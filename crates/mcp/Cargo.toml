@@ -1,0 +1,16 @@
+[package]
+name = "whycode-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Model Context Protocol client for whycode"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+whycode-core = { path = "../core" }
+whycode-tools = { path = "../tools" }

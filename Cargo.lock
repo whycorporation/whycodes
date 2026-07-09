@@ -2192,6 +2192,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "whycode-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "whycode-core",
+ "whycode-tools",
+]
+
+[[package]]
 name = "whycode-session"
 version = "0.1.0"
 dependencies = [
@@ -2207,6 +2220,22 @@ dependencies = [
  "whycode-core",
  "whycode-llm",
  "whycode-tools",
+]
+
+[[package]]
+name = "whycode-skill"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "glob",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+ "whycode-core",
 ]
 
 [[package]]

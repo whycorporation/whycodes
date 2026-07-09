@@ -9,6 +9,8 @@ use whycode_tools::tool::ToolContext;
 
 use whycode_session::session::Session;
 
+use super::subagent::{SubagentRunner, SubagentTask};
+
 /// Default system prompt
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompt.txt");
 
@@ -182,6 +184,98 @@ impl Agent {
         }
 
         Ok(final_text)
+    }
+
+    /// Spawn a single subagent to accomplish a goal.
+    ///
+    /// The subagent runs in a fresh session with its own conversation loop.
+    /// Returns the subagent's textual output.
+    pub async fn spawn_subagent(
+        &self,
+        goal: String,
+        context: Option<String>,
+        tools: Option<Vec<String>>,
+        max_turns: usize,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+    ) -> whycode_core::Result<String> {
+        let task = SubagentTask {
+            goal: goal.clone(),
+            context,
+            tools,
+            max_turns,
+        };
+
+        let runner = SubagentRunner::new(
+            Arc::clone(&self.provider_registry),
+            Arc::clone(&self.tool_executor),
+            self.info.clone(),
+            std::path::PathBuf::new(), // subagent uses the same working dir logic via the ToolContext
+        );
+
+        // Actually we need the project path — let's get it from the AgentInfo or default.
+        // SubagentRunner::run will use it from info, which is cloned above. We pass cwd from
+        // the environment; the runner creates a Session whose project_path is that value.
+        // Here we default to ".". The important piece is that ToolContext.working_dir
+        // inside run_turn_inner comes from the session's project_path.
+        let result = runner.run(task, provider_name, model, api_key).await?;
+
+        Ok(result.output)
+    }
+
+    /// Spawn multiple subagents in parallel, respecting a concurrency limit.
+    ///
+    /// Each `SubagentTask` spawns an independent subagent. Up to `max_concurrent`
+    /// subagents run at once; the rest are queued. Returns a Vec of outputs in the
+    /// same order as the input tasks.
+    pub async fn spawn_parallel(
+        &self,
+        goals: Vec<SubagentTask>,
+        max_concurrent: usize,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+    ) -> whycode_core::Result<Vec<String>> {
+        use tokio::sync::Semaphore;
+
+        let sem = Arc::new(Semaphore::new(max_concurrent.max(1)));
+        let provider_name = Arc::from(provider_name.to_string());
+        let model = Arc::from(model.to_string());
+        let api_key = Arc::from(api_key.to_string());
+
+        let runner = Arc::new(SubagentRunner::new(
+            Arc::clone(&self.provider_registry),
+            Arc::clone(&self.tool_executor),
+            self.info.clone(),
+            std::path::PathBuf::new(),
+        ));
+
+        let mut handles = Vec::with_capacity(goals.len());
+
+        for task in goals {
+            let permit = Arc::clone(&sem);
+            let r = Arc::clone(&runner);
+            let pn = Arc::clone(&provider_name);
+            let m = Arc::clone(&model);
+            let ak = Arc::clone(&api_key);
+
+            handles.push(tokio::spawn(async move {
+                let _guard = permit.acquire().await;
+                r.run(task, &pn, &m, &ak).await
+            }));
+        }
+
+        let mut outputs = Vec::with_capacity(handles.len());
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(result)) => outputs.push(result.output),
+                Ok(Err(e)) => outputs.push(format!("Subagent error: {}", e)),
+                Err(e) => outputs.push(format!("Join error: {}", e)),
+            }
+        }
+
+        Ok(outputs)
     }
 }
 

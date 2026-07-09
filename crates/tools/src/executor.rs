@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
-use crate::{edit, github_issue, github_pr, glob, grep, read, shell, webfetch, websearch, write};
+use crate::{
+    edit, git_blame, git_diff, git_log, git_status, github_issue, github_pr, glob, grep, read,
+    shell, task, webfetch, websearch, write,
+};
 
 /// Central executor that manages all available tools
 pub struct ToolExecutor {
@@ -27,6 +30,11 @@ impl ToolExecutor {
         executor.register(Box::new(websearch::WebSearchTool::new()));
         executor.register(Box::new(github_issue::GithubIssueTool::new()));
         executor.register(Box::new(github_pr::GitHubPrTool::new()));
+        executor.register(Box::new(task::TaskTool::new()));
+        executor.register(Box::new(git_diff::GitDiffTool::new()));
+        executor.register(Box::new(git_log::GitLogTool::new()));
+        executor.register(Box::new(git_status::GitStatusTool::new()));
+        executor.register(Box::new(git_blame::GitBlameTool::new()));
 
         executor
     }
