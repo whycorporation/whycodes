@@ -45,6 +45,23 @@ impl ProviderRegistry {
     pub fn get(&self, name: &str) -> Option<&dyn LlmProvider> {
         self.providers.get(name).map(|p| p.as_ref())
     }
+
+    /// Helper: build a fallback chain from this registry for the given entries.
+    ///
+    /// `primary` is a `(provider_name, model)` pair to try first.
+    /// `fallbacks` is a list of fallback `(provider_name, model)` pairs.
+    /// Returns a `FallbackChain` ready to call `.complete()` on.
+    pub fn get_with_fallback(
+        &self,
+        primary: (String, String),
+        fallbacks: Vec<(String, String)>,
+        api_keys: std::collections::HashMap<String, String>,
+    ) -> super::fallback::FallbackChain {
+        let mut entries = Vec::with_capacity(1 + fallbacks.len());
+        entries.push(primary);
+        entries.extend(fallbacks);
+        super::fallback::FallbackChain::new(entries, api_keys)
+    }
 }
 
 impl Default for ProviderRegistry {
@@ -53,6 +70,9 @@ impl Default for ProviderRegistry {
         registry.register(Box::new(super::anthropic::AnthropicProvider::new()));
         registry.register(Box::new(super::openai::OpenAiProvider::new()));
         registry.register(Box::new(super::google::GoogleProvider::new()));
+        registry.register(Box::new(super::deepseek::DeepSeekProvider::new()));
+        registry.register(Box::new(super::openrouter::OpenRouterProvider::new()));
+        registry.register(Box::new(super::ollama::OllamaProvider::new()));
         registry
     }
 }

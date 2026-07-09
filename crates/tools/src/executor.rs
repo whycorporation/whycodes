@@ -4,8 +4,8 @@ use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
 use crate::{
-    edit, git_blame, git_diff, git_log, git_status, github_issue, github_pr, glob, grep, read,
-    shell, task, webfetch, websearch, write,
+    apply_patch, edit, git_blame, git_diff, git_log, git_status, github_issue, github_pr, glob,
+    grep, plan, question, read, shell, task, todo_write, webfetch, websearch, write,
 };
 
 /// Central executor that manages all available tools
@@ -35,6 +35,10 @@ impl ToolExecutor {
         executor.register(Box::new(git_log::GitLogTool::new()));
         executor.register(Box::new(git_status::GitStatusTool::new()));
         executor.register(Box::new(git_blame::GitBlameTool::new()));
+        executor.register(Box::new(apply_patch::ApplyPatchTool::new()));
+        executor.register(Box::new(todo_write::TodoWriteTool::new()));
+        executor.register(Box::new(question::QuestionTool::new()));
+        executor.register(Box::new(plan::PlanTool::new()));
 
         executor
     }

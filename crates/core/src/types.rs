@@ -183,8 +183,50 @@ pub struct ProviderConfig {
     pub name: String,
     pub api_key: Option<String>,
     pub api_base: Option<String>,
+    /// Custom base URL for the provider API (overrides api_base if set)
+    pub base_url: Option<String>,
+    /// Custom HTTP headers to include with provider requests
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
     pub models: Vec<String>,
     pub extra: HashMap<String, serde_json::Value>,
+}
+
+impl ProviderConfig {
+    /// Resolve the full API URL for a given model.
+    ///
+    /// Priority: `base_url` field > `api_base` field > provider-specific default.
+    pub fn resolve_url(&self, _model: &str) -> String {
+        let base = self
+            .base_url
+            .as_deref()
+            .or(self.api_base.as_deref())
+            .unwrap_or_else(|| self.default_base_url());
+
+        // Strip trailing slash, then append /chat/completions
+        let base = base.trim_end_matches('/');
+        format!("{}/chat/completions", base)
+    }
+
+    /// Return the well-known default base URL for this provider.
+    fn default_base_url(&self) -> &str {
+        match self.name.to_lowercase().as_str() {
+            "openai" => "https://api.openai.com/v1",
+            "anthropic" => "https://api.anthropic.com/v1",
+            "groq" => "https://api.groq.com/openai/v1",
+            "deepseek" => "https://api.deepseek.com/v1",
+            "google" | "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+            "azure" | "azure_openai" => "https://{resource}.openai.azure.com/openai",
+            "openrouter" => "https://openrouter.ai/api/v1",
+            "together" | "together_ai" => "https://api.together.xyz/v1",
+            "fireworks" | "fireworks_ai" => "https://api.fireworks.ai/inference/v1",
+            "mistral" => "https://api.mistral.ai/v1",
+            "cohere" => "https://api.cohere.com/v1",
+            "perplexity" => "https://api.perplexity.com",
+            "xai" => "https://api.x.ai/v1",
+            _ => "https://api.openai.com/v1", // fallback to OpenAI-compatible
+        }
+    }
 }
 
 /// Model configuration

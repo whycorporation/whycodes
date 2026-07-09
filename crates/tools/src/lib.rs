@@ -1,3 +1,5 @@
+pub mod apply_patch;
+pub mod display;
 pub mod edit;
 pub mod executor;
 pub mod git_blame;
@@ -9,9 +11,12 @@ pub mod github_issue;
 pub mod github_pr;
 pub mod glob;
 pub mod grep;
+pub mod plan;
+pub mod question;
 pub mod read;
 pub mod shell;
 pub mod task;
+pub mod todo_write;
 pub mod tool;
 pub mod webfetch;
 pub mod websearch;

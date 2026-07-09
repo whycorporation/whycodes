@@ -8,6 +8,9 @@ members = [
     "crates/cli",
     "crates/mcp",
     "crates/skill",
+    "crates/storage",
+    "crates/format",
+    "crates/lsp",
 ]
 resolver = "2"
 [workspace.package]

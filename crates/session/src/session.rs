@@ -176,6 +176,64 @@ impl Session {
         self.touch();
     }
 
+    /// Persist this session and all messages to the SQLite database.
+    pub fn save_to_db(&self, db: &whycode_storage::db::Database) -> anyhow::Result<()> {
+        // Upsert the session row (INSERT OR REPLACE so repeated saves work).
+        db.create_session(
+            &self.id,
+            &self.title,
+            &self.project_path.to_string_lossy(),
+        )?;
+
+        // Store each message as a JSON-serialized row.
+        for msg in &self.messages {
+            let msg_json = serde_json::to_string(msg)?;
+            let role_str = serde_json::to_string(&msg.role)?.trim_matches('"').to_string();
+            let msg_id = uuid::Uuid::new_v4().to_string();
+            db.insert_message(
+                &msg_id,
+                &self.id,
+                &role_str,
+                &msg_json,
+                msg.tool_call_id.as_deref(),
+                msg.name.as_deref(),
+            )?;
+        }
+
+        Ok(())
+    }
+
+    /// Load a session and its messages from the SQLite database by session id.
+    pub fn load_from_db(
+        db: &whycode_storage::db::Database,
+        id: &str,
+    ) -> anyhow::Result<Option<Self>> {
+        let Some(row) = db.get_session(id)? else {
+            return Ok(None);
+        };
+
+        let created_at = chrono::DateTime::parse_from_rfc3339(&row.created_at)?
+            .with_timezone(&chrono::Utc);
+        let updated_at = chrono::DateTime::parse_from_rfc3339(&row.updated_at)?
+            .with_timezone(&chrono::Utc);
+
+        let message_rows = db.get_messages(id)?;
+        let messages: Vec<whycode_core::types::Message> = message_rows
+            .iter()
+            .map(|mr| serde_json::from_str(&mr.content))
+            .collect::<Result<_, _>>()?;
+
+        Ok(Some(Self {
+            id: row.id,
+            title: row.title,
+            messages,
+            system_prompt: String::new(), // system_prompt is not yet persisted
+            project_path: std::path::PathBuf::from(row.project_path),
+            created_at,
+            updated_at,
+        }))
+    }
+
     fn touch(&mut self) {
         self.updated_at = chrono::Utc::now();
     }
