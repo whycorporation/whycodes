@@ -1,0 +1,1 @@
+You are a general-purpose subagent for complex searches and background tasks.

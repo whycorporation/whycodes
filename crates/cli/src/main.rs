@@ -18,6 +18,10 @@ pub struct Cli {
     #[arg(short = 'p', long, group = "input")]
     pub prompt: Option<String>,
 
+    /// Agent name to use (build, plan, explore, general)
+    #[arg(short = 'a', long = "agent", default_value = "build")]
+    pub agent: String,
+
     /// Project directory
     #[arg(short = 'd', long, default_value = ".")]
     pub dir: String,
@@ -109,40 +113,54 @@ async fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             });
 
-            let default_agent = config.default_agent().cloned().unwrap_or_else(|| AgentInfo {
-                name: "build".to_string(),
-                description: "Default build agent".to_string(),
-                mode: AgentMode::Primary,
-                permission: PermissionSet {
-                    allowed_tools: None,
-                    denied_tools: None,
-                    allow_file_writes: true,
-                    allow_network: true,
-                    allow_shell: true,
-                    allowed_paths: None,
-                },
-                model: Some(ModelConfig {
-                    model_id: cli.model.clone(),
-                    provider_id: cli.provider.clone(),
-                    max_tokens: None,
+            let agent_info = config.get_agent(&cli.agent).cloned().unwrap_or_else(|| {
+                eprintln!(
+                    "{} Agent '{}' not found in config, using build agent fallback.",
+                    "Warning:".yellow().bold(),
+                    cli.agent
+                );
+                AgentInfo {
+                    name: "build".to_string(),
+                    description: "Default build agent".to_string(),
+                    mode: AgentMode::Primary,
+                    permission: PermissionSet {
+                        allowed_tools: None,
+                        denied_tools: None,
+                        allow_file_writes: true,
+                        allow_network: true,
+                        allow_shell: true,
+                        allowed_paths: None,
+                    },
+                    model: Some(ModelConfig {
+                        model_id: cli.model.clone(),
+                        provider_id: cli.provider.clone(),
+                        max_tokens: None,
+                        temperature: None,
+                        top_p: None,
+                        thinking: None,
+                        supports_tools: Some(true),
+                        supports_images: None,
+                    }),
+                    system_prompt: None,
                     temperature: None,
                     top_p: None,
-                    thinking: None,
-                    supports_tools: Some(true),
-                    supports_images: None,
-                }),
-                system_prompt: None,
-                temperature: None,
-                top_p: None,
+                }
             });
 
-            let agent = Agent::new(default_agent);
-            let mut session = Session::new(project_dir.clone(), agent.system_prompt());
+            // Resolve the system prompt: use the agent's explicit prompt, or fall back to the
+            // prompt file for that agent name, or the default system prompt.
+            let system_prompt = agent_info
+                .system_prompt
+                .clone()
+                .unwrap_or_else(|| Agent::system_prompt_for(&cli.agent));
+
+            let agent = Agent::new(agent_info);
+            let mut session = Session::new(project_dir.clone(), system_prompt);
 
             println!(
                 "{} {}",
                 "Whycode".cyan().bold(),
-                format!("[provider={}, model={}]", cli.provider, cli.model).dimmed()
+                format!("[agent={}, provider={}, model={}]", cli.agent, cli.provider, cli.model).dimmed()
             );
             println!("{} {}", "Project:".dimmed(), project_dir.display().to_string().dimmed());
             println!();

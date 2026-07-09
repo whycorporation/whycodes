@@ -21,7 +21,7 @@ pub struct CommandConfig {
 }
 
 /// Main configuration structure
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// API provider configurations
     #[serde(default)]
@@ -62,6 +62,132 @@ pub struct Config {
     /// General settings
     #[serde(default)]
     pub general: GeneralConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        use crate::types::{AgentInfo, AgentMode, PermissionSet};
+
+        let build_agent = AgentInfo {
+            name: "build".to_string(),
+            description: "Primary coding agent with full tool access — write, edit, shell, and network.".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: None,
+                denied_tools: None,
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                allowed_paths: None,
+            },
+            model: None,
+            system_prompt: None, // Loaded from prompts/build.txt at runtime
+            temperature: None,
+            top_p: None,
+        };
+
+        let plan_agent = AgentInfo {
+            name: "plan".to_string(),
+            description: "Read-only planning agent — analyzes code and proposes changes but does not modify files or run commands.".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "webfetch".to_string(),
+                ]),
+                denied_tools: Some(vec![
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "shell".to_string(),
+                    "apply_patch".to_string(),
+                    "todo_write".to_string(),
+                ]),
+                allow_file_writes: false,
+                allow_network: true,
+                allow_shell: false,
+                allowed_paths: None,
+            },
+            model: None,
+            system_prompt: Some("You are Whycode in planning mode. You are READ-ONLY. Analyze code and propose changes but do NOT edit files or run commands. Output a structured plan.".to_string()),
+            temperature: None,
+            top_p: None,
+        };
+
+        let explore_agent = AgentInfo {
+            name: "explore".to_string(),
+            description: "Read-only exploration agent — reads code, searches the web, understands codebases. No file modifications.".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "webfetch".to_string(),
+                    "websearch".to_string(),
+                ]),
+                denied_tools: Some(vec![
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "shell".to_string(),
+                    "apply_patch".to_string(),
+                    "todo_write".to_string(),
+                ]),
+                allow_file_writes: false,
+                allow_network: true,
+                allow_shell: false,
+                allowed_paths: None,
+            },
+            model: None,
+            system_prompt: Some("You are Whycode in exploration mode. Read code, search the web, understand codebases. No file modifications.".to_string()),
+            temperature: None,
+            top_p: None,
+        };
+
+        let general_agent = AgentInfo {
+            name: "general".to_string(),
+            description: "General-purpose subagent for complex internal searches and background tasks.".to_string(),
+            mode: AgentMode::Subagent,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "webfetch".to_string(),
+                    "websearch".to_string(),
+                ]),
+                denied_tools: Some(vec![
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "shell".to_string(),
+                    "apply_patch".to_string(),
+                    "todo_write".to_string(),
+                ]),
+                allow_file_writes: false,
+                allow_network: true,
+                allow_shell: false,
+                allowed_paths: None,
+            },
+            model: None,
+            system_prompt: Some("You are a general-purpose subagent for complex searches and background tasks.".to_string()),
+            temperature: None,
+            top_p: None,
+        };
+
+        Config {
+            providers: HashMap::new(),
+            models: HashMap::new(),
+            agents: vec![build_agent, plan_agent, explore_agent, general_agent],
+            default_agent: "build".to_string(),
+            default_model: None,
+            command_configs: HashMap::new(),
+            tools: ToolsConfig::default(),
+            session: SessionConfig::default(),
+            tui: TuiConfig::default(),
+            general: GeneralConfig::default(),
+        }
+    }
 }
 
 fn default_agent() -> String {

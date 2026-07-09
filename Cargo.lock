@@ -2440,6 +2440,7 @@ name = "whycode-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "directories",
  "serde",
@@ -2576,6 +2577,7 @@ dependencies = [
  "tracing",
  "whycode-core",
  "whycode-format",
+ "whycode-skill",
 ]
 
 [[package]]

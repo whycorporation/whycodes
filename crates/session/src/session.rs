@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use whycode_core::types::{
     ContentBlock, LlmRequest, Message, MessageContent, Role,
@@ -5,6 +6,7 @@ use whycode_core::types::{
 };
 
 /// A conversation session
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub id: String,
     pub title: String,
@@ -232,6 +234,34 @@ impl Session {
             created_at,
             updated_at,
         }))
+    }
+
+    /// Export the session as a shareable JSON file.
+    /// Writes to .whycode/shares/{session_id}.json and returns the file path.
+    pub fn export_share(&self) -> anyhow::Result<String> {
+        let shares_dir = self.project_path.join(".whycode").join("shares");
+        std::fs::create_dir_all(&shares_dir)?;
+
+        let filename = format!("{}.json", self.id);
+        let share_path = shares_dir.join(&filename);
+
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(&share_path, json)?;
+
+        Ok(share_path.to_string_lossy().to_string())
+    }
+
+    /// Revert the session to a previous state by removing all messages after
+    /// the given index. Returns the number of messages removed.
+    pub fn revert_to(&mut self, message_index: usize) -> usize {
+        if message_index >= self.messages.len() {
+            return 0;
+        }
+
+        let removed = self.messages.len() - message_index - 1;
+        self.messages.truncate(message_index + 1);
+        self.touch();
+        removed
     }
 
     fn touch(&mut self) {

@@ -11,8 +11,8 @@ use whycode_session::session::Session;
 
 use super::subagent::{SubagentRunner, SubagentTask};
 
-/// Default system prompt
-pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompt.txt");
+/// Default system prompt (loaded from prompts/build.txt at compile time)
+pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompts/build.txt");
 
 /// Main agent orchestrating the conversation loop
 pub struct Agent {
@@ -46,6 +46,21 @@ impl Agent {
             .system_prompt
             .clone()
             .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
+    }
+
+    /// Get the system prompt for a named agent.
+    ///
+    /// If the agent has an explicit `system_prompt` set in its info, that wins.
+    /// Otherwise falls back to loading the matching prompt file from
+    /// `crates/agent/prompts/<name>.txt` at compile time.
+    pub fn system_prompt_for(agent_name: &str) -> String {
+        match agent_name {
+            "build" => include_str!("../prompts/build.txt").to_string(),
+            "plan" => include_str!("../prompts/plan.txt").to_string(),
+            "explore" => include_str!("../prompts/explore.txt").to_string(),
+            "general" => include_str!("../prompts/general.txt").to_string(),
+            _ => DEFAULT_SYSTEM_PROMPT.to_string(),
+        }
     }
 
     /// Run a single conversation turn: send LLM request, process tool calls, return response
@@ -181,6 +196,24 @@ impl Agent {
             }
 
             session.add_tool_results(results.clone());
+
+            // Error recovery: if any tool failed, inject a user-like message
+            // giving the LLM a chance to self-correct in the same turn
+            let failed_tools: Vec<String> = results
+                .iter()
+                .filter(|r| r.is_error)
+                .map(|r| {
+                    format!(
+                        "The tool failed with error: {content}. Please correct your approach.",
+                        content = r.content
+                    )
+                })
+                .collect();
+
+            if !failed_tools.is_empty() {
+                let recovery_msg = failed_tools.join("\n");
+                session.add_user_message(&recovery_msg);
+            }
         }
 
         Ok(final_text)

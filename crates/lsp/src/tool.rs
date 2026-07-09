@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use whycode_tools::tool::{Tool, ToolContext};
+use whycode_core::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 
 use crate::client::{self, LspClient};
