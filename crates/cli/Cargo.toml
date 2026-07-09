@@ -1,0 +1,26 @@
+[package]
+name = "whycode-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "whycode"
+path = "src/main.rs"
+
+[dependencies]
+whycode-core = { path = "../core" }
+whycode-llm = { path = "../llm" }
+whycode-tools = { path = "../tools" }
+whycode-session = { path = "../session" }
+whycode-agent = { path = "../agent" }
+clap = { workspace = true, features = ["derive"] }
+toml.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+colored.workspace = true
