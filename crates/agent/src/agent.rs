@@ -5,7 +5,7 @@ use whycode_core::types::{
 };
 use whycode_llm::provider::ProviderRegistry;
 use whycode_tools::executor::ToolExecutor;
-use whycode_tools::tool::ToolContext;
+use whycode_core::tool::ToolContext;
 
 use whycode_session::session::Session;
 

@@ -2492,7 +2492,6 @@ dependencies = [
  "tokio",
  "tracing",
  "whycode-core",
- "whycode-tools",
 ]
 
 [[package]]
@@ -2505,7 +2504,6 @@ dependencies = [
  "tokio",
  "tracing",
  "whycode-core",
- "whycode-tools",
 ]
 
 [[package]]

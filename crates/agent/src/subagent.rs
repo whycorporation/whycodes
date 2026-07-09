@@ -5,7 +5,7 @@ use whycode_core::types::{AgentInfo, PermissionSet};
 use whycode_llm::provider::ProviderRegistry;
 use whycode_session::session::Session;
 use whycode_tools::executor::ToolExecutor;
-use whycode_tools::tool::ToolContext;
+use whycode_core::tool::ToolContext;
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
 
