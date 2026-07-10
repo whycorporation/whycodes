@@ -41,8 +41,10 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Start interactive mode
+    /// Start interactive mode (line-based REPL)
     Run,
+    /// Start full-screen TUI mode
+    Tui,
     /// Show configuration
     Config,
     /// List available models
@@ -93,137 +95,199 @@ async fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Some(Commands::Tui) => {
+            run_tui(cli).await
+        }
         Some(Commands::Run) | None => {
-            let project_dir = if cli.dir == "." {
-                std::env::current_dir()?
-            } else {
-                PathBuf::from(&cli.dir)
-            };
-
-            let api_key = get_api_key(&cli.provider, &config).unwrap_or_else(|| {
-                eprintln!(
-                    "{} {}",
-                    "Error:".red().bold(),
-                    format!(
-                        "No API key for '{}'. Set {} env var.",
-                        cli.provider,
-                        provider_env_var(&cli.provider)
-                    )
-                );
-                std::process::exit(1);
-            });
-
-            let agent_info = config.get_agent(&cli.agent).cloned().unwrap_or_else(|| {
-                eprintln!(
-                    "{} Agent '{}' not found in config, using build agent fallback.",
-                    "Warning:".yellow().bold(),
-                    cli.agent
-                );
-                AgentInfo {
-                    name: "build".to_string(),
-                    description: "Default build agent".to_string(),
-                    mode: AgentMode::Primary,
-                    permission: PermissionSet {
-                        allowed_tools: None,
-                        denied_tools: None,
-                        allow_file_writes: true,
-                        allow_network: true,
-                        allow_shell: true,
-                        allowed_paths: None,
-                    },
-                    model: Some(ModelConfig {
-                        model_id: cli.model.clone(),
-                        provider_id: cli.provider.clone(),
-                        max_tokens: None,
-                        temperature: None,
-                        top_p: None,
-                        thinking: None,
-                        supports_tools: Some(true),
-                        supports_images: None,
-                    }),
-                    system_prompt: None,
-                    temperature: None,
-                    top_p: None,
-                }
-            });
-
-            // Resolve the system prompt: use the agent's explicit prompt, or fall back to the
-            // prompt file for that agent name, or the default system prompt.
-            let system_prompt = agent_info
-                .system_prompt
-                .clone()
-                .unwrap_or_else(|| Agent::system_prompt_for(&cli.agent));
-
-            let agent = Agent::new(agent_info);
-            let mut session = Session::new(project_dir.clone(), system_prompt);
-
-            println!(
-                "{} {}",
-                "Whycode".cyan().bold(),
-                format!("[agent={}, provider={}, model={}]", cli.agent, cli.provider, cli.model).dimmed()
-            );
-            println!("{} {}", "Project:".dimmed(), project_dir.display().to_string().dimmed());
-            println!();
-
-            if let Some(prompt) = &cli.prompt {
-                if prompt.is_empty() {
-                    eprintln!("{}", "Error: empty prompt".red());
-                    return Ok(());
-                }
-                session.add_user_message(prompt);
-                match agent.run_turn(&mut session, &cli.provider, &cli.model, &api_key, cli.max_turns).await {
-                    Ok(response) => {
-                        if !response.is_empty() {
-                            println!("\n{}", response);
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("{} {}", "Error:".red().bold(), e);
-                        return Err(anyhow::anyhow!("{e}"));
-                    }
-                }
-                return Ok(());
-            }
-
-            // Interactive mode
-            println!("{}", "Interactive mode. Type /help for commands, /exit to quit.".dimmed());
-            loop {
-                use std::io::Write;
-                let _ = std::io::stdout().flush();
-
-                let mut input = String::new();
-                if std::io::stdin().read_line(&mut input).is_err() {
-                    break;
-                }
-                let input = input.trim().to_string();
-                if input.is_empty() { continue; }
-
-                if input.starts_with('/') {
-                    match input.as_str() {
-                        "/exit" | "/quit" | "/q" => break,
-                        "/help" | "/h" => {
-                            println!("  /exit, /quit, /q — Exit");
-                            println!("  /help, /h       — Help");
-                            println!("  /clear          — Clear session");
-                            println!("  /info           — Session info");
-                            continue;
-                        }
-                        "/clear" => { session = Session::new(project_dir.clone(), agent.system_prompt()); println!("Cleared."); continue; }
-                        "/info" => { let i = session.info(); println!("ID: {} | Messages: {} | {}", i.id, i.message_count, i.created_at.format("%H:%M:%S")); continue; }
-                        cmd => { println!("Unknown: {}. /help for commands.", cmd); continue; }
-                    }
-                }
-
-                session.add_user_message(&input);
-                match agent.run_turn(&mut session, &cli.provider, &cli.model, &api_key, cli.max_turns).await {
-                    Ok(response) => { if !response.is_empty() { println!("\n{}", response); } println!(); }
-                    Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
-                }
-            }
-            println!("{}", "Goodbye!".cyan());
-            Ok(())
+            run_repl(cli, config).await
         }
     }
+}
+
+async fn run_tui(_cli: Cli) -> anyhow::Result<()> {
+    use crossterm::terminal::{enable_raw_mode, EnterAlternateScreen};
+    use crossterm::ExecutableCommand;
+    use ratatui::Terminal;
+    use ratatui::backend::CrosstermBackend;
+    use std::io::{self};
+    use whycode_tui::app::App;
+    use whycode_tui::ui;
+
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    stdout.execute(EnterAlternateScreen)?;
+
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut app = App::new();
+
+    // Add welcome messages
+    app.add_message("system", &format!("Whycode v{} — AI coding agent", env!("CARGO_PKG_VERSION")));
+    app.add_message("system", "Press ? for help | Ctrl+P to add provider | :q to quit");
+
+    loop {
+        terminal.draw(|f| ui::render(f, &app))?;
+
+        if !app.running {
+            break;
+        }
+
+        if crossterm::event::poll(std::time::Duration::from_millis(100))? {
+            if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
+                app.handle_key(key);
+            }
+        }
+    }
+
+    crossterm::terminal::disable_raw_mode()?;
+    println!("\n{}", "Goodbye!".cyan());
+    Ok(())
+}
+
+async fn run_repl(cli: Cli, config: Config) -> anyhow::Result<()> {
+    let project_dir = if cli.dir == "." {
+        std::env::current_dir()?
+    } else {
+        PathBuf::from(&cli.dir)
+    };
+
+    let api_key = get_api_key(&cli.provider, &config).unwrap_or_else(|| {
+        eprintln!(
+            "{} {}",
+            "Error:".red().bold(),
+            format!(
+                "No API key for '{}'. Set {} env var.",
+                cli.provider,
+                provider_env_var(&cli.provider)
+            )
+        );
+        std::process::exit(1);
+    });
+
+    let agent_info = config.get_agent(&cli.agent).cloned().unwrap_or_else(|| {
+        eprintln!(
+            "{} Agent '{}' not found in config, using build agent fallback.",
+            "Warning:".yellow().bold(),
+            cli.agent
+        );
+        AgentInfo {
+            name: "build".to_string(),
+            description: "Default build agent".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: None,
+                denied_tools: None,
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                allowed_paths: None,
+            },
+            model: Some(ModelConfig {
+                model_id: cli.model.clone(),
+                provider_id: cli.provider.clone(),
+                max_tokens: None,
+                temperature: None,
+                top_p: None,
+                thinking: None,
+                supports_tools: Some(true),
+                supports_images: None,
+            }),
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        }
+    });
+
+    let system_prompt = agent_info
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| Agent::system_prompt_for(&cli.agent));
+
+    let agent = Agent::new(agent_info);
+    let mut session = Session::new(project_dir.clone(), system_prompt);
+
+    println!(
+        "{} {}",
+        "Whycode".cyan().bold(),
+        format!("[agent={}, provider={}, model={}]", cli.agent, cli.provider, cli.model).dimmed()
+    );
+    println!("{} {}", "Project:".dimmed(), project_dir.display().to_string().dimmed());
+    println!();
+
+    if let Some(prompt) = &cli.prompt {
+        if prompt.is_empty() {
+            eprintln!("{}", "Error: empty prompt".red());
+            return Ok(());
+        }
+        session.add_user_message(prompt);
+        match agent.run_turn(&mut session, &cli.provider, &cli.model, &api_key, cli.max_turns).await {
+            Ok(response) => {
+                if !response.is_empty() {
+                    println!("\n{}", response);
+                }
+            }
+            Err(e) => {
+                eprintln!("{} {}", "Error:".red().bold(), e);
+                return Err(anyhow::anyhow!("{e}"));
+            }
+        }
+        return Ok(());
+    }
+
+    println!("{}", "Interactive mode. Type /help for commands, /exit to quit.".dimmed());
+    loop {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_err() {
+            break;
+        }
+        let input = input.trim().to_string();
+        if input.is_empty() { continue; }
+
+        if input.starts_with('/') {
+            match input.as_str() {
+                "/exit" | "/quit" | "/q" => break,
+                "/tui" => {
+                    // Launch TUI from REPL
+                    println!("Launching TUI...");
+                    run_tui(Cli {
+                        command: Some(Commands::Tui),
+                        prompt: None,
+                        agent: cli.agent.clone(),
+                        dir: cli.dir.clone(),
+                        provider: cli.provider.clone(),
+                        model: cli.model.clone(),
+                        max_turns: cli.max_turns,
+                    })
+                    .await?;
+                    println!("Back to REPL.");
+                    continue;
+                }
+                "/help" | "/h" => {
+                    println!("  /exit, /quit, /q — Exit");
+                    println!("  /help, /h       — Help");
+                    println!("  /clear          — Clear session");
+                    println!("  /info           — Session info");
+                    println!("  /tui            — Switch to full-screen TUI");
+                    continue;
+                }
+                "/clear" => { session = Session::new(project_dir.clone(), agent.system_prompt()); println!("Cleared."); continue; }
+                "/info" => { let i = session.info(); println!("ID: {} | Messages: {} | {}", i.id, i.message_count, i.created_at.format("%H:%M:%S")); continue; }
+                cmd => { println!("Unknown: {}. /help for commands.", cmd); continue; }
+            }
+        }
+
+        session.add_user_message(&input);
+        match agent.run_turn(&mut session, &cli.provider, &cli.model, &api_key, cli.max_turns).await {
+            Ok(response) => { if !response.is_empty() { println!("\n{}", response); } println!(); }
+            Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
+        }
+    }
+    println!("{}", "Goodbye!".cyan());
+    Ok(())
 }
 
 fn get_api_key(provider: &str, config: &Config) -> Option<String> {

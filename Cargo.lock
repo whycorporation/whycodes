@@ -2615,9 +2615,11 @@ dependencies = [
  "tracing-subscriber",
  "whycode-agent",
  "whycode-core",
+ "whycode-format",
  "whycode-llm",
  "whycode-session",
  "whycode-tools",
+ "whycode-tui",
 ]
 
 [[package]]
