@@ -46,7 +46,19 @@ impl ProviderRegistry {
         self.providers.get(name).map(|p| p.as_ref())
     }
 
-    /// Helper: build a fallback chain from this registry for the given entries.
+    /// Register a custom provider from config.
+    /// This enables dynamically-added providers from config.toml.
+    pub fn register_from_config(&mut self, config: &whycode_core::config::Config) {
+        for (name, pc) in &config.providers {
+            // Skip built-in providers that already exist
+            if self.providers.contains_key(name) {
+                continue;
+            }
+            // Create a CustomProvider for this config entry
+            let custom = Box::new(super::custom::CustomProvider::from_config(pc));
+            self.providers.insert(name.clone(), custom);
+        }
+    }
     ///
     /// `primary` is a `(provider_name, model)` pair to try first.
     /// `fallbacks` is a list of fallback `(provider_name, model)` pairs.

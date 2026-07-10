@@ -5,6 +5,7 @@ pub mod google;
 pub mod deepseek;
 pub mod openrouter;
 pub mod ollama;
+pub mod custom;
 pub mod types;
 pub mod retry;
 pub mod fallback;

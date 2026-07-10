@@ -40,6 +40,14 @@ impl Agent {
         self
     }
 
+    /// Load custom providers from config
+    pub fn with_config(mut self, config: &whycode_core::config::Config) -> Self {
+        let mut registry = ProviderRegistry::default();
+        registry.register_from_config(config);
+        self.provider_registry = Arc::new(registry);
+        self
+    }
+
     /// Get the system prompt for this agent
     pub fn system_prompt(&self) -> String {
         self.info
