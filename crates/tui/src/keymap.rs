@@ -50,6 +50,8 @@ pub enum Action {
     ToggleToolCall,
     ToggleThinking,
     ToggleToolResult,
+    /// Cycle primary agents (OpenCode Tab)
+    SwitchAgent,
 }
 
 /// A single keybinding description for the help overlay.
@@ -122,6 +124,8 @@ impl Keymap {
                 (true, KeyCode::Char('m')) => Some(Action::OpenModelDialog),
                 (true, KeyCode::Char('a')) => Some(Action::ToggleAutoScroll),
                 (true, KeyCode::Char('l')) => Some(Action::ClearSession),
+                // OpenCode: Tab cycles primary agents
+                (false, KeyCode::Tab) => Some(Action::SwitchAgent),
                 // Input editing
                 (false, KeyCode::Backspace) => Some(Action::InputBackspace),
                 (false, KeyCode::Delete) => Some(Action::InputDelete),
@@ -140,6 +144,8 @@ impl Keymap {
                 (false, KeyCode::Down) => Some(Action::DialogNextField),
                 (false, KeyCode::Char('y')) => Some(Action::DialogConfirm),
                 (false, KeyCode::Char('n')) => Some(Action::DialogCancel),
+                (false, KeyCode::Char('a')) => Some(Action::DialogConfirm), // allow
+                (false, KeyCode::Char('d')) => Some(Action::DialogCancel), // deny
                 (false, KeyCode::Backspace) => Some(Action::InputBackspace),
                 (true, KeyCode::Char('s')) => Some(Action::DialogConfirm),
                 (true, KeyCode::Char('c')) => Some(Action::DialogCancel),

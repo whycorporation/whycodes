@@ -2,7 +2,9 @@
 // Translates raw crossterm events into actions via the keymap,
 // then updates application state accordingly.
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+};
 use crate::app::{AppMode, ConfirmAction, DialogKind, TuiApp};
 use crate::keymap::{Action, KeymapContext};
 
@@ -18,15 +20,13 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
 }
 
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
-    let ctx = app.key_context;
+    // Windows (and enhanced keyboard) emits Press + Release for every key.
+    // Without this filter each character is inserted twice.
+    if key.kind != KeyEventKind::Press && key.kind != KeyEventKind::Repeat {
+        return true;
+    }
 
-    // Resolve action via keymap.
-    let action = app.config.key_bindings.get("default")
-        .and_then(|_| None) // skip for now
-        .or_else(|| {
-            // Use default keymap resolution
-            crate::keymap::Keymap::default().resolve(ctx, &key)
-        });
+    let ctx = app.key_context;
 
     // If dialog mode, route to dialog handler first.
     if ctx == KeymapContext::Dialog {
@@ -123,6 +123,11 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
                 "Clear all messages from this session?",
                 ConfirmAction::ClearSession,
             );
+            true
+        }
+        Some(Action::SwitchAgent) => {
+            // Handled in run loop (needs Agent + Config); mark status only here.
+            app.status_message = "Tab: switch agent (run loop)".into();
             true
         }
         Some(Action::ScrollUp) => {

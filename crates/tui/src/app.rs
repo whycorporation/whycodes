@@ -41,6 +41,11 @@ pub enum DialogKind {
         message: String,
         on_confirm: ConfirmAction,
     },
+    /// OpenCode-style tool permission prompt (y/n)
+    Permission {
+        tool_name: String,
+        detail: String,
+    },
     SessionList,
     Status,
     Theme,
@@ -300,6 +305,19 @@ pub struct TuiApp {
 
     // ── config ──
     pub config: crate::config::TuiAppConfig,
+
+    /// Prompt waiting to be sent to the agent (set by submit / slash commands).
+    pub pending_prompt: Option<String>,
+
+    /// Primary agent names for Tab cycling (OpenCode build/plan).
+    pub primary_agents: Vec<String>,
+    pub agent_cycle_idx: usize,
+
+    // ── session chrome (OpenCode status header/footer) ──
+    pub provider_name: String,
+    pub model_name: String,
+    pub agent_name: String,
+    pub project_label: String,
 }
 
 /// Model selection dialog state.
@@ -333,7 +351,25 @@ impl TuiApp {
             command: CommandState::default(),
             theme: config.theme.clone(),
             config,
+            pending_prompt: None,
+            primary_agents: vec!["build".into(), "plan".into()],
+            agent_cycle_idx: 0,
+            provider_name: String::new(),
+            model_name: String::new(),
+            agent_name: String::from("build"),
+            project_label: String::from("."),
         }
+    }
+
+    /// Open a permission dialog for tool approval.
+    pub fn ask_permission(&mut self, tool_name: impl Into<String>, detail: impl Into<String>) {
+        self.mode = AppMode::Dialog;
+        self.key_context = KeymapContext::Dialog;
+        self.current_agent_state = AgentState::WaitingForPermission;
+        self.dialogs.push(DialogKind::Permission {
+            tool_name: tool_name.into(),
+            detail: detail.into(),
+        });
     }
 
     /// Push a simple alert dialog.
@@ -468,14 +504,19 @@ impl TuiApp {
         }
     }
 
-    /// Submit current input as user message.
+    /// Submit current input as user message and queue it for the agent.
     pub fn submit_input(&mut self) {
         let text = self.input_buffer.trim().to_string();
         if text.is_empty() {
             return;
         }
+        // Slash commands are handled by the run loop before submit.
+        if text.starts_with('/') {
+            return;
+        }
         self.input_history.push(text.clone());
-        self.add_message(ChatRole::User, text);
+        self.add_message(ChatRole::User, text.clone());
+        self.pending_prompt = Some(text);
         self.input_buffer.clear();
         self.input_lines.clear();
         self.input_cursor = 0;

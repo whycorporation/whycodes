@@ -21,6 +21,7 @@ whycode-agent = { path = "../agent" }
 whycode-llm = { path = "../llm" }
 whycode-tools = { path = "../tools" }
 whycode-format = { path = "../format" }
+whycode-storage = { path = "../storage" }
 unicode-width = "0.2"
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 

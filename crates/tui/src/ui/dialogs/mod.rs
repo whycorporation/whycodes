@@ -35,6 +35,13 @@ pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
         crate::app::DialogKind::Alert { title, message } => {
             render_alert_dialog(frame, title, message, palette)
         }
+        crate::app::DialogKind::Permission { tool_name, detail } => {
+            let title = format!("Permission: {tool_name}");
+            let message = format!(
+                "{detail}\n\n[y/a] Allow   [n/d/Esc] Deny"
+            );
+            render_confirm_dialog(frame, &title, &message, palette)
+        }
         _ => {}
     }
 }

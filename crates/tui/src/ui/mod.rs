@@ -3,6 +3,7 @@
 
 pub mod chat;
 pub mod dialogs;
+pub mod header;
 pub mod layout;
 pub mod prompt;
 pub mod render;
