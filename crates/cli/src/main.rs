@@ -28,6 +28,10 @@ pub struct Cli {
     /// Project directory
     #[arg(short = 'd', long, global = true)]
     pub dir: Option<String>,
+
+    /// Use plain stdin REPL instead of the full-screen TUI
+    #[arg(long, global = true)]
+    pub plain: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -400,6 +404,7 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
                 allow_network: true,
                 allow_shell: true,
                 allowed_paths: None,
+                rules: Default::default(),
             },
             model: Some(ModelConfig {
                 model_id: model,
@@ -422,46 +427,83 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
 // Command implementations
 // ────────────────────────────────────────────────────────────────────────
 
-/// `run` — Start an interactive session
+/// `run` — Start an interactive session (TUI by default, `--plain` for readline REPL)
 async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::Result<()> {
-    let config = Config::load()?;
+    let project_dir_early = resolve_dir(cli);
+    let mut config = Config::load_layered(&project_dir_early)
+        .or_else(|_| Config::load())
+        .unwrap_or_default();
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
     let project_dir = resolve_dir(cli);
+    config.load_command_files(&project_dir);
 
-    let api_key = get_api_key(&provider, &config).unwrap_or_else(|| {
-        eprintln!(
-            "{} {}",
-            "Error:".red().bold(),
-            format!(
-                "No API key for '{}'. Set {} env var or configure a provider.",
-                provider,
-                provider_env_var(&provider)
-            )
-        );
-        std::process::exit(1);
-    });
+    // Interactive mode always starts (OpenCode-style). API key is optional until
+    // the user actually sends a prompt that needs the LLM.
+    let mut api_key = get_api_key(&provider, &config).unwrap_or_default();
 
-    let agent_info = agent_info_for(cli, &config);
-    let system_prompt = agent_info
+    // Full-screen TUI (OpenCode default experience) unless --plain or non-TTY
+    let use_tui = !cli.plain && std::env::var_os("WHYCODE_PLAIN").is_none();
+    if use_tui {
+        return whycode_tui::run(whycode_tui::TuiRunOptions {
+            project_dir,
+            provider,
+            model,
+            api_key,
+            agent_name,
+            max_turns,
+            initial_prompt: prompt.map(|s| s.to_string()),
+            config,
+        })
+        .await;
+    }
+
+    let agent_info = {
+        let mut info = agent_info_for(cli, &config);
+        info.permission = config.effective_permission(&info.permission);
+        info
+    };
+    let base_prompt = agent_info
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
+    let system_prompt = Agent::with_agents_md(&base_prompt, &project_dir);
 
-    let agent = Agent::new(agent_info);
-    let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
+    let mut agent_name = agent_name;
+    let mut agent = Agent::new(agent_info)
+        .with_config(&config)
+        .with_mcp(&config)
+        .await;
+    let mut session =
+        whycode_session::session::Session::new(project_dir.clone(), system_prompt);
+    let mut history = whycode_session::SessionHistory::new();
+    let mut provider = provider;
+    let mut model = model;
+    let mut show_thinking = false;
 
     println!(
         "{} {}",
         "Whycode".cyan().bold(),
-        format!("[agent={}, provider={}, model={}]", agent_name, provider, model).dimmed()
+        format!(
+            "[agent={}, provider={}, model={}]",
+            agent_name, provider, model
+        )
+        .dimmed()
     );
     println!(
         "{} {}",
         "Project:".dimmed(),
         project_dir.display().to_string().dimmed()
     );
+    if api_key.is_empty() {
+        println!(
+            "{} No API key for '{}'. Set {} or run /connect. UI is ready.",
+            "ℹ".yellow(),
+            provider.cyan(),
+            provider_env_var(&provider).cyan()
+        );
+    }
     println!();
 
     if let Some(prompt) = prompt {
@@ -469,7 +511,17 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
             eprintln!("{}", "Error: empty prompt".red());
             return Ok(());
         }
-        session.add_user_message(prompt);
+        if api_key.is_empty() {
+            eprintln!(
+                "{} No API key for '{}'. Set {} then retry.",
+                "Error:".red().bold(),
+                provider,
+                provider_env_var(&provider)
+            );
+            return Ok(());
+        }
+        let expanded = expand_user_input(prompt, &project_dir);
+        session.add_user_message(&expanded);
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
             .await
@@ -489,10 +541,12 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
 
     println!(
         "{}",
-        "Interactive mode. Type /help for commands, /exit to quit.".dimmed()
+        "Interactive mode. Type /help for commands, Tab agents: build|plan. /exit to quit."
+            .dimmed()
     );
     loop {
         use std::io::Write;
+        print!("{} ", ">".cyan().bold());
         let _ = std::io::stdout().flush();
 
         let mut input = String::new();
@@ -504,42 +558,265 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
             continue;
         }
 
+        // OpenCode: !command runs bash and injects output into the conversation
+        if let Some(cmd) = input.strip_prefix('!') {
+            let cmd = cmd.trim();
+            if cmd.is_empty() {
+                println!("Usage: ! <shell command>");
+                continue;
+            }
+            println!("{} {}", "$".dimmed(), cmd.dimmed());
+            let output = run_shell_capture(cmd, &project_dir);
+            println!("{}", output);
+            session.add_user_message(&format!(
+                "I ran the shell command `{}` and got:\n```\n{}\n```",
+                cmd, output
+            ));
+            continue;
+        }
+
         if input.starts_with('/') {
-            match input.as_str() {
+            let (cmd, rest) = split_slash_command(&input);
+            // Custom markdown / config commands (OpenCode `/commands`)
+            if let Some(name) = cmd.strip_prefix('/') {
+                if let Some(custom) = config.commands.get(name) {
+                    let rendered = custom.render(rest);
+                    if !ensure_api_key(&mut api_key, &provider, &config) {
+                        continue;
+                    }
+                    println!("{} /{} → prompt", "⚡".bold(), name.cyan());
+                    history.push_before_turn(&session.messages, &project_dir);
+                    session.add_user_message(&rendered);
+                    match agent
+                        .run_turn(&mut session, &provider, &model, &api_key, max_turns)
+                        .await
+                    {
+                        Ok(response) => {
+                            if !response.is_empty() {
+                                println!("\n{}", response);
+                            }
+                            println!();
+                        }
+                        Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
+                    }
+                    continue;
+                }
+            }
+            match cmd {
                 "/exit" | "/quit" | "/q" => break,
                 "/help" | "/h" => {
-                    println!("  /exit, /quit, /q — Exit");
-                    println!("  /help, /h       — Help");
-                    println!("  /clear          — Clear session");
-                    println!("  /info           — Session info");
+                    print_slash_help();
                     continue;
                 }
-                "/clear" => {
+                "/new" | "/clear" => {
+                    history = whycode_session::SessionHistory::new();
                     session = whycode_session::session::Session::new(
                         project_dir.clone(),
-                        agent.system_prompt(),
+                        Agent::with_agents_md(&agent.system_prompt(), &project_dir),
                     );
-                    println!("Cleared.");
+                    println!("{} New session started.", "✓".green());
                     continue;
                 }
-                "/info" => {
+                "/info" | "/details" => {
                     let i = session.info();
                     println!(
-                        "ID: {} | Messages: {} | {}",
+                        "ID: {} | Messages: {} | Tokens≈{} | Agent: {} | {}/{}",
                         i.id,
                         i.message_count,
-                        i.created_at.format("%H:%M:%S")
+                        session.token_count(),
+                        agent_name,
+                        provider,
+                        model
+                    );
+                    println!(
+                        "  Created: {} | Project: {}",
+                        i.created_at.format("%Y-%m-%d %H:%M:%S"),
+                        project_dir.display()
                     );
                     continue;
                 }
-                cmd => {
-                    println!("Unknown: {}. /help for commands.", cmd);
+                "/init" => {
+                    match run_init_agents_md(&project_dir, &agent, &provider, &model, &api_key)
+                        .await
+                    {
+                        Ok(path) => println!(
+                            "{} Wrote project instructions: {}",
+                            "✓".green(),
+                            path.cyan()
+                        ),
+                        Err(e) => eprintln!("{} /init failed: {}", "✗".red(), e),
+                    }
+                    // Reload system prompt with new AGENTS.md
+                    session.set_system_prompt(&Agent::with_agents_md(
+                        &Agent::system_prompt_for(&agent_name),
+                        &project_dir,
+                    ));
+                    continue;
+                }
+                "/undo" => {
+                    if let Some(msgs) = history.undo(&session.messages, &project_dir) {
+                        session.set_messages(msgs);
+                        println!(
+                            "{} Undid last turn ({} messages left).",
+                            "↩".cyan(),
+                            session.messages.len()
+                        );
+                    } else if session.undo_last_turn() > 0 {
+                        println!(
+                            "{} Undid last turn ({} messages left).",
+                            "↩".cyan(),
+                            session.messages.len()
+                        );
+                    } else {
+                        println!("{} Nothing to undo.", "ℹ".cyan());
+                    }
+                    continue;
+                }
+                "/redo" => {
+                    if let Some(msgs) = history.redo(&session.messages, &project_dir) {
+                        session.set_messages(msgs);
+                        println!(
+                            "{} Redid turn ({} messages).",
+                            "↪".cyan(),
+                            session.messages.len()
+                        );
+                    } else {
+                        println!("{} Nothing to redo.", "ℹ".cyan());
+                    }
+                    continue;
+                }
+                "/share" | "/export" => {
+                    match session.export_share() {
+                        Ok(path) => println!("{} Session exported: {}", "✓".green(), path.cyan()),
+                        Err(e) => eprintln!("{} Export failed: {}", "✗".red(), e),
+                    }
+                    continue;
+                }
+                "/compact" | "/summarize" => {
+                    let before = session.messages.len();
+                    session.compact(config.session.compaction_threshold);
+                    println!(
+                        "{} Compacted session ({} → {} messages).",
+                        "✓".green(),
+                        before,
+                        session.messages.len()
+                    );
+                    continue;
+                }
+                "/sessions" | "/resume" | "/continue" => {
+                    let _ = cmd_session(&SessionCmd::List).await;
+                    continue;
+                }
+                "/models" => {
+                    let _ = cmd_model(&ModelCmd::List).await;
+                    println!("Current: {}/{}", provider.cyan(), model.cyan());
+                    if !rest.is_empty() {
+                        // /models provider/model
+                        if let Some((p, m)) = rest.split_once('/') {
+                            provider = p.to_string();
+                            model = m.to_string();
+                            if let Some(k) = get_api_key(&provider, &config) {
+                                api_key = k;
+                            }
+                            println!(
+                                "{} Switched model to {}/{}",
+                                "✓".green(),
+                                provider.cyan(),
+                                model.cyan()
+                            );
+                        } else {
+                            model = rest.to_string();
+                            println!("{} Model set to {}", "✓".green(), model.cyan());
+                        }
+                    }
+                    continue;
+                }
+                "/agent" | "/agents" => {
+                    if rest.is_empty() {
+                        let _ = cmd_agent(None).await;
+                        println!("Current agent: {}", agent_name.cyan());
+                    } else {
+                        match switch_agent(rest, &config, &project_dir) {
+                            Ok((name, new_agent, prompt)) => {
+                                agent_name = name;
+                                agent = new_agent;
+                                session.set_system_prompt(&prompt);
+                                println!("{} Switched to agent '{}'", "✓".green(), agent_name.cyan());
+                            }
+                            Err(e) => eprintln!("{} {}", "✗".red(), e),
+                        }
+                    }
+                    continue;
+                }
+                "/connect" => {
+                    // Re-load config + env in case user set a key in another shell
+                    if let Ok(cfg) = Config::load() {
+                        config = cfg;
+                    }
+                    if let Some(k) = get_api_key(&provider, &config) {
+                        api_key = k;
+                        println!(
+                            "{} API key loaded for {} ({}…)",
+                            "✓".green(),
+                            provider.cyan(),
+                            &api_key.chars().take(8).collect::<String>()
+                        );
+                    } else {
+                        println!("Add a provider:");
+                        println!(
+                            "  whycode provider add {} --api-key <key>",
+                            provider
+                        );
+                        println!("  or set env {}", provider_env_var(&provider));
+                        println!();
+                        println!("Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ...");
+                        let _ = cmd_provider(&ProviderCmd::List).await;
+                    }
+                    continue;
+                }
+                "/thinking" => {
+                    show_thinking = !show_thinking;
+                    println!(
+                        "Thinking display: {}",
+                        if show_thinking {
+                            "ON".green().to_string()
+                        } else {
+                            "OFF".dimmed().to_string()
+                        }
+                    );
+                    let _ = show_thinking; // reserved for TUI streaming
+                    continue;
+                }
+                "/themes" => {
+                    println!("Themes (TUI): default, dark, light, monokai, dracula");
+                    println!("Set in config: [tui] theme = \"dark\"");
+                    continue;
+                }
+                "/tools" => {
+                    let tools = whycode_tools::ToolExecutor::new()
+                        .get_definitions(&agent.info.permission);
+                    println!("{} Available tools ({}):", "🔧".bold(), tools.len());
+                    for t in tools {
+                        println!("  {} — {}", t.name.cyan(), t.description);
+                    }
+                    continue;
+                }
+                other => {
+                    println!("Unknown command: {}. Type /help", other);
                     continue;
                 }
             }
         }
 
-        session.add_user_message(&input);
+        // Expand @file references (OpenCode parity)
+        let expanded = expand_user_input(&input, &project_dir);
+
+        if !ensure_api_key(&mut api_key, &provider, &config) {
+            continue;
+        }
+
+        history.push_before_turn(&session.messages, &project_dir);
+        session.add_user_message(&expanded);
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
             .await
@@ -549,12 +826,238 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                     println!("\n{}", response);
                 }
                 println!();
+                // Persist session best-effort
+                if let Ok(db) = open_db() {
+                    let _ = session.save_to_db(&db);
+                }
             }
             Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
         }
     }
     println!("{}", "Goodbye!".cyan());
     Ok(())
+}
+
+/// Refresh API key from env/config; print how to connect if still missing.
+/// Returns false if no key is available (caller should not call the LLM).
+fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -> bool {
+    if !api_key.is_empty() {
+        return true;
+    }
+    if let Some(k) = get_api_key(provider, config) {
+        *api_key = k;
+        return true;
+    }
+    eprintln!(
+        "{} No API key for '{}'.\n  Set env {}  or: whycode provider add {} --api-key <key>\n  Then type /connect or send another message.",
+        "ℹ".yellow(),
+        provider.cyan(),
+        provider_env_var(provider).cyan(),
+        provider
+    );
+    false
+}
+
+fn print_slash_help() {
+    println!("{}", "Slash commands (OpenCode-compatible):".bold());
+    println!("  /help, /h              — Show this help");
+    println!("  /exit, /quit, /q       — Exit");
+    println!("  /new, /clear           — Start a new session");
+    println!("  /init                  — Create/update AGENTS.md for this project");
+    println!("  /undo                  — Undo last message + file changes (git)");
+    println!("  /redo                  — Redo previously undone turn");
+    println!("  /share, /export        — Export session JSON");
+    println!("  /compact, /summarize   — Compact long context");
+    println!("  /sessions              — List saved sessions");
+    println!("  /models [provider/id]  — List or switch models");
+    println!("  /agent [name]          — List or switch agents (build|plan|…)");
+    println!("  /connect               — Provider setup help");
+    println!("  /thinking              — Toggle thinking display");
+    println!("  /themes                — Theme info");
+    println!("  /tools                 — List tools for current agent");
+    println!("  /info, /details        — Session info");
+    println!();
+    println!("{}", "Also:".bold());
+    println!("  !cmd                   — Run shell command, add output to chat");
+    println!("  @path/to/file          — Include file contents in your message");
+    println!("  Custom commands        — .whycode/commands/*.md or config [commands]");
+    println!("  whycode --plain        — readline REPL instead of TUI");
+}
+
+fn split_slash_command(input: &str) -> (&str, &str) {
+    let s = input.trim();
+    match s.find(char::is_whitespace) {
+        Some(i) => (&s[..i], s[i..].trim()),
+        None => (s, ""),
+    }
+}
+
+fn switch_agent(
+    name: &str,
+    config: &Config,
+    project_dir: &std::path::Path,
+) -> anyhow::Result<(String, Agent, String)> {
+    let name = name.trim();
+    let info = config
+        .get_agent(name)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("Unknown agent '{}'. Try: build, plan, explore, general, scout", name))?;
+    let base = info
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| Agent::system_prompt_for(name));
+    let prompt = Agent::with_agents_md(&base, project_dir);
+    let agent = Agent::new(info);
+    Ok((name.to_string(), agent, prompt))
+}
+
+/// Expand `@path` file references and return the full prompt text.
+fn expand_user_input(input: &str, project_dir: &std::path::Path) -> String {
+    let mut result = String::new();
+    let mut rest = input;
+    while let Some(at) = rest.find('@') {
+        result.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        // path continues until whitespace or end
+        let end = after
+            .find(|c: char| c.is_whitespace() || c == ',' || c == ';')
+            .unwrap_or(after.len());
+        let path_str = &after[..end];
+        if path_str.is_empty() {
+            result.push('@');
+            rest = after;
+            continue;
+        }
+        let path = if std::path::Path::new(path_str).is_absolute() {
+            std::path::PathBuf::from(path_str)
+        } else {
+            project_dir.join(path_str)
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                result.push_str(&format!(
+                    "\n\n--- file: {} ---\n{}\n--- end file ---\n\n",
+                    path_str, content
+                ));
+            }
+            Err(_) => {
+                // keep as plain text if file missing
+                result.push('@');
+                result.push_str(path_str);
+            }
+        }
+        rest = &after[end..];
+    }
+    result.push_str(rest);
+    result
+}
+
+fn run_shell_capture(cmd: &str, cwd: &std::path::Path) -> String {
+    #[cfg(windows)]
+    let output = std::process::Command::new("cmd")
+        .args(["/C", cmd])
+        .current_dir(cwd)
+        .output();
+    #[cfg(not(windows))]
+    let output = std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .current_dir(cwd)
+        .output();
+
+    match output {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+            let err = String::from_utf8_lossy(&o.stderr);
+            if !err.is_empty() {
+                if !s.is_empty() {
+                    s.push('\n');
+                }
+                s.push_str(&err);
+            }
+            if s.is_empty() {
+                s = format!("(exit {})", o.status.code().unwrap_or(-1));
+            }
+            s
+        }
+        Err(e) => format!("Failed to run command: {}", e),
+    }
+}
+
+/// `/init` — analyze project and write AGENTS.md (OpenCode parity).
+async fn run_init_agents_md(
+    project_dir: &std::path::Path,
+    agent: &Agent,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+) -> anyhow::Result<String> {
+    let agents_path = project_dir.join("AGENTS.md");
+    let existing = std::fs::read_to_string(&agents_path).unwrap_or_default();
+
+    // Quick project snapshot for the prompt
+    let mut snapshot = String::new();
+    if let Ok(entries) = std::fs::read_dir(project_dir) {
+        let mut names: Vec<String> = entries
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        names.sort();
+        snapshot.push_str("Top-level entries:\n");
+        for n in names.iter().take(40) {
+            snapshot.push_str(&format!("- {}\n", n));
+        }
+    }
+    for marker in [
+        "Cargo.toml",
+        "package.json",
+        "pyproject.toml",
+        "go.mod",
+        "README.md",
+    ] {
+        let p = project_dir.join(marker);
+        if let Ok(c) = std::fs::read_to_string(&p) {
+            let preview: String = c.chars().take(2000).collect();
+            snapshot.push_str(&format!("\n## {}\n```\n{}\n```\n", marker, preview));
+        }
+    }
+
+    let prompt = format!(
+        "Create or update an AGENTS.md file for this project. \
+         AGENTS.md gives coding agents project-specific instructions \
+         (build/test commands, conventions, architecture notes).\n\n\
+         Project path: {}\n\n{}\n\n\
+         Existing AGENTS.md (may be empty):\n```\n{}\n```\n\n\
+         Write a complete AGENTS.md in Markdown. Output ONLY the file contents, no fence.",
+        project_dir.display(),
+        snapshot,
+        existing
+    );
+
+    let mut tmp = whycode_session::session::Session::new(
+        project_dir.to_path_buf(),
+        "You write clear AGENTS.md project instruction files.".to_string(),
+    );
+    tmp.add_user_message(&prompt);
+    let content = agent
+        .run_turn(&mut tmp, provider, model, api_key, 5)
+        .await
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let content = content
+        .trim()
+        .trim_start_matches("```markdown")
+        .trim_start_matches("```md")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string();
+
+    if content.is_empty() {
+        anyhow::bail!("Model returned empty AGENTS.md");
+    }
+
+    std::fs::write(&agents_path, format!("{}\n", content))?;
+    Ok(agents_path.display().to_string())
 }
 
 /// `generate` — Non-interactive code generation
@@ -578,14 +1081,19 @@ async fn cmd_generate(cli: &Cli, prompt: &str, max_turns: usize) -> anyhow::Resu
         }
     };
 
-    let agent_info = agent_info_for(cli, &config);
-    let system_prompt = agent_info
+    let mut agent_info = agent_info_for(cli, &config);
+    agent_info.permission = config.effective_permission(&agent_info.permission);
+    let base_prompt = agent_info
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
+    let system_prompt = Agent::with_agents_md(&base_prompt, &project_dir);
 
-    let agent = Agent::new(agent_info);
-    let mut session = whycode_session::session::Session::new(project_dir, system_prompt);
+    let agent = Agent::new(agent_info)
+        .with_config(&config)
+        .with_mcp(&config)
+        .await;
+    let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
 
     println!(
         "{} Generating with {}/{}...",
@@ -594,7 +1102,8 @@ async fn cmd_generate(cli: &Cli, prompt: &str, max_turns: usize) -> anyhow::Resu
         model.dimmed()
     );
 
-    session.add_user_message(prompt);
+    let expanded = expand_user_input(prompt, &project_dir);
+    session.add_user_message(&expanded);
     match agent
         .run_turn(&mut session, &provider, &model, &api_key, max_turns)
         .await
@@ -716,7 +1225,7 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `serve` — Start API server
+/// `serve` — Start API + local share server
 async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     println!(
         "{} Starting Whycode API server on http://localhost:{}",
@@ -729,7 +1238,15 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         name: "build".to_string(),
         description: "Default".to_string(),
         mode: AgentMode::Primary,
-        permission: PermissionSet::default(),
+        permission: PermissionSet {
+            allowed_tools: None,
+            denied_tools: None,
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            allowed_paths: None,
+            rules: Default::default(),
+        },
         model: None,
         system_prompt: None,
         temperature: None,
@@ -749,8 +1266,18 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     println!("    GET  /api/tools");
     println!("    GET  /api/models");
     println!("    GET  /api/sessions");
+    println!("    GET  /api/shares");
     println!("    POST /api/session/new");
     println!("    POST /api/session/:id/chat");
+    println!("    GET  /s/:id        — shared session (HTML)");
+    println!("    GET  /s/:id.md     — shared session (Markdown)");
+    println!("    GET  /s/:id.json   — shared session (JSON)");
+    println!();
+    println!(
+        "  Share tip: in TUI run {} then open {}",
+        "/share".cyan(),
+        format!("http://localhost:{port}/s/<session-id>").cyan()
+    );
     println!();
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -766,39 +1293,69 @@ async fn cmd_web() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `mcp` — MCP server management
+/// `mcp` — MCP server management (persisted in config.toml)
 async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
+    let mut config = Config::load()?;
+
     match cmd {
         McpCmd::List => {
-            println!("{} Configured MCP servers:", "🔌".bold());
-            println!("  (none configured yet)");
-            println!();
-            println!("Add an MCP server:");
-            println!("  whycode mcp add <name> <command> [--args args]");
+            if config.mcp_servers.is_empty() {
+                println!("{} No MCP servers configured.", "🔌".bold());
+                println!();
+                println!("Add one:");
+                println!("  whycode mcp add <name> <command> [--args \"arg1 arg2\"]");
+            } else {
+                println!("{} Configured MCP servers:", "🔌".bold());
+                for (name, server) in &config.mcp_servers {
+                    let args = if server.args.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", server.args.join(" "))
+                    };
+                    println!(
+                        "  {} → {}{}",
+                        name.cyan(),
+                        server.command,
+                        args.dimmed()
+                    );
+                }
+            }
         }
         McpCmd::Add {
             name,
             command,
             args,
         } => {
-            println!(
-                "{} Adding MCP server '{}' with command '{}'",
-                "➕".bold(),
-                name.cyan(),
-                command.cyan()
+            let arg_vec: Vec<String> = args
+                .as_deref()
+                .map(|s| s.split_whitespace().map(|a| a.to_string()).collect())
+                .unwrap_or_default();
+
+            config.mcp_servers.insert(
+                name.clone(),
+                whycode_core::config::McpServerConfig {
+                    command: command.clone(),
+                    args: arg_vec.clone(),
+                    env: None,
+                    cwd: None,
+                },
             );
-            if let Some(a) = args {
-                println!("  Args: {}", a);
-            }
-            println!("  (MCP server configuration persistence not yet implemented)");
+            config.save()?;
+            println!(
+                "{} MCP server '{}' saved ({} {}).",
+                "✓".green(),
+                name.cyan(),
+                command,
+                arg_vec.join(" ")
+            );
         }
         McpCmd::Remove { name } => {
-            println!(
-                "{} Removing MCP server '{}'",
-                "➖".bold(),
-                name.cyan()
-            );
-            println!("  (MCP server management not yet fully implemented)");
+            if config.mcp_servers.remove(name).is_some() {
+                config.save()?;
+                println!("{} MCP server '{}' removed.", "✓".green(), name.cyan());
+            } else {
+                eprintln!("{} MCP server '{}' not found.", "✗".red(), name.cyan());
+            }
         }
     }
     Ok(())

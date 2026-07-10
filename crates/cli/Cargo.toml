@@ -17,6 +17,7 @@ whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }
 whycode-storage = { path = "../storage" }
 whycode-server = { path = "../server" }
+whycode-tui = { path = "../tui" }
 clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 serde_json.workspace = true
