@@ -283,3 +283,179 @@ pub struct SessionInfo {
     pub message_count: usize,
     pub project_path: PathBuf,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── test_message_content_as_text ────────────────────────────────────
+
+    #[test]
+    fn test_message_content_as_text_string_variant() {
+        let mc = MessageContent::Text("hello world".to_string());
+        assert_eq!(mc.as_text(), Some("hello world"));
+    }
+
+    #[test]
+    fn test_message_content_as_text_blocks_with_text() {
+        let mc = MessageContent::Blocks(vec![
+            ContentBlock::Text {
+                text: "first block".to_string(),
+            },
+            ContentBlock::Text {
+                text: "second block".to_string(),
+            },
+        ]);
+        assert_eq!(mc.as_text(), Some("first block"));
+    }
+
+    #[test]
+    fn test_message_content_as_text_blocks_without_text() {
+        let mc = MessageContent::Blocks(vec![ContentBlock::ToolUse {
+            id: "tool-1".to_string(),
+            name: "search".to_string(),
+            input: serde_json::json!({"q": "test"}),
+        }]);
+        assert_eq!(mc.as_text(), None);
+    }
+
+    #[test]
+    fn test_message_content_as_text_empty_blocks() {
+        let mc = MessageContent::Blocks(vec![]);
+        assert_eq!(mc.as_text(), None);
+    }
+
+    #[test]
+    fn test_message_content_text_constructor() {
+        let mc = MessageContent::text("hello");
+        assert_eq!(mc.as_text(), Some("hello"));
+    }
+
+    // ── test_serialize_deserialize_message ──────────────────────────────
+
+    #[test]
+    fn test_serialize_deserialize_message_text() {
+        let msg = Message {
+            role: Role::User,
+            content: MessageContent::Text("hello".to_string()),
+            tool_call_id: None,
+            name: None,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let deser: Message = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deser.role, Role::User);
+        assert_eq!(deser.content.as_text(), Some("hello"));
+        assert!(deser.tool_call_id.is_none());
+    }
+
+    #[test]
+    fn test_serialize_deserialize_message_blocks() {
+        let msg = Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![ContentBlock::Text {
+                text: "assistant reply".to_string(),
+            }]),
+            tool_call_id: None,
+            name: Some("assistant".to_string()),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let deser: Message = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deser.role, Role::Assistant);
+        assert_eq!(deser.content.as_text(), Some("assistant reply"));
+        assert_eq!(deser.name.as_deref(), Some("assistant"));
+    }
+
+    #[test]
+    fn test_serialize_deserialize_message_tool() {
+        let msg = Message {
+            role: Role::Tool,
+            content: MessageContent::Text("tool result".to_string()),
+            tool_call_id: Some("call-1".to_string()),
+            name: None,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let deser: Message = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deser.role, Role::Tool);
+        assert_eq!(deser.tool_call_id.as_deref(), Some("call-1"));
+    }
+
+    // ── test_tool_definition_serialize ──────────────────────────────────
+
+    #[test]
+    fn test_tool_definition_serialize() {
+        let td = ToolDefinition {
+            name: "search".to_string(),
+            description: "Search the web".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"}
+                },
+                "required": ["query"]
+            }),
+        };
+
+        let json = serde_json::to_string(&td).expect("serialize");
+        let deser: ToolDefinition = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(deser.name, "search");
+        assert_eq!(deser.description, "Search the web");
+        assert_eq!(deser.parameters["type"], "object");
+        assert!(deser.parameters["required"][0] == "query");
+    }
+
+    // ── test_permission_set_default ─────────────────────────────────────
+
+    #[test]
+    fn test_permission_set_default() {
+        let ps = PermissionSet::default();
+        assert!(ps.allowed_tools.is_none());
+        assert!(ps.denied_tools.is_none());
+        // Default booleans are false
+        assert!(!ps.allow_file_writes);
+        assert!(!ps.allow_network);
+        assert!(!ps.allow_shell);
+        assert!(ps.allowed_paths.is_none());
+    }
+
+    #[test]
+    fn test_role_serialization() {
+        let role = Role::User;
+        let json = serde_json::to_string(&role).expect("serialize");
+        assert_eq!(json, "\"user\"");
+
+        let deser: Role = serde_json::from_str("\"assistant\"").expect("deserialize");
+        assert_eq!(deser, Role::Assistant);
+    }
+
+    #[test]
+    fn test_provider_config_resolve_url() {
+        let pc = ProviderConfig {
+            name: "openai".to_string(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            extra: HashMap::new(),
+        };
+        assert_eq!(
+            pc.resolve_url("gpt-4"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+
+        let pc_custom = ProviderConfig {
+            name: "openai".to_string(),
+            api_key: None,
+            api_base: None,
+            base_url: Some("https://custom.example.com/api".to_string()),
+            headers: None,
+            models: vec![],
+            extra: HashMap::new(),
+        };
+        assert_eq!(
+            pc_custom.resolve_url("gpt-4"),
+            "https://custom.example.com/api/chat/completions"
+        );
+    }
+}

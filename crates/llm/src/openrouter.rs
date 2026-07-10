@@ -32,7 +32,7 @@ impl OpenRouterProvider {
         self
     }
 
-    fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
+    pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
         let mut body = serde_json::json!({
             "model": model,
             "messages": self.convert_messages(request),

@@ -1,59 +1,41 @@
-use rusqlite::{params, Connection};
-use tracing::info;
-
+use rusqlite::Connection;
 use crate::migrations::run_migrations;
-use crate::models::{MessageRow, SessionRow, StateRow};
+use crate::models::{SessionRow, MessageRow, StateRow};
 
-/// SQLite-backed persistence store for sessions, messages, and key-value state.
+/// Core database wrapper
 pub struct Database {
     conn: Connection,
 }
 
 impl Database {
-    /// Open (or create) the SQLite database at `path` and run migrations.
-    pub fn open(path: &str) -> Result<Self, rusqlite::Error> {
+    pub fn open(path: &str) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
-
-        // Enable WAL mode for better concurrent-read performance.
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-
         run_migrations(&conn)?;
-        info!("Opened storage database at {}", path);
-
         Ok(Self { conn })
     }
 
-    // ── session methods ────────────────────────────────────────
-
-    pub fn create_session(
-        &self,
-        id: &str,
-        title: &str,
-        project_path: &str,
-    ) -> Result<SessionRow, rusqlite::Error> {
-        let now = chrono::Utc::now().to_rfc3339();
-        self.conn.execute(
-            "INSERT INTO sessions (id, title, created_at, updated_at, project_path)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, title, &now, &now, project_path],
-        )?;
-
-        Ok(SessionRow {
-            id: id.to_string(),
-            title: title.to_string(),
-            created_at: now.clone(),
-            updated_at: now,
-            project_path: project_path.to_string(),
-        })
+    pub fn open_in_memory() -> anyhow::Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        run_migrations(&conn)?;
+        Ok(Self { conn })
     }
 
-    pub fn get_session(&self, id: &str) -> Result<Option<SessionRow>, rusqlite::Error> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, title, created_at, updated_at, project_path
-             FROM sessions WHERE id = ?1",
+    pub fn create_session(&self, id: &str, title: &str, project_path: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, project_path) VALUES (?1, ?2, ?3, ?3, ?4)",
+            rusqlite::params![id, title, now, project_path],
         )?;
+        Ok(())
+    }
 
-        let mut rows = stmt.query_map(params![id], |row| {
+    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<SessionRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, created_at, updated_at, project_path FROM sessions WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
             Ok(SessionRow {
                 id: row.get(0)?,
                 title: row.get(1)?,
@@ -62,19 +44,13 @@ impl Database {
                 project_path: row.get(4)?,
             })
         })?;
-
-        match rows.next() {
-            Some(row) => row.map(Some),
-            None => Ok(None),
-        }
+        Ok(rows.next().transpose()?)
     }
 
-    pub fn list_sessions(&self) -> Result<Vec<SessionRow>, rusqlite::Error> {
+    pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, created_at, updated_at, project_path
-             FROM sessions ORDER BY updated_at DESC",
+            "SELECT id, title, created_at, updated_at, project_path FROM sessions ORDER BY updated_at DESC"
         )?;
-
         let rows = stmt.query_map([], |row| {
             Ok(SessionRow {
                 id: row.get(0)?,
@@ -84,65 +60,41 @@ impl Database {
                 project_path: row.get(4)?,
             })
         })?;
-
-        rows.collect()
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
     }
 
-    pub fn update_title(&self, id: &str, title: &str) -> Result<(), rusqlite::Error> {
+    pub fn update_title(&self, id: &str, title: &str) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
-            params![title, &now, id],
+            rusqlite::params![title, now, id],
         )?;
         Ok(())
     }
 
-    pub fn delete_session(&self, id: &str) -> Result<(), rusqlite::Error> {
-        // Delete messages first (foreign key CASCADE would be cleaner,
-        // but explicit is fine for portability).
-        self.conn
-            .execute("DELETE FROM messages WHERE session_id = ?1", params![id])?;
-        self.conn
-            .execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+    pub fn delete_session(&self, id: &str) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
     }
 
-    // ── message methods ────────────────────────────────────────
-
-    pub fn insert_message(
-        &self,
-        id: &str,
-        session_id: &str,
-        role: &str,
-        content: &str,
-        tool_call_id: Option<&str>,
-        name: Option<&str>,
-    ) -> Result<MessageRow, rusqlite::Error> {
+    pub fn insert_message(&self, msg_id: &str, session_id: &str, role: &str, content: &str, tool_call_id: Option<&str>, name: Option<&str>) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
-            "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, session_id, role, content, tool_call_id, name, &now],
+            "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![msg_id, session_id, role, content, tool_call_id, name, now],
         )?;
-
-        Ok(MessageRow {
-            id: id.to_string(),
-            session_id: session_id.to_string(),
-            role: role.to_string(),
-            content: content.to_string(),
-            tool_call_id: tool_call_id.map(String::from),
-            name: name.map(String::from),
-            created_at: now,
-        })
+        Ok(())
     }
 
-    pub fn get_messages(&self, session_id: &str) -> Result<Vec<MessageRow>, rusqlite::Error> {
+    pub fn get_messages(&self, session_id: &str) -> anyhow::Result<Vec<MessageRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, session_id, role, content, tool_call_id, name, created_at
-             FROM messages WHERE session_id = ?1 ORDER BY created_at ASC",
+            "SELECT id, session_id, role, content, tool_call_id, name, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
         )?;
-
-        let rows = stmt.query_map(params![session_id], |row| {
+        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
             Ok(MessageRow {
                 id: row.get(0)?,
                 session_id: row.get(1)?,
@@ -153,49 +105,115 @@ impl Database {
                 created_at: row.get(6)?,
             })
         })?;
-
-        rows.collect()
-    }
-
-    pub fn message_count(&self, session_id: &str) -> Result<usize, rusqlite::Error> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
-            params![session_id],
-            |row| row.get::<_, usize>(0),
-        )
-    }
-
-    // ── state methods (key-value store) ────────────────────────
-
-    pub fn get_state(&self, key: &str) -> Result<Option<String>, rusqlite::Error> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT value FROM state WHERE key = ?1")?;
-
-        let mut rows = stmt.query_map(params![key], |row| row.get::<_, String>(0))?;
-
-        match rows.next() {
-            Some(row) => row.map(Some),
-            None => Ok(None),
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
         }
+        Ok(result)
     }
 
-    pub fn set_state(&self, key: &str, value: &str) -> Result<StateRow, rusqlite::Error> {
-        self.conn.execute(
-            "INSERT INTO state (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![key, value],
+    pub fn message_count(&self, session_id: &str) -> anyhow::Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
+            rusqlite::params![session_id],
+            |row| row.get(0),
         )?;
-
-        Ok(StateRow {
-            key: key.to_string(),
-            value: value.to_string(),
-        })
+        Ok(count as usize)
     }
 
-    pub fn delete_state(&self, key: &str) -> Result<(), rusqlite::Error> {
-        self.conn
-            .execute("DELETE FROM state WHERE key = ?1", params![key])?;
+    pub fn get_state(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let mut stmt = self.conn.prepare("SELECT value FROM state WHERE key = ?1")?;
+        let mut rows = stmt.query_map(rusqlite::params![key], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn set_state(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO state (key, value) VALUES (?1, ?2)",
+            rusqlite::params![key, value],
+        )?;
         Ok(())
+    }
+
+    pub fn delete_state(&self, key: &str) -> anyhow::Result<()> {
+        self.conn.execute("DELETE FROM state WHERE key = ?1", rusqlite::params![key])?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_db() -> Database {
+        Database::open_in_memory().unwrap()
+    }
+
+    #[test]
+    fn test_create_and_get_session() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        let s = db.get_session("s1").unwrap().unwrap();
+        assert_eq!(s.title, "Test");
+    }
+
+    #[test]
+    fn test_list_sessions() {
+        let db = test_db();
+        db.create_session("a", "A", "/a").unwrap();
+        db.create_session("b", "B", "/b").unwrap();
+        assert_eq!(db.list_sessions().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_update_title() {
+        let db = test_db();
+        db.create_session("s1", "Old", "/tmp").unwrap();
+        db.update_title("s1", "New").unwrap();
+        assert_eq!(db.get_session("s1").unwrap().unwrap().title, "New");
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        db.delete_session("s1").unwrap();
+        assert!(db.get_session("s1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_insert_and_get_messages() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        db.insert_message("m1", "s1", "user", "hello", None, None).unwrap();
+        db.insert_message("m2", "s1", "assistant", "hi", None, None).unwrap();
+        let msgs = db.get_messages("s1").unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+    }
+
+    #[test]
+    fn test_message_count() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        assert_eq!(db.message_count("s1").unwrap(), 0);
+        db.insert_message("m1", "s1", "user", "hi", None, None).unwrap();
+        assert_eq!(db.message_count("s1").unwrap(), 1);
+    }
+
+    #[test]
+    fn test_state_get_set_delete() {
+        let db = test_db();
+        assert!(db.get_state("k1").unwrap().is_none());
+        db.set_state("k1", "v1").unwrap();
+        assert_eq!(db.get_state("k1").unwrap().unwrap(), "v1");
+        db.delete_state("k1").unwrap();
+        assert!(db.get_state("k1").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_nonexistent_session() {
+        let db = test_db();
+        assert!(db.get_session("no").unwrap().is_none());
     }
 }

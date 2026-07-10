@@ -20,7 +20,7 @@ impl AnthropicProvider {
         }
     }
 
-    fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
+    pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
         let mut body = serde_json::json!({
             "model": model,
             "max_tokens": request.max_tokens.unwrap_or(4096),

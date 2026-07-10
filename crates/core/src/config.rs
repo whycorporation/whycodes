@@ -828,3 +828,296 @@ impl ToolsConfig {
         merged
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn make_provider(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.to_string(),
+            api_key: Some(format!("key-{}", name)),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            extra: HashMap::new(),
+        }
+    }
+
+    fn make_model(provider: &str, model: &str) -> ModelConfig {
+        ModelConfig {
+            model_id: model.to_string(),
+            provider_id: provider.to_string(),
+            max_tokens: Some(4096),
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: None,
+            supports_images: None,
+        }
+    }
+
+    // ── test_default_config ─────────────────────────────────────────────
+
+    #[test]
+    fn test_default_config() {
+        let cfg = Config::default();
+        assert_eq!(cfg.agents.len(), 4, "default config should have 4 agents");
+        assert_eq!(cfg.default_agent, "build");
+        assert!(cfg.default_model.is_none());
+        assert!(cfg.providers.is_empty());
+        assert!(cfg.models.is_empty());
+
+        // Verify agent names
+        let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"build"));
+        assert!(names.contains(&"plan"));
+        assert!(names.contains(&"explore"));
+        assert!(names.contains(&"general"));
+    }
+
+    // ── test_config_load_save ───────────────────────────────────────────
+
+    #[test]
+    fn test_config_serialize_deserialize_roundtrip() {
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "openai".to_string(),
+            make_provider("openai"),
+        );
+        cfg.models.insert(
+            "gpt-4".to_string(),
+            make_model("openai", "gpt-4"),
+        );
+
+        let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
+        let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
+
+        assert_eq!(loaded.agents.len(), cfg.agents.len());
+        assert_eq!(loaded.default_agent, cfg.default_agent);
+        assert_eq!(loaded.providers.len(), cfg.providers.len());
+        assert!(loaded.providers.contains_key("openai"));
+        assert_eq!(
+            loaded.providers["openai"].api_key.as_deref(),
+            Some("key-openai")
+        );
+        assert_eq!(loaded.models.len(), cfg.models.len());
+        assert_eq!(loaded.models["gpt-4"].model_id, "gpt-4");
+    }
+
+    #[test]
+    fn test_config_load_save_tempfile() {
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "openai".to_string(),
+            make_provider("openai"),
+        );
+
+        let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
+
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("whycode-test-config-{}.toml", std::process::id()));
+        {
+            let mut f = std::fs::File::create(&path).expect("create temp file");
+            f.write_all(toml_str.as_bytes()).expect("write");
+        }
+
+        let content = std::fs::read_to_string(&path).expect("read back");
+        let loaded: Config = toml::from_str(&content).expect("deserialize");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(loaded.agents.len(), 4);
+        assert_eq!(loaded.providers.len(), 1);
+        assert_eq!(loaded.providers["openai"].name, "openai");
+    }
+
+    // ── test_get_provider ───────────────────────────────────────────────
+
+    #[test]
+    fn test_get_provider() {
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "anthropic".to_string(),
+            make_provider("anthropic"),
+        );
+
+        assert!(cfg.get_provider("openai").is_none());
+        let p = cfg.get_provider("anthropic").expect("should find anthropic");
+        assert_eq!(p.name, "anthropic");
+        assert_eq!(p.api_key.as_deref(), Some("key-anthropic"));
+    }
+
+    // ── test_get_model ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_model() {
+        let mut cfg = Config::default();
+        cfg.models.insert(
+            "gpt-4".to_string(),
+            make_model("openai", "gpt-4"),
+        );
+        cfg.models.insert(
+            "claude-3".to_string(),
+            make_model("anthropic", "claude-3"),
+        );
+
+        let m = cfg.get_model("openai", "gpt-4").expect("should find gpt-4");
+        assert_eq!(m.model_id, "gpt-4");
+        assert_eq!(m.provider_id, "openai");
+
+        let m = cfg
+            .get_model("anthropic", "claude-3")
+            .expect("should find claude-3");
+        assert_eq!(m.model_id, "claude-3");
+
+        assert!(cfg.get_model("openai", "nonexistent").is_none());
+        assert!(cfg.get_model("nonexistent", "gpt-4").is_none());
+    }
+
+    // ── test_get_agent ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_get_agent() {
+        let cfg = Config::default();
+
+        let a = cfg.get_agent("build").expect("should find build agent");
+        assert_eq!(a.name, "build");
+        assert!(a.permission.allow_file_writes);
+        assert!(a.permission.allow_shell);
+
+        let a = cfg.get_agent("plan").expect("should find plan agent");
+        assert_eq!(a.name, "plan");
+        assert!(!a.permission.allow_file_writes);
+        assert!(!a.permission.allow_shell);
+
+        assert!(cfg.get_agent("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_default_agent() {
+        let cfg = Config::default();
+        let a = cfg.default_agent().expect("default agent should exist");
+        assert_eq!(a.name, "build");
+    }
+
+    // ── test_substitute_vars ────────────────────────────────────────────
+
+    #[test]
+    fn test_substitute_vars_braced() {
+        unsafe {
+            std::env::set_var("WHYCODE_TEST_FOO", "hello-world");
+        }
+        let result = Config::substitute_vars("prefix ${WHYCODE_TEST_FOO} suffix");
+        assert_eq!(result, "prefix hello-world suffix");
+        unsafe {
+            std::env::remove_var("WHYCODE_TEST_FOO");
+        }
+    }
+
+    #[test]
+    fn test_substitute_vars_unbraced() {
+        unsafe {
+            std::env::set_var("WHYCODE_TEST_BAR", "bar-value");
+        }
+        let result = Config::substitute_vars("start $WHYCODE_TEST_BAR end");
+        assert_eq!(result, "start bar-value end");
+        unsafe {
+            std::env::remove_var("WHYCODE_TEST_BAR");
+        }
+    }
+
+    #[test]
+    fn test_substitute_vars_unknown_kept() {
+        let result = Config::substitute_vars("${NONEXISTENT_VAR_12345}");
+        assert_eq!(result, "${NONEXISTENT_VAR_12345}");
+    }
+
+    #[test]
+    fn test_substitute_vars_lone_dollar() {
+        let result = Config::substitute_vars("just a $ sign");
+        assert_eq!(result, "just a $ sign");
+    }
+
+    #[test]
+    fn test_substitute_vars_no_vars() {
+        let result = Config::substitute_vars("plain text with no variables");
+        assert_eq!(result, "plain text with no variables");
+    }
+
+    // ── test_merge_with ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_merge_with_priority() {
+        let mut base = Config::default();
+        base.providers.insert(
+            "openai".to_string(),
+            make_provider("openai"),
+        );
+        base.default_agent = "plan".to_string();
+
+        let mut overlay = Config::default();
+        overlay.providers.insert(
+            "anthropic".to_string(),
+            make_provider("anthropic"),
+        );
+        overlay.default_agent = "explore".to_string();
+        let mc = make_model("openai", "gpt-4");
+        overlay.models.insert("gpt-4".to_string(), mc.clone());
+        overlay.default_model = Some(mc);
+
+        let merged = base.merge_with(&overlay);
+
+        // overlay providers are added
+        assert_eq!(merged.providers.len(), 2);
+        assert!(merged.providers.contains_key("openai"));
+        assert!(merged.providers.contains_key("anthropic"));
+
+        // overlay default_agent wins
+        assert_eq!(merged.default_agent, "explore");
+
+        // overlay default_model wins
+        assert!(merged.default_model.is_some());
+        assert_eq!(merged.default_model.unwrap().model_id, "gpt-4");
+    }
+
+    #[test]
+    fn test_merge_with_provider_override() {
+        let mut base = Config::default();
+        base.providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                name: "openai".to_string(),
+                api_key: Some("old-key".to_string()),
+                api_base: Some("https://old.example.com".to_string()),
+                base_url: None,
+                headers: None,
+                models: vec![],
+                extra: HashMap::new(),
+            },
+        );
+
+        let mut overlay = Config::default();
+        overlay.providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                name: "openai".to_string(),
+                api_key: Some("new-key".to_string()),
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: vec![],
+                extra: HashMap::new(),
+            },
+        );
+
+        let merged = base.merge_with(&overlay);
+        assert_eq!(merged.providers.len(), 1);
+        let p = &merged.providers["openai"];
+        // api_key from overlay wins
+        assert_eq!(p.api_key.as_deref(), Some("new-key"));
+        // api_base from base is kept (overlay didn't set it)
+        assert_eq!(p.api_base.as_deref(), Some("https://old.example.com"));
+    }
+}

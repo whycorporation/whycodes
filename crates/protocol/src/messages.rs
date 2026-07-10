@@ -23,3 +23,47 @@ pub enum ServerMessage {
     Done,
     Error { message: String },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_message_chat_json() {
+        let msg = ClientMessage::Chat { content: "hello".to_string() };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("chat"));
+        assert!(json.contains("hello"));
+    }
+
+    #[test]
+    fn test_server_message_done() {
+        let json = serde_json::to_string(&ServerMessage::Done).unwrap();
+        assert!(json.contains("done"));
+    }
+
+    #[test]
+    fn test_server_message_error() {
+        let msg = ServerMessage::Error { message: "oops".to_string() };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("oops"));
+    }
+
+    #[test]
+    fn test_deserialize_text_delta() {
+        let json = r#"{"type":"text_delta","text":"hi"}"#;
+        let msg: ServerMessage = serde_json::from_str(json).unwrap();
+        if let ServerMessage::TextDelta { text } = msg {
+            assert_eq!(text, "hi");
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_deserialize_done() {
+        let json = r#"{"type":"done"}"#;
+        let msg: ServerMessage = serde_json::from_str(json).unwrap();
+        assert!(matches!(msg, ServerMessage::Done));
+    }
+}

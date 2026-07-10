@@ -269,6 +269,264 @@ impl Session {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_project_path() -> PathBuf {
+        PathBuf::from("/tmp/test-project")
+    }
+
+    fn test_system_prompt() -> String {
+        "You are a helpful assistant.".to_string()
+    }
+
+    #[test]
+    fn test_new_session() {
+        let session = Session::new(test_project_path(), test_system_prompt());
+
+        assert!(!session.id.is_empty(), "session id should not be empty");
+        assert!(
+            session.title.starts_with("New session -"),
+            "title should start with 'New session -'"
+        );
+        assert!(session.messages.is_empty(), "new session should have no messages");
+        assert_eq!(session.system_prompt, test_system_prompt());
+        assert_eq!(session.project_path, test_project_path());
+        assert_eq!(session.created_at, session.updated_at);
+    }
+
+    #[test]
+    fn test_add_messages() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+
+        session.add_user_message("Hello");
+        assert_eq!(session.messages.len(), 1);
+        assert_eq!(session.messages[0].role, Role::User);
+        assert_eq!(session.messages[0].content.as_text(), Some("Hello"));
+
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "Hi there!".to_string(),
+        }]);
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(session.messages[1].role, Role::Assistant);
+        assert_eq!(session.messages[1].content.as_text(), Some("Hi there!"));
+
+        // updated_at should change after adding messages
+        assert!(session.updated_at >= session.created_at);
+    }
+
+    #[test]
+    fn test_add_tool_results() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+
+        let results = vec![
+            whycode_core::types::ToolResult {
+                tool_call_id: "call-1".to_string(),
+                content: "result 1".to_string(),
+                is_error: false,
+            },
+            whycode_core::types::ToolResult {
+                tool_call_id: "call-2".to_string(),
+                content: "error result".to_string(),
+                is_error: true,
+            },
+        ];
+
+        session.add_user_message("use tools");
+        session.add_tool_results(results);
+
+        assert_eq!(session.messages.len(), 3);
+        assert_eq!(session.messages[1].role, Role::Tool);
+        assert_eq!(session.messages[1].tool_call_id.as_deref(), Some("call-1"));
+        assert_eq!(session.messages[1].content.as_text(), Some("result 1"));
+        assert_eq!(session.messages[2].role, Role::Tool);
+        assert_eq!(session.messages[2].tool_call_id.as_deref(), Some("call-2"));
+    }
+
+    #[test]
+    fn test_build_request() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("test message");
+
+        let tools = vec![ToolDefinition {
+            name: "search".to_string(),
+            description: "search tool".to_string(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        }];
+
+        let req = session.build_request(&tools, Some(1024), Some(0.7), None);
+
+        assert_eq!(req.system, test_system_prompt());
+        assert_eq!(req.messages.len(), 1);
+        assert_eq!(req.tools.len(), 1);
+        assert_eq!(req.tools[0].name, "search");
+        assert_eq!(req.max_tokens, Some(1024));
+        assert_eq!(req.temperature, Some(0.7));
+        assert!(req.top_p.is_none());
+        assert!(req.top_k.is_none());
+    }
+
+    #[test]
+    fn test_build_request_no_tools() {
+        let session = Session::new(test_project_path(), test_system_prompt());
+        let req = session.build_request(&[], None, None, None);
+
+        assert!(req.tools.is_empty());
+        assert_eq!(req.system, test_system_prompt());
+        assert!(req.messages.is_empty());
+    }
+
+    #[test]
+    fn test_token_count() {
+        let mut session = Session::new(test_project_path(), "short prompt".to_string());
+
+        // Empty session should just have system prompt tokens
+        let base_tokens = session.token_count();
+        assert_eq!(base_tokens, "short prompt".len() / 4);
+
+        // Add a text message
+        session.add_user_message("hello world, this is a test message");
+        let with_msg = session.token_count();
+        assert!(with_msg > base_tokens);
+
+        // Add assistant with blocks
+        session.add_assistant_message(vec![
+            ContentBlock::Text {
+                text: "response text here".to_string(),
+            },
+            ContentBlock::ToolUse {
+                id: "t1".to_string(),
+                name: "tool".to_string(),
+                input: serde_json::json!({}),
+            },
+        ]);
+        let with_blocks = session.token_count();
+        // Non-text blocks count as 100 each
+        assert!(with_blocks > with_msg);
+    }
+
+    #[test]
+    fn test_compact() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+
+        // Add 10 messages
+        for i in 0..10 {
+            session.add_user_message(&format!("message {}", i));
+        }
+
+        assert_eq!(session.messages.len(), 10);
+
+        session.compact(1000);
+
+        // After compaction, we should have: 1 summary message + 4 kept messages = 5
+        assert_eq!(
+            session.messages.len(),
+            5,
+            "should keep summary + last 4 messages"
+        );
+
+        // First message should be the summary
+        let summary_text = session.messages[0].content.as_text().unwrap();
+        assert!(
+            summary_text.contains("earlier messages trimmed"),
+            "summary should mention trimmed messages: {}",
+            summary_text
+        );
+
+        // Last 4 should be the original last 4 messages
+        assert_eq!(session.messages[1].content.as_text(), Some("message 6"));
+        assert_eq!(session.messages[2].content.as_text(), Some("message 7"));
+        assert_eq!(session.messages[3].content.as_text(), Some("message 8"));
+        assert_eq!(session.messages[4].content.as_text(), Some("message 9"));
+    }
+
+    #[test]
+    fn test_compact_few_messages() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("only message");
+
+        let before = session.messages.len();
+        session.compact(1000);
+
+        // With only 1 message, keep=1, trimmed=0 -> no change
+        assert_eq!(session.messages.len(), before);
+        assert_eq!(session.messages[0].content.as_text(), Some("only message"));
+    }
+
+    #[test]
+    fn test_info() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("hello");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "hi".to_string(),
+        }]);
+
+        let info = session.info();
+        assert_eq!(info.id, session.id);
+        assert_eq!(info.title, session.title);
+        assert_eq!(info.message_count, 2);
+        assert_eq!(info.project_path, test_project_path());
+        assert_eq!(info.created_at, session.created_at);
+        assert_eq!(info.updated_at, session.updated_at);
+    }
+
+    #[test]
+    fn test_set_system_prompt() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        let old_updated = session.updated_at;
+
+        // Small delay so we can assert the timestamp changes
+        std::thread::sleep(std::time::Duration::from_millis(1));
+
+        session.set_system_prompt("new prompt");
+
+        assert_eq!(session.system_prompt, "new prompt");
+        assert!(session.updated_at > old_updated);
+    }
+
+    #[test]
+    fn test_revert_to() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        for i in 0..5 {
+            session.add_user_message(&format!("msg {}", i));
+        }
+
+        assert_eq!(session.messages.len(), 5);
+
+        // Keep messages up to and including index 2 (first 3 messages)
+        let removed = session.revert_to(2);
+        assert_eq!(removed, 2); // removed messages at indices 3 and 4
+        assert_eq!(session.messages.len(), 3);
+        assert_eq!(session.messages[0].content.as_text(), Some("msg 0"));
+        assert_eq!(session.messages[1].content.as_text(), Some("msg 1"));
+        assert_eq!(session.messages[2].content.as_text(), Some("msg 2"));
+    }
+
+    #[test]
+    fn test_revert_to_out_of_bounds() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("hello");
+
+        let removed = session.revert_to(5); // beyond length
+        assert_eq!(removed, 0);
+        assert_eq!(session.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_conversation_text() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("hello");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "hi there".to_string(),
+        }]);
+
+        let text = session.conversation_text();
+        assert!(text.contains("User: hello"));
+        assert!(text.contains("Assistant: hi there"));
+    }
+}
+
 /// Default system prompt for the main agent
 pub fn default_system_prompt() -> String {
     include_str!("../../agent/prompt.txt").to_string()
