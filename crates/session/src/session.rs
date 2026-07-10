@@ -248,7 +248,69 @@ impl Session {
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(&share_path, json)?;
 
+        // Also write a human-readable Markdown share (OpenCode /export style)
+        let md_path = shares_dir.join(format!("{}.md", self.id));
+        let _ = std::fs::write(&md_path, self.export_markdown());
+
         Ok(share_path.to_string_lossy().to_string())
+    }
+
+    /// Export conversation as Markdown for sharing / `/export`.
+    pub fn export_markdown(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!("# {}\n\n", self.title));
+        out.push_str(&format!("- **Session:** `{}`\n", self.id));
+        out.push_str(&format!("- **Project:** `{}`\n", self.project_path.display()));
+        out.push_str(&format!(
+            "- **Created:** {}\n\n---\n\n",
+            self.created_at.to_rfc3339()
+        ));
+
+        for msg in &self.messages {
+            let role = match msg.role {
+                Role::User => "User",
+                Role::Assistant => "Assistant",
+                Role::System => "System",
+                Role::Tool => "Tool",
+            };
+            out.push_str(&format!("### {role}\n\n"));
+            match &msg.content {
+                MessageContent::Text(t) => {
+                    out.push_str(t);
+                    out.push_str("\n\n");
+                }
+                MessageContent::Blocks(blocks) => {
+                    for b in blocks {
+                        match b {
+                            ContentBlock::Text { text } => {
+                                out.push_str(text);
+                                out.push_str("\n\n");
+                            }
+                            ContentBlock::ToolUse { name, input, .. } => {
+                                out.push_str(&format!(
+                                    "```tool\n{name}\n{}\n```\n\n",
+                                    serde_json::to_string_pretty(input).unwrap_or_default()
+                                ));
+                            }
+                            ContentBlock::ToolResult {
+                                content, is_error, ..
+                            } => {
+                                let tag = if is_error.unwrap_or(false) {
+                                    "error"
+                                } else {
+                                    "result"
+                                };
+                                out.push_str(&format!("```{tag}\n{content}\n```\n\n"));
+                            }
+                            ContentBlock::Image { .. } => {
+                                out.push_str("*[image]*\n\n");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// Revert the session to a previous state by removing all messages after
@@ -262,6 +324,30 @@ impl Session {
         self.messages.truncate(message_index + 1);
         self.touch();
         removed
+    }
+
+    /// Replace the entire message list (used by undo/redo).
+    pub fn set_messages(&mut self, messages: Vec<Message>) {
+        self.messages = messages;
+        self.touch();
+    }
+
+    /// Undo the last user turn: remove from the last user message to the end.
+    /// Returns the number of messages removed, or 0 if nothing to undo.
+    pub fn undo_last_turn(&mut self) -> usize {
+        let last_user = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == Role::User);
+        match last_user {
+            Some(idx) => {
+                let removed = self.messages.len() - idx;
+                self.messages.truncate(idx);
+                self.touch();
+                removed
+            }
+            None => 0,
+        }
     }
 
     fn touch(&mut self) {
