@@ -34,6 +34,7 @@ fn default_perms() -> PermissionSet {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
+                rules: Default::default(),
     }
 }
 
@@ -527,6 +528,7 @@ async fn test_permission_filtering_denied_tools() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
+                rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -552,6 +554,7 @@ async fn test_permission_filtering_allow_list() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
+                rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -572,6 +575,7 @@ async fn test_permission_filtering_no_file_writes() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
+                rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -601,6 +605,7 @@ async fn test_permission_filtering_no_shell() {
         allow_network: true,
         allow_shell: false,  // <-- shell denied
         allowed_paths: None,
+                rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -626,6 +631,7 @@ async fn test_permission_filtering_deny_takes_priority_over_allow() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
+                rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -671,6 +677,7 @@ async fn test_executor_execute_denied_tool() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
+                rules: Default::default(),
     };
     let executor = ToolExecutor::new();
 

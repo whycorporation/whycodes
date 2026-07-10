@@ -5,22 +5,30 @@ use std::process::Command;
 use super::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 
-pub struct ShellTool;
+pub struct ShellTool {
+    /// Tool name exposed to the model (`bash` for OpenCode parity, `shell` as alias).
+    name: &'static str,
+}
 
 impl ShellTool {
     pub fn new() -> Self {
-        Self
+        Self { name: "bash" }
+    }
+
+    /// Legacy alias name used by older prompts.
+    pub fn as_shell() -> Self {
+        Self { name: "shell" }
     }
 }
 
 #[async_trait]
 impl Tool for ShellTool {
     fn name(&self) -> &str {
-        "shell"
+        self.name
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the terminal and return its output."
+        "Execute a shell command in the project environment and return stdout/stderr."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -34,6 +42,10 @@ impl Tool for ShellTool {
                 "timeout": {
                     "type": "integer",
                     "description": "Timeout in seconds (default: 120)"
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Short description of why this command is run (optional)"
                 }
             },
             "required": ["command"]

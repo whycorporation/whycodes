@@ -5,8 +5,8 @@ use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 use super::tool::{Tool, ToolContext};
 use crate::{
     apply_patch, code_mode, edit, external_directory, git_blame, git_commit, git_diff, git_log,
-    git_status, github_issue, github_pr, glob, grep, plan, question, read, shell,
-    skill_tool, task, todo_write, truncate_tool, webfetch, websearch, write,
+    git_status, github_issue, github_pr, glob, grep, list, lsp_tool, plan, question, read, shell,
+    skill_tool, task, todo_read, todo_write, truncate_tool, webfetch, websearch, write,
 };
 
 /// Central executor that manages all available tools
@@ -26,7 +26,10 @@ impl ToolExecutor {
         executor.register(Box::new(edit::EditTool::new()));
         executor.register(Box::new(grep::GrepTool::new()));
         executor.register(Box::new(glob::GlobTool::new()));
+        executor.register(Box::new(list::ListTool::new()));
+        // Primary name matches OpenCode (`bash`); `shell` kept as legacy alias
         executor.register(Box::new(shell::ShellTool::new()));
+        executor.register(Box::new(shell::ShellTool::as_shell()));
         executor.register(Box::new(webfetch::WebFetchTool::new()));
         executor.register(Box::new(websearch::WebSearchTool::new()));
         executor.register(Box::new(github_issue::GithubIssueTool::new()));
@@ -39,15 +42,17 @@ impl ToolExecutor {
         executor.register(Box::new(git_commit::GitCommitTool::new()));
         executor.register(Box::new(apply_patch::ApplyPatchTool::new()));
         executor.register(Box::new(todo_write::TodoWriteTool::new()));
+        executor.register(Box::new(todo_read::TodoReadTool::new()));
         executor.register(Box::new(question::QuestionTool::new()));
         executor.register(Box::new(plan::PlanTool::new()));
         executor.register(Box::new(code_mode::CodeModeTool::new()));
         executor.register(Box::new(external_directory::ExternalDirectoryTool::new()));
         executor.register(Box::new(truncate_tool::TruncateTool::new()));
         executor.register(Box::new(skill_tool::SkillTool::new()));
+        executor.register(Box::new(lsp_tool::LspTool::new()));
 
-        // "todo" alias for todowrite
-        executor.register_as("todo", Box::new(todo_write::TodoWriteTool::new()));
+        // Alias for common model tool names
+        executor.register(Box::new(todo_write::TodoWriteTool::as_todo()));
 
         executor
     }

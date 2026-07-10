@@ -17,18 +17,25 @@ struct TodoList {
     todos: Vec<TodoItem>,
 }
 
-pub struct TodoWriteTool;
+pub struct TodoWriteTool {
+    name: &'static str,
+}
 
 impl TodoWriteTool {
     pub fn new() -> Self {
-        Self
+        Self { name: "todowrite" }
+    }
+
+    /// Alias used by some models
+    pub fn as_todo() -> Self {
+        Self { name: "todo" }
     }
 }
 
 #[async_trait]
 impl Tool for TodoWriteTool {
     fn name(&self) -> &str {
-        "todowrite"
+        self.name
     }
 
     fn description(&self) -> &str {

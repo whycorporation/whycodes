@@ -9,6 +9,7 @@ repository.workspace = true
 whycode-core = { path = "../core" }
 whycode-format = { path = "../format" }
 whycode-skill = { path = "../skill" }
+whycode-lsp = { path = "../lsp" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

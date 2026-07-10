@@ -19,7 +19,7 @@ impl Tool for TaskTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a task to a subagent"
+        "Launch a subagent to handle a complex multi-step task. Use for research, exploration, or parallel units of work. Prefer explore for read-only codebase search, general for multi-step work that may edit files."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -33,6 +33,15 @@ impl Tool for TaskTool {
                 "context": {
                     "type": "string",
                     "description": "Additional context for the subagent (optional)"
+                },
+                "subagent_type": {
+                    "type": "string",
+                    "enum": ["general", "explore", "scout"],
+                    "description": "Which subagent to spawn (default: general)"
+                },
+                "max_turns": {
+                    "type": "integer",
+                    "description": "Maximum conversation turns for the subagent (default: 15)"
                 }
             },
             "required": ["goal"]
@@ -40,22 +49,16 @@ impl Tool for TaskTool {
     }
 
     async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+        // Real execution is intercepted by Agent::run_turn (needs provider/model/api_key).
+        // If this path is hit, the agent loop failed to intercept.
         let goal = args["goal"].as_str().unwrap_or("(no goal specified)");
-        let context = args.get("context").and_then(|v| v.as_str());
-
-        let mut response = format!(
-            "Task delegation not yet wired. Would delegate:\n  Goal: {}\n",
-            goal
-        );
-        if let Some(ctx) = context {
-            response.push_str(&format!("  Context: {}\n", ctx));
-        }
-        response.push_str("  Status: placeholder - real subagent spawning will be connected in a future update.");
-
         ToolResult {
             tool_call_id: String::new(),
-            content: response,
-            is_error: false,
+            content: format!(
+                "Task tool was not intercepted by the agent loop. Goal was: {}",
+                goal
+            ),
+            is_error: true,
         }
     }
 }
