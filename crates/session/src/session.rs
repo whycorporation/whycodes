@@ -87,7 +87,7 @@ impl Session {
             top_p: None,
             top_k: None,
             stop_sequences: None,
-            thinking,
+            thinking: None,
         }
     }
 

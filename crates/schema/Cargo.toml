@@ -1,0 +1,9 @@
+[package]
+name = "whycode-schema"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+whycode-core = { path = "../core" }

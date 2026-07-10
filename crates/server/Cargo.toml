@@ -1,0 +1,20 @@
+[package]
+name = "whycode-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = { version = "0.7", features = ["macros"] }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+whycode-core = { path = "../core" }
+whycode-agent = { path = "../agent" }
+whycode-session = { path = "../session" }
+whycode-tools = { path = "../tools" }
+whycode-llm = { path = "../llm" }
+tower-http = { version = "0.5", features = ["cors"] }
+tracing.workspace = true
+anyhow.workspace = true
+futures.workspace = true

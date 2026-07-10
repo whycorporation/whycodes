@@ -44,7 +44,7 @@ impl AnthropicProvider {
             body["top_p"] = Value::Number(serde_json::Number::from_f64(top_p as f64).unwrap());
         }
 
-        if request.thinking.unwrap_or(false) {
+        if request.thinking.is_some() {
             body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 4000});
         }
 

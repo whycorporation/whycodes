@@ -147,7 +147,7 @@ pub struct LlmRequest {
     pub top_p: Option<f32>,
     pub top_k: Option<u32>,
     pub stop_sequences: Option<Vec<String>>,
-    pub thinking: Option<bool>,
+    pub thinking: Option<serde_json::Value>,
 }
 
 /// LLM response

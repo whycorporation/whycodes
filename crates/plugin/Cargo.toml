@@ -1,0 +1,12 @@
+[package]
+name = "whycode-plugin"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+whycode-core = { path = "../core" }
+whycode-tools = { path = "../tools" }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

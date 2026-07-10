@@ -18,3 +18,5 @@ futures.workspace = true
 tracing.workspace = true
 async-trait = "0.1"
 async-stream.workspace = true
+tiktoken-rs = "0.6"
+tokio-stream = "0.1"

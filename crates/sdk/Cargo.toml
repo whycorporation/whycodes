@@ -1,0 +1,16 @@
+[package]
+name = "whycode-sdk"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+whycode-core = { path = "../core" }
+whycode-session = { path = "../session" }
+whycode-agent = { path = "../agent" }
+whycode-tools = { path = "../tools" }
+whycode-llm = { path = "../llm" }
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+futures.workspace = true
