@@ -10,3 +10,4 @@ whycode-core = { path = "../core" }
 serde.workspace = true
 anyhow.workspace = true
 syntect = "5"
+regex = "1"

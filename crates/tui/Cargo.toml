@@ -9,9 +9,20 @@ repository.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 tokio = { workspace = true, features = ["full"] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+chrono.workspace = true
 whycode-core = { path = "../core" }
 whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }
+whycode-llm = { path = "../llm" }
+whycode-tools = { path = "../tools" }
+whycode-format = { path = "../format" }
+unicode-width = "0.2"
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 
 [features]
 screenshot = []

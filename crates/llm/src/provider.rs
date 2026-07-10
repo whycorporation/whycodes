@@ -85,6 +85,10 @@ impl Default for ProviderRegistry {
         registry.register(Box::new(super::deepseek::DeepSeekProvider::new()));
         registry.register(Box::new(super::openrouter::OpenRouterProvider::new()));
         registry.register(Box::new(super::ollama::OllamaProvider::new()));
+        registry.register(Box::new(super::xai::XaiProvider::new()));
+        registry.register(Box::new(super::mistral::MistralProvider::new()));
+        registry.register(Box::new(super::together::TogetherProvider::new()));
+        registry.register(Box::new(super::groq::GroqProvider::new()));
         registry
     }
 }
