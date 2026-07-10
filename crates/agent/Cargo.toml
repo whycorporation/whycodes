@@ -10,6 +10,7 @@ whycode-core = { path = "../core" }
 whycode-llm = { path = "../llm" }
 whycode-tools = { path = "../tools" }
 whycode-session = { path = "../session" }
+whycode-mcp = { path = "../mcp" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -18,3 +19,4 @@ anyhow.workspace = true
 tracing.workspace = true
 futures.workspace = true
 async-stream.workspace = true
+async-trait = "0.1"

@@ -16,6 +16,7 @@ mod tests {
                 allow_network: true,
                 allow_shell: true,
                 allowed_paths: None,
+                rules: Default::default(),
             },
             model: None,
             system_prompt: Some("You are a test agent.".to_string()),

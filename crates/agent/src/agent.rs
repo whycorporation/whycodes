@@ -1,7 +1,7 @@
 use futures::StreamExt;
 use std::sync::Arc;
 use whycode_core::types::{
-    AgentInfo, ContentBlock, StreamEvent, ToolCall,
+    AgentInfo, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
 };
 use whycode_llm::provider::ProviderRegistry;
 use whycode_tools::executor::ToolExecutor;
@@ -9,6 +9,8 @@ use whycode_core::tool::ToolContext;
 
 use whycode_session::session::Session;
 
+use super::events::{emit, is_cancelled, CancelFlag, EventSink, TurnEvent};
+use super::permission::{default_prompter, PermissionPrompter};
 use super::subagent::{SubagentRunner, SubagentTask};
 
 /// Default system prompt (loaded from prompts/build.txt at compile time)
@@ -19,6 +21,7 @@ pub struct Agent {
     pub info: AgentInfo,
     provider_registry: Arc<ProviderRegistry>,
     tool_executor: Arc<ToolExecutor>,
+    permission_prompter: Arc<dyn PermissionPrompter>,
 }
 
 impl Agent {
@@ -27,6 +30,7 @@ impl Agent {
             info,
             provider_registry: Arc::new(ProviderRegistry::default()),
             tool_executor: Arc::new(ToolExecutor::new()),
+            permission_prompter: default_prompter(),
         }
     }
 
@@ -40,11 +44,31 @@ impl Agent {
         self
     }
 
-    /// Load custom providers from config
+    pub fn with_permission_prompter(mut self, prompter: Arc<dyn PermissionPrompter>) -> Self {
+        self.permission_prompter = prompter;
+        self
+    }
+
+    /// Load custom providers from config and merge global permission rules.
     pub fn with_config(mut self, config: &whycode_core::config::Config) -> Self {
         let mut registry = ProviderRegistry::default();
         registry.register_from_config(config);
         self.provider_registry = Arc::new(registry);
+        self.info.permission = config.effective_permission(&self.info.permission);
+        self
+    }
+
+    /// Connect MCP servers from config and register their tools on a fresh executor.
+    pub async fn with_mcp(mut self, config: &whycode_core::config::Config) -> Self {
+        if config.mcp_servers.is_empty() {
+            return self;
+        }
+        let mut full = ToolExecutor::new();
+        let n = super::mcp_load::register_mcp_tools(&mut full, config).await;
+        if n > 0 {
+            self.tool_executor = Arc::new(full);
+            tracing::info!(count = n, "MCP tools registered");
+        }
         self
     }
 
@@ -67,11 +91,33 @@ impl Agent {
             "plan" => include_str!("../prompts/plan.txt").to_string(),
             "explore" => include_str!("../prompts/explore.txt").to_string(),
             "general" => include_str!("../prompts/general.txt").to_string(),
+            "scout" => include_str!("../prompts/explore.txt").to_string(),
             _ => DEFAULT_SYSTEM_PROMPT.to_string(),
         }
     }
 
-    /// Run a single conversation turn: send LLM request, process tool calls, return response
+    /// Append project AGENTS.md (OpenCode rules file) to a system prompt if present.
+    pub fn with_agents_md(system_prompt: &str, project_path: &std::path::Path) -> String {
+        let candidates = [
+            project_path.join("AGENTS.md"),
+            project_path.join("agents.md"),
+            project_path.join(".whycode").join("AGENTS.md"),
+        ];
+        for path in &candidates {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    return format!(
+                        "{}\n\n# Project Instructions (AGENTS.md)\n\n{}",
+                        system_prompt, trimmed
+                    );
+                }
+            }
+        }
+        system_prompt.to_string()
+    }
+
+    /// Run a single conversation turn (no streaming UI events).
     pub async fn run_turn(
         &self,
         session: &mut Session,
@@ -80,7 +126,21 @@ impl Agent {
         api_key: &str,
         max_turns: usize,
     ) -> whycode_core::Result<String> {
-        // Get tool definitions
+        self.run_turn_with_events(session, provider_name, model, api_key, max_turns, None, None)
+            .await
+    }
+
+    /// Run a turn, optionally streaming `TurnEvent`s and honouring a cancel flag (Esc).
+    pub async fn run_turn_with_events(
+        &self,
+        session: &mut Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        max_turns: usize,
+        events: Option<EventSink>,
+        cancel: Option<CancelFlag>,
+    ) -> whycode_core::Result<String> {
         let tools = self
             .tool_executor
             .get_definitions(&self.info.permission);
@@ -95,7 +155,7 @@ impl Agent {
             .get(provider_name)
             .ok_or_else(|| {
                 whycode_core::Error::Llm(format!(
-                    "Unknown provider: {}. Available: anthropic, openai, google",
+                    "Unknown provider: {}. Available: anthropic, openai, google, and configured custom providers",
                     provider_name
                 ))
             })?;
@@ -104,6 +164,11 @@ impl Agent {
         let mut final_text = String::new();
 
         loop {
+            if is_cancelled(&cancel) {
+                emit(&events, TurnEvent::Cancelled);
+                return Err(whycode_core::Error::Agent("Cancelled".into()));
+            }
+
             turn_count += 1;
             if turn_count > max_turns {
                 return Err(whycode_core::Error::Agent(format!(
@@ -112,31 +177,55 @@ impl Agent {
                 )));
             }
 
-            // Build request
-            let request = session.build_request(
-                &tools,
-                None,    // max_tokens
-                self.info.temperature,
-                Some(true), // thinking: enabled for complex tasks
+            emit(
+                &events,
+                TurnEvent::Status(format!(
+                    "LLM request (step {turn_count})…  [Esc cancel]"
+                )),
             );
 
-            // Stream response
+            let request = session.build_request(
+                &tools,
+                None,
+                self.info.temperature,
+                Some(true),
+            );
+
             let mut accumulated_text = String::new();
             let mut tool_calls: Vec<ToolCall> = Vec::new();
             let mut current_tool_id = String::new();
-            let mut _current_tool_name = String::new();
             let mut current_tool_args = String::new();
 
             let mut event_stream = provider.stream(&request, api_key, model).await?;
 
             while let Some(event) = event_stream.next().await {
+                if is_cancelled(&cancel) {
+                    // Persist partial assistant text before aborting
+                    if !accumulated_text.is_empty() {
+                        session.add_assistant_message(vec![ContentBlock::Text {
+                            text: accumulated_text.clone(),
+                        }]);
+                        final_text.push_str(&accumulated_text);
+                    }
+                    emit(&events, TurnEvent::Cancelled);
+                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                }
+
                 match event? {
                     StreamEvent::TextDelta { text } => {
+                        emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
                     }
                     StreamEvent::ToolUse { id, name, input } => {
                         current_tool_id = id.clone();
-                        _current_tool_name = name.clone();
+                        emit(
+                            &events,
+                            TurnEvent::ToolStart {
+                                id: id.clone(),
+                                name: name.clone(),
+                                input: input.clone(),
+                            },
+                        );
                         tool_calls.push(ToolCall {
                             id,
                             name,
@@ -152,10 +241,11 @@ impl Agent {
                         }
                     }
                     StreamEvent::Thinking { text } => {
-                        // Thinking content is not shown to user by default
+                        emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::debug!("Thinking: {}", text);
                     }
                     StreamEvent::ThinkingDelta { text } => {
+                        emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::debug!("Thinking: {}", text);
                     }
                     StreamEvent::MessageStop => break,
@@ -168,7 +258,6 @@ impl Agent {
                 }
             }
 
-            // Build assistant content blocks
             let mut blocks: Vec<ContentBlock> = Vec::new();
 
             if !accumulated_text.is_empty() {
@@ -188,25 +277,36 @@ impl Agent {
 
             session.add_assistant_message(blocks);
 
-            // If no tool calls, we're done
             if tool_calls.is_empty() {
                 break;
             }
 
-            // Execute tool calls
             let mut results = Vec::new();
             for tc in &tool_calls {
+                if is_cancelled(&cancel) {
+                    emit(&events, TurnEvent::Cancelled);
+                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                }
+                emit(
+                    &events,
+                    TurnEvent::Status(format!("Running tool `{}`…  [Esc cancel]", tc.name)),
+                );
                 let result = self
-                    .tool_executor
-                    .execute(tc, &tool_ctx, &self.info.permission)
+                    .execute_with_permission(tc, session, &tool_ctx, provider_name, model, api_key)
                     .await;
+                emit(
+                    &events,
+                    TurnEvent::ToolEnd {
+                        id: tc.id.clone(),
+                        content: result.content.clone(),
+                        is_error: result.is_error,
+                    },
+                );
                 results.push(result);
             }
 
             session.add_tool_results(results.clone());
 
-            // Error recovery: if any tool failed, inject a user-like message
-            // giving the LLM a chance to self-correct in the same turn
             let failed_tools: Vec<String> = results
                 .iter()
                 .filter(|r| r.is_error)
@@ -227,6 +327,190 @@ impl Agent {
         Ok(final_text)
     }
 
+    /// Apply OpenCode allow/ask/deny then execute (or spawn task subagent).
+    async fn execute_with_permission(
+        &self,
+        tc: &ToolCall,
+        session: &Session,
+        tool_ctx: &ToolContext,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+    ) -> ToolResult {
+        match self.info.permission.action_for(&tc.name) {
+            PermissionAction::Deny => {
+                return ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    content: format!(
+                        "Permission denied for tool '{}'. Adjust agent permissions or config.permission.",
+                        tc.name
+                    ),
+                    is_error: true,
+                };
+            }
+            PermissionAction::Ask => {
+                let detail = tc.arguments.to_string();
+                let detail = if detail.len() > 200 {
+                    format!("{}…", &detail[..200])
+                } else {
+                    detail
+                };
+                let allowed = self.permission_prompter.ask(&tc.name, &detail).await;
+                if !allowed {
+                    return ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!("User denied permission for tool '{}'.", tc.name),
+                        is_error: true,
+                    };
+                }
+            }
+            PermissionAction::Allow => {}
+        }
+
+        if tc.name == "task" {
+            self.execute_task_tool(tc, session, provider_name, model, api_key)
+                .await
+        } else {
+            self.tool_executor
+                .execute(tc, tool_ctx, &self.info.permission)
+                .await
+        }
+    }
+
+    /// Execute the `task` tool by spawning a real subagent (OpenCode Task tool parity).
+    async fn execute_task_tool(
+        &self,
+        call: &ToolCall,
+        session: &Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+    ) -> whycode_core::types::ToolResult {
+        use whycode_core::types::{AgentMode, PermissionSet, ToolResult};
+
+        let goal = call
+            .arguments
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if goal.is_empty() {
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: "task requires a non-empty `goal`".to_string(),
+                is_error: true,
+            };
+        }
+
+        let context = call
+            .arguments
+            .get("context")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let subagent_type = call
+            .arguments
+            .get("subagent_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("general");
+        let max_turns = call
+            .arguments
+            .get("max_turns")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(15) as usize;
+
+        // Permission profile per OpenCode subagent type
+        let (permission, system_prompt) = match subagent_type {
+            "explore" | "scout" => (
+                PermissionSet {
+                    allowed_tools: Some(vec![
+                        "read".into(),
+                        "grep".into(),
+                        "glob".into(),
+                        "list".into(),
+                        "webfetch".into(),
+                        "websearch".into(),
+                        "lsp".into(),
+                    ]),
+                    denied_tools: Some(vec![
+                        "write".into(),
+                        "edit".into(),
+                        "shell".into(),
+                        "bash".into(),
+                        "apply_patch".into(),
+                        "todowrite".into(),
+                        "todo".into(),
+                    ]),
+                    allow_file_writes: false,
+                    allow_network: true,
+                    allow_shell: false,
+                    allowed_paths: None,
+                rules: Default::default(),
+                },
+                Self::system_prompt_for(subagent_type),
+            ),
+            _ => {
+                // general: full tools except todo (OpenCode default)
+                let mut perm = self.info.permission.clone();
+                let mut denied = perm.denied_tools.unwrap_or_default();
+                for t in ["todowrite", "todo", "todoread"] {
+                    if !denied.iter().any(|x| x == t) {
+                        denied.push(t.to_string());
+                    }
+                }
+                perm.denied_tools = Some(denied);
+                (perm, Self::system_prompt_for("general"))
+            }
+        };
+
+        let mut info = self.info.clone();
+        info.name = subagent_type.to_string();
+        info.mode = AgentMode::Subagent;
+        info.permission = permission;
+        info.system_prompt = Some(Self::with_agents_md(
+            &system_prompt,
+            &session.project_path,
+        ));
+
+        let task = SubagentTask {
+            goal: goal.clone(),
+            context,
+            tools: None,
+            max_turns,
+        };
+
+        let runner = SubagentRunner::new(
+            Arc::clone(&self.provider_registry),
+            Arc::clone(&self.tool_executor),
+            info,
+            session.project_path.clone(),
+        );
+
+        match runner.run(task, provider_name, model, api_key).await {
+            Ok(result) => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: if result.success {
+                    format!(
+                        "Subagent ({}) completed in {:.1}s:\n\n{}",
+                        subagent_type,
+                        result.duration.as_secs_f64(),
+                        result.output
+                    )
+                } else {
+                    format!(
+                        "Subagent ({}) finished with errors:\n\n{}",
+                        subagent_type, result.output
+                    )
+                },
+                is_error: !result.success,
+            },
+            Err(e) => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!("Failed to run subagent: {}", e),
+                is_error: true,
+            },
+        }
+    }
+
     /// Spawn a single subagent to accomplish a goal.
     ///
     /// The subagent runs in a fresh session with its own conversation loop.
@@ -240,6 +524,7 @@ impl Agent {
         provider_name: &str,
         model: &str,
         api_key: &str,
+        project_path: std::path::PathBuf,
     ) -> whycode_core::Result<String> {
         let task = SubagentTask {
             goal: goal.clone(),
@@ -252,14 +537,9 @@ impl Agent {
             Arc::clone(&self.provider_registry),
             Arc::clone(&self.tool_executor),
             self.info.clone(),
-            std::path::PathBuf::new(), // subagent uses the same working dir logic via the ToolContext
+            project_path,
         );
 
-        // Actually we need the project path — let's get it from the AgentInfo or default.
-        // SubagentRunner::run will use it from info, which is cloned above. We pass cwd from
-        // the environment; the runner creates a Session whose project_path is that value.
-        // Here we default to ".". The important piece is that ToolContext.working_dir
-        // inside run_turn_inner comes from the session's project_path.
         let result = runner.run(task, provider_name, model, api_key).await?;
 
         Ok(result.output)
@@ -277,6 +557,7 @@ impl Agent {
         provider_name: &str,
         model: &str,
         api_key: &str,
+        project_path: std::path::PathBuf,
     ) -> whycode_core::Result<Vec<String>> {
         use tokio::sync::Semaphore;
 
@@ -289,7 +570,7 @@ impl Agent {
             Arc::clone(&self.provider_registry),
             Arc::clone(&self.tool_executor),
             self.info.clone(),
-            std::path::PathBuf::new(),
+            project_path,
         ));
 
         let mut handles = Vec::with_capacity(goals.len());
