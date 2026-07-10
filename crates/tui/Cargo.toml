@@ -15,6 +15,3 @@ whycode-agent = { path = "../agent" }
 
 [features]
 screenshot = []
-
-name = "tui-dump"
-path = "src/bin/dump.rs"
