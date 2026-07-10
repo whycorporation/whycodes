@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::types::{AgentInfo, ModelConfig, ProviderConfig};
+use crate::types::{AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig};
 
 /// Per-command configuration overrides
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -62,6 +62,51 @@ pub struct Config {
     /// General settings
     #[serde(default)]
     pub general: GeneralConfig,
+
+    /// MCP server configurations (OpenCode-compatible)
+    #[serde(default)]
+    pub mcp_servers: HashMap<String, McpServerConfig>,
+
+    /// Global tool permissions (OpenCode-style allow/ask/deny).
+    /// Merged into each agent; agent-level `permission.rules` wins on conflict.
+    #[serde(default)]
+    pub permission: HashMap<String, PermissionAction>,
+
+    /// Custom slash commands keyed by name (from config.toml + markdown files)
+    #[serde(default)]
+    pub commands: HashMap<String, CustomCommandConfig>,
+}
+
+/// Custom slash command definition (OpenCode `/commands` parity)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CustomCommandConfig {
+    /// Prompt template (`$ARGUMENTS`, `$1`, `$2`, …)
+    pub template: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Force subagent invocation
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtask: Option<bool>,
+}
+
+/// MCP server definition stored in config
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfig {
+    /// Command to spawn (stdio transport)
+    pub command: String,
+    /// Command arguments
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Optional environment variables
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+    /// Optional working directory
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 impl Default for Config {
@@ -79,6 +124,7 @@ impl Default for Config {
                 allow_network: true,
                 allow_shell: true,
                 allowed_paths: None,
+                rules: Default::default(),
             },
             model: None,
             system_prompt: None, // Loaded from prompts/build.txt at runtime
@@ -86,91 +132,132 @@ impl Default for Config {
             top_p: None,
         };
 
+        // Plan: primary (Tab-switchable), file edits denied — matches OpenCode
         let plan_agent = AgentInfo {
             name: "plan".to_string(),
-            description: "Read-only planning agent — analyzes code and proposes changes but does not modify files or run commands.".to_string(),
+            description: "Read-only planning agent — analyzes code and proposes changes but does not modify files. Bash requires care.".to_string(),
             mode: AgentMode::Primary,
             permission: PermissionSet {
                 allowed_tools: Some(vec![
                     "read".to_string(),
                     "grep".to_string(),
                     "glob".to_string(),
-                    "webfetch".to_string(),
-                ]),
-                denied_tools: Some(vec![
-                    "write".to_string(),
-                    "edit".to_string(),
-                    "shell".to_string(),
-                    "apply_patch".to_string(),
-                    "todo_write".to_string(),
-                ]),
-                allow_file_writes: false,
-                allow_network: true,
-                allow_shell: false,
-                allowed_paths: None,
-            },
-            model: None,
-            system_prompt: Some("You are Whycode in planning mode. You are READ-ONLY. Analyze code and propose changes but do NOT edit files or run commands. Output a structured plan.".to_string()),
-            temperature: None,
-            top_p: None,
-        };
-
-        let explore_agent = AgentInfo {
-            name: "explore".to_string(),
-            description: "Read-only exploration agent — reads code, searches the web, understands codebases. No file modifications.".to_string(),
-            mode: AgentMode::Primary,
-            permission: PermissionSet {
-                allowed_tools: Some(vec![
-                    "read".to_string(),
-                    "grep".to_string(),
-                    "glob".to_string(),
+                    "list".to_string(),
                     "webfetch".to_string(),
                     "websearch".to_string(),
+                    "lsp".to_string(),
                 ]),
                 denied_tools: Some(vec![
                     "write".to_string(),
                     "edit".to_string(),
+                    "bash".to_string(),
                     "shell".to_string(),
                     "apply_patch".to_string(),
-                    "todo_write".to_string(),
+                    "todowrite".to_string(),
+                    "todo".to_string(),
                 ]),
                 allow_file_writes: false,
                 allow_network: true,
                 allow_shell: false,
                 allowed_paths: None,
+                rules: Default::default(),
             },
             model: None,
-            system_prompt: Some("You are Whycode in exploration mode. Read code, search the web, understand codebases. No file modifications.".to_string()),
+            system_prompt: Some("You are Whycode in planning mode. You are READ-ONLY. Analyze code and propose changes but do NOT edit files or run shell commands. Output a structured plan.".to_string()),
             temperature: None,
             top_p: None,
         };
 
-        let general_agent = AgentInfo {
-            name: "general".to_string(),
-            description: "General-purpose subagent for complex internal searches and background tasks.".to_string(),
+        // Explore: subagent (OpenCode) — fast read-only codebase search
+        let explore_agent = AgentInfo {
+            name: "explore".to_string(),
+            description: "Fast read-only subagent for exploring codebases (find files, search keywords, answer questions).".to_string(),
             mode: AgentMode::Subagent,
             permission: PermissionSet {
                 allowed_tools: Some(vec![
                     "read".to_string(),
                     "grep".to_string(),
                     "glob".to_string(),
+                    "list".to_string(),
                     "webfetch".to_string(),
                     "websearch".to_string(),
+                    "lsp".to_string(),
                 ]),
                 denied_tools: Some(vec![
                     "write".to_string(),
                     "edit".to_string(),
+                    "bash".to_string(),
                     "shell".to_string(),
                     "apply_patch".to_string(),
-                    "todo_write".to_string(),
+                    "todowrite".to_string(),
+                    "todo".to_string(),
                 ]),
                 allow_file_writes: false,
                 allow_network: true,
                 allow_shell: false,
                 allowed_paths: None,
+                rules: Default::default(),
             },
             model: None,
-            system_prompt: Some("You are a general-purpose subagent for complex searches and background tasks.".to_string()),
+            system_prompt: Some("You are a read-only exploration subagent. Find files, search code, answer questions. No file modifications.".to_string()),
+            temperature: None,
+            top_p: None,
+        };
+
+        // General: subagent with full tool access except todo (OpenCode)
+        let general_agent = AgentInfo {
+            name: "general".to_string(),
+            description: "General-purpose subagent for complex multi-step tasks. Full tools except todo. Use for parallel units of work.".to_string(),
+            mode: AgentMode::Subagent,
+            permission: PermissionSet {
+                allowed_tools: None,
+                denied_tools: Some(vec![
+                    "todowrite".to_string(),
+                    "todo".to_string(),
+                    "todoread".to_string(),
+                ]),
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                allowed_paths: None,
+                rules: Default::default(),
+            },
+            model: None,
+            system_prompt: Some("You are a general-purpose subagent for complex searches and multi-step tasks. Complete the goal thoroughly.".to_string()),
+            temperature: None,
+            top_p: None,
+        };
+
+        // Scout: subagent for external docs / dependency research (OpenCode)
+        let scout_agent = AgentInfo {
+            name: "scout".to_string(),
+            description: "Read-only subagent for external docs and dependency research.".to_string(),
+            mode: AgentMode::Subagent,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "list".to_string(),
+                    "webfetch".to_string(),
+                    "websearch".to_string(),
+                    "bash".to_string(), // limited: clone/inspect only ideally
+                ]),
+                denied_tools: Some(vec![
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "apply_patch".to_string(),
+                    "todowrite".to_string(),
+                    "todo".to_string(),
+                ]),
+                allow_file_writes: false,
+                allow_network: true,
+                allow_shell: true,
+                allowed_paths: None,
+                rules: Default::default(),
+            },
+            model: None,
+            system_prompt: Some("You are a scout subagent. Research external docs and dependencies. Prefer webfetch/websearch. Do not modify the workspace project files.".to_string()),
             temperature: None,
             top_p: None,
         };
@@ -178,7 +265,7 @@ impl Default for Config {
         Config {
             providers: HashMap::new(),
             models: HashMap::new(),
-            agents: vec![build_agent, plan_agent, explore_agent, general_agent],
+            agents: vec![build_agent, plan_agent, explore_agent, general_agent, scout_agent],
             default_agent: "build".to_string(),
             default_model: None,
             command_configs: HashMap::new(),
@@ -186,6 +273,9 @@ impl Default for Config {
             session: SessionConfig::default(),
             tui: TuiConfig::default(),
             general: GeneralConfig::default(),
+            mcp_servers: HashMap::new(),
+            permission: HashMap::new(),
+            commands: HashMap::new(),
         }
     }
 }
@@ -560,9 +650,169 @@ impl Config {
             merged.general.log_level = other.general.log_level.clone();
         }
 
+        // MCP servers: higher-priority entries override by name
+        for (name, server) in &other.mcp_servers {
+            merged.mcp_servers.insert(name.clone(), server.clone());
+        }
+
+        // Global permissions
+        for (k, v) in &other.permission {
+            merged.permission.insert(k.clone(), *v);
+        }
+
+        // Custom commands
+        for (k, v) in &other.commands {
+            merged.commands.insert(k.clone(), v.clone());
+        }
+
         merged
     }
 
+    /// Merge global `permission` map into an agent's PermissionSet (agent rules win).
+    pub fn effective_permission(&self, agent: &PermissionSet) -> PermissionSet {
+        let mut out = agent.clone();
+        for (k, v) in &self.permission {
+            out.rules.entry(k.clone()).or_insert(*v);
+        }
+        // agent rules already on out.rules take precedence (entry::or_insert)
+        // but agent may have set rules that should win — re-apply agent rules last
+        for (k, v) in &agent.rules {
+            out.rules.insert(k.clone(), *v);
+        }
+        out
+    }
+
+    /// Load custom commands from markdown files (OpenCode paths adapted):
+    /// - global: `~/.config/.../commands/*.md`
+    /// - project: `<project>/.whycode/commands/*.md`
+    pub fn load_command_files(&mut self, project_dir: &Path) {
+        if let Ok(global_dir) = Self::default_path() {
+            if let Some(parent) = global_dir.parent() {
+                load_commands_from_dir(&mut self.commands, &parent.join("commands"));
+            }
+        }
+        load_commands_from_dir(&mut self.commands, &project_dir.join(".whycode").join("commands"));
+        // also accept OpenCode-style .opencode/commands
+        load_commands_from_dir(&mut self.commands, &project_dir.join(".opencode").join("commands"));
+    }
+}
+
+fn load_commands_from_dir(into: &mut HashMap<String, CustomCommandConfig>, dir: &Path) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("cmd")
+            .to_string();
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Some(cmd) = parse_command_markdown(&content) {
+                into.insert(name, cmd);
+            }
+        }
+    }
+}
+
+/// Parse OpenCode-style command markdown with YAML frontmatter.
+fn parse_command_markdown(content: &str) -> Option<CustomCommandConfig> {
+    let content = content.trim();
+    if !content.starts_with("---") {
+        return Some(CustomCommandConfig {
+            template: content.to_string(),
+            description: None,
+            agent: None,
+            model: None,
+            subtask: None,
+        });
+    }
+    let rest = content.strip_prefix("---")?;
+    let end = rest.find("---")?;
+    let front = rest[..end].trim();
+    let body = rest[end + 3..].trim().to_string();
+
+    let mut description = None;
+    let mut agent = None;
+    let mut model = None;
+    let mut subtask = None;
+    for line in front.lines() {
+        let line = line.trim();
+        if let Some((k, v)) = line.split_once(':') {
+            let k = k.trim();
+            let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
+            match k {
+                "description" => description = Some(v),
+                "agent" => agent = Some(v),
+                "model" => model = Some(v),
+                "subtask" => {
+                    subtask = Some(matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"))
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Some(CustomCommandConfig {
+        template: body,
+        description,
+        agent,
+        model,
+        subtask,
+    })
+}
+
+impl CustomCommandConfig {
+    /// Expand `$ARGUMENTS`, `$1`… placeholders.
+    pub fn render(&self, args: &str) -> String {
+        let parts: Vec<&str> = args.split_whitespace().collect();
+        let mut out = self.template.clone();
+        out = out.replace("$ARGUMENTS", args);
+        for (i, p) in parts.iter().enumerate() {
+            out = out.replace(&format!("${}", i + 1), p);
+        }
+        // shell injection: !`cmd` — run and replace (best-effort, sync)
+        while let Some(start) = out.find("!`") {
+            if let Some(rel_end) = out[start + 2..].find('`') {
+                let cmd = &out[start + 2..start + 2 + rel_end];
+                let output = run_inline_shell(cmd);
+                out.replace_range(start..start + 2 + rel_end + 1, &output);
+            } else {
+                break;
+            }
+        }
+        out
+    }
+}
+
+fn run_inline_shell(cmd: &str) -> String {
+    #[cfg(windows)]
+    let output = std::process::Command::new("cmd")
+        .args(["/C", cmd])
+        .output();
+    #[cfg(not(windows))]
+    let output = std::process::Command::new("sh")
+        .args(["-c", cmd])
+        .output();
+    match output {
+        Ok(o) => {
+            let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+            let err = String::from_utf8_lossy(&o.stderr);
+            if !err.is_empty() {
+                s.push_str(&err);
+            }
+            s
+        }
+        Err(e) => format!("(command failed: {})", e),
+    }
+}
+
+impl Config {
     // ── Command config ──────────────────────────────────────────────────
 
     /// Get per-command configuration overrides for the given command name.
@@ -864,18 +1114,19 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = Config::default();
-        assert_eq!(cfg.agents.len(), 4, "default config should have 4 agents");
+        assert_eq!(cfg.agents.len(), 5, "default config should have 5 agents");
         assert_eq!(cfg.default_agent, "build");
         assert!(cfg.default_model.is_none());
         assert!(cfg.providers.is_empty());
         assert!(cfg.models.is_empty());
 
-        // Verify agent names
+        // Verify agent names (OpenCode: build/plan primary, general/explore/scout subagents)
         let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"build"));
         assert!(names.contains(&"plan"));
         assert!(names.contains(&"explore"));
         assert!(names.contains(&"general"));
+        assert!(names.contains(&"scout"));
     }
 
     // ── test_config_load_save ───────────────────────────────────────────
@@ -928,7 +1179,7 @@ mod tests {
         let loaded: Config = toml::from_str(&content).expect("deserialize");
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(loaded.agents.len(), 4);
+        assert_eq!(loaded.agents.len(), 5);
         assert_eq!(loaded.providers.len(), 1);
         assert_eq!(loaded.providers["openai"].name, "openai");
     }

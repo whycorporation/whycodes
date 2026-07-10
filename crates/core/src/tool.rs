@@ -35,51 +35,10 @@ pub trait Tool: Send + Sync {
 
     /// Whether this tool is allowed given a permission set.
     ///
-    /// Checks in priority order:
-    /// 1. If the tool name is in `denied_tools`, deny.
-    /// 2. If `allowed_tools` is set and the tool is NOT in it, deny.
-    /// 3. For write-type tools (write, edit, apply_patch, todo_write):
-    ///    deny if `allow_file_writes` is false.
-    /// 4. For `shell`: deny if `allow_shell` is false.
-    /// 5. For network tools (webfetch, websearch): deny if `allow_network` is false.
-    /// 6. Otherwise allow.
+    /// Uses OpenCode-style resolution: `rules` (allow/ask/deny), then legacy
+    /// allowed/denied lists and category flags. `Ask` still returns true so the
+    /// tool appears in the schema; the agent loop prompts before execution.
     fn is_allowed(&self, permissions: &PermissionSet) -> bool {
-        let name = self.name().to_string();
-
-        // 1. Explicit deny list
-        if let Some(denied) = &permissions.denied_tools {
-            if denied.contains(&name) {
-                return false;
-            }
-        }
-
-        // 2. Explicit allow list (if set, only those are allowed)
-        if let Some(allowed) = &permissions.allowed_tools {
-            if !allowed.contains(&name) {
-                return false;
-            }
-        }
-
-        // 3. Write-type tools: check allow_file_writes
-        if matches!(
-            self.name(),
-            "write" | "edit" | "apply_patch" | "todo_write" | "todowrite" | "todo"
-        ) {
-            if !permissions.allow_file_writes {
-                return false;
-            }
-        }
-
-        // 4. Shell: check allow_shell
-        if self.name() == "shell" && !permissions.allow_shell {
-            return false;
-        }
-
-        // 5. Network tools: check allow_network
-        if matches!(self.name(), "webfetch" | "websearch") && !permissions.allow_network {
-            return false;
-        }
-
-        true
+        permissions.is_tool_allowed(self.name())
     }
 }

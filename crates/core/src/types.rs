@@ -263,14 +263,110 @@ pub enum AgentMode {
     All,
 }
 
+/// OpenCode-style permission action for a tool or pattern.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum PermissionAction {
+    /// Run without prompting
+    #[default]
+    Allow,
+    /// Prompt the user for approval
+    Ask,
+    /// Block the tool
+    Deny,
+}
+
+impl PermissionAction {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "allow" | "true" | "yes" => Some(Self::Allow),
+            "ask" | "prompt" => Some(Self::Ask),
+            "deny" | "false" | "no" | "block" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PermissionSet {
+    /// Explicit allow list (if set, only these tools are candidates)
     pub allowed_tools: Option<Vec<String>>,
+    /// Explicit deny list
     pub denied_tools: Option<Vec<String>>,
     pub allow_file_writes: bool,
     pub allow_network: bool,
     pub allow_shell: bool,
     pub allowed_paths: Option<Vec<PathBuf>>,
+    /// OpenCode-style rules: tool name or glob pattern → allow|ask|deny.
+    /// Patterns support trailing `*` (e.g. `mymcp_*`, `git *` is for bash args later).
+    /// Last matching rule wins when multiple match (map iteration order is unstable;
+    /// prefer more-specific keys). Exact name match always wins over patterns.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub rules: HashMap<String, PermissionAction>,
+}
+
+impl PermissionSet {
+    /// Resolve the effective permission action for a tool name (OpenCode parity).
+    pub fn action_for(&self, tool_name: &str) -> PermissionAction {
+        // 1. Exact rule match
+        if let Some(a) = self.rules.get(tool_name) {
+            return *a;
+        }
+
+        // 2. Glob-style rules: `prefix*` and `*`
+        let mut matched: Option<PermissionAction> = None;
+        for (pattern, action) in &self.rules {
+            if pattern == "*" {
+                matched = Some(*action);
+                continue;
+            }
+            if let Some(prefix) = pattern.strip_suffix('*') {
+                if tool_name.starts_with(prefix) {
+                    matched = Some(*action);
+                }
+            }
+        }
+        if let Some(a) = matched {
+            return a;
+        }
+
+        // 3. Legacy deny list
+        if let Some(denied) = &self.denied_tools {
+            if denied.iter().any(|d| d == tool_name) {
+                return PermissionAction::Deny;
+            }
+        }
+
+        // 4. Legacy allow list (if set, tools not listed are denied)
+        if let Some(allowed) = &self.allowed_tools {
+            if !allowed.iter().any(|a| a == tool_name) {
+                return PermissionAction::Deny;
+            }
+        }
+
+        // 5. Category flags
+        if matches!(
+            tool_name,
+            "write" | "edit" | "apply_patch" | "todo_write" | "todowrite" | "todo"
+        ) && !self.allow_file_writes
+        {
+            return PermissionAction::Deny;
+        }
+        if matches!(tool_name, "shell" | "bash") && !self.allow_shell {
+            return PermissionAction::Deny;
+        }
+        if matches!(tool_name, "webfetch" | "websearch" | "mcp_websearch") && !self.allow_network
+        {
+            return PermissionAction::Deny;
+        }
+
+        PermissionAction::Allow
+    }
+
+    /// Whether the tool may run at all (Allow or Ask). Deny → false.
+    pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        self.action_for(tool_name) != PermissionAction::Deny
+    }
 }
 
 /// Session metadata
@@ -416,6 +512,25 @@ mod tests {
         assert!(!ps.allow_network);
         assert!(!ps.allow_shell);
         assert!(ps.allowed_paths.is_none());
+        assert!(ps.rules.is_empty());
+    }
+
+    #[test]
+    fn test_permission_action_for_rules() {
+        let mut ps = PermissionSet::default();
+        ps.allow_file_writes = true;
+        ps.allow_shell = true;
+        ps.allow_network = true;
+        ps.rules.insert("bash".into(), PermissionAction::Ask);
+        ps.rules.insert("edit".into(), PermissionAction::Deny);
+        ps.rules.insert("mymcp_*".into(), PermissionAction::Deny);
+
+        assert_eq!(ps.action_for("bash"), PermissionAction::Ask);
+        assert_eq!(ps.action_for("edit"), PermissionAction::Deny);
+        assert_eq!(ps.action_for("mymcp_search"), PermissionAction::Deny);
+        assert_eq!(ps.action_for("read"), PermissionAction::Allow);
+        assert!(!ps.is_tool_allowed("edit"));
+        assert!(ps.is_tool_allowed("bash")); // ask still appears in schema
     }
 
     #[test]

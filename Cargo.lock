@@ -2678,6 +2678,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "async-trait",
  "futures",
  "serde",
  "serde_json",
@@ -2686,6 +2687,7 @@ dependencies = [
  "tracing",
  "whycode-core",
  "whycode-llm",
+ "whycode-mcp",
  "whycode-session",
  "whycode-tools",
 ]
@@ -2715,6 +2717,7 @@ dependencies = [
  "whycode-session",
  "whycode-storage",
  "whycode-tools",
+ "whycode-tui",
 ]
 
 [[package]]
@@ -2936,6 +2939,7 @@ dependencies = [
  "tracing",
  "whycode-core",
  "whycode-format",
+ "whycode-lsp",
  "whycode-skill",
 ]
 
@@ -2959,6 +2963,7 @@ dependencies = [
  "whycode-format",
  "whycode-llm",
  "whycode-session",
+ "whycode-storage",
  "whycode-tools",
 ]
 
