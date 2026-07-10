@@ -1,10 +1,41 @@
-use axum::{extract::{Path, State}, response::sse::{Event, Sse}, Json};
+use axum::{
+    extract::{Path, State},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
+    response::sse::{Event, Sse},
+    Json,
+};
 use futures::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use whycode_session::session::Session;
 
 use crate::AppState;
+
+/// Resolve share file directories: project .whycode/shares + global data dir shares.
+fn share_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        dirs.push(cwd.join(".whycode").join("shares"));
+    }
+    if let Ok(data) = whycode_core::config::Config::data_dir() {
+        dirs.push(data.join("shares"));
+    }
+    dirs
+}
+
+fn find_share_file(id: &str, ext: &str) -> Option<PathBuf> {
+    // Strip accidental extension from id
+    let id = id.trim_end_matches(".json").trim_end_matches(".md");
+    for dir in share_search_dirs() {
+        let p = dir.join(format!("{id}.{ext}"));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
 
 pub async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
@@ -62,4 +93,126 @@ pub async fn chat(
             .data(serde_json::json!({"type": "text_delta", "text": "Server mode: send a message to get started"}).to_string()))
     });
     Sse::new(stream)
+}
+
+/// List locally shared sessions.
+pub async fn list_shares() -> Json<serde_json::Value> {
+    let mut shares = Vec::new();
+    for dir in share_search_dirs() {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for e in entries.flatten() {
+                let path = e.path();
+                if path.extension().and_then(|x| x.to_str()) == Some("json") {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        shares.push(serde_json::json!({
+                            "id": stem,
+                            "json": format!("/s/{stem}.json"),
+                            "md": format!("/s/{stem}.md"),
+                            "view": format!("/s/{stem}"),
+                            "path": path.display().to_string(),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+    Json(serde_json::json!({ "shares": shares }))
+}
+
+/// Human-readable HTML view of a shared session.
+pub async fn share_view(Path(id): Path<String>) -> Response {
+    let id = id.trim_end_matches(".json").trim_end_matches(".md").to_string();
+    let md = match find_share_file(&id, "md") {
+        Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "(empty)".into()),
+        None => {
+            // fall back to JSON pretty as text
+            match find_share_file(&id, "json") {
+                Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "Share not found".into()),
+                None => {
+                    return (
+                        StatusCode::NOT_FOUND,
+                        Html(format!("<h1>Share not found</h1><p>id={id}</p>")),
+                    )
+                        .into_response();
+                }
+            }
+        }
+    };
+
+    let escaped = html_escape(&md);
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Whycode share · {id}</title>
+<style>
+  :root {{ color-scheme: dark light; }}
+  body {{ font-family: ui-sans-serif, system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.55; }}
+  pre {{ white-space: pre-wrap; word-break: break-word; background: #111; color: #e8e8e8; padding: 1.25rem; border-radius: 8px; overflow-x: auto; }}
+  a {{ color: #6cb6ff; }}
+  header {{ margin-bottom: 1rem; opacity: 0.85; font-size: 0.9rem; }}
+</style>
+</head>
+<body>
+<header>
+  <strong>Whycode share</strong> · <code>{id}</code>
+  · <a href="/s/{id}.md">markdown</a>
+  · <a href="/s/{id}.json">json</a>
+</header>
+<pre>{escaped}</pre>
+</body>
+</html>"#
+    );
+    Html(html).into_response()
+}
+
+pub async fn share_json(Path(id): Path<String>) -> Response {
+    let id = id.trim_end_matches(".json").to_string();
+    match find_share_file(&id, "json") {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(body) => (
+                [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                body,
+            )
+                .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => (StatusCode::NOT_FOUND, "share not found").into_response(),
+    }
+}
+
+pub async fn share_markdown(Path(id): Path<String>) -> Response {
+    let id = id.trim_end_matches(".md").to_string();
+    match find_share_file(&id, "md") {
+        Some(p) => match std::fs::read_to_string(p) {
+            Ok(body) => (
+                [(header::CONTENT_TYPE, "text/markdown; charset=utf-8")],
+                body,
+            )
+                .into_response(),
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        },
+        None => {
+            // synthesize from json conversation if md missing
+            match find_share_file(&id, "json") {
+                Some(p) => match std::fs::read_to_string(p) {
+                    Ok(body) => (
+                        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
+                        body,
+                    )
+                        .into_response(),
+                    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+                },
+                None => (StatusCode::NOT_FOUND, "share not found").into_response(),
+            }
+        }
+    }
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }

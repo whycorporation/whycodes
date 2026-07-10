@@ -20,6 +20,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions", get(routes::list_sessions))
         .route("/api/session/new", post(routes::create_session))
         .route("/api/session/:id/chat", post(routes::chat))
+        // OpenCode-style share links (local)
+        .route("/s/:id", get(routes::share_view))
+        .route("/s/:id.json", get(routes::share_json))
+        .route("/s/:id.md", get(routes::share_markdown))
+        .route("/api/shares", get(routes::list_shares))
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
