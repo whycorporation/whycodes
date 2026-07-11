@@ -13,3 +13,6 @@ pub mod widgets;
 
 pub use app::TuiApp;
 pub use run::{run, TuiRunOptions};
+
+#[cfg(test)]
+mod tests;
