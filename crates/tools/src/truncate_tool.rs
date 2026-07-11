@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct TruncateTool;
 
+impl Default for TruncateTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TruncateTool {
     pub fn new() -> Self {
         Self

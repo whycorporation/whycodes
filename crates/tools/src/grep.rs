@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GrepTool;
 
+impl Default for GrepTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GrepTool {
     pub fn new() -> Self {
         Self
@@ -105,11 +111,10 @@ impl GrepTool {
 
         cmd.arg(pattern).arg(path);
 
-        if let Some(glob) = file_glob {
-            if Self::has_command("rg") {
+        if let Some(glob) = file_glob
+            && Self::has_command("rg") {
                 cmd.arg("--glob").arg(glob);
             }
-        }
 
         let output = cmd
             .output()

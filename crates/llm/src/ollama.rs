@@ -91,11 +91,8 @@ impl OllamaProvider {
                 let mut images: Vec<String> = Vec::new();
                 for block in blocks {
                     if let ContentBlock::Image { source } = block {
-                        match source {
-                            whycode_core::types::ImageSource::Base64 { data, .. } => {
-                                images.push(data.clone());
-                            }
-                            _ => {}
+                        if let whycode_core::types::ImageSource::Base64 { data, .. } = source {
+                            images.push(data.clone());
                         }
                     }
                 }
@@ -174,13 +171,12 @@ impl LlmProvider for OllamaProvider {
 
         // Ollama response has "message" -> "content"
         let message = &json["message"];
-        if let Some(text) = message["content"].as_str() {
-            if !text.is_empty() {
+        if let Some(text) = message["content"].as_str()
+            && !text.is_empty() {
                 content.push(ContentBlock::Text {
                     text: text.to_string(),
                 });
             }
-        }
 
         // Check for tool calls in message
         if let Some(tool_calls) = message["tool_calls"].as_array() {
@@ -262,13 +258,12 @@ impl LlmProvider for OllamaProvider {
                                 let done = event["done"].as_bool().unwrap_or(false);
 
                                 if let Some(message) = event.get("message") {
-                                    if let Some(text) = message["content"].as_str() {
-                                        if !text.is_empty() {
+                                    if let Some(text) = message["content"].as_str()
+                                        && !text.is_empty() {
                                             yield Ok(StreamEvent::TextDelta {
                                                 text: text.to_string(),
                                             });
                                         }
-                                    }
 
                                     // Tool calls in streaming may appear in message
                                     if let Some(tool_calls) = message["tool_calls"].as_array() {

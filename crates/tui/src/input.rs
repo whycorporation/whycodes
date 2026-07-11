@@ -3,7 +3,7 @@
 // then updates application state accordingly.
 
 use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind,
 };
 use crate::app::{AppMode, ConfirmAction, DialogKind, TuiApp};
 use crate::keymap::{Action, KeymapContext};
@@ -200,25 +200,22 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
 
 fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
     match action {
-        Action::InputBackspace => {
-            if app.input_cursor > 0 {
+        Action::InputBackspace
+            if app.input_cursor > 0 => {
                 app.input_cursor -= 1;
                 app.input_buffer.remove(app.input_cursor);
             }
-        }
-        Action::InputDelete => {
-            if app.input_cursor < app.input_buffer.len() {
+        Action::InputDelete
+            if app.input_cursor < app.input_buffer.len() => {
                 app.input_buffer.remove(app.input_cursor);
             }
-        }
         Action::InputLeft => {
             app.input_cursor = app.input_cursor.saturating_sub(1);
         }
-        Action::InputRight => {
-            if app.input_cursor < app.input_buffer.len() {
+        Action::InputRight
+            if app.input_cursor < app.input_buffer.len() => {
                 app.input_cursor += 1;
             }
-        }
         Action::InputHome => {
             app.input_cursor = 0;
         }
@@ -229,15 +226,14 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.input_buffer.clear();
             app.input_cursor = 0;
         }
-        Action::InputHistoryPrev => {
-            if !app.input_history.is_empty() && app.input_history_idx > 0 {
+        Action::InputHistoryPrev
+            if !app.input_history.is_empty() && app.input_history_idx > 0 => {
                 app.input_history_idx -= 1;
                 app.input_buffer = app.input_history[app.input_history_idx].clone();
                 app.input_cursor = app.input_buffer.len();
             }
-        }
-        Action::InputHistoryNext => {
-            if app.input_history_idx < app.input_history.len() {
+        Action::InputHistoryNext
+            if app.input_history_idx < app.input_history.len() => {
                 app.input_history_idx += 1;
                 if app.input_history_idx < app.input_history.len() {
                     app.input_buffer = app.input_history[app.input_history_idx].clone();
@@ -246,7 +242,6 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 }
                 app.input_cursor = app.input_buffer.len();
             }
-        }
         _ => {}
     }
 }
@@ -256,11 +251,10 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         MouseEventKind::ScrollDown => {
             app.scroll_offset = app.scroll_offset.saturating_sub(1);
         }
-        MouseEventKind::ScrollUp => {
-            if app.scroll_offset < app.messages.len().saturating_sub(1) {
+        MouseEventKind::ScrollUp
+            if app.scroll_offset < app.messages.len().saturating_sub(1) => {
                 app.scroll_offset += 1;
             }
-        }
         _ => {}
     }
     true
@@ -321,8 +315,8 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
         }
         _ => {
             // Forward char input to provider form fields.
-            if matches!(active, DialogKind::Provider) {
-                if let KeyCode::Char(c) = key.code {
+            if matches!(active, DialogKind::Provider)
+                && let KeyCode::Char(c) = key.code {
                     let field_val = match app.provider_dialog.active_field {
                         0 => &mut app.provider_dialog.form_name,
                         1 => &mut app.provider_dialog.form_api_key,
@@ -332,7 +326,6 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                     };
                     field_val.push(c);
                 }
-            }
         }
     }
 

@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use whycode_agent::agent::Agent;
 use whycode_agent::permission::ChannelPermissionPrompter;
 use whycode_agent::{
-    new_cancel_flag, request_cancel, CancelFlag, PermissionRequest, TurnEvent,
+    new_cancel_flag, request_cancel, CancelFlag, TurnEvent,
 };
 use whycode_core::config::Config;
 use whycode_core::types::AgentMode;
@@ -160,21 +160,19 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut agent_busy = false;
     let mut cancel_flag: Option<CancelFlag> = None;
     let mut spinner_frame: usize = 0;
-    /// Pending oneshot reply for open permission dialog
     let mut pending_perm_reply: Option<tokio::sync::oneshot::Sender<bool>> = None;
 
     // Keep home empty so OpenCode-style logo shows (no system spam).
     // Key missing is communicated via footer "Get started /connect".
     if missing_key {
-        app.status_message = format!("no API key · /connect");
+        app.status_message = "no API key · /connect".to_string();
     }
 
-    if let Some(p) = opts.initial_prompt {
-        if !p.is_empty() {
+    if let Some(p) = opts.initial_prompt
+        && !p.is_empty() {
             app.add_message(ChatRole::User, &p);
             app.pending_prompt = Some(p);
         }
-    }
 
     let result = async {
         loop {
@@ -226,13 +224,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         agent = a;
                         session = s;
                         // Ensure final text is present
-                        if !text.is_empty() {
-                            if let Some(last) = app.messages.last_mut() {
-                                if last.role == ChatRole::Assistant && last.content.is_empty() {
+                        if !text.is_empty()
+                            && let Some(last) = app.messages.last_mut()
+                                && last.role == ChatRole::Assistant && last.content.is_empty() {
                                     last.content = text;
                                 }
-                            }
-                        }
                         app.current_agent_state = AgentState::Idle;
                         app.status_message = format!(
                             "Ready — agent={}  {}/{}",
@@ -264,27 +260,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Start turn if needed ──────────────────────────────────
-            if !agent_busy {
-                if let Some(prompt) = app.pending_prompt.take() {
+            if !agent_busy
+                && let Some(prompt) = app.pending_prompt.take() {
                     // Lazy-load API key from env/config when user first chats
                     if api_key.is_empty() {
-                        if let Ok(cfg) = Config::load() {
-                            if let Some(pc) = cfg.get_provider(&provider) {
-                                if let Some(k) = &pc.api_key {
-                                    if !k.is_empty() {
+                        if let Ok(cfg) = Config::load()
+                            && let Some(pc) = cfg.get_provider(&provider)
+                                && let Some(k) = &pc.api_key
+                                    && !k.is_empty() {
                                         api_key = k.clone();
                                     }
-                                }
-                            }
-                        }
                         let env_name = format!("{}_API_KEY", provider.to_uppercase());
-                        if api_key.is_empty() {
-                            if let Ok(k) = std::env::var(&env_name) {
-                                if !k.is_empty() {
+                        if api_key.is_empty()
+                            && let Ok(k) = std::env::var(&env_name)
+                                && !k.is_empty() {
                                     api_key = k;
                                 }
-                            }
-                        }
                     }
                     if api_key.is_empty() {
                         app.add_message(
@@ -347,7 +338,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     );
 
                     tokio::spawn(async move {
-                        let mut agent = ag;
+                        let agent = ag;
                         let mut session = sess;
                         let result = agent
                             .run_turn_with_events(
@@ -381,7 +372,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         }
                     });
                 }
-            }
 
             // ── Input ─────────────────────────────────────────────────
             if event::poll(Duration::from_millis(40))? {
@@ -391,9 +381,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 if matches!(
                     app.dialogs.active(),
                     Some(DialogKind::Permission { .. })
-                ) {
-                    if let Event::Key(key) = &ev {
-                        if key.kind == KeyEventKind::Press {
+                )
+                    && let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press {
                             match key.code {
                                 KeyCode::Char('y')
                                 | KeyCode::Char('Y')
@@ -428,12 +418,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 _ => {}
                             }
                         }
-                    }
-                }
 
                 // Tab: cycle agents (when idle)
-                if let Event::Key(key) = &ev {
-                    if key.kind == KeyEventKind::Press
+                if let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
                         && key.code == KeyCode::Tab
                         && app.mode == AppMode::Normal
                         && !agent_busy
@@ -449,11 +437,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         .await;
                         continue;
                     }
-                }
 
                 // Slash commands on Enter
-                if let Event::Key(key) = &ev {
-                    if key.kind == KeyEventKind::Press
+                if let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
                         && key.code == KeyCode::Enter
                         && app.mode == AppMode::Normal
                         && !agent_busy
@@ -479,12 +466,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             continue;
                         }
                     }
-                }
 
                 // Block input submission while busy (except quit/scroll/Esc cancel)
-                if agent_busy {
-                    if let Event::Key(key) = &ev {
-                        if key.kind == KeyEventKind::Press {
+                if agent_busy
+                    && let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press {
                             match key.code {
                                 KeyCode::Esc => {
                                     if let Some(ref flag) = cancel_flag {
@@ -516,8 +502,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             }
                             continue;
                         }
-                    }
-                }
 
                 if !input::handle_event(&mut app, ev) {
                     break;
@@ -701,14 +685,13 @@ async fn handle_slash(
         None => (text, ""),
     };
 
-    if let Some(name) = cmd.strip_prefix('/') {
-        if let Some(custom) = config.commands.get(name) {
+    if let Some(name) = cmd.strip_prefix('/')
+        && let Some(custom) = config.commands.get(name) {
             let rendered = custom.render(rest);
             app.add_message(ChatRole::User, &rendered);
             app.pending_prompt = Some(rendered);
             return;
         }
-    }
 
     match cmd {
         "/exit" | "/quit" | "/q" => {
@@ -788,7 +771,7 @@ async fn handle_slash(
         },
         "/unshare" => {
             let id = session.id.clone();
-            let removed = unshare_session(&project_dir, &id);
+            let removed = unshare_session(project_dir, &id);
             app.status_message = if removed > 0 {
                 format!("Unshared ({removed} files)")
             } else {
@@ -797,23 +780,18 @@ async fn handle_slash(
         }
         "/connect" => {
             // Reload key from env / config
-            if let Ok(cfg) = Config::load() {
-                if let Some(pc) = cfg.get_provider(provider) {
-                    if let Some(k) = &pc.api_key {
-                        if !k.is_empty() {
+            if let Ok(cfg) = Config::load()
+                && let Some(pc) = cfg.get_provider(provider)
+                    && let Some(k) = &pc.api_key
+                        && !k.is_empty() {
                             *api_key = k.clone();
                         }
-                    }
-                }
-            }
             let env_name = format!("{}_API_KEY", provider.to_uppercase());
-            if api_key.is_empty() {
-                if let Ok(k) = std::env::var(&env_name) {
-                    if !k.is_empty() {
+            if api_key.is_empty()
+                && let Ok(k) = std::env::var(&env_name)
+                    && !k.is_empty() {
                         *api_key = k;
                     }
-                }
-            }
             if api_key.is_empty() {
                 app.status_message = format!("no key — set {env_name} or provider add");
                 app.add_message(

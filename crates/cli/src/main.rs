@@ -354,24 +354,20 @@ fn resolve_dir(cli: &Cli) -> PathBuf {
 
 fn get_api_key(provider: &str, config: &Config) -> Option<String> {
     let env_var = provider_env_var(provider);
-    if let Ok(key) = std::env::var(&env_var) {
-        if !key.is_empty() {
+    if let Ok(key) = std::env::var(&env_var)
+        && !key.is_empty() {
             return Some(key);
         }
-    }
-    if let Some(pc) = config.get_provider(provider) {
-        if let Some(key) = &pc.api_key {
-            if !key.is_empty() {
+    if let Some(pc) = config.get_provider(provider)
+        && let Some(key) = &pc.api_key
+            && !key.is_empty() {
                 return Some(key.clone());
             }
-        }
-    }
     // Fallback to generic env vars
-    if provider == "openai" {
-        if let Ok(key) = std::env::var("OPENAI_API_KEY") {
+    if provider == "openai"
+        && let Ok(key) = std::env::var("OPENAI_API_KEY") {
             return Some(key);
         }
-    }
     None
 }
 
@@ -578,8 +574,8 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
         if input.starts_with('/') {
             let (cmd, rest) = split_slash_command(&input);
             // Custom markdown / config commands (OpenCode `/commands`)
-            if let Some(name) = cmd.strip_prefix('/') {
-                if let Some(custom) = config.commands.get(name) {
+            if let Some(name) = cmd.strip_prefix('/')
+                && let Some(custom) = config.commands.get(name) {
                     let rendered = custom.render(rest);
                     if !ensure_api_key(&mut api_key, &provider, &config) {
                         continue;
@@ -601,7 +597,6 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                     }
                     continue;
                 }
-            }
             match cmd {
                 "/exit" | "/quit" | "/q" => break,
                 "/help" | "/h" => {

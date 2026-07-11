@@ -3,8 +3,6 @@
 // the focused mode, dialog stack, session messages, input buffer,
 // sidebar visibility, theme, and keybinding context.
 
-use std::collections::HashMap;
-
 use crate::keymap::KeymapContext;
 use crate::theme::ThemeName;
 
@@ -64,6 +62,12 @@ pub enum ConfirmAction {
 pub struct DialogManager {
     /// Stack of open dialogs; last item is the visible one.
     pub stack: Vec<DialogKind>,
+}
+
+impl Default for DialogManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl DialogManager {
@@ -349,7 +353,7 @@ impl TuiApp {
             help_scroll: 0,
             sidebar: SidebarState::default(),
             command: CommandState::default(),
-            theme: config.theme.clone(),
+            theme: config.theme,
             config,
             pending_prompt: None,
             primary_agents: vec!["build".into(), "plan".into()],
@@ -421,8 +425,8 @@ impl TuiApp {
 
     /// Append a thinking block to the last assistant message.
     pub fn append_thinking(&mut self, text: &str) {
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == ChatRole::Assistant {
+        if let Some(last) = self.messages.last_mut()
+            && last.role == ChatRole::Assistant {
                 // Append to the last thinking block or create one.
                 if let Some(ChatBlock::Thinking(t)) = last.blocks.last_mut() {
                     t.push_str(text);
@@ -431,9 +435,8 @@ impl TuiApp {
                 }
                 return;
             }
-        }
         // No assistant message yet — create one.
-        let mut msg = ChatMessage {
+        let msg = ChatMessage {
             role: ChatRole::Assistant,
             content: String::new(),
             blocks: vec![ChatBlock::Thinking(text.to_string())],
@@ -456,8 +459,8 @@ impl TuiApp {
             is_error: false,
         };
 
-        if let Some(last) = self.messages.last_mut() {
-            if last.role == ChatRole::Assistant {
+        if let Some(last) = self.messages.last_mut()
+            && last.role == ChatRole::Assistant {
                 last.blocks.push(ChatBlock::ToolUse {
                     id: tc.id.clone(),
                     name: tc.name.clone(),
@@ -466,9 +469,8 @@ impl TuiApp {
                 last.tool_calls.push(tc);
                 return;
             }
-        }
 
-        let mut msg = ChatMessage {
+        let msg = ChatMessage {
             role: ChatRole::Assistant,
             content: String::new(),
             blocks: vec![ChatBlock::ToolUse {

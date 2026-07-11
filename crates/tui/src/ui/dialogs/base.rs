@@ -2,9 +2,9 @@
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 use crate::theme::ThemePalette;
@@ -34,13 +34,13 @@ pub fn dialog_frame<'a>(
     frame.render_widget(block, dialog_area);
 
     // Inner area (inside borders).
-    let inner = Rect {
+    
+    Rect {
         x: dialog_area.x + 1,
         y: dialog_area.y + 1,
         width: dialog_area.width.saturating_sub(2),
         height: dialog_area.height.saturating_sub(2),
-    };
-    inner
+    }
 }
 
 /// Render dialog footer buttons.

@@ -32,8 +32,8 @@ pub fn truncate_path(path: &str, max_len: usize) -> String {
     let start_count = 2; // keep first 2 components
     let end_count = 2; // keep last 2 components
 
-    let start = components[..start_count].join("/");
-    let end = components[components.len() - end_count..].join("/");
+    let _start = components[..start_count].join("/");
+    let _end = components[components.len() - end_count..].join("/");
 
     // Try adding one component at a time from each side until we hit max_len
     let mut left = start_count;

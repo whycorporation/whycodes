@@ -1,11 +1,8 @@
 // ── widgets/message.rs: Message renderer ───────────────────────────────
 
 use ratatui::{
-    layout::Rect,
     style::{Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Paragraph, Wrap},
-    Frame,
+    text::{Line, Span},
 };
 use crate::app::{ChatBlock, ChatRole};
 use crate::theme::ThemePalette;

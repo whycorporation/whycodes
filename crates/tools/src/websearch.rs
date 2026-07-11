@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct WebSearchTool;
 
+impl Default for WebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSearchTool {
     pub fn new() -> Self {
         Self
@@ -55,7 +61,7 @@ impl Tool for WebSearchTool {
         if let Ok(api_key) = std::env::var("SERPAPI_API_KEY") {
             let url = format!(
                 "https://serpapi.com/search?q={}&api_key={}&num={}&engine=google",
-                urlencoding(&query),
+                urlencoding(query),
                 api_key,
                 num_results
             );
@@ -119,16 +125,13 @@ impl Tool for WebSearchTool {
                     // Simple extraction of result snippets
                     let mut results: Vec<String> = Vec::new();
                     for line in html.lines() {
-                        if line.contains("result__snippet") {
-                            if let Some(start) = line.find('>') {
-                                if let Some(end) = line.rfind('<') {
-                                    if start + 1 < end {
+                        if line.contains("result__snippet")
+                            && let Some(start) = line.find('>')
+                                && let Some(end) = line.rfind('<')
+                                    && start + 1 < end {
                                         let snippet = &line[start + 1..end];
                                         results.push(snippet.trim().to_string());
                                     }
-                                }
-                            }
-                        }
                     }
 
                     results.truncate(num_results as usize);

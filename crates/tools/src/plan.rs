@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct PlanTool;
 
+impl Default for PlanTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PlanTool {
     pub fn new() -> Self {
         Self

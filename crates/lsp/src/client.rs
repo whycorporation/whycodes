@@ -114,9 +114,9 @@ impl LspClient {
                                 let body_str = String::from_utf8_lossy(&body).to_string();
                                 match IncomingMessage::from_line(&body_str) {
                                     Ok(IncomingMessage::Notification(notif)) => {
-                                        if notif.method == "textDocument/publishDiagnostics" {
-                                            if let Some(params) = notif.params {
-                                                if let Ok(parsed) = serde_json::from_value::<
+                                        if notif.method == "textDocument/publishDiagnostics"
+                                            && let Some(params) = notif.params
+                                                && let Ok(parsed) = serde_json::from_value::<
                                                     crate::types::PublishDiagnosticsParams,
                                                 >(
                                                     params
@@ -126,8 +126,6 @@ impl LspClient {
                                                         .await
                                                         .insert(parsed.uri, parsed.diagnostics);
                                                 }
-                                            }
-                                        }
                                     }
                                     Ok(IncomingMessage::Response(_)) => {
                                         // silently discard — handled by `request()`
@@ -170,11 +168,10 @@ impl LspClient {
         // Try cached first
         {
             let diags = self.diagnostics.lock().await;
-            if let Some(d) = diags.get(uri) {
-                if !d.is_empty() {
+            if let Some(d) = diags.get(uri)
+                && !d.is_empty() {
                     return Ok(d.clone());
                 }
-            }
         }
 
         // Send textDocument/diagnostic request

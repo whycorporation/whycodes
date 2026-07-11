@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GithubIssueTool;
 
+impl Default for GithubIssueTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GithubIssueTool {
     pub fn new() -> Self {
         Self
@@ -192,11 +198,10 @@ async fn issue_create(
     }
 
     let mut body = json!({ "title": title });
-    if let Some(b) = args["body"].as_str() {
-        if !b.is_empty() {
+    if let Some(b) = args["body"].as_str()
+        && !b.is_empty() {
             body["body"] = json!(b);
         }
-    }
     if let Some(labels) = args["labels"].as_array() {
         body["labels"] = json!(labels);
     }

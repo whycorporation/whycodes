@@ -8,6 +8,12 @@ use whycode_core::types::ToolResult;
 
 pub struct ApplyPatchTool;
 
+impl Default for ApplyPatchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ApplyPatchTool {
     pub fn new() -> Self {
         Self

@@ -464,19 +464,19 @@ impl Config {
             }
 
             // If no default model is set, try to pick it up from WHYCODE_MODEL
-            if self.default_model.is_none() {
-                if let Ok(model_name) = std::env::var("WHYCODE_MODEL") {
-                    self.default_model = Some(ModelConfig {
-                        model_id: model_name,
-                        provider_id: provider_name,
-                        max_tokens: None,
-                        temperature: None,
-                        top_p: None,
-                        thinking: None,
-                        supports_tools: None,
-                        supports_images: None,
-                    });
-                }
+            if self.default_model.is_none()
+                && let Ok(model_name) = std::env::var("WHYCODE_MODEL")
+            {
+                self.default_model = Some(ModelConfig {
+                    model_id: model_name,
+                    provider_id: provider_name,
+                    max_tokens: None,
+                    temperature: None,
+                    top_p: None,
+                    thinking: None,
+                    supports_tools: None,
+                    supports_images: None,
+                });
             }
         } else if let Ok(model_name) = std::env::var("WHYCODE_MODEL") {
             // Model set without provider — update default model's model_id if
@@ -498,10 +498,10 @@ impl Config {
         }
 
         // WHYCODE_MAX_TURNS
-        if let Ok(val) = std::env::var("WHYCODE_MAX_TURNS") {
-            if let Ok(n) = val.parse::<usize>() {
-                self.session.max_context_tokens = n;
-            }
+        if let Ok(val) = std::env::var("WHYCODE_MAX_TURNS")
+            && let Ok(n) = val.parse::<usize>()
+        {
+            self.session.max_context_tokens = n;
         }
 
         // WHYCODE_LOG_LEVEL
@@ -686,10 +686,10 @@ impl Config {
     /// - global: `~/.config/.../commands/*.md`
     /// - project: `<project>/.whycode/commands/*.md`
     pub fn load_command_files(&mut self, project_dir: &Path) {
-        if let Ok(global_dir) = Self::default_path() {
-            if let Some(parent) = global_dir.parent() {
-                load_commands_from_dir(&mut self.commands, &parent.join("commands"));
-            }
+        if let Ok(global_dir) = Self::default_path()
+            && let Some(parent) = global_dir.parent()
+        {
+            load_commands_from_dir(&mut self.commands, &parent.join("commands"));
         }
         load_commands_from_dir(&mut self.commands, &project_dir.join(".whycode").join("commands"));
         // also accept OpenCode-style .opencode/commands
@@ -712,11 +712,10 @@ fn load_commands_from_dir(into: &mut HashMap<String, CustomCommandConfig>, dir: 
             .and_then(|s| s.to_str())
             .unwrap_or("cmd")
             .to_string();
-        if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Some(cmd) = parse_command_markdown(&content) {
+        if let Ok(content) = std::fs::read_to_string(&path)
+            && let Some(cmd) = parse_command_markdown(&content) {
                 into.insert(name, cmd);
             }
-        }
     }
 }
 
@@ -732,10 +731,11 @@ fn parse_command_markdown(content: &str) -> Option<CustomCommandConfig> {
             subtask: None,
         });
     }
-    let rest = content.strip_prefix("---")?;
-    let end = rest.find("---")?;
-    let front = rest[..end].trim();
-    let body = rest[end + 3..].trim().to_string();
+    let (front, body) = content
+        .strip_prefix("---")?
+        .split_once("---")?;
+    let front = front.trim();
+    let body = body.trim().to_string();
 
     let mut description = None;
     let mut agent = None;
@@ -934,14 +934,14 @@ impl Config {
             }
 
             // Warn if base_url is set to a known developer/local endpoint
-            if let Some(ref url) = provider.base_url {
-                if url.contains("localhost") || url.contains("127.0.0.1") {
-                    issues.push(format!(
-                        "Provider '{}' base_url points to localhost ({}). \
-                         This is fine for local development but will not work in production.",
-                        name, url
-                    ));
-                }
+            if let Some(ref url) = provider.base_url
+                && (url.contains("localhost") || url.contains("127.0.0.1"))
+            {
+                issues.push(format!(
+                    "Provider '{}' base_url points to localhost ({}). \
+                     This is fine for local development but will not work in production.",
+                    name, url
+                ));
             }
         }
 

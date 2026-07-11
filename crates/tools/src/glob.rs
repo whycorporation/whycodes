@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GlobTool;
 
+impl Default for GlobTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobTool {
     pub fn new() -> Self {
         Self

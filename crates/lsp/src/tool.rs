@@ -17,6 +17,12 @@ pub struct LspTool {
     clients: Arc<Mutex<HashMap<String, Arc<LspClient>>>>,
 }
 
+impl Default for LspTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LspTool {
     pub fn new() -> Self {
         Self {

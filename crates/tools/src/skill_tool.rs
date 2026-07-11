@@ -7,6 +7,12 @@ use whycode_skill::registry::SkillRegistry;
 
 pub struct SkillTool;
 
+impl Default for SkillTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkillTool {
     pub fn new() -> Self {
         Self

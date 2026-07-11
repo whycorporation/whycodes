@@ -102,8 +102,8 @@ pub async fn list_shares() -> Json<serde_json::Value> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
                 let path = e.path();
-                if path.extension().and_then(|x| x.to_str()) == Some("json") {
-                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                if path.extension().and_then(|x| x.to_str()) == Some("json")
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         shares.push(serde_json::json!({
                             "id": stem,
                             "json": format!("/s/{stem}.json"),
@@ -112,7 +112,6 @@ pub async fn list_shares() -> Json<serde_json::Value> {
                             "path": path.display().to_string(),
                         }));
                     }
-                }
             }
         }
     }

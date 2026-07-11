@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 use crate::migrations::run_migrations;
-use crate::models::{SessionRow, MessageRow, StateRow};
+use crate::models::{SessionRow, MessageRow};
 
 /// Core database wrapper
 pub struct Database {

@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GitHubPrTool;
 
+impl Default for GitHubPrTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitHubPrTool {
     pub fn new() -> Self {
         Self

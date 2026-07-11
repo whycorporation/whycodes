@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct WebFetchTool;
 
+impl Default for WebFetchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebFetchTool {
     pub fn new() -> Self {
         Self

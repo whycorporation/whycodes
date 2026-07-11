@@ -21,6 +21,12 @@ pub struct TodoWriteTool {
     name: &'static str,
 }
 
+impl Default for TodoWriteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TodoWriteTool {
     pub fn new() -> Self {
         Self { name: "todowrite" }

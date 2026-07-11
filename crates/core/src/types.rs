@@ -320,10 +320,10 @@ impl PermissionSet {
                 matched = Some(*action);
                 continue;
             }
-            if let Some(prefix) = pattern.strip_suffix('*') {
-                if tool_name.starts_with(prefix) {
-                    matched = Some(*action);
-                }
+            if let Some(prefix) = pattern.strip_suffix('*')
+                && tool_name.starts_with(prefix)
+            {
+                matched = Some(*action);
             }
         }
         if let Some(a) = matched {
@@ -331,18 +331,16 @@ impl PermissionSet {
         }
 
         // 3. Legacy deny list
-        if let Some(denied) = &self.denied_tools {
-            if denied.iter().any(|d| d == tool_name) {
+        if let Some(denied) = &self.denied_tools
+            && denied.iter().any(|d| d == tool_name) {
                 return PermissionAction::Deny;
             }
-        }
 
         // 4. Legacy allow list (if set, tools not listed are denied)
-        if let Some(allowed) = &self.allowed_tools {
-            if !allowed.iter().any(|a| a == tool_name) {
+        if let Some(allowed) = &self.allowed_tools
+            && !allowed.iter().any(|a| a == tool_name) {
                 return PermissionAction::Deny;
             }
-        }
 
         // 5. Category flags
         if matches!(

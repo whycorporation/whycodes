@@ -28,11 +28,10 @@ impl SkillRegistry {
         }
 
         // 2. Global user config directory
-        if let Ok(global_dir) = global_skills_dir() {
-            if global_dir.is_dir() {
+        if let Ok(global_dir) = global_skills_dir()
+            && global_dir.is_dir() {
                 registry.load_from_dir(&global_dir)?;
             }
-        }
 
         Ok(registry)
     }

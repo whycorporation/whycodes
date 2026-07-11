@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct CodeModeTool;
 
+impl Default for CodeModeTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodeModeTool {
     pub fn new() -> Self {
         Self

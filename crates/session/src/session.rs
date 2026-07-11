@@ -76,7 +76,7 @@ impl Session {
         tools: &[ToolDefinition],
         max_tokens: Option<u32>,
         temperature: Option<f32>,
-        thinking: Option<bool>,
+        _thinking: Option<bool>,
     ) -> LlmRequest {
         LlmRequest {
             system: self.system_prompt.clone(),

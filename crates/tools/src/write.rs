@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct WriteTool;
 
+impl Default for WriteTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WriteTool {
     pub fn new() -> Self {
         Self
@@ -53,15 +59,14 @@ impl Tool for WriteTool {
         };
 
         // Create parent directories if needed
-        if let Some(parent) = std::path::Path::new(&full_path).parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
+        if let Some(parent) = std::path::Path::new(&full_path).parent()
+            && let Err(e) = std::fs::create_dir_all(parent) {
                 return ToolResult {
                     tool_call_id: String::new(),
                     content: format!("Error creating directory: {}", e),
                     is_error: true,
                 };
             }
-        }
 
         match std::fs::write(&full_path, content) {
             Ok(_) => {

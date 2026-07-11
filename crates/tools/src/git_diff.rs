@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GitDiffTool;
 
+impl Default for GitDiffTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitDiffTool {
     pub fn new() -> Self {
         Self

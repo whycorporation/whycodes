@@ -22,7 +22,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         .split(area);
 
     // Tab bar.
-    let tabs = vec!["Files", "Diag", "MCP", "Todos"];
+    let tabs = ["Files", "Diag", "MCP", "Todos"];
     let tab_titles: Vec<Line> = tabs
         .iter()
         .enumerate()

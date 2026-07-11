@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GitLogTool;
 
+impl Default for GitLogTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitLogTool {
     pub fn new() -> Self {
         Self

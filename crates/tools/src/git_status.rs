@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GitStatusTool;
 
+impl Default for GitStatusTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitStatusTool {
     pub fn new() -> Self {
         Self

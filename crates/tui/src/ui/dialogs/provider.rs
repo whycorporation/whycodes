@@ -2,16 +2,16 @@
 // Two modes: Select from list, or Add Custom.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
     Frame,
 };
 use crate::app::{AuthMethod, ProviderDialogMode, TuiApp};
 use crate::theme::ThemePalette;
 
-use super::base::{centered_rect, dialog_frame};
+use super::base::dialog_frame;
 
 pub fn render_provider_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
     let pd = &app.provider_dialog;

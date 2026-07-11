@@ -7,11 +7,10 @@ const GITHUB_API_BASE: &str = "https://api.github.com";
 
 /// Resolve a GitHub token: explicit argument first, then GITHUB_TOKEN env var.
 pub fn resolve_token(explicit_token: Option<&str>) -> Option<String> {
-    if let Some(t) = explicit_token {
-        if !t.is_empty() {
+    if let Some(t) = explicit_token
+        && !t.is_empty() {
             return Some(t.to_string());
         }
-    }
     env::var("GITHUB_TOKEN").ok()
 }
 

@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct ExternalDirectoryTool;
 
+impl Default for ExternalDirectoryTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExternalDirectoryTool {
     pub fn new() -> Self {
         Self

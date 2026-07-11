@@ -398,6 +398,7 @@ async fn test_glob_tool_no_matches() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
+#[cfg_attr(windows, ignore)] // bash/WSL not reliably available on all Windows
 async fn test_shell_tool_echo() {
     let dir = TempDir::new().unwrap();
     let ctx = temp_ctx(&dir);
@@ -418,6 +419,7 @@ async fn test_shell_tool_echo() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore)] // bash/WSL not reliably available on all Windows
 async fn test_shell_tool_exit_code() {
     let dir = TempDir::new().unwrap();
     let ctx = temp_ctx(&dir);
@@ -435,6 +437,7 @@ async fn test_shell_tool_exit_code() {
 }
 
 #[tokio::test]
+#[cfg_attr(windows, ignore)] // bash/WSL not reliably available on all Windows
 async fn test_shell_tool_working_dir() {
     let dir = TempDir::new().unwrap();
     let ctx = temp_ctx(&dir);

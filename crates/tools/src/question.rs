@@ -10,6 +10,12 @@ use whycode_core::types::ToolResult;
 
 pub struct QuestionTool;
 
+impl Default for QuestionTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QuestionTool {
     pub fn new() -> Self {
         Self
@@ -118,9 +124,9 @@ impl Tool for QuestionTool {
             "No answer received (timeout or empty input).".to_string()
         } else {
             // If choices were provided, try to resolve numeric choice
-            if let Some(ref choices) = choices {
-                if let Ok(num) = answer.parse::<usize>() {
-                    if num >= 1 && num <= choices.len() {
+            if let Some(ref choices) = choices
+                && let Ok(num) = answer.parse::<usize>()
+                    && num >= 1 && num <= choices.len() {
                         let chosen = &choices[num - 1];
                         return ToolResult {
                             tool_call_id: String::new(),
@@ -131,8 +137,6 @@ impl Tool for QuestionTool {
                             is_error: false,
                         };
                     }
-                }
-            }
             format!("Question: {}\nAnswer: {}", question, answer)
         };
 

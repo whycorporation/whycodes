@@ -29,7 +29,10 @@ fn test_cli_version() {
 
 #[test]
 fn test_config_subcommand() {
-    let o = Command::new(whycode_binary()).arg("config").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .args(["config", "show"])
+        .output()
+        .unwrap();
     assert!(o.status.success());
 }
 

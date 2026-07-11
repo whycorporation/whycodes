@@ -7,7 +7,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Padding, Paragraph, Wrap},
+    widgets::{Block, Padding, Paragraph, Wrap},
     Frame,
 };
 use crate::app::{ChatBlock, ChatRole, TuiApp};
@@ -67,7 +67,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     lines.push(center_line(&app.project_label, area.width, palette.dim, false));
     lines.push(Line::from(""));
     // "Get started /connect" like footer welcome
-    let gs = format!("Get started  /connect");
+    let gs = "Get started  /connect".to_string();
     lines.push(center_line(&gs, area.width, palette.fg, false));
 
     frame.render_widget(

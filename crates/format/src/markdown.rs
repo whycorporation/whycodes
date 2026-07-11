@@ -86,22 +86,23 @@ pub fn render_markdown(text: &str) -> String {
 fn format_inline(text: &str) -> String {
     let mut result = text.to_string();
 
+    // Inline code: `text` (do first to avoid interference)
+    let code_re = Regex::new(r"`([^`]+)`").unwrap();
+    result = code_re
+        .replace_all(&result, "\x1b[7m$1\x1b[0m")
+        .to_string();
+
     // Bold: **text**
     let bold_re = Regex::new(r"\*\*(.+?)\*\*").unwrap();
     result = bold_re
         .replace_all(&result, "\x1b[1m$1\x1b[0m")
         .to_string();
 
-    // Italic: *text* (but not inside bold already handled)
-    let italic_re = Regex::new(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)").unwrap();
+    // Italic: *text* — simple non-greedy match between single * chars.
+    // After bold replacement, remaining single * pairs are italics.
+    let italic_re = Regex::new(r"\*(.+?)\*").unwrap();
     result = italic_re
         .replace_all(&result, "\x1b[3m$1\x1b[0m")
-        .to_string();
-
-    // Inline code: `text`
-    let code_re = Regex::new(r"`([^`]+)`").unwrap();
-    result = code_re
-        .replace_all(&result, "\x1b[7m$1\x1b[0m")
         .to_string();
 
     // Links: [text](url)

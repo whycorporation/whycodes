@@ -28,7 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     );
 
     // OpenCode prompt uses left border color = agent color (peach primary for build)
-    let edge = palette.accent;
+    let edge = palette.agent_color_by_index(app.agent_cycle_idx);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)

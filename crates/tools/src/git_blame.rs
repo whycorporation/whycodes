@@ -7,6 +7,12 @@ use whycode_core::types::ToolResult;
 
 pub struct GitBlameTool;
 
+impl Default for GitBlameTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GitBlameTool {
     pub fn new() -> Self {
         Self

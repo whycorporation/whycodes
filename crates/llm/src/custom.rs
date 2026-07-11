@@ -53,11 +53,10 @@ impl CustomProvider {
 
         let mut headers = config.headers.clone().unwrap_or_default();
         // Add auth header if not already present
-        if !headers.contains_key("Authorization") {
-            if let Some(key) = &config.api_key {
+        if !headers.contains_key("Authorization")
+            && let Some(key) = &config.api_key {
                 headers.insert("Authorization".to_string(), format!("Bearer {}", key));
             }
-        }
 
         Self {
             name: config.name.clone(),
@@ -159,11 +158,10 @@ impl CustomProvider {
         }
 
         // Fallback auth if no Authorization header set
-        if !self.headers.contains_key("Authorization") {
-            if let Some(key) = &self.api_key {
+        if !self.headers.contains_key("Authorization")
+            && let Some(key) = &self.api_key {
                 req = req.header("Authorization", format!("Bearer {}", key));
             }
-        }
 
         req
     }
@@ -211,11 +209,10 @@ impl LlmProvider for CustomProvider {
         let choice = &json["choices"][0];
         let msg = &choice["message"];
         let mut content: Vec<ContentBlock> = Vec::new();
-        if let Some(text) = msg["content"].as_str() {
-            if !text.is_empty() {
+        if let Some(text) = msg["content"].as_str()
+            && !text.is_empty() {
                 content.push(ContentBlock::Text { text: text.to_string() });
             }
-        }
         if let Some(tcs) = msg["tool_calls"].as_array() {
             for tc in tcs {
                 let f = &tc["function"];
@@ -275,9 +272,8 @@ impl LlmProvider for CustomProvider {
                             if data == "[DONE]" { yield Ok(StreamEvent::MessageStop); return; }
                             if let Ok(evt) = serde_json::from_str::<Value>(data) {
                                 let delta = &evt["choices"][0]["delta"];
-                                if let Some(t) = delta["content"].as_str() {
-                                    if !t.is_empty() { yield Ok(StreamEvent::TextDelta { text: t.to_string() }); }
-                                }
+                                if let Some(t) = delta["content"].as_str()
+                                    && !t.is_empty() { yield Ok(StreamEvent::TextDelta { text: t.to_string() }); }
                                 if let Some(tcs) = delta["tool_calls"].as_array() {
                                     let tc = &tcs[0];
                                     if let Some(id) = tc["id"].as_str() {

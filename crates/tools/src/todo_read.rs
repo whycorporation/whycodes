@@ -20,6 +20,12 @@ struct TodoList {
 /// Read the current session todo list — OpenCode `todoread` tool.
 pub struct TodoReadTool;
 
+impl Default for TodoReadTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TodoReadTool {
     pub fn new() -> Self {
         Self

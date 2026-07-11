@@ -10,6 +10,12 @@ pub struct ShellTool {
     name: &'static str,
 }
 
+impl Default for ShellTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ShellTool {
     pub fn new() -> Self {
         Self { name: "bash" }
@@ -54,7 +60,7 @@ impl Tool for ShellTool {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let command_str = args["command"].as_str().unwrap_or("");
-        let timeout_secs = args["timeout"].as_u64().unwrap_or(120) as u64;
+        let timeout_secs = args["timeout"].as_u64().unwrap_or(120);
 
         let result = tokio::task::spawn_blocking({
             let command_str = command_str.to_string();

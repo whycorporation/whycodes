@@ -6,6 +6,12 @@ use whycode_core::types::ToolResult;
 
 pub struct DisplayTool;
 
+impl Default for DisplayTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DisplayTool {
     pub fn new() -> Self {
         Self

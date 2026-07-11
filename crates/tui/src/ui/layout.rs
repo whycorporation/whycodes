@@ -1,6 +1,6 @@
 // ── ui/layout.rs: Layout helpers ───────────────────────────────────────
 
-use ratatui::layout::{Constraint, Rect};
+use ratatui::layout::Rect;
 
 /// Calculate the number of lines that fit in a rect.
 pub fn lines_in_rect(rect: Rect) -> usize {

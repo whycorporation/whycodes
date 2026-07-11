@@ -141,6 +141,23 @@ pub struct ThemePalette {
     pub diff_hunk: Color,
 }
 
+impl ThemePalette {
+    /// Deterministic color for agent by cycle index — guarantees distinct
+    /// colors regardless of agent naming (unlike name-based matching).
+    pub fn agent_color_by_index(&self, idx: usize) -> Color {
+        const AGENT_COLORS: &[fn(&ThemePalette) -> Color] = &[
+            |p| p.accent,
+            |p| p.thinking,
+            |p| p.info,
+            |p| p.tool_msg,
+            |p| p.assistant_msg,
+            |p| p.success,
+            |p| p.warning,
+        ];
+        AGENT_COLORS[idx % AGENT_COLORS.len()](self)
+    }
+}
+
 // ── Palette factories ──────────────────────────────────────────────────
 #[allow(clippy::too_many_lines)]
 /// Default = exact OpenCode theme dark tokens (`theme/assets/opencode.json`).

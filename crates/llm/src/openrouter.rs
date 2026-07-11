@@ -214,13 +214,12 @@ impl LlmProvider for OpenRouterProvider {
         let message = &choice["message"];
 
         let mut content: Vec<ContentBlock> = Vec::new();
-        if let Some(text) = message["content"].as_str() {
-            if !text.is_empty() {
+        if let Some(text) = message["content"].as_str()
+            && !text.is_empty() {
                 content.push(ContentBlock::Text {
                     text: text.to_string(),
                 });
             }
-        }
 
         if let Some(tool_calls) = message["tool_calls"].as_array() {
             for tc in tool_calls {
@@ -309,13 +308,12 @@ impl LlmProvider for OpenRouterProvider {
                                 let choice = &event["choices"][0];
                                 let delta = &choice["delta"];
 
-                                if let Some(text) = delta["content"].as_str() {
-                                    if !text.is_empty() {
+                                if let Some(text) = delta["content"].as_str()
+                                    && !text.is_empty() {
                                         yield Ok(StreamEvent::TextDelta {
                                             text: text.to_string(),
                                         });
                                     }
-                                }
 
                                 if let Some(tool_calls) = delta["tool_calls"].as_array() {
                                     let tc = &tool_calls[0];
@@ -333,16 +331,14 @@ impl LlmProvider for OpenRouterProvider {
                                     }
                                 }
 
-                                if let Some(finish) = choice["finish_reason"].as_str() {
-                                    if !finish.is_empty() {
-                                        if let Some(usage) = event.get("usage") {
+                                if let Some(finish) = choice["finish_reason"].as_str()
+                                    && !finish.is_empty()
+                                        && let Some(usage) = event.get("usage") {
                                             yield Ok(StreamEvent::Usage {
                                                 input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
                                                 output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
                                             });
                                         }
-                                    }
-                                }
                             }
                         }
                     }

@@ -18,10 +18,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             .fg(palette.accent)
             .add_modifier(Modifier::BOLD),
     );
+    let agent_color = palette.agent_color_by_index(app.agent_cycle_idx);
+    let agent = Span::styled(
+        format!(" {} ", app.agent_name),
+        Style::default()
+            .fg(agent_color)
+            .add_modifier(Modifier::BOLD),
+    );
     let rest = Span::styled(
         format!(
-            " {}  {}/{} ",
-            app.agent_name,
+            " {}/{} ",
             if app.provider_name.is_empty() {
                 "—"
             } else {
@@ -36,9 +42,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         Style::default().fg(palette.dim),
     );
 
-    // No bottom border line noise — solid panel strip like OpenCode step2
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(vec![brand, rest])))
+        Paragraph::new(Text::from(Line::from(vec![brand, agent, rest])))
             .style(Style::default().bg(palette.status_bar_bg)),
         area,
     );

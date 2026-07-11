@@ -11,7 +11,7 @@ use crate::theme::ThemePalette;
 
 use super::base::dialog_frame;
 
-pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePalette) {
     let area = dialog_frame(frame, " Help ", palette, 65, 75);
 
     let help_text = vec![
