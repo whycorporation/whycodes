@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
     use crate::theme::ThemeName;
     use crate::app::{
         TuiApp, AppMode, ChatRole,
@@ -17,31 +18,31 @@ mod tests {
 
     #[test]
     fn test_theme_from_str_dark() {
-        assert_eq!(ThemeName::from_name("dark"), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_name("default-dark"), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_name("default_dark"), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_str("dark").unwrap(), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_str("default-dark").unwrap(), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_str("default_dark").unwrap(), ThemeName::DefaultDark);
     }
 
     #[test]
     fn test_theme_from_str_light() {
-        assert_eq!(ThemeName::from_name("light"), ThemeName::DefaultLight);
-        assert_eq!(ThemeName::from_name("default_light"), ThemeName::DefaultLight);
+        assert_eq!(ThemeName::from_str("light").unwrap(), ThemeName::DefaultLight);
+        assert_eq!(ThemeName::from_str("default_light").unwrap(), ThemeName::DefaultLight);
     }
 
     #[test]
     fn test_theme_from_str_named_themes() {
-        assert_eq!(ThemeName::from_name("monokai"), ThemeName::Monokai);
-        assert_eq!(ThemeName::from_name("nord"), ThemeName::Nord);
-        assert_eq!(ThemeName::from_name("dracula"), ThemeName::Dracula);
-        assert_eq!(ThemeName::from_name("gruvbox"), ThemeName::Gruvbox);
-        assert_eq!(ThemeName::from_name("catppuccin-mocha"), ThemeName::CatppuccinMocha);
-        assert_eq!(ThemeName::from_name("tokyonight"), ThemeName::TokyoNight);
+        assert_eq!(ThemeName::from_str("monokai").unwrap(), ThemeName::Monokai);
+        assert_eq!(ThemeName::from_str("nord").unwrap(), ThemeName::Nord);
+        assert_eq!(ThemeName::from_str("dracula").unwrap(), ThemeName::Dracula);
+        assert_eq!(ThemeName::from_str("gruvbox").unwrap(), ThemeName::Gruvbox);
+        assert_eq!(ThemeName::from_str("catppuccin-mocha").unwrap(), ThemeName::CatppuccinMocha);
+        assert_eq!(ThemeName::from_str("tokyonight").unwrap(), ThemeName::TokyoNight);
     }
 
     #[test]
     fn test_theme_from_str_unknown_defaults_to_dark() {
-        assert_eq!(ThemeName::from_name("nonexistent_theme"), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_name(""), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_str("nonexistent_theme").unwrap(), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_str("").unwrap(), ThemeName::DefaultDark);
     }
 
     #[test]

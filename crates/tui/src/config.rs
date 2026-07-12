@@ -1,5 +1,6 @@
 // ── config.rs: TUI-specific configuration ─────────────────────────────
 
+use std::str::FromStr;
 use whycode_core::config::TuiConfig;
 use crate::theme::ThemeName;
 
@@ -35,7 +36,7 @@ impl TuiAppConfig {
     pub fn from_core_config(cfg: &TuiConfig) -> Self {
         let mut c = Self::default();
         if let Some(ref theme_name) = cfg.theme {
-            c.theme = ThemeName::from_name(theme_name);
+            c.theme = ThemeName::from_str(theme_name).unwrap_or(ThemeName::DefaultDark);
         }
         if let Some(ref kb) = cfg.key_bindings {
             c.key_bindings = kb.clone();

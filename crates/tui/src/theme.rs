@@ -2,6 +2,7 @@
 // Port of OpenCode's 29 themes — each theme provides a palette of
 // semantic color roles used throughout the TUI.
 
+use std::str::FromStr;
 use ratatui::style::Color;
 
 // ── Theme Name ─────────────────────────────────────────────────────────
@@ -38,9 +39,11 @@ pub enum ThemeName {
     MaterialPalenight,
 }
 
-impl ThemeName {
-    pub fn from_name(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
+impl FromStr for ThemeName {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s.to_lowercase().as_str() {
             "default_dark" | "default-dark" | "dark" => Self::DefaultDark,
             "default_light" | "default-light" | "light" => Self::DefaultLight,
             "monokai" => Self::Monokai,
@@ -71,9 +74,11 @@ impl ThemeName {
             "oceanic_next" | "oceanic-next" | "oceanicnext" => Self::OceanicNext,
             "material_palenight" | "material-palenight" | "palenight" => Self::MaterialPalenight,
             _ => Self::DefaultDark,
-        }
+        })
     }
+}
 
+impl ThemeName {
     pub fn palette(&self) -> ThemePalette {
         match self {
             Self::DefaultDark => palette_default_dark(),
