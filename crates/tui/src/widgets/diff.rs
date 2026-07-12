@@ -114,14 +114,12 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<DiffLine> {
         if raw.is_empty() {
             continue;
         }
-        let (kind, content) = if raw.starts_with("+++") || raw.starts_with("---") {
+        let (kind, content) = if raw.starts_with("+++") || raw.starts_with("---") || raw.starts_with("@@") {
             (DiffLineKind::Header, raw.to_string())
-        } else if raw.starts_with("@@") {
-            (DiffLineKind::Header, raw.to_string())
-        } else if raw.starts_with('+') {
-            (DiffLineKind::Add, raw[1..].to_string())
-        } else if raw.starts_with('-') {
-            (DiffLineKind::Remove, raw[1..].to_string())
+        } else if let Some(rest) = raw.strip_prefix('+') {
+            (DiffLineKind::Add, rest.to_string())
+        } else if let Some(rest) = raw.strip_prefix('-') {
+            (DiffLineKind::Remove, rest.to_string())
         } else {
             (DiffLineKind::Context, raw.to_string())
         };

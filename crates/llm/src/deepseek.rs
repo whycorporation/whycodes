@@ -27,8 +27,8 @@ impl DeepSeekProvider {
             "stream": true,
         });
 
-        if request.max_tokens.is_some() {
-            body["max_tokens"] = request.max_tokens.unwrap().into();
+        if let Some(max_tokens) = request.max_tokens {
+            body["max_tokens"] = max_tokens.into();
         }
 
         if !request.tools.is_empty() {

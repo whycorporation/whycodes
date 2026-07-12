@@ -131,6 +131,7 @@ impl Agent {
     }
 
     /// Run a turn, optionally streaming `TurnEvent`s and honouring a cancel flag (Esc).
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_turn_with_events(
         &self,
         session: &mut Session,
@@ -515,6 +516,7 @@ impl Agent {
     ///
     /// The subagent runs in a fresh session with its own conversation loop.
     /// Returns the subagent's textual output.
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn_subagent(
         &self,
         goal: String,

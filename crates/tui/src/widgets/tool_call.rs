@@ -10,6 +10,7 @@ use ratatui::{
 use crate::theme::ThemePalette;
 
 /// Render a collapsible tool-call widget.
+#[allow(clippy::too_many_arguments)]
 pub fn render_tool_call(
     frame: &mut Frame,
     area: Rect,

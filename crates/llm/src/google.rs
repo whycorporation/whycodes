@@ -218,9 +218,9 @@ impl GoogleProvider {
 
         body["contents"] = Value::Array(contents);
 
-        if request.max_tokens.is_some() {
+        if let Some(max_tokens) = request.max_tokens {
             body["generationConfig"] = serde_json::json!({
-                "maxOutputTokens": request.max_tokens.unwrap(),
+                "maxOutputTokens": max_tokens,
             });
         }
 

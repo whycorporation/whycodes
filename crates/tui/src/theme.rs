@@ -39,7 +39,7 @@ pub enum ThemeName {
 }
 
 impl ThemeName {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_name(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "default_dark" | "default-dark" | "dark" => Self::DefaultDark,
             "default_light" | "default-light" | "light" => Self::DefaultLight,

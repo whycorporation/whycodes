@@ -11,7 +11,7 @@ use crate::theme::ThemePalette;
 
 /// Render a centered dialog frame with title and border.
 /// Returns the inner area for body content.
-pub fn dialog_frame<'a>(
+pub fn dialog_frame(
     frame: &mut Frame,
     title: &str,
     palette: &ThemePalette,

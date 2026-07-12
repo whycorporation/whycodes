@@ -17,31 +17,31 @@ mod tests {
 
     #[test]
     fn test_theme_from_str_dark() {
-        assert_eq!(ThemeName::from_str("dark"), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_str("default-dark"), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_str("default_dark"), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_name("dark"), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_name("default-dark"), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_name("default_dark"), ThemeName::DefaultDark);
     }
 
     #[test]
     fn test_theme_from_str_light() {
-        assert_eq!(ThemeName::from_str("light"), ThemeName::DefaultLight);
-        assert_eq!(ThemeName::from_str("default_light"), ThemeName::DefaultLight);
+        assert_eq!(ThemeName::from_name("light"), ThemeName::DefaultLight);
+        assert_eq!(ThemeName::from_name("default_light"), ThemeName::DefaultLight);
     }
 
     #[test]
     fn test_theme_from_str_named_themes() {
-        assert_eq!(ThemeName::from_str("monokai"), ThemeName::Monokai);
-        assert_eq!(ThemeName::from_str("nord"), ThemeName::Nord);
-        assert_eq!(ThemeName::from_str("dracula"), ThemeName::Dracula);
-        assert_eq!(ThemeName::from_str("gruvbox"), ThemeName::Gruvbox);
-        assert_eq!(ThemeName::from_str("catppuccin-mocha"), ThemeName::CatppuccinMocha);
-        assert_eq!(ThemeName::from_str("tokyonight"), ThemeName::TokyoNight);
+        assert_eq!(ThemeName::from_name("monokai"), ThemeName::Monokai);
+        assert_eq!(ThemeName::from_name("nord"), ThemeName::Nord);
+        assert_eq!(ThemeName::from_name("dracula"), ThemeName::Dracula);
+        assert_eq!(ThemeName::from_name("gruvbox"), ThemeName::Gruvbox);
+        assert_eq!(ThemeName::from_name("catppuccin-mocha"), ThemeName::CatppuccinMocha);
+        assert_eq!(ThemeName::from_name("tokyonight"), ThemeName::TokyoNight);
     }
 
     #[test]
     fn test_theme_from_str_unknown_defaults_to_dark() {
-        assert_eq!(ThemeName::from_str("nonexistent_theme"), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_str(""), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_name("nonexistent_theme"), ThemeName::DefaultDark);
+        assert_eq!(ThemeName::from_name(""), ThemeName::DefaultDark);
     }
 
     #[test]

@@ -10,6 +10,12 @@ pub struct WhycodeClient {
     config: Config,
 }
 
+impl Default for WhycodeClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WhycodeClient {
     /// Create a new client from default config
     pub fn new() -> Self {

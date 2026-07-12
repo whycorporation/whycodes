@@ -109,12 +109,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             name: opts.agent_name.clone(),
             description: "Default".into(),
             mode: AgentMode::Primary,
-            permission: {
-                let mut p = whycode_core::types::PermissionSet::default();
-                p.allow_file_writes = true;
-                p.allow_network = true;
-                p.allow_shell = true;
-                p
+            permission: whycode_core::types::PermissionSet {
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                ..whycode_core::types::PermissionSet::default()
             },
             model: None,
             system_prompt: None,
@@ -667,6 +666,7 @@ fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize {
     n
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_slash(
     text: &str,
     app: &mut TuiApp,

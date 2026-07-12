@@ -95,8 +95,14 @@ pub fn bindings_for_context(context: KeymapContext) -> Vec<KeyBinding> {
 // ── Keymap ─────────────────────────────────────────────────────────────
 pub struct Keymap;
 
+impl Default for Keymap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Keymap {
-    pub fn default() -> Self { Self }
+    pub fn new() -> Self { Self }
 
     pub fn resolve(&self, ctx: KeymapContext, key: &KeyEvent) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);

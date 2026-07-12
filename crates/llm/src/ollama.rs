@@ -29,27 +29,20 @@ impl OllamaProvider {
             "stream": true,
         });
 
-        if !request.system.is_empty() {
-            // Ollama uses a "system" message in the messages array
+        // Ensure options object exists
+        if !body.as_object().unwrap().contains_key("options") {
+            body["options"] = serde_json::json!({});
         }
 
         if let Some(temp) = request.temperature {
-            body["options"] = serde_json::json!({
-                "temperature": temp,
-            });
+            body["options"]["temperature"] = temp.into();
         }
 
         if let Some(max_tokens) = request.max_tokens {
-            if !body.as_object().unwrap().contains_key("options") {
-                body["options"] = serde_json::json!({});
-            }
             body["options"]["num_predict"] = max_tokens.into();
         }
 
         if let Some(top_p) = request.top_p {
-            if !body.as_object().unwrap().contains_key("options") {
-                body["options"] = serde_json::json!({});
-            }
             body["options"]["top_p"] = top_p.into();
         }
 
@@ -90,10 +83,8 @@ impl OllamaProvider {
             if let whycode_core::types::MessageContent::Blocks(blocks) = &msg.content {
                 let mut images: Vec<String> = Vec::new();
                 for block in blocks {
-                    if let ContentBlock::Image { source } = block {
-                        if let whycode_core::types::ImageSource::Base64 { data, .. } = source {
-                            images.push(data.clone());
-                        }
+                    if let ContentBlock::Image { source: whycode_core::types::ImageSource::Base64 { data, .. } } = block {
+                        images.push(data.clone());
                     }
                 }
                 if !images.is_empty() {

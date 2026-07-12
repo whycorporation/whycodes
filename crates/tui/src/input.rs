@@ -34,7 +34,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     }
 
     // Resolve and dispatch.
-    let action = crate::keymap::Keymap::default().resolve(ctx, &key);
+    let action = crate::keymap::Keymap::new().resolve(ctx, &key);
 
     match action {
         Some(Action::Quit) => {
@@ -262,7 +262,7 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
 // ── Dialog Key Handling ────────────────────────────────────────────────
 fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
-    let action = crate::keymap::Keymap::default().resolve(KeymapContext::Dialog, key);
+    let action = crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, key);
 
     let active = match app.dialogs.active() {
         Some(d) => d.clone(),
