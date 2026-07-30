@@ -754,7 +754,7 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                             "{} API key loaded for {} ({}…)",
                             "✓".green(),
                             provider.cyan(),
-                            &api_key.chars().take(8).collect::<String>()
+                            api_key.chars().take(8).collect::<String>()
                         );
                     } else {
                         println!("Add a provider:");

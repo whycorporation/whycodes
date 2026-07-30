@@ -2,8 +2,23 @@
 // Port of OpenCode's 29 themes — each theme provides a palette of
 // semantic color roles used throughout the TUI.
 
+use std::fmt;
 use std::str::FromStr;
 use ratatui::style::Color;
+
+/// Error returned when parsing an unknown theme name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeParseError {
+    pub name: String,
+}
+
+impl fmt::Display for ThemeParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown theme '{}' — falling back to DefaultDark", self.name)
+    }
+}
+
+impl std::error::Error for ThemeParseError {}
 
 // ── Theme Name ─────────────────────────────────────────────────────────
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -40,41 +55,41 @@ pub enum ThemeName {
 }
 
 impl FromStr for ThemeName {
-    type Err = ();
+    type Err = ThemeParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.to_lowercase().as_str() {
-            "default_dark" | "default-dark" | "dark" => Self::DefaultDark,
-            "default_light" | "default-light" | "light" => Self::DefaultLight,
-            "monokai" => Self::Monokai,
-            "solarized_dark" | "solarized-dark" => Self::SolarizedDark,
-            "solarized_light" | "solarized-light" => Self::SolarizedLight,
-            "nord" => Self::Nord,
-            "dracula" => Self::Dracula,
-            "gruvbox" => Self::Gruvbox,
-            "one_dark" | "one-dark" | "onedark" => Self::OneDark,
-            "catppuccin_mocha" | "catppuccin-mocha" => Self::CatppuccinMocha,
-            "catppuccin_latte" | "catppuccin-latte" => Self::CatppuccinLatte,
-            "tokyo_night" | "tokyo-night" | "tokyonight" => Self::TokyoNight,
-            "tokyo_night_storm" | "tokyo-night-storm" | "tokyonightstorm" => Self::TokyoNightStorm,
-            "tokyo_night_light" | "tokyo-night-light" | "tokyonightlight" => Self::TokyoNightLight,
-            "kanagawa" => Self::Kanagawa,
-            "everforest" => Self::Everforest,
-            "rose_pine" | "rose-pine" | "rosepine" => Self::RosePine,
-            "rose_pine_moon" | "rose-pine-moon" | "rosepinemoon" => Self::RosePineMoon,
-            "rose_pine_dawn" | "rose-pine-dawn" | "rosepinedawn" => Self::RosePineDawn,
-            "ayu_dark" | "ayu-dark" => Self::AyuDark,
-            "ayu_mirage" | "ayu-mirage" => Self::AyuMirage,
-            "ayu_light" | "ayu-light" => Self::AyuLight,
-            "github_dark" | "github-dark" => Self::GithubDark,
-            "github_light" | "github-light" => Self::GithubLight,
-            "vscode_dark" | "vscode-dark" => Self::VscodeDark,
-            "vscode_light" | "vscode-light" => Self::VscodeLight,
-            "zenburn" => Self::Zenburn,
-            "oceanic_next" | "oceanic-next" | "oceanicnext" => Self::OceanicNext,
-            "material_palenight" | "material-palenight" | "palenight" => Self::MaterialPalenight,
-            _ => Self::DefaultDark,
-        })
+        match s.to_lowercase().as_str() {
+            "default_dark" | "default-dark" | "dark" => Ok(Self::DefaultDark),
+            "default_light" | "default-light" | "light" => Ok(Self::DefaultLight),
+            "monokai" => Ok(Self::Monokai),
+            "solarized_dark" | "solarized-dark" => Ok(Self::SolarizedDark),
+            "solarized_light" | "solarized-light" => Ok(Self::SolarizedLight),
+            "nord" => Ok(Self::Nord),
+            "dracula" => Ok(Self::Dracula),
+            "gruvbox" => Ok(Self::Gruvbox),
+            "one_dark" | "one-dark" | "onedark" => Ok(Self::OneDark),
+            "catppuccin_mocha" | "catppuccin-mocha" => Ok(Self::CatppuccinMocha),
+            "catppuccin_latte" | "catppuccin-latte" => Ok(Self::CatppuccinLatte),
+            "tokyo_night" | "tokyo-night" | "tokyonight" => Ok(Self::TokyoNight),
+            "tokyo_night_storm" | "tokyo-night-storm" | "tokyonightstorm" => Ok(Self::TokyoNightStorm),
+            "tokyo_night_light" | "tokyo-night-light" | "tokyonightlight" => Ok(Self::TokyoNightLight),
+            "kanagawa" => Ok(Self::Kanagawa),
+            "everforest" => Ok(Self::Everforest),
+            "rose_pine" | "rose-pine" | "rosepine" => Ok(Self::RosePine),
+            "rose_pine_moon" | "rose-pine-moon" | "rosepinemoon" => Ok(Self::RosePineMoon),
+            "rose_pine_dawn" | "rose-pine-dawn" | "rosepinedawn" => Ok(Self::RosePineDawn),
+            "ayu_dark" | "ayu-dark" => Ok(Self::AyuDark),
+            "ayu_mirage" | "ayu-mirage" => Ok(Self::AyuMirage),
+            "ayu_light" | "ayu-light" => Ok(Self::AyuLight),
+            "github_dark" | "github-dark" => Ok(Self::GithubDark),
+            "github_light" | "github-light" => Ok(Self::GithubLight),
+            "vscode_dark" | "vscode-dark" => Ok(Self::VscodeDark),
+            "vscode_light" | "vscode-light" => Ok(Self::VscodeLight),
+            "zenburn" => Ok(Self::Zenburn),
+            "oceanic_next" | "oceanic-next" | "oceanicnext" => Ok(Self::OceanicNext),
+            "material_palenight" | "material-palenight" | "palenight" => Ok(Self::MaterialPalenight),
+            _ => Err(ThemeParseError { name: s.to_string() }),
+        }
     }
 }
 
@@ -147,19 +162,25 @@ pub struct ThemePalette {
 }
 
 impl ThemePalette {
-    /// Deterministic color for agent by cycle index — guarantees distinct
-    /// colors regardless of agent naming (unlike name-based matching).
+    /// Deterministic color for agent by cycle index.
+    ///
+    /// Uses hardcoded colors instead of palette semantic fields because
+    /// many themes define `accent == thinking` (e.g. Catppuccin, RosePine),
+    /// which would make agent 0 and agent 1 look identical.
     pub fn agent_color_by_index(&self, idx: usize) -> Color {
-        const AGENT_COLORS: &[fn(&ThemePalette) -> Color] = &[
-            |p| p.accent,
-            |p| p.thinking,
-            |p| p.info,
-            |p| p.tool_msg,
-            |p| p.assistant_msg,
-            |p| p.success,
-            |p| p.warning,
+        // 4-bit basic ANSI colors — guaranteed visually distinct on every
+        // terminal (Windows conhost, cmd, PowerShell, iTerm2, etc.).
+        // These map to the standard 16-color palette that all terminals support.
+        const AGENT_COLORS: &[Color] = &[
+            Color::Red,     // 0: red
+            Color::Green,   // 1: green
+            Color::Yellow,  // 2: yellow
+            Color::Blue,    // 3: blue
+            Color::Magenta, // 4: magenta/purple
+            Color::Cyan,    // 5: cyan
+            Color::White,   // 6: white
         ];
-        AGENT_COLORS[idx % AGENT_COLORS.len()](self)
+        AGENT_COLORS[idx % AGENT_COLORS.len()]
     }
 }
 

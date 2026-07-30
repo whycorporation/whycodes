@@ -40,9 +40,12 @@ mod tests {
     }
 
     #[test]
-    fn test_theme_from_str_unknown_defaults_to_dark() {
-        assert_eq!(ThemeName::from_str("nonexistent_theme").unwrap(), ThemeName::DefaultDark);
-        assert_eq!(ThemeName::from_str("").unwrap(), ThemeName::DefaultDark);
+    fn test_theme_from_str_unknown_returns_err() {
+        assert!(ThemeName::from_str("nonexistent_theme").is_err());
+        assert!(ThemeName::from_str("").is_err());
+        // Error should contain the theme name
+        let err = ThemeName::from_str("nonexistent_theme").unwrap_err();
+        assert!(err.name.contains("nonexistent_theme"));
     }
 
     #[test]

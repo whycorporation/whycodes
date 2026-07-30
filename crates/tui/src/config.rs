@@ -36,7 +36,10 @@ impl TuiAppConfig {
     pub fn from_core_config(cfg: &TuiConfig) -> Self {
         let mut c = Self::default();
         if let Some(ref theme_name) = cfg.theme {
-            c.theme = ThemeName::from_str(theme_name).unwrap_or(ThemeName::DefaultDark);
+            c.theme = ThemeName::from_str(theme_name).unwrap_or_else(|e| {
+                tracing::warn!("{}", e);
+                ThemeName::DefaultDark
+            });
         }
         if let Some(ref kb) = cfg.key_bindings {
             c.key_bindings = kb.clone();

@@ -57,13 +57,20 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     }
 
     lines.push(Line::from(""));
-    let meta = format!(
-        "{}  ·  {}/{}",
-        app.agent_name,
+    let agent_color = palette.agent_color_by_index(app.agent_cycle_idx);
+    let meta_part = format!(
+        "  ·  {}/{}",
         empty_dash(&app.provider_name),
         empty_dash(&app.model_name)
     );
-    lines.push(center_line(&meta, area.width, palette.dim, false));
+    lines.push(center_line_colored(
+        &app.agent_name,
+        &meta_part,
+        area.width,
+        agent_color,
+        palette.dim,
+        false,
+    ));
     lines.push(center_line(&app.project_label, area.width, palette.dim, false));
     lines.push(Line::from(""));
     // "Get started /connect" like footer welcome
@@ -126,8 +133,8 @@ fn render_message(
 
     match msg.role {
         ChatRole::User => {
-            // UserMessage: left border ┃ + panel background
-            let border_c = palette.user_msg; // agent color ≈ secondary blue
+            // UserMessage: left border ┃ + panel background — uses agent color
+            let border_c = palette.agent_color_by_index(app.agent_cycle_idx);
             let body_lines: Vec<&str> = msg.content.lines().collect();
             let empty = body_lines.is_empty();
 
@@ -219,16 +226,17 @@ fn render_message(
                 }
             }
             // Epilogue: ▣ agent · model  (AssistantMessage final line)
+            let agent_color = palette.agent_color_by_index(app.agent_cycle_idx);
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::raw("   "),
                 Span::styled(
                     "▣ ".to_string(),
-                    Style::default().fg(palette.accent),
+                    Style::default().fg(agent_color),
                 ),
                 Span::styled(
                     format!("{} ", app.agent_name),
-                    Style::default().fg(palette.fg),
+                    Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!(
@@ -383,6 +391,30 @@ fn center_line(text: &str, width: u16, color: ratatui::style::Color, bold: bool)
     Line::from(vec![
         Span::raw(" ".repeat(pad as usize)),
         Span::styled(text.to_string(), style),
+    ])
+}
+
+/// Centered line with two color segments: first part in `color1`, rest in `color2`.
+fn center_line_colored(
+    text1: &str,
+    text2: &str,
+    width: u16,
+    color1: ratatui::style::Color,
+    color2: ratatui::style::Color,
+    bold: bool,
+) -> Line<'static> {
+    let total_w = (text1.chars().count() + text2.chars().count()) as u16;
+    let pad = width.saturating_sub(total_w) / 2;
+    let mut style1 = Style::default().fg(color1);
+    let mut style2 = Style::default().fg(color2);
+    if bold {
+        style1 = style1.add_modifier(Modifier::BOLD);
+        style2 = style2.add_modifier(Modifier::BOLD);
+    }
+    Line::from(vec![
+        Span::raw(" ".repeat(pad as usize)),
+        Span::styled(text1.to_string(), style1),
+        Span::styled(text2.to_string(), style2),
     ])
 }
 

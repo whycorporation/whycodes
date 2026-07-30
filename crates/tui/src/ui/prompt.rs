@@ -106,7 +106,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         Span::raw("  "),
         Span::styled(
             format!("{} ", app.agent_name),
-            Style::default().fg(palette.fg),
+            Style::default().fg(edge).add_modifier(Modifier::BOLD),
         ),
         Span::styled("· ".to_string(), Style::default().fg(palette.dim)),
         Span::styled(

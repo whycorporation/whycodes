@@ -29,6 +29,20 @@ use crate::input;
 use crate::keymap::KeymapContext;
 use crate::ui::render;
 
+/// Context struct for slash command handling, reducing parameter count.
+pub struct SlashContext<'a> {
+    pub app: &'a mut TuiApp,
+    pub session: &'a mut Session,
+    pub history: &'a mut SessionHistory,
+    pub agent: &'a mut Agent,
+    pub config: &'a Config,
+    pub project_dir: &'a std::path::Path,
+    pub provider: &'a mut String,
+    pub model: &'a mut String,
+    pub api_key: &'a mut String,
+    pub perm_prompter: Arc<ChannelPermissionPrompter>,
+}
+
 /// Options for launching the interactive TUI.
 pub struct TuiRunOptions {
     pub project_dir: PathBuf,
@@ -450,16 +464,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             app.input_cursor = 0;
                             handle_slash(
                                 &text,
-                                &mut app,
-                                &mut session,
-                                &mut history,
-                                &mut agent,
-                                &config,
-                                &project_dir,
-                                &mut provider,
-                                &mut model,
-                                &mut api_key,
-                                Arc::clone(&perm_prompter),
+                                &mut SlashContext {
+                                    app: &mut app,
+                                    session: &mut session,
+                                    history: &mut history,
+                                    agent: &mut agent,
+                                    config: &config,
+                                    project_dir: &project_dir,
+                                    provider: &mut provider,
+                                    model: &mut model,
+                                    api_key: &mut api_key,
+                                    perm_prompter: Arc::clone(&perm_prompter),
+                                },
                             )
                             .await;
                             continue;
@@ -571,6 +587,9 @@ async fn cycle_agent(
     }
     app.agent_cycle_idx = (app.agent_cycle_idx + 1) % app.primary_agents.len();
     let name = app.primary_agents[app.agent_cycle_idx].clone();
+    // Always update agent_name so colors/header reflect the switch
+    app.agent_name = name.clone();
+    app.status_message = format!("Agent → {name}");
     if let Some(info) = config.get_agent(&name).cloned() {
         let base = info
             .system_prompt
@@ -583,8 +602,6 @@ async fn cycle_agent(
                 Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
             );
         session.set_system_prompt(&prompt);
-        app.agent_name = name.clone();
-        app.status_message = format!("Agent → {name}");
     }
 }
 
@@ -666,91 +683,78 @@ fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize {
     n
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn handle_slash(
-    text: &str,
-    app: &mut TuiApp,
-    session: &mut Session,
-    history: &mut SessionHistory,
-    agent: &mut Agent,
-    config: &Config,
-    project_dir: &std::path::Path,
-    provider: &mut String,
-    model: &mut String,
-    api_key: &mut String,
-    perm_prompter: Arc<ChannelPermissionPrompter>,
-) {
+async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
     let (cmd, rest) = match text.find(char::is_whitespace) {
         Some(i) => (&text[..i], text[i..].trim()),
         None => (text, ""),
     };
 
+    // Custom commands from config
     if let Some(name) = cmd.strip_prefix('/')
-        && let Some(custom) = config.commands.get(name) {
+        && let Some(custom) = ctx.config.commands.get(name) {
             let rendered = custom.render(rest);
-            app.add_message(ChatRole::User, &rendered);
-            app.pending_prompt = Some(rendered);
+            ctx.app.add_message(ChatRole::User, &rendered);
+            ctx.app.pending_prompt = Some(rendered);
             return;
         }
 
     match cmd {
         "/exit" | "/quit" | "/q" => {
-            app.running = false;
+            ctx.app.running = false;
         }
         "/help" | "/h" => {
-            app.mode = AppMode::Help;
-            app.key_context = KeymapContext::Help;
+            ctx.app.mode = AppMode::Help;
+            ctx.app.key_context = KeymapContext::Help;
         }
         "/new" | "/clear" => {
-            *history = SessionHistory::new();
-            *session = Session::new(
-                project_dir.to_path_buf(),
-                Agent::with_agents_md(&agent.system_prompt(), project_dir),
+            *ctx.history = SessionHistory::new();
+            *ctx.session = Session::new(
+                ctx.project_dir.to_path_buf(),
+                Agent::with_agents_md(&ctx.agent.system_prompt(), ctx.project_dir),
             );
-            app.messages.clear();
-            app.status_message = "New session".into();
+            ctx.app.messages.clear();
+            ctx.app.status_message = "New session".into();
         }
         "/undo" => {
-            if let Some(msgs) = history.undo(&session.messages, project_dir) {
-                session.set_messages(msgs);
-                app.messages.clear();
-                app.status_message = "Undid last turn".into();
-            } else if session.undo_last_turn() > 0 {
-                app.status_message = "Undid last turn".into();
+            if let Some(msgs) = ctx.history.undo(&ctx.session.messages, ctx.project_dir) {
+                ctx.session.set_messages(msgs);
+                ctx.app.messages.clear();
+                ctx.app.status_message = "Undid last turn".into();
+            } else if ctx.session.undo_last_turn() > 0 {
+                ctx.app.status_message = "Undid last turn".into();
             } else {
-                app.status_message = "Nothing to undo".into();
+                ctx.app.status_message = "Nothing to undo".into();
             }
         }
         "/redo" => {
-            if let Some(msgs) = history.redo(&session.messages, project_dir) {
-                session.set_messages(msgs);
-                app.status_message = "Redid turn".into();
+            if let Some(msgs) = ctx.history.redo(&ctx.session.messages, ctx.project_dir) {
+                ctx.session.set_messages(msgs);
+                ctx.app.status_message = "Redid turn".into();
             } else {
-                app.status_message = "Nothing to redo".into();
+                ctx.app.status_message = "Nothing to redo".into();
             }
         }
         "/compact" | "/summarize" => {
-            let before = session.messages.len();
-            session.compact(config.session.compaction_threshold);
-            app.status_message = format!("Compacted {before} → {}", session.messages.len());
+            let before = ctx.session.messages.len();
+            ctx.session.compact(ctx.config.session.compaction_threshold);
+            ctx.app.status_message = format!("Compacted {before} → {}", ctx.session.messages.len());
         }
-        "/share" | "/export" => match session.export_share() {
+        "/share" | "/export" => match ctx.session.export_share() {
             Ok(p) => {
                 let md = p.replace(".json", ".md");
-                let id = session.id.clone();
+                let id = ctx.session.id.clone();
                 let port = std::env::var("WHYCODE_SHARE_PORT")
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(3030u16);
                 let url = format!("http://127.0.0.1:{port}/s/{id}");
-                // Best-effort: probe if serve is up
                 let live = share_server_up(port);
-                app.status_message = if live {
+                ctx.app.status_message = if live {
                     format!("Share: {url}")
                 } else {
                     format!("Exported — run `whycode serve` then open {url}")
                 };
-                app.add_message(
+                ctx.app.add_message(
                     ChatRole::System,
                     format!(
                         "Session shared locally:\n\
@@ -767,12 +771,12 @@ async fn handle_slash(
                     ),
                 );
             }
-            Err(e) => app.status_message = format!("Export failed: {e}"),
+            Err(e) => ctx.app.status_message = format!("Export failed: {e}"),
         },
         "/unshare" => {
-            let id = session.id.clone();
-            let removed = unshare_session(project_dir, &id);
-            app.status_message = if removed > 0 {
+            let id = ctx.session.id.clone();
+            let removed = unshare_session(ctx.project_dir, &id);
+            ctx.app.status_message = if removed > 0 {
                 format!("Unshared ({removed} files)")
             } else {
                 "No share files found".into()
@@ -781,90 +785,91 @@ async fn handle_slash(
         "/connect" => {
             // Reload key from env / config
             if let Ok(cfg) = Config::load()
-                && let Some(pc) = cfg.get_provider(provider)
+                && let Some(pc) = cfg.get_provider(ctx.provider)
                     && let Some(k) = &pc.api_key
                         && !k.is_empty() {
-                            *api_key = k.clone();
+                            *ctx.api_key = k.clone();
                         }
-            let env_name = format!("{}_API_KEY", provider.to_uppercase());
-            if api_key.is_empty()
+            let env_name = format!("{}_API_KEY", ctx.provider.to_uppercase());
+            if ctx.api_key.is_empty()
                 && let Ok(k) = std::env::var(&env_name)
                     && !k.is_empty() {
-                        *api_key = k;
+                        *ctx.api_key = k;
                     }
-            if api_key.is_empty() {
-                app.status_message = format!("no key — set {env_name} or provider add");
-                app.add_message(
+            if ctx.api_key.is_empty() {
+                ctx.app.status_message = format!("no key — set {env_name} or provider add");
+                ctx.app.add_message(
                     ChatRole::System,
                     format!(
-                        "No API key for `{provider}`.\n\
+                        "No API key for `{}`.\n\
                          1. $env:{env_name} = \"…\"   (PowerShell)\n\
-                         2. whycode provider add {provider} --api-key <key>\n\
-                         3. /connect again"
+                         2. whycode provider add {} --api-key <key>\n\
+                         3. /connect again",
+                        ctx.provider, ctx.provider
                     ),
                 );
             } else {
-                app.status_message = format!("API key loaded for {provider}");
-                app.add_message(
+                ctx.app.status_message = format!("API key loaded for {}", ctx.provider);
+                ctx.app.add_message(
                     ChatRole::System,
-                    format!("✓ API key ready for `{provider}` / `{model}`."),
+                    format!("✓ API key ready for `{}` / `{}`.", ctx.provider, ctx.model),
                 );
             }
         }
         "/agent" => {
             if rest.is_empty() {
-                app.status_message = format!(
+                ctx.app.status_message = format!(
                     "Agent: {} — Tab cycles {:?}",
-                    agent.info.name, app.primary_agents
+                    ctx.agent.info.name, ctx.app.primary_agents
                 );
-            } else if let Some(info) = config.get_agent(rest).cloned() {
+            } else if let Some(info) = ctx.config.get_agent(rest).cloned() {
                 let base = info
                     .system_prompt
                     .clone()
                     .unwrap_or_else(|| Agent::system_prompt_for(rest));
-                let prompt = Agent::with_agents_md(&base, project_dir);
-                *agent = Agent::new(info)
-                    .with_config(config)
+                let prompt = Agent::with_agents_md(&base, ctx.project_dir);
+                *ctx.agent = Agent::new(info)
+                    .with_config(ctx.config)
                     .with_permission_prompter(
-                        Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+                        Arc::clone(&ctx.perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
                     );
-                session.set_system_prompt(&prompt);
-                if let Some(idx) = app.primary_agents.iter().position(|n| n == rest) {
-                    app.agent_cycle_idx = idx;
+                ctx.session.set_system_prompt(&prompt);
+                if let Some(idx) = ctx.app.primary_agents.iter().position(|n| n == rest) {
+                    ctx.app.agent_cycle_idx = idx;
                 }
-                app.agent_name = rest.to_string();
-                app.status_message = format!("Switched to agent '{rest}'");
+                ctx.app.agent_name = rest.to_string();
+                ctx.app.status_message = format!("Switched to agent '{rest}'");
             } else {
-                app.status_message = format!("Unknown agent '{rest}'");
+                ctx.app.status_message = format!("Unknown agent '{rest}'");
             }
         }
         "/models" => {
             if rest.is_empty() {
-                app.status_message = format!("Model: {provider}/{model}");
+                ctx.app.status_message = format!("Model: {}/{}", ctx.provider, ctx.model);
             } else if let Some((p, m)) = rest.split_once('/') {
-                *provider = p.to_string();
-                *model = m.to_string();
-                app.provider_name = p.to_string();
-                app.model_name = m.to_string();
-                if let Some(k) = config
+                *ctx.provider = p.to_string();
+                *ctx.model = m.to_string();
+                ctx.app.provider_name = p.to_string();
+                ctx.app.model_name = m.to_string();
+                if let Some(k) = ctx.config
                     .get_provider(p)
                     .and_then(|pc| pc.api_key.clone())
                     .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
                 {
-                    *api_key = k;
+                    *ctx.api_key = k;
                 }
-                app.status_message = format!("Model → {provider}/{model}");
+                ctx.app.status_message = format!("Model → {}/{}", ctx.provider, ctx.model);
             } else {
-                *model = rest.to_string();
-                app.model_name = rest.to_string();
-                app.status_message = format!("Model → {model}");
+                *ctx.model = rest.to_string();
+                ctx.app.model_name = rest.to_string();
+                ctx.app.status_message = format!("Model → {}", ctx.model);
             }
         }
         "/tools" => {
             let tools =
-                whycode_tools::ToolExecutor::new().get_definitions(&agent.info.permission);
-            app.status_message = format!("{} tools", tools.len());
-            app.add_message(
+                whycode_tools::ToolExecutor::new().get_definitions(&ctx.agent.info.permission);
+            ctx.app.status_message = format!("{} tools", tools.len());
+            ctx.app.add_message(
                 ChatRole::System,
                 tools
                     .iter()
@@ -874,24 +879,24 @@ async fn handle_slash(
             );
         }
         "/info" | "/details" => {
-            app.status_message = format!(
+            ctx.app.status_message = format!(
                 "msgs={} tokens≈{} agent={}",
-                session.messages.len(),
-                session.token_count(),
-                agent.info.name
+                ctx.session.messages.len(),
+                ctx.session.token_count(),
+                ctx.agent.info.name
             );
         }
         "/init" => {
-            app.add_message(
+            ctx.app.add_message(
                 ChatRole::User,
                 "Create or update AGENTS.md for this project with build/test conventions and architecture notes. Write the file.",
             );
-            app.pending_prompt = Some(
+            ctx.app.pending_prompt = Some(
                 "Analyze this project and write a complete AGENTS.md at the project root with build/test commands, conventions, and architecture. Use the write tool.".into(),
             );
         }
         other => {
-            app.status_message = format!("Unknown: {other} — /help");
+            ctx.app.status_message = format!("Unknown: {other} — /help");
         }
     }
 }
