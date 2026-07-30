@@ -41,6 +41,24 @@ impl Plugin {
         self.config.parameters.as_ref()
     }
 
+    /// Build the platform's shell invocation for `command`.
+    fn shell_command(command: &str) -> tokio::process::Command {
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("cmd");
+            c.arg("/C");
+            c
+        };
+        #[cfg(not(windows))]
+        let mut cmd = {
+            let mut c = tokio::process::Command::new("sh");
+            c.arg("-c");
+            c
+        };
+        cmd.arg(command);
+        cmd
+    }
+
     /// Execute the plugin command.
     ///
     /// `args` are passed as environment variables to the child process (keys
@@ -51,8 +69,7 @@ impl Plugin {
         args: &HashMap<String, String>,
         _ctx: &PluginContext,
     ) -> ToolResult {
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c").arg(&self.config.command);
+        let mut cmd = Self::shell_command(&self.config.command);
 
         // Inject args as environment variables
         for (k, v) in args {
@@ -108,9 +125,16 @@ mod tests {
 
     #[tokio::test]
     async fn plugin_execute_echo() {
+        // Plugin commands are written in the host shell's syntax, so the
+        // variable reference differs between cmd.exe and sh.
+        let command = if cfg!(windows) {
+            "echo hello %PLUGIN_ARG_NAME%"
+        } else {
+            "echo hello $PLUGIN_ARG_NAME"
+        };
         let config = PluginConfig {
             name: "echo".into(),
-            command: "echo hello $PLUGIN_ARG_NAME".into(),
+            command: command.into(),
             description: "test echo".into(),
             parameters: None,
         };
