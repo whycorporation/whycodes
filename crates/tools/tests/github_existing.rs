@@ -38,7 +38,9 @@ async fn test_github_issue_list() {
     };
 
     let executor = ToolExecutor::new();
-    let tool = executor.get("github_issue").expect("github_issue tool not found");
+    let tool = executor
+        .get("github_issue")
+        .expect("github_issue tool not found");
     let ctx = neutral_ctx();
 
     let args = serde_json::json!({
@@ -51,7 +53,11 @@ async fn test_github_issue_list() {
     });
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "github_issue list should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "github_issue list should succeed: {}",
+        result.content
+    );
 
     // The response should be valid JSON containing an array
     let trimmed = result.content.trim();
@@ -65,7 +71,9 @@ async fn test_github_issue_list() {
 #[tokio::test]
 async fn test_github_issue_list_without_token() {
     let executor = ToolExecutor::new();
-    let tool = executor.get("github_issue").expect("github_issue tool not found");
+    let tool = executor
+        .get("github_issue")
+        .expect("github_issue tool not found");
     let ctx = neutral_ctx();
 
     let args = serde_json::json!({
@@ -130,7 +138,11 @@ async fn test_github_pr_list() {
     });
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "github_pr list should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "github_pr list should succeed: {}",
+        result.content
+    );
 
     // The response embeds "Status: 200" at the top and then JSON array
     assert!(

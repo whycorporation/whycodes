@@ -34,7 +34,7 @@ fn default_perms() -> PermissionSet {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     }
 }
 
@@ -60,9 +60,18 @@ async fn test_read_tool() {
     let result = tool.execute(args, &ctx).await;
 
     assert!(!result.is_error, "read should succeed: {}", result.content);
-    assert!(result.content.contains("line one"), "should contain first line");
-    assert!(result.content.contains("line two"), "should contain second line");
-    assert!(result.content.contains("line three"), "should contain third line");
+    assert!(
+        result.content.contains("line one"),
+        "should contain first line"
+    );
+    assert!(
+        result.content.contains("line two"),
+        "should contain second line"
+    );
+    assert!(
+        result.content.contains("line three"),
+        "should contain third line"
+    );
     assert!(
         result.content.contains("Total lines: 3"),
         "should report total lines: {}",
@@ -143,7 +152,11 @@ async fn test_write_tool_creates_parent_dirs() {
     let args = serde_json::json!({"path": "sub/deep/file.txt", "content": "nested\n"});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "nested write should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "nested write should succeed: {}",
+        result.content
+    );
 
     let written = std::fs::read_to_string(dir.path().join("sub/deep/file.txt")).unwrap();
     assert_eq!(written, "nested\n");
@@ -203,7 +216,11 @@ async fn test_edit_tool_replace_all() {
     });
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "replace_all should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "replace_all should succeed: {}",
+        result.content
+    );
     assert!(
         result.content.contains("Replaced 3 occurrences"),
         "should report 3 replacements: {}",
@@ -329,7 +346,11 @@ async fn test_grep_tool_with_include_filter() {
     let args = serde_json::json!({"pattern": "fn", "include": "*.rs"});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "grep with include should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "grep with include should succeed: {}",
+        result.content
+    );
     // Should ideally only match code.rs; but regardless, it works
     assert!(result.content.contains("fn"), "should contain matches");
 }
@@ -469,15 +490,28 @@ async fn test_tool_registry_all_builtins() {
     let executor = ToolExecutor::new();
 
     let expected_tools = vec![
-        "read", "write", "edit", "grep", "glob", "shell",
-        "webfetch", "websearch",
-        "github_issue", "github_pr",
+        "read",
+        "write",
+        "edit",
+        "grep",
+        "glob",
+        "shell",
+        "webfetch",
+        "websearch",
+        "github_issue",
+        "github_pr",
         "task",
-        "git_diff", "git_log", "git_status", "git_blame", "git_commit",
+        "git_diff",
+        "git_log",
+        "git_status",
+        "git_blame",
+        "git_commit",
         "apply_patch",
         // "todowrite" is the actual name; "todo" is registered as alias
-        "todowrite", "todo",
-        "question", "plan",
+        "todowrite",
+        "todo",
+        "question",
+        "plan",
         "code_mode",
         "external_directory",
         "truncate",
@@ -531,16 +565,13 @@ async fn test_permission_filtering_denied_tools() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
 
     let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-    assert!(
-        names.contains(&"read"),
-        "read should still be present"
-    );
+    assert!(names.contains(&"read"), "read should still be present");
     assert!(
         !names.contains(&"shell"),
         "shell should be excluded when denied"
@@ -557,13 +588,18 @@ async fn test_permission_filtering_allow_list() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
 
     let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-    assert_eq!(names.len(), 2, "only 2 tools should be allowed, got: {:?}", names);
+    assert_eq!(
+        names.len(),
+        2,
+        "only 2 tools should be allowed, got: {:?}",
+        names
+    );
     assert!(names.contains(&"read"));
     assert!(names.contains(&"write"));
 }
@@ -574,11 +610,11 @@ async fn test_permission_filtering_no_file_writes() {
     let perms = PermissionSet {
         allowed_tools: None,
         denied_tools: None,
-        allow_file_writes: false,   // <-- write-type tools denied
+        allow_file_writes: false, // <-- write-type tools denied
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -592,10 +628,7 @@ async fn test_permission_filtering_no_file_writes() {
         !names.contains(&"edit"),
         "edit should be denied when file writes off"
     );
-    assert!(
-        names.contains(&"read"),
-        "read should still be allowed"
-    );
+    assert!(names.contains(&"read"), "read should still be allowed");
 }
 
 #[tokio::test]
@@ -606,9 +639,9 @@ async fn test_permission_filtering_no_shell() {
         denied_tools: None,
         allow_file_writes: true,
         allow_network: true,
-        allow_shell: false,  // <-- shell denied
+        allow_shell: false, // <-- shell denied
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -618,10 +651,7 @@ async fn test_permission_filtering_no_shell() {
         !names.contains(&"shell"),
         "shell should be denied when allow_shell is false"
     );
-    assert!(
-        names.contains(&"read"),
-        "read should still be allowed"
-    );
+    assert!(names.contains(&"read"), "read should still be allowed");
 }
 
 #[tokio::test]
@@ -634,7 +664,7 @@ async fn test_permission_filtering_deny_takes_priority_over_allow() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     };
 
     let defs = executor.get_definitions(&perms);
@@ -680,7 +710,7 @@ async fn test_executor_execute_denied_tool() {
         allow_network: true,
         allow_shell: true,
         allowed_paths: None,
-                rules: Default::default(),
+        rules: Default::default(),
     };
     let executor = ToolExecutor::new();
 

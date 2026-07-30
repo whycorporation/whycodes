@@ -116,10 +116,7 @@ impl Tool for ShellTool {
             },
             Err(_) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!(
-                    "Command timed out after {} seconds",
-                    timeout_secs
-                ),
+                content: format!("Command timed out after {} seconds", timeout_secs),
                 is_error: true,
             },
         }

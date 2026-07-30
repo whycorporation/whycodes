@@ -1,6 +1,6 @@
-use rusqlite::Connection;
 use crate::migrations::run_migrations;
-use crate::models::{SessionRow, MessageRow};
+use crate::models::{MessageRow, SessionRow};
+use rusqlite::Connection;
 
 /// Core database wrapper
 pub struct Database {
@@ -33,7 +33,7 @@ impl Database {
 
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<SessionRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, created_at, updated_at, project_path FROM sessions WHERE id = ?1"
+            "SELECT id, title, created_at, updated_at, project_path FROM sessions WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![id], |row| {
             Ok(SessionRow {
@@ -77,11 +77,20 @@ impl Database {
     }
 
     pub fn delete_session(&self, id: &str) -> anyhow::Result<()> {
-        self.conn.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
+        self.conn
+            .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
     }
 
-    pub fn insert_message(&self, msg_id: &str, session_id: &str, role: &str, content: &str, tool_call_id: Option<&str>, name: Option<&str>) -> anyhow::Result<()> {
+    pub fn insert_message(
+        &self,
+        msg_id: &str,
+        session_id: &str,
+        role: &str,
+        content: &str,
+        tool_call_id: Option<&str>,
+        name: Option<&str>,
+    ) -> anyhow::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -122,7 +131,9 @@ impl Database {
     }
 
     pub fn get_state(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let mut stmt = self.conn.prepare("SELECT value FROM state WHERE key = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM state WHERE key = ?1")?;
         let mut rows = stmt.query_map(rusqlite::params![key], |row| row.get::<_, String>(0))?;
         Ok(rows.next().transpose()?)
     }
@@ -136,7 +147,8 @@ impl Database {
     }
 
     pub fn delete_state(&self, key: &str) -> anyhow::Result<()> {
-        self.conn.execute("DELETE FROM state WHERE key = ?1", rusqlite::params![key])?;
+        self.conn
+            .execute("DELETE FROM state WHERE key = ?1", rusqlite::params![key])?;
         Ok(())
     }
 }
@@ -185,8 +197,10 @@ mod tests {
     fn test_insert_and_get_messages() {
         let db = test_db();
         db.create_session("s1", "Test", "/tmp").unwrap();
-        db.insert_message("m1", "s1", "user", "hello", None, None).unwrap();
-        db.insert_message("m2", "s1", "assistant", "hi", None, None).unwrap();
+        db.insert_message("m1", "s1", "user", "hello", None, None)
+            .unwrap();
+        db.insert_message("m2", "s1", "assistant", "hi", None, None)
+            .unwrap();
         let msgs = db.get_messages("s1").unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
@@ -197,7 +211,8 @@ mod tests {
         let db = test_db();
         db.create_session("s1", "Test", "/tmp").unwrap();
         assert_eq!(db.message_count("s1").unwrap(), 0);
-        db.insert_message("m1", "s1", "user", "hi", None, None).unwrap();
+        db.insert_message("m1", "s1", "user", "hi", None, None)
+            .unwrap();
         assert_eq!(db.message_count("s1").unwrap(), 1);
     }
 

@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use whycode_core::types::{
-    ContentBlock, LlmRequest, Message, MessageContent, Role,
-    SessionInfo, ToolDefinition,
+    ContentBlock, LlmRequest, Message, MessageContent, Role, SessionInfo, ToolDefinition,
 };
 
 /// A conversation session
@@ -23,10 +22,7 @@ impl Session {
         let now = chrono::Utc::now();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
-            title: format!(
-                "New session - {}",
-                now.format("%Y-%m-%dT%H:%M:%S%.3fZ")
-            ),
+            title: format!("New session - {}", now.format("%Y-%m-%dT%H:%M:%S%.3fZ")),
             messages: Vec::new(),
             system_prompt,
             project_path,
@@ -181,16 +177,14 @@ impl Session {
     /// Persist this session and all messages to the SQLite database.
     pub fn save_to_db(&self, db: &whycode_storage::db::Database) -> anyhow::Result<()> {
         // Upsert the session row (INSERT OR REPLACE so repeated saves work).
-        db.create_session(
-            &self.id,
-            &self.title,
-            &self.project_path.to_string_lossy(),
-        )?;
+        db.create_session(&self.id, &self.title, &self.project_path.to_string_lossy())?;
 
         // Store each message as a JSON-serialized row.
         for msg in &self.messages {
             let msg_json = serde_json::to_string(msg)?;
-            let role_str = serde_json::to_string(&msg.role)?.trim_matches('"').to_string();
+            let role_str = serde_json::to_string(&msg.role)?
+                .trim_matches('"')
+                .to_string();
             let msg_id = uuid::Uuid::new_v4().to_string();
             db.insert_message(
                 &msg_id,
@@ -214,10 +208,10 @@ impl Session {
             return Ok(None);
         };
 
-        let created_at = chrono::DateTime::parse_from_rfc3339(&row.created_at)?
-            .with_timezone(&chrono::Utc);
-        let updated_at = chrono::DateTime::parse_from_rfc3339(&row.updated_at)?
-            .with_timezone(&chrono::Utc);
+        let created_at =
+            chrono::DateTime::parse_from_rfc3339(&row.created_at)?.with_timezone(&chrono::Utc);
+        let updated_at =
+            chrono::DateTime::parse_from_rfc3339(&row.updated_at)?.with_timezone(&chrono::Utc);
 
         let message_rows = db.get_messages(id)?;
         let messages: Vec<whycode_core::types::Message> = message_rows
@@ -260,7 +254,10 @@ impl Session {
         let mut out = String::new();
         out.push_str(&format!("# {}\n\n", self.title));
         out.push_str(&format!("- **Session:** `{}`\n", self.id));
-        out.push_str(&format!("- **Project:** `{}`\n", self.project_path.display()));
+        out.push_str(&format!(
+            "- **Project:** `{}`\n",
+            self.project_path.display()
+        ));
         out.push_str(&format!(
             "- **Created:** {}\n\n---\n\n",
             self.created_at.to_rfc3339()
@@ -335,10 +332,7 @@ impl Session {
     /// Undo the last user turn: remove from the last user message to the end.
     /// Returns the number of messages removed, or 0 if nothing to undo.
     pub fn undo_last_turn(&mut self) -> usize {
-        let last_user = self
-            .messages
-            .iter()
-            .rposition(|m| m.role == Role::User);
+        let last_user = self.messages.iter().rposition(|m| m.role == Role::User);
         match last_user {
             Some(idx) => {
                 let removed = self.messages.len() - idx;
@@ -381,7 +375,10 @@ mod tests {
             session.title.starts_with("New session -"),
             "title should start with 'New session -'"
         );
-        assert!(session.messages.is_empty(), "new session should have no messages");
+        assert!(
+            session.messages.is_empty(),
+            "new session should have no messages"
+        );
         assert_eq!(session.system_prompt, test_system_prompt());
         assert_eq!(session.project_path, test_project_path());
         assert_eq!(session.created_at, session.updated_at);

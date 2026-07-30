@@ -54,10 +54,12 @@ impl Tool for QuestionTool {
 
     async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
         let question = args["question"].as_str().unwrap_or("(no question)");
-        let choices: Option<Vec<String>> = args
-            .get("choices")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect());
+        let choices: Option<Vec<String>> =
+            args.get("choices").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            });
 
         // Print the question to stderr
         let mut prompt = format!("\n❓ {}\n", question);
@@ -126,17 +128,19 @@ impl Tool for QuestionTool {
             // If choices were provided, try to resolve numeric choice
             if let Some(ref choices) = choices
                 && let Ok(num) = answer.parse::<usize>()
-                    && num >= 1 && num <= choices.len() {
-                        let chosen = &choices[num - 1];
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!(
-                                "Question: {}\nAnswer (choice #{}): {}",
-                                question, num, chosen
-                            ),
-                            is_error: false,
-                        };
-                    }
+                && num >= 1
+                && num <= choices.len()
+            {
+                let chosen = &choices[num - 1];
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!(
+                        "Question: {}\nAnswer (choice #{}): {}",
+                        question, num, chosen
+                    ),
+                    is_error: false,
+                };
+            }
             format!("Question: {}\nAnswer: {}", question, answer)
         };
 

@@ -8,13 +8,13 @@
 //   main: scroll messages | prompt | (footer is outside in some hosts;
 //         we keep footer as bottom strip for path + status)
 
+use crate::app::TuiApp;
+use crate::opencode_tokens::layout as oc;
+use crate::theme::ThemePalette;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::Style;
 use ratatui::widgets::Block;
-use crate::app::TuiApp;
-use crate::opencode_tokens::layout as oc;
-use crate::theme::ThemePalette;
 
 use super::chat;
 use super::dialogs;

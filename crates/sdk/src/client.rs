@@ -20,17 +20,23 @@ impl WhycodeClient {
     /// Create a new client from default config
     pub fn new() -> Self {
         let config = Config::load().unwrap_or_default();
-        let agent_info = config.default_agent().cloned().unwrap_or_else(|| AgentInfo {
-            name: "build".to_string(),
-            description: "Default agent".to_string(),
-            mode: AgentMode::Primary,
-            permission: PermissionSet::default(),
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        });
-        Self { agent: Agent::new(agent_info), config }
+        let agent_info = config
+            .default_agent()
+            .cloned()
+            .unwrap_or_else(|| AgentInfo {
+                name: "build".to_string(),
+                description: "Default agent".to_string(),
+                mode: AgentMode::Primary,
+                permission: PermissionSet::default(),
+                model: None,
+                system_prompt: None,
+                temperature: None,
+                top_p: None,
+            });
+        Self {
+            agent: Agent::new(agent_info),
+            config,
+        }
     }
 
     /// Create a new session in a project directory
@@ -46,7 +52,9 @@ impl WhycodeClient {
 
     /// List configured models
     pub fn list_models(&self) -> Vec<String> {
-        self.config.models.values()
+        self.config
+            .models
+            .values()
             .map(|m| format!("{}/{}", m.provider_id, m.model_id))
             .collect()
     }

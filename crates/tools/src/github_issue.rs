@@ -99,8 +99,9 @@ impl Tool for GithubIssueTool {
             None => {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: "GitHub token not found. Set GITHUB_TOKEN env var or pass 'token' arg."
-                        .to_string(),
+                    content:
+                        "GitHub token not found. Set GITHUB_TOKEN env var or pass 'token' arg."
+                            .to_string(),
                     is_error: true,
                 };
             }
@@ -129,7 +130,9 @@ impl Tool for GithubIssueTool {
             other => {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Unknown action: '{other}'. Valid: create, list, view, close, reopen, comment"),
+                    content: format!(
+                        "Unknown action: '{other}'. Valid: create, list, view, close, reopen, comment"
+                    ),
                     is_error: true,
                 };
             }
@@ -199,9 +202,10 @@ async fn issue_create(
 
     let mut body = json!({ "title": title });
     if let Some(b) = args["body"].as_str()
-        && !b.is_empty() {
-            body["body"] = json!(b);
-        }
+        && !b.is_empty()
+    {
+        body["body"] = json!(b);
+    }
     if let Some(labels) = args["labels"].as_array() {
         body["labels"] = json!(labels);
     }
@@ -219,9 +223,7 @@ async fn issue_list(
 ) -> Result<String, String> {
     let state = args["state"].as_str().unwrap_or("open");
     let per_page = args["per_page"].as_u64().unwrap_or(30).min(100);
-    let path = format!(
-        "repos/{owner}/{repo}/issues?state={state}&per_page={per_page}&filter=all"
-    );
+    let path = format!("repos/{owner}/{repo}/issues?state={state}&per_page={per_page}&filter=all");
     request(client, headers, reqwest::Method::GET, &path, None).await
 }
 
@@ -232,7 +234,9 @@ async fn issue_view(
     repo: &str,
     args: &serde_json::Value,
 ) -> Result<String, String> {
-    let number = args["issue_number"].as_u64().ok_or("issue_number is required and must be an integer for view action.")?;
+    let number = args["issue_number"]
+        .as_u64()
+        .ok_or("issue_number is required and must be an integer for view action.")?;
     let path = format!("repos/{owner}/{repo}/issues/{number}");
     request(client, headers, reqwest::Method::GET, &path, None).await
 }
@@ -245,7 +249,9 @@ async fn issue_set_state(
     args: &serde_json::Value,
     state: &str,
 ) -> Result<String, String> {
-    let number = args["issue_number"].as_u64().ok_or(format!("issue_number is required and must be an integer for {state} action."))?;
+    let number = args["issue_number"].as_u64().ok_or(format!(
+        "issue_number is required and must be an integer for {state} action."
+    ))?;
     let path = format!("repos/{owner}/{repo}/issues/{number}");
     let body = json!({ "state": state });
     request(client, headers, reqwest::Method::PATCH, &path, Some(body)).await
@@ -258,7 +264,9 @@ async fn issue_comment(
     repo: &str,
     args: &serde_json::Value,
 ) -> Result<String, String> {
-    let number = args["issue_number"].as_u64().ok_or("issue_number is required and must be an integer for comment action.")?;
+    let number = args["issue_number"]
+        .as_u64()
+        .ok_or("issue_number is required and must be an integer for comment action.")?;
     let comment_body = args["body"].as_str().unwrap_or("");
     if comment_body.is_empty() {
         return Err("body is required for comment action.".to_string());

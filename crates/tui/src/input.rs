@@ -2,11 +2,9 @@
 // Translates raw crossterm events into actions via the keymap,
 // then updates application state accordingly.
 
-use crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind,
-};
 use crate::app::{AppMode, ConfirmAction, DialogKind, TuiApp};
 use crate::keymap::{Action, KeymapContext};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
 
 /// Process a single crossterm event and update application state.
 /// Returns `false` when the app should exit.
@@ -39,7 +37,11 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     match action {
         Some(Action::Quit) => {
             if app.mode != AppMode::Command && app.mode != AppMode::Dialog {
-                app.confirm("Quit", "Are you sure you want to quit whycode?", ConfirmAction::Quit);
+                app.confirm(
+                    "Quit",
+                    "Are you sure you want to quit whycode?",
+                    ConfirmAction::Quit,
+                );
             }
             true
         }
@@ -200,22 +202,19 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
 
 fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
     match action {
-        Action::InputBackspace
-            if app.input_cursor > 0 => {
-                app.input_cursor -= 1;
-                app.input_buffer.remove(app.input_cursor);
-            }
-        Action::InputDelete
-            if app.input_cursor < app.input_buffer.len() => {
-                app.input_buffer.remove(app.input_cursor);
-            }
+        Action::InputBackspace if app.input_cursor > 0 => {
+            app.input_cursor -= 1;
+            app.input_buffer.remove(app.input_cursor);
+        }
+        Action::InputDelete if app.input_cursor < app.input_buffer.len() => {
+            app.input_buffer.remove(app.input_cursor);
+        }
         Action::InputLeft => {
             app.input_cursor = app.input_cursor.saturating_sub(1);
         }
-        Action::InputRight
-            if app.input_cursor < app.input_buffer.len() => {
-                app.input_cursor += 1;
-            }
+        Action::InputRight if app.input_cursor < app.input_buffer.len() => {
+            app.input_cursor += 1;
+        }
         Action::InputHome => {
             app.input_cursor = 0;
         }
@@ -226,22 +225,20 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.input_buffer.clear();
             app.input_cursor = 0;
         }
-        Action::InputHistoryPrev
-            if !app.input_history.is_empty() && app.input_history_idx > 0 => {
-                app.input_history_idx -= 1;
+        Action::InputHistoryPrev if !app.input_history.is_empty() && app.input_history_idx > 0 => {
+            app.input_history_idx -= 1;
+            app.input_buffer = app.input_history[app.input_history_idx].clone();
+            app.input_cursor = app.input_buffer.len();
+        }
+        Action::InputHistoryNext if app.input_history_idx < app.input_history.len() => {
+            app.input_history_idx += 1;
+            if app.input_history_idx < app.input_history.len() {
                 app.input_buffer = app.input_history[app.input_history_idx].clone();
-                app.input_cursor = app.input_buffer.len();
+            } else {
+                app.input_buffer.clear();
             }
-        Action::InputHistoryNext
-            if app.input_history_idx < app.input_history.len() => {
-                app.input_history_idx += 1;
-                if app.input_history_idx < app.input_history.len() {
-                    app.input_buffer = app.input_history[app.input_history_idx].clone();
-                } else {
-                    app.input_buffer.clear();
-                }
-                app.input_cursor = app.input_buffer.len();
-            }
+            app.input_cursor = app.input_buffer.len();
+        }
         _ => {}
     }
 }
@@ -251,10 +248,9 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         MouseEventKind::ScrollDown => {
             app.scroll_offset = app.scroll_offset.saturating_sub(1);
         }
-        MouseEventKind::ScrollUp
-            if app.scroll_offset < app.messages.len().saturating_sub(1) => {
-                app.scroll_offset += 1;
-            }
+        MouseEventKind::ScrollUp if app.scroll_offset < app.messages.len().saturating_sub(1) => {
+            app.scroll_offset += 1;
+        }
         _ => {}
     }
     true
@@ -288,8 +284,7 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
         }
         Some(Action::DialogNextField) => {
             if matches!(active, DialogKind::Provider) {
-                app.provider_dialog.active_field =
-                    (app.provider_dialog.active_field + 1) % 4;
+                app.provider_dialog.active_field = (app.provider_dialog.active_field + 1) % 4;
             }
         }
         Some(Action::DialogPrevField) => {
@@ -316,16 +311,17 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
         _ => {
             // Forward char input to provider form fields.
             if matches!(active, DialogKind::Provider)
-                && let KeyCode::Char(c) = key.code {
-                    let field_val = match app.provider_dialog.active_field {
-                        0 => &mut app.provider_dialog.form_name,
-                        1 => &mut app.provider_dialog.form_api_key,
-                        2 => &mut app.provider_dialog.form_base_url,
-                        3 => &mut app.provider_dialog.form_headers,
-                        _ => return true,
-                    };
-                    field_val.push(c);
-                }
+                && let KeyCode::Char(c) = key.code
+            {
+                let field_val = match app.provider_dialog.active_field {
+                    0 => &mut app.provider_dialog.form_name,
+                    1 => &mut app.provider_dialog.form_api_key,
+                    2 => &mut app.provider_dialog.form_base_url,
+                    3 => &mut app.provider_dialog.form_headers,
+                    _ => return true,
+                };
+                field_val.push(c);
+            }
         }
     }
 
@@ -334,20 +330,18 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
 
 fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
     match dialog {
-        DialogKind::Confirm { on_confirm, .. } => {
-            match on_confirm {
-                ConfirmAction::Quit => {
-                    app.running = false;
-                }
-                ConfirmAction::ClearSession => {
-                    app.messages.clear();
-                    app.status_message = "Session cleared".into();
-                }
-                ConfirmAction::DeleteProvider(name) => {
-                    app.status_message = format!("Provider '{name}' would be deleted");
-                }
+        DialogKind::Confirm { on_confirm, .. } => match on_confirm {
+            ConfirmAction::Quit => {
+                app.running = false;
             }
-        }
+            ConfirmAction::ClearSession => {
+                app.messages.clear();
+                app.status_message = "Session cleared".into();
+            }
+            ConfirmAction::DeleteProvider(name) => {
+                app.status_message = format!("Provider '{name}' would be deleted");
+            }
+        },
         DialogKind::Alert { .. } => {
             // Close alert on confirm.
         }
@@ -402,8 +396,14 @@ fn open_provider_dialog(app: &mut TuiApp) {
     app.provider_dialog.providers.clear();
     // Built-in providers first.
     let builtin = [
-        "opencode", "anthropic", "openai", "google",
-        "groq", "deepseek", "mistral", "azure",
+        "opencode",
+        "anthropic",
+        "openai",
+        "google",
+        "groq",
+        "deepseek",
+        "mistral",
+        "azure",
     ];
     for name in builtin {
         app.provider_dialog.providers.push(name.to_string());

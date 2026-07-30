@@ -2,7 +2,7 @@ use regex::Regex;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
-use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
 /// Render a markdown string to ANSI-escaped terminal output.
 ///
@@ -34,7 +34,12 @@ pub fn render_markdown(text: &str) -> String {
             } else {
                 // Start of code block
                 in_code_block = true;
-                code_lang = line.trim_start().strip_prefix("```").unwrap_or("").trim().to_string();
+                code_lang = line
+                    .trim_start()
+                    .strip_prefix("```")
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
                 continue;
             }
         }
@@ -88,15 +93,11 @@ fn format_inline(text: &str) -> String {
 
     // Inline code: `text` (do first to avoid interference)
     let code_re = Regex::new(r"`([^`]+)`").unwrap();
-    result = code_re
-        .replace_all(&result, "\x1b[7m$1\x1b[0m")
-        .to_string();
+    result = code_re.replace_all(&result, "\x1b[7m$1\x1b[0m").to_string();
 
     // Bold: **text**
     let bold_re = Regex::new(r"\*\*(.+?)\*\*").unwrap();
-    result = bold_re
-        .replace_all(&result, "\x1b[1m$1\x1b[0m")
-        .to_string();
+    result = bold_re.replace_all(&result, "\x1b[1m$1\x1b[0m").to_string();
 
     // Italic: *text* — simple non-greedy match between single * chars.
     // After bold replacement, remaining single * pairs are italics.

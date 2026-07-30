@@ -82,7 +82,11 @@ impl Tool for CodeModeTool {
 
         let prompt = format!(
             "// Instruction: {}\n// {}\n\nThe file at {} has been loaded. Apply the following transformation: {}. The current content is:\n\n{}",
-            instruction, lang_hint.trim_end(), path_str, instruction, file_content
+            instruction,
+            lang_hint.trim_end(),
+            path_str,
+            instruction,
+            file_content
         );
 
         ToolResult {

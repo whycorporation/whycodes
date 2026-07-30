@@ -76,10 +76,7 @@ impl Tool for EditTool {
                     match std::fs::write(&full_path, &modified) {
                         Ok(_) => ToolResult {
                             tool_call_id: String::new(),
-                            content: format!(
-                                "Replaced {} occurrences in '{}'",
-                                count, full_path
-                            ),
+                            content: format!("Replaced {} occurrences in '{}'", count, full_path),
                             is_error: false,
                         },
                         Err(e) => ToolResult {

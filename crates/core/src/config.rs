@@ -115,7 +115,9 @@ impl Default for Config {
 
         let build_agent = AgentInfo {
             name: "build".to_string(),
-            description: "Primary coding agent with full tool access — write, edit, shell, and network.".to_string(),
+            description:
+                "Primary coding agent with full tool access — write, edit, shell, and network."
+                    .to_string(),
             mode: AgentMode::Primary,
             permission: PermissionSet {
                 allowed_tools: None,
@@ -265,7 +267,13 @@ impl Default for Config {
         Config {
             providers: HashMap::new(),
             models: HashMap::new(),
-            agents: vec![build_agent, plan_agent, explore_agent, general_agent, scout_agent],
+            agents: vec![
+                build_agent,
+                plan_agent,
+                explore_agent,
+                general_agent,
+                scout_agent,
+            ],
             default_agent: "build".to_string(),
             default_model: None,
             command_configs: HashMap::new(),
@@ -407,20 +415,18 @@ impl Config {
         let project_config_path = project_dir.join(".whycode").join("config.toml");
         if project_config_path.exists() {
             match std::fs::read_to_string(&project_config_path) {
-                Ok(content) => {
-                    match toml::from_str::<Config>(&content) {
-                        Ok(project) => {
-                            config = config.merge_with(&project);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to parse project config at {}: {}",
-                                project_config_path.display(),
-                                e
-                            );
-                        }
+                Ok(content) => match toml::from_str::<Config>(&content) {
+                    Ok(project) => {
+                        config = config.merge_with(&project);
                     }
-                }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse project config at {}: {}",
+                            project_config_path.display(),
+                            e
+                        );
+                    }
+                },
                 Err(e) => {
                     tracing::warn!(
                         "Failed to read project config at {}: {}",
@@ -691,9 +697,15 @@ impl Config {
         {
             load_commands_from_dir(&mut self.commands, &parent.join("commands"));
         }
-        load_commands_from_dir(&mut self.commands, &project_dir.join(".whycode").join("commands"));
+        load_commands_from_dir(
+            &mut self.commands,
+            &project_dir.join(".whycode").join("commands"),
+        );
         // also accept OpenCode-style .opencode/commands
-        load_commands_from_dir(&mut self.commands, &project_dir.join(".opencode").join("commands"));
+        load_commands_from_dir(
+            &mut self.commands,
+            &project_dir.join(".opencode").join("commands"),
+        );
     }
 }
 
@@ -713,9 +725,10 @@ fn load_commands_from_dir(into: &mut HashMap<String, CustomCommandConfig>, dir: 
             .unwrap_or("cmd")
             .to_string();
         if let Ok(content) = std::fs::read_to_string(&path)
-            && let Some(cmd) = parse_command_markdown(&content) {
-                into.insert(name, cmd);
-            }
+            && let Some(cmd) = parse_command_markdown(&content)
+        {
+            into.insert(name, cmd);
+        }
     }
 }
 
@@ -731,9 +744,7 @@ fn parse_command_markdown(content: &str) -> Option<CustomCommandConfig> {
             subtask: None,
         });
     }
-    let (front, body) = content
-        .strip_prefix("---")?
-        .split_once("---")?;
+    let (front, body) = content.strip_prefix("---")?.split_once("---")?;
     let front = front.trim();
     let body = body.trim().to_string();
 
@@ -751,7 +762,10 @@ fn parse_command_markdown(content: &str) -> Option<CustomCommandConfig> {
                 "agent" => agent = Some(v),
                 "model" => model = Some(v),
                 "subtask" => {
-                    subtask = Some(matches!(v.to_ascii_lowercase().as_str(), "true" | "yes" | "1"))
+                    subtask = Some(matches!(
+                        v.to_ascii_lowercase().as_str(),
+                        "true" | "yes" | "1"
+                    ))
                 }
                 _ => {}
             }
@@ -792,13 +806,9 @@ impl CustomCommandConfig {
 
 fn run_inline_shell(cmd: &str) -> String {
     #[cfg(windows)]
-    let output = std::process::Command::new("cmd")
-        .args(["/C", cmd])
-        .output();
+    let output = std::process::Command::new("cmd").args(["/C", cmd]).output();
     #[cfg(not(windows))]
-    let output = std::process::Command::new("sh")
-        .args(["-c", cmd])
-        .output();
+    let output = std::process::Command::new("sh").args(["-c", cmd]).output();
     match output {
         Ok(o) => {
             let mut s = String::from_utf8_lossy(&o.stdout).to_string();
@@ -917,9 +927,7 @@ impl Config {
             if provider.api_key.is_none() {
                 // Check env var: <NAME>_API_KEY or WHYCODE_<NAME>_API_KEY
                 let key_from_env = std::env::var(format!("{}_API_KEY", name.to_uppercase()))
-                    .or_else(|_| {
-                        std::env::var(format!("WHYCODE_{}_API_KEY", name.to_uppercase()))
-                    })
+                    .or_else(|_| std::env::var(format!("WHYCODE_{}_API_KEY", name.to_uppercase())))
                     .or_else(|_| std::env::var("OPENAI_API_KEY"))
                     .or_else(|_| std::env::var("ANTHROPIC_API_KEY"));
 
@@ -947,7 +955,9 @@ impl Config {
 
         // Check session config
         if self.session.max_context_tokens == 0 {
-            issues.push("session.max_context_tokens is set to 0. This will disable context.".to_string());
+            issues.push(
+                "session.max_context_tokens is set to 0. This will disable context.".to_string(),
+            );
         }
 
         // Check agents
@@ -959,7 +969,8 @@ impl Config {
         }
 
         // Check that default_agent resolves to an existing agent
-        if !self.default_agent.is_empty() && !self.agents.iter().any(|a| a.name == self.default_agent)
+        if !self.default_agent.is_empty()
+            && !self.agents.iter().any(|a| a.name == self.default_agent)
         {
             issues.push(format!(
                 "Default agent '{}' not found in the agents list.",
@@ -982,10 +993,7 @@ impl Config {
             // Return the first real error if any; otherwise it's just warnings
             let errors: Vec<&String> = issues
                 .iter()
-                .filter(|i| {
-                    !i.contains("localhost")
-                        && !i.contains("127.0.0.1")
-                })
+                .filter(|i| !i.contains("localhost") && !i.contains("127.0.0.1"))
                 .collect();
 
             if errors.is_empty() {
@@ -994,7 +1002,13 @@ impl Config {
             } else if errors.len() == 1 {
                 Err(crate::Error::Config(errors[0].clone()))
             } else {
-                Err(crate::Error::Config(errors.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("; ")))
+                Err(crate::Error::Config(
+                    errors
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ))
             }
         }
     }
@@ -1072,7 +1086,10 @@ impl ToolsConfig {
             merged.disabled_tools = other.disabled_tools.clone();
         }
         for (name, tool) in &other.custom_tools {
-            merged.custom_tools.entry(name.clone()).or_insert_with(|| tool.clone());
+            merged
+                .custom_tools
+                .entry(name.clone())
+                .or_insert_with(|| tool.clone());
         }
 
         merged
@@ -1134,14 +1151,10 @@ mod tests {
     #[test]
     fn test_config_serialize_deserialize_roundtrip() {
         let mut cfg = Config::default();
-        cfg.providers.insert(
-            "openai".to_string(),
-            make_provider("openai"),
-        );
-        cfg.models.insert(
-            "gpt-4".to_string(),
-            make_model("openai", "gpt-4"),
-        );
+        cfg.providers
+            .insert("openai".to_string(), make_provider("openai"));
+        cfg.models
+            .insert("gpt-4".to_string(), make_model("openai", "gpt-4"));
 
         let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
         let loaded: Config = toml::from_str(&toml_str).expect("deserialize");
@@ -1161,10 +1174,8 @@ mod tests {
     #[test]
     fn test_config_load_save_tempfile() {
         let mut cfg = Config::default();
-        cfg.providers.insert(
-            "openai".to_string(),
-            make_provider("openai"),
-        );
+        cfg.providers
+            .insert("openai".to_string(), make_provider("openai"));
 
         let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
 
@@ -1189,13 +1200,13 @@ mod tests {
     #[test]
     fn test_get_provider() {
         let mut cfg = Config::default();
-        cfg.providers.insert(
-            "anthropic".to_string(),
-            make_provider("anthropic"),
-        );
+        cfg.providers
+            .insert("anthropic".to_string(), make_provider("anthropic"));
 
         assert!(cfg.get_provider("openai").is_none());
-        let p = cfg.get_provider("anthropic").expect("should find anthropic");
+        let p = cfg
+            .get_provider("anthropic")
+            .expect("should find anthropic");
         assert_eq!(p.name, "anthropic");
         assert_eq!(p.api_key.as_deref(), Some("key-anthropic"));
     }
@@ -1205,14 +1216,10 @@ mod tests {
     #[test]
     fn test_get_model() {
         let mut cfg = Config::default();
-        cfg.models.insert(
-            "gpt-4".to_string(),
-            make_model("openai", "gpt-4"),
-        );
-        cfg.models.insert(
-            "claude-3".to_string(),
-            make_model("anthropic", "claude-3"),
-        );
+        cfg.models
+            .insert("gpt-4".to_string(), make_model("openai", "gpt-4"));
+        cfg.models
+            .insert("claude-3".to_string(), make_model("anthropic", "claude-3"));
 
         let m = cfg.get_model("openai", "gpt-4").expect("should find gpt-4");
         assert_eq!(m.model_id, "gpt-4");
@@ -1302,17 +1309,14 @@ mod tests {
     #[test]
     fn test_merge_with_priority() {
         let mut base = Config::default();
-        base.providers.insert(
-            "openai".to_string(),
-            make_provider("openai"),
-        );
+        base.providers
+            .insert("openai".to_string(), make_provider("openai"));
         base.default_agent = "plan".to_string();
 
         let mut overlay = Config::default();
-        overlay.providers.insert(
-            "anthropic".to_string(),
-            make_provider("anthropic"),
-        );
+        overlay
+            .providers
+            .insert("anthropic".to_string(), make_provider("anthropic"));
         overlay.default_agent = "explore".to_string();
         let mc = make_model("openai", "gpt-4");
         overlay.models.insert("gpt-4".to_string(), mc.clone());

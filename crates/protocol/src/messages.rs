@@ -15,13 +15,30 @@ pub enum ClientMessage {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerMessage {
-    TextDelta { text: String },
-    ToolUse { id: String, name: String, input: serde_json::Value },
-    ToolResult { id: String, content: String, is_error: bool },
-    Thinking { text: String },
-    Usage { input_tokens: u64, output_tokens: u64 },
+    TextDelta {
+        text: String,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        id: String,
+        content: String,
+        is_error: bool,
+    },
+    Thinking {
+        text: String,
+    },
+    Usage {
+        input_tokens: u64,
+        output_tokens: u64,
+    },
     Done,
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 #[cfg(test)]
@@ -30,7 +47,9 @@ mod tests {
 
     #[test]
     fn test_client_message_chat_json() {
-        let msg = ClientMessage::Chat { content: "hello".to_string() };
+        let msg = ClientMessage::Chat {
+            content: "hello".to_string(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("chat"));
         assert!(json.contains("hello"));
@@ -44,7 +63,9 @@ mod tests {
 
     #[test]
     fn test_server_message_error() {
-        let msg = ServerMessage::Error { message: "oops".to_string() };
+        let msg = ServerMessage::Error {
+            message: "oops".to_string(),
+        };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("oops"));
     }

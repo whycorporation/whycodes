@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::tool::{Tool, ToolContext};
 use crate::github_api;
@@ -150,8 +150,8 @@ impl GitHubPrTool {
         if title.is_empty() || head.is_empty() || base.is_empty() {
             return ToolResult {
                 tool_call_id: String::new(),
-                content:
-                    "For 'create' action, 'title', 'head', and 'base' are required.".to_string(),
+                content: "For 'create' action, 'title', 'head', and 'base' are required."
+                    .to_string(),
                 is_error: true,
             };
         }
@@ -164,14 +164,8 @@ impl GitHubPrTool {
         });
 
         let path = format!("repos/{owner}/{repo}/pulls");
-        match github_api::make_request(
-            client,
-            reqwest::Method::POST,
-            &path,
-            token,
-            Some(payload),
-        )
-        .await
+        match github_api::make_request(client, reqwest::Method::POST, &path, token, Some(payload))
+            .await
         {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
@@ -205,7 +199,9 @@ impl GitHubPrTool {
         args: &Value,
     ) -> ToolResult {
         let state = args["state"].as_str().unwrap_or("open");
-        let path = format!("repos/{owner}/{repo}/pulls?state={state}&sort=updated&direction=desc&per_page=30");
+        let path = format!(
+            "repos/{owner}/{repo}/pulls?state={state}&sort=updated&direction=desc&per_page=30"
+        );
 
         match github_api::make_request(client, reqwest::Method::GET, &path, token, None).await {
             Ok((status, text)) => {
@@ -309,14 +305,8 @@ impl GitHubPrTool {
         });
 
         let path = format!("repos/{owner}/{repo}/pulls/{pr_number}/merge");
-        match github_api::make_request(
-            client,
-            reqwest::Method::PUT,
-            &path,
-            token,
-            Some(payload),
-        )
-        .await
+        match github_api::make_request(client, reqwest::Method::PUT, &path, token, Some(payload))
+            .await
         {
             Ok((status, text)) => {
                 let is_error = !status.is_success();

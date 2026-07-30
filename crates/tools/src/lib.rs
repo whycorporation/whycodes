@@ -31,6 +31,6 @@ pub mod webfetch;
 pub mod websearch;
 pub mod write;
 
-pub use tool::Tool;
 pub use executor::ToolExecutor;
 pub use mcp_tool::{McpCaller, McpToolBridge};
+pub use tool::Tool;

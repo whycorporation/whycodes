@@ -70,9 +70,11 @@ impl HoverResult {
         match &self.contents {
             HoverContents::MarkupContent(mc) => mc.value.clone(),
             HoverContents::String(s) => s.clone(),
-            HoverContents::Array(arr) => {
-                arr.iter().map(|mc| mc.value.clone()).collect::<Vec<_>>().join("\n")
-            }
+            HoverContents::Array(arr) => arr
+                .iter()
+                .map(|mc| mc.value.clone())
+                .collect::<Vec<_>>()
+                .join("\n"),
         }
     }
 }

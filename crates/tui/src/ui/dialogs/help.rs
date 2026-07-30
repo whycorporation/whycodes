@@ -1,13 +1,13 @@
 // ── ui/dialogs/help.rs: Help / keybinding cheatsheet ──────────────────
 
+use crate::app::TuiApp;
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
-    Frame,
 };
-use crate::app::TuiApp;
-use crate::theme::ThemePalette;
 
 use super::base::dialog_frame;
 
@@ -16,7 +16,12 @@ pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePale
 
     let help_text = vec![
         // ── General ──
-        Line::from(Span::styled(" General ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " General ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  ?           Toggle this help screen"),
         Line::from("  :           Enter command mode"),
@@ -24,7 +29,12 @@ pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePale
         Line::from("  Esc         Exit current mode"),
         Line::from(""),
         // ── Commands ──
-        Line::from(Span::styled(" Commands ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Commands ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  :q, :quit    Quit whycode"),
         Line::from("  :h, :help    Show help"),
@@ -35,7 +45,12 @@ pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePale
         Line::from("  :sidebar     Toggle sidebar"),
         Line::from(""),
         // ── Navigation ──
-        Line::from(Span::styled(" Navigation ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Navigation ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  ↑/k, ↓/j    Scroll messages"),
         Line::from("  PgUp/PgDown   Scroll page"),
@@ -43,7 +58,12 @@ pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePale
         Line::from("  Ctrl+A      Toggle auto-scroll"),
         Line::from(""),
         // ── Dialogs ──
-        Line::from(Span::styled(" Dialogs ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Dialogs ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  Ctrl+P      Open provider dialog"),
         Line::from("  Ctrl+M      Open model dialog"),
@@ -53,7 +73,12 @@ pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePale
         Line::from("  Esc / q / n Cancel"),
         Line::from(""),
         // ── Input ──
-        Line::from(Span::styled(" Input ", Style::default().fg(palette.accent).add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            " Input ",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        )),
         Line::from(""),
         Line::from("  Ctrl+Space  File autocomplete"),
         Line::from("  Ctrl+U      Clear input"),

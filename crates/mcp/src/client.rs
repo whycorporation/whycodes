@@ -74,8 +74,8 @@ impl McpClient {
             .await
             .context("initialize request failed")?;
 
-        let init_result: InitializeResult = serde_json::from_value(result)
-            .context("failed to parse initialize result")?;
+        let init_result: InitializeResult =
+            serde_json::from_value(result).context("failed to parse initialize result")?;
 
         debug!(
             server_name = %init_result.server_info.name,
@@ -137,11 +137,7 @@ impl McpClient {
         }
 
         if let Some(error) = response.error {
-            anyhow::bail!(
-                "MCP error [{}]: {}",
-                error.code,
-                error.message
-            );
+            anyhow::bail!("MCP error [{}]: {}", error.code, error.message);
         }
 
         response.result.context("MCP response has no result")
@@ -162,11 +158,7 @@ impl McpClient {
     }
 
     /// Call a named tool with the given arguments.
-    pub async fn call_tool(
-        &mut self,
-        name: &str,
-        arguments: serde_json::Value,
-    ) -> Result<String> {
+    pub async fn call_tool(&mut self, name: &str, arguments: serde_json::Value) -> Result<String> {
         let params = serde_json::to_value(CallToolParams {
             name: name.to_string(),
             arguments: Some(arguments),

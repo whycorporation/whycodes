@@ -114,10 +114,7 @@ impl Tool for WebSearchTool {
         }
 
         // Fallback: try DuckDuckGo HTML search
-        let url = format!(
-            "https://html.duckduckgo.com/html/?q={}",
-            urlencoding(query)
-        );
+        let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
 
         match reqwest::get(&url).await {
             Ok(response) => match response.text().await {
@@ -127,11 +124,12 @@ impl Tool for WebSearchTool {
                     for line in html.lines() {
                         if line.contains("result__snippet")
                             && let Some(start) = line.find('>')
-                                && let Some(end) = line.rfind('<')
-                                    && start + 1 < end {
-                                        let snippet = &line[start + 1..end];
-                                        results.push(snippet.trim().to_string());
-                                    }
+                            && let Some(end) = line.rfind('<')
+                            && start + 1 < end
+                        {
+                            let snippet = &line[start + 1..end];
+                            results.push(snippet.trim().to_string());
+                        }
                     }
 
                     results.truncate(num_results as usize);

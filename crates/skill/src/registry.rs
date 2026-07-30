@@ -29,9 +29,10 @@ impl SkillRegistry {
 
         // 2. Global user config directory
         if let Ok(global_dir) = global_skills_dir()
-            && global_dir.is_dir() {
-                registry.load_from_dir(&global_dir)?;
-            }
+            && global_dir.is_dir()
+        {
+            registry.load_from_dir(&global_dir)?;
+        }
 
         Ok(registry)
     }
@@ -41,9 +42,8 @@ impl SkillRegistry {
         let pattern = dir.join("*.skill.md");
         let pattern_str = pattern.to_string_lossy();
 
-        let entries = glob::glob(&pattern_str).map_err(|e| {
-            anyhow::anyhow!("Invalid glob pattern '{}': {}", pattern_str, e)
-        })?;
+        let entries = glob::glob(&pattern_str)
+            .map_err(|e| anyhow::anyhow!("Invalid glob pattern '{}': {}", pattern_str, e))?;
 
         for entry in entries {
             match entry {
@@ -104,7 +104,10 @@ impl PluginRegistry {
         let path = global_plugins_path()?;
 
         if !path.exists() {
-            debug!("No plugins config found at {:?}, returning empty registry", path);
+            debug!(
+                "No plugins config found at {:?}, returning empty registry",
+                path
+            );
             return Ok(Self::new());
         }
 

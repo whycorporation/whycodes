@@ -4,10 +4,12 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, Message, StreamEvent, ToolDefinition, Usage};
+use whycode_core::types::{
+    ContentBlock, LlmRequest, LlmResponse, Message, StreamEvent, ToolDefinition, Usage,
+};
 
-use async_trait::async_trait;
 use super::provider::LlmProvider;
+use async_trait::async_trait;
 
 pub struct AnthropicProvider {
     name: String,
@@ -154,9 +156,7 @@ impl LlmProvider for AnthropicProvider {
             .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
-            let err_msg = json["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown error");
+            let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
             return Err(whycode_core::Error::Llm(format!(
                 "Anthropic API error ({}): {}",
                 status, err_msg

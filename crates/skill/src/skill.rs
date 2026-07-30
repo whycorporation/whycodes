@@ -59,24 +59,16 @@ impl Skill {
             .trim();
 
         // Third split is the prompt body (everything after the closing `---`)
-        let prompt = parts
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string();
+        let prompt = parts.next().unwrap_or("").trim().to_string();
 
         // Parse frontmatter with simple line-based key: value parser
         let parsed = parse_frontmatter(frontmatter)?;
 
-        let name = parsed
-            .get("name")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Skill file {:?} missing required field 'name'", path))?;
+        let name = parsed.get("name").cloned().ok_or_else(|| {
+            anyhow::anyhow!("Skill file {:?} missing required field 'name'", path)
+        })?;
 
-        let description = parsed
-            .get("description")
-            .cloned()
-            .unwrap_or_default();
+        let description = parsed.get("description").cloned().unwrap_or_default();
 
         let tools_allowed = parse_string_list(parsed.get("tools_allowed"));
 
@@ -153,7 +145,11 @@ fn parse_frontmatter(input: &str) -> anyhow::Result<std::collections::HashMap<St
 /// Helper: parse a value that may be a newline-separated list into a `Vec<String>`.
 fn parse_string_list(value: Option<&String>) -> Vec<String> {
     match value {
-        Some(s) if !s.is_empty() => s.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect(),
+        Some(s) if !s.is_empty() => s
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
         _ => Vec::new(),
     }
 }

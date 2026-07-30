@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
-    http::{header, StatusCode},
-    response::{Html, IntoResponse, Response},
-    response::sse::{Event, Sse},
     Json,
+    extract::{Path, State},
+    http::{StatusCode, header},
+    response::sse::{Event, Sse},
+    response::{Html, IntoResponse, Response},
 };
 use futures::stream::Stream;
 use serde::Deserialize;
@@ -51,7 +51,10 @@ pub async fn list_tools(State(_state): State<AppState>) -> Json<serde_json::Valu
 }
 
 pub async fn list_models(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let models: Vec<_> = state.config.models.values()
+    let models: Vec<_> = state
+        .config
+        .models
+        .values()
         .map(|m| serde_json::json!({"id": m.model_id, "provider": m.provider_id}))
         .collect();
     Json(serde_json::json!({"models": models}))
@@ -103,15 +106,16 @@ pub async fn list_shares() -> Json<serde_json::Value> {
             for e in entries.flatten() {
                 let path = e.path();
                 if path.extension().and_then(|x| x.to_str()) == Some("json")
-                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        shares.push(serde_json::json!({
-                            "id": stem,
-                            "json": format!("/s/{stem}.json"),
-                            "md": format!("/s/{stem}.md"),
-                            "view": format!("/s/{stem}"),
-                            "path": path.display().to_string(),
-                        }));
-                    }
+                    && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+                {
+                    shares.push(serde_json::json!({
+                        "id": stem,
+                        "json": format!("/s/{stem}.json"),
+                        "md": format!("/s/{stem}.md"),
+                        "view": format!("/s/{stem}"),
+                        "path": path.display().to_string(),
+                    }));
+                }
             }
         }
     }
@@ -120,7 +124,10 @@ pub async fn list_shares() -> Json<serde_json::Value> {
 
 /// Human-readable HTML view of a shared session.
 pub async fn share_view(Path(id): Path<String>) -> Response {
-    let id = id.trim_end_matches(".json").trim_end_matches(".md").to_string();
+    let id = id
+        .trim_end_matches(".json")
+        .trim_end_matches(".md")
+        .to_string();
     let md = match find_share_file(&id, "md") {
         Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "(empty)".into()),
         None => {

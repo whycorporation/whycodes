@@ -225,8 +225,16 @@ impl ChatRole {
 pub enum ChatBlock {
     Text(String),
     Thinking(String),
-    ToolUse { id: String, name: String, input: serde_json::Value },
-    ToolResult { id: String, content: String, is_error: bool },
+    ToolUse {
+        id: String,
+        name: String,
+        input: serde_json::Value,
+    },
+    ToolResult {
+        id: String,
+        content: String,
+        is_error: bool,
+    },
 }
 
 /// A rendered tool-call chunk for display.
@@ -387,7 +395,12 @@ impl TuiApp {
     }
 
     /// Push a confirmation dialog.
-    pub fn confirm(&mut self, title: impl Into<String>, message: impl Into<String>, action: ConfirmAction) {
+    pub fn confirm(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        action: ConfirmAction,
+    ) {
         self.mode = AppMode::Dialog;
         self.key_context = KeymapContext::Dialog;
         self.dialogs.push(DialogKind::Confirm {
@@ -426,15 +439,16 @@ impl TuiApp {
     /// Append a thinking block to the last assistant message.
     pub fn append_thinking(&mut self, text: &str) {
         if let Some(last) = self.messages.last_mut()
-            && last.role == ChatRole::Assistant {
-                // Append to the last thinking block or create one.
-                if let Some(ChatBlock::Thinking(t)) = last.blocks.last_mut() {
-                    t.push_str(text);
-                } else {
-                    last.blocks.push(ChatBlock::Thinking(text.to_string()));
-                }
-                return;
+            && last.role == ChatRole::Assistant
+        {
+            // Append to the last thinking block or create one.
+            if let Some(ChatBlock::Thinking(t)) = last.blocks.last_mut() {
+                t.push_str(text);
+            } else {
+                last.blocks.push(ChatBlock::Thinking(text.to_string()));
             }
+            return;
+        }
         // No assistant message yet — create one.
         let msg = ChatMessage {
             role: ChatRole::Assistant,
@@ -460,15 +474,16 @@ impl TuiApp {
         };
 
         if let Some(last) = self.messages.last_mut()
-            && last.role == ChatRole::Assistant {
-                last.blocks.push(ChatBlock::ToolUse {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    input: tc.arguments.clone(),
-                });
-                last.tool_calls.push(tc);
-                return;
-            }
+            && last.role == ChatRole::Assistant
+        {
+            last.blocks.push(ChatBlock::ToolUse {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                input: tc.arguments.clone(),
+            });
+            last.tool_calls.push(tc);
+            return;
+        }
 
         let msg = ChatMessage {
             role: ChatRole::Assistant,
@@ -487,7 +502,12 @@ impl TuiApp {
     }
 
     /// Add a tool result to the most recent tool-call.
-    pub fn add_tool_result(&mut self, tool_use_id: &str, content: impl Into<String>, is_error: bool) {
+    pub fn add_tool_result(
+        &mut self,
+        tool_use_id: &str,
+        content: impl Into<String>,
+        is_error: bool,
+    ) {
         let content = content.into();
         // Search backwards for the matching tool-call
         for msg in self.messages.iter_mut().rev() {

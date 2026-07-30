@@ -8,20 +8,18 @@ use std::time::Duration;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use whycode_agent::agent::Agent;
 use whycode_agent::permission::ChannelPermissionPrompter;
-use whycode_agent::{
-    new_cancel_flag, request_cancel, CancelFlag, TurnEvent,
-};
+use whycode_agent::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
 use whycode_core::config::Config;
 use whycode_core::types::AgentMode;
-use whycode_session::session::Session;
 use whycode_session::SessionHistory;
+use whycode_session::session::Session;
 
 use crate::app::{AgentState, AppMode, ChatRole, DialogKind, TuiApp};
 use crate::config::TuiAppConfig;
@@ -118,8 +116,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         )
     };
 
-    let agent_info = config.get_agent(&opts.agent_name).cloned().unwrap_or_else(|| {
-        whycode_core::types::AgentInfo {
+    let agent_info = config
+        .get_agent(&opts.agent_name)
+        .cloned()
+        .unwrap_or_else(|| whycode_core::types::AgentInfo {
             name: opts.agent_name.clone(),
             description: "Default".into(),
             mode: AgentMode::Primary,
@@ -133,8 +133,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             system_prompt: None,
             temperature: None,
             top_p: None,
-        }
-    });
+        });
 
     let base = agent_info
         .system_prompt
@@ -148,7 +147,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
-        .with_permission_prompter(Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>)
+        .with_permission_prompter(
+            Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+        )
         .with_mcp(&config)
         .await;
 
@@ -182,10 +183,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
 
     if let Some(p) = opts.initial_prompt
-        && !p.is_empty() {
-            app.add_message(ChatRole::User, &p);
-            app.pending_prompt = Some(p);
-        }
+        && !p.is_empty()
+    {
+        app.add_message(ChatRole::User, &p);
+        app.pending_prompt = Some(p);
+    }
 
     let result = async {
         loop {
@@ -691,12 +693,13 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
 
     // Custom commands from config
     if let Some(name) = cmd.strip_prefix('/')
-        && let Some(custom) = ctx.config.commands.get(name) {
-            let rendered = custom.render(rest);
-            ctx.app.add_message(ChatRole::User, &rendered);
-            ctx.app.pending_prompt = Some(rendered);
-            return;
-        }
+        && let Some(custom) = ctx.config.commands.get(name)
+    {
+        let rendered = custom.render(rest);
+        ctx.app.add_message(ChatRole::User, &rendered);
+        ctx.app.pending_prompt = Some(rendered);
+        return;
+    }
 
     match cmd {
         "/exit" | "/quit" | "/q" => {
@@ -786,16 +789,18 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             // Reload key from env / config
             if let Ok(cfg) = Config::load()
                 && let Some(pc) = cfg.get_provider(ctx.provider)
-                    && let Some(k) = &pc.api_key
-                        && !k.is_empty() {
-                            *ctx.api_key = k.clone();
-                        }
+                && let Some(k) = &pc.api_key
+                && !k.is_empty()
+            {
+                *ctx.api_key = k.clone();
+            }
             let env_name = format!("{}_API_KEY", ctx.provider.to_uppercase());
             if ctx.api_key.is_empty()
                 && let Ok(k) = std::env::var(&env_name)
-                    && !k.is_empty() {
-                        *ctx.api_key = k;
-                    }
+                && !k.is_empty()
+            {
+                *ctx.api_key = k;
+            }
             if ctx.api_key.is_empty() {
                 ctx.app.status_message = format!("no key — set {env_name} or provider add");
                 ctx.app.add_message(
@@ -830,9 +835,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 let prompt = Agent::with_agents_md(&base, ctx.project_dir);
                 *ctx.agent = Agent::new(info)
                     .with_config(ctx.config)
-                    .with_permission_prompter(
-                        Arc::clone(&ctx.perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
-                    );
+                    .with_permission_prompter(Arc::clone(&ctx.perm_prompter)
+                        as Arc<dyn whycode_agent::PermissionPrompter>);
                 ctx.session.set_system_prompt(&prompt);
                 if let Some(idx) = ctx.app.primary_agents.iter().position(|n| n == rest) {
                     ctx.app.agent_cycle_idx = idx;
@@ -851,7 +855,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 *ctx.model = m.to_string();
                 ctx.app.provider_name = p.to_string();
                 ctx.app.model_name = m.to_string();
-                if let Some(k) = ctx.config
+                if let Some(k) = ctx
+                    .config
                     .get_provider(p)
                     .and_then(|pc| pc.api_key.clone())
                     .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())

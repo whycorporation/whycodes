@@ -12,7 +12,7 @@ pub mod ui;
 pub mod widgets;
 
 pub use app::TuiApp;
-pub use run::{run, TuiRunOptions};
+pub use run::{TuiRunOptions, run};
 
 #[cfg(test)]
 mod tests;

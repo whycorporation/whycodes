@@ -116,16 +116,17 @@ impl LspClient {
                                     Ok(IncomingMessage::Notification(notif)) => {
                                         if notif.method == "textDocument/publishDiagnostics"
                                             && let Some(params) = notif.params
-                                                && let Ok(parsed) = serde_json::from_value::<
-                                                    crate::types::PublishDiagnosticsParams,
-                                                >(
-                                                    params
-                                                ) {
-                                                    diags_bg
-                                                        .lock()
-                                                        .await
-                                                        .insert(parsed.uri, parsed.diagnostics);
-                                                }
+                                            && let Ok(parsed) = serde_json::from_value::<
+                                                crate::types::PublishDiagnosticsParams,
+                                            >(
+                                                params
+                                            )
+                                        {
+                                            diags_bg
+                                                .lock()
+                                                .await
+                                                .insert(parsed.uri, parsed.diagnostics);
+                                        }
                                     }
                                     Ok(IncomingMessage::Response(_)) => {
                                         // silently discard — handled by `request()`
@@ -169,9 +170,10 @@ impl LspClient {
         {
             let diags = self.diagnostics.lock().await;
             if let Some(d) = diags.get(uri)
-                && !d.is_empty() {
-                    return Ok(d.clone());
-                }
+                && !d.is_empty()
+            {
+                return Ok(d.clone());
+            }
         }
 
         // Send textDocument/diagnostic request
@@ -184,8 +186,7 @@ impl LspClient {
             .context("textDocument/diagnostic request failed")?;
 
         if let Some(result) = resp.result {
-            let diagnostics: Vec<Diagnostic> = serde_json::from_value(result)
-                .unwrap_or_default();
+            let diagnostics: Vec<Diagnostic> = serde_json::from_value(result).unwrap_or_default();
             self.diagnostics
                 .lock()
                 .await
@@ -208,19 +209,13 @@ impl LspClient {
             .request("textDocument/hover", serde_json::to_value(&params)?)
             .await?;
         match resp.result {
-            Some(result) if !result.is_null() => {
-                Ok(Some(serde_json::from_value(result)?))
-            }
+            Some(result) if !result.is_null() => Ok(Some(serde_json::from_value(result)?)),
             _ => Ok(None),
         }
     }
 
     /// Go to definition.
-    pub async fn definition(
-        &self,
-        uri: &str,
-        position: Position,
-    ) -> Result<Vec<Location>> {
+    pub async fn definition(&self, uri: &str, position: Position) -> Result<Vec<Location>> {
         let params = TextDocumentPositionParams {
             text_document: crate::types::TextDocumentIdentifier {
                 uri: uri.to_string(),
@@ -244,11 +239,7 @@ impl LspClient {
     }
 
     /// Find references.
-    pub async fn references(
-        &self,
-        uri: &str,
-        position: Position,
-    ) -> Result<Vec<Location>> {
+    pub async fn references(&self, uri: &str, position: Position) -> Result<Vec<Location>> {
         let params = json!({
             "textDocument": { "uri": uri },
             "position": position,
@@ -278,11 +269,7 @@ impl LspClient {
         self.send_message(&serde_json::to_value(&notif)?).await
     }
 
-    async fn request(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Result<JsonRpcResponse> {
+    async fn request(&self, method: &str, params: serde_json::Value) -> Result<JsonRpcResponse> {
         let id = {
             let mut lock = self.next_id.lock().await;
             let id = *lock;
@@ -323,7 +310,10 @@ impl LspClient {
                 // Not our response — could be a server notification or response
                 // to another request.  For simplicity we ignore unmatched ids,
                 // but a production client would queue them.
-                debug!("Ignoring LSP response with id {:?}, waiting for {id}", resp.id);
+                debug!(
+                    "Ignoring LSP response with id {:?}, waiting for {id}",
+                    resp.id
+                );
             }
             // Otherwise it's a non-Content-Length line, keep reading.
         }
@@ -348,7 +338,7 @@ pub fn language_server_for_extension(ext: &str) -> Option<(&'static str, Vec<&'s
         "go" => Some(("gopls", vec![])),
         "c" | "cpp" | "h" | "hpp" | "cc" => Some(("clangd", vec![])),
         "java" => Some(("jdtls", vec![])),
-        "cs" => Some(("omnisharp", vec!("--languageserver"))),
+        "cs" => Some(("omnisharp", vec!["--languageserver"])),
         "lua" => Some(("lua-language-server", vec![])),
         "zig" => Some(("zls", vec![])),
         "swift" => Some(("sourcekit-lsp", vec![])),

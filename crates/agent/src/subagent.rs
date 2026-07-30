@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use whycode_core::tool::ToolContext;
 use whycode_core::types::{AgentInfo, PermissionSet};
 use whycode_llm::provider::ProviderRegistry;
 use whycode_session::session::Session;
 use whycode_tools::executor::ToolExecutor;
-use whycode_core::tool::ToolContext;
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
 
@@ -72,7 +72,10 @@ impl SubagentRunner {
 
         // Build the full prompt from goal + optional context
         let user_message = if let Some(ctx) = &task.context {
-            format!("GOAL: {}\n\nCONTEXT:\n{}\n\nPlease accomplish the goal above.", task.goal, ctx)
+            format!(
+                "GOAL: {}\n\nCONTEXT:\n{}\n\nPlease accomplish the goal above.",
+                task.goal, ctx
+            )
         } else {
             format!("GOAL: {}\n\nPlease accomplish the goal above.", task.goal)
         };
@@ -145,15 +148,12 @@ impl SubagentRunner {
             session_id: Some(session.id.clone()),
         };
 
-        let provider = self
-            .provider_registry
-            .get(provider_name)
-            .ok_or_else(|| {
-                whycode_core::Error::Llm(format!(
-                    "Unknown provider: {}. Available: anthropic, openai, google",
-                    provider_name
-                ))
-            })?;
+        let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
+            whycode_core::Error::Llm(format!(
+                "Unknown provider: {}. Available: anthropic, openai, google",
+                provider_name
+            ))
+        })?;
 
         let mut turn_count = 0;
         let mut final_text = String::new();
@@ -250,10 +250,7 @@ impl SubagentRunner {
             // Execute tool calls
             let mut results = Vec::new();
             for tc in &tool_calls {
-                let result = self
-                    .tool_executor
-                    .execute(tc, &tool_ctx, permission)
-                    .await;
+                let result = self.tool_executor.execute(tc, &tool_ctx, permission).await;
                 results.push(result);
             }
 

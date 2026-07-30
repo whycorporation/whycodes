@@ -50,10 +50,7 @@ impl Tool for ListTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let rel = args
-            .get("path")
-            .and_then(|v| v.as_str())
-            .unwrap_or(".");
+        let rel = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let base = Path::new(&ctx.working_dir);
         let target = if Path::new(rel).is_absolute() {
             Path::new(rel).to_path_buf()

@@ -6,8 +6,8 @@ use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use async_trait::async_trait;
 use super::provider::LlmProvider;
+use async_trait::async_trait;
 
 pub struct XaiProvider {
     name: String,
@@ -66,9 +66,7 @@ impl XaiProvider {
             };
 
             let content = match &msg.content {
-                whycode_core::types::MessageContent::Text(text) => {
-                    Value::String(text.clone())
-                }
+                whycode_core::types::MessageContent::Text(text) => Value::String(text.clone()),
                 whycode_core::types::MessageContent::Blocks(blocks) => {
                     let parts: Vec<Value> = blocks
                         .iter()
@@ -179,9 +177,7 @@ impl LlmProvider for XaiProvider {
             .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
-            let err_msg = json["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown error");
+            let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
             return Err(whycode_core::Error::Llm(format!(
                 "xAI API error ({}): {}",
                 status, err_msg
@@ -193,11 +189,12 @@ impl LlmProvider for XaiProvider {
 
         let mut content: Vec<ContentBlock> = Vec::new();
         if let Some(text) = message["content"].as_str()
-            && !text.is_empty() {
-                content.push(ContentBlock::Text {
-                    text: text.to_string(),
-                });
-            }
+            && !text.is_empty()
+        {
+            content.push(ContentBlock::Text {
+                text: text.to_string(),
+            });
+        }
 
         if let Some(tool_calls) = message["tool_calls"].as_array() {
             for tc in tool_calls {
@@ -244,10 +241,7 @@ impl LlmProvider for XaiProvider {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
-                "xAI API error: {}",
-                text
-            )));
+            return Err(whycode_core::Error::Llm(format!("xAI API error: {}", text)));
         }
 
         let s = stream! {

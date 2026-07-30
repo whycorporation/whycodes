@@ -1,14 +1,14 @@
 // ── ui/sidebar.rs: Sidebar panel ───────────────────────────────────────
 
+use crate::app::{SidebarTab, TuiApp};
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Tabs, Wrap},
-    Frame,
 };
-use crate::app::{SidebarTab, TuiApp};
-use crate::theme::ThemePalette;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     let sidebar = &app.sidebar;
@@ -16,8 +16,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),  // tab bar
-            Constraint::Min(1),     // content
+            Constraint::Length(2), // tab bar
+            Constraint::Min(1),    // content
         ])
         .split(area);
 
@@ -37,7 +37,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             if tab_enum == sidebar.active_tab {
                 Line::from(Span::styled(
                     format!(" {} ", name),
-                    Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(palette.accent)
+                        .add_modifier(Modifier::BOLD),
                 ))
             } else {
                 Line::from(Span::styled(
@@ -128,7 +130,10 @@ fn render_mcp(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         )));
     } else {
         for status in &sidebar.mcp_status {
-            lines.push(Line::from(Span::styled(status, Style::default().fg(palette.fg))));
+            lines.push(Line::from(Span::styled(
+                status,
+                Style::default().fg(palette.fg),
+            )));
         }
     }
 

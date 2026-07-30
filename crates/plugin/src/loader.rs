@@ -24,7 +24,9 @@ pub struct PluginManager {
 
 impl PluginManager {
     pub fn new() -> Self {
-        Self { plugins: Vec::new() }
+        Self {
+            plugins: Vec::new(),
+        }
     }
 
     /// Register a plugin from its manifest

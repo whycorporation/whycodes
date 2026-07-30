@@ -2,16 +2,16 @@
 // From component/prompt: agent-colored left edge, model meta row,
 // ▀ bottom hairline, max-width centered on home.
 
+use crate::app::{AgentState, AppMode, TuiApp};
+use crate::opencode_tokens::layout as oc_layout;
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
-use crate::app::{AgentState, AppMode, TuiApp};
-use crate::opencode_tokens::layout as oc_layout;
-use crate::theme::ThemePalette;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     // Center prompt on home (empty messages) with max width like home.tsx
@@ -95,8 +95,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     spans.extend(body_spans);
 
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(spans)))
-            .style(Style::default().bg(palette.input_bg)),
+        Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.input_bg)),
         chunks[0],
     );
 

@@ -1,13 +1,13 @@
 // ── ui/dialogs/base.rs: Dialog frame utilities ─────────────────────────
 
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
-use crate::theme::ThemePalette;
 
 /// Render a centered dialog frame with title and border.
 /// Returns the inner area for body content.
@@ -34,7 +34,7 @@ pub fn dialog_frame(
     frame.render_widget(block, dialog_area);
 
     // Inner area (inside borders).
-    
+
     Rect {
         x: dialog_area.x + 1,
         y: dialog_area.y + 1,
@@ -44,20 +44,25 @@ pub fn dialog_frame(
 }
 
 /// Render dialog footer buttons.
-pub fn dialog_footer(frame: &mut Frame, area: Rect, buttons: &[&str], palette: &ThemePalette, active: usize) {
+pub fn dialog_footer(
+    frame: &mut Frame,
+    area: Rect,
+    buttons: &[&str],
+    palette: &ThemePalette,
+    active: usize,
+) {
     let button_spans: Vec<Span> = buttons
         .iter()
         .enumerate()
         .flat_map(|(i, label)| {
             let style = if i == active {
-                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(palette.dim)
             };
-            vec![
-                Span::styled(format!(" {} ", label), style),
-                Span::raw(" "),
-            ]
+            vec![Span::styled(format!(" {} ", label), style), Span::raw(" ")]
         })
         .collect();
 

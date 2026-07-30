@@ -1,13 +1,13 @@
 // ── widgets/tool_call.rs: Collapsible tool call widget ─────────────────
 
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
-    Frame,
 };
-use crate::theme::ThemePalette;
 
 /// Render a collapsible tool-call widget.
 #[allow(clippy::too_many_arguments)]
@@ -23,7 +23,11 @@ pub fn render_tool_call(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
-    let color = if is_error { palette.error } else { palette.tool_msg };
+    let color = if is_error {
+        palette.error
+    } else {
+        palette.tool_msg
+    };
 
     if collapsed {
         lines.push(Line::from(Span::styled(

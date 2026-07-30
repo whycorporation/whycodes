@@ -1,7 +1,7 @@
 //! Streaming turn events for TUI / external consumers.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 

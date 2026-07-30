@@ -120,7 +120,11 @@ mod tests {
         let ctx = PluginContext::default();
         let result = plugin.execute(&args, &ctx).await;
         assert!(!result.is_error);
-        assert!(result.content.contains("hello world"), "got: {}", result.content);
+        assert!(
+            result.content.contains("hello world"),
+            "got: {}",
+            result.content
+        );
     }
 
     #[tokio::test]
@@ -132,7 +136,9 @@ mod tests {
             parameters: None,
         };
         let plugin = Plugin::new(config);
-        let result = plugin.execute(&HashMap::new(), &PluginContext::default()).await;
+        let result = plugin
+            .execute(&HashMap::new(), &PluginContext::default())
+            .await;
         assert!(result.is_error);
     }
 }

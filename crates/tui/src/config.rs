@@ -1,8 +1,8 @@
 // ── config.rs: TUI-specific configuration ─────────────────────────────
 
+use crate::theme::ThemeName;
 use std::str::FromStr;
 use whycode_core::config::TuiConfig;
-use crate::theme::ThemeName;
 
 /// Configuration consumed by the TUI application.
 #[derive(Debug, Clone)]

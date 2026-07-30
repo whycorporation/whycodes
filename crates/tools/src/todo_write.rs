@@ -85,10 +85,7 @@ impl Tool for TodoWriteTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let merge = args
-            .get("merge")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
+        let merge = args.get("merge").and_then(|v| v.as_bool()).unwrap_or(false);
 
         // Parse new todos from args
         let new_todos: Vec<TodoItem> = match serde_json::from_value(args["todos"].clone()) {

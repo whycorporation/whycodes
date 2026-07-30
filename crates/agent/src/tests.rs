@@ -117,10 +117,7 @@ fn test_subagent_task_creation() {
     };
 
     assert_eq!(task.goal, "Write a test file");
-    assert_eq!(
-        task.context.as_deref(),
-        Some("Project is a Rust workspace")
-    );
+    assert_eq!(task.context.as_deref(), Some("Project is a Rust workspace"));
     assert_eq!(task.tools.as_deref().unwrap().len(), 2);
     assert_eq!(task.max_turns, 10);
 }

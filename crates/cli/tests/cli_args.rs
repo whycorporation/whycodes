@@ -6,7 +6,10 @@ fn whycode_binary() -> &'static str {
 
 #[test]
 fn test_cli_help() {
-    let o = Command::new(whycode_binary()).arg("--help").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .arg("--help")
+        .output()
+        .unwrap();
     assert!(o.status.success());
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(s.contains("run") && s.contains("generate"), "help: {}", s);
@@ -21,7 +24,10 @@ fn test_cli_help_short_flag() {
 
 #[test]
 fn test_cli_version() {
-    let o = Command::new(whycode_binary()).arg("--version").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(o.status.success());
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(s.contains("whycode"), "version: {}", s);
@@ -38,19 +44,28 @@ fn test_config_subcommand() {
 
 #[test]
 fn test_debug_subcommand() {
-    let o = Command::new(whycode_binary()).arg("debug").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .arg("debug")
+        .output()
+        .unwrap();
     assert!(o.status.success());
 }
 
 #[test]
 fn test_stats_subcommand() {
-    let o = Command::new(whycode_binary()).arg("stats").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .arg("stats")
+        .output()
+        .unwrap();
     assert!(o.status.success());
 }
 
 #[test]
 fn test_provider_list() {
-    let o = Command::new(whycode_binary()).args(["provider", "list"]).output().unwrap();
+    let o = Command::new(whycode_binary())
+        .args(["provider", "list"])
+        .output()
+        .unwrap();
     assert!(o.status.success());
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(!s.is_empty(), "provider list output empty");
@@ -58,18 +73,27 @@ fn test_provider_list() {
 
 #[test]
 fn test_session_list() {
-    let o = Command::new(whycode_binary()).args(["session", "list"]).output().unwrap();
+    let o = Command::new(whycode_binary())
+        .args(["session", "list"])
+        .output()
+        .unwrap();
     assert!(o.status.success());
 }
 
 #[test]
 fn test_invalid_subcommand() {
-    let o = Command::new(whycode_binary()).arg("nonexistent_xyz").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .arg("nonexistent_xyz")
+        .output()
+        .unwrap();
     assert!(!o.status.success());
 }
 
 #[test]
 fn test_unknown_flag() {
-    let o = Command::new(whycode_binary()).arg("--nonexistent-flag").output().unwrap();
+    let o = Command::new(whycode_binary())
+        .arg("--nonexistent-flag")
+        .output()
+        .unwrap();
     assert!(!o.status.success());
 }

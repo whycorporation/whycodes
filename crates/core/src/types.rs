@@ -332,15 +332,17 @@ impl PermissionSet {
 
         // 3. Legacy deny list
         if let Some(denied) = &self.denied_tools
-            && denied.iter().any(|d| d == tool_name) {
-                return PermissionAction::Deny;
-            }
+            && denied.iter().any(|d| d == tool_name)
+        {
+            return PermissionAction::Deny;
+        }
 
         // 4. Legacy allow list (if set, tools not listed are denied)
         if let Some(allowed) = &self.allowed_tools
-            && !allowed.iter().any(|a| a == tool_name) {
-                return PermissionAction::Deny;
-            }
+            && !allowed.iter().any(|a| a == tool_name)
+        {
+            return PermissionAction::Deny;
+        }
 
         // 5. Category flags
         if matches!(
@@ -353,8 +355,7 @@ impl PermissionSet {
         if matches!(tool_name, "shell" | "bash") && !self.allow_shell {
             return PermissionAction::Deny;
         }
-        if matches!(tool_name, "webfetch" | "websearch" | "mcp_websearch") && !self.allow_network
-        {
+        if matches!(tool_name, "webfetch" | "websearch" | "mcp_websearch") && !self.allow_network {
             return PermissionAction::Deny;
         }
 

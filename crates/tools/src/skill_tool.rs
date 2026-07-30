@@ -132,10 +132,7 @@ impl Tool for SkillTool {
             }
             _ => ToolResult {
                 tool_call_id: String::new(),
-                content: format!(
-                    "Unknown action '{}'. Valid actions: list, load",
-                    action
-                ),
+                content: format!("Unknown action '{}'. Valid actions: list, load", action),
                 is_error: true,
             },
         }

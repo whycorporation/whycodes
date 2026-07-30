@@ -139,7 +139,11 @@ impl Tool for ApplyPatchTool {
                         content: format!(
                             "Patch failed on '{}': {}",
                             full_path,
-                            if result.is_empty() { "unknown error" } else { &result }
+                            if result.is_empty() {
+                                "unknown error"
+                            } else {
+                                &result
+                            }
                         ),
                         is_error: true,
                     }

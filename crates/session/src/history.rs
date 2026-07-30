@@ -134,11 +134,7 @@ fn git_stash_create(project_path: &Path) -> Option<String> {
         return None;
     }
     let hash = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if hash.is_empty() {
-        None
-    } else {
-        Some(hash)
-    }
+    if hash.is_empty() { None } else { Some(hash) }
 }
 
 /// List untracked + modified files relative to project (for diagnostics).

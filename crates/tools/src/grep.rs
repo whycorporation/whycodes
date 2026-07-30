@@ -112,9 +112,10 @@ impl GrepTool {
         cmd.arg(pattern).arg(path);
 
         if let Some(glob) = file_glob
-            && Self::has_command("rg") {
-                cmd.arg("--glob").arg(glob);
-            }
+            && Self::has_command("rg")
+        {
+            cmd.arg("--glob").arg(glob);
+        }
 
         let output = cmd
             .output()

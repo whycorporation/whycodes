@@ -6,8 +6,8 @@ use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use async_trait::async_trait;
 use super::provider::LlmProvider;
+use async_trait::async_trait;
 
 pub struct GoogleProvider {
     name: String,
@@ -69,9 +69,7 @@ impl LlmProvider for GoogleProvider {
             .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
-            let err_msg = json["error"]["message"]
-                .as_str()
-                .unwrap_or("Unknown error");
+            let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
             return Err(whycode_core::Error::Llm(format!(
                 "Google API error ({}): {}",
                 status, err_msg

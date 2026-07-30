@@ -63,8 +63,7 @@ impl FallbackChain {
                     if idx > 0 {
                         warn!(
                             "Fallback succeeded on provider '{}' (tried {} providers first)",
-                            provider_name,
-                            idx
+                            provider_name, idx
                         );
                     }
                     return Ok(response);

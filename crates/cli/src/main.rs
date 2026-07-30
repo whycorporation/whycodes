@@ -142,9 +142,7 @@ pub enum GithubCmd {
         action: Option<PrAction>,
     },
     /// Show issue details
-    Issue {
-        number: Option<u64>,
-    },
+    Issue { number: Option<u64> },
 }
 
 #[derive(Subcommand, Debug)]
@@ -289,12 +287,8 @@ async fn main() -> anyhow::Result<()> {
 
 async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
     match cmd {
-        Commands::Run { prompt, max_turns } => {
-            cmd_run(cli, prompt.as_deref(), *max_turns).await
-        }
-        Commands::Generate { prompt, max_turns } => {
-            cmd_generate(cli, prompt, *max_turns).await
-        }
+        Commands::Run { prompt, max_turns } => cmd_run(cli, prompt.as_deref(), *max_turns).await,
+        Commands::Generate { prompt, max_turns } => cmd_generate(cli, prompt, *max_turns).await,
         Commands::Acp => cmd_acp(cli).await,
         Commands::Pr { title, base } => cmd_pr(cli, title.as_deref(), base.as_deref()).await,
         Commands::Github { cmd: gh_cmd } => cmd_github(cli, gh_cmd).await,
@@ -319,13 +313,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
 fn resolve_provider(cli: &Cli, config: &Config) -> String {
     cli.provider
         .clone()
-        .or_else(|| {
-            config
-                .providers
-                .keys()
-                .next()
-                .cloned()
-        })
+        .or_else(|| config.providers.keys().next().cloned())
         .unwrap_or_else(|| "anthropic".to_string())
 }
 
@@ -355,19 +343,22 @@ fn resolve_dir(cli: &Cli) -> PathBuf {
 fn get_api_key(provider: &str, config: &Config) -> Option<String> {
     let env_var = provider_env_var(provider);
     if let Ok(key) = std::env::var(&env_var)
-        && !key.is_empty() {
-            return Some(key);
-        }
+        && !key.is_empty()
+    {
+        return Some(key);
+    }
     if let Some(pc) = config.get_provider(provider)
         && let Some(key) = &pc.api_key
-            && !key.is_empty() {
-                return Some(key.clone());
-            }
+        && !key.is_empty()
+    {
+        return Some(key.clone());
+    }
     // Fallback to generic env vars
     if provider == "openai"
-        && let Ok(key) = std::env::var("OPENAI_API_KEY") {
-            return Some(key);
-        }
+        && let Ok(key) = std::env::var("OPENAI_API_KEY")
+    {
+        return Some(key);
+    }
     None
 }
 
@@ -388,8 +379,10 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
     let provider = resolve_provider(cli, config);
     let model = resolve_model(cli, config);
 
-    config.get_agent(&agent_name).cloned().unwrap_or_else(|| {
-        AgentInfo {
+    config
+        .get_agent(&agent_name)
+        .cloned()
+        .unwrap_or_else(|| AgentInfo {
             name: "build".to_string(),
             description: "Default build agent".to_string(),
             mode: AgentMode::Primary,
@@ -415,8 +408,7 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
             system_prompt: None,
             temperature: None,
             top_p: None,
-        }
-    })
+        })
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -471,8 +463,7 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
         .with_config(&config)
         .with_mcp(&config)
         .await;
-    let mut session =
-        whycode_session::session::Session::new(project_dir.clone(), system_prompt);
+    let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
     let mut history = whycode_session::SessionHistory::new();
     let mut provider = provider;
     let mut model = model;
@@ -575,28 +566,29 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
             let (cmd, rest) = split_slash_command(&input);
             // Custom markdown / config commands (OpenCode `/commands`)
             if let Some(name) = cmd.strip_prefix('/')
-                && let Some(custom) = config.commands.get(name) {
-                    let rendered = custom.render(rest);
-                    if !ensure_api_key(&mut api_key, &provider, &config) {
-                        continue;
-                    }
-                    println!("{} /{} → prompt", "⚡".bold(), name.cyan());
-                    history.push_before_turn(&session.messages, &project_dir);
-                    session.add_user_message(&rendered);
-                    match agent
-                        .run_turn(&mut session, &provider, &model, &api_key, max_turns)
-                        .await
-                    {
-                        Ok(response) => {
-                            if !response.is_empty() {
-                                println!("\n{}", response);
-                            }
-                            println!();
-                        }
-                        Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
-                    }
+                && let Some(custom) = config.commands.get(name)
+            {
+                let rendered = custom.render(rest);
+                if !ensure_api_key(&mut api_key, &provider, &config) {
                     continue;
                 }
+                println!("{} /{} → prompt", "⚡".bold(), name.cyan());
+                history.push_before_turn(&session.messages, &project_dir);
+                session.add_user_message(&rendered);
+                match agent
+                    .run_turn(&mut session, &provider, &model, &api_key, max_turns)
+                    .await
+                {
+                    Ok(response) => {
+                        if !response.is_empty() {
+                            println!("\n{}", response);
+                        }
+                        println!();
+                    }
+                    Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
+                }
+                continue;
+            }
             match cmd {
                 "/exit" | "/quit" | "/q" => break,
                 "/help" | "/h" => {
@@ -736,7 +728,11 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                                 agent_name = name;
                                 agent = new_agent;
                                 session.set_system_prompt(&prompt);
-                                println!("{} Switched to agent '{}'", "✓".green(), agent_name.cyan());
+                                println!(
+                                    "{} Switched to agent '{}'",
+                                    "✓".green(),
+                                    agent_name.cyan()
+                                );
                             }
                             Err(e) => eprintln!("{} {}", "✗".red(), e),
                         }
@@ -758,13 +754,12 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                         );
                     } else {
                         println!("Add a provider:");
-                        println!(
-                            "  whycode provider add {} --api-key <key>",
-                            provider
-                        );
+                        println!("  whycode provider add {} --api-key <key>", provider);
                         println!("  or set env {}", provider_env_var(&provider));
                         println!();
-                        println!("Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ...");
+                        println!(
+                            "Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ..."
+                        );
                         let _ = cmd_provider(&ProviderCmd::List).await;
                     }
                     continue;
@@ -788,8 +783,8 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                     continue;
                 }
                 "/tools" => {
-                    let tools = whycode_tools::ToolExecutor::new()
-                        .get_definitions(&agent.info.permission);
+                    let tools =
+                        whycode_tools::ToolExecutor::new().get_definitions(&agent.info.permission);
                     println!("{} Available tools ({}):", "🔧".bold(), tools.len());
                     for t in tools {
                         println!("  {} — {}", t.name.cyan(), t.description);
@@ -893,10 +888,12 @@ fn switch_agent(
     project_dir: &std::path::Path,
 ) -> anyhow::Result<(String, Agent, String)> {
     let name = name.trim();
-    let info = config
-        .get_agent(name)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("Unknown agent '{}'. Try: build, plan, explore, general, scout", name))?;
+    let info = config.get_agent(name).cloned().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown agent '{}'. Try: build, plan, explore, general, scout",
+            name
+        )
+    })?;
     let base = info
         .system_prompt
         .clone()
@@ -1127,10 +1124,7 @@ async fn cmd_pr(_cli: &Cli, title: Option<&str>, base: Option<&str>) -> anyhow::
     let title = title.unwrap_or("Auto-generated PR");
     let base = base.unwrap_or("main");
 
-    println!(
-        "{} Creating pull request...",
-        "🔀".bold()
-    );
+    println!("{} Creating pull request...", "🔀".bold());
     println!("  Title: {}", title.cyan());
     println!("  Base:  {}", base.cyan());
     println!();
@@ -1150,7 +1144,10 @@ async fn cmd_pr(_cli: &Cli, title: Option<&str>, base: Option<&str>) -> anyhow::
                 "⚠".yellow(),
                 "https://cli.github.com/".cyan()
             );
-            println!("  Or run: gh pr create --title \"{}\" --base \"{}\"", title, base);
+            println!(
+                "  Or run: gh pr create --title \"{}\" --base \"{}\"",
+                title, base
+            );
         }
     }
 
@@ -1160,49 +1157,45 @@ async fn cmd_pr(_cli: &Cli, title: Option<&str>, base: Option<&str>) -> anyhow::
 /// `github` — GitHub operations
 async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
     match cmd {
-        GithubCmd::Pr { action } => {
-            match action {
-                Some(PrAction::List) | None => {
-                    println!("{} Listing pull requests...", "📋".bold());
-                    let status = std::process::Command::new("gh")
-                        .args(["pr", "list"])
-                        .status();
-                    if status.is_err() || !status.unwrap().success() {
-                        println!(
-                            "{} GitHub CLI not available. Install: {}",
-                            "⚠".yellow(),
-                            "https://cli.github.com/".cyan()
-                        );
-                    }
+        GithubCmd::Pr { action } => match action {
+            Some(PrAction::List) | None => {
+                println!("{} Listing pull requests...", "📋".bold());
+                let status = std::process::Command::new("gh")
+                    .args(["pr", "list"])
+                    .status();
+                if status.is_err() || !status.unwrap().success() {
+                    println!(
+                        "{} GitHub CLI not available. Install: {}",
+                        "⚠".yellow(),
+                        "https://cli.github.com/".cyan()
+                    );
                 }
-                Some(PrAction::View { number }) => {
-                    println!("{} Viewing PR #{}...", "👁".bold(), number);
-                    let status = std::process::Command::new("gh")
-                        .args(["pr", "view", &number.to_string()])
-                        .status();
-                    if status.is_err() || !status.unwrap().success() {
-                        println!("{} Could not view PR.", "⚠".yellow());
-                    }
+            }
+            Some(PrAction::View { number }) => {
+                println!("{} Viewing PR #{}...", "👁".bold(), number);
+                let status = std::process::Command::new("gh")
+                    .args(["pr", "view", &number.to_string()])
+                    .status();
+                if status.is_err() || !status.unwrap().success() {
+                    println!("{} Could not view PR.", "⚠".yellow());
                 }
-                Some(PrAction::Create { title, base }) => {
-                    let title = title.as_deref().unwrap_or("Auto PR");
-                    let base = base.as_deref().unwrap_or("main");
-                    let status = std::process::Command::new("gh")
-                        .args([
-                            "pr", "create", "--title", title, "--base", base, "--fill",
-                        ])
-                        .status();
-                    match status {
-                        Ok(s) if s.success() => {
-                            println!("{} PR created!", "✓".green());
-                        }
-                        _ => {
-                            println!("{} Could not create PR.", "⚠".yellow());
-                        }
+            }
+            Some(PrAction::Create { title, base }) => {
+                let title = title.as_deref().unwrap_or("Auto PR");
+                let base = base.as_deref().unwrap_or("main");
+                let status = std::process::Command::new("gh")
+                    .args(["pr", "create", "--title", title, "--base", base, "--fill"])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {
+                        println!("{} PR created!", "✓".green());
+                    }
+                    _ => {
+                        println!("{} Could not create PR.", "⚠".yellow());
                     }
                 }
             }
-        }
+        },
         GithubCmd::Issue { number } => {
             if let Some(n) = number {
                 println!("{} Viewing issue #{}...", "📝".bold(), n);
@@ -1229,24 +1222,27 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     );
 
     let config = Config::load()?;
-    let agent_info = config.default_agent().cloned().unwrap_or_else(|| AgentInfo {
-        name: "build".to_string(),
-        description: "Default".to_string(),
-        mode: AgentMode::Primary,
-        permission: PermissionSet {
-            allowed_tools: None,
-            denied_tools: None,
-            allow_file_writes: true,
-            allow_network: true,
-            allow_shell: true,
-            allowed_paths: None,
-            rules: Default::default(),
-        },
-        model: None,
-        system_prompt: None,
-        temperature: None,
-        top_p: None,
-    });
+    let agent_info = config
+        .default_agent()
+        .cloned()
+        .unwrap_or_else(|| AgentInfo {
+            name: "build".to_string(),
+            description: "Default".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: None,
+                denied_tools: None,
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                allowed_paths: None,
+                rules: Default::default(),
+            },
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        });
     let agent = Agent::new(agent_info);
 
     let state = whycode_server::AppState {
@@ -1307,12 +1303,7 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                     } else {
                         format!(" {}", server.args.join(" "))
                     };
-                    println!(
-                        "  {} → {}{}",
-                        name.cyan(),
-                        server.command,
-                        args.dimmed()
-                    );
+                    println!("  {} → {}{}", name.cyan(), server.command, args.dimmed());
                 }
             }
         }
@@ -1368,7 +1359,9 @@ async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 println!("Add a provider:");
                 println!("  whycode provider add <name> --api-key <key> --base-url <url>");
                 println!();
-                println!("Built-in providers supported: openai, anthropic, deepseek, google, groq, xai");
+                println!(
+                    "Built-in providers supported: openai, anthropic, deepseek, google, groq, xai"
+                );
             } else {
                 println!("{} Configured providers:", "🔑".bold());
                 for (name, provider) in &config.providers {
@@ -1451,28 +1444,16 @@ async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
         ProviderCmd::Remove { name } => {
             if config.providers.remove(name).is_some() {
                 config.save()?;
-                println!(
-                    "{} Provider '{}' removed.",
-                    "✓".green(),
-                    name.cyan()
-                );
+                println!("{} Provider '{}' removed.", "✓".green(), name.cyan());
             } else {
-                eprintln!(
-                    "{} Provider '{}' not found.",
-                    "✗".red(),
-                    name.cyan()
-                );
+                eprintln!("{} Provider '{}' not found.", "✗".red(), name.cyan());
             }
         }
         ProviderCmd::Default { name } => {
             if config.providers.contains_key(name) {
                 // Save provider name as metadata
                 config.save()?;
-                println!(
-                    "{} Default provider set to '{}'.",
-                    "✓".green(),
-                    name.cyan()
-                );
+                println!("{} Default provider set to '{}'.", "✓".green(), name.cyan());
                 println!("  Use: whycode -P {} ...", name);
             } else {
                 eprintln!(
@@ -1561,10 +1542,7 @@ async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
                     println!("  Denied tools: {:?}", tools);
                 }
                 if let Some(ref model) = agent.model {
-                    println!(
-                        "  Model: {}/{}",
-                        model.provider_id, model.model_id
-                    );
+                    println!("  Model: {}/{}", model.provider_id, model.model_id);
                 }
             } else {
                 eprintln!("{} Agent '{}' not found.", "✗".red(), name);
@@ -1615,22 +1593,15 @@ async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
             let text = toml::to_string_pretty(&config)?;
             println!("{}", text);
         }
-        ConfigCmd::Get { key } => {
-            match get_config_value(&config, key) {
-                Some(val) => println!("{}", val),
-                None => eprintln!("{} Key '{}' not found.", "✗".red(), key),
-            }
-        }
+        ConfigCmd::Get { key } => match get_config_value(&config, key) {
+            Some(val) => println!("{}", val),
+            None => eprintln!("{} Key '{}' not found.", "✗".red(), key),
+        },
         ConfigCmd::Set { key, value } => {
             let mut config = config.clone();
             set_config_value(&mut config, key, value)?;
             config.save()?;
-            println!(
-                "{} Set '{}' = '{}'",
-                "✓".green(),
-                key.cyan(),
-                value
-            );
+            println!("{} Set '{}' = '{}'", "✓".green(), key.cyan(), value);
         }
         ConfigCmd::Path => {
             let config_path = Config::default_path()?;
@@ -1644,7 +1615,11 @@ async fn cmd_config(cmd: &ConfigCmd) -> anyhow::Result<()> {
 fn get_config_value(config: &Config, key: &str) -> Option<String> {
     match key {
         "default_agent" => Some(config.default_agent.clone()),
-        "project_path" => config.general.project_path.as_ref().map(|p| p.display().to_string()),
+        "project_path" => config
+            .general
+            .project_path
+            .as_ref()
+            .map(|p| p.display().to_string()),
         "log_level" => config.general.log_level.clone(),
         _ => None,
     }
@@ -1662,7 +1637,10 @@ fn set_config_value(config: &mut Config, key: &str, value: &str) -> anyhow::Resu
             config.general.log_level = Some(value.to_string());
         }
         _ => {
-            anyhow::bail!("Unknown config key: {}. Supported: default_agent, project_path, log_level", key);
+            anyhow::bail!(
+                "Unknown config key: {}. Supported: default_agent, project_path, log_level",
+                key
+            );
         }
     }
     Ok(())
@@ -1685,16 +1663,8 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                 println!("{} Sessions:", "📋".bold());
                 for s in &sessions {
                     let msg_count = db.message_count(&s.id).unwrap_or(0);
-                    println!(
-                        "  {} — {} ({} messages)",
-                        s.id.cyan(),
-                        s.title,
-                        msg_count
-                    );
-                    println!(
-                        "    Created: {}  Updated: {}",
-                        s.created_at, s.updated_at
-                    );
+                    println!("  {} — {} ({} messages)", s.id.cyan(), s.title, msg_count);
+                    println!("    Created: {}  Updated: {}", s.created_at, s.updated_at);
                     if !s.project_path.is_empty() && s.project_path != "/" {
                         println!("    Project: {}", s.project_path);
                     }
@@ -1702,10 +1672,7 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
             }
         }
         SessionCmd::View { id } => {
-            match db
-                .get_session(id)
-                .map_err(|e| anyhow::anyhow!("{}", e))?
-            {
+            match db.get_session(id).map_err(|e| anyhow::anyhow!("{}", e))? {
                 Some(s) => {
                     let msg_count = db.message_count(&s.id).unwrap_or(0);
                     println!("{} Session: {}", "📋".bold(), s.id.cyan());
@@ -1847,10 +1814,7 @@ async fn cmd_stats() -> anyhow::Result<()> {
         let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
         let db_path = data_dir.join("whycode.db");
         if let Ok(meta) = std::fs::metadata(&db_path) {
-            println!(
-                "  DB size:    {} bytes",
-                meta.len()
-            );
+            println!("  DB size:    {} bytes", meta.len());
         }
     }
 
@@ -1860,15 +1824,16 @@ async fn cmd_stats() -> anyhow::Result<()> {
 /// `debug` — Show debug information
 async fn cmd_debug() -> anyhow::Result<()> {
     println!("{} Debug Information:", "🔧".bold());
-    println!(
-        "  Version:     {}",
-        env!("CARGO_PKG_VERSION").cyan()
-    );
+    println!("  Version:     {}", env!("CARGO_PKG_VERSION").cyan());
 
     // Config path
     match Config::default_path() {
         Ok(p) => {
-            let exists = if p.exists() { "✓".green() } else { "✗ (not found)".red() };
+            let exists = if p.exists() {
+                "✓".green()
+            } else {
+                "✗ (not found)".red()
+            };
             println!("  Config:      {} {}", p.display(), exists);
         }
         Err(e) => {
@@ -1879,7 +1844,11 @@ async fn cmd_debug() -> anyhow::Result<()> {
     // Data directory
     match Config::data_dir() {
         Ok(p) => {
-            let exists = if p.exists() { "✓".green() } else { "✗".red() };
+            let exists = if p.exists() {
+                "✓".green()
+            } else {
+                "✗".red()
+            };
             println!("  Data dir:    {} {}", p.display(), exists);
         }
         Err(e) => {
@@ -1899,7 +1868,10 @@ async fn cmd_debug() -> anyhow::Result<()> {
     }
 
     // Rust toolchain
-    if let Ok(rustc) = std::process::Command::new("rustc").arg("--version").output() {
+    if let Ok(rustc) = std::process::Command::new("rustc")
+        .arg("--version")
+        .output()
+    {
         let ver = String::from_utf8_lossy(&rustc.stdout).trim().to_string();
         println!("  Rust:        {}", ver);
     }
@@ -1943,10 +1915,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
 async fn cmd_upgrade() -> anyhow::Result<()> {
     println!("{} Whycode Upgrade", "⬆".bold());
     println!();
-    println!(
-        "  Current version: {}",
-        env!("CARGO_PKG_VERSION").cyan()
-    );
+    println!("  Current version: {}", env!("CARGO_PKG_VERSION").cyan());
     println!();
     println!("  To upgrade, re-install from source or use your package manager.");
     println!();

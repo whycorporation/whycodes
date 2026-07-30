@@ -1,21 +1,21 @@
 // ── ui/dialogs/mod.rs: Dialog rendering system ────────────────────────
 // Renders modal overlays: provider, model, help, confirm, alert.
 
-mod base;
-mod provider;
-mod help;
-mod confirm;
 mod alert;
+mod base;
+mod confirm;
+mod help;
+mod provider;
 
-pub use base::*;
-pub use provider::*;
-pub use help::*;
-pub use confirm::*;
 pub use alert::*;
+pub use base::*;
+pub use confirm::*;
+pub use help::*;
+pub use provider::*;
 
-use ratatui::Frame;
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
+use ratatui::Frame;
 
 /// Main dialog render — dispatches to the correct dialog renderer
 /// based on the active dialog kind.
@@ -37,9 +37,7 @@ pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
         }
         crate::app::DialogKind::Permission { tool_name, detail } => {
             let title = format!("Permission: {tool_name}");
-            let message = format!(
-                "{detail}\n\n[y/a] Allow   [n/d/Esc] Deny"
-            );
+            let message = format!("{detail}\n\n[y/a] Allow   [n/d/Esc] Deny");
             render_confirm_dialog(frame, &title, &message, palette)
         }
         _ => {}

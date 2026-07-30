@@ -75,8 +75,7 @@ mod tests {
 
     #[test]
     fn test_error_display_serde() {
-        let serde_err =
-            serde_json::from_str::<serde_json::Value>("invalid").unwrap_err();
+        let serde_err = serde_json::from_str::<serde_json::Value>("invalid").unwrap_err();
         let err = Error::from(serde_err);
         assert!(err.to_string().contains("Serialization error"));
     }

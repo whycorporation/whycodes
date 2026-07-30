@@ -7,8 +7,8 @@ pub mod subagent;
 mod tests;
 
 pub use agent::Agent;
-pub use events::{new_cancel_flag, request_cancel, CancelFlag, TurnEvent};
+pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
 pub use permission::{
-    default_prompter, ChannelPermissionPrompter, PermissionPrompter, PermissionRequest,
-    StdinPrompter,
+    ChannelPermissionPrompter, PermissionPrompter, PermissionRequest, StdinPrompter,
+    default_prompter,
 };

@@ -38,7 +38,10 @@ fn test_anthropic_build_body() {
     assert_eq!(body["model"].as_str().unwrap(), "claude-sonnet-4-20250514");
     assert_eq!(body["max_tokens"].as_u64().unwrap(), 1024);
     assert!(body["stream"].as_bool().unwrap());
-    assert_eq!(body["system"].as_str().unwrap(), "You are a helpful assistant.");
+    assert_eq!(
+        body["system"].as_str().unwrap(),
+        "You are a helpful assistant."
+    );
 
     let messages = body["messages"].as_array().unwrap();
     assert_eq!(messages.len(), 1);
@@ -59,7 +62,10 @@ fn test_anthropic_build_body_with_temperature_and_top_p() {
     let body = provider.build_body(&request, "claude-opus");
     // f32/f64 conversion can cause minor floating-point drift
     let temp = body["temperature"].as_f64().unwrap();
-    assert!((temp - 0.3).abs() < 0.001, "temperature {temp} should be ~0.3");
+    assert!(
+        (temp - 0.3).abs() < 0.001,
+        "temperature {temp} should be ~0.3"
+    );
     let top_p = body["top_p"].as_f64().unwrap();
     assert!((top_p - 0.9).abs() < 0.001, "top_p {top_p} should be ~0.9");
 }
@@ -83,7 +89,10 @@ fn test_anthropic_build_body_uses_top_level_system() {
     let body = provider.build_body(&request, "claude");
 
     // Anthropic puts system at top-level, not in messages
-    assert_eq!(body["system"].as_str().unwrap(), "You are a helpful assistant.");
+    assert_eq!(
+        body["system"].as_str().unwrap(),
+        "You are a helpful assistant."
+    );
     let messages = body["messages"].as_array().unwrap();
     for m in messages {
         // No system role in messages — Anthropic uses top-level system
@@ -105,7 +114,10 @@ fn test_openai_build_body() {
     let messages = body["messages"].as_array().unwrap();
     // OpenAI puts system as a message
     assert_eq!(messages[0]["role"].as_str().unwrap(), "system");
-    assert_eq!(messages[0]["content"].as_str().unwrap(), "You are a helpful assistant.");
+    assert_eq!(
+        messages[0]["content"].as_str().unwrap(),
+        "You are a helpful assistant."
+    );
     assert_eq!(messages[1]["role"].as_str().unwrap(), "user");
 
     // OpenAI uses string content for text messages, not arrays
@@ -143,7 +155,10 @@ fn test_deepseek_is_openai_compatible() {
     // Should have the same OpenAI-compatible message structure
     let messages = body["messages"].as_array().unwrap();
     assert_eq!(messages[0]["role"].as_str().unwrap(), "system");
-    assert_eq!(messages[0]["content"].as_str().unwrap(), "You are a helpful assistant.");
+    assert_eq!(
+        messages[0]["content"].as_str().unwrap(),
+        "You are a helpful assistant."
+    );
     assert_eq!(messages[1]["role"].as_str().unwrap(), "user");
     assert!(messages[1]["content"].is_string());
 
@@ -228,8 +243,8 @@ async fn test_retry_backoff_non_retryable_error() {
 
 #[tokio::test]
 async fn test_retry_backoff_retryable_error_retries() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     let call_count = Arc::new(AtomicUsize::new(0));
     let c = call_count.clone();

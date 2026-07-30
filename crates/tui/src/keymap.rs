@@ -63,8 +63,16 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub fn new(key: impl Into<String>, description: impl Into<String>, context: KeymapContext) -> Self {
-        Self { key: key.into(), description: description.into(), context }
+    pub fn new(
+        key: impl Into<String>,
+        description: impl Into<String>,
+        context: KeymapContext,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            description: description.into(),
+            context,
+        }
     }
 }
 
@@ -102,7 +110,9 @@ impl Default for Keymap {
 }
 
 impl Keymap {
-    pub fn new() -> Self { Self }
+    pub fn new() -> Self {
+        Self
+    }
 
     pub fn resolve(&self, ctx: KeymapContext, key: &KeyEvent) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -151,7 +161,7 @@ impl Keymap {
                 (false, KeyCode::Char('y')) => Some(Action::DialogConfirm),
                 (false, KeyCode::Char('n')) => Some(Action::DialogCancel),
                 (false, KeyCode::Char('a')) => Some(Action::DialogConfirm), // allow
-                (false, KeyCode::Char('d')) => Some(Action::DialogCancel), // deny
+                (false, KeyCode::Char('d')) => Some(Action::DialogCancel),  // deny
                 (false, KeyCode::Backspace) => Some(Action::InputBackspace),
                 (true, KeyCode::Char('s')) => Some(Action::DialogConfirm),
                 (true, KeyCode::Char('c')) => Some(Action::DialogCancel),

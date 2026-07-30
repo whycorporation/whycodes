@@ -31,11 +31,7 @@ impl LspTool {
     }
 
     /// Get or start an LSP client for the given extension.
-    async fn get_client(
-        &self,
-        ext: &str,
-        workspace_root: &str,
-    ) -> Result<Arc<LspClient>, String> {
+    async fn get_client(&self, ext: &str, workspace_root: &str) -> Result<Arc<LspClient>, String> {
         let mut clients = self.clients.lock().await;
         if let Some(c) = clients.get(ext) {
             return Ok(Arc::clone(c));
@@ -141,7 +137,10 @@ impl Tool for LspTool {
         }
 
         let pos = Position {
-            line: args["line"].as_u64().map(|l| l.saturating_sub(1) as u32).unwrap_or(0),
+            line: args["line"]
+                .as_u64()
+                .map(|l| l.saturating_sub(1) as u32)
+                .unwrap_or(0),
             character: args["character"]
                 .as_u64()
                 .map(|c| c.saturating_sub(1) as u32)
@@ -149,44 +148,42 @@ impl Tool for LspTool {
         };
 
         match action {
-            "diagnostics" => {
-                match client.get_diagnostics(&uri).await {
-                    Ok(diags) => {
-                        if diags.is_empty() {
-                            ToolResult {
-                                tool_call_id: String::new(),
-                                content: "No diagnostics found.".to_string(),
-                                is_error: false,
-                            }
-                        } else {
-                            let lines: Vec<String> = diags
-                                .iter()
-                                .map(|d| {
-                                    format!(
-                                        "[L{}:C{}-L{}:C{}] {:?}: {}",
-                                        d.range.start.line + 1,
-                                        d.range.start.character + 1,
-                                        d.range.end.line + 1,
-                                        d.range.end.character + 1,
-                                        d.severity,
-                                        d.message
-                                    )
-                                })
-                                .collect();
-                            ToolResult {
-                                tool_call_id: String::new(),
-                                content: lines.join("\n"),
-                                is_error: false,
-                            }
+            "diagnostics" => match client.get_diagnostics(&uri).await {
+                Ok(diags) => {
+                    if diags.is_empty() {
+                        ToolResult {
+                            tool_call_id: String::new(),
+                            content: "No diagnostics found.".to_string(),
+                            is_error: false,
+                        }
+                    } else {
+                        let lines: Vec<String> = diags
+                            .iter()
+                            .map(|d| {
+                                format!(
+                                    "[L{}:C{}-L{}:C{}] {:?}: {}",
+                                    d.range.start.line + 1,
+                                    d.range.start.character + 1,
+                                    d.range.end.line + 1,
+                                    d.range.end.character + 1,
+                                    d.severity,
+                                    d.message
+                                )
+                            })
+                            .collect();
+                        ToolResult {
+                            tool_call_id: String::new(),
+                            content: lines.join("\n"),
+                            is_error: false,
                         }
                     }
-                    Err(e) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error fetching diagnostics: {e}"),
-                        is_error: true,
-                    },
                 }
-            }
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Error fetching diagnostics: {e}"),
+                    is_error: true,
+                },
+            },
             "hover" => match client.hover(&uri, pos).await {
                 Ok(Some(h)) => ToolResult {
                     tool_call_id: String::new(),
@@ -272,7 +269,10 @@ impl Tool for LspTool {
             },
             _ => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Unknown action '{}'. Valid: diagnostics, hover, definition, references", action),
+                content: format!(
+                    "Unknown action '{}'. Valid: diagnostics, hover, definition, references",
+                    action
+                ),
                 is_error: true,
             },
         }

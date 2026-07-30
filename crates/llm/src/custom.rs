@@ -54,9 +54,10 @@ impl CustomProvider {
         let mut headers = config.headers.clone().unwrap_or_default();
         // Add auth header if not already present
         if !headers.contains_key("Authorization")
-            && let Some(key) = &config.api_key {
-                headers.insert("Authorization".to_string(), format!("Bearer {}", key));
-            }
+            && let Some(key) = &config.api_key
+        {
+            headers.insert("Authorization".to_string(), format!("Bearer {}", key));
+        }
 
         Self {
             name: config.name.clone(),
@@ -83,8 +84,7 @@ impl CustomProvider {
         }
 
         if let Some(temp) = request.temperature {
-            body["temperature"] =
-                Value::Number(serde_json::Number::from_f64(temp as f64).unwrap());
+            body["temperature"] = Value::Number(serde_json::Number::from_f64(temp as f64).unwrap());
         }
         if let Some(top_p) = request.top_p {
             body["top_p"] = Value::Number(serde_json::Number::from_f64(top_p as f64).unwrap());
@@ -115,7 +115,9 @@ impl CustomProvider {
                                 serde_json::json!({"type": "text", "text": text})
                             }
                             ContentBlock::ToolResult {
-                                tool_use_id, content, ..
+                                tool_use_id,
+                                content,
+                                ..
                             } => {
                                 serde_json::json!({"tool_call_id": tool_use_id, "content": content})
                             }
@@ -159,9 +161,10 @@ impl CustomProvider {
 
         // Fallback auth if no Authorization header set
         if !self.headers.contains_key("Authorization")
-            && let Some(key) = &self.api_key {
-                req = req.header("Authorization", format!("Bearer {}", key));
-            }
+            && let Some(key) = &self.api_key
+        {
+            req = req.header("Authorization", format!("Bearer {}", key));
+        }
 
         req
     }
@@ -210,9 +213,12 @@ impl LlmProvider for CustomProvider {
         let msg = &choice["message"];
         let mut content: Vec<ContentBlock> = Vec::new();
         if let Some(text) = msg["content"].as_str()
-            && !text.is_empty() {
-                content.push(ContentBlock::Text { text: text.to_string() });
-            }
+            && !text.is_empty()
+        {
+            content.push(ContentBlock::Text {
+                text: text.to_string(),
+            });
+        }
         if let Some(tcs) = msg["tool_calls"].as_array() {
             for tc in tcs {
                 let f = &tc["function"];
@@ -319,7 +325,10 @@ mod tests {
             HashMap::from([("X-Custom".to_string(), "val".to_string())]),
         );
         assert_eq!(p.name(), "my-api");
-        assert_eq!(p.default_base_url(), "https://api.example.com/v1/chat/completions");
+        assert_eq!(
+            p.default_base_url(),
+            "https://api.example.com/v1/chat/completions"
+        );
     }
 
     #[test]

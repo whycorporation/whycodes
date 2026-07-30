@@ -3,16 +3,16 @@
 // Assistant: free parts + "▣ agent · model" epilogue
 // Home: centered dual-block logo (home.tsx + logo.tsx)
 
+use crate::app::{ChatBlock, ChatRole, TuiApp};
+use crate::opencode_tokens::{LOGO_WHY, LOGO_WHY_CODE, layout};
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Padding, Paragraph, Wrap},
-    Frame,
 };
-use crate::app::{ChatBlock, ChatRole, TuiApp};
-use crate::opencode_tokens::{layout, LOGO_WHY, LOGO_WHY_CODE};
-use crate::theme::ThemePalette;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     if app.messages.is_empty() {
@@ -42,16 +42,11 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     for i in 0..4 {
         lines.push(Line::from(vec![
             Span::raw(pad.clone()),
-            Span::styled(
-                LOGO_WHY[i].to_string(),
-                Style::default().fg(palette.dim),
-            ),
+            Span::styled(LOGO_WHY[i].to_string(), Style::default().fg(palette.dim)),
             Span::raw(" "),
             Span::styled(
                 LOGO_WHY_CODE[i].to_string(),
-                Style::default()
-                    .fg(palette.fg)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
             ),
         ]));
     }
@@ -71,7 +66,12 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         palette.dim,
         false,
     ));
-    lines.push(center_line(&app.project_label, area.width, palette.dim, false));
+    lines.push(center_line(
+        &app.project_label,
+        area.width,
+        palette.dim,
+        false,
+    ));
     lines.push(Line::from(""));
     // "Get started /connect" like footer welcome
     let gs = "Get started  /connect".to_string();
@@ -230,13 +230,12 @@ fn render_message(
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::raw("   "),
-                Span::styled(
-                    "▣ ".to_string(),
-                    Style::default().fg(agent_color),
-                ),
+                Span::styled("▣ ".to_string(), Style::default().fg(agent_color)),
                 Span::styled(
                     format!("{} ", app.agent_name),
-                    Style::default().fg(agent_color).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(agent_color)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
                     format!(
@@ -285,9 +284,7 @@ fn panel_line(
             } else {
                 format!("  {text}")
             },
-            Style::default()
-                .fg(palette.fg)
-                .bg(palette.status_bar_bg), // STEP2 panel
+            Style::default().fg(palette.fg).bg(palette.status_bar_bg), // STEP2 panel
         ),
     ])
 }
@@ -324,11 +321,7 @@ fn tool_block(
 }
 
 fn tool_result(content: &str, is_error: bool, palette: &ThemePalette) -> Vec<Line<'static>> {
-    let color = if is_error {
-        palette.error
-    } else {
-        palette.dim
-    };
+    let color = if is_error { palette.error } else { palette.dim };
     let mut lines = Vec::new();
     let total = content.lines().count();
     for line in content.lines().take(8) {
@@ -419,9 +412,5 @@ fn center_line_colored(
 }
 
 fn empty_dash(s: &str) -> &str {
-    if s.is_empty() {
-        "—"
-    } else {
-        s
-    }
+    if s.is_empty() { "—" } else { s }
 }

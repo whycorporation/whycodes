@@ -7,8 +7,8 @@ use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use async_trait::async_trait;
 use super::provider::LlmProvider;
+use async_trait::async_trait;
 
 pub struct OllamaProvider {
     name: String,
@@ -83,12 +83,16 @@ impl OllamaProvider {
             if let whycode_core::types::MessageContent::Blocks(blocks) = &msg.content {
                 let mut images: Vec<String> = Vec::new();
                 for block in blocks {
-                    if let ContentBlock::Image { source: whycode_core::types::ImageSource::Base64 { data, .. } } = block {
+                    if let ContentBlock::Image {
+                        source: whycode_core::types::ImageSource::Base64 { data, .. },
+                    } = block
+                    {
                         images.push(data.clone());
                     }
                 }
                 if !images.is_empty() {
-                    msg_obj["images"] = Value::Array(images.into_iter().map(Value::String).collect());
+                    msg_obj["images"] =
+                        Value::Array(images.into_iter().map(Value::String).collect());
                 }
             }
 
@@ -149,9 +153,7 @@ impl LlmProvider for OllamaProvider {
             .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
-            let err_msg = json["error"]
-                .as_str()
-                .unwrap_or("Unknown error");
+            let err_msg = json["error"].as_str().unwrap_or("Unknown error");
             return Err(whycode_core::Error::Llm(format!(
                 "Ollama API error ({}): {}",
                 status, err_msg
@@ -163,18 +165,23 @@ impl LlmProvider for OllamaProvider {
         // Ollama response has "message" -> "content"
         let message = &json["message"];
         if let Some(text) = message["content"].as_str()
-            && !text.is_empty() {
-                content.push(ContentBlock::Text {
-                    text: text.to_string(),
-                });
-            }
+            && !text.is_empty()
+        {
+            content.push(ContentBlock::Text {
+                text: text.to_string(),
+            });
+        }
 
         // Check for tool calls in message
         if let Some(tool_calls) = message["tool_calls"].as_array() {
             for tc in tool_calls {
                 let func = &tc["function"];
                 content.push(ContentBlock::ToolUse {
-                    id: tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    id: tc
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
                     input: func["arguments"].clone(),
                 });

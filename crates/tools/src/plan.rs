@@ -73,39 +73,34 @@ impl Tool for PlanTool {
                     },
                 }
             }
-            "exit" => {
-                match std::fs::remove_file(&plan_mode_file) {
-                    Ok(_) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: "Planning mode exited. File modifications are now allowed."
-                            .to_string(),
-                        is_error: false,
-                    },
-                    Err(e) => {
-                        if e.kind() == std::io::ErrorKind::NotFound {
-                            ToolResult {
-                                tool_call_id: String::new(),
-                                content:
-                                    "Planning mode is not currently active (no plan_mode file found)."
-                                        .to_string(),
-                                is_error: false,
-                            }
-                        } else {
-                            ToolResult {
-                                tool_call_id: String::new(),
-                                content: format!("Error exiting planning mode: {}", e),
-                                is_error: true,
-                            }
+            "exit" => match std::fs::remove_file(&plan_mode_file) {
+                Ok(_) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: "Planning mode exited. File modifications are now allowed."
+                        .to_string(),
+                    is_error: false,
+                },
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        ToolResult {
+                            tool_call_id: String::new(),
+                            content:
+                                "Planning mode is not currently active (no plan_mode file found)."
+                                    .to_string(),
+                            is_error: false,
+                        }
+                    } else {
+                        ToolResult {
+                            tool_call_id: String::new(),
+                            content: format!("Error exiting planning mode: {}", e),
+                            is_error: true,
                         }
                     }
                 }
-            }
+            },
             _ => ToolResult {
                 tool_call_id: String::new(),
-                content: format!(
-                    "Invalid action: '{}'. Must be 'enter' or 'exit'.",
-                    action
-                ),
+                content: format!("Invalid action: '{}'. Must be 'enter' or 'exit'.", action),
                 is_error: true,
             },
         }

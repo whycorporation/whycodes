@@ -71,16 +71,12 @@ impl Tool for DisplayTool {
                     whycode_format::highlight::highlight_code(content, lang)
                 }
             }
-            "diff" => {
-                whycode_format::diff::render_diff_unified(content)
-            }
+            "diff" => whycode_format::diff::render_diff_unified(content),
             "table" => {
                 // Parse content as simple newline-and-comma table
                 content.to_string()
             }
-            _ => {
-                content.to_string()
-            }
+            _ => content.to_string(),
         };
 
         ToolResult {

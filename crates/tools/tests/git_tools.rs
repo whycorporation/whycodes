@@ -12,9 +12,9 @@ use whycode_tools::executor::ToolExecutor;
 fn repo_ctx() -> ToolContext {
     // Find the workspace root (where .git lives) from the manifest dir
     let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()   // crates/tools -> crates
+        .parent() // crates/tools -> crates
         .unwrap()
-        .parent()   // crates -> workspace root
+        .parent() // crates -> workspace root
         .unwrap();
 
     ToolContext {
@@ -37,7 +37,11 @@ async fn test_git_diff() {
     let result = tool.execute(args, &ctx).await;
 
     // In a repo without uncommitted changes, diff should succeed but may be empty.
-    assert!(!result.is_error, "git_diff should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_diff should succeed: {}",
+        result.content
+    );
 
     // The output should either contain diff content or the "no changes" message
     let has_diff = result.content.contains("diff --git")
@@ -55,7 +59,11 @@ async fn test_git_diff_staged() {
     let args = serde_json::json!({"staged": true});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "git_diff --staged should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_diff --staged should succeed: {}",
+        result.content
+    );
 }
 
 #[tokio::test]
@@ -67,7 +75,11 @@ async fn test_git_diff_path_filter() {
     let args = serde_json::json!({"path": "README.md"});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "git_diff with path should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_diff with path should succeed: {}",
+        result.content
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -83,7 +95,11 @@ async fn test_git_log() {
     let args = serde_json::json!({"count": 5});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "git_log should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_log should succeed: {}",
+        result.content
+    );
     // git log --oneline output: "<hash> <message>"
     // Should have at least one line with a short hash
     assert!(
@@ -97,7 +113,11 @@ async fn test_git_log() {
         for line in result.content.trim().lines() {
             // Format: <hash> <message>  (hash is hex, at least 7 chars)
             let parts: Vec<&str> = line.splitn(2, ' ').collect();
-            assert!(!parts.is_empty(), "each line should have a hash: '{}'", line);
+            assert!(
+                !parts.is_empty(),
+                "each line should have a hash: '{}'",
+                line
+            );
             assert!(
                 parts[0].len() >= 7,
                 "hash should be at least 7 chars: '{}'",
@@ -116,11 +136,19 @@ async fn test_git_log_with_count() {
     let args = serde_json::json!({"count": 1});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "git_log count=1 should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_log count=1 should succeed: {}",
+        result.content
+    );
 
     if !result.content.contains("No commits") && !result.content.is_empty() {
         let lines: Vec<&str> = result.content.trim().lines().collect();
-        assert!(lines.len() <= 1, "should have at most 1 commit, got {}", lines.len());
+        assert!(
+            lines.len() <= 1,
+            "should have at most 1 commit, got {}",
+            lines.len()
+        );
     }
 }
 
@@ -131,13 +159,19 @@ async fn test_git_log_with_count() {
 #[tokio::test]
 async fn test_git_status() {
     let executor = ToolExecutor::new();
-    let tool = executor.get("git_status").expect("git_status tool not found");
+    let tool = executor
+        .get("git_status")
+        .expect("git_status tool not found");
     let ctx = repo_ctx();
 
     let args = serde_json::json!({});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "git_status should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_status should succeed: {}",
+        result.content
+    );
 
     // Status output is either a list of status codes or "clean" message
     let valid = result.content.contains("Working tree clean")
@@ -154,7 +188,8 @@ async fn test_git_status() {
                     || line.starts_with('!'))
         });
     // If empty, that's still valid (no changes reported)
-    assert!(valid || result.content.is_empty(),
+    assert!(
+        valid || result.content.is_empty(),
         "unexpected git_status output: '{}'",
         result.content
     );
@@ -163,12 +198,18 @@ async fn test_git_status() {
 #[tokio::test]
 async fn test_git_status_path_filter() {
     let executor = ToolExecutor::new();
-    let tool = executor.get("git_status").expect("git_status tool not found");
+    let tool = executor
+        .get("git_status")
+        .expect("git_status tool not found");
     let ctx = repo_ctx();
 
     // Filter to a path that definitely exists in the repo
     let args = serde_json::json!({"path": "Cargo.toml"});
     let result = tool.execute(args, &ctx).await;
 
-    assert!(!result.is_error, "git_status with path should succeed: {}", result.content);
+    assert!(
+        !result.is_error,
+        "git_status with path should succeed: {}",
+        result.content
+    );
 }

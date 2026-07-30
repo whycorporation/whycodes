@@ -1,11 +1,11 @@
 // ── widgets/message.rs: Message renderer ───────────────────────────────
 
+use crate::app::{ChatBlock, ChatRole};
+use crate::theme::ThemePalette;
 use ratatui::{
     style::{Modifier, Style},
     text::{Line, Span},
 };
-use crate::app::{ChatBlock, ChatRole};
-use crate::theme::ThemePalette;
 
 /// A display-ready message struct for widget rendering.
 #[derive(Debug, Clone)]
@@ -24,10 +24,18 @@ impl MessageWidget {
         let mut lines: Vec<Line> = Vec::new();
 
         let role_style = match self.role {
-            ChatRole::User => Style::default().fg(palette.user_msg).add_modifier(Modifier::BOLD),
-            ChatRole::Assistant => Style::default().fg(palette.assistant_msg).add_modifier(Modifier::BOLD),
-            ChatRole::System => Style::default().fg(palette.system_msg).add_modifier(Modifier::BOLD),
-            ChatRole::Tool => Style::default().fg(palette.tool_msg).add_modifier(Modifier::BOLD),
+            ChatRole::User => Style::default()
+                .fg(palette.user_msg)
+                .add_modifier(Modifier::BOLD),
+            ChatRole::Assistant => Style::default()
+                .fg(palette.assistant_msg)
+                .add_modifier(Modifier::BOLD),
+            ChatRole::System => Style::default()
+                .fg(palette.system_msg)
+                .add_modifier(Modifier::BOLD),
+            ChatRole::Tool => Style::default()
+                .fg(palette.tool_msg)
+                .add_modifier(Modifier::BOLD),
         };
 
         // Role header.
@@ -72,12 +80,16 @@ impl MessageWidget {
                     } else {
                         lines.push(Line::from(Span::styled(
                             "  💭 Thinking:",
-                            Style::default().fg(palette.thinking).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(palette.thinking)
+                                .add_modifier(Modifier::BOLD),
                         )));
                         for line in text.lines() {
                             lines.push(Line::from(Span::styled(
                                 format!("    {}", line),
-                                Style::default().fg(palette.thinking).add_modifier(Modifier::DIM),
+                                Style::default()
+                                    .fg(palette.thinking)
+                                    .add_modifier(Modifier::DIM),
                             )));
                         }
                     }
@@ -97,7 +109,11 @@ impl MessageWidget {
                     content,
                     is_error,
                 } => {
-                    let color = if *is_error { palette.error } else { palette.tool_msg };
+                    let color = if *is_error {
+                        palette.error
+                    } else {
+                        palette.tool_msg
+                    };
                     let truncated = if content.len() > 500 {
                         format!("{}... (truncated)", &content[..500])
                     } else {

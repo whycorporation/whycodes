@@ -1,16 +1,16 @@
 use futures::StreamExt;
 use std::sync::Arc;
+use whycode_core::tool::ToolContext;
 use whycode_core::types::{
     AgentInfo, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
 };
 use whycode_llm::provider::ProviderRegistry;
 use whycode_tools::executor::ToolExecutor;
-use whycode_core::tool::ToolContext;
 
 use whycode_session::session::Session;
 
-use super::events::{emit, is_cancelled, CancelFlag, EventSink, TurnEvent};
-use super::permission::{default_prompter, PermissionPrompter};
+use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
+use super::permission::{PermissionPrompter, default_prompter};
 use super::subagent::{SubagentRunner, SubagentTask};
 
 /// Default system prompt (loaded from prompts/build.txt at compile time)
@@ -126,8 +126,16 @@ impl Agent {
         api_key: &str,
         max_turns: usize,
     ) -> whycode_core::Result<String> {
-        self.run_turn_with_events(session, provider_name, model, api_key, max_turns, None, None)
-            .await
+        self.run_turn_with_events(
+            session,
+            provider_name,
+            model,
+            api_key,
+            max_turns,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Run a turn, optionally streaming `TurnEvent`s and honouring a cancel flag (Esc).
@@ -142,9 +150,7 @@ impl Agent {
         events: Option<EventSink>,
         cancel: Option<CancelFlag>,
     ) -> whycode_core::Result<String> {
-        let tools = self
-            .tool_executor
-            .get_definitions(&self.info.permission);
+        let tools = self.tool_executor.get_definitions(&self.info.permission);
 
         let tool_ctx = ToolContext {
             working_dir: session.project_path.to_string_lossy().to_string(),
@@ -180,17 +186,10 @@ impl Agent {
 
             emit(
                 &events,
-                TurnEvent::Status(format!(
-                    "LLM request (step {turn_count})…  [Esc cancel]"
-                )),
+                TurnEvent::Status(format!("LLM request (step {turn_count})…  [Esc cancel]")),
             );
 
-            let request = session.build_request(
-                &tools,
-                None,
-                self.info.temperature,
-                Some(true),
-            );
+            let request = session.build_request(&tools, None, self.info.temperature, Some(true));
 
             let mut accumulated_text = String::new();
             let mut tool_calls: Vec<ToolCall> = Vec::new();
@@ -445,7 +444,7 @@ impl Agent {
                     allow_network: true,
                     allow_shell: false,
                     allowed_paths: None,
-                rules: Default::default(),
+                    rules: Default::default(),
                 },
                 Self::system_prompt_for(subagent_type),
             ),
@@ -467,10 +466,7 @@ impl Agent {
         info.name = subagent_type.to_string();
         info.mode = AgentMode::Subagent;
         info.permission = permission;
-        info.system_prompt = Some(Self::with_agents_md(
-            &system_prompt,
-            &session.project_path,
-        ));
+        info.system_prompt = Some(Self::with_agents_md(&system_prompt, &session.project_path));
 
         let task = SubagentTask {
             goal: goal.clone(),
@@ -602,4 +598,3 @@ impl Agent {
         Ok(outputs)
     }
 }
-

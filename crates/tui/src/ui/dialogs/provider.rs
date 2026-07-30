@@ -1,15 +1,15 @@
 // ── ui/dialogs/provider.rs: Provider dialog ────────────────────────────
 // Two modes: Select from list, or Add Custom.
 
+use crate::app::{AuthMethod, ProviderDialogMode, TuiApp};
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
-    Frame,
 };
-use crate::app::{AuthMethod, ProviderDialogMode, TuiApp};
-use crate::theme::ThemePalette;
 
 use super::base::dialog_frame;
 
@@ -36,23 +36,33 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
     for (i, name) in pd.providers.iter().enumerate() {
         let prefix = if i == pd.selected { "▸ " } else { "  " };
         let style = if i == pd.selected {
-            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(palette.fg)
         };
-        lines.push(Line::from(Span::styled(format!("{}{}", prefix, name), style)));
+        lines.push(Line::from(Span::styled(
+            format!("{}{}", prefix, name),
+            style,
+        )));
     }
 
     // Add custom entry.
     let idx = pd.providers.len();
     let prefix = if idx == pd.selected { "▸ " } else { "  " };
     let style = if idx == pd.selected {
-        Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(palette.dim)
     };
     lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(format!("{}+ Add Custom Provider...", prefix), style)));
+    lines.push(Line::from(Span::styled(
+        format!("{}+ Add Custom Provider...", prefix),
+        style,
+    )));
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
@@ -71,10 +81,7 @@ fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) 
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(3)])
         .split(area);
 
     let body = chunks[0];
@@ -86,14 +93,24 @@ fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) 
     let form_fields = [
         ("Name", &pd.form_name, "(e.g., groq, together)"),
         ("API Key", &pd.form_api_key, "(leave empty if not required)"),
-        ("Base URL", &pd.form_base_url, "(e.g., https://api.groq.com/openai/v1)"),
-        ("Headers", &pd.form_headers, "(optional: key1=val1,key2=val2)"),
+        (
+            "Base URL",
+            &pd.form_base_url,
+            "(e.g., https://api.groq.com/openai/v1)",
+        ),
+        (
+            "Headers",
+            &pd.form_headers,
+            "(optional: key1=val1,key2=val2)",
+        ),
     ];
 
     for (i, (label, value, hint)) in form_fields.iter().enumerate() {
         let active = i == pd.active_field;
         let style = if active {
-            Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(palette.fg)
         };
@@ -182,7 +199,9 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
         for (i, (provider, model)) in ms.models.iter().enumerate() {
             let prefix = if i == ms.selected { "▸ " } else { "  " };
             let style = if i == ms.selected {
-                Style::default().fg(palette.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(palette.fg)
             };

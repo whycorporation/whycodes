@@ -1,10 +1,13 @@
 pub mod routes;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 use std::sync::Arc;
+use tower_http::cors::CorsLayer;
 use whycode_agent::agent::Agent;
 use whycode_core::config::Config;
-use tower_http::cors::CorsLayer;
 
 #[derive(Clone)]
 pub struct AppState {

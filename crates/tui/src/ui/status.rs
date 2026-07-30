@@ -5,15 +5,15 @@
 //     <box> permissions / LSP / MCP / /status  OR  Get started /connect
 //   </box>
 
+use crate::app::{AgentState, AppMode, TuiApp};
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::Paragraph,
-    Frame,
 };
-use crate::app::{AgentState, AppMode, TuiApp};
-use crate::theme::ThemePalette;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     let dir = truncate_start(&app.project_label, (area.width / 3).max(12) as usize);
@@ -36,10 +36,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         ]
     } else {
         let state = match &app.current_agent_state {
-            AgentState::Idle => Span::styled(
-                String::from("ready"),
-                Style::default().fg(palette.success),
-            ),
+            AgentState::Idle => {
+                Span::styled(String::from("ready"), Style::default().fg(palette.success))
+            }
             AgentState::Generating => Span::styled(
                 String::from("generating"),
                 Style::default()
@@ -84,8 +83,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     spans.extend(right);
 
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(spans)))
-            .style(Style::default().bg(palette.bg)),
+        Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.bg)),
         area,
     );
 }
@@ -95,9 +93,6 @@ fn truncate_start(s: &str, max: usize) -> String {
     if n <= max {
         s.to_string()
     } else {
-        format!(
-            "…{}",
-            s.chars().skip(n - max + 1).collect::<String>()
-        )
+        format!("…{}", s.chars().skip(n - max + 1).collect::<String>())
     }
 }

@@ -71,7 +71,8 @@ mod tests {
 
     #[test]
     fn test_retryable_503() {
-        let err = whycode_core::Error::Llm("Provider API error (503): Service unavailable".to_string());
+        let err =
+            whycode_core::Error::Llm("Provider API error (503): Service unavailable".to_string());
         assert!(is_retryable(&err));
     }
 

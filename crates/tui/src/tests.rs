@@ -1,12 +1,10 @@
-use std::str::FromStr;
-use crate::theme::ThemeName;
 use crate::app::{
-    TuiApp, AppMode, ChatRole,
-    DialogManager, DialogKind, ConfirmAction,
-    SidebarState, SidebarTab, AgentState,
-    ProviderDialogState, ProviderDialogMode, AuthMethod,
+    AgentState, AppMode, AuthMethod, ChatRole, ConfirmAction, DialogKind, DialogManager,
+    ProviderDialogMode, ProviderDialogState, SidebarState, SidebarTab, TuiApp,
 };
 use crate::config::TuiAppConfig;
+use crate::theme::ThemeName;
+use std::str::FromStr;
 
 fn test_config() -> TuiAppConfig {
     TuiAppConfig::default()
@@ -17,14 +15,26 @@ fn test_config() -> TuiAppConfig {
 #[test]
 fn test_theme_from_str_dark() {
     assert_eq!(ThemeName::from_str("dark").unwrap(), ThemeName::DefaultDark);
-    assert_eq!(ThemeName::from_str("default-dark").unwrap(), ThemeName::DefaultDark);
-    assert_eq!(ThemeName::from_str("default_dark").unwrap(), ThemeName::DefaultDark);
+    assert_eq!(
+        ThemeName::from_str("default-dark").unwrap(),
+        ThemeName::DefaultDark
+    );
+    assert_eq!(
+        ThemeName::from_str("default_dark").unwrap(),
+        ThemeName::DefaultDark
+    );
 }
 
 #[test]
 fn test_theme_from_str_light() {
-    assert_eq!(ThemeName::from_str("light").unwrap(), ThemeName::DefaultLight);
-    assert_eq!(ThemeName::from_str("default_light").unwrap(), ThemeName::DefaultLight);
+    assert_eq!(
+        ThemeName::from_str("light").unwrap(),
+        ThemeName::DefaultLight
+    );
+    assert_eq!(
+        ThemeName::from_str("default_light").unwrap(),
+        ThemeName::DefaultLight
+    );
 }
 
 #[test]
@@ -33,8 +43,14 @@ fn test_theme_from_str_named_themes() {
     assert_eq!(ThemeName::from_str("nord").unwrap(), ThemeName::Nord);
     assert_eq!(ThemeName::from_str("dracula").unwrap(), ThemeName::Dracula);
     assert_eq!(ThemeName::from_str("gruvbox").unwrap(), ThemeName::Gruvbox);
-    assert_eq!(ThemeName::from_str("catppuccin-mocha").unwrap(), ThemeName::CatppuccinMocha);
-    assert_eq!(ThemeName::from_str("tokyonight").unwrap(), ThemeName::TokyoNight);
+    assert_eq!(
+        ThemeName::from_str("catppuccin-mocha").unwrap(),
+        ThemeName::CatppuccinMocha
+    );
+    assert_eq!(
+        ThemeName::from_str("tokyonight").unwrap(),
+        ThemeName::TokyoNight
+    );
 }
 
 #[test]
@@ -52,7 +68,10 @@ fn test_theme_palette_has_distinct_colors() {
     // bg and fg should be different
     assert_ne!(format!("{:?}", palette.bg), format!("{:?}", palette.fg));
     // error and success should be different
-    assert_ne!(format!("{:?}", palette.error), format!("{:?}", palette.success));
+    assert_ne!(
+        format!("{:?}", palette.error),
+        format!("{:?}", palette.success)
+    );
 }
 
 #[test]
@@ -66,17 +85,35 @@ fn test_agent_color_by_index_cycles() {
 #[test]
 fn test_all_themes_produce_palette() {
     let themes = [
-        ThemeName::DefaultDark, ThemeName::DefaultLight,
-        ThemeName::Monokai, ThemeName::SolarizedDark, ThemeName::SolarizedLight,
-        ThemeName::Nord, ThemeName::Dracula, ThemeName::Gruvbox,
-        ThemeName::OneDark, ThemeName::CatppuccinMocha, ThemeName::CatppuccinLatte,
-        ThemeName::TokyoNight, ThemeName::TokyoNightStorm, ThemeName::TokyoNightLight,
-        ThemeName::Kanagawa, ThemeName::Everforest,
-        ThemeName::RosePine, ThemeName::RosePineMoon, ThemeName::RosePineDawn,
-        ThemeName::AyuDark, ThemeName::AyuMirage, ThemeName::AyuLight,
-        ThemeName::GithubDark, ThemeName::GithubLight,
-        ThemeName::VscodeDark, ThemeName::VscodeLight,
-        ThemeName::Zenburn, ThemeName::OceanicNext, ThemeName::MaterialPalenight,
+        ThemeName::DefaultDark,
+        ThemeName::DefaultLight,
+        ThemeName::Monokai,
+        ThemeName::SolarizedDark,
+        ThemeName::SolarizedLight,
+        ThemeName::Nord,
+        ThemeName::Dracula,
+        ThemeName::Gruvbox,
+        ThemeName::OneDark,
+        ThemeName::CatppuccinMocha,
+        ThemeName::CatppuccinLatte,
+        ThemeName::TokyoNight,
+        ThemeName::TokyoNightStorm,
+        ThemeName::TokyoNightLight,
+        ThemeName::Kanagawa,
+        ThemeName::Everforest,
+        ThemeName::RosePine,
+        ThemeName::RosePineMoon,
+        ThemeName::RosePineDawn,
+        ThemeName::AyuDark,
+        ThemeName::AyuMirage,
+        ThemeName::AyuLight,
+        ThemeName::GithubDark,
+        ThemeName::GithubLight,
+        ThemeName::VscodeDark,
+        ThemeName::VscodeLight,
+        ThemeName::Zenburn,
+        ThemeName::OceanicNext,
+        ThemeName::MaterialPalenight,
     ];
     for theme in &themes {
         theme.palette(); // should not panic
@@ -161,9 +198,16 @@ fn test_add_tool_call() {
 #[test]
 fn test_add_tool_result() {
     let mut app = TuiApp::new(test_config());
-    app.add_tool_call("tc-1".to_string(), "bash".to_string(), serde_json::json!({}));
+    app.add_tool_call(
+        "tc-1".to_string(),
+        "bash".to_string(),
+        serde_json::json!({}),
+    );
     app.add_tool_result("tc-1", "output here", false);
-    assert_eq!(app.messages[0].tool_calls[0].result.as_deref(), Some("output here"));
+    assert_eq!(
+        app.messages[0].tool_calls[0].result.as_deref(),
+        Some("output here")
+    );
     assert!(!app.messages[0].tool_calls[0].is_error);
 }
 

@@ -138,12 +138,7 @@ impl Tool for ExternalDirectoryTool {
                                 "-"
                             };
                             let size = meta.len();
-                            output.push_str(&format!(
-                                "{:<10} {:>10} {}\n",
-                                file_type,
-                                size,
-                                name
-                            ));
+                            output.push_str(&format!("{:<10} {:>10} {}\n", file_type, size, name));
                         }
                         Err(_) => continue,
                     }
@@ -159,20 +154,18 @@ impl Tool for ExternalDirectoryTool {
                     is_error: false,
                 }
             }
-            "read" => {
-                match std::fs::read_to_string(&full_path) {
-                    Ok(content) => ToolResult {
-                        tool_call_id: String::new(),
-                        content,
-                        is_error: false,
-                    },
-                    Err(e) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error reading file '{}': {}", full_path, e),
-                        is_error: true,
-                    },
-                }
-            }
+            "read" => match std::fs::read_to_string(&full_path) {
+                Ok(content) => ToolResult {
+                    tool_call_id: String::new(),
+                    content,
+                    is_error: false,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Error reading file '{}': {}", full_path, e),
+                    is_error: true,
+                },
+            },
             _ => ToolResult {
                 tool_call_id: String::new(),
                 content: format!("Unknown action '{}'. Use 'read' or 'list'.", action),

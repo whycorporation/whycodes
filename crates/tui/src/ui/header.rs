@@ -1,15 +1,15 @@
 // ── ui/header.rs: thin top bar (session chrome) ────────────────────────
 // OpenCode session route doesn't use a heavy title box; keep a 1-line bar.
 
+use crate::app::TuiApp;
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::Paragraph,
-    Frame,
 };
-use crate::app::TuiApp;
-use crate::theme::ThemePalette;
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     let brand = Span::styled(

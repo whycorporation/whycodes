@@ -8,9 +8,10 @@ const GITHUB_API_BASE: &str = "https://api.github.com";
 /// Resolve a GitHub token: explicit argument first, then GITHUB_TOKEN env var.
 pub fn resolve_token(explicit_token: Option<&str>) -> Option<String> {
     if let Some(t) = explicit_token
-        && !t.is_empty() {
-            return Some(t.to_string());
-        }
+        && !t.is_empty()
+    {
+        return Some(t.to_string());
+    }
     env::var("GITHUB_TOKEN").ok()
 }
 
@@ -55,7 +56,10 @@ pub async fn make_request(
         req = req.json(&b);
     }
 
-    let resp = req.send().await.map_err(|e| format!("GitHub API request failed: {e}"))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("GitHub API request failed: {e}"))?;
     let status = resp.status();
     let text = resp
         .text()

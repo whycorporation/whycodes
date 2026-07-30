@@ -189,9 +189,17 @@ impl CallToolResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ToolContent {
-    Text { text: String },
-    Image { data: String, #[serde(rename = "mimeType")] mime_type: String },
-    Resource { resource: McpResourceContent },
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
+    Resource {
+        resource: McpResourceContent,
+    },
 }
 
 impl ToolContent {

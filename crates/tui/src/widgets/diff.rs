@@ -1,14 +1,14 @@
 // ── widgets/diff.rs: Diff viewer widget ────────────────────────────────
 // Renders unified or side-by-side diffs with syntax highlighting.
 
+use crate::theme::ThemePalette;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
-use crate::theme::ThemePalette;
 
 /// Render a unified diff.
 pub fn render_unified_diff(
@@ -114,15 +114,16 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<DiffLine> {
         if raw.is_empty() {
             continue;
         }
-        let (kind, content) = if raw.starts_with("+++") || raw.starts_with("---") || raw.starts_with("@@") {
-            (DiffLineKind::Header, raw.to_string())
-        } else if let Some(rest) = raw.strip_prefix('+') {
-            (DiffLineKind::Add, rest.to_string())
-        } else if let Some(rest) = raw.strip_prefix('-') {
-            (DiffLineKind::Remove, rest.to_string())
-        } else {
-            (DiffLineKind::Context, raw.to_string())
-        };
+        let (kind, content) =
+            if raw.starts_with("+++") || raw.starts_with("---") || raw.starts_with("@@") {
+                (DiffLineKind::Header, raw.to_string())
+            } else if let Some(rest) = raw.strip_prefix('+') {
+                (DiffLineKind::Add, rest.to_string())
+            } else if let Some(rest) = raw.strip_prefix('-') {
+                (DiffLineKind::Remove, rest.to_string())
+            } else {
+                (DiffLineKind::Context, raw.to_string())
+            };
         lines.push(DiffLine { kind, content });
     }
     lines
