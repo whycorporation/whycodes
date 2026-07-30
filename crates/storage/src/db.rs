@@ -7,9 +7,15 @@ pub struct Database {
     conn: Connection,
 }
 
+/// How long to wait for another process to release a database lock before
+/// giving up. Without this SQLite returns SQLITE_BUSY immediately, so two
+/// whycode processes touching the same database can fail spuriously.
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl Database {
     pub fn open(path: &str) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         run_migrations(&conn)?;
         Ok(Self { conn })
