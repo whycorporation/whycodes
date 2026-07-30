@@ -21,7 +21,7 @@ Last updated: 2026-07-31
 
 | # | Phase | Doc | Status | Notes |
 |---|---|---|---|---|
-| 1 | Shell command risk classification | [1.md](1.md) | not started | Highest priority: today `bash = "allow"` gives zero protection |
+| 1 | Shell command risk classification | [1.md](1.md) | done | `crates/command-risk`, gated in `Agent::execute_with_permission` |
 | 2 | Distribution and self-update | [2.md](2.md) | not started | `upgrade` is currently a stub that prints instructions |
 | 3 | OAuth and credential discovery | [3.md](3.md) | not started | Depends on 2 for a credible install story |
 | 4 | CI quality budgets | [4.md](4.md) | not started | Cheapest phase; can run in parallel with any other |
@@ -31,7 +31,8 @@ Last updated: 2026-07-31
 
 ## Current focus
 
-Nothing in progress. Phase 1 is the recommended starting point.
+Phase 1 is complete. Phase 2 (distribution) or Phase 4 (budgets, independent of
+everything else) are the next candidates.
 
 ## Decision log
 
@@ -42,6 +43,9 @@ Decisions that shaped this plan, so they are not re-litigated later.
 | 2026-07-31 | Stop targeting "OpenCode parity" as the project's goal | Parity is definitionally a following position. It gives a user no reason to choose whycode over the thing it copies. See `docs/comparison.md`. |
 | 2026-07-31 | Re-implement borrowed designs rather than vendoring jcode source | jcode is MIT, so copying is permitted with attribution, but its abstractions assume its own config, provider and session types. Porting the design is cheaper than porting the code plus its dependencies. Any file that is a derivative work keeps jcode's copyright notice. |
 | 2026-07-31 | Safety before features | whycode runs shell commands from a model with no risk classification. That is a correctness problem, not a feature gap, so it precedes everything user-facing. |
+| 2026-07-31 | Default `bash_risk_threshold` is `destructive`, not `caution` as 1.md first proposed | `caution` fires on ordinary in-project cleanup (`rm -rf target`, `> file`). A gate that prompts during a normal build gets switched off, and then protects nothing. |
+| 2026-07-31 | Unresolvable targets escalate to `destructive`, never `catastrophic` | `catastrophic` is not promptable. An unexpandable `$BUILD_DIR` or a `$(…)` target is unknown, not known-bad, so refusing it outright would block legitimate work with no way to override. Refusal is reserved for targets we positively identified. |
+| 2026-07-31 | Unrecognised commands are `safe` | The alternative — unknown means dangerous — prompts on every build and script. Recorded as a limitation in the crate docs and README rather than hidden. |
 
 ## Verification commands
 

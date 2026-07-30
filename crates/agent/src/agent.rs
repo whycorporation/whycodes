@@ -12,6 +12,10 @@ use whycode_session::session::Session;
 use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
 use super::subagent::{SubagentRunner, SubagentTask};
+use whycode_command_risk::{Decision, RiskThreshold, assess, decide};
+
+/// Tool names that run an arbitrary shell command string.
+const SHELL_TOOLS: &[&str] = &["bash", "shell"];
 
 /// Default system prompt (loaded from prompts/build.txt at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompts/build.txt");
@@ -22,6 +26,7 @@ pub struct Agent {
     provider_registry: Arc<ProviderRegistry>,
     tool_executor: Arc<ToolExecutor>,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    risk_threshold: RiskThreshold,
 }
 
 impl Agent {
@@ -31,6 +36,7 @@ impl Agent {
             provider_registry: Arc::new(ProviderRegistry::default()),
             tool_executor: Arc::new(ToolExecutor::new()),
             permission_prompter: default_prompter(),
+            risk_threshold: RiskThreshold::default(),
         }
     }
 
@@ -55,6 +61,14 @@ impl Agent {
         registry.register_from_config(config);
         self.provider_registry = Arc::new(registry);
         self.info.permission = config.effective_permission(&self.info.permission);
+        self.risk_threshold = config
+            .security
+            .bash_risk_threshold
+            .parse()
+            .unwrap_or_else(|e| {
+                tracing::warn!("{e}; falling back to the default");
+                RiskThreshold::default()
+            });
         self
     }
 
@@ -327,8 +341,14 @@ impl Agent {
         Ok(final_text)
     }
 
-    /// Apply OpenCode allow/ask/deny then execute (or spawn task subagent).
-    async fn execute_with_permission(
+    /// Apply the shell risk gate, then allow/ask/deny, then execute (or spawn
+    /// a task subagent).
+    ///
+    /// `pub(crate)` so the risk gate can be tested at this level: the unit
+    /// tests in `command-risk` cover classification, but only this method
+    /// proves that a catastrophic command is refused even when the permission
+    /// map says `allow`.
+    pub(crate) async fn execute_with_permission(
         &self,
         tc: &ToolCall,
         session: &Session,
@@ -337,6 +357,46 @@ impl Agent {
         model: &str,
         api_key: &str,
     ) -> ToolResult {
+        // Shell commands are gated on what the command would destroy. The
+        // permission map below only sees the tool name, so on its own `allow`
+        // would run anything the model emits.
+        let mut risk_confirmed = false;
+        if SHELL_TOOLS.contains(&tc.name.as_str()) {
+            let command = tc
+                .arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let assessment = assess(command, std::path::Path::new(&tool_ctx.working_dir));
+
+            match decide(&assessment, self.risk_threshold) {
+                Decision::Allow => {}
+                Decision::Refuse { reason } => {
+                    tracing::warn!(command, reason, "refused catastrophic shell command");
+                    return ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!(
+                            "Refused: {reason}.\n\
+                             This command is classified catastrophic and cannot be approved. \
+                             Run it yourself if you are certain."
+                        ),
+                        is_error: true,
+                    };
+                }
+                Decision::Confirm { reason } => {
+                    let detail = format!("{command}\n\nRisk: {reason}");
+                    if !self.permission_prompter.ask(&tc.name, &detail).await {
+                        return ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!("User denied permission for tool '{}'.", tc.name),
+                            is_error: true,
+                        };
+                    }
+                    risk_confirmed = true;
+                }
+            }
+        }
+
         match self.info.permission.action_for(&tc.name) {
             PermissionAction::Deny => {
                 return ToolResult {
@@ -348,6 +408,8 @@ impl Agent {
                     is_error: true,
                 };
             }
+            // Already confirmed with the command in hand; do not ask twice.
+            PermissionAction::Ask if risk_confirmed => {}
             PermissionAction::Ask => {
                 let detail = tc.arguments.to_string();
                 let detail = if detail.len() > 200 {

@@ -75,6 +75,36 @@ pub struct Config {
     /// Custom slash commands keyed by name (from config.toml + markdown files)
     #[serde(default)]
     pub commands: HashMap<String, CustomCommandConfig>,
+
+    /// Shell command risk gating.
+    #[serde(default)]
+    pub security: SecurityConfig,
+}
+
+/// Settings for the shell command risk classifier.
+///
+/// The classifier inspects the command a model asked to run and decides
+/// whether it needs confirmation, independently of the `[permission]` map,
+/// which only sees the tool name.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityConfig {
+    /// Lowest risk level that requires confirmation: `caution`, `destructive`
+    /// or `off`. Commands classified `catastrophic` are always refused and
+    /// this setting cannot override that.
+    #[serde(default = "default_risk_threshold")]
+    pub bash_risk_threshold: String,
+}
+
+fn default_risk_threshold() -> String {
+    "destructive".to_string()
+}
+
+impl Default for SecurityConfig {
+    fn default() -> Self {
+        Self {
+            bash_risk_threshold: default_risk_threshold(),
+        }
+    }
 }
 
 /// Custom slash command definition (OpenCode `/commands` parity)
@@ -284,6 +314,7 @@ impl Default for Config {
             mcp_servers: HashMap::new(),
             permission: HashMap::new(),
             commands: HashMap::new(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -669,6 +700,11 @@ impl Config {
         // Custom commands
         for (k, v) in &other.commands {
             merged.commands.insert(k.clone(), v.clone());
+        }
+
+        // Security: a layer that set a threshold overrides the one below it.
+        if other.security.bash_risk_threshold != default_risk_threshold() {
+            merged.security.bash_risk_threshold = other.security.bash_risk_threshold.clone();
         }
 
         merged

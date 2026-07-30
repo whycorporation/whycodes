@@ -1,6 +1,6 @@
 use crate::agent::Agent;
 use crate::subagent::SubagentTask;
-use whycode_core::types::{AgentInfo, AgentMode, PermissionSet};
+use whycode_core::types::{AgentInfo, AgentMode, PermissionAction, PermissionSet};
 
 fn make_test_agent_info(name: &str) -> AgentInfo {
     AgentInfo {
@@ -21,6 +21,142 @@ fn make_test_agent_info(name: &str) -> AgentInfo {
         temperature: Some(0.5),
         top_p: None,
     }
+}
+
+// ─── Shell risk gate ───────────────────────────────────────────────────
+//
+// Classification itself is covered by `whycode-command-risk`. These tests
+// cover the part only this layer can prove: that the gate sits in front of the
+// permission map rather than behind it.
+
+/// An agent whose permission map explicitly allows `bash` — the setting the
+/// gate has to survive.
+fn agent_with_bash_allowed() -> Agent {
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .rules
+        .insert("bash".to_string(), PermissionAction::Allow);
+    Agent::new(info)
+}
+
+fn bash_call(command: &str) -> whycode_core::types::ToolCall {
+    whycode_core::types::ToolCall {
+        id: "tc-1".to_string(),
+        name: "bash".to_string(),
+        arguments: serde_json::json!({ "command": command }),
+    }
+}
+
+async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResult {
+    let session = whycode_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".to_string(),
+    );
+    let ctx = whycode_core::ToolContext {
+        working_dir: "/work/proj".to_string(),
+        session_id: None,
+    };
+    agent
+        .execute_with_permission(&bash_call(command), &session, &ctx, "anthropic", "m", "k")
+        .await
+}
+
+/// A command classified `Catastrophic` that would do nothing if it ever ran.
+///
+/// These tests execute against a live `ShellTool`, so a regression that lets a
+/// command through must not be able to destroy the machine running the suite.
+/// `mkfs.*` is classified by family, and this member of the family does not
+/// exist as a binary, so a failure here is a failed assertion rather than a
+/// wiped disk. The dangerous strings — `rm -rf /`, `rm -rf ~` — are covered in
+/// `whycode-command-risk`, where classification is a pure function and nothing
+/// is executed.
+const HARMLESS_CATASTROPHIC: &str = "mkfs.whycode-test-not-a-real-binary /dev/null";
+
+#[tokio::test]
+async fn catastrophic_command_is_refused_despite_bash_being_allowed() {
+    let agent = agent_with_bash_allowed();
+    let result = run_bash(&agent, HARMLESS_CATASTROPHIC).await;
+    assert!(result.is_error);
+    assert!(
+        result.content.starts_with("Refused:"),
+        "the gate must override an explicit `allow`: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn refusal_says_it_cannot_be_approved() {
+    let agent = agent_with_bash_allowed();
+    let result = run_bash(&agent, HARMLESS_CATASTROPHIC).await;
+    assert!(
+        result.content.contains("cannot be approved"),
+        "a refusal is not a prompt, and should say so: {}",
+        result.content
+    );
+    assert!(
+        result.content.contains("mkfs"),
+        "the reason should name what triggered it: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn a_catastrophic_command_hidden_in_a_chain_is_still_refused() {
+    let agent = agent_with_bash_allowed();
+    let result = run_bash(&agent, &format!("echo hi && {HARMLESS_CATASTROPHIC}")).await;
+    assert!(result.is_error);
+    assert!(result.content.starts_with("Refused:"), "{}", result.content);
+}
+
+/// The gate has to run *before* the permission map, not after it. With `bash`
+/// denied, a working gate answers "Refused:" while a gate that runs too late
+/// answers "Permission denied" — so the message distinguishes them, and the
+/// deny is a second backstop against execution.
+#[tokio::test]
+async fn the_gate_runs_before_the_permission_map() {
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .rules
+        .insert("bash".to_string(), PermissionAction::Deny);
+    let agent = Agent::new(info);
+    let result = run_bash(&agent, HARMLESS_CATASTROPHIC).await;
+    assert!(
+        result.content.starts_with("Refused:"),
+        "expected the risk gate to answer first, got: {}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn deny_still_wins_for_non_shell_tools() {
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .rules
+        .insert("read".to_string(), PermissionAction::Deny);
+    let agent = Agent::new(info);
+
+    let session = whycode_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".to_string(),
+    );
+    let ctx = whycode_core::ToolContext {
+        working_dir: "/work/proj".to_string(),
+        session_id: None,
+    };
+    let call = whycode_core::types::ToolCall {
+        id: "tc-2".to_string(),
+        name: "read".to_string(),
+        arguments: serde_json::json!({ "path": "x" }),
+    };
+    let result = agent
+        .execute_with_permission(&call, &session, &ctx, "anthropic", "m", "k")
+        .await;
+    assert!(result.is_error);
+    assert!(
+        result.content.contains("Permission denied"),
+        "{}",
+        result.content
+    );
 }
 
 #[test]

@@ -18,6 +18,7 @@ members = [
     "crates/sdk",
     "crates/function",
     "crates/plugin",
+    "crates/command-risk",
 ]
 resolver = "2"
 

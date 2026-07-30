@@ -11,6 +11,7 @@ whycode-llm = { path = "../llm" }
 whycode-tools = { path = "../tools" }
 whycode-session = { path = "../session" }
 whycode-mcp = { path = "../mcp" }
+whycode-command-risk = { path = "../command-risk" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

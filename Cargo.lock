@@ -2685,6 +2685,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "whycode-command-risk",
  "whycode-core",
  "whycode-llm",
  "whycode-mcp",
@@ -2719,6 +2720,10 @@ dependencies = [
  "whycode-tools",
  "whycode-tui",
 ]
+
+[[package]]
+name = "whycode-command-risk"
+version = "0.1.0"
 
 [[package]]
 name = "whycode-core"

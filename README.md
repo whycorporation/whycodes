@@ -230,6 +230,38 @@ dialog in the TUI, a stdin prompt in `--plain` — unless overridden:
 | `WHYCODE_AUTO_DENY=1` | auto-deny |
 | stdin is not a terminal (piped, CI) | auto-deny |
 
+### Shell command risk
+
+The table above decides per tool *name*, before the command is known, so on its
+own `bash = "allow"` would run anything a model emits. Shell commands are
+therefore also classified by what they would destroy:
+
+| Level | Meaning | Example |
+|---|---|---|
+| `safe` | Read-only, or confined to the project | `cargo build`, `rm build.log` |
+| `caution` | Writes or deletes inside the project | `rm -rf target`, `git reset --hard` |
+| `destructive` | Reaches outside the project, or cannot be undone | `rm -rf /tmp/x`, `git push --force`, `curl … \| sh` |
+| `catastrophic` | Home directory, system location, or a whole disk | `rm -rf ~`, `mkfs`, `dd of=/dev/sda` |
+
+```toml
+[security]
+bash_risk_threshold = "destructive"   # caution | destructive | off
+```
+
+The threshold is the lowest level that prompts. `destructive` is the default:
+`caution` would prompt on ordinary cleanup like `rm -rf target`, which trains
+people to switch the feature off.
+
+`catastrophic` is refused outright and **cannot be approved** — not by a prompt,
+not by `bash = "allow"`, not by `bash_risk_threshold = "off"`. Run such a
+command yourself if you mean it.
+
+Two limits worth stating plainly. An unrecognised command is treated as `safe`,
+so a shell script that deletes your home directory is invisible to this; the
+alternative is prompting on every build. And a sufficiently obfuscated command
+can defeat any static parser, which is why the catastrophic tier checks paths
+rather than trusting the parse. This is defence in depth, not a sandbox.
+
 ### Custom commands
 
 Markdown files become slash commands named after the file. They are read from
@@ -265,6 +297,7 @@ converged on, so a repository set up for another agent needs no changes:
 ```
 crates/
 ├── core/      — Shared types, config, error handling
+├── command-risk/ — Shell command risk classification
 ├── llm/       — LLM providers
 ├── tools/     — Tool system and built-ins
 ├── session/   — Conversation, compaction, undo/redo
