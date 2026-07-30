@@ -301,6 +301,12 @@ blame output:
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
+### Roadmap
+
+`docs/status.md` tracks the phased plan; `docs/1.md` … `docs/7.md` are the
+phase definitions, each with its own scope and acceptance criteria.
+`docs/comparison.md` records the measurements the plan was derived from.
+
 ## License
 
 MIT — [whycorporation/whycode](https://github.com/whycorporation/whycode)
