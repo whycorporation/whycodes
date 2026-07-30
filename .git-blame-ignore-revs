@@ -1,0 +1,9 @@
+# Commits to skip in `git blame` — formatting-only, no behavioural change.
+#
+# Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+#
+# GitHub applies this file automatically in its blame view.
+
+# style: apply rustfmt across the workspace
+eaad9cb908afcdcc01ae5afccc9b67a406ba100a

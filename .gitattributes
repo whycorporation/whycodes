@@ -1,0 +1,10 @@
+# Normalize line endings so the repository always stores LF, regardless of
+# each contributor's core.autocrlf setting. The repository is already all-LF,
+# so this changes no stored content — it just makes the behaviour explicit.
+* text=auto
+
+*.rs   text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
