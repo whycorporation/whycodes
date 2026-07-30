@@ -16,7 +16,17 @@ impl Database {
     pub fn open(path: &str) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+
+        // Switching journal mode needs exclusive access, so it returns
+        // SQLITE_BUSY whenever another connection holds a transaction — and
+        // when that is a write transaction it returns immediately, without
+        // consulting the busy timeout set above. The mode only has to change
+        // once: it lives in the file header, so a failure here means either
+        // that another process already set WAL or that this connection runs in
+        // the default rollback mode. Neither is fatal, so do not propagate it.
+        let _ = conn.execute_batch("PRAGMA journal_mode=WAL;");
+
+        conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         run_migrations(&conn)?;
         Ok(Self { conn })
     }
@@ -165,6 +175,38 @@ mod tests {
 
     fn test_db() -> Database {
         Database::open_in_memory().unwrap()
+    }
+
+    /// Opening a database while another connection holds a write transaction
+    /// must succeed. `PRAGMA journal_mode=WAL` returns SQLITE_BUSY in that
+    /// state without consulting the busy handler, and treating that as fatal
+    /// made concurrent whycode processes fail with "database is locked".
+    #[test]
+    fn test_open_while_another_connection_holds_a_write_transaction() {
+        let path = std::env::temp_dir().join(format!("whycode-test-{}.db", uuid::Uuid::new_v4()));
+        let path_str = path.to_string_lossy().to_string();
+
+        // Seed the schema with a plain connection, leaving the journal mode at
+        // the default. `Database::open` therefore has to switch it to WAL,
+        // which is the step that fails under contention — on a database that
+        // is already in WAL mode the pragma is a no-op and takes no lock.
+        let seed = Connection::open(&path_str).unwrap();
+        run_migrations(&seed).unwrap();
+        seed.execute_batch("BEGIN IMMEDIATE;").unwrap();
+
+        let opened = Database::open(&path_str);
+
+        let _ = seed.execute_batch("ROLLBACK;");
+        drop(seed);
+        for suffix in ["db", "db-wal", "db-shm"] {
+            let _ = std::fs::remove_file(path.with_extension(suffix));
+        }
+
+        assert!(
+            opened.is_ok(),
+            "open failed while another connection held a write transaction: {:?}",
+            opened.err()
+        );
     }
 
     #[test]
