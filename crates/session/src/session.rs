@@ -355,6 +355,11 @@ impl Session {
     }
 }
 
+/// Default system prompt for the main agent
+pub fn default_system_prompt() -> String {
+    include_str!("../../agent/prompt.txt").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,9 +616,4 @@ mod tests {
         assert!(text.contains("User: hello"));
         assert!(text.contains("Assistant: hi there"));
     }
-}
-
-/// Default system prompt for the main agent
-pub fn default_system_prompt() -> String {
-    include_str!("../../agent/prompt.txt").to_string()
 }

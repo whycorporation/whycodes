@@ -37,7 +37,7 @@ fn test_anthropic_build_body() {
 
     assert_eq!(body["model"].as_str().unwrap(), "claude-sonnet-4-20250514");
     assert_eq!(body["max_tokens"].as_u64().unwrap(), 1024);
-    assert_eq!(body["stream"].as_bool().unwrap(), true);
+    assert!(body["stream"].as_bool().unwrap());
     assert_eq!(body["system"].as_str().unwrap(), "You are a helpful assistant.");
 
     let messages = body["messages"].as_array().unwrap();
@@ -100,7 +100,7 @@ fn test_openai_build_body() {
     let body = provider.build_body(&request, "gpt-4o");
 
     assert_eq!(body["model"].as_str().unwrap(), "gpt-4o");
-    assert_eq!(body["stream"].as_bool().unwrap(), true);
+    assert!(body["stream"].as_bool().unwrap());
 
     let messages = body["messages"].as_array().unwrap();
     // OpenAI puts system as a message

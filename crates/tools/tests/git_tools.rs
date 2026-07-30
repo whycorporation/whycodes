@@ -97,11 +97,7 @@ async fn test_git_log() {
         for line in result.content.trim().lines() {
             // Format: <hash> <message>  (hash is hex, at least 7 chars)
             let parts: Vec<&str> = line.splitn(2, ' ').collect();
-            assert!(
-                parts.len() >= 1,
-                "each line should have a hash: '{}'",
-                line
-            );
+            assert!(!parts.is_empty(), "each line should have a hash: '{}'", line);
             assert!(
                 parts[0].len() >= 7,
                 "hash should be at least 7 chars: '{}'",

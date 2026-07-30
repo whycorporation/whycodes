@@ -515,10 +515,12 @@ mod tests {
 
     #[test]
     fn test_permission_action_for_rules() {
-        let mut ps = PermissionSet::default();
-        ps.allow_file_writes = true;
-        ps.allow_shell = true;
-        ps.allow_network = true;
+        let mut ps = PermissionSet {
+            allow_file_writes: true,
+            allow_shell: true,
+            allow_network: true,
+            ..Default::default()
+        };
         ps.rules.insert("bash".into(), PermissionAction::Ask);
         ps.rules.insert("edit".into(), PermissionAction::Deny);
         ps.rules.insert("mymcp_*".into(), PermissionAction::Deny);
