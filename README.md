@@ -4,15 +4,13 @@ A coding agent for the terminal, written in Rust. It reads, writes and edits
 files, runs commands, searches codebases and drives an LLM through multi-turn
 tool use — either in a full-screen TUI or as a one-shot CLI invocation.
 
-Whycode follows [OpenCode's](https://github.com/sst/opencode) conventions for
-tool names, agent modes, slash commands and permission rules, so existing
-`AGENTS.md` files and `.opencode/commands/` definitions work unchanged.
-
 - Ships as a single binary with no runtime dependencies. Search runs in-process,
   so `ripgrep` and `grep` are not required on `PATH`.
 - Built and tested on Linux, macOS and Windows in CI.
 - Works with Anthropic, OpenAI, Google, Groq, xAI, DeepSeek, Ollama, OpenRouter,
   Mistral, Together, and any OpenAI-compatible endpoint.
+- Reads the project's `AGENTS.md`, connects to MCP servers, and drives language
+  servers over LSP.
 
 ## Installation
 
@@ -235,8 +233,8 @@ dialog in the TUI, a stdin prompt in `--plain` — unless overridden:
 ### Custom commands
 
 Markdown files become slash commands named after the file. They are read from
-`.whycode/commands/` and `.opencode/commands/` in the project, and from a
-`commands/` directory next to the global `config.toml`. `.whycode/commands/test.md`:
+`.whycode/commands/` in the project and from a `commands/` directory next to the
+global `config.toml`. `.whycode/commands/test.md`:
 
 ```markdown
 ---
@@ -249,6 +247,18 @@ Focus on $ARGUMENTS.
 
 `/test unit` sends the body with `$ARGUMENTS` replaced by `unit`. Positional
 placeholders `$1`, `$2`, … are also expanded.
+
+### Interoperability
+
+Whycode uses the file formats and naming that terminal coding agents have
+converged on, so a repository set up for another agent needs no changes:
+
+| Convention | Where |
+|---|---|
+| `AGENTS.md` project instructions | Repository root |
+| Markdown slash commands | `.whycode/commands/`, also read from `.opencode/commands/` |
+| MCP servers | `[mcp_servers]` in `config.toml`, tools bound as `{server}_{tool}` |
+| `allow` / `ask` / `deny` tool permissions | `[permission]` in `config.toml` |
 
 ## Architecture
 
