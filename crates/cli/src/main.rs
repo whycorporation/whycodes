@@ -778,8 +778,13 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                     continue;
                 }
                 "/themes" => {
-                    println!("Themes (TUI): default, dark, light, monokai, dracula");
-                    println!("Set in config: [tui] theme = \"dark\"");
+                    let names: Vec<&str> = whycode_tui::theme::ThemeName::ALL
+                        .iter()
+                        .map(|t| t.name())
+                        .collect();
+                    println!("{} Themes (TUI), {}:", "🎨".bold(), names.len());
+                    println!("  {}", names.join(", "));
+                    println!("Set in config: [tui] theme = \"{}\"", names[0]);
                     continue;
                 }
                 "/tools" => {

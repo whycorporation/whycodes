@@ -115,8 +115,25 @@ fn test_all_themes_produce_palette() {
         ThemeName::OceanicNext,
         ThemeName::MaterialPalenight,
     ];
-    for theme in &themes {
+    assert_eq!(
+        themes.len(),
+        ThemeName::ALL.len(),
+        "ThemeName::ALL is missing a variant"
+    );
+    for theme in ThemeName::ALL {
         theme.palette(); // should not panic
+    }
+}
+
+#[test]
+fn test_theme_name_round_trips_through_from_str() {
+    for theme in ThemeName::ALL {
+        assert_eq!(
+            ThemeName::from_str(theme.name()).unwrap(),
+            *theme,
+            "canonical name {:?} does not parse back",
+            theme.name()
+        );
     }
 }
 

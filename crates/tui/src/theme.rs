@@ -58,6 +58,77 @@ pub enum ThemeName {
     MaterialPalenight,
 }
 
+impl ThemeName {
+    /// Every selectable theme, in menu order.
+    pub const ALL: &'static [ThemeName] = &[
+        Self::DefaultDark,
+        Self::DefaultLight,
+        Self::Monokai,
+        Self::SolarizedDark,
+        Self::SolarizedLight,
+        Self::Nord,
+        Self::Dracula,
+        Self::Gruvbox,
+        Self::OneDark,
+        Self::CatppuccinMocha,
+        Self::CatppuccinLatte,
+        Self::TokyoNight,
+        Self::TokyoNightStorm,
+        Self::TokyoNightLight,
+        Self::Kanagawa,
+        Self::Everforest,
+        Self::RosePine,
+        Self::RosePineMoon,
+        Self::RosePineDawn,
+        Self::AyuDark,
+        Self::AyuMirage,
+        Self::AyuLight,
+        Self::GithubDark,
+        Self::GithubLight,
+        Self::VscodeDark,
+        Self::VscodeLight,
+        Self::Zenburn,
+        Self::OceanicNext,
+        Self::MaterialPalenight,
+    ];
+
+    /// Canonical config name, i.e. the value to put in `[tui] theme = "…"`.
+    /// `FromStr` also accepts hyphenated and collapsed aliases.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::DefaultDark => "default_dark",
+            Self::DefaultLight => "default_light",
+            Self::Monokai => "monokai",
+            Self::SolarizedDark => "solarized_dark",
+            Self::SolarizedLight => "solarized_light",
+            Self::Nord => "nord",
+            Self::Dracula => "dracula",
+            Self::Gruvbox => "gruvbox",
+            Self::OneDark => "one_dark",
+            Self::CatppuccinMocha => "catppuccin_mocha",
+            Self::CatppuccinLatte => "catppuccin_latte",
+            Self::TokyoNight => "tokyo_night",
+            Self::TokyoNightStorm => "tokyo_night_storm",
+            Self::TokyoNightLight => "tokyo_night_light",
+            Self::Kanagawa => "kanagawa",
+            Self::Everforest => "everforest",
+            Self::RosePine => "rose_pine",
+            Self::RosePineMoon => "rose_pine_moon",
+            Self::RosePineDawn => "rose_pine_dawn",
+            Self::AyuDark => "ayu_dark",
+            Self::AyuMirage => "ayu_mirage",
+            Self::AyuLight => "ayu_light",
+            Self::GithubDark => "github_dark",
+            Self::GithubLight => "github_light",
+            Self::VscodeDark => "vscode_dark",
+            Self::VscodeLight => "vscode_light",
+            Self::Zenburn => "zenburn",
+            Self::OceanicNext => "oceanic_next",
+            Self::MaterialPalenight => "material_palenight",
+        }
+    }
+}
+
 impl FromStr for ThemeName {
     type Err = ThemeParseError;
 

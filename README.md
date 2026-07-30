@@ -1,51 +1,48 @@
 # Whycode
 
-An AI-powered coding agent built in Rust — a high-performance, native implementation targeting **OpenCode parity**.
+A coding agent for the terminal, written in Rust. It reads, writes and edits
+files, runs commands, searches codebases and drives an LLM through multi-turn
+tool use — either in a full-screen TUI or as a one-shot CLI invocation.
 
-## Features
+Whycode follows [OpenCode's](https://github.com/sst/opencode) conventions for
+tool names, agent modes, slash commands and permission rules, so existing
+`AGENTS.md` files and `.opencode/commands/` definitions work unchanged.
 
-- 🦀 **Pure Rust** — single binary, no runtime dependencies (search is in-process; no `ripgrep`/`grep` on `PATH` required)
-- 🖥 **Cross-platform** — Linux, macOS and Windows, all built and tested in CI
-- 🤖 **AI Coding Agent** — reads, writes, edits, searches, and executes code
-- 🔌 **Multi-Provider** — Anthropic, OpenAI, Google, Groq, xAI, DeepSeek, Ollama, OpenRouter, Mistral, Together, custom OpenAI-compatible
-- 🔧 **OpenCode-aligned tools** — `bash`, `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `task`, `todowrite`/`todoread`, `webfetch`, `websearch`, `question`, `skill`, `lsp`, plus git/github helpers
-- 🧭 **Agents** — primary `build` / `plan` (switch with `/agent`), subagents `general` / `explore` / `scout` via `task`
-- 📡 **Streaming** — real-time text, tool use, and thinking events
-- 💻 **Full-screen TUI** — default interactive UI with live streaming (use `--plain` for readline REPL)
-- 💬 **Slash commands** — OpenCode-style `/init` `/undo` `/agent` `/models` … + custom commands
-- ↹ **Tab agent switch** — cycle primary agents (`build` ↔ `plan`)
-- ⏹ **Esc cancel** — abort in-flight generation (partial output kept)
-- 🔗 **Local share links** — `/share` → `http://localhost:3030/s/<id>` via `whycode serve`
-- 🔐 **Permissions** — OpenCode `allow` / `ask` / `deny` with TUI y/n dialog
-- 📜 **AGENTS.md** — `/init` and automatic project instructions injection
-- ↩ **Undo/Redo** — conversation + git-backed file restore
-- 🔌 **MCP** — config persistence + auto-bind tools as `{server}_{tool}`
-- 📝 **Custom commands** — `.whycode/commands/*.md` (also `.opencode/commands/`)
-- 🌐 **HTTP API** — `whycode serve`
+- Ships as a single binary with no runtime dependencies. Search runs in-process,
+  so `ripgrep` and `grep` are not required on `PATH`.
+- Built and tested on Linux, macOS and Windows in CI.
+- Works with Anthropic, OpenAI, Google, Groq, xAI, DeepSeek, Ollama, OpenRouter,
+  Mistral, Together, and any OpenAI-compatible endpoint.
 
-## Quick Start
+## Installation
 
 ```bash
-# Build from source
 git clone https://github.com/whycorporation/whycode.git
 cd whycode
 cargo build --release
-
-# Run with Anthropic
-export ANTHROPIC_API_KEY="sk-ant-..."
-./target/release/whycode -d ./my-project
-
-# Single prompt (non-interactive)
-./target/release/whycode generate "Explain the error handling in main.rs" -d ./my-project
-
-# Interactive session seeded with an opening prompt
-./target/release/whycode run "Where is the retry logic?" -d ./my-project
-
-# Use OpenAI
-./target/release/whycode -P openai -m gpt-4o generate "Refactor this module"
 ```
 
-## Usage
+The binary is written to `target/release/whycode`.
+
+## Quick start
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Interactive session in a project
+whycode -d ./my-project
+
+# One-shot, non-interactive
+whycode generate "Explain the error handling in main.rs" -d ./my-project
+
+# Interactive, seeded with an opening prompt
+whycode run "Where is the retry logic?" -d ./my-project
+
+# A different provider and model
+whycode -P openai -m gpt-4o generate "Refactor this module"
+```
+
+## Command line
 
 ```
 Usage: whycode [OPTIONS] [COMMAND]
@@ -76,11 +73,27 @@ Options (global):
       --plain                Use plain stdin REPL instead of the full-screen TUI
 ```
 
-The prompt is a positional argument, not a flag: `whycode generate "<prompt>"`
-and `whycode run "<prompt>"`. `run` and `generate` additionally accept
+The prompt is a positional argument rather than a flag — `whycode generate
+"<prompt>"`, not `whycode -p "<prompt>"`. `run` and `generate` also accept
 `-t, --max-turns <N>` (default 25).
 
-## Interactive slash commands (OpenCode-compatible)
+## Interactive session
+
+The default interface is a full-screen TUI with live streaming of text, tool
+calls and thinking. `--plain` switches to a line-based stdin REPL.
+
+| Key | Action |
+|---|---|
+| `Tab` | Cycle primary agents (`build` ↔ `plan`), when idle |
+| `Esc` | Cancel the in-flight turn, keeping partial output; dismiss a dialog |
+| `Ctrl+C` / `Ctrl+Q` | Cancel the turn and quit |
+
+Two input prefixes are available in both interfaces:
+
+- `!ls -la` runs a shell command and attaches its output to the conversation.
+- `@src/main.rs` inlines a file's contents into the prompt.
+
+### Slash commands
 
 Available in both the TUI and the `--plain` REPL:
 
@@ -88,69 +101,79 @@ Available in both the TUI and the `--plain` REPL:
 |---|---|
 | `/help` `/h` | Show help |
 | `/exit` `/quit` `/q` | Exit |
-| `/new` `/clear` | New session |
-| `/init` | Create/update `AGENTS.md` |
-| `/undo` | Undo last turn + restore files (git) |
-| `/redo` | Redo |
-| `/share` `/export` | Export + local share URL (`/s/:id`) |
-| `/compact` `/summarize` | Compact context |
-| `/models [provider/id]` | List or switch model |
-| `/agent [name]` | List or switch agent (`build`/`plan`) |
-| `/connect` | Provider setup help |
-| `/tools` | List tools for current agent |
+| `/new` `/clear` | Start a new session |
+| `/init` | Create or update `AGENTS.md` |
+| `/undo` | Undo the last turn and restore files via git |
+| `/redo` | Redo the last undone turn |
+| `/share` `/export` | Export the session and print its local share URL |
+| `/compact` `/summarize` | Compact the conversation context |
+| `/models [provider/id]` | Show or switch the model |
+| `/agent [name]` | Show or switch the agent |
+| `/connect` | Provider and API key setup help |
+| `/tools` | List the tools available to the current agent |
 | `/info` `/details` | Session details |
 
 TUI only:
 
 | Command | Description |
 |---|---|
-| `/unshare` | Delete local share files |
+| `/unshare` | Delete the local share files for this session |
 
 `--plain` REPL only:
 
 | Command | Description |
 |---|---|
-| `/sessions` `/resume` `/continue` | List sessions |
-| `/thinking` | Toggle thinking display |
-| `/themes` | Show TUI theme names |
+| `/sessions` `/resume` `/continue` | List stored sessions |
+| `/thinking` | Toggle display of thinking output |
+| `/themes` | List the available TUI themes |
 
-Also:
+Commands defined under `.whycode/commands/` are available alongside these; see
+[Custom commands](#custom-commands).
 
-- `!ls` — run shell, attach output to chat
-- `@src/main.rs` — include file contents in the prompt
+### Sharing a session
 
-## Architecture
+`/share` exports the session and prints a URL of the form
+`http://127.0.0.1:3030/s/<id>`. Serve it with `whycode serve`; the port can be
+overridden with `WHYCODE_SHARE_PORT`. Nothing leaves the machine — `/unshare`
+removes the exported files.
 
-```
-crates/
-├── core/      — Shared types, config, error handling
-├── llm/       — LLM providers
-├── tools/     — Tool system (OpenCode-aligned built-ins)
-├── session/   — Conversation, compaction, undo/redo
-├── agent/     — Agent loop, subagents, AGENTS.md
-├── skill/     — Skill registry
-├── mcp/       — MCP client
-├── lsp/       — LSP tool
-├── storage/   — SQLite sessions
-├── server/    — HTTP API
-├── tui/       — Terminal UI (ratatui)
-└── cli/       — Interactive CLI (clap)
-```
+## Agents
 
-## Agents (OpenCode mapping)
+Primary agents run the main conversation and are switched with `Tab` or
+`/agent`. Subagents are spawned by the `task` tool for scoped work and report
+back to the primary agent.
 
 | Agent | Mode | Role |
 |---|---|---|
 | `build` | primary | Full-access coding (default) |
 | `plan` | primary | Read-only planning |
-| `general` | subagent | Multi-step tasks (via `task`) |
+| `general` | subagent | Multi-step tasks |
 | `explore` | subagent | Fast read-only codebase search |
-| `scout` | subagent | External docs / dependency research |
+| `scout` | subagent | External documentation and dependency research |
+
+## Tools
+
+| Category | Tools |
+|---|---|
+| Files | `read`, `write`, `edit`, `apply_patch` |
+| Search | `grep`, `glob`, `list` |
+| Execution | `bash` (alias `shell`) |
+| Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit` |
+| GitHub | `github_issue`, `github_pr` |
+| Web | `webfetch`, `websearch` |
+| Workflow | `task`, `plan`, `todowrite` (alias `todo`), `todoread`, `question` |
+| Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate` |
+
+`grep` is implemented in-process with the `regex` crate. It skips dot
+directories, common build directories and binary files, and needs no external
+search binary.
+
+MCP server tools are bound automatically under `{server}_{tool}`.
 
 ## Configuration
 
-Configuration lives in the platform config directory as `config.toml`. Run
-`whycode debug` to print the exact path for your machine.
+Configuration is a `config.toml` in the platform config directory. Run `whycode
+debug` to print the exact path for your machine.
 
 ```toml
 [providers.anthropic]
@@ -160,6 +183,9 @@ api_key = "sk-ant-..."
 [providers.openai]
 name = "openai"
 api_key = "sk-..."
+
+[tui]
+theme = "default_dark"
 
 [mcp_servers.filesystem]
 command = "npx"
@@ -171,9 +197,23 @@ description = "Default coding agent"
 mode = "primary"
 ```
 
-Project instructions: commit an `AGENTS.md` in the repo root (create with `/init`).
+Settings are layered, with each level overriding the one above it:
 
-### Permissions (OpenCode-style)
+1. Built-in defaults
+2. Global `config.toml`
+3. Project `.whycode/config.toml`
+4. `WHYCODE_*` environment variables
+
+Project instructions belong in an `AGENTS.md` at the repository root; `/init`
+generates one. It is injected into the system prompt automatically.
+
+### Themes
+
+29 TUI themes are available, including Catppuccin, Tokyo Night, Rose Pine,
+Gruvbox, Nord, Dracula, Solarized and Ayu variants. Set one with `[tui] theme`;
+`/themes` in the `--plain` REPL prints the full list of valid names.
+
+### Permissions
 
 ```toml
 [permission]
@@ -183,22 +223,20 @@ webfetch = "allow"
 "mymcp_*" = "deny"
 ```
 
-`allow` runs immediately, `deny` blocks, and `ask` prompts — a y/n dialog in the
-TUI, a stdin prompt in `--plain`. The prompt can be overridden:
+`allow` runs the tool immediately and `deny` blocks it. `ask` prompts — a y/n
+dialog in the TUI, a stdin prompt in `--plain` — unless overridden:
 
 | Condition | Result for `ask` |
 |---|---|
 | `WHYCODE_AUTO_APPROVE=1` | auto-allow |
 | `WHYCODE_AUTO_DENY=1` | auto-deny |
-| stdin is not a terminal (piped/CI) | auto-deny |
+| stdin is not a terminal (piped, CI) | auto-deny |
 
 ### Custom commands
 
-```bash
-mkdir -p .whycode/commands
-```
-
-`.whycode/commands/test.md`:
+Markdown files become slash commands named after the file. They are read from
+`.whycode/commands/` and `.opencode/commands/` in the project, and from a
+`commands/` directory next to the global `config.toml`. `.whycode/commands/test.md`:
 
 ```markdown
 ---
@@ -209,45 +247,45 @@ Run the full test suite and summarize failures.
 Focus on $ARGUMENTS.
 ```
 
-Then run `/test` in the TUI or plain REPL.
+`/test unit` sends the body with `$ARGUMENTS` replaced by `unit`. Positional
+placeholders `$1`, `$2`, … are also expanded.
 
-## Tools
+## Architecture
 
-| Tool | OpenCode name | Description |
-|---|---|---|
-| `bash` / `shell` | `bash` | Execute shell commands |
-| `read` | `read` | Read files with line numbers |
-| `write` | `write` | Create/overwrite files |
-| `edit` | `edit` | Find-and-replace in files |
-| `apply_patch` | `apply_patch` | Apply multi-file patches |
-| `grep` | `grep` | Regex search (in-process, no external binary) |
-| `glob` | `glob` | Find files by pattern |
-| `list` | `list` | List directory contents |
-| `task` | `task` | Spawn subagent (`general`/`explore`/`scout`) |
-| `todowrite` / `todoread` | `todowrite` | Task list management |
-| `webfetch` | `webfetch` | Fetch web pages |
-| `websearch` | `websearch` | Web search |
-| `question` | `question` | Ask the user a question |
-| `skill` | `skill` | Load a skill |
-| `lsp` | `lsp` | Language server intelligence |
+```
+crates/
+├── core/      — Shared types, config, error handling
+├── llm/       — LLM providers
+├── tools/     — Tool system and built-ins
+├── session/   — Conversation, compaction, undo/redo
+├── agent/     — Agent loop, subagents, AGENTS.md
+├── skill/     — Skill registry and plugins
+├── mcp/       — MCP client
+├── lsp/       — LSP tool
+├── storage/   — SQLite sessions
+├── server/    — HTTP API
+├── tui/       — Terminal UI (ratatui)
+└── cli/       — Command line entry point (clap)
+```
 
 ## Development
 
-CI runs these three checks on every push and pull request; run them locally
-before opening a PR:
+CI runs these three checks on every push and pull request. Run them before
+opening a pull request:
 
 ```bash
-cargo fmt --all --check                              # formatting is enforced
-cargo clippy --workspace --all-targets -- -D warnings # includes test targets
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Tests and release builds run on `ubuntu-latest`, `windows-latest` and
-`macos-latest`, so platform-specific code needs a `#[cfg]` branch rather than a
-Unix-only assumption.
+Note that clippy is run with `--all-targets`, so test code is linted under
+`-D warnings` too. Tests and release builds run on `ubuntu-latest`,
+`windows-latest` and `macos-latest`, so platform-specific behaviour needs a
+`#[cfg]` branch rather than a Unix-only assumption.
 
-The repository has been reformatted with `rustfmt` in a single commit. Skip it
-in `git blame`:
+The tree was reformatted with `rustfmt` in a single commit. Exclude it from
+blame output:
 
 ```bash
 git config blame.ignoreRevsFile .git-blame-ignore-revs
