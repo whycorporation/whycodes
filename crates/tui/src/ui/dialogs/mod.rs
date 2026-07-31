@@ -6,12 +6,14 @@ mod base;
 mod confirm;
 mod help;
 mod provider;
+mod select;
 
 pub use alert::*;
 pub use base::*;
 pub use confirm::*;
 pub use help::*;
 pub use provider::*;
+pub use select::*;
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
@@ -39,6 +41,24 @@ pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
             let title = format!("Permission: {tool_name}");
             let message = format!("{detail}\n\n[y/a] Allow   [n/d/Esc] Deny");
             render_confirm_dialog(frame, &title, &message, palette)
+        }
+        crate::app::DialogKind::SessionList => {
+            let items: Vec<SelectItem> = app
+                .session_list
+                .sessions
+                .iter()
+                .map(|s| {
+                    SelectItem::with_detail(s.title.clone(), format!("{} messages", s.messages))
+                })
+                .collect();
+            render_select(
+                frame,
+                " Sessions ",
+                &items,
+                app.session_list.selected,
+                "No sessions yet — they are recorded as you use whycode.",
+                palette,
+            )
         }
         _ => {}
     }

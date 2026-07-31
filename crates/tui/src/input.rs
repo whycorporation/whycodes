@@ -104,10 +104,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             true
         }
         Some(Action::OpenModelDialog) => {
-            // TODO: populate models from config
-            app.mode = AppMode::Dialog;
-            app.key_context = KeymapContext::Dialog;
-            app.dialogs.push(DialogKind::Model);
+            open_dialog(app, DialogKind::Model);
             true
         }
         Some(Action::ToggleAutoScroll) => {
@@ -282,20 +279,10 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
         Some(Action::DialogConfirm) => {
             confirm_dialog(app, &active);
         }
-        Some(Action::DialogNextField) => {
-            if matches!(active, DialogKind::Provider) {
-                app.provider_dialog.active_field = (app.provider_dialog.active_field + 1) % 4;
-            }
-        }
-        Some(Action::DialogPrevField) => {
-            if matches!(active, DialogKind::Provider) {
-                app.provider_dialog.active_field = if app.provider_dialog.active_field == 0 {
-                    3
-                } else {
-                    app.provider_dialog.active_field - 1
-                };
-            }
-        }
+        // Up/Down are bound to next/prev field. In a form that means the next
+        // input; in a list dialog it means the next row.
+        Some(Action::DialogNextField) => move_in_dialog(app, &active, 1),
+        Some(Action::DialogPrevField) => move_in_dialog(app, &active, -1),
         Some(Action::InputBackspace) => {
             if matches!(active, DialogKind::Provider) {
                 let field_val = match app.provider_dialog.active_field {
@@ -309,9 +296,11 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             }
         }
         _ => {
-            // Forward char input to provider form fields.
+            // Forward char input to provider form fields. Only in the add-custom
+            // form: in select mode a keystroke is navigation, not text.
             if matches!(active, DialogKind::Provider)
                 && let KeyCode::Char(c) = key.code
+                && app.provider_dialog.mode == crate::app::ProviderDialogMode::AddCustom
             {
                 let field_val = match app.provider_dialog.active_field {
                     0 => &mut app.provider_dialog.form_name,
@@ -421,4 +410,49 @@ fn open_provider_dialog(app: &mut TuiApp) {
     app.mode = AppMode::Dialog;
     app.key_context = KeymapContext::Dialog;
     app.dialogs.push(DialogKind::Provider);
+}
+
+// ── Dialog helpers ─────────────────────────────────────────────────────
+
+/// Open `dialog`, putting the app into dialog mode.
+pub fn open_dialog(app: &mut TuiApp, dialog: DialogKind) {
+    app.mode = AppMode::Dialog;
+    app.key_context = KeymapContext::Dialog;
+    app.dialogs.push(dialog);
+}
+
+/// Move the cursor within whichever dialog is showing a list.
+///
+/// The provider dialog has two modes and only one of them is a list: in
+/// add-custom it is a form, where up and down move between input fields.
+fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
+    use crate::app::{ProviderDialogMode, move_selection};
+    match active {
+        DialogKind::Provider if app.provider_dialog.mode == ProviderDialogMode::AddCustom => {
+            app.provider_dialog.active_field =
+                move_selection(app.provider_dialog.active_field, 4, delta);
+        }
+        DialogKind::Provider => {
+            app.provider_dialog.selected = move_selection(
+                app.provider_dialog.selected,
+                app.provider_dialog.providers.len(),
+                delta,
+            );
+        }
+        DialogKind::Model => {
+            app.model_selection.selected = move_selection(
+                app.model_selection.selected,
+                app.model_selection.models.len(),
+                delta,
+            );
+        }
+        DialogKind::SessionList => {
+            app.session_list.selected = move_selection(
+                app.session_list.selected,
+                app.session_list.sessions.len(),
+                delta,
+            );
+        }
+        _ => {}
+    }
 }

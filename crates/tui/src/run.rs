@@ -847,6 +847,23 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.status_message = format!("Unknown agent '{rest}'");
             }
         }
+        "/sessions" | "/resume" | "/continue" => {
+            // Previously only existed in the --plain REPL.
+            ctx.app.session_list.sessions = load_session_entries();
+            ctx.app.session_list.selected = 0;
+            crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+        }
+        "/models" if rest.is_empty() => {
+            ctx.app.model_selection.models = configured_models(ctx.config);
+            ctx.app.model_selection.selected = ctx
+                .app
+                .model_selection
+                .models
+                .iter()
+                .position(|(p, m)| p == ctx.provider && m == ctx.model)
+                .unwrap_or(0);
+            crate::input::open_dialog(ctx.app, DialogKind::Model);
+        }
         "/models" => {
             if rest.is_empty() {
                 ctx.app.status_message = format!("Model: {}/{}", ctx.provider, ctx.model);
@@ -904,4 +921,40 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             ctx.app.status_message = format!("Unknown: {other} — /help");
         }
     }
+}
+
+/// Every provider/model pair the config knows about, for the model picker.
+fn configured_models(config: &Config) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = config
+        .providers
+        .values()
+        .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Stored sessions, newest first, for the session picker.
+///
+/// A database that will not open is not worth interrupting the user for here —
+/// the picker shows its empty state, and `whycode session list` reports the
+/// actual error.
+fn load_session_entries() -> Vec<crate::app::SessionEntry> {
+    let Ok(data_dir) = Config::data_dir() else {
+        return Vec::new();
+    };
+    let path = data_dir.join("whycode.db");
+    let Ok(db) = whycode_storage::db::Database::open(&path.to_string_lossy()) else {
+        return Vec::new();
+    };
+    db.list_sessions()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| crate::app::SessionEntry {
+            messages: db.message_count(&s.id).unwrap_or(0),
+            id: s.id,
+            title: s.title,
+        })
+        .collect()
 }

@@ -304,6 +304,7 @@ pub struct TuiApp {
     pub dialogs: DialogManager,
     pub provider_dialog: ProviderDialogState,
     pub model_selection: ModelSelectionState,
+    pub session_list: SessionListState,
     pub help_scroll: usize,
 
     // ── sidebar ──
@@ -339,6 +340,34 @@ pub struct ModelSelectionState {
     pub selected: usize,
 }
 
+/// One row of the session list dialog.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEntry {
+    pub id: String,
+    pub title: String,
+    pub messages: usize,
+}
+
+/// Session list dialog state.
+#[derive(Debug, Clone, Default)]
+pub struct SessionListState {
+    pub sessions: Vec<SessionEntry>,
+    pub selected: usize,
+}
+
+/// Cursor movement shared by every list-style dialog.
+///
+/// Wraps at both ends: a list short enough to see at once is faster to reach
+/// the last item of by pressing up once.
+pub fn move_selection(selected: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let len = len as isize;
+    let next = (selected as isize + delta).rem_euclid(len);
+    next as usize
+}
+
 impl TuiApp {
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
         Self {
@@ -358,6 +387,7 @@ impl TuiApp {
             dialogs: DialogManager::new(),
             provider_dialog: ProviderDialogState::default(),
             model_selection: ModelSelectionState::default(),
+            session_list: SessionListState::default(),
             help_scroll: 0,
             sidebar: SidebarState::default(),
             command: CommandState::default(),

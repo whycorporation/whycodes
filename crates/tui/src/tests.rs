@@ -337,3 +337,47 @@ fn test_provider_dialog_default() {
     assert!(!pd.saved);
     assert_eq!(pd.form_auth_method, AuthMethod::ApiKey);
 }
+
+// ── List dialog navigation ──────────────────────────────────────────
+
+#[test]
+fn selection_moves_and_wraps_at_both_ends() {
+    use crate::app::move_selection;
+    assert_eq!(move_selection(0, 3, 1), 1);
+    assert_eq!(move_selection(2, 3, 1), 0, "should wrap forward");
+    assert_eq!(move_selection(0, 3, -1), 2, "should wrap backward");
+    assert_eq!(move_selection(1, 3, -1), 0);
+}
+
+#[test]
+fn selection_on_an_empty_list_stays_at_zero() {
+    use crate::app::move_selection;
+    assert_eq!(move_selection(0, 0, 1), 0);
+    assert_eq!(move_selection(0, 0, -1), 0);
+    assert_eq!(move_selection(5, 0, 1), 0);
+}
+
+#[test]
+fn a_single_item_list_stays_put() {
+    use crate::app::move_selection;
+    assert_eq!(move_selection(0, 1, 1), 0);
+    assert_eq!(move_selection(0, 1, -1), 0);
+}
+
+#[test]
+fn opening_a_dialog_switches_mode_and_key_context() {
+    use crate::app::DialogKind;
+    let mut app = TuiApp::new(test_config());
+    crate::input::open_dialog(&mut app, DialogKind::SessionList);
+
+    assert_eq!(app.mode, AppMode::Dialog);
+    assert!(app.dialogs.is_open());
+    assert!(matches!(app.dialogs.active(), Some(DialogKind::SessionList)));
+}
+
+#[test]
+fn the_session_list_starts_empty() {
+    let app = TuiApp::new(test_config());
+    assert!(app.session_list.sessions.is_empty());
+    assert_eq!(app.session_list.selected, 0);
+}
