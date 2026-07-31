@@ -22,7 +22,7 @@ Last updated: 2026-07-31
 | # | Phase | Doc | Status | Notes |
 |---|---|---|---|---|
 | 1 | Shell command risk classification | [1.md](1.md) | done | `crates/command-risk`, gated in `Agent::execute_with_permission` |
-| 2 | Distribution and self-update | [2.md](2.md) | not started | `upgrade` is currently a stub that prints instructions |
+| 2 | Distribution and self-update | [2.md](2.md) | implemented | Release workflow, installers and real self-update; criteria needing a published release are unticked in 2.md |
 | 3 | OAuth and credential discovery | [3.md](3.md) | not started | Depends on 2 for a credible install story |
 | 4 | CI quality budgets | [4.md](4.md) | done | panic, swallowed-error and dependency-edge ratchets; binary size deferred to phase 2 |
 | 5 | Performance measurement | [5.md](5.md) | not started | Prerequisite for any performance claim |
@@ -58,4 +58,5 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
 

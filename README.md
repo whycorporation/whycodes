@@ -14,6 +14,32 @@ tool use — either in a full-screen TUI or as a one-shot CLI invocation.
 
 ## Installation
 
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.sh | sh
+```
+
+Windows:
+
+```powershell
+irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.ps1 | iex
+```
+
+Both verify the download against the release's `SHA256SUMS` and refuse to
+install anything that does not match. Neither modifies `PATH`; they print the
+install directory if it is not already on it. `WHYCODE_INSTALL_DIR` overrides
+the location, and `scripts/uninstall.sh` / `uninstall.ps1` remove it again —
+add `--purge` / `-Purge` to also delete config and session data.
+
+The binaries are unsigned, so macOS Gatekeeper and Windows SmartScreen will
+warn on first run.
+
+`whycode upgrade` replaces the running binary with the newest release, checksum
+verified, and leaves the existing one in place if anything fails.
+
+From source, which needs a Rust toolchain:
+
 ```bash
 git clone https://github.com/whycorporation/whycode.git
 cd whycode

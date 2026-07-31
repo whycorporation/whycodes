@@ -1,3 +1,5 @@
+mod upgrade;
+
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
@@ -1938,27 +1940,34 @@ async fn cmd_debug() -> anyhow::Result<()> {
 
 /// `upgrade` — Show upgrade instructions
 async fn cmd_upgrade() -> anyhow::Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
     println!("{} Whycode Upgrade", "⬆".bold());
-    println!();
-    println!("  Current version: {}", env!("CARGO_PKG_VERSION").cyan());
-    println!();
-    println!("  To upgrade, re-install from source or use your package manager.");
-    println!();
-    println!("  From source:");
-    println!(
-        "    {}",
-        "git clone https://github.com/whycorporation/whycode.git".dimmed()
-    );
-    println!(
-        "    {}",
-        "cd whycode && cargo install --path crates/cli".dimmed()
-    );
-    println!();
-    println!("  Check for latest release:");
-    println!(
-        "    {}",
-        "https://github.com/whycorporation/whycode/releases".cyan()
-    );
+    println!("  Current version: {}", current.cyan());
+    println!("  Checking for a newer release…");
+
+    match upgrade::run().await {
+        Ok(Some(version)) => {
+            println!("  {} Upgraded {current} → {}", "✓".green(), version.cyan());
+        }
+        Ok(None) => {
+            println!("  {} Already on the latest release.", "✓".green());
+        }
+        Err(e) => {
+            // Not fatal: a machine with no network, or a platform with no
+            // published binary, should still be told how to proceed.
+            println!("  {} {e}", "!".yellow());
+            println!();
+            println!("  Build from source instead:");
+            println!(
+                "    {}",
+                "git clone https://github.com/whycorporation/whycode.git".dimmed()
+            );
+            println!(
+                "    {}",
+                "cd whycode && cargo install --path crates/cli".dimmed()
+            );
+        }
+    }
 
     Ok(())
 }
