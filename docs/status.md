@@ -25,7 +25,7 @@ Last updated: 2026-07-31 (phases 1, 4, 8 done; 2 implemented; 5 partial; 7 dropp
 | 2 | Distribution and self-update | [2.md](2.md) | implemented | Release workflow, installers and real self-update; criteria needing a published release are unticked in 2.md |
 | 3 | OAuth and credential discovery | [3.md](3.md) | blocked | Needs a provider-terms review and client registration — an owner decision, see 3.md |
 | 4 | CI quality budgets | [4.md](4.md) | done | panic, swallowed-error and dependency-edge ratchets; binary size deferred to phase 2 |
-| 5 | Performance measurement | [5.md](5.md) | partially done | Startup and RSS measured; first-frame and idle-draw need a pty harness |
+| 5 | Performance measurement | [5.md](5.md) | mostly done | Startup, RSS, first frame and idle draws all measured; token accounting and the CI gate remain |
 | 6 | Semantic memory | [6.md](6.md) | not started | Largest phase; open model-distribution decision, see 6.md |
 | 7 | Multi-agent coordination | [7.md](7.md) | dropped | Prerequisite question answered in 7.md: no task here is faster with three agents |
 | 8 | TUI rendering and readability | [8.md](8.md) | done | Markdown, highlighting, JSON themes, pickers and toasts; render-cost criterion waits on phase 5 |
@@ -66,6 +66,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
 
 
 

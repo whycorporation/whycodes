@@ -2,6 +2,7 @@
 // Re-exports all public modules in the whycode-tui crate.
 
 pub mod app;
+pub mod bench;
 pub mod config;
 pub mod input;
 pub mod keymap;

@@ -189,12 +189,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         app.pending_prompt = Some(p);
     }
 
+    // Inert unless WHYCODE_BENCH is set; see crate::bench.
+    let bench = crate::bench::config_from_env();
+
     let result = async {
         loop {
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
             app.toasts.prune(std::time::Instant::now());
             terminal.draw(|f| render::render(f, &app))?;
+            crate::bench::record_draw();
+
+            if let Some(ref bench) = bench
+                && crate::bench::should_stop(bench)
+            {
+                break;
+            }
 
             // ── Stream events from agent ──────────────────────────────
             while let Ok(ev) = event_rx.try_recv() {
@@ -392,7 +402,25 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
 
             // ── Input ─────────────────────────────────────────────────
-            if event::poll(Duration::from_millis(40))? {
+            // How long to wait for a keystroke before looping again — which is
+            // also how often the screen is repainted, because the loop draws
+            // every iteration.
+            //
+            // A fixed 40ms meant ~21 repaints a second with nobody typing, all
+            // of them painting an unchanged screen. Input latency is unaffected
+            // by lengthening it: `poll` returns the moment a key arrives. What
+            // the timeout does control is how quickly the loop notices things
+            // that do not arrive as terminal events — streamed tokens on a
+            // channel, the spinner, a toast reaching its expiry — so it stays
+            // short while any of those are live.
+            let idle = !agent_busy && app.toasts.is_empty();
+            let poll_for = if idle {
+                Duration::from_millis(500)
+            } else {
+                Duration::from_millis(40)
+            };
+
+            if event::poll(poll_for)? {
                 let ev = event::read()?;
 
                 // Permission dialog keys handled specially
@@ -544,6 +572,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+
+    // After the terminal is restored, so a failed write cannot corrupt the
+    // screen the user is left looking at.
+    if let Some(ref bench) = bench {
+        crate::bench::write_results(bench);
+    }
 
     result
 }

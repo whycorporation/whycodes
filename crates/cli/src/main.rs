@@ -270,6 +270,9 @@ pub enum SessionCmd {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // First statement: everything after it is time a user waits for, and the
+    // first-frame benchmark measures from here.
+    whycode_tui::bench::mark_process_start();
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 

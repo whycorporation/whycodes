@@ -97,18 +97,56 @@ The ANSI path (`render_markdown`, used by `--plain` and the CLI) still
 highlights uncached at ~3.8 ms for a typical response. That one runs once per
 response rather than once per frame, so it is left alone.
 
+## Time to first frame, and idle redraws
+
+Added 2026-07-31. These are the two numbers a process-level benchmark cannot
+reach: timing a process that has exited says nothing about when it drew, and a
+loop that repaints an unchanged screen is invisible without a counter.
+
+```bash
+python scripts/bench_first_frame.py --runs 12 --idle-ms 0      # first frame
+python scripts/bench_first_frame.py --runs 10 --idle-ms 3000   # idle redraws
+```
+
+The binary reports on itself when `WHYCODE_BENCH` is set — see
+`crates/tui/src/bench.rs`. It is inert otherwise: two atomic loads per frame.
+The harness allocates a pty on Unix; Windows has no stdlib ConPTY, so the child
+inherits the console and the screen flickers briefly during a run.
+
+| | median | min | max |
+|---|---|---|---|
+| First frame, from the first statement of `main` | **4.74 ms** | 4.29 ms | 4.98 ms |
+| Spawn to exit, `--idle-ms 0` | 27.4 ms | 26.5 ms | 28.8 ms |
+| Idle redraws per second | **1.96** | 1.95 | 1.97 |
+
+The two timings decompose the wait. Inside the process, config loading through
+to a painted screen is 4.7 ms. Externally the same run takes 27.4 ms, so
+roughly 22 ms is process creation, dynamic linking and teardown — cost a user
+pays that the process cannot see. That figure cross-checks against `--version`
+at 23.8 ms, which does nothing but start, parse and exit.
+
+**Idle redraws were 21.4 per second.** The loop draws once per iteration and
+polled for input with a fixed 40 ms timeout, so with nobody typing it repainted
+an unchanged screen twenty-one times a second. The timeout is now 500 ms when
+nothing is live, and stays at 40 ms while the agent is streaming or a toast is
+counting down — the things that do not arrive as terminal events and so need
+the loop to come round. Input latency is unaffected either way, because `poll`
+returns the moment a key arrives.
+
+That took idle redraws from 21.44/s to 1.96/s, a 91% reduction, with first-frame
+time unchanged at 4.74 ms.
+
+Zero is still the right target and this is not zero. Reaching it means only
+drawing when something changed, which means tracking invalidation across every
+state mutation — and a missed one leaves a stale screen, which is a worse
+failure than a wasted repaint. The timeout change gets most of the benefit
+without that risk.
+
 ## What is deliberately not measured yet
 
 Being explicit, because a benchmark page that quietly omits things reads as
 though it covered them.
 
-- **Time to first TUI frame.** The number that matters most for perceived speed,
-  and the one other agents advertise. It needs a terminal, so it cannot be
-  measured by spawning a process and timing it. Measuring it properly means
-  instrumenting the render loop behind an environment variable and driving the
-  binary through a pty.
-- **Idle redraws.** A TUI that redraws when nothing changed burns CPU for no
-  reason, and it is invisible without an explicit counter. Same blocker.
 - **Memory per additional session.** Requires driving a real session, which
   requires a provider key.
 - **Token accounting.** Listed in 5.md; not implemented.
@@ -124,8 +162,13 @@ the same thing as the table above.
 
 ## Regression gating
 
-Not wired into CI yet. Shared runners vary enough that a tight ceiling would
-flap, and a ceiling loose enough not to flap on a 20 ms measurement catches
-almost nothing. The useful gate is on time to first frame and idle draws, which
-are exactly the two things not yet measurable — so the gate waits for them
-rather than being added in a weakened form that provides false assurance.
+Not wired into CI. First frame and idle draws are now measurable, which removes
+the original blocker, but they need a terminal — and CI has none. The pty path
+would work on the Linux runner; the Windows and macOS jobs would not.
+
+A gate that runs on one of three platforms is still worth having for a
+regression as large as the 21-to-2 change above, and that is the shape to build
+if this is wired up: Linux only, on idle draws and first frame, with a ceiling
+loose enough to survive a shared runner. Startup and RSS stay ungated — a
+ceiling loose enough not to flap at a 20 ms measurement catches almost nothing,
+and a gate that catches nothing reads as assurance while providing none.
