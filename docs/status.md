@@ -23,17 +23,26 @@ Last updated: 2026-07-31
 |---|---|---|---|---|
 | 1 | Shell command risk classification | [1.md](1.md) | done | `crates/command-risk`, gated in `Agent::execute_with_permission` |
 | 2 | Distribution and self-update | [2.md](2.md) | implemented | Release workflow, installers and real self-update; criteria needing a published release are unticked in 2.md |
-| 3 | OAuth and credential discovery | [3.md](3.md) | not started | Depends on 2 for a credible install story |
+| 3 | OAuth and credential discovery | [3.md](3.md) | blocked | Needs a provider-terms review and client registration — an owner decision, see 3.md |
 | 4 | CI quality budgets | [4.md](4.md) | done | panic, swallowed-error and dependency-edge ratchets; binary size deferred to phase 2 |
 | 5 | Performance measurement | [5.md](5.md) | partially done | Startup and RSS measured; first-frame and idle-draw need a pty harness |
-| 6 | Semantic memory | [6.md](6.md) | not started | Largest feature; do not start before 1–5 |
-| 7 | Multi-agent coordination | [7.md](7.md) | not started | Optional; revisit after 6 |
+| 6 | Semantic memory | [6.md](6.md) | not started | Largest phase; open model-distribution decision, see 6.md |
+| 7 | Multi-agent coordination | [7.md](7.md) | dropped | Prerequisite question answered in 7.md: no task here is faster with three agents |
 | 8 | TUI rendering and readability | [8.md](8.md) | in progress | Markdown, highlighting and JSON themes done; pickers and toasts remain |
 
 ## Current focus
 
-Phase 1 is complete. Phase 2 (distribution) or Phase 4 (budgets, independent of
-everything else) are the next candidates.
+Phase 8's remaining items: the model picker, the session list dialog and toasts.
+
+Then, in order of what is actually blocking:
+
+1. **Phase 5's pty harness** — time to first frame and idle draws. Blocks
+   Phase 6, and is the only measurement that would be comparable to what other
+   agents publish.
+2. **Phase 2's first release** — one `git tag`, and the seven unticked criteria
+   in 2.md become testable.
+3. **Phase 3's two owner decisions** — OAuth client registration and a
+   per-provider terms reading. Neither is an engineering task.
 
 ## Decision log
 
@@ -58,6 +67,8 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
+
 
 
 
