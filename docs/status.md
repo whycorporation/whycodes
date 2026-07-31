@@ -28,7 +28,7 @@ Last updated: 2026-07-31
 | 5 | Performance measurement | [5.md](5.md) | partially done | Startup and RSS measured; first-frame and idle-draw need a pty harness |
 | 6 | Semantic memory | [6.md](6.md) | not started | Largest phase; open model-distribution decision, see 6.md |
 | 7 | Multi-agent coordination | [7.md](7.md) | dropped | Prerequisite question answered in 7.md: no task here is faster with three agents |
-| 8 | TUI rendering and readability | [8.md](8.md) | mostly done | Markdown, highlighting, JSON themes and pickers done; toasts remain |
+| 8 | TUI rendering and readability | [8.md](8.md) | done | Markdown, highlighting, JSON themes, pickers and toasts; render-cost criterion waits on phase 5 |
 
 ## Current focus
 
@@ -67,6 +67,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
 
 
 

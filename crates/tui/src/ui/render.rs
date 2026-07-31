@@ -21,6 +21,7 @@ use super::dialogs;
 use super::prompt;
 use super::sidebar;
 use super::status;
+use super::toast;
 
 pub fn render(frame: &mut Frame, app: &TuiApp) {
     // Via the config rather than `app.theme`, so a palette loaded from a JSON
@@ -45,6 +46,9 @@ pub fn render(frame: &mut Frame, app: &TuiApp) {
     }
 
     render_shell(frame, app, &palette);
+    // Last, so toasts sit above the chat. Not drawn over a dialog: a modal has
+    // the user's attention already, and covering its corner would obscure it.
+    toast::render(frame, frame.area(), app.toasts.visible(), &palette);
 }
 
 fn render_shell(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {

@@ -191,6 +191,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let result = async {
         loop {
+            // Expire toasts before drawing, so one never lingers a frame past
+            // its time.
+            app.toasts.prune(std::time::Instant::now());
             terminal.draw(|f| render::render(f, &app))?;
 
             // ── Stream events from agent ──────────────────────────────
@@ -716,7 +719,9 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 Agent::with_agents_md(&ctx.agent.system_prompt(), ctx.project_dir),
             );
             ctx.app.messages.clear();
-            ctx.app.status_message = "New session".into();
+            ctx.app
+                .toasts
+                .push(crate::toast::ToastKind::Success, "New session");
         }
         "/undo" => {
             if let Some(msgs) = ctx.history.undo(&ctx.session.messages, ctx.project_dir) {
@@ -774,7 +779,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     ),
                 );
             }
-            Err(e) => ctx.app.status_message = format!("Export failed: {e}"),
+            Err(e) => ctx.app.toasts.push(
+                crate::toast::ToastKind::Error,
+                format!("Export failed: {e}"),
+            ),
         },
         "/unshare" => {
             let id = ctx.session.id.clone();
@@ -844,7 +852,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.agent_name = rest.to_string();
                 ctx.app.status_message = format!("Switched to agent '{rest}'");
             } else {
-                ctx.app.status_message = format!("Unknown agent '{rest}'");
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    format!("Unknown agent '{rest}'"),
+                );
             }
         }
         "/sessions" | "/resume" | "/continue" => {
@@ -918,7 +929,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
         other => {
-            ctx.app.status_message = format!("Unknown: {other} — /help");
+            ctx.app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                format!("Unknown command {other} — try /help"),
+            );
         }
     }
 }

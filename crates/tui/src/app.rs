@@ -305,6 +305,9 @@ pub struct TuiApp {
     pub provider_dialog: ProviderDialogState,
     pub model_selection: ModelSelectionState,
     pub session_list: SessionListState,
+
+    // ── transient notices ──
+    pub toasts: crate::toast::Toasts,
     pub help_scroll: usize,
 
     // ── sidebar ──
@@ -388,6 +391,7 @@ impl TuiApp {
             provider_dialog: ProviderDialogState::default(),
             model_selection: ModelSelectionState::default(),
             session_list: SessionListState::default(),
+            toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
             sidebar: SidebarState::default(),
             command: CommandState::default(),

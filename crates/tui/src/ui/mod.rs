@@ -10,5 +10,6 @@ pub mod prompt;
 pub mod render;
 pub mod sidebar;
 pub mod status;
+pub mod toast;
 
 pub use render::render;
