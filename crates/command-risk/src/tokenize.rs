@@ -215,12 +215,21 @@ pub fn tokenize(input: &str) -> Tokenized {
 fn match_operator(chars: &[char], i: usize, candidates: &[&'static str]) -> Option<&'static str> {
     candidates
         .iter()
-        .filter(|op| {
-            let op_chars: Vec<char> = op.chars().collect();
-            chars.len() >= i + op_chars.len() && chars[i..i + op_chars.len()] == op_chars[..]
-        })
+        .filter(|op| starts_with_at(chars, i, op))
         .max_by_key(|op| op.len())
         .copied()
+}
+
+/// Does `chars` contain `needle` starting at `i`?
+///
+/// Compares char by char rather than collecting `needle` into a `Vec`. This is
+/// called once per candidate per character position — fifteen times for every
+/// character of the command — so an allocation here is an allocation per
+/// character, which is what it used to be.
+fn starts_with_at(chars: &[char], i: usize, needle: &str) -> bool {
+    (i..)
+        .zip(needle.chars())
+        .all(|(offset, c)| chars.get(offset) == Some(&c))
 }
 
 fn find_char(chars: &[char], from: usize, target: char) -> Option<usize> {

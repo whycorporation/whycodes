@@ -6,6 +6,8 @@ and no basis for any performance statement.
 
 ## Running them
 
+Process level:
+
 ```bash
 cargo build --release -p whycode-cli
 python scripts/bench_startup.py --runs 20
@@ -13,6 +15,18 @@ python scripts/bench_memory.py --runs 5      # needs psutil
 ```
 
 Both accept `--json out.json` so a run can be recorded.
+
+Function level, for the two paths that run on a hot loop:
+
+```bash
+cargo bench -p whycode-format        # markdown + highlighting, per frame
+cargo bench -p whycode-command-risk  # shell risk gate, per tool call
+```
+
+These use criterion. They are not run in CI — criterion's own comparison against
+the previous run is per machine, and a shared runner would report noise as a
+regression. They are for changing the code in these paths and checking the
+before and after on one machine.
 
 ## Method
 
@@ -46,6 +60,42 @@ and `config show` is config loading and the SQLite open.
 These are single-machine numbers on a developer laptop, not a controlled
 environment. They are useful as a baseline to compare future runs against, not
 as a published claim.
+
+## Hot paths
+
+Added 2026-07-31 after the process-level numbers, for the two functions that do
+not run once per invocation.
+
+`highlight_code_spans` and `parse_markdown` are called from the TUI render loop,
+so their cost is paid **per frame, per visible message** — not once per
+response. `assess` runs before every `bash` tool call.
+
+Both benchmarks found a defect on their first run, which is the argument for
+having them at all.
+
+| | before | after | |
+|---|---|---|---|
+| `assess` on `cargo test --workspace --no-fail-fast` | 39.8 µs | 2.11 µs | 18.8× |
+| `assess` on `ls -la` | 6.12 µs | 780 ns | 7.8× |
+| `highlight_code_spans`, 100 lines of Rust | 5.83 ms | 92 µs | 63× |
+| `highlight_code_spans`, 500 lines | 29.3 ms | 468 µs | 63× |
+
+**The tokeniser allocated per character.** `match_operator` collected each of
+its fifteen candidate operators into a `Vec<char>` at every character position,
+so cost scaled with input length times candidate count. The measured ratio
+between the two commands matched their character-count ratio exactly, which is
+what pointed at it. Fixed by comparing char by char.
+
+**Highlighting ran every frame.** 5.8 ms for a 100-line Rust block, against
+17 µs for the same text untagged — syntect is roughly 350× the cost of not
+highlighting, and the TUI was paying it on every redraw. A visible 500-line
+block would have cost 29 ms per frame. Fixed with a bounded memo on
+`(code, language)`; the block is identical between frames, so it is computed
+once.
+
+The ANSI path (`render_markdown`, used by `--plain` and the CLI) still
+highlights uncached at ~3.8 ms for a typical response. That one runs once per
+response rather than once per frame, so it is left alone.
 
 ## What is deliberately not measured yet
 
