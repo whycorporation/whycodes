@@ -372,7 +372,10 @@ fn opening_a_dialog_switches_mode_and_key_context() {
 
     assert_eq!(app.mode, AppMode::Dialog);
     assert!(app.dialogs.is_open());
-    assert!(matches!(app.dialogs.active(), Some(DialogKind::SessionList)));
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::SessionList)
+    ));
 }
 
 #[test]
