@@ -5,7 +5,7 @@ file in the same commit as the work it describes — a phase is not "done"
 because the code merged, it is done when its acceptance criteria in the phase
 doc are checked off and verified.
 
-Last updated: 2026-07-31
+Last updated: 2026-07-31 (phases 1, 4, 8 done; 2 implemented; 5 partial; 7 dropped)
 
 ## Legend
 
@@ -32,9 +32,8 @@ Last updated: 2026-07-31
 
 ## Current focus
 
-Phase 8's remaining items: the model picker, the session list dialog and toasts.
-
-Then, in order of what is actually blocking:
+Nothing in progress. Three things are ready to pick up, in order of what is
+actually blocking:
 
 1. **Phase 5's pty harness** — time to first frame and idle draws. Blocks
    Phase 6, and is the only measurement that would be comparable to what other
@@ -67,6 +66,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
 
 
 
