@@ -246,7 +246,7 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Vec<Vec<CodeS
 
     let mut highlighter = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
     code.lines()
-        .map(|line| match highlighter.highlight_line(line, &ps) {
+        .map(|line| match highlighter.highlight_line(line, ps) {
             Ok(ranges) => ranges
                 .into_iter()
                 .map(|(style, text)| {
@@ -394,7 +394,7 @@ fn highlight_code_block(code: &str, language: &str) -> String {
 
     let mut output = String::with_capacity(code.len() * 2);
     for line in LinesWithEndings::from(code) {
-        let ranges = highlighter.highlight_line(line, &ps).unwrap_or_default();
+        let ranges = highlighter.highlight_line(line, ps).unwrap_or_default();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
         output.push_str(&escaped);
     }
