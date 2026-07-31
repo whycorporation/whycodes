@@ -28,6 +28,7 @@ Last updated: 2026-07-31
 | 5 | Performance measurement | [5.md](5.md) | not started | Prerequisite for any performance claim |
 | 6 | Semantic memory | [6.md](6.md) | not started | Largest feature; do not start before 1–5 |
 | 7 | Multi-agent coordination | [7.md](7.md) | not started | Optional; revisit after 6 |
+| 8 | TUI rendering and readability | [8.md](8.md) | not started | Target look and feel is opencode's TUI |
 
 ## Current focus
 
@@ -46,6 +47,7 @@ Decisions that shaped this plan, so they are not re-litigated later.
 | 2026-07-31 | Default `bash_risk_threshold` is `destructive`, not `caution` as 1.md first proposed | `caution` fires on ordinary in-project cleanup (`rm -rf target`, `> file`). A gate that prompts during a normal build gets switched off, and then protects nothing. |
 | 2026-07-31 | Unresolvable targets escalate to `destructive`, never `catastrophic` | `catastrophic` is not promptable. An unexpandable `$BUILD_DIR` or a `$(…)` target is unknown, not known-bad, so refusing it outright would block legitimate work with no way to override. Refusal is reserved for targets we positively identified. |
 | 2026-07-31 | Unrecognised commands are `safe` | The alternative — unknown means dangerous — prompts on every build and script. Recorded as a limitation in the crate docs and README rather than hidden. |
+| 2026-07-31 | Added phase 8 (TUI), targeting opencode's look and feel | The original seven phases had no TUI phase, which was a gap: the TUI is the product surface. opencode's TUI is SolidJS on OpenTUI, so no code transfers — but its theme JSON schema does, and 33 themes come with it. |
 
 ## Verification commands
 
