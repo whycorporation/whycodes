@@ -25,7 +25,7 @@ Last updated: 2026-07-31
 | 2 | Distribution and self-update | [2.md](2.md) | implemented | Release workflow, installers and real self-update; criteria needing a published release are unticked in 2.md |
 | 3 | OAuth and credential discovery | [3.md](3.md) | not started | Depends on 2 for a credible install story |
 | 4 | CI quality budgets | [4.md](4.md) | done | panic, swallowed-error and dependency-edge ratchets; binary size deferred to phase 2 |
-| 5 | Performance measurement | [5.md](5.md) | not started | Prerequisite for any performance claim |
+| 5 | Performance measurement | [5.md](5.md) | partially done | Startup and RSS measured; first-frame and idle-draw need a pty harness |
 | 6 | Semantic memory | [6.md](6.md) | not started | Largest feature; do not start before 1–5 |
 | 7 | Multi-agent coordination | [7.md](7.md) | not started | Optional; revisit after 6 |
 | 8 | TUI rendering and readability | [8.md](8.md) | in progress | Markdown, highlighting and JSON themes done; pickers and toasts remain |
@@ -58,5 +58,6 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
+
 
 

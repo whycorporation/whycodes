@@ -33,8 +33,10 @@ reproduced these. Note that the memory figure is stated with local embeddings
 disabled, and that jcode's embedding crate loads an ONNX `all-MiniLM-L6-v2`
 model in-process, so the enabled figure will be materially higher.
 
-whycode has no published measurements at all, which is the actual gap — see
-[5.md](5.md).
+whycode now has its first measurements — 20.9 ms to `--version` and 9.6 MB peak
+RSS, release build, one machine. See [benchmarks.md](benchmarks.md) for the
+method and for what is still unmeasured, which includes time to first TUI frame:
+the number that would actually be comparable to jcode's.
 
 ## What whycode has that is worth keeping
 

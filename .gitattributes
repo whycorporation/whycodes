@@ -8,3 +8,10 @@
 *.md   text eol=lf
 *.yml  text eol=lf
 *.yaml text eol=lf
+*.json text eol=lf
+*.py   text eol=lf
+
+# Shell scripts must keep LF in the working tree, not just in the repository.
+# A CRLF shebang line fails with "bad interpreter", and these run on machines
+# that have never seen this project before.
+*.sh   text eol=lf
