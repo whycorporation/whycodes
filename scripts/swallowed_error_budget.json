@@ -1,0 +1,21 @@
+{
+  "agent": 2,
+  "cli": 10,
+  "command-risk": 0,
+  "core": 1,
+  "format": 1,
+  "function": 0,
+  "llm": 1,
+  "lsp": 1,
+  "mcp": 0,
+  "plugin": 0,
+  "protocol": 0,
+  "schema": 0,
+  "sdk": 0,
+  "server": 0,
+  "session": 5,
+  "skill": 0,
+  "storage": 1,
+  "tools": 11,
+  "tui": 10
+}

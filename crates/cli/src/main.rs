@@ -366,6 +366,15 @@ fn provider_env_var(provider: &str) -> String {
     format!("{}_API_KEY", provider.to_uppercase())
 }
 
+/// True when opening the database failed because there is nothing there yet,
+/// as opposed to failing for a reason the user should hear about.
+fn is_missing_database(error: &anyhow::Error) -> bool {
+    error.chain().any(|e| {
+        e.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
 fn open_db() -> anyhow::Result<whycode_storage::db::Database> {
     let data_dir = Config::data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
@@ -1787,11 +1796,22 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
 
 /// `stats` — Show usage statistics
 async fn cmd_stats() -> anyhow::Result<()> {
+    // A missing database is the normal state before the first session, and is
+    // not worth an error. Anything else — a locked file, a permission problem —
+    // is reported rather than hidden behind "no database found", which is what
+    // previously made a database fault indistinguishable from a fresh install.
     let db = match open_db() {
         Ok(d) => d,
-        Err(_) => {
+        Err(e) if is_missing_database(&e) => {
             println!("{} No statistics database found.", "ℹ".cyan());
             println!("Stats are collected as you use whycode.");
+            return Ok(());
+        }
+        Err(e) => {
+            println!(
+                "{} Could not open the statistics database: {e}",
+                "!".yellow()
+            );
             return Ok(());
         }
     };

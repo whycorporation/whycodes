@@ -27,6 +27,21 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  budgets:
+    name: Budgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Panic budget
+        run: python scripts/check_panic_budget.py
+      - name: Swallowed error budget
+        run: python scripts/check_swallowed_error_budget.py
+      - name: Dependency boundaries
+        run: python scripts/check_dependency_boundaries.py
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

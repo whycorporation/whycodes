@@ -1,0 +1,89 @@
+{
+  "agent": [
+    "command-risk",
+    "core",
+    "llm",
+    "mcp",
+    "session",
+    "tools"
+  ],
+  "cli": [
+    "agent",
+    "core",
+    "llm",
+    "server",
+    "session",
+    "storage",
+    "tools",
+    "tui"
+  ],
+  "command-risk": [],
+  "core": [],
+  "format": [
+    "core"
+  ],
+  "function": [
+    "core",
+    "tools"
+  ],
+  "llm": [
+    "core"
+  ],
+  "lsp": [
+    "core"
+  ],
+  "mcp": [
+    "core"
+  ],
+  "plugin": [
+    "core",
+    "tools"
+  ],
+  "protocol": [
+    "core"
+  ],
+  "schema": [
+    "core"
+  ],
+  "sdk": [
+    "agent",
+    "core",
+    "llm",
+    "session",
+    "tools"
+  ],
+  "server": [
+    "agent",
+    "core",
+    "llm",
+    "session",
+    "tools"
+  ],
+  "session": [
+    "core",
+    "llm",
+    "storage",
+    "tools"
+  ],
+  "skill": [
+    "core"
+  ],
+  "storage": [
+    "core"
+  ],
+  "tools": [
+    "core",
+    "format",
+    "lsp",
+    "skill"
+  ],
+  "tui": [
+    "agent",
+    "core",
+    "format",
+    "llm",
+    "session",
+    "storage",
+    "tools"
+  ]
+}
