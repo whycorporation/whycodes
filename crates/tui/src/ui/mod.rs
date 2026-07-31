@@ -5,6 +5,7 @@ pub mod chat;
 pub mod dialogs;
 pub mod header;
 pub mod layout;
+pub mod markdown;
 pub mod prompt;
 pub mod render;
 pub mod sidebar;

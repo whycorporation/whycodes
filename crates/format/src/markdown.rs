@@ -1,8 +1,265 @@
 use regex::Regex;
+use std::sync::OnceLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::SyntaxSet;
 use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
+
+/// Syntect's default sets, loaded once.
+///
+/// `load_defaults_*` parses the bundled grammar and theme data, which costs
+/// milliseconds. The TUI highlights on every frame, so loading per call made
+/// redrawing proportional to the grammar set rather than to the text on screen.
+fn syntax_set() -> &'static SyntaxSet {
+    static SET: OnceLock<SyntaxSet> = OnceLock::new();
+    SET.get_or_init(SyntaxSet::load_defaults_newlines)
+}
+
+fn theme_set() -> &'static ThemeSet {
+    static SET: OnceLock<ThemeSet> = OnceLock::new();
+    SET.get_or_init(ThemeSet::load_defaults)
+}
+
+// ── Structured markdown ────────────────────────────────────────────────
+//
+// `render_markdown` below emits ANSI, which suits a plain terminal but not
+// ratatui, which needs `Style` values rather than escape sequences. Parsing to
+// this structure first lets each frontend render it its own way, and lets the
+// TUI colour markdown with the active theme instead of syntect's built-in one.
+
+/// A run of text within a line, carrying its emphasis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Inline {
+    Text(String),
+    Bold(String),
+    Italic(String),
+    Code(String),
+    Link { text: String, url: String },
+}
+
+impl Inline {
+    /// The characters this run contributes, ignoring emphasis.
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Text(s) | Self::Bold(s) | Self::Italic(s) | Self::Code(s) => s,
+            Self::Link { text, .. } => text,
+        }
+    }
+}
+
+/// A block-level element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Block {
+    Heading {
+        level: u8,
+        spans: Vec<Inline>,
+    },
+    Paragraph(Vec<Inline>),
+    ListItem {
+        indent: usize,
+        spans: Vec<Inline>,
+    },
+    /// A fenced block. `closed` is false while the closing fence has not
+    /// arrived yet, which happens constantly during streaming.
+    Code {
+        language: Option<String>,
+        lines: Vec<String>,
+        closed: bool,
+    },
+    Blank,
+}
+
+/// One highlighted run of code: 24-bit colour and the text it applies to.
+pub type CodeSpan = ((u8, u8, u8), String);
+
+/// Parse markdown into blocks.
+///
+/// Deliberately line-oriented and total: any input produces blocks, and an
+/// unterminated fence yields `Code { closed: false }` rather than an error, so
+/// a partially streamed response still renders.
+pub fn parse_markdown(text: &str) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    let mut fence: Option<(Option<String>, Vec<String>)> = None;
+
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+
+        if trimmed.starts_with("```") {
+            match fence.take() {
+                Some((language, lines)) => blocks.push(Block::Code {
+                    language,
+                    lines,
+                    closed: true,
+                }),
+                None => {
+                    let lang = trimmed.trim_start_matches('`').trim();
+                    fence = Some(((!lang.is_empty()).then(|| lang.to_string()), Vec::new()));
+                }
+            }
+            continue;
+        }
+
+        if let Some((_, lines)) = fence.as_mut() {
+            lines.push(line.to_string());
+            continue;
+        }
+
+        if let Some((level, rest)) = heading(trimmed) {
+            blocks.push(Block::Heading {
+                level,
+                spans: parse_inline(rest),
+            });
+        } else if let Some(rest) = list_item(trimmed) {
+            blocks.push(Block::ListItem {
+                indent: line.len() - trimmed.len(),
+                spans: parse_inline(rest),
+            });
+        } else if trimmed.is_empty() {
+            blocks.push(Block::Blank);
+        } else {
+            blocks.push(Block::Paragraph(parse_inline(line)));
+        }
+    }
+
+    if let Some((language, lines)) = fence {
+        blocks.push(Block::Code {
+            language,
+            lines,
+            closed: false,
+        });
+    }
+
+    blocks
+}
+
+fn heading(trimmed: &str) -> Option<(u8, &str)> {
+    let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+    if (1..=6).contains(&hashes) {
+        trimmed[hashes..]
+            .strip_prefix(' ')
+            .map(|rest| (hashes as u8, rest))
+    } else {
+        None
+    }
+}
+
+fn list_item(trimmed: &str) -> Option<&str> {
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(rest) = trimmed.strip_prefix(marker) {
+            return Some(rest);
+        }
+    }
+    None
+}
+
+/// Split a line into emphasis runs.
+///
+/// Scans once rather than applying regexes in sequence, so `**bold**` cannot be
+/// re-matched as two italics and a marker inside inline code stays literal.
+pub fn parse_inline(line: &str) -> Vec<Inline> {
+    let chars: Vec<char> = line.chars().collect();
+    let mut spans = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+
+    macro_rules! flush {
+        () => {
+            if !plain.is_empty() {
+                spans.push(Inline::Text(std::mem::take(&mut plain)));
+            }
+        };
+    }
+
+    while i < chars.len() {
+        // Inline code first: nothing inside a backtick pair is markup.
+        if chars[i] == '`'
+            && let Some(end) = find(&chars, i + 1, "`")
+        {
+            flush!();
+            spans.push(Inline::Code(chars[i + 1..end].iter().collect()));
+            i = end + 1;
+            continue;
+        }
+        if chars[i] == '*'
+            && i + 1 < chars.len()
+            && chars[i + 1] == '*'
+            && let Some(end) = find(&chars, i + 2, "**")
+        {
+            flush!();
+            spans.push(Inline::Bold(chars[i + 2..end].iter().collect()));
+            i = end + 2;
+            continue;
+        }
+        if chars[i] == '*'
+            && let Some(end) = find(&chars, i + 1, "*")
+        {
+            flush!();
+            spans.push(Inline::Italic(chars[i + 1..end].iter().collect()));
+            i = end + 1;
+            continue;
+        }
+        if chars[i] == '['
+            && let Some(close) = find(&chars, i + 1, "]")
+            && chars.get(close + 1) == Some(&'(')
+            && let Some(paren) = find(&chars, close + 2, ")")
+        {
+            flush!();
+            spans.push(Inline::Link {
+                text: chars[i + 1..close].iter().collect(),
+                url: chars[close + 2..paren].iter().collect(),
+            });
+            i = paren + 1;
+            continue;
+        }
+        plain.push(chars[i]);
+        i += 1;
+    }
+
+    flush!();
+    spans
+}
+
+/// Index of the next occurrence of `needle` at or after `from`.
+fn find(chars: &[char], from: usize, needle: &str) -> Option<usize> {
+    let n: Vec<char> = needle.chars().collect();
+    (from..chars.len().saturating_sub(n.len() - 1)).find(|&i| chars[i..i + n.len()] == n[..])
+}
+
+/// Syntax-highlight code into coloured runs, for frontends that cannot consume
+/// ANSI. Returns one `Vec<CodeSpan>` per line. An unknown language yields the
+/// text unstyled rather than failing.
+pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Vec<Vec<CodeSpan>> {
+    let ps = syntax_set();
+    let ts = theme_set();
+
+    let syntax = language.and_then(|l| {
+        ps.find_syntax_by_token(l)
+            .or_else(|| ps.find_syntax_by_extension(l))
+    });
+
+    let Some(syntax) = syntax else {
+        return code
+            .lines()
+            .map(|l| vec![((0xcc, 0xcc, 0xcc), l.to_string())])
+            .collect();
+    };
+
+    let mut highlighter = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
+    code.lines()
+        .map(|line| match highlighter.highlight_line(line, &ps) {
+            Ok(ranges) => ranges
+                .into_iter()
+                .map(|(style, text)| {
+                    (
+                        (style.foreground.r, style.foreground.g, style.foreground.b),
+                        text.to_string(),
+                    )
+                })
+                .collect(),
+            Err(_) => vec![((0xcc, 0xcc, 0xcc), line.to_string())],
+        })
+        .collect()
+}
 
 /// Render a markdown string to ANSI-escaped terminal output.
 ///
@@ -117,8 +374,8 @@ fn format_inline(text: &str) -> String {
 
 /// Syntax-highlight a code block using syntect.
 fn highlight_code_block(code: &str, language: &str) -> String {
-    let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
+    let ps = syntax_set();
+    let ts = theme_set();
 
     let syntax = if language.is_empty() {
         None
@@ -184,5 +441,174 @@ mod tests {
         let result = render_markdown("```rust\nlet x = 1;\n```");
         // Should contain syntax-highlighted content, not raw backticks
         assert!(!result.contains("```"));
+    }
+
+    // ── Structured parsing ──────────────────────────────────────────────
+
+    #[test]
+    fn parses_headings_by_level() {
+        let blocks = parse_markdown("# One\n### Three");
+        assert_eq!(
+            blocks[0],
+            Block::Heading {
+                level: 1,
+                spans: vec![Inline::Text("One".into())]
+            }
+        );
+        assert!(matches!(blocks[1], Block::Heading { level: 3, .. }));
+    }
+
+    #[test]
+    fn a_hash_without_a_space_is_not_a_heading() {
+        assert!(matches!(parse_markdown("#hashtag")[0], Block::Paragraph(_)));
+        assert!(matches!(
+            parse_markdown("####### seven")[0],
+            Block::Paragraph(_)
+        ));
+    }
+
+    #[test]
+    fn parses_list_items_with_any_marker() {
+        for input in ["- a", "* a", "+ a"] {
+            assert!(
+                matches!(parse_markdown(input)[0], Block::ListItem { .. }),
+                "{input}"
+            );
+        }
+    }
+
+    #[test]
+    fn records_list_indentation() {
+        let blocks = parse_markdown("    - nested");
+        assert_eq!(
+            blocks[0],
+            Block::ListItem {
+                indent: 4,
+                spans: vec![Inline::Text("nested".into())]
+            }
+        );
+    }
+
+    #[test]
+    fn parses_fenced_code_with_language() {
+        let blocks = parse_markdown("```rust\nlet x = 1;\n```");
+        assert_eq!(
+            blocks[0],
+            Block::Code {
+                language: Some("rust".into()),
+                lines: vec!["let x = 1;".into()],
+                closed: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_unterminated_fence_still_parses() {
+        // This is the streaming case: the closing fence has not arrived yet.
+        let blocks = parse_markdown("```rust\nlet x = 1;");
+        assert_eq!(
+            blocks[0],
+            Block::Code {
+                language: Some("rust".into()),
+                lines: vec!["let x = 1;".into()],
+                closed: false
+            }
+        );
+    }
+
+    #[test]
+    fn markup_inside_a_fence_stays_literal() {
+        let blocks = parse_markdown("```\n**not bold**\n# not a heading\n```");
+        match &blocks[0] {
+            Block::Code { lines, .. } => {
+                assert_eq!(lines, &["**not bold**", "# not a heading"]);
+            }
+            other => panic!("expected code, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_inline_emphasis() {
+        assert_eq!(
+            parse_inline("a **b** c"),
+            vec![
+                Inline::Text("a ".into()),
+                Inline::Bold("b".into()),
+                Inline::Text(" c".into())
+            ]
+        );
+        assert_eq!(parse_inline("*i*"), vec![Inline::Italic("i".into())]);
+        assert_eq!(parse_inline("`c`"), vec![Inline::Code("c".into())]);
+    }
+
+    #[test]
+    fn bold_is_not_re_read_as_two_italics() {
+        assert_eq!(parse_inline("**b**"), vec![Inline::Bold("b".into())]);
+    }
+
+    #[test]
+    fn markup_inside_inline_code_stays_literal() {
+        assert_eq!(
+            parse_inline("`**not bold**`"),
+            vec![Inline::Code("**not bold**".into())]
+        );
+    }
+
+    #[test]
+    fn parses_links() {
+        assert_eq!(
+            parse_inline("[docs](https://example.com)"),
+            vec![Inline::Link {
+                text: "docs".into(),
+                url: "https://example.com".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn an_unclosed_marker_stays_literal() {
+        assert_eq!(parse_inline("a * b"), vec![Inline::Text("a * b".into())]);
+        assert_eq!(
+            parse_inline("`unclosed"),
+            vec![Inline::Text("`unclosed".into())]
+        );
+    }
+
+    #[test]
+    fn blank_lines_are_preserved_as_blocks() {
+        let blocks = parse_markdown("a\n\nb");
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[1], Block::Blank);
+    }
+
+    #[test]
+    fn empty_input_parses_to_nothing() {
+        assert!(parse_markdown("").is_empty());
+    }
+
+    // ── Code highlighting ───────────────────────────────────────────────
+
+    #[test]
+    fn highlights_known_languages_into_spans() {
+        let lines = highlight_code_spans("let x = 1;", Some("rust"));
+        assert_eq!(lines.len(), 1);
+        assert!(!lines[0].is_empty());
+        let text: String = lines[0].iter().map(|(_, t)| t.as_str()).collect();
+        assert_eq!(text.trim_end(), "let x = 1;");
+    }
+
+    #[test]
+    fn an_unknown_language_still_returns_the_text() {
+        for lang in [None, Some("not-a-language")] {
+            let lines = highlight_code_spans("some text", lang);
+            let text: String = lines[0].iter().map(|(_, t)| t.as_str()).collect();
+            assert_eq!(text.trim_end(), "some text", "{lang:?}");
+        }
+    }
+
+    #[test]
+    fn highlighting_preserves_line_count() {
+        let lines = highlight_code_spans("a\nb\nc", Some("rust"));
+        assert_eq!(lines.len(), 3);
     }
 }

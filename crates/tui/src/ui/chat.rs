@@ -151,24 +151,16 @@ fn render_message(
             lines.push(panel_line(" ", border_c, palette, true));
         }
         ChatRole::Assistant => {
-            // Assistant content — no outer box
+            // Assistant content — no outer box. Rendered as markdown, which
+            // also handles partially streamed text (an unterminated fence stays
+            // an open block rather than leaking backticks).
             if !msg.content.is_empty() {
-                for line in msg.content.lines() {
-                    lines.push(Line::from(vec![
-                        Span::raw(" "),
-                        Span::styled(line.to_string(), Style::default().fg(palette.fg)),
-                    ]));
-                }
+                lines.extend(super::markdown::render(&msg.content, palette));
             }
             for block in &msg.blocks {
                 match block {
                     ChatBlock::Text(t) if msg.content.is_empty() => {
-                        for line in t.lines() {
-                            lines.push(Line::from(vec![
-                                Span::raw(" "),
-                                Span::styled(line.to_string(), Style::default().fg(palette.fg)),
-                            ]));
-                        }
+                        lines.extend(super::markdown::render(t, palette));
                     }
                     ChatBlock::Text(_) => {}
                     ChatBlock::Thinking(t) => {
