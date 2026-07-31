@@ -8,6 +8,7 @@ pub mod keymap;
 pub mod opencode_tokens;
 pub mod run;
 pub mod theme;
+pub mod theme_file;
 pub mod ui;
 pub mod widgets;
 

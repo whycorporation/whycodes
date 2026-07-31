@@ -23,7 +23,9 @@ use super::sidebar;
 use super::status;
 
 pub fn render(frame: &mut Frame, app: &TuiApp) {
-    let palette = app.theme.palette();
+    // Via the config rather than `app.theme`, so a palette loaded from a JSON
+    // theme file takes precedence over the built-in of the same name.
+    let palette = app.config.palette();
 
     frame.render_widget(
         Block::default().style(Style::default().bg(palette.bg)),

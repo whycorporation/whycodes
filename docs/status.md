@@ -28,7 +28,7 @@ Last updated: 2026-07-31
 | 5 | Performance measurement | [5.md](5.md) | not started | Prerequisite for any performance claim |
 | 6 | Semantic memory | [6.md](6.md) | not started | Largest feature; do not start before 1–5 |
 | 7 | Multi-agent coordination | [7.md](7.md) | not started | Optional; revisit after 6 |
-| 8 | TUI rendering and readability | [8.md](8.md) | not started | Target look and feel is opencode's TUI |
+| 8 | TUI rendering and readability | [8.md](8.md) | in progress | Markdown, highlighting and JSON themes done; pickers and toasts remain |
 
 ## Current focus
 

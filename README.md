@@ -207,9 +207,28 @@ generates one. It is injected into the system prompt automatically.
 
 ### Themes
 
-29 TUI themes are available, including Catppuccin, Tokyo Night, Rose Pine,
-Gruvbox, Nord, Dracula, Solarized and Ayu variants. Set one with `[tui] theme`;
+29 themes are built in, including Catppuccin, Tokyo Night, Rose Pine, Gruvbox,
+Nord, Dracula, Solarized and Ayu variants. Set one with `[tui] theme`;
 `/themes` in the `--plain` REPL prints the full list of valid names.
+
+Additional themes can be dropped into a `themes/` directory beside
+`config.toml` as JSON, using
+[opencode's theme schema](https://opencode.ai/theme.json) — opencode's own
+theme files work unmodified:
+
+```json
+{
+  "defs":  { "darkRed": "#e06c75" },
+  "theme": { "error": { "dark": "darkRed", "light": "#d1383d" } }
+}
+```
+
+Each file carries both a dark and a light variant, so `themes/mine.json`
+provides two selectable names: `mine` and `mine-light`. Only `background`,
+`text`, `border` and `accent` are required; anything else falls back to the
+built-in theme, so a partial file is still usable. A file theme wins over a
+built-in of the same name. A malformed file is reported with the offending role
+and skipped, without taking the other themes or the TUI down with it.
 
 ### Permissions
 
