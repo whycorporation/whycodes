@@ -620,15 +620,31 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                 }
                 "/info" | "/details" => {
                     let i = session.info();
+                    // The provider's own counts when it reported any; the
+                    // character heuristic only otherwise, and labelled as an
+                    // estimate. They are different measurements and printing
+                    // them the same way would suggest they are not.
+                    let tokens = if session.usage.is_empty() {
+                        format!("Tokens≈{} (est)", session.token_count())
+                    } else {
+                        format!(
+                            "Tokens: {} in / {} out / {} total",
+                            session.usage.input_tokens,
+                            session.usage.output_tokens,
+                            session.usage.total()
+                        )
+                    };
                     println!(
-                        "ID: {} | Messages: {} | Tokens≈{} | Agent: {} | {}/{}",
-                        i.id,
-                        i.message_count,
-                        session.token_count(),
-                        agent_name,
-                        provider,
-                        model
+                        "ID: {} | Messages: {} | {} | Agent: {} | {}/{}",
+                        i.id, i.message_count, tokens, agent_name, provider, model
                     );
+                    if let Some(read) = session.usage.cache_read_input_tokens {
+                        println!(
+                            "  Cache: {} read | {} written",
+                            read,
+                            session.usage.cache_creation_input_tokens.unwrap_or(0)
+                        );
+                    }
                     println!(
                         "  Created: {} | Project: {}",
                         i.created_at.format("%Y-%m-%d %H:%M:%S"),

@@ -24,6 +24,10 @@ pub enum TurnEvent {
         content: String,
         is_error: bool,
     },
+    /// Token usage for the turn that just finished, as the provider reported
+    /// it. Emitted once per turn rather than per streamed chunk: the interesting
+    /// figure is what the turn cost, and a running partial is noise.
+    Usage(whycode_core::types::Usage),
     /// Human-readable status line
     Status(String),
     /// Turn was cancelled by the user

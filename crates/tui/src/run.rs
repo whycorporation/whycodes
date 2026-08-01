@@ -606,6 +606,17 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         TurnEvent::Status(s) => {
             app.status_message = s;
         }
+        TurnEvent::Usage(usage) => {
+            app.status_message = format!(
+                "{} in / {} out{}",
+                usage.input_tokens,
+                usage.output_tokens,
+                match usage.cache_read_input_tokens {
+                    Some(read) if read > 0 => format!(" / {read} cached"),
+                    _ => String::new(),
+                }
+            );
+        }
         TurnEvent::Cancelled => {
             app.status_message = "Cancelled.".into();
             app.current_agent_state = AgentState::Idle;
@@ -946,11 +957,9 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
         "/info" | "/details" => {
-            ctx.app.status_message = format!(
-                "msgs={} tokens≈{} agent={}",
-                ctx.session.messages.len(),
-                ctx.session.token_count(),
-                ctx.agent.info.name
+            ctx.app.add_message(
+                ChatRole::System,
+                session_details(ctx.session, &ctx.agent.info.name),
             );
         }
         "/init" => {
@@ -1005,4 +1014,39 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
             title: s.title,
         })
         .collect()
+}
+
+/// Session details for `/info`.
+///
+/// Reports the provider's own token counts when it gave any. The character
+/// heuristic is shown only when it did not, and labelled as an estimate — the
+/// two are not the same measurement and presenting them identically would
+/// suggest they are.
+fn session_details(session: &Session, agent: &str) -> String {
+    let usage = &session.usage;
+    let mut out = format!(
+        "Session\n  agent:     {agent}\n  messages:  {}\n",
+        session.messages.len()
+    );
+
+    if usage.is_empty() {
+        out.push_str(&format!(
+            "  tokens:    ~{} (estimated; the provider has not reported usage yet)\n",
+            session.token_count()
+        ));
+        return out;
+    }
+
+    out.push_str(&format!(
+        "  input:     {}\n  output:    {}\n",
+        usage.input_tokens, usage.output_tokens
+    ));
+    if let Some(created) = usage.cache_creation_input_tokens {
+        out.push_str(&format!("  cache write: {created}\n"));
+    }
+    if let Some(read) = usage.cache_read_input_tokens {
+        out.push_str(&format!("  cache read:  {read}\n"));
+    }
+    out.push_str(&format!("  total:     {}\n", usage.total()));
+    out
 }

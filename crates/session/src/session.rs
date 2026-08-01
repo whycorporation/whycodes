@@ -14,6 +14,11 @@ pub struct Session {
     pub project_path: PathBuf,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Token usage across every turn, as the provider reported it.
+    ///
+    /// `#[serde(default)]` so sessions exported before this existed still load.
+    #[serde(default)]
+    pub usage: whycode_core::types::Usage,
 }
 
 impl Session {
@@ -28,7 +33,14 @@ impl Session {
             project_path,
             created_at: now,
             updated_at: now,
+            usage: Default::default(),
         }
+    }
+
+    /// Fold a turn''s reported usage into the session total.
+    pub fn add_usage(&mut self, usage: &whycode_core::types::Usage) {
+        self.usage.add(usage);
+        self.touch();
     }
 
     /// Add a user message
@@ -227,6 +239,9 @@ impl Session {
             project_path: std::path::PathBuf::from(row.project_path),
             created_at,
             updated_at,
+            // Usage is not persisted per session yet; a loaded session starts
+            // its accounting from zero rather than reporting a wrong total.
+            usage: Default::default(),
         }))
     }
 

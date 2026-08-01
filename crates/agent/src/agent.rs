@@ -206,6 +206,7 @@ impl Agent {
             let request = session.build_request(&tools, None, self.info.temperature, Some(true));
 
             let mut accumulated_text = String::new();
+            let mut turn_usage = whycode_core::types::Usage::default();
             let mut tool_calls: Vec<ToolCall> = Vec::new();
             let mut current_tool_id = String::new();
             let mut current_tool_args = String::new();
@@ -263,13 +264,38 @@ impl Agent {
                         tracing::debug!("Thinking: {}", text);
                     }
                     StreamEvent::MessageStop => break,
-                    StreamEvent::Usage { .. } => {}
+                    StreamEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } => {
+                        // Providers report these in pieces — Anthropic sends
+                        // input at message_start and output at message_delta —
+                        // so accumulate rather than replace.
+                        turn_usage.input_tokens += input_tokens;
+                        turn_usage.output_tokens += output_tokens;
+                    }
+                    StreamEvent::CacheUsage {
+                        creation_input_tokens,
+                        read_input_tokens,
+                    } => {
+                        *turn_usage.cache_creation_input_tokens.get_or_insert(0) +=
+                            creation_input_tokens;
+                        *turn_usage.cache_read_input_tokens.get_or_insert(0) += read_input_tokens;
+                    }
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
                     StreamEvent::Error { message } => {
                         return Err(whycode_core::Error::Llm(message));
                     }
                 }
+            }
+
+            // Once per turn, after the stream closes and before any tool runs.
+            // A provider that reports nothing produces no event, so a silent
+            // provider is distinguishable from a zero-cost turn.
+            if !turn_usage.is_empty() {
+                session.add_usage(&turn_usage);
+                emit(&events, TurnEvent::Usage(turn_usage.clone()));
             }
 
             let mut blocks: Vec<ContentBlock> = Vec::new();

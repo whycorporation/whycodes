@@ -261,6 +261,18 @@ impl LlmProvider for AnthropicProvider {
                                                 input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                                                 output_tokens: 0,
                                             });
+                                            // Cache tokens are billed separately from input_tokens
+                                            // and only Anthropic reports them, so they travel as
+                                            // their own event rather than as empty fields on every
+                                            // other provider's usage.
+                                            let created = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                                            let read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                                            if created > 0 || read > 0 {
+                                                yield Ok(StreamEvent::CacheUsage {
+                                                    creation_input_tokens: created,
+                                                    read_input_tokens: read,
+                                                });
+                                            }
                                         }
                                     }
                                     Some("message_delta") => {

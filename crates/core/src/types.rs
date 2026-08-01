@@ -134,6 +134,54 @@ pub enum StreamEvent {
         input_tokens: u64,
         output_tokens: u64,
     },
+    /// Prompt-cache accounting, reported separately because only Anthropic
+    /// returns it. Folding it into `Usage` would mean every other provider
+    /// carrying two fields it can never fill.
+    CacheUsage {
+        creation_input_tokens: u64,
+        read_input_tokens: u64,
+    },
+}
+
+impl Usage {
+    /// Add another response's usage to this one.
+    ///
+    /// Cache figures stay `None` until a provider reports them, so a session
+    /// against a provider without prompt caching shows nothing rather than a
+    /// misleading zero.
+    pub fn add(&mut self, other: &Usage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        for (slot, value) in [
+            (
+                &mut self.cache_creation_input_tokens,
+                other.cache_creation_input_tokens,
+            ),
+            (
+                &mut self.cache_read_input_tokens,
+                other.cache_read_input_tokens,
+            ),
+        ] {
+            if let Some(v) = value {
+                *slot = Some(slot.unwrap_or(0) + v);
+            }
+        }
+    }
+
+    /// Everything the model was billed for.
+    ///
+    /// Cache reads and writes are input tokens the provider reports separately;
+    /// they are not already counted in `input_tokens`.
+    pub fn total(&self) -> u64 {
+        self.input_tokens
+            + self.output_tokens
+            + self.cache_creation_input_tokens.unwrap_or(0)
+            + self.cache_read_input_tokens.unwrap_or(0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.total() == 0
+    }
 }
 
 /// Request to an LLM
@@ -572,6 +620,77 @@ mod tests {
         assert_eq!(
             pc_custom.resolve_url("gpt-4"),
             "https://custom.example.com/api/chat/completions"
+        );
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::Usage;
+
+    fn usage(input: u64, output: u64, created: Option<u64>, read: Option<u64>) -> Usage {
+        Usage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_creation_input_tokens: created,
+            cache_read_input_tokens: read,
+        }
+    }
+
+    #[test]
+    fn adding_accumulates_every_field() {
+        let mut total = usage(10, 20, Some(1), Some(2));
+        total.add(&usage(5, 7, Some(3), Some(4)));
+        assert_eq!(total.input_tokens, 15);
+        assert_eq!(total.output_tokens, 27);
+        assert_eq!(total.cache_creation_input_tokens, Some(4));
+        assert_eq!(total.cache_read_input_tokens, Some(6));
+    }
+
+    #[test]
+    fn cache_stays_none_until_a_provider_reports_it() {
+        // A provider without prompt caching must not make the session look
+        // like it cached zero tokens — it reported nothing at all.
+        let mut total = Usage::default();
+        total.add(&usage(10, 20, None, None));
+        assert_eq!(total.cache_creation_input_tokens, None);
+        assert_eq!(total.cache_read_input_tokens, None);
+    }
+
+    #[test]
+    fn the_first_report_promotes_none_to_some() {
+        let mut total = usage(10, 20, None, None);
+        total.add(&usage(0, 0, Some(5), Some(6)));
+        assert_eq!(total.cache_creation_input_tokens, Some(5));
+        assert_eq!(total.cache_read_input_tokens, Some(6));
+    }
+
+    #[test]
+    fn total_counts_cache_tokens_as_well() {
+        // Cache reads and writes are input tokens reported separately, not a
+        // subset of input_tokens, so they add rather than overlap.
+        assert_eq!(usage(10, 20, Some(3), Some(4)).total(), 37);
+        assert_eq!(usage(10, 20, None, None).total(), 30);
+    }
+
+    #[test]
+    fn an_untouched_usage_is_empty() {
+        assert!(Usage::default().is_empty());
+        assert!(usage(0, 0, Some(0), Some(0)).is_empty());
+        assert!(!usage(0, 1, None, None).is_empty());
+        assert!(!usage(0, 0, Some(1), None).is_empty());
+    }
+
+    #[test]
+    fn accumulating_nothing_changes_nothing() {
+        let mut total = usage(10, 20, Some(1), Some(2));
+        let before = total.clone();
+        total.add(&Usage::default());
+        assert_eq!(total.input_tokens, before.input_tokens);
+        assert_eq!(total.output_tokens, before.output_tokens);
+        assert_eq!(
+            total.cache_creation_input_tokens,
+            before.cache_creation_input_tokens
         );
     }
 }
