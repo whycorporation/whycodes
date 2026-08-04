@@ -3,10 +3,14 @@ mod upgrade;
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use whycode_agent::agent::Agent;
+use whycode_agent::events::{TurnEvent, new_cancel_flag};
+use whycode_agent::permission::AutoApprovePrompter;
 use whycode_core::config::Config;
 use whycode_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet, ProviderConfig};
+use whycode_protocol::{CiEvent, OutputFormat, ResultMeta};
 
 /// Whycode — An AI coding agent built in Rust
 #[derive(Parser, Debug)]
@@ -45,12 +49,21 @@ pub enum Commands {
     /// Start an interactive session (default)
     #[command(name = "run")]
     Run {
-        /// Optional initial prompt
+        /// Optional initial prompt (with --format json|stream-json this is one-shot CI mode)
         prompt: Option<String>,
 
         /// Maximum conversation turns
         #[arg(short = 't', long, default_value = "25")]
         max_turns: usize,
+
+        /// Output format for headless / CI: text (default), json, or stream-json
+        #[arg(
+            long = "format",
+            visible_alias = "output-format",
+            value_parser = parse_output_format,
+            default_value = "text"
+        )]
+        format: OutputFormat,
     },
 
     /// Generate code from a prompt (non-interactive)
@@ -61,6 +74,15 @@ pub enum Commands {
         /// Maximum conversation turns
         #[arg(short = 't', long, default_value = "25")]
         max_turns: usize,
+
+        /// Output format for headless / CI: text (default), json, or stream-json
+        #[arg(
+            long = "format",
+            visible_alias = "output-format",
+            value_parser = parse_output_format,
+            default_value = "text"
+        )]
+        format: OutputFormat,
     },
 
     /// Agent Control Protocol (automated mode)
@@ -298,6 +320,7 @@ async fn main() -> anyhow::Result<()> {
             let run_cmd = Commands::Run {
                 prompt: None,
                 max_turns: 25,
+                format: OutputFormat::Text,
             };
             dispatch_command(&run_cmd, &cli).await
         }
@@ -311,9 +334,10 @@ async fn main() -> anyhow::Result<()> {
             "main.exit_error",
             Some(serde_json::json!({ "error": e.to_string() })),
         );
-        // Print once here; return Ok so anyhow doesn't print a second copy.
+        // Print once here; exit 1 so CI / scripts can branch on failure.
+        // (Returning Ok would make `anyhow` silent and the process succeed.)
         eprintln!("Error: {e:#}");
-        return Ok(());
+        std::process::exit(1);
     }
     result
 }
@@ -373,8 +397,16 @@ fn init_logging(cli: &Cli) {
 
 async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
     match cmd {
-        Commands::Run { prompt, max_turns } => cmd_run(cli, prompt.as_deref(), *max_turns).await,
-        Commands::Generate { prompt, max_turns } => cmd_generate(cli, prompt, *max_turns).await,
+        Commands::Run {
+            prompt,
+            max_turns,
+            format,
+        } => cmd_run(cli, prompt.as_deref(), *max_turns, *format).await,
+        Commands::Generate {
+            prompt,
+            max_turns,
+            format,
+        } => cmd_generate(cli, prompt, *max_turns, *format).await,
         Commands::Acp => cmd_acp(cli).await,
         Commands::Pr { title, base } => cmd_pr(cli, title.as_deref(), base.as_deref()).await,
         Commands::Github { cmd: gh_cmd } => cmd_github(cli, gh_cmd).await,
@@ -518,8 +550,25 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
 // Command implementations
 // ────────────────────────────────────────────────────────────────────────
 
-/// `run` — Start an interactive session (TUI by default, `--plain` for readline REPL)
-async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::Result<()> {
+/// `run` — Start an interactive session (TUI by default, `--plain` for readline REPL).
+/// With `--format json|stream-json` and a prompt, runs one-shot CI mode instead.
+async fn cmd_run(
+    cli: &Cli,
+    prompt: Option<&str>,
+    max_turns: usize,
+    format: OutputFormat,
+) -> anyhow::Result<()> {
+    // Structured output is headless-only; needs a prompt.
+    if format.is_structured() {
+        let Some(prompt) = prompt.filter(|p| !p.is_empty()) else {
+            anyhow::bail!(
+                "--format {format} requires a non-empty prompt \
+                 (e.g. `whycode run \"…\" --format {format}` or `whycode generate \"…\" --format {format}`)"
+            );
+        };
+        return cmd_generate(cli, prompt, max_turns, format).await;
+    }
+
     let project_dir_early = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir_early)
         .or_else(|_| Config::load())
@@ -1232,26 +1281,36 @@ async fn run_init_agents_md(
     Ok(agents_path.display().to_string())
 }
 
-/// `generate` — Non-interactive code generation
-async fn cmd_generate(cli: &Cli, prompt: &str, max_turns: usize) -> anyhow::Result<()> {
-    let config = Config::load()?;
+/// `generate` — Non-interactive code generation (supports `--format` for CI).
+async fn cmd_generate(
+    cli: &Cli,
+    prompt: &str,
+    max_turns: usize,
+    format: OutputFormat,
+) -> anyhow::Result<()> {
+    let project_dir = resolve_dir(cli);
+    let config = Config::load_layered(&project_dir)
+        .or_else(|_| Config::load())
+        .unwrap_or_default();
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
-    let project_dir = resolve_dir(cli);
 
     let api_key = match get_api_key(&provider, &config) {
         Some(k) => k,
         None => {
-            eprintln!(
-                "{} No API key for provider '{}'. Set {} env var.",
-                "Error:".red().bold(),
+            let msg = format!(
+                "No API key for provider '{}'. Set {} env var.",
                 provider,
                 provider_env_var(&provider)
             );
-            std::process::exit(1);
+            return emit_headless_setup_error(format, &msg);
         }
     };
+
+    if prompt.is_empty() {
+        return emit_headless_setup_error(format, "empty prompt");
+    }
 
     let mut agent_info = agent_info_for(cli, &config);
     agent_info.permission = config.effective_permission(&agent_info.permission);
@@ -1261,35 +1320,198 @@ async fn cmd_generate(cli: &Cli, prompt: &str, max_turns: usize) -> anyhow::Resu
         .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
     let system_prompt = Agent::with_agents_md(&base_prompt, &project_dir);
 
-    let agent = Agent::new(agent_info)
+    // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
+    // Catastrophic shell risk still hard-blocks regardless of this.
+    let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_mcp(&config)
         .await;
+    if format.is_structured() {
+        agent = agent.with_permission_prompter(Arc::new(AutoApprovePrompter));
+    }
+
     let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
 
-    println!(
-        "{} Generating with {}/{}...",
-        "⚡".bold(),
-        provider.dimmed(),
-        model.dimmed()
-    );
+    if format == OutputFormat::Text {
+        println!(
+            "{} Generating with {}/{}...",
+            "⚡".bold(),
+            provider.dimmed(),
+            model.dimmed()
+        );
+    }
 
     let expanded = expand_user_input(prompt, &project_dir);
     session.add_user_message(&expanded);
-    match agent
-        .run_turn(&mut session, &provider, &model, &api_key, max_turns)
-        .await
-    {
-        Ok(response) => {
-            println!("{}", response);
+
+    run_headless_turn(
+        &agent,
+        &mut session,
+        &provider,
+        &model,
+        &api_key,
+        &agent_name,
+        max_turns,
+        format,
+    )
+    .await
+}
+
+/// Parse `--format` / `--output-format` CLI values.
+fn parse_output_format(s: &str) -> Result<OutputFormat, String> {
+    s.parse()
+}
+
+/// Setup failures before a turn starts (missing key, empty prompt, …).
+fn emit_headless_setup_error(format: OutputFormat, message: &str) -> anyhow::Result<()> {
+    match format {
+        OutputFormat::Text => {
+            eprintln!("{} {}", "Error:".red().bold(), message);
+            Err(anyhow::anyhow!("{}", message))
         }
-        Err(e) => {
-            eprintln!("{} {}", "Error:".red().bold(), e);
-            return Err(anyhow::anyhow!("{}", e));
+        OutputFormat::Json | OutputFormat::StreamJson => {
+            let _ = CiEvent::Error {
+                message: message.to_string(),
+            }
+            .emit_stdout();
+            Err(anyhow::anyhow!("{}", message))
         }
     }
+}
 
-    Ok(())
+/// Run one agent turn and write stdout according to `format`.
+#[allow(clippy::too_many_arguments)]
+async fn run_headless_turn(
+    agent: &Agent,
+    session: &mut whycode_session::session::Session,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    agent_name: &str,
+    max_turns: usize,
+    format: OutputFormat,
+) -> anyhow::Result<()> {
+    let started = std::time::Instant::now();
+    let session_id = session.id.clone();
+    let cwd = session.project_path.display().to_string();
+
+    if format == OutputFormat::StreamJson {
+        let _ = CiEvent::Init {
+            session_id: session_id.clone(),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            agent: agent_name.to_string(),
+            cwd,
+        }
+        .emit_stdout();
+    }
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let cancel = new_cancel_flag();
+
+    // Drain TurnEvents → CiEvent while the agent runs.
+    let stream = format == OutputFormat::StreamJson;
+    let drain = tokio::spawn(async move {
+        while let Some(ev) = event_rx.recv().await {
+            if !stream {
+                continue;
+            }
+            if let Some(ci) = turn_event_to_ci(ev) {
+                let _ = ci.emit_stdout();
+            }
+        }
+    });
+
+    let turn_result = agent
+        .run_turn_with_events(
+            session,
+            provider,
+            model,
+            api_key,
+            max_turns,
+            Some(event_tx),
+            Some(cancel),
+        )
+        .await;
+
+    // Drop the sender side (inside agent) already closed; wait for drain.
+    let _ = drain.await;
+
+    let duration_ms = started.elapsed().as_millis() as u64;
+    let meta = ResultMeta {
+        session_id: session.id.clone(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+        agent: agent_name.to_string(),
+        usage: session.usage.clone(),
+        duration_ms,
+    };
+
+    match turn_result {
+        Ok(response) => match format {
+            OutputFormat::Text => {
+                if !response.is_empty() {
+                    println!("{response}");
+                }
+                Ok(())
+            }
+            OutputFormat::Json | OutputFormat::StreamJson => {
+                let _ = meta.ok(response).emit_stdout();
+                Ok(())
+            }
+        },
+        Err(e) => {
+            let msg = e.to_string();
+            match format {
+                OutputFormat::Text => {
+                    eprintln!("{} {}", "Error:".red().bold(), msg);
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+                OutputFormat::Json => {
+                    let _ = meta.err(&msg).emit_stdout();
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+                OutputFormat::StreamJson => {
+                    if msg.to_ascii_lowercase().contains("cancel") {
+                        let _ = CiEvent::Cancelled.emit_stdout();
+                    } else {
+                        let _ = CiEvent::Error {
+                            message: msg.clone(),
+                        }
+                        .emit_stdout();
+                    }
+                    let _ = meta.err(&msg).emit_stdout();
+                    Err(anyhow::anyhow!("{}", msg))
+                }
+            }
+        }
+    }
+}
+
+/// Map an agent turn event onto a CI wire event (skips Cancelled mid-stream).
+fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
+    match ev {
+        TurnEvent::TextDelta(text) => Some(CiEvent::TextDelta { text }),
+        TurnEvent::ThinkingDelta(text) => Some(CiEvent::ThinkingDelta { text }),
+        TurnEvent::ToolStart { id, name, input } => Some(CiEvent::ToolStart { id, name, input }),
+        TurnEvent::ToolEnd {
+            id,
+            content,
+            is_error,
+        } => Some(CiEvent::ToolEnd {
+            id,
+            content,
+            is_error,
+        }),
+        TurnEvent::Usage(u) => Some(CiEvent::Usage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cache_creation_input_tokens: u.cache_creation_input_tokens,
+            cache_read_input_tokens: u.cache_read_input_tokens,
+        }),
+        TurnEvent::Status(message) => Some(CiEvent::Status { message }),
+        TurnEvent::Cancelled => Some(CiEvent::Cancelled),
+    }
 }
 
 /// `acp` — Agent Control Protocol (automated mode placeholder)

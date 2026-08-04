@@ -59,6 +59,12 @@ whycode -d ./my-project
 # One-shot, non-interactive
 whycode generate "Explain the error handling in main.rs" -d ./my-project
 
+# CI / scripts: final JSON envelope (result, usage, session_id)
+whycode generate "Summarize the last commit" --format json | jq -r '.result'
+
+# CI / scripts: live NDJSON event stream
+whycode generate "Refactor utils" --format stream-json | jq -r '.type'
+
 # Interactive, seeded with an opening prompt
 whycode run "Where is the retry logic?" -d ./my-project
 
@@ -100,6 +106,33 @@ Options (global):
 The prompt is a positional argument rather than a flag — `whycode generate
 "<prompt>"`, not `whycode -p "<prompt>"`. `run` and `generate` also accept
 `-t, --max-turns <N>` (default 25).
+
+### Output formats (headless / CI)
+
+`generate` and `run <prompt>` accept `--format` (alias `--output-format`):
+
+| Format | Flag | stdout shape | Use case |
+|---|---|---|---|
+| **text** | `--format text` (default) | Final assistant text | Humans, simple pipes |
+| **json** | `--format json` | One JSON object after the turn | Scripts, jq, cost gates |
+| **stream-json** | `--format stream-json` | NDJSON events (one object per line) | Live progress, long tasks |
+
+```bash
+# Final envelope only
+whycode generate "List open TODOs" --format json | jq '{result, usage, session_id}'
+
+# Live event types
+whycode run "Migrate the auth module" --format stream-json -t 20 \
+  | jq -r 'select(.type=="result") | .result'
+```
+
+`stream-json` events use a `type` field: `init`, `text_delta`, `thinking_delta`,
+`tool_start`, `tool_end`, `usage`, `status`, `result`, `error`, `cancelled`.
+The last event is always `result` (with `is_error` and optional `error`).
+
+Structured formats auto-approve tool permission prompts so pipelines do not
+hang on stdin (catastrophic shell risk is still hard-blocked). Prefer explicit
+permission allow rules in config when you want tighter control.
 
 ## Interactive session
 

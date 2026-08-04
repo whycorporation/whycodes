@@ -2994,6 +2994,7 @@ dependencies = [
  "whycode-agent",
  "whycode-core",
  "whycode-llm",
+ "whycode-protocol",
  "whycode-server",
  "whycode-session",
  "whycode-storage",

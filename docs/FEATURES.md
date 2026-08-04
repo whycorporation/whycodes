@@ -56,7 +56,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | iOS / mobil | ❌ | ❌ | ❌ | ⚠️ planlı | ✅ app + remote |
 | ACP (Agent Client Protocol) | ⚠️ stub | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | HTTP API / `serve` | ✅ (local share) | ⚠️ | ✅ | ✅ `serve`/`connect` | ⚠️ |
-| Streaming JSON / CI mode | ⚠️ | ✅ | ✅ | ✅ | ✅ |
+| Streaming JSON / CI mode | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -276,6 +276,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 |---|---|
 | `run` / varsayılan TUI | ✅ |
 | `generate` (one-shot) | ✅ |
+| `--format text\|json\|stream-json` (CI / NDJSON) | ✅ |
 | `acp` | ⚠️ stub |
 | `pr` / `github` | ✅ |
 | `serve` (API + local share) | ✅ |

@@ -30,6 +30,57 @@ fn test_cli_help() {
 }
 
 #[test]
+fn test_generate_help_documents_format() {
+    let o = run(&["generate", "--help"]);
+    assert_ok(&["generate", "--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("--format") || s.contains("output-format"),
+        "generate help should document --format: {s}"
+    );
+    assert!(
+        s.contains("stream-json") || s.contains("json"),
+        "generate help should mention json formats: {s}"
+    );
+}
+
+#[test]
+fn test_run_help_documents_format() {
+    let o = run(&["run", "--help"]);
+    assert_ok(&["run", "--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("--format") || s.contains("output-format"),
+        "run help should document --format: {s}"
+    );
+}
+
+#[test]
+fn test_format_requires_prompt_on_run() {
+    // Structured format without a prompt must fail fast (no API call).
+    let o = run(&["run", "--format", "json"]);
+    assert!(
+        !o.status.success(),
+        "run --format json without prompt should fail"
+    );
+    let err = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stderr),
+        String::from_utf8_lossy(&o.stdout)
+    );
+    assert!(
+        err.contains("prompt") || err.contains("format"),
+        "error should mention prompt/format requirement: {err}"
+    );
+}
+
+#[test]
+fn test_invalid_format_value() {
+    let o = run(&["generate", "hi", "--format", "not-a-format"]);
+    assert!(!o.status.success());
+}
+
+#[test]
 fn test_cli_help_short_flag() {
     let o = run(&["-h"]);
     assert_ok(&["-h"], &o);

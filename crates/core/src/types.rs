@@ -207,7 +207,7 @@ pub struct LlmResponse {
     pub model: String,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
