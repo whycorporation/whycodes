@@ -576,6 +576,8 @@ pub struct TuiApp {
     pub provider_name: String,
     pub model_name: String,
     pub agent_name: String,
+    /// Current session display title (auto or manual).
+    pub session_title: String,
     /// Short project name (basename) for the top status strip.
     pub project_label: String,
     /// Absolute working directory (bottom bar; click-to-copy target).
@@ -691,6 +693,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/sessions",
         hint: "Pick a stored session and resume",
+    },
+    SlashCommand {
+        name: "/rename",
+        hint: "[args] Set the session title (locks auto-title)",
     },
     SlashCommand {
         name: "/models",
@@ -853,6 +859,7 @@ impl TuiApp {
             provider_name: String::new(),
             model_name: String::new(),
             agent_name: String::from("build"),
+            session_title: String::new(),
             project_label: String::from("."),
             project_dir: PathBuf::from("."),
             git_branch: None,

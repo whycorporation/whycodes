@@ -185,6 +185,7 @@ Available in both the TUI and the `--plain` REPL:
 | `/help` `/h` | Show help |
 | `/exit` `/quit` `/q` | Exit |
 | `/new` `/clear` | Start a new session |
+| `/rename [name]` | Set the session title (locks auto-title) |
 | `/init` | Create or update `AGENTS.md` |
 | `/undo` | Undo the last turn and restore files via git |
 | `/redo` | Redo the last undone turn |
@@ -269,6 +270,11 @@ api_key = "sk-..."
 
 [tui]
 theme = "default_dark"
+
+# Session titles: project-ab → first-message heuristic → small-model refine
+[session]
+auto_title = true
+# title_model = "anthropic/claude-haiku-4-5-20251001"  # optional override
 
 [mcp_servers.filesystem]
 command = "npx"

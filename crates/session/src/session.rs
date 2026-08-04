@@ -82,6 +82,9 @@ fn summarize_trimmed(trimmed: &[Message]) -> String {
 pub struct Session {
     pub id: String,
     pub title: String,
+    /// How `title` was chosen. Gates auto-title so manual renames stick.
+    #[serde(default)]
+    pub title_source: crate::title::TitleSource,
     pub messages: Vec<Message>,
     pub system_prompt: String,
     pub project_path: PathBuf,
@@ -98,9 +101,12 @@ impl Session {
     /// Create a new session
     pub fn new(project_path: PathBuf, system_prompt: String) -> Self {
         let now = chrono::Utc::now();
+        let id = uuid::Uuid::new_v4().to_string();
+        let title = crate::title::default_title(&project_path, &id);
         Self {
-            id: uuid::Uuid::new_v4().to_string(),
-            title: format!("New session - {}", now.format("%Y-%m-%dT%H:%M:%S%.3fZ")),
+            id,
+            title,
+            title_source: crate::title::TitleSource::Default,
             messages: Vec::new(),
             system_prompt,
             project_path,
@@ -108,6 +114,115 @@ impl Session {
             updated_at: now,
             usage: Default::default(),
         }
+    }
+
+    /// User-facing rename; locks the title against further auto updates.
+    pub fn set_title_manual(&mut self, title: impl Into<String>) {
+        let t = crate::title::sanitize_title(&title.into());
+        if t.is_empty() {
+            return;
+        }
+        self.title = t;
+        self.title_source = crate::title::TitleSource::Manual;
+        self.touch();
+    }
+
+    /// Instant offline title from the first user prompt (if still default).
+    ///
+    /// Returns `true` when the title changed.
+    pub fn apply_heuristic_title(&mut self, first_user_text: &str) -> bool {
+        if !self.title_source.allows_heuristic() {
+            return false;
+        }
+        let t = crate::title::heuristic_title(first_user_text);
+        if t.is_empty() || t == self.title {
+            return false;
+        }
+        self.title = t;
+        self.title_source = crate::title::TitleSource::Heuristic;
+        self.touch();
+        true
+    }
+
+    /// Apply a small-model title when still auto-titleable.
+    ///
+    /// Returns `true` when the title changed.
+    pub fn apply_generated_title(&mut self, title: impl Into<String>) -> bool {
+        if !self.title_source.allows_llm() {
+            return false;
+        }
+        let t = crate::title::sanitize_title(&title.into());
+        if t.is_empty() || t == self.title {
+            // Mark generated even on no-op so we do not keep re-calling the model.
+            if t == self.title && !t.is_empty() {
+                self.title_source = crate::title::TitleSource::Generated;
+            }
+            return false;
+        }
+        self.title = t;
+        self.title_source = crate::title::TitleSource::Generated;
+        self.touch();
+        true
+    }
+
+    /// Count of user-role messages (used to gate first-turn auto-title).
+    pub fn user_message_count(&self) -> usize {
+        self.messages
+            .iter()
+            .filter(|m| m.role == Role::User)
+            .count()
+    }
+
+    /// Text of the first user message, if any.
+    pub fn first_user_text(&self) -> Option<String> {
+        self.messages
+            .iter()
+            .find(|m| m.role == Role::User)
+            .and_then(|m| m.content.as_text().map(|s| s.to_string()))
+            .or_else(|| {
+                // Blocks-only user messages: join text blocks.
+                self.messages.iter().find(|m| m.role == Role::User).map(|m| {
+                    match &m.content {
+                        MessageContent::Text(t) => t.clone(),
+                        MessageContent::Blocks(blocks) => blocks
+                            .iter()
+                            .filter_map(|b| match b {
+                                ContentBlock::Text { text } => Some(text.as_str()),
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    }
+                })
+            })
+            .filter(|s| !s.trim().is_empty())
+    }
+
+    /// Short assistant excerpt for title refine (first text block, capped).
+    pub fn first_assistant_snippet(&self, max_chars: usize) -> Option<String> {
+        for m in &self.messages {
+            if m.role != Role::Assistant {
+                continue;
+            }
+            let text = match &m.content {
+                MessageContent::Text(t) => t.clone(),
+                MessageContent::Blocks(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            };
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let snippet: String = trimmed.chars().take(max_chars).collect();
+            return Some(snippet);
+        }
+        None
     }
 
     /// Fold a turn''s reported usage into the session total.
@@ -378,12 +493,15 @@ impl Session {
             .map(|mr| serde_json::from_str(&mr.content))
             .collect::<Result<_, _>>()?;
 
+        let project_path = std::path::PathBuf::from(row.project_path);
+        let title_source = crate::title::infer_source_from_title(&row.title, &project_path);
         Ok(Some(Self {
             id: row.id,
             title: row.title,
+            title_source,
             messages,
             system_prompt: String::new(), // system_prompt is not yet persisted
-            project_path: std::path::PathBuf::from(row.project_path),
+            project_path,
             created_at,
             updated_at,
             // Usage is not persisted per session yet; a loaded session starts
@@ -534,9 +652,11 @@ mod tests {
 
         assert!(!session.id.is_empty(), "session id should not be empty");
         assert!(
-            session.title.starts_with("New session -"),
-            "title should start with 'New session -'"
+            session.title.starts_with("test-project-"),
+            "title should be project basename + short id, got {:?}",
+            session.title
         );
+        assert_eq!(session.title_source, crate::title::TitleSource::Default);
         assert!(
             session.messages.is_empty(),
             "new session should have no messages"
@@ -544,6 +664,21 @@ mod tests {
         assert_eq!(session.system_prompt, test_system_prompt());
         assert_eq!(session.project_path, test_project_path());
         assert_eq!(session.created_at, session.updated_at);
+    }
+
+    #[test]
+    fn test_heuristic_and_manual_title() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        assert!(session.apply_heuristic_title("Please fix the auth middleware bug"));
+        assert_eq!(session.title_source, crate::title::TitleSource::Heuristic);
+        assert!(session.title.to_ascii_lowercase().contains("auth"));
+
+        session.set_title_manual("My locked name");
+        assert_eq!(session.title, "My locked name");
+        assert_eq!(session.title_source, crate::title::TitleSource::Manual);
+        assert!(!session.apply_heuristic_title("something else"));
+        assert!(!session.apply_generated_title("model title"));
+        assert_eq!(session.title, "My locked name");
     }
 
     #[test]

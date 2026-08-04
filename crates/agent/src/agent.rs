@@ -186,6 +186,69 @@ impl Agent {
         Self::with_runtime_context(&with_agents)
     }
 
+    /// Refine the session title with a small/fast model when still auto-titleable.
+    ///
+    /// Uses `api_key` for the session provider; for a cross-provider
+    /// `title_model` override, env `{PROVIDER}_API_KEY` is tried as a best effort.
+    pub async fn maybe_refine_title(
+        &self,
+        session: &mut Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        title_model_override: Option<&str>,
+    ) {
+        if !crate::title::should_refine_title(session) {
+            return;
+        }
+        let Some(user) = session.first_user_text() else {
+            return;
+        };
+
+        let (title_provider, title_model) =
+            crate::title::resolve_title_model(provider_name, model, title_model_override);
+
+        let (use_provider_name, use_model) =
+            if self.provider_registry.get(&title_provider).is_some() {
+                (title_provider.as_str(), title_model.as_str())
+            } else if self.provider_registry.get(provider_name).is_some() {
+                (provider_name, model)
+            } else {
+                tracing::debug!(%title_provider, "no provider for title refine");
+                return;
+            };
+
+        let key = if use_provider_name == provider_name {
+            api_key.to_string()
+        } else {
+            std::env::var(format!("{}_API_KEY", use_provider_name.to_uppercase()))
+                .unwrap_or_default()
+        };
+        if key.is_empty() {
+            return;
+        }
+
+        let Some(provider) = self.provider_registry.get(use_provider_name) else {
+            return;
+        };
+
+        let assistant = session.first_assistant_snippet(400);
+        match crate::title::generate_title(
+            provider,
+            &key,
+            use_model,
+            &user,
+            assistant.as_deref(),
+        )
+        .await
+        {
+            Ok(title) => crate::title::apply_refine_result(session, &title, use_model),
+            Err(e) => {
+                tracing::debug!(error = %e, "session title refine failed");
+            }
+        }
+    }
+
     /// Run a single conversation turn (no streaming UI events).
     pub async fn run_turn(
         &self,

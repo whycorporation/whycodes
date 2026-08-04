@@ -93,15 +93,21 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let glyph = status_glyph(app, palette);
     let brand = brand_spans(palette);
 
-    // Project basename after the wordmark when it adds information (skip when
-    // the folder is already called "whycode").
+    // Prefer the session title in the header when it is more specific than the
+    // bare project folder (auto-title / rename). Fall back to project basename.
+    let title_raw = app.session_title.trim();
     let dir_raw = app.project_label.trim();
-    let show_dir =
-        !dir_raw.is_empty() && !dir_raw.eq_ignore_ascii_case("whycode") && dir_raw != ".";
-    let dir = if show_dir {
+    let label_src = if !title_raw.is_empty() && title_raw != dir_raw {
+        title_raw
+    } else if !dir_raw.is_empty() && !dir_raw.eq_ignore_ascii_case("whycode") && dir_raw != "." {
+        dir_raw
+    } else {
+        ""
+    };
+    let dir = if !label_src.is_empty() {
         truncate_start(
-            dir_raw,
-            ((area.width / 5).max(8)).min(area.width / 4) as usize,
+            label_src,
+            ((area.width / 4).max(10)).min(area.width / 3) as usize,
         )
     } else {
         String::new()

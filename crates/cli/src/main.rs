@@ -718,11 +718,25 @@ async fn cmd_run(
         }
         let expanded = expand_user_input(prompt, &project_dir);
         session.add_user_message(&expanded);
+        if config.session.auto_title {
+            let _ = session.apply_heuristic_title(&expanded);
+        }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
             .await
         {
             Ok(response) => {
+                if config.session.auto_title {
+                    agent
+                        .maybe_refine_title(
+                            &mut session,
+                            &provider,
+                            &model,
+                            &api_key,
+                            config.session.title_model.as_deref(),
+                        )
+                        .await;
+                }
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
@@ -809,7 +823,31 @@ async fn cmd_run(
                         project_dir.clone(),
                         Agent::with_agents_md(&agent.system_prompt(), &project_dir),
                     );
-                    println!("{} New session started.", "✓".green());
+                    println!(
+                        "{} New session started ({})",
+                        "✓".green(),
+                        session.title.dimmed()
+                    );
+                    continue;
+                }
+                "/rename" => {
+                    if rest.is_empty() {
+                        println!(
+                            "Title: {} ({:?}) — usage: /rename <name>",
+                            session.title.cyan(),
+                            session.title_source
+                        );
+                    } else {
+                        session.set_title_manual(rest);
+                        if let Ok(db) = open_db() {
+                            let _ = db.update_title(&session.id, &session.title);
+                        }
+                        println!(
+                            "{} Renamed to '{}'",
+                            "✓".green(),
+                            session.title.cyan()
+                        );
+                    }
                     continue;
                 }
                 "/info" | "/details" => {
@@ -828,6 +866,11 @@ async fn cmd_run(
                             session.usage.total()
                         )
                     };
+                    println!(
+                        "Title: {} ({:?})",
+                        i.title.cyan(),
+                        session.title_source
+                    );
                     println!(
                         "ID: {} | Messages: {} | {} | Agent: {} | {}/{}",
                         i.id, i.message_count, tokens, agent_name, provider, model
@@ -1036,11 +1079,25 @@ async fn cmd_run(
 
         history.push_before_turn(&session.messages, &project_dir);
         session.add_user_message(&expanded);
+        if config.session.auto_title {
+            let _ = session.apply_heuristic_title(&expanded);
+        }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
             .await
         {
             Ok(response) => {
+                if config.session.auto_title {
+                    agent
+                        .maybe_refine_title(
+                            &mut session,
+                            &provider,
+                            &model,
+                            &api_key,
+                            config.session.title_model.as_deref(),
+                        )
+                        .await;
+                }
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
@@ -1058,6 +1115,7 @@ async fn cmd_run(
                             Some(serde_json::json!({
                                 "reason": "ok",
                                 "messages": session.messages.len(),
+                                "title": session.title,
                             })),
                         );
                     }
@@ -1111,6 +1169,7 @@ fn print_slash_help() {
     println!("  /help, /h              — Show this help");
     println!("  /exit, /quit, /q       — Exit");
     println!("  /new, /clear           — Start a new session");
+    println!("  /rename <name>         — Set session title (locks auto-title)");
     println!("  /init                  — Create/update AGENTS.md for this project");
     println!("  /undo                  — Undo last message + file changes (git)");
     println!("  /redo                  — Redo previously undone turn");
@@ -2222,13 +2281,18 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
         SessionCmd::Rename { id, name } => {
             match db.get_session(id).map_err(|e| anyhow::anyhow!("{}", e))? {
                 Some(s) => {
-                    db.update_title(id, name)?;
+                    let cleaned = whycode_session::sanitize_title(name);
+                    if cleaned.is_empty() {
+                        eprintln!("{} Empty title after sanitize.", "✗".red());
+                        return Ok(());
+                    }
+                    db.update_title(id, &cleaned)?;
                     println!(
                         "{} Session '{}' renamed from '{}' to '{}'.",
                         "✓".green(),
                         id.cyan(),
                         s.title,
-                        name.cyan()
+                        cleaned.cyan()
                     );
                 }
                 None => {

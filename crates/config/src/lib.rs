@@ -482,13 +482,33 @@ fn default_true() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
     #[serde(default = "default_max_tokens")]
     pub max_context_tokens: usize,
     #[serde(default = "default_compaction_threshold")]
     pub compaction_threshold: usize,
     pub store_path: Option<PathBuf>,
+    /// Auto-name sessions: project placeholder → first-message heuristic →
+    /// small-model refine after the first turn. Default on.
+    #[serde(default = "default_true")]
+    pub auto_title: bool,
+    /// Optional title model: `provider/model` or bare model id (same provider).
+    /// Empty = pick a known small/fast sibling (haiku / mini / flash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_model: Option<String>,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            max_context_tokens: default_max_tokens(),
+            compaction_threshold: default_compaction_threshold(),
+            store_path: None,
+            auto_title: true,
+            title_model: None,
+        }
+    }
 }
 
 fn default_max_tokens() -> usize {
@@ -845,6 +865,15 @@ impl Config {
         }
         if other.session.store_path.is_some() {
             merged.session.store_path = other.session.store_path.clone();
+        }
+        // auto_title defaults true; only an explicit false in a higher layer wins
+        // when the lower layer left the default — merge by taking `other` always
+        // for bools that appear in TOML (serde always deserializes them).
+        if !other.session.auto_title {
+            merged.session.auto_title = false;
+        }
+        if other.session.title_model.is_some() {
+            merged.session.title_model = other.session.title_model.clone();
         }
 
         // TUI

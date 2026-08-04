@@ -250,6 +250,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         .await;
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt);
+    app.session_title = session.title.clone();
     let mut history = SessionHistory::new();
 
     let mut provider = opts.provider.clone();
@@ -493,6 +494,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     } => {
                         agent = a;
                         session = s;
+                        app.session_title = session.title.clone();
                         // Ensure final text is present
                         if !text.is_empty()
                             && let Some(last) = app.messages.last_mut()
@@ -524,6 +526,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     } => {
                         agent = a;
                         session = s;
+                        app.session_title = session.title.clone();
                         app.finish_open_thinking();
                         if cancelled {
                             app.current_agent_state = AgentState::Idle;
@@ -716,12 +719,19 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 }
 
+                // Instant offline title from the first user prompt (no API cost).
+                if config.session.auto_title && session.apply_heuristic_title(&expanded) {
+                    app.session_title = session.title.clone();
+                }
+
                 let provider2 = provider.clone();
                 let model2 = model.clone();
                 let api_key2 = api_key.clone();
                 let event_tx2 = event_tx.clone();
                 let done_tx2 = done_tx.clone();
                 let cancel2 = Some(flag);
+                let auto_title = config.session.auto_title;
+                let title_model = config.session.title_model.clone();
 
                 // Move agent + session into background task
                 let ag = std::mem::replace(
@@ -757,6 +767,19 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             cancel2,
                         )
                         .await;
+                    // After the first successful turn, refine title with a small model
+                    // (user + assistant context beats first-message-only).
+                    if auto_title && result.is_ok() {
+                        agent
+                            .maybe_refine_title(
+                                &mut session,
+                                &provider2,
+                                &model2,
+                                &api_key2,
+                                title_model.as_deref(),
+                            )
+                            .await;
+                    }
                     match result {
                         Ok(text) => {
                             let _ = done_tx2.send(TurnOutcome::Ok {
@@ -1365,12 +1388,29 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.project_dir.to_path_buf(),
                 Agent::with_agents_md(&ctx.agent.system_prompt(), ctx.project_dir),
             );
+            ctx.app.session_title = ctx.session.title.clone();
             ctx.app.messages.clear();
             ctx.app.context_used = ctx.session.token_count() as u64;
             ctx.app.turn_usage = None;
             ctx.app
                 .toasts
                 .push(crate::toast::ToastKind::Success, "New session");
+        }
+        "/rename" => {
+            let name = rest.trim();
+            if name.is_empty() {
+                ctx.app.status_message =
+                    format!("Title: {} — usage: /rename <name>", ctx.session.title);
+            } else {
+                ctx.session.set_title_manual(name);
+                ctx.app.session_title = ctx.session.title.clone();
+                // Persist immediately so the session picker sees the rename.
+                persist_session_best_effort(ctx.session, "rename");
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!("Renamed → {}", ctx.session.title),
+                );
+            }
         }
         "/undo" => {
             if let Some(msgs) = ctx.history.undo(&ctx.session.messages, ctx.project_dir) {
@@ -1769,7 +1809,10 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
 fn session_details(session: &Session, agent: &str, app: &TuiApp) -> String {
     let usage = &session.usage;
     let mut out = format!(
-        "Session\n  agent:     {agent}\n  messages:  {}\n  model:     {}/{}\n  context:   {} / {} ({}%)\n",
+        "Session\n  title:     {}\n  source:    {:?}\n  id:        {}\n  agent:     {agent}\n  messages:  {}\n  model:     {}/{}\n  context:   {} / {} ({}%)\n",
+        session.title,
+        session.title_source,
+        session.id,
         session.messages.len(),
         app.provider_name,
         app.model_name,
