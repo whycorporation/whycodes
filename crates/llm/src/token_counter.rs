@@ -29,7 +29,9 @@ fn model_to_encoding(model: &str) -> Option<EncodingKind> {
         return Some(EncodingKind::Cl100k);
     }
     // o-series models
-    if model_lower.starts_with("o1") || model_lower.starts_with("o3") || model_lower.starts_with("o4")
+    if model_lower.starts_with("o1")
+        || model_lower.starts_with("o3")
+        || model_lower.starts_with("o4")
     {
         return Some(EncodingKind::O200k);
     }

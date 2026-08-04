@@ -275,10 +275,7 @@ mod tests {
             denylist: vec![],
         };
         let result = tool
-            .execute(
-                json!({ "url": "https://evil.example/secret" }),
-                &ctx,
-            )
+            .execute(json!({ "url": "https://evil.example/secret" }), &ctx)
             .await;
         assert!(result.is_error);
         assert!(

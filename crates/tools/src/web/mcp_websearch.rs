@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use crate::tool::{Tool, ToolContext};
 use super::websearch::WebSearchTool;
+use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 
 /// MCP-accessible web search tool.

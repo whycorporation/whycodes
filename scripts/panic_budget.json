@@ -2,6 +2,7 @@
   "agent": 0,
   "cli": 2,
   "command-risk": 0,
+  "config": 0,
   "core": 0,
   "format": 1,
   "function": 0,
@@ -10,6 +11,7 @@
   "mcp": 0,
   "plugin": 0,
   "protocol": 0,
+  "sandbox": 0,
   "schema": 0,
   "sdk": 0,
   "server": 0,
@@ -17,6 +19,5 @@
   "skill": 0,
   "storage": 0,
   "tools": 0,
-  "tui": 2,
-  "sandbox": 0
+  "tui": 2
 }

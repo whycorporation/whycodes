@@ -1745,9 +1745,7 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
         } => {
             let transport_kind = match transport.as_deref() {
                 None => None,
-                Some("stdio") | Some("local") => {
-                    Some(whycode_config::McpTransportKind::Stdio)
-                }
+                Some("stdio") | Some("local") => Some(whycode_config::McpTransportKind::Stdio),
                 Some("http") | Some("streamable-http") | Some("remote") => {
                     Some(whycode_config::McpTransportKind::Http)
                 }

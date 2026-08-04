@@ -8,7 +8,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use whycode_core::network::{self, NetworkPolicy};
-use whycode_core::types::{AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig};
+use whycode_core::types::{
+    AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig,
+};
 use whycode_core::{Error, Result};
 
 // Re-export leaf sandbox types so callers that already import `whycode_config`
@@ -544,8 +546,7 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let content =
-            toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))?;
+        let content = toml::to_string_pretty(self).map_err(|e| Error::Config(e.to_string()))?;
         std::fs::write(&path, content)?;
         Ok(())
     }

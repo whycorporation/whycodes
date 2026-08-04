@@ -49,8 +49,15 @@ pub async fn make_request(
     token: &str,
     body: Option<serde_json::Value>,
 ) -> Result<(reqwest::StatusCode, String), String> {
-    make_request_with_policy(client, method, path, token, body, &NetworkPolicy::unrestricted())
-        .await
+    make_request_with_policy(
+        client,
+        method,
+        path,
+        token,
+        body,
+        &NetworkPolicy::unrestricted(),
+    )
+    .await
 }
 
 /// Like [`make_request`], but enforces the session network allow/deny policy.

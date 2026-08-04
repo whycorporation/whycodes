@@ -47,11 +47,7 @@ impl NetworkPolicy {
         if host.is_empty() {
             return false;
         }
-        if self
-            .denylist
-            .iter()
-            .any(|p| host_matches_pattern(&host, p))
-        {
+        if self.denylist.iter().any(|p| host_matches_pattern(&host, p)) {
             return false;
         }
         if self.allowlist.is_empty() {
@@ -149,9 +145,7 @@ pub fn host_from_url(url: &str) -> Result<String, String> {
     }
 
     // authority ends at first `/`, `?`, or `#`
-    let authority_end = rest
-        .find(['/', '?', '#'])
-        .unwrap_or(rest.len());
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let authority = &rest[..authority_end];
     if authority.is_empty() {
         return Err(format!("could not parse host from URL: {url}"));
@@ -240,10 +234,7 @@ mod tests {
 
     #[test]
     fn host_from_ipv6() {
-        assert_eq!(
-            host_from_url("http://[::1]:8080/x").unwrap(),
-            "::1"
-        );
+        assert_eq!(host_from_url("http://[::1]:8080/x").unwrap(), "::1");
     }
 
     #[test]

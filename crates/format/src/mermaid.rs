@@ -28,10 +28,7 @@ pub fn is_mermaid_language(language: Option<&str>) -> bool {
 /// callers can fall back to the raw fence body.
 /// Returns shared lines so a TUI frame that re-renders a closed diagram only
 /// clones an [`Arc`], not every box-drawing string.
-pub fn render_mermaid(
-    source: &str,
-    max_width: Option<usize>,
-) -> Result<Arc<Vec<String>>, String> {
+pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Arc<Vec<String>>, String> {
     let key = cache_key(source, max_width);
     if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         return hit;
