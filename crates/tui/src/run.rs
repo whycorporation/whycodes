@@ -734,6 +734,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 );
             }
 
+            // Mouse `[stop]` on the turn strip (or other UI) → cancel.
+            if agent_busy && app.pending_cancel {
+                app.pending_cancel = false;
+                if let Some(ref flag) = cancel_flag {
+                    request_cancel(flag);
+                    app.status_message = "Cancelling…".into();
+                }
+            }
+
             // ── Start turn if needed ──────────────────────────────────
             if !agent_busy && let Some(prompt) = app.pending_prompt.take() {
                 let submit_images = std::mem::take(&mut app.pending_submit_images);

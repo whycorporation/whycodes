@@ -22,6 +22,7 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
+use unicode_width::UnicodeWidthStr;
 
 use super::chat;
 use super::dialogs;
@@ -228,15 +229,22 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     slash_suggest::render(frame, chunks[2], app, palette);
 }
 
-fn turn_status_height(app: &TuiApp) -> u16 {
-    if app.is_busy() { 1 } else { 0 }
+fn turn_status_height(app: &mut TuiApp) -> u16 {
+    if app.is_busy() {
+        1
+    } else {
+        // Control not painted — drop sticky hover + rect.
+        app.turn_stop_hit.clear();
+        0
+    }
 }
 
-/// Busy strip: spinner + state (+ elapsed) + optional agent detail.
+/// Busy strip (Grok turn_status): spinner + activity · detail …… 1m20s ⇣12k [stop]
 ///
-/// Cancel cue lives only in the header shortcuts (`esc cancel`) so it is not
-/// repeated here, in the prompt placeholder, and inside status strings.
-fn render_turn_status(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+/// `[stop]` is mouse-clickable (sticky hit → cancel). Esc still cancels from the
+/// header shortcuts / key handler.
+fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+    app.turn_stop_hit.set_rect(None);
     if area.height == 0 {
         return;
     }
@@ -256,7 +264,6 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &The
     } else {
         String::new()
     };
-    // Full turn wall-clock (request → now), shown while generating.
     let turn_elapsed = app
         .turn_elapsed_ms()
         .map(crate::app::format_elapsed_ms)
@@ -281,29 +288,84 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &The
         AgentState::Error(_) => "error".into(),
         AgentState::Idle => "ready".into(),
     };
-    // Prefer a short step/tool detail; never restate "generating" / Esc cancel.
-    // "LLM request (step N)" is useful; generic chrome is not.
     let detail = turn_status_detail(&app.status_message, &label);
-    // Flush with chat content column (no extra leading pad — shell SIDE_PAD).
-    let mut spans = vec![
+
+    // Right cluster: optional ⇣tokens + [stop]
+    let tokens_s = app.turn_usage.as_ref().map(|u| {
+        let n = u.input_tokens + u.output_tokens;
+        format!("⇣{}", crate::app::format_token_count(n))
+    });
+    let stop_label = "[stop]";
+    let stop_hovered = app.turn_stop_hit.hovered;
+    let stop_style = if stop_hovered {
+        Style::default()
+            .fg(palette.error)
+            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+    } else {
+        Style::default().fg(palette.error)
+    };
+
+    let mut right_w: u16 = 0;
+    if let Some(ref t) = tokens_s {
+        right_w = right_w.saturating_add(t.width() as u16).saturating_add(1);
+    }
+    right_w = right_w.saturating_add(stop_label.width() as u16);
+
+    let left_budget = area.width.saturating_sub(right_w.saturating_add(1)) as usize;
+    let mut left_spans = vec![
         Span::styled(
             format!("{spin} "),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            label,
+            label.clone(),
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
     ];
+    let mut used = 2 + label.width(); // spin + space + label (approx)
     if !detail.is_empty() {
+        let d = format!(" · {detail}");
+        let room = left_budget.saturating_sub(used);
+        if room > 3 {
+            let d = if d.width() > room {
+                let keep: String = d.chars().take(room.saturating_sub(1)).collect();
+                format!("{keep}…")
+            } else {
+                d
+            };
+            used += d.width();
+            left_spans.push(Span::styled(d, Style::default().fg(palette.dim)));
+        }
+    }
+
+    let gap = area
+        .width
+        .saturating_sub(used as u16)
+        .saturating_sub(right_w);
+    let mut spans = left_spans;
+    if gap > 0 {
+        spans.push(Span::raw(" ".repeat(gap as usize)));
+    }
+    if let Some(ref t) = tokens_s {
         spans.push(Span::styled(
-            format!(" · {detail}"),
+            format!("{t} "),
             Style::default().fg(palette.dim),
         ));
     }
-    let line = Line::from(spans);
+    let stop_x = area
+        .x
+        .saturating_add(area.width.saturating_sub(stop_label.width() as u16));
+    spans.push(Span::styled(stop_label.to_string(), stop_style));
+
+    app.turn_stop_hit.set_rect(Some(Rect {
+        x: stop_x,
+        y: area.y,
+        width: stop_label.width() as u16,
+        height: 1,
+    }));
+
     frame.render_widget(
-        Paragraph::new(Text::from(line)).style(Style::default().bg(palette.bg)),
+        Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.bg)),
         area,
     );
 }

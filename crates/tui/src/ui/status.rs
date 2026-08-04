@@ -1,9 +1,10 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
 // Top: upright status square + dual-tone brand · project · shortcuts.
-// Bottom: git branch + cwd (click-to-copy) · context used/max (hover → %).
+// Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
 use crate::theme::ThemePalette;
+use crate::ui::status_bar::StatusBar;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -23,25 +24,18 @@ const STATUS_SQUARE: &str = "▮";
 const STATUS_SQUARE_OPEN: &str = "▯";
 
 /// Grok-style branch glyph (process-lifetime cache).
-///
-/// Prefer Powerline Nerd Font `` (`U+E0A0`). Without a patched font it tofu,
-/// so fall back to platform stock glyphs (`⎇` / Windows `≡`). Override with
-/// `WHYCODE_NERD_FONTS=1|0` (same semantics as Grok's `GROK_NERD_FONTS`).
 fn branch_icon() -> &'static str {
     static ICON: OnceLock<&'static str> = OnceLock::new();
     ICON.get_or_init(|| {
         let nerd = match std::env::var("WHYCODE_NERD_FONTS").ok().as_deref() {
             Some("0") | Some("false") => false,
             Some(_) => true,
-            // Grok assumes Nerd Fonts everywhere except Windows consoles and
-            // stock macOS terminals; we skip brand detection and default on
-            // for non-Windows hosts (primary whycode target is Linux TUI).
             None => !cfg!(windows),
         };
         if nerd {
             "\u{e0a0}" //  Powerline branch
         } else if cfg!(windows) {
-            "\u{2261}" // ≡ CP437-safe
+            "\u{2261}" // ≡
         } else {
             "\u{2387}" // ⎇
         }
@@ -93,8 +87,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let glyph = status_glyph(app, palette);
     let brand = brand_spans(palette);
 
-    // Prefer the session title in the header when it is more specific than the
-    // bare project folder (auto-title / rename). Fall back to project basename.
     let title_raw = app.session_title.trim();
     let dir_raw = app.project_label.trim();
     let label_src = if !title_raw.is_empty() && title_raw != dir_raw {
@@ -130,7 +122,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    // Layout: ▮  whycode [· dir] …… shortcuts
     let mut left: Vec<Span<'_>> = vec![glyph, Span::raw("  ")];
     left.extend(brand);
     if !dir.is_empty() {
@@ -227,53 +218,47 @@ fn truncate_start(s: &str, max: usize) -> String {
     }
 }
 
-/// Bottom chrome: ` branch /path` (left, click-to-copy) and Grok-style
-/// context meter on the right.
+/// Bottom chrome: branch + cwd (left) · Grok context meter (right, via StatusBar).
 ///
-/// Mirrors Grok Build `context_bar` (top-right there; bottom-right here):
-/// - default: `1.2k / 200k` (tokens, colored by fill)
-/// - hover:   `████░ 42.0%` (progress bar + fixed-width %, same total width)
-///
-/// Hover uses sticky `app.context_hovered` set from mouse events against the
-/// previous frame’s hit box — do not recompute after clearing `context_hit`.
+/// Default: `1.2k / 200k` · hover: `████░ 42.0%` (same width). Sticky hover on
+/// `app.context_hit` — never recompute after clearing rect mid-paint.
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    app.cwd_hit = None;
-    // Keep sticky hover; only refresh the hit rect at the end of paint.
-    app.context_hit = None;
+    // Clear hit rects only (keep sticky hovered flags).
+    app.cwd_hit.set_rect(None);
+    app.context_hit.set_rect(None);
     if area.height == 0 || area.width < 4 {
         return;
     }
 
-    // ── Right: context window meter (Grok context_bar, bottom-right) ──
     let max = app.max_context_tokens.max(1);
     let used = app.context_used;
-    let pct = app.context_percent();
-    let hovered = app.context_hovered();
-    // Both forms share the same display width (Grok invariant — no layout shift).
+    let pct_f = crate::app::context_usage_pct(used, max);
+    let hovered = app.context_hit.hovered;
+
     let idle_label = crate::app::format_context_usage(used, max);
     let hover_label = crate::app::format_context_hover(used, max);
-    let right_w = idle_label
-        .width()
-        .max(hover_label.width()) as u16;
-    let right_label = if hovered {
-        // Pad if needed (should already match).
+    // Same-width invariant for hover swap.
+    let right_w = idle_label.width().max(hover_label.width()) as u16;
+    let ctx_text = if hovered {
         let pad = right_w.saturating_sub(hover_label.width() as u16) as usize;
         format!("{}{hover_label}", " ".repeat(pad))
     } else {
         let pad = right_w.saturating_sub(idle_label.width() as u16) as usize;
-        // Right-pad so natural short strings (e.g. `0 / 9`) still match hover width.
         format!("{idle_label}{}", " ".repeat(pad))
     };
-    let right_style = Style::default().fg(context_meter_color(pct, palette));
-    // Leave at least one space gap between path and meter.
+    let ctx_color = context_meter_color(pct_f, palette);
+    let ctx_line = Line::from(Span::styled(
+        ctx_text,
+        Style::default().fg(ctx_color),
+    ));
+
+    // Reserve right cluster (+ gap) so path truncation doesn't collide.
     let right_reserve = right_w.saturating_add(1).min(area.width);
 
     let path_full = app.project_dir.display().to_string();
     let mut spans: Vec<Span<'_>> = Vec::new();
     let mut path_start_cols: u16 = 0;
 
-    // Grok session status bar: single dim primary span for `{icon} {branch}`.
-    // No bold on the branch name — same weight as the rest of the chrome.
     if let Some(ref branch) = app.git_branch {
         let branch_disp = truncate_start(branch, 24);
         let icon = branch_icon();
@@ -297,50 +282,54 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
     let path_disp = truncate_start(&path_full, path_budget);
     let path_w = path_disp.width() as u16;
 
-    spans.push(Span::styled(path_disp, Style::default().fg(palette.dim)));
+    let mut path_style = Style::default().fg(palette.dim);
+    if app.cwd_hit.hovered {
+        path_style = path_style
+            .add_modifier(Modifier::UNDERLINED)
+            .fg(palette.fg);
+    }
+    spans.push(Span::styled(path_disp, path_style));
 
-    // Absolute screen coords of the path text for click-to-copy.
     if path_w > 0 {
-        app.cwd_hit = Some(Rect {
+        app.cwd_hit.set_rect(Some(Rect {
             x: area.x.saturating_add(path_start_cols),
             y: area.y,
             width: path_w.min(area.width.saturating_sub(path_start_cols)),
             height: 1,
-        });
+        }));
     }
 
-    // Pad between path and right-aligned meter.
+    // Left cluster only (StatusBar paints the right side).
     let left_w = path_start_cols.saturating_add(path_w);
-    let gap = area.width.saturating_sub(left_w).saturating_sub(right_w);
-    if gap > 0 {
-        spans.push(Span::raw(" ".repeat(gap as usize)));
-    }
-    spans.push(Span::styled(right_label, right_style));
-
-    if right_w > 0 && area.width >= right_w {
-        // Footer row is inside the safe inset (not the terminal’s last row
-        // when SAFE_BOTTOM > 0) — hover the text, not the padding row below.
-        app.context_hit = Some(Rect {
-            x: area.x.saturating_add(area.width.saturating_sub(right_w)),
-            y: area.y,
-            width: right_w,
-            height: 1,
-        });
-    }
-
+    let left_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: left_w.min(area.width),
+        height: 1,
+    };
     frame.render_widget(
         Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.bg)),
-        area,
+        left_area,
     );
+
+    // Right: composable StatusBar (context meter; more chips can push here).
+    let mut bar = StatusBar::new(Style::default().fg(palette.dim).bg(palette.bg));
+    bar.push("context", ctx_line);
+    let areas = bar.render(frame, area);
+    if let Some(r) = areas.get("context").copied() {
+        app.context_hit.set_rect(Some(r));
+    }
 }
 
-/// Calm dim until pressure builds — matches Grok / OpenCode cue colors.
-fn context_meter_color(pct: u64, palette: &ThemePalette) -> ratatui::style::Color {
-    if pct >= 90 {
-        palette.error
-    } else if pct >= 75 {
-        palette.warning
-    } else {
-        palette.dim
-    }
+/// Urgency color from fill percent (Grok context bar gradient).
+fn context_meter_color(pct: f64, palette: &ThemePalette) -> ratatui::style::Color {
+    use crate::ui::progress_bar::{color_to_rgb, context_urgency_rgb};
+    let (r, g, b) = context_urgency_rgb(
+        pct,
+        color_to_rgb(palette.dim),
+        color_to_rgb(palette.accent),
+        color_to_rgb(palette.warning),
+        color_to_rgb(palette.error),
+    );
+    ratatui::style::Color::Rgb(r, g, b)
 }

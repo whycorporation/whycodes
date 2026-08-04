@@ -520,11 +520,10 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     // mouse motion — that was killing the TUI on the first mouse-move after
     // EnableMouseCapture (seen as `tui.exit reason=handle_event=false`).
     //
-    // Sticky hover (Grok HitArea): update mouse_pos, then recompute against
-    // the *previous frame’s* context_hit. Never recompute hover during paint
-    // after clearing the rect — that always returned false.
+    // Sticky hover (Grok HitArea): mouse_pos first, then update all chrome
+    // hits against the *previous* frame’s rects.
     app.mouse_pos = Some((mouse.column, mouse.row));
-    if app.update_context_hover() {
+    if app.update_chrome_hover() {
         app.mark_dirty();
     }
 
@@ -565,6 +564,28 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // Turn-status [stop] → cancel current agent turn.
+            if app.turn_stop_hit.contains(mouse.column, mouse.row) && app.is_busy() {
+                app.pending_cancel = true;
+                app.status_message = "Cancelling…".into();
+                app.mark_dirty();
+                app.mouse_sel = None;
+                return true;
+            }
+            // Slash dropdown: click a row to select + apply.
+            if app.slash_suggest.active
+                && let Some(idx) = app.slash_suggest.row_index_at(mouse.column, mouse.row)
+            {
+                app.slash_suggest.selected = idx;
+                if let Some(cmd) = app.slash_suggest.current() {
+                    app.input_buffer = format!("{} ", cmd.name);
+                    app.input_cursor = app.input_buffer.len();
+                    app.slash_suggest.dismiss();
+                    app.mark_dirty();
+                }
+                app.mouse_sel = None;
+                return true;
+            }
             // Chat scrollbar first: thumb drag / track jump (not text select).
             if app.chat_scrollbar_contains(mouse.column, mouse.row)
                 && let Some(track) = app.chat_scrollbar_hit

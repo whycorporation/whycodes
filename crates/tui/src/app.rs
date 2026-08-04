@@ -446,41 +446,17 @@ pub fn fmt_pct5(pct: f64) -> String {
     }
 }
 
-/// Unicode block progress bar for context hover (same width invariant as Grok).
-///
-/// `fill` is `0.0..=1.0`. Empty cells use a light track glyph so the bar stays
-/// visible on both light and dark themes.
-pub fn context_progress_bar(width: u16, fill: f64) -> String {
-    if width == 0 {
-        return String::new();
-    }
-    let fill = fill.clamp(0.0, 1.0);
-    let filled = ((fill * width as f64).round() as u16).min(width);
-    let mut s = String::with_capacity(width as usize);
-    for i in 0..width {
-        if i < filled {
-            s.push('█');
-        } else {
-            s.push('░');
-        }
-    }
-    s
-}
-
-/// Grok hover line: progress bar + gap + 5-char %, same display width as
+/// Grok hover line: 1/8 progress bar + gap + 5-char %, same display width as
 /// the default `used / total` token string (no layout shift).
 pub fn format_context_hover(used: u64, max: u64) -> String {
-    let mut token_str = format_context_usage(used, max);
+    let token_str = format_context_usage(used, max);
     // Min width = gap(1) + pct(5) so degenerate `0 / 9` still matches hover.
     const MIN_W: usize = 6;
     let natural = token_str.chars().count();
-    if natural < MIN_W {
-        token_str.push_str(&" ".repeat(MIN_W - natural));
-    }
     let total_w = natural.max(MIN_W);
     let bar_w = (total_w - MIN_W) as u16;
     let pct = context_usage_pct(used, max);
-    let bar = context_progress_bar(bar_w, pct / 100.0);
+    let bar = crate::ui::progress_bar::progress_bar_string(bar_w, pct / 100.0);
     format!("{bar} {}", fmt_pct5(pct))
 }
 
@@ -661,17 +637,12 @@ pub struct TuiApp {
     pub project_dir: PathBuf,
     /// Current git branch, if the project is a repo.
     pub git_branch: Option<String>,
-    /// Screen hit-box of the clickable cwd path (updated each paint).
-    pub cwd_hit: Option<Rect>,
-    /// Screen hit-box of the context-usage meter (bottom-right; hover → bar+%).
-    /// Updated at end of paint; used by mouse handlers (previous frame’s rect).
-    pub context_hit: Option<Rect>,
-    /// Sticky hover flag for the context meter (Grok `HitArea.hovered`).
-    ///
-    /// Must **not** be recomputed during paint after clearing `context_hit` —
-    /// that always returned false. Updated only from mouse events via
-    /// [`Self::update_context_hover`].
-    pub context_hovered: bool,
+    /// Clickable cwd path (sticky hover → underline).
+    pub cwd_hit: crate::hit::HitArea,
+    /// Context-usage meter (hover → bar+%).
+    pub context_hit: crate::hit::HitArea,
+    /// Turn-status `[stop]` control (click → cancel turn).
+    pub turn_stop_hit: crate::hit::HitArea,
     /// Last known mouse cell (for hover tooltips).
     pub mouse_pos: Option<(u16, u16)>,
 
@@ -690,6 +661,8 @@ pub struct TuiApp {
     pub turn_started_at: Option<std::time::Instant>,
     /// Latest token usage reported for the current/last turn.
     pub turn_usage: Option<whycode_core::types::Usage>,
+    /// Mouse `[stop]` (or future UI) requested cancel — run loop consumes this.
+    pub pending_cancel: bool,
 }
 
 /// Drag selection over the terminal grid (absolute cell coordinates).
@@ -817,11 +790,17 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
 ];
 
 /// Autocomplete state for slash commands while typing.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SlashSuggestState {
     pub active: bool,
     pub matches: Vec<usize>,
     pub selected: usize,
+    /// Mouse-hovered match index (into `matches`), sticky for paint.
+    pub hovered: Option<usize>,
+    /// Absolute screen rect of the item list body (for hover hit-test).
+    pub list_hit: Option<Rect>,
+    /// First visible match index when scrolled (paint meta).
+    pub list_scroll_start: usize,
 }
 
 impl SlashSuggestState {
@@ -884,6 +863,41 @@ impl SlashSuggestState {
         self.active = false;
         self.matches.clear();
         self.selected = 0;
+        self.hovered = None;
+        self.list_hit = None;
+        self.list_scroll_start = 0;
+    }
+
+    /// Match index under the pointer, if any (using last paint’s list hit).
+    pub fn row_index_at(&self, col: u16, row: u16) -> Option<usize> {
+        let hit = self.list_hit?;
+        if col < hit.x
+            || col >= hit.x.saturating_add(hit.width)
+            || row < hit.y
+            || row >= hit.y.saturating_add(hit.height)
+        {
+            return None;
+        }
+        let vis = (row - hit.y) as usize;
+        let idx = self.list_scroll_start + vis;
+        if idx < self.matches.len() {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+}
+
+impl Default for SlashSuggestState {
+    fn default() -> Self {
+        Self {
+            active: false,
+            matches: Vec::new(),
+            selected: 0,
+            hovered: None,
+            list_hit: None,
+            list_scroll_start: 0,
+        }
     }
 }
 
@@ -967,9 +981,9 @@ impl TuiApp {
             project_label: String::from("."),
             project_dir: PathBuf::from("."),
             git_branch: None,
-            cwd_hit: None,
-            context_hit: None,
-            context_hovered: false,
+            cwd_hit: crate::hit::HitArea::default(),
+            context_hit: crate::hit::HitArea::default(),
+            turn_stop_hit: crate::hit::HitArea::default(),
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
@@ -977,6 +991,7 @@ impl TuiApp {
             api_context_for: None,
             turn_started_at: None,
             turn_usage: None,
+            pending_cancel: false,
         }
     }
 
@@ -987,40 +1002,51 @@ impl TuiApp {
 
     /// True if terminal cell `(col, row)` is inside the clickable cwd path.
     pub fn cwd_contains(&self, col: u16, row: u16) -> bool {
-        let Some(hit) = self.cwd_hit else {
-            return false;
-        };
-        col >= hit.x
-            && col < hit.x.saturating_add(hit.width)
-            && row >= hit.y
-            && row < hit.y.saturating_add(hit.height)
+        self.cwd_hit.contains(col, row)
     }
 
-    /// True if terminal cell `(col, row)` is over the context usage meter.
-    pub fn context_contains(&self, col: u16, row: u16) -> bool {
-        let Some(hit) = self.context_hit else {
-            return false;
-        };
-        col >= hit.x
-            && col < hit.x.saturating_add(hit.width)
-            && row >= hit.y
-            && row < hit.y.saturating_add(hit.height)
-    }
-
-    /// Sticky: pointer is over the context meter (set by mouse, read by paint).
+    /// Sticky: pointer is over the context meter.
     pub fn context_hovered(&self) -> bool {
-        self.context_hovered
+        self.context_hit.hovered
     }
 
-    /// Recompute sticky context hover from `mouse_pos` + last paint’s hit box.
-    /// Returns `true` when the flag flipped (caller should `mark_dirty`).
-    pub fn update_context_hover(&mut self) -> bool {
-        let now = self
-            .mouse_pos
-            .map(|(c, r)| self.context_contains(c, r))
-            .unwrap_or(false);
-        let changed = now != self.context_hovered;
-        self.context_hovered = now;
+    /// Update sticky hover flags for all chrome HitAreas. Returns true if any flipped.
+    pub fn update_chrome_hover(&mut self) -> bool {
+        let Some((c, r)) = self.mouse_pos else {
+            let mut changed = false;
+            if self.context_hit.hovered {
+                self.context_hit.hovered = false;
+                changed = true;
+            }
+            if self.cwd_hit.hovered {
+                self.cwd_hit.hovered = false;
+                changed = true;
+            }
+            if self.turn_stop_hit.hovered {
+                self.turn_stop_hit.hovered = false;
+                changed = true;
+            }
+            return changed;
+        };
+        let mut changed = false;
+        changed |= self.context_hit.update_hover(c, r);
+        changed |= self.cwd_hit.update_hover(c, r);
+        changed |= self.turn_stop_hit.update_hover(c, r);
+        // Slash dropdown hover row (index into matches, not absolute cmd).
+        if self.slash_suggest.active {
+            if let Some(idx) = self.slash_suggest.row_index_at(c, r) {
+                if self.slash_suggest.hovered != Some(idx) {
+                    self.slash_suggest.hovered = Some(idx);
+                    changed = true;
+                }
+            } else if self.slash_suggest.hovered.is_some() {
+                self.slash_suggest.hovered = None;
+                changed = true;
+            }
+        } else if self.slash_suggest.hovered.is_some() {
+            self.slash_suggest.hovered = None;
+            changed = true;
+        }
         changed
     }
 

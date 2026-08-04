@@ -187,18 +187,31 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-05 — Grok-style chrome pack (HitArea, turn strip, status bar)
+
+**What:** Ported portable Grok Build TUI patterns (no xAI product chrome):
+
+| Piece | Module |
+|-------|--------|
+| Sticky hit targets | `hit::HitArea` — paint sets `rect`, mouse sets `hovered` |
+| Context bar | default `used/total` → hover 1/8 bar + `fmt_pct5` |
+| Progress / urgency color | `ui/progress_bar.rs` |
+| Composable right status | `ui/status_bar.rs` (`│` seps + hit map) |
+| Turn strip | spinner · activity …… `⇣tokens` **`[stop]`** (mouse → `pending_cancel`) |
+| Path underline on hover | `cwd_hit.hovered` |
+| Slash mouse hover/click | `SlashSuggestState.hovered` + `list_hit` |
+
+**Rule:** Never recompute hover after clearing `rect` mid-paint. Use `update_chrome_hover()`.
+
+**Ship:** `cargo install --path crates/cli --force` (PATH binary, not only `cargo test`).
+
 ### 2026-08-05 — Context meter hover never swaps (always tokens)
 
 **Symptom:** Bottom-right stays `1.2k / 200k`; hover does not show Grok’s bar+`%`.
 
-**Root cause:** `render_footer` cleared `context_hit = None` then called `context_hovered()` which hit-tests that rect → **always false during paint**. Sticky hover was never used. Grok keeps `HitArea.hovered` set from mouse events against the *previous* frame’s rect, and only updates `rect` at paint end.
+**Root cause:** `render_footer` cleared `context_hit` then hit-tested that rect → always false during paint.
 
-**Fix (match Grok `context_bar` + `HitArea`):**
-- Sticky `app.context_hovered` updated only from mouse (`update_context_hover`).
-- Default: `used / total`; hover: `████░ 42.0%` same width.
-- Install PATH binary: `cargo install --path crates/cli --force`.
-
-**Prevention:** Never recompute hover from a hit box you just cleared in the same paint.
+**Fix:** Sticky `HitArea.hovered` (see pack entry above).
 
 ---
 

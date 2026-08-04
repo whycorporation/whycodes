@@ -83,18 +83,20 @@ impl DropdownColors {
     }
 }
 
-pub fn render(frame: &mut Frame, prompt_area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    let suggest = &app.slash_suggest;
-    if !suggest.active || suggest.matches.is_empty() {
+pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+    if !app.slash_suggest.active || app.slash_suggest.matches.is_empty() {
+        app.slash_suggest.list_hit = None;
+        app.slash_suggest.hovered = None;
         return;
     }
 
     let colors = DropdownColors::from_palette(palette);
-    let total = suggest.matches.len();
+    let total = app.slash_suggest.matches.len();
     let rows = (total as u16).min(MAX_ROWS);
     // hairline + items + hairline
     let height = rows + 2;
     if prompt_area.y < height || prompt_area.width < 8 {
+        app.slash_suggest.list_hit = None;
         return;
     }
     // Sit just above the prompt, full prompt width (Grok anchors to prompt).
@@ -109,7 +111,8 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &TuiApp, palette: &Them
 
     let visible = rows as usize;
     let needs_scrollbar = total > visible;
-    let start = scroll_center(suggest.selected, total, visible);
+    let start = scroll_center(app.slash_suggest.selected, total, visible);
+    app.slash_suggest.list_scroll_start = start;
 
     let buf = frame.buffer_mut();
 
@@ -150,23 +153,37 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &TuiApp, palette: &Them
         width: area.width,
         height: rows,
     };
+    app.slash_suggest.list_hit = Some(Rect {
+        x: items_area.x,
+        y: items_area.y,
+        width: items_area
+            .width
+            .saturating_sub(if needs_scrollbar { SCROLLBAR_GUTTER } else { 0 }),
+        height: items_area.height,
+    });
     let content_w = if needs_scrollbar {
         items_area.width.saturating_sub(SCROLLBAR_GUTTER)
     } else {
         items_area.width
     };
 
+    // Slightly elevated wash for mouse hover (between panel and selected).
+    let hover_bg = elevate(palette.bg, 36);
+
     for vis_row in 0..visible {
         let item_idx = start + vis_row;
         if item_idx >= total {
             break;
         }
-        let cmd_idx = suggest.matches[item_idx];
+        let cmd_idx = app.slash_suggest.matches[item_idx];
         let cmd = &BUILTIN_SLASH_COMMANDS[cmd_idx];
-        let selected = item_idx == suggest.selected;
+        let selected = item_idx == app.slash_suggest.selected;
+        let mouse_hover = app.slash_suggest.hovered == Some(item_idx) && !selected;
         let y = items_area.y + vis_row as u16;
         let row_bg = if selected {
             colors.selected
+        } else if mouse_hover {
+            hover_bg
         } else {
             colors.panel
         };

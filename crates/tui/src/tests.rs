@@ -314,7 +314,10 @@ fn test_format_context_usage_and_percent() {
     }
     let hover = format_context_hover(84_000, 200_000);
     assert!(hover.contains("42.0%"), "hover={hover:?}");
-    assert!(hover.contains('█') || hover.contains('░'), "hover={hover:?}");
+    assert!(
+        hover.contains('█') || hover.contains('░') || hover.contains('▌'),
+        "hover={hover:?}"
+    );
 
     let u = Usage {
         input_tokens: 1000,
@@ -335,12 +338,12 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
 
     let mut app = TuiApp::new(test_config());
     // Simulate a painted footer hit-box (right side of row 40).
-    app.context_hit = Some(Rect {
+    app.context_hit.set_rect(Some(Rect {
         x: 70,
         y: 40,
         width: 12,
         height: 1,
-    });
+    }));
     app.needs_redraw = false;
     assert!(!app.context_hovered());
 
@@ -355,20 +358,20 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
     assert!(app.context_hovered());
     assert!(app.needs_redraw, "enter context meter must mark_dirty");
 
-    // Simulate paint clearing the hit box (old bug: that made hover always false).
-    app.context_hit = None;
+    // Simulate paint clearing the rect only (sticky hovered must survive).
+    app.context_hit.set_rect(None);
     assert!(
         app.context_hovered(),
-        "sticky hover must survive paint clearing context_hit"
+        "sticky hover must survive paint clearing context_hit.rect"
     );
 
     // Restore hit for leave hit-test (next frame would set it after paint).
-    app.context_hit = Some(Rect {
+    app.context_hit.set_rect(Some(Rect {
         x: 70,
         y: 40,
         width: 12,
         height: 1,
-    });
+    }));
     app.needs_redraw = false;
     let stay = Event::Mouse(MouseEvent {
         kind: MouseEventKind::Moved,
@@ -393,6 +396,29 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
     assert!(crate::input::handle_event(&mut app, leave));
     assert!(!app.context_hovered());
     assert!(app.needs_redraw, "leave context meter must mark_dirty");
+}
+
+#[test]
+fn turn_stop_click_sets_pending_cancel() {
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    app.current_agent_state = crate::app::AgentState::Generating;
+    app.turn_stop_hit.set_rect(Some(Rect {
+        x: 70,
+        y: 20,
+        width: 6,
+        height: 1,
+    }));
+    let click = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 72,
+        row: 20,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, click));
+    assert!(app.pending_cancel);
 }
 
 #[test]
@@ -881,6 +907,7 @@ fn step_wraps_around_in_both_directions() {
         active: true,
         matches: vec![0, 1, 2],
         selected: 0,
+        ..Default::default()
     };
     s.step(-1);
     assert_eq!(s.selected, 2);
@@ -895,6 +922,7 @@ fn current_returns_the_highlighted_command() {
         active: true,
         matches: vec![],
         selected: 0,
+        ..Default::default()
     };
     assert!(s.current().is_none());
     s.matches = BUILTIN_SLASH_COMMANDS
