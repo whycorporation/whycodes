@@ -24,3 +24,4 @@ tempfile.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 base64.workspace = true
+rustc-hash.workspace = true

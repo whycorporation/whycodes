@@ -135,7 +135,7 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Vec<Vec<CodeS
 /// Most highlighted blocks held at once in the closed-content memo.
 const CACHE_ENTRIES: usize = 64;
 
-type HighlightCache = Mutex<std::collections::HashMap<u64, Vec<Vec<CodeSpan>>>>;
+type HighlightCache = Mutex<rustc_hash::FxHashMap<u64, Vec<Vec<CodeSpan>>>>;
 
 fn closed_cache() -> &'static HighlightCache {
     static CACHE: OnceLock<HighlightCache> = OnceLock::new();
@@ -153,7 +153,9 @@ fn insert_closed(key: u64, value: Vec<Vec<CodeSpan>>) {
 
 fn cache_key(code: &str, language: Option<&str>) -> u64 {
     use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // FxHash: trusted local memo keys, hashed every frame on the TUI path.
+    // SipHash (DefaultHasher) is for untrusted map keys — wrong tradeoff here.
+    let mut hasher = rustc_hash::FxHasher::default();
     code.hash(&mut hasher);
     language.hash(&mut hasher);
     // Bump if theme or grammar source changes.

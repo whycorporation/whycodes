@@ -7,9 +7,10 @@
 //! Hot path: the TUI calls this from the render loop for every visible message,
 //! so closed diagrams are memoised by `(source, max_width)`.
 
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
+
+use rustc_hash::FxHashMap;
 
 /// Fence language tags that mean Mermaid source.
 pub fn is_mermaid_language(language: Option<&str>) -> bool {
@@ -44,7 +45,7 @@ pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Vec<Stri
 /// Most diagram renders held at once (same budget idea as the highlight memo).
 const CACHE_ENTRIES: usize = 32;
 
-type MermaidCache = Mutex<HashMap<u64, Result<Vec<String>, String>>>;
+type MermaidCache = Mutex<FxHashMap<u64, Result<Vec<String>, String>>>;
 
 fn cache() -> &'static MermaidCache {
     static CACHE: OnceLock<MermaidCache> = OnceLock::new();
@@ -52,7 +53,8 @@ fn cache() -> &'static MermaidCache {
 }
 
 fn cache_key(source: &str, max_width: Option<usize>) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    // Same rationale as highlight::cache_key — local memo, not adversarial keys.
+    let mut hasher = rustc_hash::FxHasher::default();
     source.hash(&mut hasher);
     max_width.hash(&mut hasher);
     "mermaid-text-v1".hash(&mut hasher);

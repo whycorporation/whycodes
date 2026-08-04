@@ -58,3 +58,13 @@ glob = "0.3"
 colored = "2"
 base64 = "0.22"
 tempfile = "3"
+# Fast non-cryptographic hashing for trusted internal maps and memo keys.
+# Do not use for integrity (upgrade SHA-256 stays on sha2).
+rustc-hash = "2"
+
+# Release: smaller binary + better inlining on hot paths (format, risk, TUI).
+# thin LTO keeps CI/dev rebuilds reasonable vs full `lto = true`.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

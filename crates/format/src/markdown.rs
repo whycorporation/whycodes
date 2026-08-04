@@ -235,12 +235,50 @@ pub fn parse_inline(line: &str) -> Vec<Inline> {
 ///
 /// Compares char by char rather than collecting `needle`, because this is
 /// called from a loop over every character of every line the TUI renders.
+///
+/// Hot needles from `parse_inline` are single- or double-ASCII (`\``, `*`,
+/// `**`, `]`, `)`). Those take a fixed-length path so we never re-walk the
+/// needle as an iterator on every character of every line.
 fn find(chars: &[char], from: usize, needle: &str) -> Option<usize> {
+    if needle.is_empty() || chars.len() < from {
+        return None;
+    }
+
+    // Fast path: pure-ASCII needles used by the inline scanner.
+    if needle.is_ascii() {
+        let n = needle.as_bytes();
+        let len = n.len();
+        if chars.len() < len {
+            return None;
+        }
+        let last = chars.len() - len;
+        if from > last {
+            return None;
+        }
+        return match len {
+            1 => {
+                let c0 = n[0] as char;
+                (from..=last).find(|&i| chars[i] == c0)
+            }
+            2 => {
+                let c0 = n[0] as char;
+                let c1 = n[1] as char;
+                (from..=last).find(|&i| chars[i] == c0 && chars[i + 1] == c1)
+            }
+            _ => (from..=last).find(|&i| {
+                n.iter()
+                    .enumerate()
+                    .all(|(k, &b)| chars[i + k] == b as char)
+            }),
+        };
+    }
+
     let len = needle.chars().count();
     if len == 0 || chars.len() < len {
         return None;
     }
-    (from..=chars.len() - len).find(|&i| needle.chars().enumerate().all(|(k, c)| chars[i + k] == c))
+    let needle_chars: Vec<char> = needle.chars().collect();
+    (from..=chars.len() - len).find(|&i| chars[i..i + len] == needle_chars[..])
 }
 
 /// Render a markdown string to ANSI-escaped terminal output.

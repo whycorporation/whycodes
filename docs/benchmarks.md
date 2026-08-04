@@ -208,3 +208,35 @@ if this is wired up: Linux only, on idle draws and first frame, with a ceiling
 loose enough to survive a shared runner. Startup and RSS stay ungated — a
 ceiling loose enough not to flap at a 20 ms measurement catches almost nothing,
 and a gate that catches nothing reads as assurance while providing none.
+
+## Binary size, hashing, and token heuristics (2026-08-04)
+
+See also [plan-perf-hotpath.md](plan-perf-hotpath.md).
+
+**Release profile.** Workspace `[profile.release]` now sets `strip = true`,
+`lto = "thin"`, and `codegen-units = 1`. On Linux x86_64 (2026-08-04):
+
+| Binary | Size | Notes |
+|--------|------|--------|
+| Before (no profile) | **23 MB** | unstripped |
+| Manual `strip` only | **18 MB** | same build, symbols dropped |
+| After profile + thin LTO | **15 MB** | already stripped |
+
+Roughly **~35% smaller** than the old unstripped release, **~17%** smaller than
+strip-only.
+
+**Hashing.** Two different jobs, two different hashes:
+
+| Use | Hash | Why |
+|-----|------|-----|
+| `whycode upgrade` integrity (`SHA256SUMS`) | **SHA-256** (`sha2`) | Cryptographic; do not replace |
+| Highlight / mermaid memo keys; tool & provider registries | **FxHash** (`rustc-hash`) | Trusted local keys; SipHash was paying DoS resistance every TUI frame |
+
+Memo keys are hashed on every render of a visible code/mermaid block even when
+the cache hits, so the hasher cost is on the frame budget.
+
+**Math / token heuristics.** `chars_to_tokens_fallback` uses
+`chars.div_ceil(4).max(1)` so short Unicode strings are not under-counted as
+zero. Tiktoken BPE tables are cached in a process-wide map so repeated counts
+do not reload vocabularies.
+

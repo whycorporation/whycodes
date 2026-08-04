@@ -15,6 +15,7 @@ pub mod openrouter;
 pub mod provider;
 pub mod retry;
 pub mod together;
+pub mod token_counter;
 pub mod types;
 pub mod xai;
 

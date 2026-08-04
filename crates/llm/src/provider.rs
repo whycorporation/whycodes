@@ -28,13 +28,14 @@ pub trait LlmProvider: Send + Sync {
 
 /// Registry of available LLM providers
 pub struct ProviderRegistry {
-    providers: std::collections::HashMap<String, Box<dyn LlmProvider>>,
+    /// Provider id → implementation. Local config keys only (FxHash).
+    providers: rustc_hash::FxHashMap<String, Box<dyn LlmProvider>>,
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
         Self {
-            providers: std::collections::HashMap::new(),
+            providers: rustc_hash::FxHashMap::default(),
         }
     }
 

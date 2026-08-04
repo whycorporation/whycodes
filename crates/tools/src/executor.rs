@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-
+use rustc_hash::FxHashMap;
 use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
@@ -11,14 +10,16 @@ use crate::{
 
 /// Central executor that manages all available tools
 pub struct ToolExecutor {
-    tools: HashMap<String, Box<dyn Tool>>,
+    /// Tool name → implementation. FxHash: names are local/trusted, not
+    /// adversarial map keys from the network.
+    tools: FxHashMap<String, Box<dyn Tool>>,
 }
 
 impl ToolExecutor {
     /// Create a new executor with all built-in tools
     pub fn new() -> Self {
         let mut executor = Self {
-            tools: HashMap::new(),
+            tools: FxHashMap::default(),
         };
 
         executor.register(Box::new(read::ReadTool::new()));
