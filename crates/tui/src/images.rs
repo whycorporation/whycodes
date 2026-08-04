@@ -100,13 +100,13 @@ pub fn normalize_path_token(token: &str) -> Option<PathBuf> {
         return Some(PathBuf::from(decoded));
     }
 
-    if s.starts_with("~/") || s == "~" {
-        if let Some(home) = home_dir() {
-            if s == "~" {
-                return Some(home);
-            }
-            return Some(home.join(&s[2..]));
+    if (s.starts_with("~/") || s == "~")
+        && let Some(home) = home_dir()
+    {
+        if s == "~" {
+            return Some(home);
         }
+        return Some(home.join(&s[2..]));
     }
 
     Some(PathBuf::from(s))
@@ -233,10 +233,7 @@ pub fn encode_image_block(img: &PromptImage) -> Result<ContentBlock, String> {
 }
 
 /// Build user message content blocks from text + images.
-pub fn build_user_blocks(
-    text: &str,
-    images: &[PromptImage],
-) -> Result<Vec<ContentBlock>, String> {
+pub fn build_user_blocks(text: &str, images: &[PromptImage]) -> Result<Vec<ContentBlock>, String> {
     let mut blocks = Vec::new();
     let trimmed = text.trim();
     if !trimmed.is_empty() {
@@ -251,7 +248,7 @@ pub fn build_user_blocks(
         return Err("empty message".into());
     }
     // Models usually want text present; if only images, add a short cue.
-    if images.is_empty() == false && trimmed.is_empty() {
+    if !images.is_empty() && trimmed.is_empty() {
         blocks.insert(
             0,
             ContentBlock::Text {
@@ -275,12 +272,13 @@ fn percent_decode(s: &str) -> String {
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(hi), Some(lo)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2])) {
-                out.push((hi << 4) | lo);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(hi), Some(lo)) = (from_hex(bytes[i + 1]), from_hex(bytes[i + 2]))
+        {
+            out.push((hi << 4) | lo);
+            i += 3;
+            continue;
         }
         out.push(bytes[i]);
         i += 1;
@@ -301,11 +299,11 @@ fn from_hex(b: u8) -> Option<u8> {
 fn tokenize(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
-    let mut chars = s.chars().peekable();
+    let chars = s.chars().peekable();
     let mut in_single = false;
     let mut in_double = false;
 
-    while let Some(c) = chars.next() {
+    for c in chars {
         match c {
             '\'' if !in_double => {
                 in_single = !in_single;

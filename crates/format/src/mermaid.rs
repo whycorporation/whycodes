@@ -27,11 +27,7 @@ pub fn is_mermaid_language(language: Option<&str>) -> bool {
 /// callers can fall back to the raw fence body.
 pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Vec<String>, String> {
     let key = cache_key(source, max_width);
-    if let Some(hit) = cache()
-        .lock()
-        .ok()
-        .and_then(|c| c.get(&key).cloned())
-    {
+    if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         return hit;
     }
 

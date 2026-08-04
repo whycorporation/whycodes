@@ -128,12 +128,7 @@ impl Keymap {
         Self
     }
 
-    pub fn resolve(
-        &self,
-        ctx: KeymapContext,
-        focus: FocusPane,
-        key: &KeyEvent,
-    ) -> Option<Action> {
+    pub fn resolve(&self, ctx: KeymapContext, focus: FocusPane, key: &KeyEvent) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
@@ -274,9 +269,17 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Tab", "Focus prompt ↔ scrollback", KeymapContext::Normal),
         KeyBinding::new("Ctrl+T", "Cycle primary agent", KeymapContext::Normal),
         KeyBinding::new(":", "Enter command mode (prompt)", KeymapContext::Normal),
-        KeyBinding::new("Esc", "Cancel turn / double-Esc clear draft", KeymapContext::Normal),
+        KeyBinding::new(
+            "Esc",
+            "Cancel turn / double-Esc clear draft",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("Enter", "Send message (prompt)", KeymapContext::Normal),
-        KeyBinding::new("j/k · ↑/↓", "Select message (scrollback)", KeymapContext::Normal),
+        KeyBinding::new(
+            "j/k · ↑/↓",
+            "Select message (scrollback)",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("Ctrl+↑/↓", "Scroll transcript", KeymapContext::Normal),
         KeyBinding::new("PgUp/PgDn", "Page scroll", KeymapContext::Normal),
         KeyBinding::new("g / G", "Top / bottom (scrollback)", KeymapContext::Normal),
@@ -284,7 +287,11 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
         KeyBinding::new("e / h", "Toggle thinking fold", KeymapContext::Normal),
         KeyBinding::new("l", "Toggle tool results", KeymapContext::Normal),
-        KeyBinding::new("Space / i", "Focus prompt (scrollback)", KeymapContext::Normal),
+        KeyBinding::new(
+            "Space / i",
+            "Focus prompt (scrollback)",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("Ctrl+P", "Provider setup", KeymapContext::Normal),
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),

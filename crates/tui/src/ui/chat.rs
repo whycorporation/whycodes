@@ -12,9 +12,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{
-        Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget,
-    },
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -131,8 +129,8 @@ fn render_session(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePa
     let content_width = area.width;
 
     for (i, msg) in app.messages.iter().enumerate() {
-        let selected = app.selected_msg == Some(i)
-            && app.focus == crate::app::FocusPane::Scrollback;
+        let selected =
+            app.selected_msg == Some(i) && app.focus == crate::app::FocusPane::Scrollback;
         let mut msg_lines = render_message(msg, app, palette, i, content_width);
         if selected {
             // Grok: selected entry gets a left caret on its first content row.
@@ -144,7 +142,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePa
             );
             if let Some(line) = msg_lines.iter_mut().find(|l| !l.spans.is_empty()) {
                 let mut spans = vec![caret];
-                spans.extend(line.spans.drain(..));
+                spans.append(&mut line.spans);
                 line.spans = spans;
             }
         }
@@ -272,8 +270,8 @@ fn render_message(
 
     match msg.role {
         ChatRole::User => {
-            let selected = app.selected_msg == Some(index)
-                && app.focus == crate::app::FocusPane::Scrollback;
+            let selected =
+                app.selected_msg == Some(index) && app.focus == crate::app::FocusPane::Scrollback;
             lines.extend(user_prompt_lines(
                 &msg.content,
                 &msg.image_labels,
@@ -429,9 +427,7 @@ fn thinking_lines(
     let detail_style = Style::default().fg(palette.dim);
     // Body de-emphasis via dim on primary fg (Grok uses bg_blend; dim is the
     // portable stand-in so reasoning still looks like monospaced stream text).
-    let body_style = Style::default()
-        .fg(palette.fg)
-        .add_modifier(Modifier::DIM);
+    let body_style = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
     // Grok thinking accent = gray_dim; soft quiet rail, not purple.
     let rail_style = Style::default().fg(palette.dim);
     // Full-height accent only while body is visible (Grok: no accent collapsed).
@@ -493,11 +489,7 @@ fn thinking_lines(
 /// ┃ content…     ← show_rail
 ///   content…     ← collapsed / no accent
 /// ```
-fn accent_line(
-    content: Vec<Span<'static>>,
-    show_rail: bool,
-    rail_style: Style,
-) -> Line<'static> {
+fn accent_line(content: Vec<Span<'static>>, show_rail: bool, rail_style: Style) -> Line<'static> {
     if !show_rail {
         return Line::from(content);
     }
@@ -575,8 +567,8 @@ fn user_prompt_lines(
     let text = content.trim_end_matches('\n');
     // Skip redundant "[Image: …]" body when labels already render chips and
     // content is the synthetic image-only placeholder.
-    let skip_body = !image_labels.is_empty()
-        && (text.starts_with("[Image:") || text.starts_with("[Images:"));
+    let skip_body =
+        !image_labels.is_empty() && (text.starts_with("[Image:") || text.starts_with("[Images:"));
     if skip_body {
         lines.push(band_pad_line(band_style));
         return lines;
@@ -604,9 +596,10 @@ fn user_prompt_lines(
                     )]));
                     first_visual = false;
                 } else {
-                    lines.push(Line::from(vec![
-                        Span::styled(" ".repeat(PROMPT_ARROW_WIDTH as usize), prefix_style),
-                    ]));
+                    lines.push(Line::from(vec![Span::styled(
+                        " ".repeat(PROMPT_ARROW_WIDTH as usize),
+                        prefix_style,
+                    )]));
                 }
                 continue;
             }
@@ -651,11 +644,7 @@ fn band_pad_line(band_style: Style) -> Line<'static> {
 }
 
 /// Error / callout panel line: left accent rail + panel bg (content-width).
-fn panel_line(
-    text: &str,
-    border: ratatui::style::Color,
-    palette: &ThemePalette,
-) -> Line<'static> {
+fn panel_line(text: &str, border: ratatui::style::Color, palette: &ThemePalette) -> Line<'static> {
     let panel = Style::default().fg(palette.fg).bg(palette.status_bar_bg);
     let rail = Span::styled(
         "┃".to_string(),
@@ -767,10 +756,7 @@ fn system_callout(content: &str, palette: &ThemePalette, _width: u16) -> Vec<Lin
     // Title: soft accent rail + glyph, quiet label, readable message.
     lines.push(Line::from(vec![
         Span::styled("│ ".to_string(), Style::default().fg(accent)),
-        Span::styled(
-            format!("{} ", kind.glyph()),
-            Style::default().fg(accent),
-        ),
+        Span::styled(format!("{} ", kind.glyph()), Style::default().fg(accent)),
         Span::styled(
             format!("{} · ", kind.label()),
             Style::default().fg(palette.dim),
@@ -786,10 +772,7 @@ fn system_callout(content: &str, palette: &ThemePalette, _width: u16) -> Vec<Lin
         // Steps / detail sit one level quieter under the title.
         lines.push(Line::from(vec![
             Span::styled("│ ".to_string(), Style::default().fg(accent)),
-            Span::styled(
-                format!("  {t}"),
-                Style::default().fg(palette.dim),
-            ),
+            Span::styled(format!("  {t}"), Style::default().fg(palette.dim)),
         ]));
     }
 

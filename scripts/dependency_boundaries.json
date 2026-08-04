@@ -11,6 +11,7 @@
     "agent",
     "core",
     "llm",
+    "protocol",
     "server",
     "session",
     "storage",

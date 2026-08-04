@@ -83,7 +83,14 @@ fn pipe_to(cmd: &[&str], text: &str) -> bool {
 /// Callers must pass reading-order endpoints: `y0 <= y1`, and on a single row
 /// `x0`/`x1` are the left/right columns (either order is fine).
 /// `row_max_x` is the last valid column index of the row (width - 1).
-pub fn linear_cols(y: u16, y0: u16, y1: u16, x0: u16, x1: u16, row_max_x: u16) -> Option<(u16, u16)> {
+pub fn linear_cols(
+    y: u16,
+    y0: u16,
+    y1: u16,
+    x0: u16,
+    x1: u16,
+    row_max_x: u16,
+) -> Option<(u16, u16)> {
     debug_assert!(y0 <= y1);
     if y < y0 || y > y1 {
         return None;
@@ -205,10 +212,7 @@ fn clean_copied_lines(mut lines: Vec<String>) -> Vec<String> {
     // Also run on a single line so a lone status/prompt row loses its inset.
     lines = dedent_common(lines);
     // One more trim_end after collapse (paranoia).
-    lines
-        .into_iter()
-        .map(|l| trim_end_pad(&l))
-        .collect()
+    lines.into_iter().map(|l| trim_end_pad(&l)).collect()
 }
 
 /// Order a drag so `top` is the earlier reading-order endpoint.

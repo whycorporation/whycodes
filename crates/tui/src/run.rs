@@ -12,13 +12,13 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size as term_size,
-    supports_keyboard_enhancement,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    size as term_size, supports_keyboard_enhancement,
 };
-use ratatui::layout::Rect;
-use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use whycode_agent::agent::Agent;
 use whycode_agent::permission::ChannelPermissionPrompter;
@@ -29,8 +29,8 @@ use whycode_session::SessionHistory;
 use whycode_session::session::Session;
 
 use crate::app::{
-    format_elapsed_ms, format_token_count, format_usage_short, AgentState, AppMode, ChatRole,
-    DialogKind, TuiApp,
+    AgentState, AppMode, ChatRole, DialogKind, TuiApp, format_elapsed_ms, format_token_count,
+    format_usage_short,
 };
 use crate::config::TuiAppConfig;
 use crate::input;
@@ -173,7 +173,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     app.apply_context_window(
         &opts.provider,
         &opts.model,
-        opts.config.configured_context_window(&opts.provider, &opts.model),
+        opts.config
+            .configured_context_window(&opts.provider, &opts.model),
         opts.config.session.max_context_tokens as u64,
     );
 
@@ -334,7 +335,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         );
     }
     let backend = CrosstermBackend::new(tui_out);
-    let mut terminal = Terminal::new(backend).map_err(|e| {
+    let mut terminal = Terminal::new(backend).inspect_err(|e| {
         let _ = disable_raw_mode();
         whycode_core::logging::emit(
             "whycode_tui",
@@ -342,7 +343,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             "tui.terminal_new_failed",
             Some(serde_json::json!({ "error": e.to_string() })),
         );
-        e
     })?;
 
     // Some hosts (piped stdout, odd PTYs) report 0×0 via TIOCGWINSZ. Drawing a
@@ -594,13 +594,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             if app.pending_catalog_refresh {
                 app.pending_catalog_refresh = false;
                 app.clear_api_context_window();
-                spawn_model_context_fetch(
-                    &config,
-                    &provider,
-                    &model,
-                    &api_key,
-                    catalog_tx.clone(),
-                );
+                spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
             }
 
             // ── Apply async single-model context_length from gateway ──
@@ -698,9 +692,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 format!("Image attach failed: {e}"),
                             );
                             if expanded.trim().is_empty() {
-                                session.add_user_message(&format!(
-                                    "(failed to load image: {e})"
-                                ));
+                                session.add_user_message(&format!("(failed to load image: {e})"));
                             } else {
                                 session.add_user_message(&expanded);
                             }
@@ -1480,9 +1472,12 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/models" => {
             if rest.is_empty() {
-                let src = if ctx.app.api_context_for.as_ref().is_some_and(|(p, m)| {
-                    p == ctx.provider.as_str() && m == ctx.model.as_str()
-                }) {
+                let src = if ctx
+                    .app
+                    .api_context_for
+                    .as_ref()
+                    .is_some_and(|(p, m)| p == ctx.provider.as_str() && m == ctx.model.as_str())
+                {
                     "api"
                 } else {
                     "local"
@@ -1588,12 +1583,7 @@ fn truncate_toast(s: &str, max: usize) -> String {
 }
 
 /// Recompute footer context max for the active provider/model.
-fn refresh_context_window(
-    app: &mut TuiApp,
-    config: &Config,
-    provider: &str,
-    model: &str,
-) {
+fn refresh_context_window(app: &mut TuiApp, config: &Config, provider: &str, model: &str) {
     app.apply_context_window(
         provider,
         model,

@@ -239,7 +239,10 @@ fn test_with_runtime_context_injects_date() {
         .lines()
         .find(|l| l.starts_with("Today's date:"))
         .expect("date line");
-    let date = date_line.trim_start_matches("Today's date:").trim().trim_end_matches('.');
+    let date = date_line
+        .trim_start_matches("Today's date:")
+        .trim()
+        .trim_end_matches('.');
     assert_eq!(date.len(), 10, "expected YYYY-MM-DD, got {date}");
 }
 

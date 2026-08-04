@@ -40,7 +40,11 @@ CFG_TEST = re.compile(r"^\s*#\[cfg\(test\)\]")
 
 
 def strip_test_code(lines: list[str]) -> list[tuple[int, str]]:
-    """Return (line number, text) for lines outside `#[cfg(test)]` blocks."""
+    """Return (line number, text) for lines outside `#[cfg(test)]` blocks.
+
+    `#[cfg(test)] mod foo;` (semicolon, body in another file) only skips that
+    declaration — it must not put the rest of the current file into skip mode.
+    """
     out: list[tuple[int, str]] = []
     skipping = False
     depth = 0
@@ -51,6 +55,10 @@ def strip_test_code(lines: list[str]) -> list[tuple[int, str]]:
             pending = True
             continue
         if pending:
+            # External module: `mod tests;` — body lives elsewhere, not here.
+            if "{" not in line and ";" in line:
+                pending = False
+                continue
             depth += line.count("{") - line.count("}")
             if "{" in line:
                 pending = False
@@ -66,10 +74,22 @@ def strip_test_code(lines: list[str]) -> list[tuple[int, str]]:
     return out
 
 
+def is_test_path(path: Path) -> bool:
+    """True for integration-test trees and unit-test module files.
+
+    `path.parts` only matches a directory named `tests`, so `src/tests.rs`
+    (the usual `#[cfg(test)] mod tests;` body) must be excluded by filename.
+    """
+    if "tests" in path.parts:
+        return True
+    name = path.name
+    return name in ("tests.rs", "test.rs") or name.endswith("_tests.rs")
+
+
 def count_crate(crate: Path) -> list[tuple[Path, int, str]]:
     findings: list[tuple[Path, int, str]] = []
     for path in sorted((crate / "src").rglob("*.rs")):
-        if "tests" in path.parts:
+        if is_test_path(path):
             continue
         try:
             lines = path.read_text(encoding="utf-8").splitlines()

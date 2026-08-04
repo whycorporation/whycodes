@@ -151,10 +151,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         .constraints([
             Constraint::Length(OUTER_TOP_GAP), // breathing room above the box
             Constraint::Length(VPAD_TOP),      // ╭─╮
-            Constraint::Length(attach_rows),  // image chips (0–1)
-            Constraint::Length(input_rows),   // text
-            Constraint::Length(INFO_BLOCK),   // ╰─ meta ─╯
-            Constraint::Min(0),               // home hint
+            Constraint::Length(attach_rows),   // image chips (0–1)
+            Constraint::Length(input_rows),    // text
+            Constraint::Length(INFO_BLOCK),    // ╰─ meta ─╯
+            Constraint::Min(0),                // home hint
         ])
         .split(area);
 
@@ -182,17 +182,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         _ if busy && app.input_buffer.is_empty() && prompt_focused => "… ",
         _ => "❯ ",
     };
-    let placeholder: Option<&str> = if !buf.is_empty() || prompt_focused || !app.pending_images.is_empty()
-    {
-        None
-    } else {
-        match app.mode {
-            AppMode::Command => Some("command…"),
-            _ if app.messages.is_empty() => Some("Ask anything…  (drop images)"),
-            // Scrollback owns focus — nudge how to get back.
-            _ => Some("Tab/i/Space → prompt · j/k select"),
-        }
-    };
+    let placeholder: Option<&str> =
+        if !buf.is_empty() || prompt_focused || !app.pending_images.is_empty() {
+            None
+        } else {
+            match app.mode {
+                AppMode::Command => Some("command…"),
+                _ if app.messages.is_empty() => Some("Ask anything…  (drop images)"),
+                // Scrollback owns focus — nudge how to get back.
+                _ => Some("Tab/i/Space → prompt · j/k select"),
+            }
+        };
 
     let text_area = chunks[3];
     let mut lines: Vec<Line> = Vec::with_capacity(input_rows as usize);
@@ -334,10 +334,7 @@ fn paint_attach_row(
         .collect();
     let n = labels.len();
     let joined = labels.join("  ·  ");
-    let max_w = row
-        .width
-        .saturating_sub(PAD_LEFT + PAD_RIGHT)
-        .max(4) as usize;
+    let max_w = row.width.saturating_sub(PAD_LEFT + PAD_RIGHT).max(4) as usize;
     let mut line = if UnicodeWidthStr::width(joined.as_str()) > max_w {
         // Prefer a compact summary when many/long names.
         let summary = if n == 1 {
@@ -616,7 +613,9 @@ mod wrap_tests {
     #[test]
     fn prompt_height_includes_box_chrome() {
         // gap + top + 1 text + bottom + hint
-        assert!(OUTER_TOP_GAP + VPAD_TOP + 1 + INFO_BLOCK + HINT_GAP >= 5);
+        const {
+            assert!(OUTER_TOP_GAP + VPAD_TOP + 1 + INFO_BLOCK + HINT_GAP >= 5);
+        }
     }
 
     #[test]

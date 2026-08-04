@@ -55,9 +55,7 @@ impl std::str::FromStr for OutputFormat {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::parse(s).ok_or_else(|| {
-            format!(
-                "invalid output format '{s}' (expected text, json, or stream-json)"
-            )
+            format!("invalid output format '{s}' (expected text, json, or stream-json)")
         })
     }
 }
@@ -75,13 +73,9 @@ pub enum CiEvent {
         cwd: String,
     },
     /// Incremental assistant text.
-    TextDelta {
-        text: String,
-    },
+    TextDelta { text: String },
     /// Incremental thinking / reasoning text.
-    ThinkingDelta {
-        text: String,
-    },
+    ThinkingDelta { text: String },
     /// Model requested a tool.
     ToolStart {
         id: String,
@@ -104,9 +98,7 @@ pub enum CiEvent {
         cache_read_input_tokens: Option<u64>,
     },
     /// Human-readable status (e.g. "LLM request (step 2)…").
-    Status {
-        message: String,
-    },
+    Status { message: String },
     /// Final envelope: always last event for stream-json; sole object for json.
     Result {
         result: String,
@@ -121,9 +113,7 @@ pub enum CiEvent {
         error: Option<String>,
     },
     /// Hard failure before / outside a completed turn result.
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// Turn cancelled (e.g. interrupt).
     Cancelled,
 }

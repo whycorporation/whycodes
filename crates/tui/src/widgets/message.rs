@@ -126,9 +126,7 @@ fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<
         .fg(palette.dim)
         .add_modifier(Modifier::BOLD);
     let detail = Style::default().fg(palette.dim);
-    let body = Style::default()
-        .fg(palette.fg)
-        .add_modifier(Modifier::DIM);
+    let body = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
     let show_rail = t.show_body();
 
     let rail_prefix = |spans: Vec<Span<'static>>| -> Line<'static> {

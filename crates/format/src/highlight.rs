@@ -202,12 +202,7 @@ fn plain_lines(code: &str) -> Vec<Vec<CodeSpan>> {
         return Vec::new();
     }
     LinesWithEndings::from(code)
-        .map(|line| {
-            vec![(
-                PLAIN_FG,
-                line.trim_end_matches(['\r', '\n']).to_string(),
-            )]
-        })
+        .map(|line| vec![(PLAIN_FG, line.trim_end_matches(['\r', '\n']).to_string())])
         .collect()
 }
 

@@ -209,7 +209,7 @@ fn test_append_thinking() {
 
 #[test]
 fn test_thinking_lifecycle_finish_and_elapsed() {
-    use crate::app::{format_thinking_elapsed, ThinkingBlock};
+    use crate::app::{ThinkingBlock, format_thinking_elapsed};
     let mut app = TuiApp::new(test_config());
     app.append_thinking("step 1\n");
     app.append_thinking("step 2\n");
@@ -285,9 +285,7 @@ fn test_format_usage_short() {
 
 #[test]
 fn test_format_context_usage_and_percent() {
-    use crate::app::{
-        context_tokens_from_usage, format_context_percent, format_context_usage,
-    };
+    use crate::app::{context_tokens_from_usage, format_context_percent, format_context_usage};
     use whycode_core::types::Usage;
 
     assert_eq!(format_context_usage(1_200, 200_000), "1.2k / 200k");
@@ -351,7 +349,7 @@ fn test_toggle_selected_thinking() {
 
 #[test]
 fn test_thinking_live_tail_truncates() {
-    use crate::app::{ThinkingBlock, THINKING_LIVE_TAIL_LINES};
+    use crate::app::{THINKING_LIVE_TAIL_LINES, ThinkingBlock};
     let mut text = String::new();
     for i in 0..(THINKING_LIVE_TAIL_LINES + 5) {
         text.push_str(&format!("line {i}\n"));
@@ -953,7 +951,10 @@ fn scroll_rows_uses_display_height_not_message_count() {
 fn scroll_to_top_and_bottom_match_visible_range() {
     let mut app = TuiApp::new(test_config());
     for i in 0..12 {
-        app.add_message(ChatRole::User, format!("message line {i} with enough text to wrap maybe"));
+        app.add_message(
+            ChatRole::User,
+            format!("message line {i} with enough text to wrap maybe"),
+        );
         app.add_message(ChatRole::Assistant, format!("reply {i}"));
     }
     app.chat_content_width = 40;

@@ -363,20 +363,14 @@ fn ignore_sigpipe() {}
 fn init_logging(cli: &Cli) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     let log_file = std::env::var_os("WHYCODE_LOG_FILE").map(PathBuf::from);
-    let log_level = std::env::var("WHYCODE_LOG_LEVEL")
-        .ok()
-        .or_else(|| {
-            Config::load()
-                .ok()
-                .and_then(|c| c.general.log_level.clone())
-        });
+    let log_level = std::env::var("WHYCODE_LOG_LEVEL").ok().or_else(|| {
+        Config::load()
+            .ok()
+            .and_then(|c| c.general.log_level.clone())
+    });
 
     // Full-screen TUI is the default for Run / bare invoke without --plain.
-    let is_tui = !cli.plain
-        && matches!(
-            &cli.command,
-            None | Some(Commands::Run { .. })
-        );
+    let is_tui = !cli.plain && matches!(&cli.command, None | Some(Commands::Run { .. }));
 
     let opts = whycode_core::logging::InitOptions {
         data_dir,
@@ -1069,7 +1063,9 @@ fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -> bool
     let env = provider_env_var(provider);
     eprintln!(
         "{}\n  {}\n  {}\n  {}",
-        format!("Setup needed · no API key for `{provider}`").yellow().bold(),
+        format!("Setup needed · no API key for `{provider}`")
+            .yellow()
+            .bold(),
         format!("→ export {env}=…").dimmed(),
         format!("→ whycode provider add {provider} --api-key <key>").dimmed(),
         "Then /connect and try again.".dimmed(),

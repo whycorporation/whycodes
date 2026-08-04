@@ -126,7 +126,10 @@ fn convert_blocks_message(
     let text = text_parts.join("");
 
     // Strict APIs: assistant must have non-empty text and/or tool_calls.
-    if *role == Role::Assistant && text.is_empty() && tool_calls.is_empty() && image_parts.is_empty()
+    if *role == Role::Assistant
+        && text.is_empty()
+        && tool_calls.is_empty()
+        && image_parts.is_empty()
     {
         return None;
     }
@@ -471,8 +474,7 @@ mod tests {
         assert!(default_msgs[1]["tool_calls"][0]["function"]["arguments"].is_string());
 
         // Explicit provider config path: bare object
-        let object_msgs =
-            convert_messages_with_format(&req, ToolArgumentsFormat::Object);
+        let object_msgs = convert_messages_with_format(&req, ToolArgumentsFormat::Object);
         let args = &object_msgs[1]["tool_calls"][0]["function"]["arguments"];
         assert!(args.is_object(), "expected object, got {args}");
         assert_eq!(args["query"], "nuxt");
@@ -480,7 +482,12 @@ mod tests {
 
     #[test]
     fn parse_tool_arguments_empty_null() {
-        assert!(parse_tool_arguments(&Value::Null).as_object().unwrap().is_empty());
+        assert!(
+            parse_tool_arguments(&Value::Null)
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
         assert!(
             parse_tool_arguments(&Value::String(String::new()))
                 .as_object()

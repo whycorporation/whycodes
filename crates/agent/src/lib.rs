@@ -3,9 +3,9 @@ pub mod events;
 pub mod mcp_load;
 pub mod permission;
 pub mod subagent;
-pub mod tool_stream;
 #[cfg(test)]
 mod tests;
+pub mod tool_stream;
 
 pub use agent::Agent;
 pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};

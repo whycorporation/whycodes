@@ -163,7 +163,10 @@ fn heuristic_context_window(model_lower: &str, provider_lower: &str) -> u32 {
         128_000
     } else if model_lower.contains("deepseek") {
         64_000
-    } else if model_lower.contains("gpt-4o") || model_lower.starts_with("o1") || model_lower.starts_with("o3") {
+    } else if model_lower.contains("gpt-4o")
+        || model_lower.starts_with("o1")
+        || model_lower.starts_with("o3")
+    {
         128_000
     } else if model_lower.contains("gpt-4") {
         8_192
@@ -455,13 +458,8 @@ mod tests {
     #[test]
     fn resolve_prefers_api_over_builtin() {
         // Built-in would guess ~128k for unknown; API says 1.05M.
-        let n = resolve_context_window(
-            "custom",
-            "auto/best-coding",
-            None,
-            Some(1_050_000),
-            200_000,
-        );
+        let n =
+            resolve_context_window("custom", "auto/best-coding", None, Some(1_050_000), 200_000);
         assert_eq!(n, 1_050_000);
     }
 

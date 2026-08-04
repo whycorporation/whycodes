@@ -75,12 +75,10 @@ impl Tool for WebFetchTool {
             }
         };
 
-        let request = client
-            .get(url)
-            .header(
-                reqwest::header::ACCEPT,
-                "application/json, text/markdown;q=0.9, text/plain;q=0.8, text/html;q=0.5, */*;q=0.1",
-            );
+        let request = client.get(url).header(
+            reqwest::header::ACCEPT,
+            "application/json, text/markdown;q=0.9, text/plain;q=0.8, text/html;q=0.5, */*;q=0.1",
+        );
 
         match request.send().await {
             Ok(response) => {
@@ -137,10 +135,7 @@ fn format_body(content_type: &str, raw: &str) -> String {
     }
 
     // Markdown / plain: return as-is (collapse only extreme blank runs later if needed).
-    if ct.contains("markdown")
-        || ct.contains("text/plain")
-        || ct.starts_with("text/x-markdown")
-    {
+    if ct.contains("markdown") || ct.contains("text/plain") || ct.starts_with("text/x-markdown") {
         return normalize_whitespace(raw);
     }
 
@@ -203,22 +198,24 @@ fn strip_tag_blocks(html: &str, tags: &[&str]) -> String {
         let mut skipped = false;
         for tag in tags {
             let open = format!("<{tag}");
-            if lower[i..].starts_with(&open) {
-                if let Some(rel) = lower[i..].find('>') {
-                    let after_open = i + rel + 1;
-                    let close = format!("</{tag}>");
-                    if let Some(rel_close) = lower[after_open..].find(&close) {
-                        i = after_open + rel_close + close.len();
-                        skipped = true;
-                        break;
-                    }
+            if lower[i..].starts_with(&open)
+                && let Some(rel) = lower[i..].find('>')
+            {
+                let after_open = i + rel + 1;
+                let close = format!("</{tag}>");
+                if let Some(rel_close) = lower[after_open..].find(&close) {
+                    i = after_open + rel_close + close.len();
+                    skipped = true;
+                    break;
                 }
             }
         }
         if skipped {
             continue;
         }
-        let ch = html[i..].chars().next().unwrap();
+        let Some(ch) = html[i..].chars().next() else {
+            break;
+        };
         out.push(ch);
         i += ch.len_utf8();
     }
@@ -290,7 +287,11 @@ mod tests {
         assert!(!out.contains("alert"));
         assert!(!out.contains(".x{}"));
         assert!(out.contains("Title"));
-        assert!(out.contains("Hello & world") || out.contains("Hello &amp; world") || out.contains("Hello"));
+        assert!(
+            out.contains("Hello & world")
+                || out.contains("Hello &amp; world")
+                || out.contains("Hello")
+        );
         assert!(out.contains("world"));
         assert!(!out.contains("<h1>"));
     }

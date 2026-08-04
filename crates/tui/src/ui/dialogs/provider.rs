@@ -50,10 +50,7 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
         } else {
             Style::default().fg(palette.fg)
         };
-        lines.push(Line::from(Span::styled(
-            format!("{prefix}{name}"),
-            style,
-        )));
+        lines.push(Line::from(Span::styled(format!("{prefix}{name}"), style)));
     }
 
     // Add custom entry.

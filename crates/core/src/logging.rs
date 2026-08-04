@@ -297,10 +297,7 @@ pub fn init(opts: InitOptions) -> crate::Result<LoggingHandle> {
     };
 
     // try_init so tests / double-main don't panic
-    let result = registry
-        .with(file_layer)
-        .with(stderr_layer)
-        .try_init();
+    let result = registry.with(file_layer).with(stderr_layer).try_init();
 
     if let Err(e) = result {
         // Another global subscriber already exists — still keep JSONL state.
@@ -329,10 +326,10 @@ pub fn init(opts: InitOptions) -> crate::Result<LoggingHandle> {
 
 fn resolve_debug_log_path(dirs: &LogDirs, opts: &InitOptions) -> crate::Result<Option<PathBuf>> {
     if let Some(ref p) = opts.log_file {
-        if let Some(parent) = p.parent() {
-            if !parent.as_os_str().is_empty() {
-                fs::create_dir_all(parent).map_err(crate::Error::Io)?;
-            }
+        if let Some(parent) = p.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            fs::create_dir_all(parent).map_err(crate::Error::Io)?;
         }
         link_latest(dirs, p);
         return Ok(Some(p.clone()));
@@ -365,10 +362,7 @@ fn link_latest(dirs: &LogDirs, target: &Path) {
     }
     #[cfg(not(unix))]
     {
-        let _ = fs::write(
-            dirs.debug.join("latest.path"),
-            target.display().to_string(),
-        );
+        let _ = fs::write(dirs.debug.join("latest.path"), target.display().to_string());
     }
 }
 
@@ -377,15 +371,15 @@ fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
     if let Ok(filter) = EnvFilter::try_from_default_env() {
         return filter;
     }
-    if let Some(level) = explicit {
-        if let Ok(f) = EnvFilter::try_new(level) {
-            return f;
-        }
+    if let Some(level) = explicit
+        && let Ok(f) = EnvFilter::try_new(level)
+    {
+        return f;
     }
-    if let Ok(level) = std::env::var("WHYCODE_LOG_LEVEL") {
-        if let Ok(f) = EnvFilter::try_new(&level) {
-            return f;
-        }
+    if let Ok(level) = std::env::var("WHYCODE_LOG_LEVEL")
+        && let Ok(f) = EnvFilter::try_new(&level)
+    {
+        return f;
     }
     EnvFilter::new("info")
 }
@@ -420,10 +414,10 @@ fn install_panic_hook_inner(dirs: LogDirs) {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Restore terminal first so the user can read the panic / shell works.
-        if let Ok(slot) = PANIC_CLEANUP.lock() {
-            if let Some(ref cleanup) = *slot {
-                cleanup();
-            }
+        if let Ok(slot) = PANIC_CLEANUP.lock()
+            && let Some(ref cleanup) = *slot
+        {
+            cleanup();
         }
 
         match write_crash_report(&dirs, info) {
@@ -486,7 +480,10 @@ pub fn format_crash_report(info: &std::panic::PanicHookInfo<'_>) -> String {
     ));
     // Capture a backtrace when the runtime provides one via std.
     out.push_str("\nbacktrace:\n");
-    out.push_str(&format!("{:?}\n", std::backtrace::Backtrace::force_capture()));
+    out.push_str(&format!(
+        "{:?}\n",
+        std::backtrace::Backtrace::force_capture()
+    ));
     out
 }
 
@@ -565,8 +562,7 @@ impl tracing::field::Visit for JsonVisitor {
         } else if field.name() == "sid" {
             self.sid = Some(cleaned);
         } else {
-            self.fields
-                .insert(field.name().to_string(), json!(cleaned));
+            self.fields.insert(field.name().to_string(), json!(cleaned));
         }
     }
 
@@ -576,8 +572,7 @@ impl tracing::field::Visit for JsonVisitor {
         } else if field.name() == "sid" {
             self.sid = Some(value.to_string());
         } else {
-            self.fields
-                .insert(field.name().to_string(), json!(value));
+            self.fields.insert(field.name().to_string(), json!(value));
         }
     }
 

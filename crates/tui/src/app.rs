@@ -284,9 +284,7 @@ impl ThinkingBlock {
 
     pub fn elapsed_ms(&self) -> u128 {
         match self.finished_at {
-            Some(end) => end
-                .saturating_duration_since(self.started_at)
-                .as_millis(),
+            Some(end) => end.saturating_duration_since(self.started_at).as_millis(),
             None => self.started_at.elapsed().as_millis(),
         }
     }
@@ -334,9 +332,7 @@ impl ThinkingBlock {
     }
 
     pub fn is_truncated_live(&self) -> bool {
-        self.is_running()
-            && self.collapsed
-            && self.text.lines().count() > THINKING_LIVE_TAIL_LINES
+        self.is_running() && self.collapsed && self.text.lines().count() > THINKING_LIVE_TAIL_LINES
     }
 }
 
@@ -908,20 +904,13 @@ impl TuiApp {
         configured: Option<u32>,
         session_fallback: u64,
     ) {
-        let api = self
-            .api_context_window
-            .filter(|_| {
-                self.api_context_for
-                    .as_ref()
-                    .is_some_and(|(p, m)| p == provider && m == model)
-            });
-        self.max_context_tokens = whycode_llm::resolve_context_window(
-            provider,
-            model,
-            configured,
-            api,
-            session_fallback,
-        );
+        let api = self.api_context_window.filter(|_| {
+            self.api_context_for
+                .as_ref()
+                .is_some_and(|(p, m)| p == provider && m == model)
+        });
+        self.max_context_tokens =
+            whycode_llm::resolve_context_window(provider, model, configured, api, session_fallback);
     }
 
     /// Apply a single-model context window from `GET /v1/models` and re-resolve.
@@ -1029,11 +1018,7 @@ impl TuiApp {
             ));
         }
         let img = crate::images::load_prompt_image(path)?;
-        if self
-            .pending_images
-            .iter()
-            .any(|p| p.path == img.path)
-        {
+        if self.pending_images.iter().any(|p| p.path == img.path) {
             return Ok(()); // already attached
         }
         self.pending_images.push(img);
@@ -1157,7 +1142,7 @@ impl TuiApp {
                     text.push_str(&format!("\n\n[{name}]\n{input}\n"));
                 }
                 ChatBlock::ToolResult { content, .. } => {
-                    text.push_str("\n");
+                    text.push('\n');
                     text.push_str(content);
                 }
                 _ => {}
@@ -1178,8 +1163,10 @@ impl TuiApp {
             );
             true
         } else {
-            self.toasts
-                .push(crate::toast::ToastKind::Warning, "Copy failed — no clipboard");
+            self.toasts.push(
+                crate::toast::ToastKind::Warning,
+                "Copy failed — no clipboard",
+            );
             false
         }
     }

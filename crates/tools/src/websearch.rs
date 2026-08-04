@@ -77,9 +77,11 @@ impl Tool for WebSearchTool {
                         let mut results = String::new();
                         if let Some(organic) = data["organic_results"].as_array() {
                             for (i, result) in organic.iter().enumerate() {
-                                let title = strip_markup(result["title"].as_str().unwrap_or("No title"));
+                                let title =
+                                    strip_markup(result["title"].as_str().unwrap_or("No title"));
                                 let link = result["link"].as_str().unwrap_or("No link");
-                                let snippet = strip_markup(result["snippet"].as_str().unwrap_or(""));
+                                let snippet =
+                                    strip_markup(result["snippet"].as_str().unwrap_or(""));
                                 results.push_str(&format!(
                                     "{}. {}\n   {}\n   {}\n\n",
                                     i + 1,

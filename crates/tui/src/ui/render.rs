@@ -364,19 +364,22 @@ fn strip_status_chrome(s: &str) -> String {
         .map(|c| SPIN.contains(c))
         .unwrap_or(false)
     {
-        out = out.chars().skip(1).collect::<String>().trim_start().to_string();
+        out = out
+            .chars()
+            .skip(1)
+            .collect::<String>()
+            .trim_start()
+            .to_string();
     }
-    for noise in [
-        "[Esc cancel]",
-        "[esc cancel]",
-        "Esc cancel",
-        "esc cancel",
-    ] {
+    for noise in ["[Esc cancel]", "[esc cancel]", "Esc cancel", "esc cancel"] {
         out = out.replace(noise, "");
     }
     // Collapse leftover whitespace / separators.
     let parts: Vec<&str> = out.split_whitespace().collect();
-    parts.join(" ").trim_matches(|c: char| c == '·' || c.is_whitespace()).to_string()
+    parts
+        .join(" ")
+        .trim_matches(|c: char| c == '·' || c.is_whitespace())
+        .to_string()
 }
 
 fn truncate_mid(s: &str, max: usize) -> String {
@@ -419,5 +422,3 @@ mod tests {
         );
     }
 }
-
-

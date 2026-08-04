@@ -59,12 +59,10 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
         } else {
             format!("Attached {attached} images")
         };
-        app.toasts
-            .push(crate::toast::ToastKind::Success, label);
+        app.toasts.push(crate::toast::ToastKind::Success, label);
     }
     if let Some(err) = last_err {
-        app.toasts
-            .push(crate::toast::ToastKind::Warning, err);
+        app.toasts.push(crate::toast::ToastKind::Warning, err);
     }
 
     let text = classified.text;
@@ -395,10 +393,8 @@ fn handle_escape(app: &mut TuiApp) {
             return;
         }
         app.esc_armed_at = Some(now);
-        app.toasts.push(
-            crate::toast::ToastKind::Info,
-            "press Esc again to clear",
-        );
+        app.toasts
+            .push(crate::toast::ToastKind::Info, "press Esc again to clear");
         return;
     }
 
@@ -423,7 +419,9 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
         }
         // Empty buffer + staged images: Backspace peels off the last attachment.
         Action::InputBackspace
-            if app.input_cursor == 0 && app.input_buffer.is_empty() && !app.pending_images.is_empty() =>
+            if app.input_cursor == 0
+                && app.input_buffer.is_empty()
+                && !app.pending_images.is_empty() =>
         {
             if let Some(img) = app.pop_pending_image() {
                 app.toasts.push(
@@ -567,8 +565,7 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 sel.dragging = false;
                 // Linear selection needs the real endpoints, not a normalized
                 // rectangle (that would pull in the empty corner of short lines).
-                let same_cell =
-                    sel.anchor_x == sel.focus_x && sel.anchor_y == sel.focus_y;
+                let same_cell = sel.anchor_x == sel.focus_x && sel.anchor_y == sel.focus_y;
                 if same_cell {
                     // Plain click (no drag): copy cwd if the path was hit.
                     let col = mouse.column;
@@ -619,8 +616,7 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
 // ── Dialog Key Handling ────────────────────────────────────────────────
 fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
-    let action =
-        crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, app.focus, key);
+    let action = crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, app.focus, key);
 
     let active = match app.dialogs.active() {
         Some(d) => d.clone(),
@@ -787,6 +783,49 @@ fn open_provider_dialog(app: &mut TuiApp) {
     app.dialogs.push(DialogKind::Provider);
 }
 
+/// Open `dialog`, putting the app into dialog mode.
+pub fn open_dialog(app: &mut TuiApp, dialog: DialogKind) {
+    app.mode = AppMode::Dialog;
+    app.key_context = KeymapContext::Dialog;
+    app.dialogs.push(dialog);
+}
+
+/// Move the cursor within whichever dialog is showing a list.
+///
+/// The provider dialog has two modes and only one of them is a list: in
+/// add-custom it is a form, where up and down move between input fields.
+fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
+    use crate::app::{ProviderDialogMode, move_selection};
+    match active {
+        DialogKind::Provider if app.provider_dialog.mode == ProviderDialogMode::AddCustom => {
+            app.provider_dialog.active_field =
+                move_selection(app.provider_dialog.active_field, 4, delta);
+        }
+        DialogKind::Provider => {
+            app.provider_dialog.selected = move_selection(
+                app.provider_dialog.selected,
+                app.provider_dialog.providers.len(),
+                delta,
+            );
+        }
+        DialogKind::Model => {
+            app.model_selection.selected = move_selection(
+                app.model_selection.selected,
+                app.model_selection.models.len(),
+                delta,
+            );
+        }
+        DialogKind::SessionList => {
+            app.session_list.selected = move_selection(
+                app.session_list.selected,
+                app.session_list.sessions.len(),
+                delta,
+            );
+        }
+        _ => {}
+    }
+}
+
 // ── Dialog helpers ─────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -837,48 +876,5 @@ mod utf8_cursor_tests {
         assert_eq!(&s[..c], "ş");
         c = next_boundary(s, c);
         assert_eq!(&s[..c], "şx");
-    }
-}
-
-/// Open `dialog`, putting the app into dialog mode.
-pub fn open_dialog(app: &mut TuiApp, dialog: DialogKind) {
-    app.mode = AppMode::Dialog;
-    app.key_context = KeymapContext::Dialog;
-    app.dialogs.push(dialog);
-}
-
-/// Move the cursor within whichever dialog is showing a list.
-///
-/// The provider dialog has two modes and only one of them is a list: in
-/// add-custom it is a form, where up and down move between input fields.
-fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
-    use crate::app::{ProviderDialogMode, move_selection};
-    match active {
-        DialogKind::Provider if app.provider_dialog.mode == ProviderDialogMode::AddCustom => {
-            app.provider_dialog.active_field =
-                move_selection(app.provider_dialog.active_field, 4, delta);
-        }
-        DialogKind::Provider => {
-            app.provider_dialog.selected = move_selection(
-                app.provider_dialog.selected,
-                app.provider_dialog.providers.len(),
-                delta,
-            );
-        }
-        DialogKind::Model => {
-            app.model_selection.selected = move_selection(
-                app.model_selection.selected,
-                app.model_selection.models.len(),
-                delta,
-            );
-        }
-        DialogKind::SessionList => {
-            app.session_list.selected = move_selection(
-                app.session_list.selected,
-                app.session_list.sessions.len(),
-                delta,
-            );
-        }
-        _ => {}
     }
 }

@@ -23,16 +23,13 @@ pub struct ModelCatalog {
 
 impl ModelCatalog {
     pub fn context_window(&self, model: &str) -> Option<u32> {
-        self.context_windows
-            .get(model)
-            .copied()
-            .or_else(|| {
-                // Some gateways return `provider/model`; callers may only have `model`.
-                self.context_windows
-                    .iter()
-                    .find(|(id, _)| id.ends_with(&format!("/{model}")) || *id == model)
-                    .map(|(_, n)| *n)
-            })
+        self.context_windows.get(model).copied().or_else(|| {
+            // Some gateways return `provider/model`; callers may only have `model`.
+            self.context_windows
+                .iter()
+                .find(|(id, _)| id.ends_with(&format!("/{model}")) || *id == model)
+                .map(|(_, n)| *n)
+        })
     }
 
     pub fn is_empty(&self) -> bool {
@@ -86,22 +83,22 @@ pub fn context_window_from_model_value(m: &Value) -> Option<u32> {
         "max_tokens", // ambiguous; last resort
     ];
     for key in KEYS {
-        if let Some(n) = as_u32(m.get(*key)) {
-            if n > 0 {
-                return Some(n);
-            }
+        if let Some(n) = as_u32(m.get(*key))
+            && n > 0
+        {
+            return Some(n);
         }
     }
     // Nested OpenRouter-style: top_provider.context_length / architecture
-    if let Some(tp) = m.get("top_provider") {
-        if let Some(n) = as_u32(tp.get("context_length")).filter(|n| *n > 0) {
-            return Some(n);
-        }
+    if let Some(tp) = m.get("top_provider")
+        && let Some(n) = as_u32(tp.get("context_length")).filter(|n| *n > 0)
+    {
+        return Some(n);
     }
-    if let Some(arch) = m.get("architecture") {
-        if let Some(n) = as_u32(arch.get("context_length")).filter(|n| *n > 0) {
-            return Some(n);
-        }
+    if let Some(arch) = m.get("architecture")
+        && let Some(n) = as_u32(arch.get("context_length")).filter(|n| *n > 0)
+    {
+        return Some(n);
     }
     None
 }
@@ -111,15 +108,16 @@ fn as_u32(v: Option<&Value>) -> Option<u32> {
     if let Some(n) = v.as_u64() {
         return u32::try_from(n).ok();
     }
-    if let Some(n) = v.as_i64() {
-        if n > 0 {
-            return u32::try_from(n).ok();
-        }
+    if let Some(n) = v.as_i64()
+        && n > 0
+    {
+        return u32::try_from(n).ok();
     }
-    if let Some(f) = v.as_f64() {
-        if f > 0.0 && f < u32::MAX as f64 {
-            return Some(f as u32);
-        }
+    if let Some(f) = v.as_f64()
+        && f > 0.0
+        && f < u32::MAX as f64
+    {
+        return Some(f as u32);
     }
     if let Some(s) = v.as_str() {
         return s.parse().ok();
@@ -249,12 +247,7 @@ pub fn catalog_request_from_config(
 pub async fn fetch_model_catalog_from_request(
     req: &CatalogFetchRequest,
 ) -> whycode_core::Result<ModelCatalog> {
-    fetch_model_catalog(
-        &req.base_url,
-        req.api_key.as_deref(),
-        &req.headers,
-    )
-    .await
+    fetch_model_catalog(&req.base_url, req.api_key.as_deref(), &req.headers).await
 }
 
 /// Fetch `/v1/models` and return **only** `model`'s context window (no full map on heap).
@@ -276,10 +269,14 @@ pub async fn fetch_model_context_window(
         .headers
         .keys()
         .any(|k| k.eq_ignore_ascii_case("authorization"));
-    if let Some(key) = req.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
-        if !has_authorization {
-            http = http.header("Authorization", format!("Bearer {key}"));
-        }
+    if let Some(key) = req
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty())
+        && !has_authorization
+    {
+        http = http.header("Authorization", format!("Bearer {key}"));
     }
 
     let resp = http
@@ -338,10 +335,10 @@ pub async fn fetch_model_catalog(
         .keys()
         .any(|k| k.eq_ignore_ascii_case("authorization"));
 
-    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
-        if !has_authorization {
-            req = req.header("Authorization", format!("Bearer {key}"));
-        }
+    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty())
+        && !has_authorization
+    {
+        req = req.header("Authorization", format!("Bearer {key}"));
     }
 
     let resp = req
@@ -432,10 +429,7 @@ mod tests {
                 api_key: Some("sk-from-config".into()),
                 api_base: None,
                 base_url: Some("http://gateway.example/v1".into()),
-                headers: Some(HashMap::from([(
-                    "x-api-key".into(),
-                    "header-key".into(),
-                )])),
+                headers: Some(HashMap::from([("x-api-key".into(), "header-key".into())])),
                 models: vec![],
                 tool_arguments: None,
                 extra: Default::default(),
@@ -475,7 +469,10 @@ mod tests {
         assert_eq!(cat.context_window("auto/best-coding"), Some(1_050_000));
         assert_eq!(cat.context_window("gpt-4o"), Some(128_000));
         assert_eq!(cat.context_window("no-meta"), None);
-        assert_eq!(cat.max_output_tokens.get("auto/best-coding"), Some(&1_048_576));
+        assert_eq!(
+            cat.max_output_tokens.get("auto/best-coding"),
+            Some(&1_048_576)
+        );
     }
 
     #[test]

@@ -43,9 +43,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
             Span::raw("  "),
             Span::styled(
                 key_pad,
-                Style::default()
-                    .fg(palette.fg)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
             ),
             Span::styled(desc.to_string(), Style::default().fg(palette.dim)),
         ])

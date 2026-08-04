@@ -293,10 +293,7 @@ fn paint_row(
         spans.push(Span::styled(hint_text, hint_style));
     }
     if (width as usize) > used {
-        spans.push(Span::styled(
-            " ".repeat(width as usize - used),
-            pad_style,
-        ));
+        spans.push(Span::styled(" ".repeat(width as usize - used), pad_style));
     }
     let line = Line::from(spans);
     // set_line writes graphemes without restyling the whole rect.

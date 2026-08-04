@@ -17,7 +17,7 @@ pub mod ui;
 pub mod widgets;
 
 pub use app::TuiApp;
-pub use run::{tui_available, TuiRunOptions, run};
+pub use run::{TuiRunOptions, run, tui_available};
 
 #[cfg(test)]
 mod tests;

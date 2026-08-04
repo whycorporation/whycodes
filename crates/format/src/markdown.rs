@@ -1,7 +1,33 @@
+use std::sync::OnceLock;
+
 use regex::Regex;
 
 use crate::highlight::highlight_code;
 use crate::mermaid::{is_mermaid_language, render_mermaid};
+
+/// Compile a static inline-markdown regex once. Invalid patterns return `None`
+/// (no panic) so the line is left unstyled rather than aborting the TUI.
+fn re_code() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"`([^`]+)`").ok()).as_ref()
+}
+
+fn re_bold() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\*\*(.+?)\*\*").ok())
+        .as_ref()
+}
+
+fn re_italic() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\*(.+?)\*").ok()).as_ref()
+}
+
+fn re_link() -> Option<&'static Regex> {
+    static RE: OnceLock<Option<Regex>> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").ok())
+        .as_ref()
+}
 
 // ── Structured markdown ────────────────────────────────────────────────
 //
@@ -336,25 +362,27 @@ fn format_inline(text: &str) -> String {
     let mut result = text.to_string();
 
     // Inline code: `text` (do first to avoid interference)
-    let code_re = Regex::new(r"`([^`]+)`").unwrap();
-    result = code_re.replace_all(&result, "\x1b[7m$1\x1b[0m").to_string();
+    if let Some(re) = re_code() {
+        result = re.replace_all(&result, "\x1b[7m$1\x1b[0m").to_string();
+    }
 
     // Bold: **text**
-    let bold_re = Regex::new(r"\*\*(.+?)\*\*").unwrap();
-    result = bold_re.replace_all(&result, "\x1b[1m$1\x1b[0m").to_string();
+    if let Some(re) = re_bold() {
+        result = re.replace_all(&result, "\x1b[1m$1\x1b[0m").to_string();
+    }
 
     // Italic: *text* — simple non-greedy match between single * chars.
     // After bold replacement, remaining single * pairs are italics.
-    let italic_re = Regex::new(r"\*(.+?)\*").unwrap();
-    result = italic_re
-        .replace_all(&result, "\x1b[3m$1\x1b[0m")
-        .to_string();
+    if let Some(re) = re_italic() {
+        result = re.replace_all(&result, "\x1b[3m$1\x1b[0m").to_string();
+    }
 
     // Links: [text](url)
-    let link_re = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-    result = link_re
-        .replace_all(&result, "\x1b[36m\x1b[4m$1\x1b[0m (\x1b[36m$2\x1b[0m)")
-        .to_string();
+    if let Some(re) = re_link() {
+        result = re
+            .replace_all(&result, "\x1b[36m\x1b[4m$1\x1b[0m (\x1b[36m$2\x1b[0m)")
+            .to_string();
+    }
 
     result
 }

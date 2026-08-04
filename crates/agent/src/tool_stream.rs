@@ -75,11 +75,10 @@ impl ToolCallAssembler {
         }
 
         let target = if !id.is_empty() {
-            self.keys.get(id).copied().or_else(|| {
-                id.parse::<usize>()
-                    .ok()
-                    .filter(|&i| i < self.calls.len())
-            })
+            self.keys
+                .get(id)
+                .copied()
+                .or_else(|| id.parse::<usize>().ok().filter(|&i| i < self.calls.len()))
         } else {
             None
         }

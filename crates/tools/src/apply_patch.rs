@@ -97,11 +97,24 @@ impl Tool for ApplyPatchTool {
         // Ensure temp file is flushed
         drop(file);
 
+        let stdin = match std::fs::File::open(&temp_file) {
+            Ok(f) => f,
+            Err(e) => {
+                // Best-effort cleanup; ignore failure on the error path.
+                drop(std::fs::remove_file(&temp_file));
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Error reopening temp patch file: {}", e),
+                    is_error: true,
+                };
+            }
+        };
+
         // Run patch command
         let output = Command::new("patch")
             .arg("-u")
             .arg(&full_path)
-            .stdin(std::fs::File::open(&temp_file).unwrap())
+            .stdin(stdin)
             .output();
 
         // Clean up temp file
