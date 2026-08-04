@@ -1,6 +1,6 @@
-# Phase 3 — OAuth and credential discovery
+# Plan — OAuth and credential discovery
 
-**Status:** blocked (2026-07-31) · **Depends on:** 2 · **Blocks:** nothing
+**Status:** blocked (2026-07-31) · **Was:** phase 3 · **Depends on:** first install/release path ([plan-distribution.md](plan-distribution.md)) · **Blocks:** nothing
 
 ## Why this is blocked rather than in progress
 

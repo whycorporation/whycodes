@@ -1,8 +1,9 @@
 # Benchmarks
 
-Phase 5 of [5.md](5.md). Before this, whycode had no measurements at all — not
-slow ones, none — so there was no way to tell whether a change made things worse
-and no basis for any performance statement.
+Living method doc for performance measurement (open residual work:
+[plan-performance.md](plan-performance.md)). Before this, whycode had no
+measurements at all — not slow ones, none — so there was no way to tell whether
+a change made things worse and no basis for any performance statement.
 
 ## Running them
 

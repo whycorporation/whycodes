@@ -1,6 +1,6 @@
-# Phase 2 — Distribution and self-update
+# Plan — Distribution and self-update
 
-**Status:** implemented, release not yet cut (2026-07-31) · **Depends on:** nothing · **Blocks:** 3
+**Status:** implemented, release not yet cut · **Was:** phase 2 · **Blocks:** OAuth plan (registration after install path exists)
 
 ## Problem
 

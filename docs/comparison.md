@@ -1,7 +1,8 @@
 # Where whycode stands
 
-Background for the phased plan. Measured 2026-07-31 against
-[jcode](https://github.com/1jehuang/jcode) at a shallow clone of `master`.
+Background snapshot for the roadmap ([status.md](status.md)). Measured
+2026-07-31 against [jcode](https://github.com/1jehuang/jcode) at a shallow
+clone of `master`. Numbers may be stale; re-measure via [benchmarks.md](benchmarks.md).
 
 ## Numbers
 
@@ -49,37 +50,32 @@ own claims.
 - A small, readable codebase. 24k lines is an asset while the design is still
   moving.
 
-## What jcode has that whycode does not
+## Gaps then vs now
 
-Ordered by how much each one costs a whycode user today.
+Snapshot from 2026-07-31, with current status (2026-08-04):
 
-| Gap | Consequence | Phase |
+| Gap (2026-07-31) | Then | Now |
 |---|---|---|
-| No shell risk classification | `bash = "allow"` executes anything the model emits, including `rm -rf ~` | [1](1.md) |
-| No binaries, no working self-update | A user must have a Rust toolchain; `whycode upgrade` only prints instructions | [2](2.md) |
-| API keys only | No OAuth, no reuse of credentials already on the machine | [3](3.md) |
-| No quality budgets | Panics, swallowed errors and binary size drift silently | [4](4.md) |
-| No benchmarks | No basis for any performance statement | [5](5.md) |
-| No memory across sessions | Every session starts cold | [6](6.md) |
-| Subagents but no coordination | `task` spawns one subagent; no parallel agents on one repo | [7](7.md) |
+| No shell risk classification | open | **done** — [archive/phase-1](archive/phase-1-command-risk.md) + OS sandbox [phase-9](archive/phase-9-sandbox.md) |
+| No binaries / self-update | open | **implemented** — [plan-distribution](plan-distribution.md); first `v*` tag still needed |
+| API keys only | open | **blocked** — [plan-oauth](plan-oauth.md) (owner terms decision) |
+| No quality budgets | open | **done** — [budgets.md](budgets.md), [archive/phase-4](archive/phase-4-ci-budgets.md) |
+| No benchmarks | open | **mostly done** — [benchmarks.md](benchmarks.md), residual [plan-performance](plan-performance.md) |
+| No memory across sessions | open | **not started** — [plan-memory](plan-memory.md) |
+| No multi-agent coordination | open | **dropped** — [archive/phase-7](archive/phase-7-multi-agent.md) |
+
+Living feature matrix vs other products: [FEATURES.md](FEATURES.md).
 
 ## Positioning
 
-"OpenCode parity in Rust" is the goal recorded in whycode's own history
-(`feat: OpenCode-parity TUI, CLI, providers — full rewrite`). It is a weak
-position: a user comparing whycode to OpenCode has no reason to pick the copy,
-and jcode already occupies the "measurably more efficient alternative" slot
-with numbers attached.
+"OpenCode parity in Rust" is a weak goal (recorded in early history): a user
+comparing whycode to OpenCode has no reason to pick the copy, and jcode already
+occupies the "measurably more efficient alternative" slot with numbers.
 
-The plan below does not pick a new slogan. It closes the gaps that make
-whycode unusable by anyone who is not already building it from source, and
-Phase 5 produces the measurements any future positioning claim would need.
-Two candidate axes are visible from the comparison and are recorded here so
-the option is not lost:
+The roadmap does not pick a new slogan; it closes ship-blockers first. Candidate
+axes still on the table once measurements are trusted:
 
-- **First-class Windows support.** Rust terminal tooling is routinely weak
-  here, and whycode already runs its full suite on Windows in CI. jcode has a
-  `windows-smoke.yml` workflow, so this is contested, not open.
-- **LSP depth.** whycode has an LSP crate; jcode's workspace does not.
+- **First-class Windows support** — full suite in CI; contested by jcode smoke.
+- **LSP depth** — whycode has an LSP crate; jcode's workspace did not at measure time.
 
-Neither is a decision yet. Making one requires Phase 5's data.
+Neither is a product decision yet. See [status.md](status.md).

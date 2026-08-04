@@ -1,7 +1,6 @@
-# Phase 5 — Performance measurement
+# Plan — Performance measurement (residual)
 
-**Status:** mostly done (2026-07-31) · **Depends on:** 4 (shares the CI budget harness)
-· **Blocks:** any positioning claim
+**Status:** mostly done · **Was:** phase 5 · **Depends on:** CI budgets (shipped) · **Blocks:** honest positioning claims until residual items close
 
 ## Problem
 

@@ -1,6 +1,6 @@
-# Phase 6 — Semantic memory
+# Plan — Semantic memory
 
-**Status:** not started · **Depends on:** 4, 5 · **Blocks:** nothing
+**Status:** not started · **Was:** phase 6 · **Depends on:** performance residual comfort ([plan-performance.md](plan-performance.md)) · **Blocks:** nothing
 
 Largest feature in this plan. Not started, deliberately.
 
@@ -8,12 +8,13 @@ Largest feature in this plan. Not started, deliberately.
 
 Two of its preconditions are not met.
 
-**Phase 5 is only half done.** The stated reason for sequencing memory after it
-was that the harness tells us whether the RSS cost is acceptable. What exists is
-peak RSS for a short-lived CLI invocation; what this phase needs is memory for a
-*running session*, which needs the pty harness Phase 5 did not build. Starting
-now means adding an in-process ONNX model with no way to measure what it costs —
-which is the specific thing the sequencing was meant to prevent.
+**Performance residual is not fully closed.** The reason for sequencing memory
+after measurement was that the harness tells us whether the RSS cost is
+acceptable. Startup/RSS/first-frame and idle draws are measured
+([benchmarks.md](benchmarks.md)); multi-session cost of a *running* agent with
+an embedding model still needs a deliberate baseline before landing memory.
+Starting now without that check is the specific thing the sequencing was meant
+to prevent.
 
 **The model-distribution decision is open.** Bundling MiniLM roughly triples the
 download; fetching it on first use adds a network dependency and a supply-chain
@@ -42,7 +43,7 @@ and no model decision. Their `jcode-embedding` crate is 572 lines and runs
 no external service.
 
 Note the trade honestly: jcode's headline memory figure is stated *with local
-embeddings disabled*. An in-process ONNX model costs real RSS. Phase 5 is what
+embeddings disabled*. An in-process ONNX model costs real RSS. The perf plan is what
 lets us decide whether we accept that.
 
 ## Goal
@@ -61,7 +62,7 @@ In:
 - Write path: explicit (`/remember`) first; automatic extraction later, gated
   on the explicit path working.
 - `--no-memory` and a config switch, both defaulting to **off** until the
-  memory cost from Phase 5 justifies flipping it.
+  memory cost from the perf harness justifies flipping it.
 - Inspection: list, search and delete memory entries.
 
 Out:
@@ -88,14 +89,14 @@ Out:
       conversation
 - [ ] `whycode memory list|search|delete|clear`
 - [ ] `--no-memory` flag and `[memory] enabled` config key
-- [ ] Measure with Phase 5: RSS with memory on versus off, and recall latency
+- [ ] Measure with the perf harness: RSS with memory on versus off, and recall latency
 
 ## Acceptance criteria
 
 - [ ] Embedding runs with the network disabled
 - [ ] A fact written with `/remember` in one session is recalled in a new
       session when the topic recurs, and is not recalled on an unrelated topic
-- [ ] Recall adds under 100 ms to a turn on the Phase 5 reference machine
+- [ ] Recall adds under 100 ms to a turn on the benchmarks reference machine
 - [ ] RSS delta from enabling memory is measured and recorded in
       `docs/benchmarks.md`
 - [ ] Injected memories are visibly marked in the prompt, so a user reading a

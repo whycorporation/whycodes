@@ -79,8 +79,8 @@ reads as a fresh install rather than as a locked file. The fix distinguishes
 ## Deliberately not budgeted
 
 - **Warnings.** `-D warnings` already means zero; a budget adds nothing.
-- **Startup time and memory.** These need the harness from
-  [5.md](5.md) before a ceiling means anything.
+- **Startup time and memory.** Harness exists ([benchmarks.md](benchmarks.md));
+  CI ceilings are residual open work in [plan-performance.md](plan-performance.md).
 - **Test size, wildcard re-exports.** Reasonable ideas, low value at this size.
-- **Binary size.** Needs release artifacts, so it belongs with the release
-  workflow in [2.md](2.md) rather than here.
+- **Binary size.** Needs release artifacts; belongs with
+  [plan-distribution.md](plan-distribution.md) rather than here.

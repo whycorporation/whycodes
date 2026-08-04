@@ -488,11 +488,37 @@ blame output:
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 ```
 
-### Roadmap
+## Documentation
 
-`docs/status.md` tracks the phased plan; `docs/1.md` … `docs/9.md` are the
-phase definitions, each with its own scope and acceptance criteria.
-`docs/comparison.md` records the measurements the plan was derived from.
+| Doc | What it is |
+|---|---|
+| [docs/status.md](docs/status.md) | Living roadmap: open work, deferred items, decision log |
+| [docs/FEATURES.md](docs/FEATURES.md) | Feature matrix vs Grok Build, OpenCode, jcode, Claude Code |
+| [docs/KNOWHOW.md](docs/KNOWHOW.md) | Hard-won bugs (TUI, tty, silent exits) — read before event-loop changes |
+| [docs/benchmarks.md](docs/benchmarks.md) | How to measure startup, RSS, first frame, idle draws |
+| [docs/budgets.md](docs/budgets.md) | CI quality budgets (panic, swallow, dependency edges) |
+| [docs/comparison.md](docs/comparison.md) | Early jcode snapshot + gap status |
+| [packaging/README.md](packaging/README.md) | Homebrew formula and packaging notes |
+| [AGENTS.md](AGENTS.md) | Rules for coding agents working in this repo |
+
+### Open plans
+
+Still-open work with acceptance criteria:
+
+| Plan | Status |
+|---|---|
+| [docs/plan-distribution.md](docs/plan-distribution.md) | Implemented; first `v*` release exercises remaining criteria |
+| [docs/plan-oauth.md](docs/plan-oauth.md) | Blocked on owner (client id + terms) |
+| [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; residual stats / CI ceilings |
+| [docs/plan-memory.md](docs/plan-memory.md) | Not started |
+
+### Archived phases
+
+Completed or dropped numbered phases (1, 4, 7, 8, 9) live under
+[docs/archive/](docs/archive/README.md). Do not treat them as open work.
+
+Post-launch deferred: **ACP** (Agent Client Protocol) and `web` surface — see
+decision log in [docs/status.md](docs/status.md).
 
 ## License
 

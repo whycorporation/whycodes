@@ -216,7 +216,7 @@ impl SubagentRunner {
                     // A subagent's tokens are billed to the same session, but
                     // it does not own one — the parent's accounting is what the
                     // user sees, and routing these there needs a channel this
-                    // does not have. Recorded as a known gap in docs/5.md.
+                    // does not have. Recorded as a known gap in docs/plan-performance.md.
                     StreamEvent::Usage { .. } | StreamEvent::CacheUsage { .. } => {}
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}

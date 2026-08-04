@@ -243,9 +243,9 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 
 | Boşluk | Kimde var | Not |
 |---|---|---|
-| OAuth + subscription login | jcode, OpenCode, Claude, Grok | Phase 3 — blocked (owner kararı) |
-| Semantic / cross-session memory | jcode★, Grok, Claude | Phase 6 — not started |
-| Swarm / multi-agent conflict | jcode★ | Phase 7 — dropped (bilinçli) |
+| OAuth + subscription login | jcode, OpenCode, Claude, Grok | [plan-oauth](plan-oauth.md) — blocked (owner kararı) |
+| Semantic / cross-session memory | jcode★, Grok, Claude | [plan-memory](plan-memory.md) — not started |
+| Swarm / multi-agent conflict | jcode★ | dropped ([archive](archive/phase-7-multi-agent.md)) |
 | Browser automation | jcode, Claude | Yok |
 | Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub; **ACP ürün çıktıktan sonra** (`docs/status.md`) |
 | Hooks + plugin marketplace | Grok, OpenCode, Claude | Plugin crate iskelet |
