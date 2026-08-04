@@ -1,31 +1,13 @@
 use regex::Regex;
-use std::sync::OnceLock;
-use syntect::easy::HighlightLines;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
-/// Syntect's default sets, loaded once.
-///
-/// `load_defaults_*` parses the bundled grammar and theme data, which costs
-/// milliseconds. The TUI highlights on every frame, so loading per call made
-/// redrawing proportional to the grammar set rather than to the text on screen.
-fn syntax_set() -> &'static SyntaxSet {
-    static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(SyntaxSet::load_defaults_newlines)
-}
-
-fn theme_set() -> &'static ThemeSet {
-    static SET: OnceLock<ThemeSet> = OnceLock::new();
-    SET.get_or_init(ThemeSet::load_defaults)
-}
+use crate::highlight::highlight_code;
 
 // ── Structured markdown ────────────────────────────────────────────────
 //
 // `render_markdown` below emits ANSI, which suits a plain terminal but not
 // ratatui, which needs `Style` values rather than escape sequences. Parsing to
-// this structure first lets each frontend render it its own way, and lets the
-// TUI colour markdown with the active theme instead of syntect's built-in one.
+// this structure first lets each frontend render it its own way. Fenced code
+// blocks use the shared syntect/two-face highlighter (Tokyo Night).
 
 /// A run of text within a line, carrying its emphasis.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +52,10 @@ pub enum Block {
 }
 
 /// One highlighted run of code: 24-bit colour and the text it applies to.
-pub type CodeSpan = ((u8, u8, u8), String);
+pub use crate::highlight::CodeSpan;
+
+/// Syntax-highlight code into coloured runs (re-export for TUI consumers).
+pub use crate::highlight::highlight_code_spans;
 
 /// Parse markdown into blocks.
 ///
@@ -231,82 +216,6 @@ fn find(chars: &[char], from: usize, needle: &str) -> Option<usize> {
     (from..=chars.len() - len).find(|&i| needle.chars().enumerate().all(|(k, c)| chars[i + k] == c))
 }
 
-/// Syntax-highlight code into coloured runs, for frontends that cannot consume
-/// ANSI. Returns one `Vec<CodeSpan>` per line. An unknown language yields the
-/// text unstyled rather than failing.
-pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Vec<Vec<CodeSpan>> {
-    // Highlighting is roughly 350× the cost of not highlighting — 5.8 ms for a
-    // 100-line Rust block against 17 µs untagged — and the TUI calls this from
-    // its render loop, so the cost is paid per frame rather than per response.
-    // The same block is highlighted identically every frame, so memoise it.
-    let key = cache_key(code, language);
-    if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
-        return hit;
-    }
-    let computed = highlight_uncached(code, language);
-    if let Ok(mut cache) = cache().lock() {
-        // Bounded rather than an LRU: entries are cheap to recompute and the
-        // working set is whatever is on screen. Clearing wholesale beats
-        // tracking recency for a cache this small.
-        if cache.len() >= CACHE_ENTRIES {
-            cache.clear();
-        }
-        cache.insert(key, computed.clone());
-    }
-    computed
-}
-
-/// Most highlighted blocks held at once.
-const CACHE_ENTRIES: usize = 64;
-
-type HighlightCache = std::sync::Mutex<std::collections::HashMap<u64, Vec<Vec<CodeSpan>>>>;
-
-fn cache() -> &'static HighlightCache {
-    static CACHE: OnceLock<HighlightCache> = OnceLock::new();
-    CACHE.get_or_init(Default::default)
-}
-
-fn cache_key(code: &str, language: Option<&str>) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    code.hash(&mut hasher);
-    language.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn highlight_uncached(code: &str, language: Option<&str>) -> Vec<Vec<CodeSpan>> {
-    let ps = syntax_set();
-    let ts = theme_set();
-
-    let syntax = language.and_then(|l| {
-        ps.find_syntax_by_token(l)
-            .or_else(|| ps.find_syntax_by_extension(l))
-    });
-
-    let Some(syntax) = syntax else {
-        return code
-            .lines()
-            .map(|l| vec![((0xcc, 0xcc, 0xcc), l.to_string())])
-            .collect();
-    };
-
-    let mut highlighter = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
-    code.lines()
-        .map(|line| match highlighter.highlight_line(line, ps) {
-            Ok(ranges) => ranges
-                .into_iter()
-                .map(|(style, text)| {
-                    (
-                        (style.foreground.r, style.foreground.g, style.foreground.b),
-                        text.to_string(),
-                    )
-                })
-                .collect(),
-            Err(_) => vec![((0xcc, 0xcc, 0xcc), line.to_string())],
-        })
-        .collect()
-}
-
 /// Render a markdown string to ANSI-escaped terminal output.
 ///
 /// Supported formatting:
@@ -418,34 +327,18 @@ fn format_inline(text: &str) -> String {
     result
 }
 
-/// Syntax-highlight a code block using syntect.
+/// Syntax-highlight a code block using the shared highlighter.
 fn highlight_code_block(code: &str, language: &str) -> String {
-    let ps = syntax_set();
-    let ts = theme_set();
-
-    let syntax = if language.is_empty() {
-        None
-    } else {
-        ps.find_syntax_by_token(language)
-            .or_else(|| ps.find_syntax_by_extension(language))
-    };
-
-    let syntax = match syntax {
-        Some(s) => s,
-        None => return format!("```\n{code}\n```\n"),
-    };
-
-    let theme = &ts.themes["base16-ocean.dark"];
-    let mut highlighter = HighlightLines::new(syntax, theme);
-
-    let mut output = String::with_capacity(code.len() * 2);
-    for line in LinesWithEndings::from(code) {
-        let ranges = highlighter.highlight_line(line, ps).unwrap_or_default();
-        let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        output.push_str(&escaped);
+    if language.is_empty() {
+        return format!("```\n{code}\n```\n");
     }
-
-    output
+    let highlighted = highlight_code(code, language);
+    // `highlight_code` returns the input unchanged when the language is unknown.
+    if highlighted == code {
+        format!("```\n{code}\n```\n")
+    } else {
+        highlighted
+    }
 }
 
 #[cfg(test)]
@@ -632,58 +525,5 @@ mod tests {
         assert!(parse_markdown("").is_empty());
     }
 
-    // ── Code highlighting ───────────────────────────────────────────────
-
-    #[test]
-    fn highlights_known_languages_into_spans() {
-        let lines = highlight_code_spans("let x = 1;", Some("rust"));
-        assert_eq!(lines.len(), 1);
-        assert!(!lines[0].is_empty());
-        let text: String = lines[0].iter().map(|(_, t)| t.as_str()).collect();
-        assert_eq!(text.trim_end(), "let x = 1;");
-    }
-
-    #[test]
-    fn an_unknown_language_still_returns_the_text() {
-        for lang in [None, Some("not-a-language")] {
-            let lines = highlight_code_spans("some text", lang);
-            let text: String = lines[0].iter().map(|(_, t)| t.as_str()).collect();
-            assert_eq!(text.trim_end(), "some text", "{lang:?}");
-        }
-    }
-
-    #[test]
-    fn highlighting_preserves_line_count() {
-        let lines = highlight_code_spans("a\nb\nc", Some("rust"));
-        assert_eq!(lines.len(), 3);
-    }
-
-    #[test]
-    fn a_cached_result_matches_an_uncached_one() {
-        let code = "fn main() { let x = 1; }";
-        let first = highlight_code_spans(code, Some("rust"));
-        let second = highlight_code_spans(code, Some("rust")); // served from cache
-        assert_eq!(first, second);
-        assert_eq!(first, highlight_uncached(code, Some("rust")));
-    }
-
-    #[test]
-    fn the_language_is_part_of_the_cache_key() {
-        // Same text, different language, must not collide.
-        let code = "let x = 1";
-        let rust = highlight_code_spans(code, Some("rust"));
-        let untagged = highlight_code_spans(code, None);
-        assert_ne!(
-            rust, untagged,
-            "a tagged and an untagged block share text but not styling"
-        );
-    }
-
-    #[test]
-    fn the_cache_stays_bounded() {
-        for i in 0..CACHE_ENTRIES * 2 {
-            highlight_code_spans(&format!("let unique_{i} = {i};"), Some("rust"));
-        }
-        assert!(cache().lock().unwrap().len() <= CACHE_ENTRIES);
-    }
+    // Code-span highlighting tests live in `highlight` (shared module).
 }

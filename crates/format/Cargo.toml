@@ -9,7 +9,10 @@ repository.workspace = true
 whycode-core = { path = "../core" }
 serde.workspace = true
 anyhow.workspace = true
-syntect = "5"
+# TextMate highlighting; `default-fancy` matches two-face's syntect-fancy feature.
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+# Bat's extended grammar set (~250+ languages), same stack as Grok TUI.
+two-face = { version = "0.4", default-features = false, features = ["syntect-fancy"] }
 regex = "1"
 
 [dev-dependencies]
