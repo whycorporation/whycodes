@@ -19,11 +19,7 @@ const SUMMARY_TOKEN_SLACK: usize = 64;
 /// ~4 Unicode scalars per token (matches `whycode_llm` fallback family).
 fn estimate_tokens(text: &str) -> usize {
     let n = text.chars().count();
-    if n == 0 {
-        0
-    } else {
-        n.div_ceil(4)
-    }
+    if n == 0 { 0 } else { n.div_ceil(4) }
 }
 
 fn message_tokens(msg: &Message) -> usize {

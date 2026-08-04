@@ -1132,10 +1132,7 @@ fn format_turn_done_status(
 
 /// Drain the agent event channel, coalescing consecutive text/thinking deltas
 /// into one UI append each. Returns whether any event was applied.
-fn drain_turn_events(
-    app: &mut TuiApp,
-    event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>,
-) -> bool {
+fn drain_turn_events(app: &mut TuiApp, event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>) -> bool {
     let mut any = false;
     let mut text_buf = String::new();
     let mut think_buf = String::new();
