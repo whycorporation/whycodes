@@ -8,6 +8,12 @@ use whycode_core::types::ToolResult;
 /// Tool that lists a directory and truncates the output to fit context.
 pub struct TruncationDirTool;
 
+impl Default for TruncationDirTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TruncationDirTool {
     pub fn new() -> Self {
         Self
@@ -74,7 +80,7 @@ impl Tool for TruncationDirTool {
 
         // The first line is typically the "total N" line; keep it.
         // Then take up to max_entries more lines.
-        let header_idx = if lines.first().map_or(false, |l| l.starts_with("total ")) {
+        let header_idx = if lines.first().is_some_and(|l| l.starts_with("total ")) {
             1
         } else {
             0

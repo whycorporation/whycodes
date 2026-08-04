@@ -13,6 +13,12 @@ pub struct McpWebSearchTool {
     inner: WebSearchTool,
 }
 
+impl Default for McpWebSearchTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl McpWebSearchTool {
     pub fn new() -> Self {
         Self {
