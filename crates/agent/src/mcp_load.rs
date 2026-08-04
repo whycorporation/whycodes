@@ -1,19 +1,18 @@
 //! Load MCP servers from config and register their tools on a ToolExecutor.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use whycode_core::config::Config;
+use whycode_core::config::{Config, McpServerConfig, McpTransportKind};
 use whycode_mcp::client::McpClient;
 use whycode_tools::executor::ToolExecutor;
 use whycode_tools::mcp_tool::{McpCaller, McpToolBridge};
 
-/// Shared MCP client for one server process.
 struct SharedMcpCaller {
     client: Arc<Mutex<McpClient>>,
-    /// Remote tool name as advertised by the MCP server
     remote_name: String,
 }
 
@@ -32,15 +31,57 @@ impl McpCaller for SharedMcpCaller {
     }
 }
 
-/// Connect configured MCP servers and register tools as `{server}_{tool}`.
-/// Failures for individual servers are logged and skipped.
+pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpClient> {
+    let kind = server
+        .resolved_transport()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let empty_headers = HashMap::new();
+    let headers = server.headers.as_ref().unwrap_or(&empty_headers);
+    match kind {
+        McpTransportKind::Stdio => {
+            let command = server
+                .command
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("stdio MCP server missing `command`"))?;
+            let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
+            McpClient::connect_stdio_with(
+                command,
+                &args,
+                server.env.as_ref(),
+                server.cwd.as_deref(),
+            )
+            .await
+        }
+        McpTransportKind::Http => {
+            let url = server
+                .url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("http MCP server missing `url`"))?;
+            McpClient::connect_http(url, headers).await
+        }
+        McpTransportKind::Sse => {
+            let url = server
+                .url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("sse MCP server missing `url`"))?;
+            McpClient::connect_sse(url, headers).await
+        }
+        McpTransportKind::Auto => {
+            let url = server
+                .url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("auto MCP server missing `url`"))?;
+            McpClient::connect_auto(url, headers).await
+        }
+    }
+}
+
 pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) -> usize {
     let mut count = 0usize;
-
     for (server_name, server) in &config.mcp_servers {
-        let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
-        match McpClient::connect_stdio(&server.command, &args).await {
+        match connect_mcp_server(server).await {
             Ok(client) => {
+                let transport = client.transport_name();
                 let client = Arc::new(Mutex::new(client));
                 let tools = {
                     let mut c = client.lock().await;
@@ -52,7 +93,6 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                         }
                     }
                 };
-
                 for tool in tools {
                     let bridge_name = format!("{}_{}", server_name, tool.name);
                     let description = tool
@@ -64,12 +104,10 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                     } else {
                         tool.input_schema.clone()
                     };
-
                     let caller: Arc<dyn McpCaller> = Arc::new(SharedMcpCaller {
                         client: Arc::clone(&client),
                         remote_name: tool.name.clone(),
                     });
-
                     executor.register(Box::new(McpToolBridge::new(
                         caller,
                         bridge_name.clone(),
@@ -77,19 +115,30 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
                         schema,
                     )));
                     count += 1;
-                    info!(server = %server_name, tool = %bridge_name, "Registered MCP tool");
+                    info!(
+                        server = %server_name,
+                        tool = %bridge_name,
+                        transport,
+                        "Registered MCP tool"
+                    );
                 }
             }
             Err(e) => {
+                let detail = match server.resolved_transport() {
+                    Ok(McpTransportKind::Stdio) => {
+                        format!("command={}", server.command.as_deref().unwrap_or("?"))
+                    }
+                    Ok(_) => format!("url={}", server.url.as_deref().unwrap_or("?")),
+                    Err(msg) => msg,
+                };
                 warn!(
                     server = %server_name,
-                    command = %server.command,
+                    %detail,
                     error = %e,
                     "Failed to connect MCP server"
                 );
             }
         }
     }
-
     count
 }

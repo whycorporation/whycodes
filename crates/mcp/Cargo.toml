@@ -12,4 +12,13 @@ serde_json.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+reqwest.workspace = true
+futures.workspace = true
 whycode-core = { path = "../core" }
+
+[dev-dependencies]
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.5"
+async-stream = "0.3"
+tokio = { workspace = true, features = ["full", "test-util", "macros", "rt-multi-thread"] }
+http-body-util = "0.1"

@@ -268,6 +268,12 @@ theme = "default_dark"
 command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
 
+# Remote MCP (Streamable HTTP; falls back to legacy SSE when needed)
+# [mcp_servers.remote]
+# url = "https://mcp.example.com/mcp"
+# type = "http"   # or "sse" / "auto"
+# headers = { Authorization = "Bearer …" }
+
 [[agents]]
 name = "build"
 description = "Default coding agent"

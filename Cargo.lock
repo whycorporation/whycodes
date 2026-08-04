@@ -3093,9 +3093,15 @@ name = "whycode-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
+ "axum",
+ "futures",
+ "http-body-util",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
  "tracing",
  "whycode-core",
 ]

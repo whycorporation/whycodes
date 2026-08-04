@@ -255,20 +255,79 @@ pub struct CustomCommandConfig {
     pub subtask: Option<bool>,
 }
 
-/// MCP server definition stored in config
+/// How to reach an MCP server.
+///
+/// - `stdio` — spawn a local process (default when `command` is set)
+/// - `http` — Streamable HTTP (spec 2025-03-26+); preferred remote transport
+/// - `sse` — legacy HTTP+SSE (spec 2024-11-05)
+/// - `auto` — for URL endpoints: try Streamable HTTP, fall back to legacy SSE
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransportKind {
+    #[default]
+    Stdio,
+    /// Streamable HTTP (single MCP endpoint, POST/GET + optional SSE)
+    Http,
+    /// Legacy dual-endpoint HTTP+SSE transport
+    Sse,
+    /// Probe Streamable HTTP first, then fall back to legacy SSE
+    Auto,
+}
+
+/// MCP server definition stored in config.
+///
+/// Stdio: `command` + `args`. Remote: `url` (+ optional `type` / `headers`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServerConfig {
+    /// Explicit transport (`stdio` | `http` | `sse` | `auto`).
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub transport: Option<McpTransportKind>,
     /// Command to spawn (stdio transport)
-    pub command: String,
-    /// Command arguments
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
-    /// Optional environment variables
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
-    /// Optional working directory
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Remote MCP endpoint URL (Streamable HTTP or legacy SSE)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headers: Option<HashMap<String, String>>,
+}
+
+impl McpServerConfig {
+    pub fn resolved_transport(&self) -> Result<McpTransportKind, String> {
+        if let Some(kind) = self.transport {
+            return match kind {
+                McpTransportKind::Stdio if self.command.is_none() => {
+                    Err("MCP transport 'stdio' requires `command`".into())
+                }
+                McpTransportKind::Http | McpTransportKind::Sse | McpTransportKind::Auto
+                    if self.url.is_none() =>
+                {
+                    Err(format!("MCP transport '{kind:?}' requires `url`"))
+                }
+                other => Ok(other),
+            };
+        }
+        match (&self.url, &self.command) {
+            (Some(_), _) => Ok(McpTransportKind::Auto),
+            (None, Some(_)) => Ok(McpTransportKind::Stdio),
+            (None, None) => Err(
+                "MCP server config needs either `command` (stdio) or `url` (http/sse)".into(),
+            ),
+        }
+    }
+
+    pub fn is_remote(&self) -> bool {
+        matches!(
+            self.resolved_transport().ok(),
+            Some(McpTransportKind::Http | McpTransportKind::Sse | McpTransportKind::Auto)
+        )
+    }
 }
 
 impl Default for Config {
@@ -1614,4 +1673,56 @@ mod tests {
         // api_base from base is kept (overlay didn't set it)
         assert_eq!(p.api_base.as_deref(), Some("https://old.example.com"));
     }
+    #[test]
+    fn mcp_stdio_config_deserializes() {
+        let toml = r#"
+            [mcp_servers.fs]
+            command = "npx"
+            args = ["-y", "server"]
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let s = &cfg.mcp_servers["fs"];
+        assert_eq!(s.command.as_deref(), Some("npx"));
+        assert_eq!(s.resolved_transport().unwrap(), McpTransportKind::Stdio);
+        assert!(!s.is_remote());
+    }
+
+    #[test]
+    fn mcp_http_url_infers_auto() {
+        let toml = r#"
+            [mcp_servers.remote]
+            url = "https://mcp.example.com/mcp"
+            headers = { Authorization = "Bearer t" }
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        let s = &cfg.mcp_servers["remote"];
+        assert_eq!(s.resolved_transport().unwrap(), McpTransportKind::Auto);
+        assert!(s.is_remote());
+    }
+
+    #[test]
+    fn mcp_explicit_sse_type() {
+        let toml = r#"
+            [mcp_servers.legacy]
+            type = "sse"
+            url = "http://127.0.0.1:9/sse"
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.mcp_servers["legacy"].resolved_transport().unwrap(), McpTransportKind::Sse);
+    }
+
+    #[test]
+    fn mcp_http_type_requires_url() {
+        let s = McpServerConfig {
+            transport: Some(McpTransportKind::Http),
+            command: None,
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        };
+        assert!(s.resolved_transport().is_err());
+    }
+
 }
