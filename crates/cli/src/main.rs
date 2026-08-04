@@ -34,6 +34,10 @@ pub struct Cli {
     /// Use plain stdin REPL instead of the full-screen TUI
     #[arg(long, global = true)]
     pub plain: bool,
+
+    /// Write debug logs under the data dir (`debug/whycode-*.log` + `debug/latest.log`)
+    #[arg(long, global = true)]
+    pub debug: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -273,8 +277,12 @@ async fn main() -> anyhow::Result<()> {
     // First statement: everything after it is time a user waits for, and the
     // first-frame benchmark measures from here.
     whycode_tui::bench::mark_process_start();
-    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
+
+    // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
+    // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
+    // is not corrupted (use --debug or WHYCODE_LOG_FILE to capture human logs).
+    init_logging(&cli);
 
     // Determine which command to run; default to Run
     match &cli.command {
@@ -287,6 +295,42 @@ async fn main() -> anyhow::Result<()> {
             };
             dispatch_command(&run_cmd, &cli).await
         }
+    }
+}
+
+/// Resolve data dir + env/config filters and install the process logger.
+fn init_logging(cli: &Cli) {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let log_file = std::env::var_os("WHYCODE_LOG_FILE").map(PathBuf::from);
+    let log_level = std::env::var("WHYCODE_LOG_LEVEL")
+        .ok()
+        .or_else(|| {
+            Config::load()
+                .ok()
+                .and_then(|c| c.general.log_level.clone())
+        });
+
+    // Full-screen TUI is the default for Run / bare invoke without --plain.
+    let is_tui = !cli.plain
+        && matches!(
+            &cli.command,
+            None | Some(Commands::Run { .. })
+        );
+
+    let opts = whycode_core::logging::InitOptions {
+        data_dir,
+        log_level,
+        log_file,
+        debug: cli.debug,
+        // Keep stderr free while the alternate screen is active unless the
+        // user asked for --debug (file still gets the firehose either way).
+        with_stderr: !is_tui || cli.debug,
+    };
+
+    if let Err(e) = whycode_core::logging::init(opts) {
+        eprintln!("warning: failed to initialize logging: {e}");
+        // Last-resort so tracing macros still work somewhere.
+        let _ = tracing_subscriber::fmt::try_init();
     }
 }
 
@@ -318,6 +362,13 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
 fn resolve_provider(cli: &Cli, config: &Config) -> String {
     cli.provider
         .clone()
+        .or_else(|| {
+            config
+                .default_model
+                .as_ref()
+                .map(|m| m.provider_id.clone())
+                .filter(|id| !id.is_empty())
+        })
         .or_else(|| config.providers.keys().next().cloned())
         .unwrap_or_else(|| "anthropic".to_string())
 }
@@ -413,6 +464,7 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
                 model_id: model,
                 provider_id: provider,
                 max_tokens: None,
+                context_window: None,
                 temperature: None,
                 top_p: None,
                 thinking: None,
@@ -445,8 +497,22 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
     // the user actually sends a prompt that needs the LLM.
     let mut api_key = get_api_key(&provider, &config).unwrap_or_default();
 
-    // Full-screen TUI (OpenCode default experience) unless --plain or non-TTY
-    let use_tui = !cli.plain && std::env::var_os("WHYCODE_PLAIN").is_none();
+    // Full-screen TUI unless --plain / WHYCODE_PLAIN.
+    // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
+    // while still having a controlling terminal — tui_available() opens
+    // /dev/tty in that case so the TUI still works.
+    let force_plain = cli.plain || std::env::var_os("WHYCODE_PLAIN").is_some();
+    let use_tui = !force_plain && whycode_tui::tui_available();
+    if !use_tui && !force_plain {
+        use std::io::IsTerminal;
+        eprintln!(
+            "whycode: no interactive terminal \
+             (stdin_tty={} stdout_tty={} /dev/tty unavailable).\n\
+             Falling back to plain mode. Use a real terminal, or pass --plain.",
+            std::io::stdin().is_terminal(),
+            std::io::stdout().is_terminal(),
+        );
+    }
     if use_tui {
         return whycode_tui::run(whycode_tui::TuiRunOptions {
             project_dir,
@@ -458,7 +524,23 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
             initial_prompt: prompt.map(|s| s.to_string()),
             config,
         })
-        .await;
+        .await
+        .map_err(|e| {
+            // Crossterm ENXIO / similar — make the message actionable.
+            let msg = e.to_string();
+            if msg.contains("No such device")
+                || msg.contains("os error 6")
+                || msg.contains("not a terminal")
+            {
+                anyhow::anyhow!(
+                    "{msg}\n\n\
+                     TUI needs a real terminal. Run in a terminal emulator, or:\n\
+                       whycode --plain"
+                )
+            } else {
+                e
+            }
+        });
     }
 
     let agent_info = {
@@ -547,7 +629,6 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
     );
     loop {
         use std::io::Write;
-        print!("{} ", ">".cyan().bold());
         let _ = std::io::stdout().flush();
 
         let mut input = String::new();
@@ -851,12 +932,38 @@ async fn cmd_run(cli: &Cli, prompt: Option<&str>, max_turns: usize) -> anyhow::R
                     println!("\n{}", response);
                 }
                 println!();
-                // Persist session best-effort
+                // Persist session best-effort (success)
+                if let Ok(db) = open_db() {
+                    if let Err(err) = session.save_to_db(&db) {
+                        tracing::warn!(error = %err, "failed to persist session");
+                    } else {
+                        whycode_core::logging::emit_sid(
+                            "session",
+                            "info",
+                            "session.persist",
+                            Some(session.id.as_str()),
+                            Some(serde_json::json!({
+                                "reason": "ok",
+                                "messages": session.messages.len(),
+                            })),
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("{} {}", "Error:".red().bold(), e);
+                whycode_core::logging::emit_sid(
+                    "cli",
+                    "error",
+                    "turn.error",
+                    Some(session.id.as_str()),
+                    Some(serde_json::json!({ "error": e.to_string() })),
+                );
+                // Persist even on error so a crash mid-debug still has history.
                 if let Ok(db) = open_db() {
                     let _ = session.save_to_db(&db);
                 }
             }
-            Err(e) => eprintln!("{} {}", "Error:".red().bold(), e),
         }
     }
     println!("{}", "Goodbye!".cyan());
@@ -873,12 +980,13 @@ fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -> bool
         *api_key = k;
         return true;
     }
+    let env = provider_env_var(provider);
     eprintln!(
-        "{} No API key for '{}'.\n  Set env {}  or: whycode provider add {} --api-key <key>\n  Then type /connect or send another message.",
-        "ℹ".yellow(),
-        provider.cyan(),
-        provider_env_var(provider).cyan(),
-        provider
+        "{}\n  {}\n  {}\n  {}",
+        format!("Setup needed · no API key for `{provider}`").yellow().bold(),
+        format!("→ export {env}=…").dimmed(),
+        format!("→ whycode provider add {provider} --api-key <key>").dimmed(),
+        "Then /connect and try again.".dimmed(),
     );
     false
 }
@@ -1452,6 +1560,7 @@ async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                     Some(headers_map)
                 },
                 models: Vec::new(),
+                tool_arguments: None,
                 extra: std::collections::HashMap::new(),
             };
 
@@ -1538,6 +1647,7 @@ async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
                 model_id: model.clone(),
                 provider_id: provider.clone(),
                 max_tokens: None,
+                context_window: None,
                 temperature: None,
                 top_p: None,
                 thinking: None,
@@ -1887,7 +1997,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
         }
     }
 
-    // Data directory
+    // Data directory + log paths (Grok-style)
     match Config::data_dir() {
         Ok(p) => {
             let exists = if p.exists() {
@@ -1896,6 +2006,21 @@ async fn cmd_debug() -> anyhow::Result<()> {
                 "✗".red()
             };
             println!("  Data dir:    {} {}", p.display(), exists);
+            let dirs = whycode_core::logging::LogDirs::from_data_dir(&p);
+            println!(
+                "  JSONL log:   {} {}",
+                dirs.unified_jsonl().display(),
+                if dirs.unified_jsonl().exists() {
+                    "✓".green()
+                } else {
+                    "·".dimmed()
+                }
+            );
+            println!("  Crash dir:   {}", dirs.crash.display());
+            println!(
+                "  Debug log:   {} (or WHYCODE_LOG_FILE / --debug)",
+                dirs.debug.join("latest.log").display()
+            );
         }
         Err(e) => {
             println!("  Data dir:    error: {}", e);
@@ -1933,6 +2058,9 @@ async fn cmd_debug() -> anyhow::Result<()> {
     for var in &[
         "WHYCODE_PROVIDER",
         "WHYCODE_MODEL",
+        "WHYCODE_LOG_LEVEL",
+        "WHYCODE_LOG_FILE",
+        "RUST_LOG",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "DEEPSEEK_API_KEY",

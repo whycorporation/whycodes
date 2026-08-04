@@ -54,6 +54,22 @@ fn test_config_subcommand() {
 fn test_debug_subcommand() {
     let o = run(&["debug"]);
     assert_ok(&["debug"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("JSONL log") || s.contains("Data dir"),
+        "debug should report log paths: {s}"
+    );
+}
+
+#[test]
+fn test_global_debug_flag_in_help() {
+    let o = run(&["--help"]);
+    assert_ok(&["--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("--debug") || s.contains("debug logs"),
+        "help should document --debug: {s}"
+    );
 }
 
 #[test]
