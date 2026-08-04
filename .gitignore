@@ -4,3 +4,5 @@ target/
 
 # Local agent/session scratch (do not commit)
 .omo/
+# Machine-local external-directory grants for the agent (absolute paths)
+.whycode/external_dirs_allowed
