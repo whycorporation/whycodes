@@ -721,18 +721,40 @@ impl SlashSuggestState {
     /// Rebuild the match list from the input buffer.
     /// Active only while the buffer starts with `/` and has no space yet
     /// — once the user types an argument the command choice is fixed.
+    ///
+    /// Extra leading slashes (`//`, `///`) collapse to `/` so a second `/`
+    /// after Esc (which leaves a lone `/` in the draft) reopens the menu
+    /// instead of filtering to zero matches.
     pub fn refresh(&mut self, input: &str) {
         if !input.starts_with('/') || input.contains(char::is_whitespace) {
             self.active = false;
+            self.matches.clear();
             return;
         }
-        self.active = true;
+        // `//` and friends: treat as bare `/` (show every command).
+        let query = if input.bytes().all(|b| b == b'/') {
+            "/"
+        } else {
+            input
+        };
         self.matches = BUILTIN_SLASH_COMMANDS
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.name.starts_with(input))
+            .filter(|(_, c)| {
+                c.name.starts_with(query)
+                    || c.name
+                        .strip_prefix('/')
+                        .is_some_and(|n| n.starts_with(query.trim_start_matches('/')))
+            })
             .map(|(i, _)| i)
             .collect();
+        if self.matches.is_empty() {
+            // No command matches the typed prefix — hide the popup.
+            self.active = false;
+            self.selected = 0;
+            return;
+        }
+        self.active = true;
         if self.selected >= self.matches.len() {
             self.selected = 0;
         }

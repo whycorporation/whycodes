@@ -216,6 +216,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             lines.push(Line::from(Span::styled(prefix.to_string(), prefix_style)));
         }
         None => {
+            // Slash commands (`/help`, `/models …`) render bold + accent so the
+            // command token stands out from ordinary prompt text.
+            let cmd_end = slash_command_byte_end(buf);
+            let cmd_style = Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD);
+            let text_style = Style::default().fg(palette.input_fg);
+
             for (i, row) in rows.iter().enumerate().take(input_rows as usize) {
                 let mut spans = Vec::new();
                 if i == 0 {
@@ -224,9 +232,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
                     // Continuation rows align under the text, not under ❯.
                     spans.push(Span::raw(" ".repeat(PREFIX_WIDTH as usize)));
                 }
-                spans.push(Span::styled(
-                    buf[row.byte_range.0..row.byte_range.1].to_string(),
-                    Style::default().fg(palette.input_fg),
+                spans.extend(styled_input_row(
+                    buf,
+                    row.byte_range.0,
+                    row.byte_range.1,
+                    cmd_end,
+                    cmd_style,
+                    text_style,
                 ));
                 lines.push(Line::from(spans));
             }
@@ -494,6 +506,47 @@ fn center_prompt_area(area: Rect) -> Rect {
     }
 }
 
+/// Byte end of the leading slash-command token (`/name`), or `None` when the
+/// buffer is not a slash command. Includes the leading `/`; stops at the first
+/// whitespace (arguments stay in the normal input style).
+fn slash_command_byte_end(buf: &str) -> Option<usize> {
+    if !buf.starts_with('/') {
+        return None;
+    }
+    Some(buf.find(char::is_whitespace).unwrap_or(buf.len()))
+}
+
+/// Split one wrapped row into styled spans so the slash-command token can be
+/// bold/accent even when the wrap boundary cuts mid-token.
+fn styled_input_row(
+    buf: &str,
+    start: usize,
+    end: usize,
+    cmd_end: Option<usize>,
+    cmd_style: Style,
+    text_style: Style,
+) -> Vec<Span<'static>> {
+    if start >= end {
+        return Vec::new();
+    }
+    let Some(cmd_end) = cmd_end else {
+        return vec![Span::styled(buf[start..end].to_string(), text_style)];
+    };
+    if end <= cmd_end {
+        // Entire row is inside the command token.
+        return vec![Span::styled(buf[start..end].to_string(), cmd_style)];
+    }
+    if start >= cmd_end {
+        // Entire row is after the command token.
+        return vec![Span::styled(buf[start..end].to_string(), text_style)];
+    }
+    // Row straddles the command / args boundary.
+    vec![
+        Span::styled(buf[start..cmd_end].to_string(), cmd_style),
+        Span::styled(buf[cmd_end..end].to_string(), text_style),
+    ]
+}
+
 #[cfg(test)]
 mod wrap_tests {
     use super::*;
@@ -564,5 +617,29 @@ mod wrap_tests {
     fn prompt_height_includes_box_chrome() {
         // gap + top + 1 text + bottom + hint
         assert!(OUTER_TOP_GAP + VPAD_TOP + 1 + INFO_BLOCK + HINT_GAP >= 5);
+    }
+
+    #[test]
+    fn slash_command_byte_end_covers_token_only() {
+        assert_eq!(slash_command_byte_end("/help"), Some(5));
+        assert_eq!(slash_command_byte_end("/models foo"), Some(7));
+        assert_eq!(slash_command_byte_end("/"), Some(1));
+        assert_eq!(slash_command_byte_end("hello"), None);
+        assert_eq!(slash_command_byte_end(""), None);
+    }
+
+    #[test]
+    fn styled_input_row_splits_command_and_args() {
+        use ratatui::style::{Color, Modifier};
+        let cmd = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let text = Style::default().fg(Color::White);
+        let buf = "/help me";
+        let spans = styled_input_row(buf, 0, buf.len(), slash_command_byte_end(buf), cmd, text);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].content.as_ref(), "/help");
+        assert_eq!(spans[1].content.as_ref(), " me");
+        assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
     }
 }

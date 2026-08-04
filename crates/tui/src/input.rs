@@ -300,6 +300,17 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
                 AppMode::Normal => {
                     if let KeyCode::Char(c) = key.code {
                         app.focus_prompt();
+                        // Second `/` while the draft is already a bare slash
+                        // (typical after Esc dismisses the popup but leaves `/`)
+                        // reopens the menu instead of turning the buffer into
+                        // `//`, which matches no command names.
+                        if c == '/' && is_bare_slash_draft(&app.input_buffer) {
+                            app.input_buffer = "/".to_string();
+                            app.input_cursor = 1;
+                            app.slash_suggest.refresh(&app.input_buffer);
+                            app.esc_armed_at = None;
+                            return true;
+                        }
                         let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
                         app.input_buffer.insert(pos, c);
                         app.input_cursor = pos + c.len_utf8();
@@ -325,6 +336,12 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     }
 }
 
+/// True when the prompt holds only a bare `/` draft (optionally more slashes).
+/// Used so a second `/` reopens the command menu instead of building `//`.
+fn is_bare_slash_draft(buf: &str) -> bool {
+    !buf.is_empty() && buf.bytes().all(|b| b == b'/')
+}
+
 /// Grok Esc hierarchy (steal-Esc first, then double-Esc clear).
 ///
 /// Cancel-while-busy is owned by the run loop (has the CancelFlag); here we
@@ -333,6 +350,12 @@ fn handle_escape(app: &mut TuiApp) {
     // 1. Steal: slash suggest
     if app.slash_suggest.active {
         app.slash_suggest.dismiss();
+        // Drop a lone `/` so the next `/` opens a clean menu (otherwise the
+        // buffer stays `/` and a second press becomes `//` with no matches).
+        if is_bare_slash_draft(&app.input_buffer) {
+            app.input_buffer.clear();
+            app.input_cursor = 0;
+        }
         app.esc_armed_at = None;
         return;
     }

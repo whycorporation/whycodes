@@ -730,6 +730,83 @@ fn dismiss_clears_popup_state_so_a_new_slash_reopens_clean() {
     assert_eq!(names, vec!["/help"]);
 }
 
+#[test]
+fn double_slash_still_lists_every_command() {
+    use crate::app::BUILTIN_SLASH_COMMANDS;
+    let mut app = TuiApp::new(test_config());
+    // User typed `/`, then another `/` (Esc left a lone slash, or accidental).
+    app.input_buffer = "//".to_string();
+    app.slash_suggest.refresh(&app.input_buffer);
+    assert!(app.slash_suggest.active, "bare // must reopen the menu");
+    assert_eq!(
+        app.slash_suggest.matches.len(),
+        BUILTIN_SLASH_COMMANDS.len()
+    );
+}
+
+#[test]
+fn second_slash_key_after_lone_slash_reopens_menu() {
+    use crate::app::BUILTIN_SLASH_COMMANDS;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = TuiApp::new(test_config());
+    // First `/` opens the popup.
+    crate::input::handle_event(
+        &mut app,
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE)),
+    );
+    assert_eq!(app.input_buffer, "/");
+    assert!(app.slash_suggest.active);
+    assert_eq!(
+        app.slash_suggest.matches.len(),
+        BUILTIN_SLASH_COMMANDS.len()
+    );
+
+    // Esc dismisses and clears the bare `/` draft.
+    crate::input::handle_event(
+        &mut app,
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+    );
+    assert!(!app.slash_suggest.active);
+    assert!(
+        app.input_buffer.is_empty(),
+        "Esc on bare / should clear the draft"
+    );
+
+    // Second `/` opens a clean menu again.
+    crate::input::handle_event(
+        &mut app,
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE)),
+    );
+    assert_eq!(app.input_buffer, "/");
+    assert!(app.slash_suggest.active);
+    assert_eq!(
+        app.slash_suggest.matches.len(),
+        BUILTIN_SLASH_COMMANDS.len()
+    );
+}
+
+#[test]
+fn second_slash_while_draft_is_slash_does_not_become_double() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = TuiApp::new(test_config());
+    app.input_buffer = "/".to_string();
+    app.input_cursor = 1;
+    // Simulate dismissed menu with `/` still present (legacy path).
+    app.slash_suggest.dismiss();
+
+    crate::input::handle_event(
+        &mut app,
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE)),
+    );
+    assert_eq!(
+        app.input_buffer, "/",
+        "second / must not turn the draft into //"
+    );
+    assert!(app.slash_suggest.active);
+}
+
 // ── Grok focus model (Prompt vs Scrollback) ─────────────────────────
 
 #[test]
