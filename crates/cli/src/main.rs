@@ -8,7 +8,7 @@ use std::sync::Arc;
 use whycode_agent::agent::Agent;
 use whycode_agent::events::{TurnEvent, new_cancel_flag};
 use whycode_agent::permission::AutoApprovePrompter;
-use whycode_core::config::Config;
+use whycode_config::Config;
 use whycode_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet, ProviderConfig};
 use whycode_protocol::{CiEvent, OutputFormat, ResultMeta};
 
@@ -1746,13 +1746,13 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             let transport_kind = match transport.as_deref() {
                 None => None,
                 Some("stdio") | Some("local") => {
-                    Some(whycode_core::config::McpTransportKind::Stdio)
+                    Some(whycode_config::McpTransportKind::Stdio)
                 }
                 Some("http") | Some("streamable-http") | Some("remote") => {
-                    Some(whycode_core::config::McpTransportKind::Http)
+                    Some(whycode_config::McpTransportKind::Http)
                 }
-                Some("sse") => Some(whycode_core::config::McpTransportKind::Sse),
-                Some("auto") => Some(whycode_core::config::McpTransportKind::Auto),
+                Some("sse") => Some(whycode_config::McpTransportKind::Sse),
+                Some("auto") => Some(whycode_config::McpTransportKind::Auto),
                 Some(other) => {
                     anyhow::bail!("unknown MCP transport '{other}' (expected stdio|http|sse|auto)");
                 }
@@ -1783,7 +1783,7 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 .map(|s| s.split_whitespace().map(|a| a.to_string()).collect())
                 .unwrap_or_default();
 
-            let server = whycode_core::config::McpServerConfig {
+            let server = whycode_config::McpServerConfig {
                 transport: transport_kind,
                 command: command.clone(),
                 args: arg_vec.clone(),

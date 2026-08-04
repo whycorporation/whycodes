@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use whycode_agent::agent::Agent;
-use whycode_core::config::Config;
+use whycode_config::Config;
 use whycode_core::types::{AgentInfo, AgentMode, PermissionSet, ToolDefinition};
 use whycode_session::session::Session;
 

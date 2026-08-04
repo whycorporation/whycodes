@@ -7,8 +7,6 @@ repository.workspace = true
 
 [dependencies]
 whycode-core = { path = "../core" }
-whycode-llm = { path = "../llm" }
-whycode-tools = { path = "../tools" }
 whycode-storage = { path = "../storage" }
 serde.workspace = true
 serde_json.workspace = true

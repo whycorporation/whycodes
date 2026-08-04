@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
-use crate::config::SandboxSettings;
 use crate::network::NetworkPolicy;
+use crate::sandbox::SandboxSettings;
 use crate::types::{PermissionSet, ToolDefinition, ToolResult};
 
 /// Context passed to tool execution

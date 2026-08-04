@@ -8,11 +8,9 @@ repository.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-toml.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
-directories.workspace = true
 chrono.workspace = true
 uuid.workspace = true
 tracing.workspace = true

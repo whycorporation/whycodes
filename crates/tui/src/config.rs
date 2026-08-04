@@ -4,7 +4,7 @@ use crate::theme::{ThemeName, ThemePalette};
 use crate::theme_file;
 use std::path::Path;
 use std::str::FromStr;
-use whycode_core::config::TuiConfig;
+use whycode_config::TuiConfig;
 
 /// Directory, relative to the config directory, holding user theme files.
 pub const THEMES_DIR: &str = "themes";
@@ -51,7 +51,7 @@ impl TuiAppConfig {
 
     /// Build from the core `TuiConfig` loaded from config.toml.
     pub fn from_core_config(cfg: &TuiConfig) -> Self {
-        Self::from_core_config_with_themes(cfg, whycode_core::config::Config::default_path().ok())
+        Self::from_core_config_with_themes(cfg, whycode_config::Config::default_path().ok())
     }
 
     /// [`Self::from_core_config`] with the config file location supplied, so

@@ -2962,6 +2962,7 @@ dependencies = [
  "tokio",
  "tracing",
  "whycode-command-risk",
+ "whycode-config",
  "whycode-core",
  "whycode-llm",
  "whycode-mcp",
@@ -2993,6 +2994,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "whycode-agent",
+ "whycode-config",
  "whycode-core",
  "whycode-llm",
  "whycode-protocol",
@@ -3012,19 +3014,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "whycode-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+ "tracing",
+ "whycode-core",
+]
+
+[[package]]
 name = "whycode-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "directories",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "toml",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -3052,7 +3067,6 @@ dependencies = [
  "serde_json",
  "tokio",
  "whycode-core",
- "whycode-tools",
 ]
 
 [[package]]
@@ -3072,6 +3086,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "whycode-config",
  "whycode-core",
 ]
 
@@ -3115,7 +3130,6 @@ dependencies = [
  "serde_json",
  "tracing",
  "whycode-core",
- "whycode-tools",
 ]
 
 [[package]]
@@ -3156,6 +3170,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "whycode-agent",
+ "whycode-config",
  "whycode-core",
  "whycode-llm",
  "whycode-session",
@@ -3175,6 +3190,7 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "whycode-agent",
+ "whycode-config",
  "whycode-core",
  "whycode-llm",
  "whycode-session",
@@ -3195,9 +3211,7 @@ dependencies = [
  "tracing",
  "uuid",
  "whycode-core",
- "whycode-llm",
  "whycode-storage",
- "whycode-tools",
 ]
 
 [[package]]
@@ -3272,6 +3286,7 @@ dependencies = [
  "tracing",
  "unicode-width 0.2.0",
  "whycode-agent",
+ "whycode-config",
  "whycode-core",
  "whycode-format",
  "whycode-llm",

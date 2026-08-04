@@ -1,35 +1,31 @@
-pub mod apply_patch;
-pub mod code_mode;
+//! Built-in tools for Whycode.
+//!
+//! Domain modules group related tools; flat re-exports keep historical paths
+//! (`whycode_tools::read`, …) working for tests and callers.
+
+pub mod agent_tools;
 pub mod display;
-pub mod edit;
 pub mod executor;
-pub mod external_directory;
-pub mod git_blame;
-pub mod git_commit;
-pub mod git_diff;
-pub mod git_log;
-pub mod git_status;
-pub mod github_api;
-pub mod github_issue;
-pub mod github_pr;
-pub mod glob;
-pub mod grep;
-pub mod list;
+pub mod file;
+pub mod git;
+pub mod github;
 pub mod lsp_tool;
 pub mod mcp_tool;
-pub mod plan;
-pub mod question;
-pub mod read;
 pub mod shell;
-pub mod skill_tool;
-pub mod task;
-pub mod todo_read;
-pub mod todo_write;
 pub mod tool;
-pub mod truncate_tool;
-pub mod webfetch;
-pub mod websearch;
-pub mod write;
+pub mod web;
+
+// Flat re-exports (stable paths)
+pub use agent_tools::{
+    code_mode, plan, question, skill_tool, task, todo_read, todo_write,
+};
+pub use file::{
+    apply_patch, edit, external_directory, glob, grep, list, read, truncate_tool, truncation_dir,
+    write,
+};
+pub use git::{git_blame, git_commit, git_diff, git_log, git_status};
+pub use github::{github_api, github_issue, github_pr};
+pub use web::{mcp_websearch, webfetch, websearch};
 
 pub use executor::ToolExecutor;
 pub use mcp_tool::{McpCaller, McpToolBridge};

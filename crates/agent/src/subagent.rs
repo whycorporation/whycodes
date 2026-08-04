@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use whycode_core::config::SandboxSettings;
+use whycode_core::SandboxSettings;
 use whycode_core::network::NetworkPolicy;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{AgentInfo, PermissionSet};

@@ -209,7 +209,7 @@ pub struct CatalogFetchRequest {
 /// `{PROVIDER}_API_KEY` env. Headers come from `ProviderConfig.headers`
 /// (may already include `Authorization` / `x-api-key`).
 pub fn catalog_request_from_config(
-    config: &whycode_core::config::Config,
+    config: &whycode_config::Config,
     provider_name: &str,
     runtime_api_key: Option<&str>,
 ) -> Option<CatalogFetchRequest> {
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn catalog_request_requires_config_base_url() {
-        use whycode_core::config::Config;
+        use whycode_config::Config;
         use whycode_core::types::ProviderConfig;
 
         let mut cfg = Config::default();

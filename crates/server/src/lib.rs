@@ -7,7 +7,7 @@ use axum::{
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use whycode_agent::agent::Agent;
-use whycode_core::config::Config;
+use whycode_config::Config;
 
 #[derive(Clone)]
 pub struct AppState {

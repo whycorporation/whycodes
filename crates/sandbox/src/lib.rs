@@ -16,7 +16,7 @@ pub use policy::{
     Backend, PreparedCommand, SandboxError, SandboxOutcome, SandboxRequest, prepare, run,
 };
 
-use whycode_core::config::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycode_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
 pub fn backend_available() -> bool {
     bwrap::bwrap_path().is_some()
@@ -50,7 +50,7 @@ pub fn describe_backend(settings: &SandboxSettings) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use whycode_core::config::{SandboxFallback, SandboxMode, SandboxSettings};
+    use whycode_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
     #[test]
     fn off_mode_prepares_host_bash() {

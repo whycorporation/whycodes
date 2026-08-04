@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 whycode-core = { path = "../core" }
+whycode-config = { path = "../config" }
 whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }
 whycode-tools = { path = "../tools" }

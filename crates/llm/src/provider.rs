@@ -48,7 +48,7 @@ impl ProviderRegistry {
 
     /// Register a custom provider from config.
     /// This enables dynamically-added providers from config.toml.
-    pub fn register_from_config(&mut self, config: &whycode_core::config::Config) {
+    pub fn register_from_config(&mut self, config: &whycode_config::Config) {
         for (name, pc) in &config.providers {
             // Skip built-in providers that already exist
             if self.providers.contains_key(name) {

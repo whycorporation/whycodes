@@ -1,6 +1,7 @@
 {
   "agent": [
     "command-risk",
+    "config",
     "core",
     "llm",
     "mcp",
@@ -10,6 +11,7 @@
   ],
   "cli": [
     "agent",
+    "config",
     "core",
     "llm",
     "protocol",
@@ -20,15 +22,18 @@
     "tui"
   ],
   "command-risk": [],
+  "config": [
+    "core"
+  ],
   "core": [],
   "format": [
     "core"
   ],
   "function": [
-    "core",
-    "tools"
+    "core"
   ],
   "llm": [
+    "config",
     "core"
   ],
   "lsp": [
@@ -38,10 +43,12 @@
     "core"
   ],
   "plugin": [
-    "core",
-    "tools"
+    "core"
   ],
   "protocol": [
+    "core"
+  ],
+  "sandbox": [
     "core"
   ],
   "schema": [
@@ -49,6 +56,7 @@
   ],
   "sdk": [
     "agent",
+    "config",
     "core",
     "llm",
     "session",
@@ -56,6 +64,7 @@
   ],
   "server": [
     "agent",
+    "config",
     "core",
     "llm",
     "session",
@@ -63,9 +72,7 @@
   ],
   "session": [
     "core",
-    "llm",
-    "storage",
-    "tools"
+    "storage"
   ],
   "skill": [
     "core"
@@ -82,14 +89,12 @@
   ],
   "tui": [
     "agent",
+    "config",
     "core",
     "format",
     "llm",
     "session",
     "storage",
     "tools"
-  ],
-  "sandbox": [
-    "core"
   ]
 }

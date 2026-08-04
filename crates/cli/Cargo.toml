@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 whycode-core = { path = "../core" }
+whycode-config = { path = "../config" }
 whycode-llm = { path = "../llm" }
 whycode-tools = { path = "../tools" }
 whycode-session = { path = "../session" }

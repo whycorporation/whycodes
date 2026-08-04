@@ -6,7 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use whycode_core::config::{Config, McpServerConfig, McpTransportKind};
+use whycode_config::{Config, McpServerConfig, McpTransportKind};
 use whycode_mcp::client::McpClient;
 use whycode_tools::executor::ToolExecutor;
 use whycode_tools::mcp_tool::{McpCaller, McpToolBridge};

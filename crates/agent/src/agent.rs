@@ -1,6 +1,6 @@
 use futures::StreamExt;
 use std::sync::Arc;
-use whycode_core::config::SandboxSettings;
+use whycode_core::SandboxSettings;
 use whycode_core::network::NetworkPolicy;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{
@@ -63,7 +63,7 @@ impl Agent {
     }
 
     /// Load custom providers from config and merge global permission rules.
-    pub fn with_config(mut self, config: &whycode_core::config::Config) -> Self {
+    pub fn with_config(mut self, config: &whycode_config::Config) -> Self {
         let mut registry = ProviderRegistry::default();
         registry.register_from_config(config);
         self.provider_registry = Arc::new(registry);
@@ -76,7 +76,7 @@ impl Agent {
                 tracing::warn!("{e}; falling back to the default");
                 RiskThreshold::default()
             });
-        self.sandbox = SandboxSettings::from_security(&config.security);
+        self.sandbox = config.security.sandbox_settings();
         self.network = config.security.network_policy();
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
@@ -102,7 +102,7 @@ impl Agent {
     }
 
     /// Connect MCP servers from config and register their tools on a fresh executor.
-    pub async fn with_mcp(mut self, config: &whycode_core::config::Config) -> Self {
+    pub async fn with_mcp(mut self, config: &whycode_config::Config) -> Self {
         if config.mcp_servers.is_empty() {
             return self;
         }

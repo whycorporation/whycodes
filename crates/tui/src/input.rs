@@ -769,7 +769,7 @@ fn open_provider_dialog(app: &mut TuiApp) {
         app.provider_dialog.providers.push(name.to_string());
     }
     // Then custom from config.
-    if let Ok(config) = whycode_core::config::Config::load() {
+    if let Ok(config) = whycode_config::Config::load() {
         for name in config.providers.keys() {
             if !app.provider_dialog.providers.contains(name) {
                 app.provider_dialog.providers.push(name.clone());

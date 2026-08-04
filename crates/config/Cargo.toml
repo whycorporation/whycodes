@@ -1,0 +1,20 @@
+[package]
+name = "whycode-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Configuration load, merge, and validation for Whycode"
+
+[dependencies]
+whycode-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+directories.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

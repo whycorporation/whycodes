@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 use whycode_agent::agent::Agent;
 use whycode_agent::permission::ChannelPermissionPrompter;
 use whycode_agent::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
-use whycode_core::config::Config;
+use whycode_config::Config;
 use whycode_core::types::AgentMode;
 use whycode_session::SessionHistory;
 use whycode_session::session::Session;
@@ -1232,7 +1232,7 @@ fn expand_at_files(input: &str, project_dir: &std::path::Path) -> String {
 }
 
 fn open_db_quiet() -> Option<whycode_storage::db::Database> {
-    let data_dir = whycode_core::config::Config::data_dir().ok()?;
+    let data_dir = whycode_config::Config::data_dir().ok()?;
     std::fs::create_dir_all(&data_dir).ok()?;
     let db_path = data_dir.join("whycode.db");
     whycode_storage::db::Database::open(&db_path.to_string_lossy()).ok()
@@ -1257,7 +1257,7 @@ fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize {
     let mut n = 0usize;
     let candidates = [
         project_dir.join(".whycode").join("shares"),
-        whycode_core::config::Config::data_dir()
+        whycode_config::Config::data_dir()
             .map(|d| d.join("shares"))
             .unwrap_or_default(),
     ];

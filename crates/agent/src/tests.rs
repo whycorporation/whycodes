@@ -55,7 +55,7 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
     let ctx = whycode_core::ToolContext {
         working_dir: "/work/proj".to_string(),
         session_id: None,
-        sandbox: whycode_core::config::SandboxSettings::off(),
+        sandbox: whycode_core::SandboxSettings::off(),
         network: whycode_core::NetworkPolicy::unrestricted(),
     };
     agent
@@ -144,7 +144,7 @@ async fn deny_still_wins_for_non_shell_tools() {
     let ctx = whycode_core::ToolContext {
         working_dir: "/work/proj".to_string(),
         session_id: None,
-        sandbox: whycode_core::config::SandboxSettings::off(),
+        sandbox: whycode_core::SandboxSettings::off(),
         network: whycode_core::NetworkPolicy::unrestricted(),
     };
     let call = whycode_core::types::ToolCall {

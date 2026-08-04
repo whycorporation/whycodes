@@ -19,7 +19,7 @@ fn share_search_dirs() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         dirs.push(cwd.join(".whycode").join("shares"));
     }
-    if let Ok(data) = whycode_core::config::Config::data_dir() {
+    if let Ok(data) = whycode_config::Config::data_dir() {
         dirs.push(data.join("shares"));
     }
     dirs
