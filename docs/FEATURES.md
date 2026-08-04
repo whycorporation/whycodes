@@ -129,7 +129,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Auto-approve / auto-deny env | ✅ | ✅ always-approve | ⚠️ | ⚠️ | ✅ |
 | Shell **risk sınıflandırması** | ✅★ | ⚠️ | ⚠️ | ✅ safety system | ⚠️ |
 | Catastrophic komut hard-block | ✅★ (`rm -rf ~` asla onaylanmaz) | ⚠️ | ❌ | ⚠️ | ⚠️ |
-| Sandbox (OS / network) | ❌ | ✅ | ❌ | ⚠️ | ✅ |
+| Sandbox (OS / network) | ✅★ (Linux bwrap workspace; net opt-out) | ✅ | ❌ | ⚠️ | ✅ |
 | Network allowlist | ❌ | ⚠️ | ❌ | ⚠️ | ✅ |
 | Hooks (pre/post tool) | ⚠️ plugin iskelet | ✅★ | ✅★ | ⚠️ | ✅★ |
 
@@ -140,7 +140,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
 |---|:---:|:---:|:---:|:---:|:---:|
 | MCP client (stdio) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MCP HTTP/SSE | ⚠️ | ⚠️ | ✅ | ❌ (skip) | ✅ |
+| MCP HTTP/SSE | ✅ | ⚠️ | ✅ | ❌ (skip) | ✅ |
 | MCP yönetim CLI | ✅ | ✅ `/mcps` | ✅ | ✅ mcp.json | ✅ |
 | Skills (SKILL.md) | ✅ | ✅★ + marketplace | ✅ | ✅ semantic inject | ✅★ |
 | Plugins / extensions | ⚠️ iskelet | ✅★ marketplace | ✅★ JS/TS | Self-dev★ | ⚠️ |
@@ -247,7 +247,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | Browser automation | jcode, Claude | Yok |
 | Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub |
 | Hooks + plugin marketplace | Grok, OpenCode, Claude | Plugin crate iskelet |
-| OS sandbox | Grok, Claude | Defence-in-depth risk parse var, sandbox yok |
+| OS sandbox (macOS/Windows backend) | Grok, Claude | Linux bwrap ✅; diğer platformlar fallback |
 | Cloud share / remote control | OpenCode, Claude | Sadece local share |
 | Side panel UI | jcode | Basit sidebar; Mermaid Unicode fenced blocks ✅ |
 | Image/video generation | Grok | Yok |
@@ -318,6 +318,9 @@ edit = "allow"
 
 [security]
 bash_risk_threshold = "destructive"  # caution | destructive | off
+sandbox = "workspace"                # off | workspace
+sandbox_network = true
+sandbox_fallback = "allow"           # allow | deny
 ```
 
 ---

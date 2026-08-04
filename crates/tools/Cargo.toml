@@ -10,6 +10,7 @@ whycode-core = { path = "../core" }
 whycode-format = { path = "../format" }
 whycode-skill = { path = "../skill" }
 whycode-lsp = { path = "../lsp" }
+whycode-sandbox = { path = "../sandbox" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

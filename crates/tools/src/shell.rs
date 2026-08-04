@@ -1,12 +1,12 @@
 use async_trait::async_trait;
 use serde_json::json;
-use std::process::Command;
+use std::path::PathBuf;
 
 use super::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
+use whycode_sandbox::{SandboxRequest, run as sandbox_run};
 
 pub struct ShellTool {
-    /// Tool name exposed to the model (`bash` for OpenCode parity, `shell` as alias).
     name: &'static str,
 }
 
@@ -21,7 +21,6 @@ impl ShellTool {
         Self { name: "bash" }
     }
 
-    /// Legacy alias name used by older prompts.
     pub fn as_shell() -> Self {
         Self { name: "shell" }
     }
@@ -34,7 +33,10 @@ impl Tool for ShellTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a shell command in the project environment and return stdout/stderr."
+        "Execute a shell command in the project environment and return stdout/stderr. \
+         When security.sandbox=workspace (default), the process is confined: project \
+         directory is writable, the rest of the filesystem is read-only; network may \
+         be disabled via security.sandbox_network=false."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -62,61 +64,36 @@ impl Tool for ShellTool {
         let command_str = args["command"].as_str().unwrap_or("");
         let timeout_secs = args["timeout"].as_u64().unwrap_or(120);
 
-        let result = tokio::task::spawn_blocking({
-            let command_str = command_str.to_string();
-            let working_dir = ctx.working_dir.clone();
-            move || {
-                let output = Command::new("bash")
-                    .arg("-c")
-                    .arg(&command_str)
-                    .current_dir(&working_dir)
-                    .output();
+        let request = SandboxRequest {
+            command: command_str.to_string(),
+            working_dir: PathBuf::from(&ctx.working_dir),
+            settings: ctx.sandbox.clone(),
+        };
 
-                match output {
-                    Ok(out) => {
-                        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-                        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                        let mut result = String::new();
-
-                        if !stdout.is_empty() {
-                            result.push_str(&stdout);
-                        }
-                        if !stderr.is_empty() {
-                            if !result.is_empty() {
-                                result.push('\n');
-                            }
-                            result.push_str("[stderr]\n");
-                            result.push_str(&stderr);
-                        }
-
-                        if result.is_empty() {
-                            result = format!(
-                                "Command executed successfully (exit code: {})",
-                                out.status.code().unwrap_or(0)
-                            );
-                        }
-
-                        (result, out.status.success())
-                    }
-                    Err(e) => (format!("Error executing command: {}", e), false),
-                }
-            }
-        });
+        let result = tokio::task::spawn_blocking(move || sandbox_run(&request));
 
         match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), result).await {
-            Ok(Ok((content, success))) => ToolResult {
+            Ok(Ok(Ok(outcome))) => {
+                let (content, success) = outcome.display_content();
+                ToolResult {
+                    tool_call_id: String::new(),
+                    content,
+                    is_error: !success,
+                }
+            }
+            Ok(Ok(Err(e))) => ToolResult {
                 tool_call_id: String::new(),
-                content,
-                is_error: !success,
+                content: format!("Sandbox error: {e}"),
+                is_error: true,
             },
             Ok(Err(e)) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Task join error: {}", e),
+                content: format!("Task join error: {e}"),
                 is_error: true,
             },
             Err(_) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Command timed out after {} seconds", timeout_secs),
+                content: format!("Command timed out after {timeout_secs} seconds"),
                 is_error: true,
             },
         }

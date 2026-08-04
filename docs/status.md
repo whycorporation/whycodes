@@ -5,7 +5,7 @@ file in the same commit as the work it describes — a phase is not "done"
 because the code merged, it is done when its acceptance criteria in the phase
 doc are checked off and verified.
 
-Last updated: 2026-07-31 (phases 1, 4, 8 done; 2 implemented; 5 partial; 7 dropped)
+Last updated: 2026-08-04 (phases 1, 4, 8 done; 2 implemented; 5 partial; 7 dropped; shell OS sandbox shipped)
 
 ## Legend
 
@@ -56,6 +56,7 @@ Decisions that shaped this plan, so they are not re-litigated later.
 | 2026-07-31 | Unresolvable targets escalate to `destructive`, never `catastrophic` | `catastrophic` is not promptable. An unexpandable `$BUILD_DIR` or a `$(…)` target is unknown, not known-bad, so refusing it outright would block legitimate work with no way to override. Refusal is reserved for targets we positively identified. |
 | 2026-07-31 | Unrecognised commands are `safe` | The alternative — unknown means dangerous — prompts on every build and script. Recorded as a limitation in the crate docs and README rather than hidden. |
 | 2026-07-31 | Added phase 8 (TUI), targeting opencode's look and feel | The original seven phases had no TUI phase, which was a gap: the TUI is the product surface. opencode's TUI is SolidJS on OpenTUI, so no code transfers — but its theme JSON schema does, and 33 themes come with it. |
+| 2026-08-04 | Shell OS sandbox defaults to `workspace` with network on and fallback allow | Risk parse is not a sandbox; bwrap workspace is the second lock. Network stays on so cargo/npm/git work; fallback allow avoids breaking macOS/Windows/CI without bwrap. |
 
 ## Verification commands
 

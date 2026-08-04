@@ -81,11 +81,11 @@ pub struct Config {
     pub security: SecurityConfig,
 }
 
-/// Settings for the shell command risk classifier.
+/// Settings for shell safety: risk classification and OS sandbox.
 ///
-/// The classifier inspects the command a model asked to run and decides
-/// whether it needs confirmation, independently of the `[permission]` map,
-/// which only sees the tool name.
+/// The risk classifier inspects the command *string* a model asked to run.
+/// The sandbox (when enabled) confines the process that runs it. They stack;
+/// neither replaces the other. See the README security section.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Lowest risk level that requires confirmation: `caution`, `destructive`
@@ -93,16 +93,148 @@ pub struct SecurityConfig {
     /// this setting cannot override that.
     #[serde(default = "default_risk_threshold")]
     pub bash_risk_threshold: String,
+
+    /// OS sandbox for `bash` / `shell`: `off` | `workspace` (default).
+    #[serde(default = "default_sandbox_mode")]
+    pub sandbox: String,
+
+    /// When `sandbox = "workspace"`, whether the sandboxed shell may use the
+    /// network. Default `true` so `cargo` / `npm` / `git` keep working.
+    #[serde(default = "default_true_bool")]
+    pub sandbox_network: bool,
+
+    /// When the requested sandbox cannot be applied (no `bwrap`, non-Linux):
+    /// `allow` (default — warn and run on host) or `deny` (fail the tool call).
+    #[serde(default = "default_sandbox_fallback")]
+    pub sandbox_fallback: String,
 }
 
 fn default_risk_threshold() -> String {
     "destructive".to_string()
 }
 
+fn default_sandbox_mode() -> String {
+    "workspace".to_string()
+}
+
+fn default_sandbox_fallback() -> String {
+    "allow".to_string()
+}
+
+fn default_true_bool() -> bool {
+    true
+}
+
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
             bash_risk_threshold: default_risk_threshold(),
+            sandbox: default_sandbox_mode(),
+            sandbox_network: true,
+            sandbox_fallback: default_sandbox_fallback(),
+        }
+    }
+}
+
+/// How aggressively shell commands are OS-sandboxed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SandboxMode {
+    /// Host `bash -c` with no namespace isolation.
+    Off,
+    /// Project directory RW, host root RO (bubblewrap on Linux).
+    #[default]
+    Workspace,
+}
+
+impl std::str::FromStr for SandboxMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" | "0" => Ok(Self::Off),
+            "workspace" | "on" | "true" | "1" => Ok(Self::Workspace),
+            other => Err(format!(
+                "unknown sandbox mode '{other}' (expected off or workspace)"
+            )),
+        }
+    }
+}
+
+impl SandboxMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Workspace => "workspace",
+        }
+    }
+}
+
+/// What to do when the requested sandbox backend is missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SandboxFallback {
+    /// Log a warning and run the command on the host.
+    #[default]
+    Allow,
+    /// Fail the tool call; do not run unsandboxed.
+    Deny,
+}
+
+impl std::str::FromStr for SandboxFallback {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "allow" | "warn" | "host" => Ok(Self::Allow),
+            "deny" | "error" | "strict" => Ok(Self::Deny),
+            other => Err(format!(
+                "unknown sandbox_fallback '{other}' (expected allow or deny)"
+            )),
+        }
+    }
+}
+
+/// Resolved sandbox policy carried on [`crate::ToolContext`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxSettings {
+    pub mode: SandboxMode,
+    pub network: bool,
+    pub fallback: SandboxFallback,
+}
+
+impl Default for SandboxSettings {
+    fn default() -> Self {
+        Self {
+            mode: SandboxMode::Workspace,
+            network: true,
+            fallback: SandboxFallback::Allow,
+        }
+    }
+}
+
+impl SandboxSettings {
+    pub fn off() -> Self {
+        Self {
+            mode: SandboxMode::Off,
+            network: true,
+            fallback: SandboxFallback::Allow,
+        }
+    }
+
+    pub fn from_security(sec: &SecurityConfig) -> Self {
+        let mode = sec.sandbox.parse().unwrap_or_else(|e| {
+            tracing::warn!("{e}; falling back to workspace");
+            SandboxMode::Workspace
+        });
+        let fallback = sec.sandbox_fallback.parse().unwrap_or_else(|e| {
+            tracing::warn!("{e}; falling back to allow");
+            SandboxFallback::Allow
+        });
+        Self {
+            mode,
+            network: sec.sandbox_network,
+            fallback,
         }
     }
 }
@@ -569,6 +701,19 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODE_PROJECT_DIR") {
             self.general.project_path = Some(PathBuf::from(val));
         }
+
+        if let Ok(val) = std::env::var("WHYCODE_SANDBOX") {
+            self.security.sandbox = val;
+        }
+        if let Ok(val) = std::env::var("WHYCODE_SANDBOX_NETWORK") {
+            self.security.sandbox_network = matches!(
+                val.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            );
+        }
+        if let Ok(val) = std::env::var("WHYCODE_SANDBOX_FALLBACK") {
+            self.security.sandbox_fallback = val;
+        }
     }
 
     // ── Merging ─────────────────────────────────────────────────────────
@@ -727,9 +872,18 @@ impl Config {
             merged.commands.insert(k.clone(), v.clone());
         }
 
-        // Security: a layer that set a threshold overrides the one below it.
+        // Security: a layer that set a non-default field overrides the one below.
         if other.security.bash_risk_threshold != default_risk_threshold() {
             merged.security.bash_risk_threshold = other.security.bash_risk_threshold.clone();
+        }
+        if other.security.sandbox != default_sandbox_mode() {
+            merged.security.sandbox = other.security.sandbox.clone();
+        }
+        if !other.security.sandbox_network {
+            merged.security.sandbox_network = false;
+        }
+        if other.security.sandbox_fallback != default_sandbox_fallback() {
+            merged.security.sandbox_fallback = other.security.sandbox_fallback.clone();
         }
 
         merged

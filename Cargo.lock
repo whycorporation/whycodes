@@ -2965,6 +2965,7 @@ dependencies = [
  "whycode-core",
  "whycode-llm",
  "whycode-mcp",
+ "whycode-sandbox",
  "whycode-session",
  "whycode-tools",
 ]
@@ -3121,6 +3122,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "whycode-sandbox"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.18",
+ "tracing",
+ "whycode-core",
+]
+
+[[package]]
 name = "whycode-schema"
 version = "0.1.0"
 dependencies = [
@@ -3234,6 +3245,7 @@ dependencies = [
  "whycode-core",
  "whycode-format",
  "whycode-lsp",
+ "whycode-sandbox",
  "whycode-skill",
 ]
 

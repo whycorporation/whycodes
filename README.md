@@ -358,7 +358,44 @@ Two limits worth stating plainly. An unrecognised command is treated as `safe`,
 so a shell script that deletes your home directory is invisible to this; the
 alternative is prompting on every build. And a sufficiently obfuscated command
 can defeat any static parser, which is why the catastrophic tier checks paths
-rather than trusting the parse. This is defence in depth, not a sandbox.
+rather than trusting the parse. That layer is defence in depth, not a sandbox —
+the OS sandbox below is the second lock.
+
+### Shell OS sandbox
+
+Shell commands also run under an OS sandbox by default (`security.sandbox =
+"workspace"`). On Linux this uses [bubblewrap](https://github.com/containers/bubblewrap)
+(`bwrap`):
+
+| Mode | Behaviour |
+|---|---|
+| `workspace` (default) | Project directory is read-write; the rest of the host is read-only; `/tmp` is a private tmpfs. Common toolchain caches (`~/.cargo`, `~/.npm`, …) stay writable so builds work. |
+| `off` | Host `bash -c` with no namespace isolation (previous behaviour). |
+
+Network is allowed inside the sandbox by default so `cargo` / `npm` / `git`
+keep working. Set `sandbox_network = false` to cut TCP/UDP for the shell
+process (`--unshare-net`). Dedicated tools (`webfetch`, `websearch`) are
+unchanged by this flag.
+
+```toml
+[security]
+bash_risk_threshold = "destructive"   # caution | destructive | off
+sandbox = "workspace"                 # off | workspace
+sandbox_network = true                # false → no network in sandboxed shell
+sandbox_fallback = "allow"            # allow | deny (when bwrap is missing)
+```
+
+| Env | Effect |
+|---|---|
+| `WHYCODE_SANDBOX` | `off` or `workspace` |
+| `WHYCODE_SANDBOX_NETWORK` | `0`/`1` (or true/false) |
+| `WHYCODE_SANDBOX_FALLBACK` | `allow` or `deny` |
+
+If `bwrap` is not installed (or you are on macOS/Windows), `sandbox_fallback =
+"allow"` warns and runs on the host; `"deny"` fails the tool call instead.
+This is still not a multi-tenant security boundary — it reduces blast radius
+for agent shell mistakes and obfuscated commands that slip past the risk
+classifier.
 
 ### Custom commands
 
@@ -396,6 +433,7 @@ converged on, so a repository set up for another agent needs no changes:
 crates/
 ├── core/      — Shared types, config, error handling
 ├── command-risk/ — Shell command risk classification
+├── sandbox/      — OS sandbox for shell (bubblewrap on Linux)
 ├── llm/       — LLM providers
 ├── tools/     — Tool system and built-ins
 ├── session/   — Conversation, compaction, undo/redo

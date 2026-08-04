@@ -1,5 +1,6 @@
 use futures::StreamExt;
 use std::sync::Arc;
+use whycode_core::config::SandboxSettings;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{
     AgentInfo, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
@@ -28,6 +29,7 @@ pub struct Agent {
     tool_executor: Arc<ToolExecutor>,
     permission_prompter: Arc<dyn PermissionPrompter>,
     risk_threshold: RiskThreshold,
+    sandbox: SandboxSettings,
 }
 
 impl Agent {
@@ -38,6 +40,7 @@ impl Agent {
             tool_executor: Arc::new(ToolExecutor::new()),
             permission_prompter: default_prompter(),
             risk_threshold: RiskThreshold::default(),
+            sandbox: SandboxSettings::default(),
         }
     }
 
@@ -70,7 +73,25 @@ impl Agent {
                 tracing::warn!("{e}; falling back to the default");
                 RiskThreshold::default()
             });
+        self.sandbox = SandboxSettings::from_security(&config.security);
+        tracing::debug!(
+            sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
+            "shell sandbox policy"
+        );
         self
+    }
+
+    /// Build tool context for a session, applying permission network flags.
+    fn tool_context(&self, session: &Session) -> ToolContext {
+        let mut sandbox = self.sandbox.clone();
+        if !self.info.permission.allow_network {
+            sandbox.network = false;
+        }
+        ToolContext {
+            working_dir: session.project_path.to_string_lossy().to_string(),
+            session_id: Some(session.id.clone()),
+            sandbox,
+        }
     }
 
     /// Connect MCP servers from config and register their tools on a fresh executor.
@@ -193,10 +214,7 @@ impl Agent {
     ) -> whycode_core::Result<String> {
         let tools = self.tool_executor.get_definitions(&self.info.permission);
 
-        let tool_ctx = ToolContext {
-            working_dir: session.project_path.to_string_lossy().to_string(),
-            session_id: Some(session.id.clone()),
-        };
+        let tool_ctx = self.tool_context(session);
 
         let provider = self
             .provider_registry
@@ -599,6 +617,7 @@ impl Agent {
             Arc::clone(&self.tool_executor),
             info,
             session.project_path.clone(),
+            self.sandbox.clone(),
         );
 
         match runner.run(task, provider_name, model, api_key).await {
@@ -655,6 +674,7 @@ impl Agent {
             Arc::clone(&self.tool_executor),
             self.info.clone(),
             project_path,
+            self.sandbox.clone(),
         );
 
         let result = runner.run(task, provider_name, model, api_key).await?;
@@ -688,6 +708,7 @@ impl Agent {
             Arc::clone(&self.tool_executor),
             self.info.clone(),
             project_path,
+            self.sandbox.clone(),
         ));
 
         let mut handles = Vec::with_capacity(goals.len());

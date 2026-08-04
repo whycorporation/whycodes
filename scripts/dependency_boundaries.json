@@ -4,6 +4,7 @@
     "core",
     "llm",
     "mcp",
+    "sandbox",
     "session",
     "tools"
   ],
@@ -76,6 +77,7 @@
     "core",
     "format",
     "lsp",
+    "sandbox",
     "skill"
   ],
   "tui": [
@@ -86,5 +88,8 @@
     "session",
     "storage",
     "tools"
+  ],
+  "sandbox": [
+    "core"
   ]
 }

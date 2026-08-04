@@ -16,6 +16,7 @@ fn temp_ctx(dir: &TempDir) -> ToolContext {
     ToolContext {
         working_dir: dir.path().to_string_lossy().to_string(),
         session_id: None,
+        sandbox: whycode_core::config::SandboxSettings::off(),
     }
 }
 

@@ -55,6 +55,7 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
     let ctx = whycode_core::ToolContext {
         working_dir: "/work/proj".to_string(),
         session_id: None,
+        sandbox: whycode_core::config::SandboxSettings::off(),
     };
     agent
         .execute_with_permission(&bash_call(command), &session, &ctx, "anthropic", "m", "k")
@@ -142,6 +143,7 @@ async fn deny_still_wins_for_non_shell_tools() {
     let ctx = whycode_core::ToolContext {
         working_dir: "/work/proj".to_string(),
         session_id: None,
+        sandbox: whycode_core::config::SandboxSettings::off(),
     };
     let call = whycode_core::types::ToolCall {
         id: "tc-2".to_string(),

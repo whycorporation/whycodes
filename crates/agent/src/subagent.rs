@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use whycode_core::config::SandboxSettings;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{AgentInfo, PermissionSet};
 use whycode_llm::provider::ProviderRegistry;
@@ -42,6 +43,7 @@ pub struct SubagentRunner {
     tool_executor: Arc<ToolExecutor>,
     info: AgentInfo,
     project_path: std::path::PathBuf,
+    sandbox: SandboxSettings,
 }
 
 impl SubagentRunner {
@@ -51,12 +53,14 @@ impl SubagentRunner {
         tool_executor: Arc<ToolExecutor>,
         info: AgentInfo,
         project_path: std::path::PathBuf,
+        sandbox: SandboxSettings,
     ) -> Self {
         Self {
             provider_registry,
             tool_executor,
             info,
             project_path,
+            sandbox,
         }
     }
 
@@ -145,9 +149,14 @@ impl SubagentRunner {
         // Get tool definitions filtered by the subagent's permission set
         let tools = self.tool_executor.get_definitions(permission);
 
+        let mut sandbox = self.sandbox.clone();
+        if !permission.allow_network {
+            sandbox.network = false;
+        }
         let tool_ctx = ToolContext {
             working_dir: session.project_path.to_string_lossy().to_string(),
             session_id: Some(session.id.clone()),
+            sandbox,
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {

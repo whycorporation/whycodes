@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::config::SandboxSettings;
 use crate::types::{PermissionSet, ToolDefinition, ToolResult};
 
 /// Context passed to tool execution
@@ -7,6 +8,26 @@ use crate::types::{PermissionSet, ToolDefinition, ToolResult};
 pub struct ToolContext {
     pub working_dir: String,
     pub session_id: Option<String>,
+    /// OS sandbox policy for shell tools (ignored by pure file tools).
+    pub sandbox: SandboxSettings,
+}
+
+impl ToolContext {
+    pub fn new(working_dir: impl Into<String>) -> Self {
+        Self {
+            working_dir: working_dir.into(),
+            session_id: None,
+            sandbox: SandboxSettings::default(),
+        }
+    }
+
+    pub fn unsandboxed(working_dir: impl Into<String>) -> Self {
+        Self {
+            working_dir: working_dir.into(),
+            session_id: None,
+            sandbox: SandboxSettings::off(),
+        }
+    }
 }
 
 /// A tool that can be invoked by the LLM
