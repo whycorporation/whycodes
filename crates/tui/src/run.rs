@@ -11,9 +11,10 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size as term_size,
     supports_keyboard_enhancement,
 };
+use ratatui::layout::Rect;
 use ratatui::buffer::Buffer;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
@@ -264,7 +265,25 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         }
     });
 
+    whycode_core::logging::emit(
+        "whycode_tui",
+        "info",
+        "tui.starting",
+        Some(serde_json::json!({
+            "provider": provider,
+            "model": model,
+            "stdout_tty": io::stdout().is_terminal(),
+            "stdin_tty": io::stdin().is_terminal(),
+        })),
+    );
+
     let mut tui_out = open_tui_writer().map_err(|e| {
+        whycode_core::logging::emit(
+            "whycode_tui",
+            "error",
+            "tui.open_writer_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
         anyhow::anyhow!(
             "failed to open terminal for TUI ({e}). \
              Run inside a real terminal, or use `whycode --plain`."
@@ -272,6 +291,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     })?;
 
     enable_raw_mode().map_err(|e| {
+        whycode_core::logging::emit(
+            "whycode_tui",
+            "error",
+            "tui.raw_mode_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
         anyhow::anyhow!(
             "failed to enter raw mode ({e}). \
              Run inside a real terminal, or use `whycode --plain`."
@@ -281,6 +306,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // background pad spaces. Shift+drag is still native select in many hosts.
     execute!(tui_out, EnterAlternateScreen, EnableMouseCapture).map_err(|e| {
         let _ = disable_raw_mode();
+        whycode_core::logging::emit(
+            "whycode_tui",
+            "error",
+            "tui.alt_screen_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
         anyhow::anyhow!("failed to enter alternate screen ({e})")
     })?;
     // Lets terminals that support it (Kitty, WezTerm, Alacritty…) report
@@ -293,14 +324,45 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         );
     }
     let backend = CrosstermBackend::new(tui_out);
-    let mut terminal = Terminal::new(backend)?;
+    let mut terminal = Terminal::new(backend).map_err(|e| {
+        let _ = disable_raw_mode();
+        whycode_core::logging::emit(
+            "whycode_tui",
+            "error",
+            "tui.terminal_new_failed",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        e
+    })?;
+
+    // Some hosts (piped stdout, odd PTYs) report 0×0 via TIOCGWINSZ. Drawing a
+    // zero-area buffer is useless and has been linked to instant “flash and
+    // quit” behaviour — force a sane fallback size.
+    let (tw, th) = term_size().unwrap_or((0, 0));
+    if tw == 0 || th == 0 {
+        let fallback = Rect::new(0, 0, 80, 24);
+        let _ = terminal.resize(fallback);
+        whycode_core::logging::emit(
+            "whycode_tui",
+            "warn",
+            "tui.size_fallback",
+            Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
+        );
+    }
+
+    whycode_core::logging::emit(
+        "whycode_tui",
+        "info",
+        "tui.ready",
+        Some(serde_json::json!({ "term_w": tw, "term_h": th })),
+    );
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TurnEvent>();
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
-    // Live context windows from config provider's GET …/v1/models (base + key from config).
-    let (catalog_tx, mut catalog_rx) =
-        mpsc::unbounded_channel::<(String, whycode_llm::ModelCatalog)>();
-    spawn_model_catalog_fetch(&config, &provider, &api_key, catalog_tx.clone());
+    // Live context window from config provider's GET …/v1/models (only active model).
+    // Channel payload is tiny: (provider, model, context_window) — never the full catalog.
+    let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
+    spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
 
     let mut agent_busy = false;
     let mut cancel_flag: Option<CancelFlag> = None;
@@ -323,12 +385,36 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // Inert unless WHYCODE_BENCH is set; see crate::bench.
     let bench = crate::bench::config_from_env();
 
+    let mut first_frame = true;
     let result = async {
         loop {
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
             app.toasts.prune(std::time::Instant::now());
-            let completed = terminal.draw(|f| render::render(f, &mut app))?;
+            let completed = match terminal.draw(|f| render::render(f, &mut app)) {
+                Ok(c) => c,
+                Err(e) => {
+                    whycode_core::logging::emit(
+                        "whycode_tui",
+                        "error",
+                        "tui.draw_failed",
+                        Some(serde_json::json!({ "error": e.to_string() })),
+                    );
+                    return Err(e.into());
+                }
+            };
+            if first_frame {
+                first_frame = false;
+                whycode_core::logging::emit(
+                    "whycode_tui",
+                    "info",
+                    "tui.first_frame",
+                    Some(serde_json::json!({
+                        "w": completed.area.width,
+                        "h": completed.area.height,
+                    })),
+                );
+            }
             app.screen_cells = snapshot_cells(completed.buffer);
             crate::bench::record_draw();
 
@@ -467,10 +553,25 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     api_key = k;
                 }
                 if provider_changed {
-                    // Different base_url/key — drop stale catalog and re-fetch from config.
-                    app.model_catalog = None;
-                    app.model_catalog_provider = None;
-                    spawn_model_catalog_fetch(&config, &provider, &api_key, catalog_tx.clone());
+                    // Different base_url/key — drop stale window and re-fetch.
+                    app.clear_api_context_window();
+                    spawn_model_context_fetch(
+                        &config,
+                        &provider,
+                        &model,
+                        &api_key,
+                        catalog_tx.clone(),
+                    );
+                } else {
+                    // Same provider, new model id — re-fetch that model's window.
+                    app.clear_api_context_window();
+                    spawn_model_context_fetch(
+                        &config,
+                        &provider,
+                        &model,
+                        &api_key,
+                        catalog_tx.clone(),
+                    );
                 }
                 refresh_context_window(&mut app, &config, &p, &m);
                 app.status_message = format!(
@@ -479,31 +580,41 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 );
             }
 
-            // ── Re-fetch catalog when slash /models switches provider ──
+            // ── Re-fetch when slash /models switches provider ──
             if app.pending_catalog_refresh {
                 app.pending_catalog_refresh = false;
-                spawn_model_catalog_fetch(&config, &provider, &api_key, catalog_tx.clone());
-            }
-
-            // ── Apply async /v1/models catalog (context_length from gateway) ──
-            while let Ok((for_provider, catalog)) = catalog_rx.try_recv() {
-                if for_provider != provider {
-                    continue; // switched away while fetch was in flight
-                }
-                let n = catalog.context_windows.len();
-                app.set_model_catalog(
-                    catalog,
-                    &for_provider,
+                app.clear_api_context_window();
+                spawn_model_context_fetch(
+                    &config,
                     &provider,
                     &model,
+                    &api_key,
+                    catalog_tx.clone(),
+                );
+            }
+
+            // ── Apply async single-model context_length from gateway ──
+            while let Ok((for_provider, for_model, window)) = catalog_rx.try_recv() {
+                if for_provider != provider || for_model != model {
+                    continue; // stale in-flight result
+                }
+                app.set_api_context_window(
+                    &for_provider,
+                    &for_model,
+                    window,
                     config.configured_context_window(&provider, &model),
                     config.session.max_context_tokens as u64,
                 );
-                tracing::debug!(
-                    provider = %for_provider,
-                    models = n,
-                    window = app.max_context_tokens,
-                    "model catalog applied"
+                whycode_core::logging::emit(
+                    "whycode_tui",
+                    "info",
+                    "tui.context_window_applied",
+                    Some(serde_json::json!({
+                        "provider": for_provider,
+                        "model": for_model,
+                        "window": window,
+                        "max": app.max_context_tokens,
+                    })),
                 );
             }
 
@@ -646,8 +757,31 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 Duration::from_millis(40)
             };
 
-            if event::poll(poll_for)? {
-                let ev = event::read()?;
+            let has_ev = match event::poll(poll_for) {
+                Ok(v) => v,
+                Err(e) => {
+                    whycode_core::logging::emit(
+                        "whycode_tui",
+                        "error",
+                        "tui.poll_failed",
+                        Some(serde_json::json!({ "error": e.to_string() })),
+                    );
+                    return Err(e.into());
+                }
+            };
+            if has_ev {
+                let ev = match event::read() {
+                    Ok(ev) => ev,
+                    Err(e) => {
+                        whycode_core::logging::emit(
+                            "whycode_tui",
+                            "error",
+                            "tui.read_failed",
+                            Some(serde_json::json!({ "error": e.to_string() })),
+                        );
+                        return Err(e.into());
+                    }
+                };
 
                 // Permission dialog keys handled specially
                 if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. }))
@@ -812,11 +946,23 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
 
                 if !input::handle_event(&mut app, ev) {
+                    whycode_core::logging::emit(
+                        "whycode_tui",
+                        "info",
+                        "tui.exit",
+                        Some(serde_json::json!({ "reason": "handle_event=false" })),
+                    );
                     break;
                 }
             }
 
             if !app.running {
+                whycode_core::logging::emit(
+                    "whycode_tui",
+                    "info",
+                    "tui.exit",
+                    Some(serde_json::json!({ "reason": "running=false" })),
+                );
                 break;
             }
         }
@@ -829,16 +975,26 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         let _ = reply.send(false);
     }
 
-    disable_raw_mode()?;
+    if let Err(ref e) = result {
+        whycode_core::logging::emit(
+            "whycode_tui",
+            "error",
+            "tui.loop_error",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+    }
+
+    // Cleanup must not fail the process after a successful session — best-effort.
+    let _ = disable_raw_mode();
     if keyboard_enhanced {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
-    execute!(
+    let _ = execute!(
         terminal.backend_mut(),
         DisableMouseCapture,
         LeaveAlternateScreen
-    )?;
-    terminal.show_cursor()?;
+    );
+    let _ = terminal.show_cursor();
     // Normal exit — panic hook no longer needs to touch the terminal.
     whycode_core::logging::clear_panic_cleanup();
 
@@ -847,6 +1003,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     if let Some(ref bench) = bench {
         crate::bench::write_results(bench);
     }
+
+    whycode_core::logging::emit(
+        "whycode_tui",
+        "info",
+        "tui.stopped",
+        Some(serde_json::json!({ "ok": result.is_ok() })),
+    );
 
     result
 }
@@ -1283,12 +1446,9 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/models" => {
             if rest.is_empty() {
-                let src = if ctx
-                    .app
-                    .model_catalog_provider
-                    .as_deref()
-                    .is_some_and(|p| p == ctx.provider.as_str())
-                {
+                let src = if ctx.app.api_context_for.as_ref().is_some_and(|(p, m)| {
+                    p == ctx.provider.as_str() && m == ctx.model.as_str()
+                }) {
                     "api"
                 } else {
                     "local"
@@ -1315,8 +1475,11 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     *ctx.api_key = k;
                 }
                 if provider_changed {
-                    ctx.app.model_catalog = None;
-                    ctx.app.model_catalog_provider = None;
+                    ctx.app.clear_api_context_window();
+                    ctx.app.pending_catalog_refresh = true;
+                } else {
+                    // Model-only change: still need a fresh window for the new id.
+                    ctx.app.clear_api_context_window();
                     ctx.app.pending_catalog_refresh = true;
                 }
                 refresh_context_window(ctx.app, ctx.config, p, m);
@@ -1405,17 +1568,23 @@ fn refresh_context_window(
     );
 }
 
-/// Background `GET {config.base_url}/models` using that provider's key/headers.
+/// Background `GET {config.base_url}/models` — extract **one** model's window.
 ///
-/// No-op when the provider has no `base_url`/`api_base` in config. Failures are
-/// logged only — meter keeps config/built-in fallback. Never blocks the TUI
-/// thread and never aborts the process on error.
-fn spawn_model_catalog_fetch(
+/// No-op without `base_url`/`api_base`. Failures are logged only; meter keeps
+/// config/built-in fallback. Never stores the full gateway list in the TUI.
+fn spawn_model_context_fetch(
     config: &Config,
     provider: &str,
+    model: &str,
     runtime_api_key: &str,
-    tx: mpsc::UnboundedSender<(String, whycode_llm::ModelCatalog)>,
+    tx: mpsc::UnboundedSender<(String, String, u32)>,
 ) {
+    // Opt-out for debugging hang/crash suspicions: WHYCODE_NO_MODEL_CATALOG=1
+    if std::env::var_os("WHYCODE_NO_MODEL_CATALOG").is_some() {
+        tracing::debug!("WHYCODE_NO_MODEL_CATALOG set — skip /v1/models");
+        return;
+    }
+
     let Some(req) = whycode_llm::catalog_request_from_config(
         config,
         provider,
@@ -1433,22 +1602,32 @@ fn spawn_model_catalog_fetch(
     };
 
     let provider_name = req.provider_name.clone();
+    let model = model.to_string();
     let url = whycode_llm::normalize_models_url(&req.base_url);
-    // Isolated task: failure/panic here must never kill the TUI.
     tokio::spawn(async move {
-        match whycode_llm::fetch_model_catalog_from_request(&req).await {
-            Ok(catalog) => {
+        match whycode_llm::fetch_model_context_window(&req, &model).await {
+            Ok(Some(window)) => {
                 tracing::info!(
                     provider = %provider_name,
+                    model = %model,
                     %url,
-                    models = catalog.context_windows.len(),
-                    "GET /v1/models ok"
+                    window,
+                    "GET /v1/models context_length ok"
                 );
-                let _ = tx.send((provider_name, catalog));
+                let _ = tx.send((provider_name, model, window));
+            }
+            Ok(None) => {
+                tracing::debug!(
+                    provider = %provider_name,
+                    model = %model,
+                    %url,
+                    "model not in /v1/models list — using local fallback"
+                );
             }
             Err(e) => {
                 tracing::warn!(
                     provider = %provider_name,
+                    model = %model,
                     %url,
                     error = %e,
                     "GET /v1/models failed (using local context fallback)"

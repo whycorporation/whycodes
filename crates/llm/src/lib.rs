@@ -23,9 +23,9 @@ pub use capabilities::{
 };
 pub use client_identity::{HTTP_REFERER, USER_AGENT, X_TITLE};
 pub use model_catalog::{
-    base_url_from_provider_config, catalog_request_from_config, fetch_model_catalog,
-    fetch_model_catalog_from_request, normalize_models_url, parse_models_json, CatalogFetchRequest,
-    ModelCatalog, CATALOG_TTL,
+    base_url_from_provider_config, catalog_request_from_config, context_window_for_model_id,
+    fetch_model_catalog, fetch_model_catalog_from_request, fetch_model_context_window,
+    normalize_models_url, parse_models_json, CatalogFetchRequest, ModelCatalog, CATALOG_TTL,
 };
 pub use provider::{LlmProvider, ProviderRegistry};
 pub use types::*;

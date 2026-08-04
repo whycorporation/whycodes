@@ -578,11 +578,11 @@ pub struct TuiApp {
     /// Context window capacity for the *active* model
     /// (config → `/v1/models` → built-in catalog → `session.max_context_tokens`).
     pub max_context_tokens: u64,
-    /// Live model metadata from the active provider's `GET /v1/models`
-    /// (URL/key from config — not hard-coded).
-    pub model_catalog: Option<whycode_llm::ModelCatalog>,
-    /// Provider name the catalog was fetched for (ignore if it no longer matches).
-    pub model_catalog_provider: Option<String>,
+    /// Live context window from `GET /v1/models` for `(provider, model)`, if known.
+    /// Only the single active window is kept — never the full gateway catalog.
+    pub api_context_window: Option<u32>,
+    /// Which provider/model `api_context_window` was fetched for.
+    pub api_context_for: Option<(String, String)>,
 
     /// When the current agent turn started (live latency while busy).
     pub turn_started_at: Option<std::time::Instant>,
@@ -815,8 +815,8 @@ impl TuiApp {
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
-            model_catalog: None,
-            model_catalog_provider: None,
+            api_context_window: None,
+            api_context_for: None,
             turn_started_at: None,
             turn_usage: None,
         }
@@ -869,7 +869,7 @@ impl TuiApp {
 
     /// Resolve and apply the context window for the active model.
     ///
-    /// Priority: config → live `/v1/models` (same provider) → built-in → session fallback.
+    /// Priority: config → live `/v1/models` (same provider/model) → built-in → session fallback.
     pub fn apply_context_window(
         &mut self,
         provider: &str,
@@ -878,14 +878,12 @@ impl TuiApp {
         session_fallback: u64,
     ) {
         let api = self
-            .model_catalog
-            .as_ref()
+            .api_context_window
             .filter(|_| {
-                self.model_catalog_provider
-                    .as_deref()
-                    .is_some_and(|p| p == provider)
-            })
-            .and_then(|c| c.context_window(model));
+                self.api_context_for
+                    .as_ref()
+                    .is_some_and(|(p, m)| p == provider && m == model)
+            });
         self.max_context_tokens = whycode_llm::resolve_context_window(
             provider,
             model,
@@ -895,19 +893,27 @@ impl TuiApp {
         );
     }
 
-    /// Store a fetched catalog and re-resolve the active model's window.
-    pub fn set_model_catalog(
+    /// Apply a single-model context window from `GET /v1/models` and re-resolve.
+    pub fn set_api_context_window(
         &mut self,
-        catalog: whycode_llm::ModelCatalog,
-        catalog_provider: &str,
         provider: &str,
         model: &str,
+        window: u32,
         configured: Option<u32>,
         session_fallback: u64,
     ) {
-        self.model_catalog = Some(catalog);
-        self.model_catalog_provider = Some(catalog_provider.to_string());
+        if window == 0 {
+            return;
+        }
+        self.api_context_window = Some(window);
+        self.api_context_for = Some((provider.to_string(), model.to_string()));
         self.apply_context_window(provider, model, configured, session_fallback);
+    }
+
+    /// Drop live API window (e.g. provider switch) so we do not reuse a stale max.
+    pub fn clear_api_context_window(&mut self) {
+        self.api_context_window = None;
+        self.api_context_for = None;
     }
 
     /// Mark wall-clock start of a new agent turn (call when the request is sent).

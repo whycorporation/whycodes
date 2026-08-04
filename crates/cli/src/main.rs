@@ -277,6 +277,12 @@ async fn main() -> anyhow::Result<()> {
     // First statement: everything after it is time a user waits for, and the
     // first-frame benchmark measures from here.
     whycode_tui::bench::mark_process_start();
+
+    // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
+    // SIGPIPE-kill the process on any accidental write to stdout. Ignore it so
+    // the TUI (which draws on /dev/tty) keeps running.
+    ignore_sigpipe();
+
     let cli = Cli::parse();
 
     // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
@@ -285,7 +291,7 @@ async fn main() -> anyhow::Result<()> {
     init_logging(&cli);
 
     // Determine which command to run; default to Run
-    match &cli.command {
+    let result = match &cli.command {
         Some(cmd) => dispatch_command(cmd, &cli).await,
         None => {
             // No subcommand → interactive run
@@ -295,8 +301,39 @@ async fn main() -> anyhow::Result<()> {
             };
             dispatch_command(&run_cmd, &cli).await
         }
+    };
+
+    if let Err(ref e) = result {
+        // Always land in unified.jsonl — TUI mode often silences stderr.
+        whycode_core::logging::emit(
+            "whycode",
+            "error",
+            "main.exit_error",
+            Some(serde_json::json!({ "error": e.to_string() })),
+        );
+        // Print once here; return Ok so anyhow doesn't print a second copy.
+        eprintln!("Error: {e:#}");
+        return Ok(());
+    }
+    result
+}
+
+/// Ignore SIGPIPE so a closed stdout pipe cannot kill the process.
+#[cfg(unix)]
+fn ignore_sigpipe() {
+    // libc::SIG_IGN without pulling libc as a hard dep for this one call.
+    unsafe extern "C" {
+        fn signal(sig: i32, handler: usize) -> usize;
+    }
+    const SIGPIPE: i32 = 13;
+    const SIG_IGN: usize = 1;
+    unsafe {
+        let _ = signal(SIGPIPE, SIG_IGN);
     }
 }
+
+#[cfg(not(unix))]
+fn ignore_sigpipe() {}
 
 /// Resolve data dir + env/config filters and install the process logger.
 fn init_logging(cli: &Cli) {

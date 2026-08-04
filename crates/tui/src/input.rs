@@ -427,9 +427,12 @@ fn next_boundary(s: &str, idx: usize) -> usize {
 
 fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     // Always track pointer for hover chrome (context % meter, etc.).
-    let prev_hover = app.context_hovered();
+    //
+    // IMPORTANT: this function's return value is "keep running?" for the
+    // event loop (`false` = quit the app). Never return `false` for ordinary
+    // mouse motion — that was killing the TUI on the first mouse-move after
+    // EnableMouseCapture (seen as `tui.exit reason=handle_event=false`).
     app.mouse_pos = Some((mouse.column, mouse.row));
-    let hover_changed = prev_hover != app.context_hovered();
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
@@ -439,8 +442,8 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             app.scroll_rows(3);
         }
         MouseEventKind::Moved => {
-            // Hover-only: repaint when the context meter enter/leave flips.
-            return hover_changed;
+            // Position already updated above; next frame paints hover %.
+            return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {
             // Start a fresh selection. Shift+drag is left to the terminal for

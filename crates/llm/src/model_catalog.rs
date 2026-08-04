@@ -135,15 +135,7 @@ pub fn parse_models_json(json: &Value, source_url: &str) -> ModelCatalog {
         ..Default::default()
     };
 
-    let items: Vec<&Value> = if let Some(arr) = json.get("data").and_then(|d| d.as_array()) {
-        arr.iter().collect()
-    } else if let Some(arr) = json.as_array() {
-        arr.iter().collect()
-    } else {
-        Vec::new()
-    };
-
-    for m in items {
+    for m in model_items(json) {
         let id = m
             .get("id")
             .and_then(|v| v.as_str())
@@ -164,6 +156,42 @@ pub fn parse_models_json(json: &Value, source_url: &str) -> ModelCatalog {
     }
 
     catalog
+}
+
+fn model_items(json: &Value) -> Vec<&Value> {
+    if let Some(arr) = json.get("data").and_then(|d| d.as_array()) {
+        arr.iter().collect()
+    } else if let Some(arr) = json.as_array() {
+        arr.iter().collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Look up a single model's context window without keeping the full catalog.
+///
+/// Prefer exact `id` match, then suffix `…/{model}`.
+pub fn context_window_for_model_id(json: &Value, model: &str) -> Option<u32> {
+    if model.is_empty() {
+        return None;
+    }
+    let mut suffix_hit = None;
+    for m in model_items(json) {
+        let id = m.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        if id.is_empty() {
+            continue;
+        }
+        let Some(cw) = context_window_from_model_value(m) else {
+            continue;
+        };
+        if id == model {
+            return Some(cw);
+        }
+        if suffix_hit.is_none() && (id.ends_with(&format!("/{model}")) || id.ends_with(model)) {
+            suffix_hit = Some(cw);
+        }
+    }
+    suffix_hit
 }
 
 /// Inputs needed to call a provider's models list — all from config/runtime,
@@ -227,6 +255,62 @@ pub async fn fetch_model_catalog_from_request(
         &req.headers,
     )
     .await
+}
+
+/// Fetch `/v1/models` and return **only** `model`'s context window (no full map on heap).
+///
+/// Prefer this on the TUI hot path: gateways can list thousands of models; we
+/// only need the active one's `context_length`.
+pub async fn fetch_model_context_window(
+    req: &CatalogFetchRequest,
+    model: &str,
+) -> whycode_core::Result<Option<u32>> {
+    let url = normalize_models_url(&req.base_url);
+    let mut http =
+        super::client_identity::with_identity(super::client_identity::http_client().get(&url));
+
+    for (k, v) in &req.headers {
+        http = http.header(k, v);
+    }
+    let has_authorization = req
+        .headers
+        .keys()
+        .any(|k| k.eq_ignore_ascii_case("authorization"));
+    if let Some(key) = req.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
+        if !has_authorization {
+            http = http.header("Authorization", format!("Bearer {key}"));
+        }
+    }
+
+    let resp = http
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| whycode_core::Error::Llm(format!("models list HTTP: {e}")))?;
+
+    let status = resp.status();
+    // Hard cap so a runaway gateway cannot OOM the agent (typical catalog ~1–2 MB).
+    const MAX_BODY: usize = 8 * 1024 * 1024;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| whycode_core::Error::Llm(format!("models list body: {e}")))?;
+    if bytes.len() > MAX_BODY {
+        return Err(whycode_core::Error::Llm(format!(
+            "models list too large ({} bytes > {MAX_BODY})",
+            bytes.len()
+        )));
+    }
+    if !status.is_success() {
+        let snippet: String = String::from_utf8_lossy(&bytes).chars().take(200).collect();
+        return Err(whycode_core::Error::Llm(format!(
+            "models list {status}: {snippet}"
+        )));
+    }
+
+    let json: Value = serde_json::from_slice(&bytes)
+        .map_err(|e| whycode_core::Error::Llm(format!("models list JSON: {e}")))?;
+    Ok(context_window_for_model_id(&json, model))
 }
 
 /// Fetch `GET {base}/models` (OpenAI-compatible) and parse context windows.
@@ -412,4 +496,18 @@ mod tests {
         assert_eq!(context_window_from_model_value(&m), Some(200_000));
     }
 
+    #[test]
+    fn context_window_for_model_id_exact_and_suffix() {
+        let json = json!({
+            "data": [
+                { "id": "trk/moonshotai/kimi-k3-free", "context_length": 128_000 },
+                { "id": "other", "context_length": 1_000 }
+            ]
+        });
+        assert_eq!(
+            context_window_for_model_id(&json, "trk/moonshotai/kimi-k3-free"),
+            Some(128_000)
+        );
+        assert_eq!(context_window_for_model_id(&json, "missing"), None);
+    }
 }
