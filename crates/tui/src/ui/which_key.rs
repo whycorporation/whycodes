@@ -1,5 +1,6 @@
 // ── which_key.rs: Keyboard shortcut popup (like OpenCode's which-key.tsx) ─
 // Activated by pressing '?' or Ctrl+H. Shows context-appropriate shortcuts.
+// When the binding list overflows, a solid scrollbar is painted on the right.
 
 use ratatui::{
     layout::Rect,
@@ -10,6 +11,7 @@ use ratatui::{
 };
 
 use crate::keymap::{self, KeyBinding, KeymapContext};
+use crate::ui::scrollbar::paint_scrollbar;
 
 /// Render the which-key popup overlaid on the main area.
 pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usize) {
@@ -53,33 +55,33 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
     // Column headers
     let header = format!(
         "  {:<cw$} {:<cd$}",
-        "KEY", "DESCRIPTION",
+        "KEY",
+        "DESCRIPTION",
         cw = col1_width,
         cd = col2_width
     );
     lines.push(Line::from(Span::styled(
         header,
-        Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD),
     )));
     let sep = format!(
         "  {:-<cw$} {:-<cd$}",
-        "", "",
+        "",
+        "",
         cw = col1_width,
         cd = col2_width
     );
     lines.push(Line::from(Span::raw(sep)));
 
-    // Filter by scroll
-    let max_visible = (popup_area.height as usize).saturating_sub(6);
-    let start = scroll.min(bindings.len().saturating_sub(max_visible));
+    // Binding rows occupy the middle; chrome is header(4) + footer(2).
+    const CHROME_ROWS: usize = 6;
+    let max_visible = (popup_area.height as usize).saturating_sub(CHROME_ROWS).max(1);
+    let total_bindings = bindings.len();
+    let needs_scrollbar = total_bindings > max_visible;
+    let start = scroll.min(total_bindings.saturating_sub(max_visible));
     let visible: Vec<&KeyBinding> = bindings.iter().skip(start).take(max_visible).collect();
-
-    if start > 0 {
-        lines.push(Line::from(Span::styled(
-            format!("  {} more above...", start),
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
 
     for binding in &visible {
         let key_style = Style::default()
@@ -87,7 +89,7 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
             .add_modifier(Modifier::BOLD);
         let desc_style = Style::default().fg(Color::Rgb(210, 210, 220));
 
-        let mut spans = vec![
+        lines.push(Line::from(vec![
             Span::styled("  ", Style::default()),
             Span::styled(
                 format!("{:<cw$}", binding.key, cw = col1_width),
@@ -98,16 +100,7 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
                 format!("{:<cd$}", binding.description, cd = col2_width),
                 desc_style,
             ),
-        ];
-        lines.push(Line::from(spans));
-    }
-
-    let remaining = bindings.len().saturating_sub(start + visible.len());
-    if remaining > 0 {
-        lines.push(Line::from(Span::styled(
-            format!("  {} more below...", remaining),
-            Style::default().fg(Color::DarkGray),
-        )));
+        ]));
     }
 
     // Footer
@@ -127,4 +120,31 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
         .wrap(Wrap { trim: true });
 
     frame.render_widget(block, popup_area);
+
+    if needs_scrollbar && popup_area.height > 4 && popup_area.width > 2 {
+        // Bar next to the binding rows only (below header, above footer).
+        let header_inner = 4u16; // title + blank + KEY + sep
+        let footer_inner = 2u16; // blank + hint
+        let bar_y = popup_area.y + 1 + header_inner;
+        let bar_h = popup_area
+            .height
+            .saturating_sub(2 + header_inner + footer_inner);
+        if bar_h > 0 {
+            let sb = Rect {
+                x: popup_area.x + popup_area.width.saturating_sub(2),
+                y: bar_y,
+                width: 1,
+                height: bar_h,
+            };
+            paint_scrollbar(
+                frame.buffer_mut(),
+                sb,
+                total_bindings,
+                max_visible,
+                start,
+                Color::Rgb(28, 28, 38),
+                Color::Rgb(100, 100, 120),
+            );
+        }
+    }
 }

@@ -1,10 +1,13 @@
 // ── ui/dialogs/help.rs: Help / keybinding cheatsheet ──────────────────
 // Grok-style: ModalWindow chrome + section headers + key/desc columns.
+// Scrolls when content exceeds the body; solid scrollbar on the right.
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
+use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
@@ -88,13 +91,45 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
     ];
 
     // Scroll: skip leading lines per help_scroll, keep footer-safe window.
+    let total = help_text.len();
     let max_rows = area.height as usize;
-    let max_scroll = help_text.len().saturating_sub(max_rows);
+    let max_scroll = total.saturating_sub(max_rows);
     let start = app.help_scroll.min(max_scroll);
+    let needs_scrollbar = total > max_rows;
+    let list_width = if needs_scrollbar {
+        area.width.saturating_sub(1)
+    } else {
+        area.width
+    };
     let visible: Vec<Line> = help_text.into_iter().skip(start).take(max_rows).collect();
 
+    let list_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: list_width,
+        height: area.height,
+    };
     let p = Paragraph::new(Text::from(visible))
         .wrap(Wrap { trim: false })
         .style(Style::default().bg(palette.bg));
-    frame.render_widget(p, area);
+    frame.render_widget(p, list_area);
+
+    if needs_scrollbar {
+        let colors = ScrollbarColors::from_palette(palette);
+        let sb = Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y,
+            width: 1,
+            height: area.height,
+        };
+        paint_scrollbar(
+            frame.buffer_mut(),
+            sb,
+            total,
+            max_rows,
+            start,
+            colors.track,
+            colors.thumb,
+        );
+    }
 }

@@ -1,11 +1,14 @@
 // ── ui/dialogs/provider.rs: Provider dialog ────────────────────────────
 // Two modes: Select from list, or Add Custom.
 // Chrome matches Grok ModalWindow via dialog_frame.
+// List modes paint a scrollbar when the item list overflows the content area.
 
 use crate::app::{AuthMethod, ProviderDialogMode, TuiApp};
 use crate::theme::ThemePalette;
+use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar, scroll_to_selected};
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
@@ -32,7 +35,23 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
         70,
     );
     let area = chrome.content;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let pd = &app.provider_dialog;
+
+    // Header (2 lines) is fixed; the selectable rows scroll below.
+    const HEADER_ROWS: usize = 2;
+    // providers + "Add Custom"
+    let item_count = pd.providers.len() + 1;
+    let list_budget = (area.height as usize).saturating_sub(HEADER_ROWS).max(1);
+    let needs_scrollbar = item_count > list_budget;
+    let list_width = if needs_scrollbar {
+        area.width.saturating_sub(1)
+    } else {
+        area.width
+    };
+    let start = scroll_to_selected(pd.selected, item_count, list_budget);
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
@@ -41,38 +60,68 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
     )));
     lines.push(Line::from(""));
 
-    for (i, name) in pd.providers.iter().enumerate() {
-        let prefix = if i == pd.selected { "▸ " } else { "  " };
-        let style = if i == pd.selected {
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD)
+    for i in start..start.saturating_add(list_budget).min(item_count) {
+        if i < pd.providers.len() {
+            let name = &pd.providers[i];
+            let prefix = if i == pd.selected { "▸ " } else { "  " };
+            let style = if i == pd.selected {
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.fg)
+            };
+            lines.push(Line::from(Span::styled(format!("{prefix}{name}"), style)));
         } else {
-            Style::default().fg(palette.fg)
-        };
-        lines.push(Line::from(Span::styled(format!("{prefix}{name}"), style)));
+            // Add custom entry (last selectable row).
+            let prefix = if i == pd.selected { "▸ " } else { "  " };
+            let style = if i == pd.selected {
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(palette.dim)
+            };
+            lines.push(Line::from(Span::styled(
+                format!("{prefix}+ Add Custom Provider…"),
+                style,
+            )));
+        }
     }
 
-    // Add custom entry.
-    let idx = pd.providers.len();
-    let prefix = if idx == pd.selected { "▸ " } else { "  " };
-    let style = if idx == pd.selected {
-        Style::default()
-            .fg(palette.accent)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(palette.dim)
+    let list_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: list_width,
+        height: area.height,
     };
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        format!("{prefix}+ Add Custom Provider…"),
-        style,
-    )));
-
     let p = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: true })
         .style(Style::default().bg(palette.bg));
-    frame.render_widget(p, area);
+    frame.render_widget(p, list_area);
+
+    if needs_scrollbar {
+        let colors = ScrollbarColors::from_palette(palette);
+        // Bar covers the list body only (below header).
+        let bar_h = area.height.saturating_sub(HEADER_ROWS as u16);
+        if bar_h > 0 {
+            let sb = Rect {
+                x: area.x + area.width.saturating_sub(1),
+                y: area.y + HEADER_ROWS as u16,
+                width: 1,
+                height: bar_h,
+            };
+            paint_scrollbar(
+                frame.buffer_mut(),
+                sb,
+                item_count,
+                list_budget,
+                start,
+                colors.track,
+                colors.thumb,
+            );
+        }
+    }
 }
 
 fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
@@ -179,7 +228,21 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
         50,
     );
     let area = chrome.content;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
     let ms = &app.model_selection;
+
+    const HEADER_ROWS: usize = 2;
+    let item_count = ms.models.len();
+    let list_budget = (area.height as usize).saturating_sub(HEADER_ROWS).max(1);
+    let needs_scrollbar = item_count > list_budget;
+    let list_width = if needs_scrollbar {
+        area.width.saturating_sub(1)
+    } else {
+        area.width
+    };
+    let start = scroll_to_selected(ms.selected, item_count, list_budget);
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
@@ -194,7 +257,13 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
             Style::default().fg(palette.dim),
         )));
     } else {
-        for (i, (provider, model)) in ms.models.iter().enumerate() {
+        for (i, (provider, model)) in ms
+            .models
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(list_budget)
+        {
             let prefix = if i == ms.selected { "▸ " } else { "  " };
             let style = if i == ms.selected {
                 Style::default()
@@ -210,8 +279,36 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
         }
     }
 
+    let list_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: list_width,
+        height: area.height,
+    };
     let p = Paragraph::new(Text::from(lines))
         .wrap(Wrap { trim: true })
         .style(Style::default().bg(palette.bg));
-    frame.render_widget(p, area);
+    frame.render_widget(p, list_area);
+
+    if needs_scrollbar && !ms.models.is_empty() {
+        let colors = ScrollbarColors::from_palette(palette);
+        let bar_h = area.height.saturating_sub(HEADER_ROWS as u16);
+        if bar_h > 0 {
+            let sb = Rect {
+                x: area.x + area.width.saturating_sub(1),
+                y: area.y + HEADER_ROWS as u16,
+                width: 1,
+                height: bar_h,
+            };
+            paint_scrollbar(
+                frame.buffer_mut(),
+                sb,
+                item_count,
+                list_budget,
+                start,
+                colors.track,
+                colors.thumb,
+            );
+        }
+    }
 }

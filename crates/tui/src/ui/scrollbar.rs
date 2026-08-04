@@ -1,0 +1,235 @@
+//! Shared solid-fill scrollbar for list popups and dropdowns.
+//!
+//! Grok-style: track = solid dark cells, thumb = solid mid-gray (█ with matching
+//! bg so the bar fills the cell box — bare fg █ leaves line-gap stripes).
+
+use crate::theme::ThemePalette;
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Style},
+};
+
+/// Columns reserved for the scrollbar track when content overflows.
+pub const SCROLLBAR_GUTTER: u16 = 1;
+
+/// Track / thumb pair derived from the active palette.
+#[derive(Clone, Copy)]
+pub struct ScrollbarColors {
+    pub track: Color,
+    pub thumb: Color,
+}
+
+impl ScrollbarColors {
+    pub fn from_palette(p: &ThemePalette) -> Self {
+        let track = elevate(p.bg, 8);
+        let thumb = {
+            // Prefer palette.scrollbar, then dim, then a lifted mid-gray.
+            if contrast_ok(track, p.scrollbar) {
+                p.scrollbar
+            } else if contrast_ok(track, p.dim) {
+                p.dim
+            } else {
+                elevate(p.bg, 72)
+            }
+        };
+        Self { track, thumb }
+    }
+}
+
+/// Classic proportional scrollbar.
+///
+/// `total` = full item/line count, `visible` = viewport capacity, `offset` =
+/// first visible index. No-op when content fits.
+pub fn paint_scrollbar(
+    buf: &mut Buffer,
+    area: Rect,
+    total: usize,
+    visible: usize,
+    offset: usize,
+    track: Color,
+    thumb: Color,
+) {
+    if area.width == 0 || area.height == 0 || total <= visible {
+        return;
+    }
+    let h = area.height as usize;
+    // Thumb spans at least 1 cell; scales with viewport/content ratio.
+    let thumb_len = ((visible * h).div_ceil(total)).max(1).min(h);
+    let max_off = total - visible;
+    let thumb_pos = if max_off == 0 || h == thumb_len {
+        0
+    } else {
+        (offset * (h - thumb_len) + max_off / 2) / max_off
+    };
+
+    let track_style = Style::default().fg(track).bg(track);
+    let thumb_style = Style::default().fg(thumb).bg(thumb);
+    for row in 0..area.height {
+        let y = area.y + row;
+        let r = row as usize;
+        let on_thumb = r >= thumb_pos && r < thumb_pos + thumb_len;
+        if let Some(cell) = buf.cell_mut((area.x, y)) {
+            cell.set_symbol("█");
+            cell.set_style(if on_thumb { thumb_style } else { track_style });
+        }
+    }
+}
+
+/// Paint a scrollbar on the right edge of `area` when `total > visible`.
+///
+/// Returns the content rect (full width if no bar, else width − gutter).
+pub fn content_with_scrollbar(
+    buf: &mut Buffer,
+    area: Rect,
+    total: usize,
+    visible: usize,
+    offset: usize,
+    colors: ScrollbarColors,
+) -> Rect {
+    if area.width == 0 || area.height == 0 || total <= visible {
+        return area;
+    }
+    let content = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width.saturating_sub(SCROLLBAR_GUTTER),
+        height: area.height,
+    };
+    let sb = Rect {
+        x: area.x + area.width.saturating_sub(1),
+        y: area.y,
+        width: 1,
+        height: area.height,
+    };
+    paint_scrollbar(
+        buf,
+        sb,
+        total,
+        visible,
+        offset,
+        colors.track,
+        colors.thumb,
+    );
+    content
+}
+
+/// Keep `selected` on screen for a window of `visible` rows.
+pub fn scroll_to_selected(selected: usize, total: usize, visible: usize) -> usize {
+    if total == 0 || visible == 0 {
+        return 0;
+    }
+    let rows = visible.min(total);
+    selected
+        .saturating_sub(rows.saturating_sub(1))
+        .min(total.saturating_sub(rows))
+}
+
+/// Center-ish scroll used by slash suggest (selected near vertical middle).
+pub fn scroll_center(selected: usize, total: usize, visible: usize) -> usize {
+    if total <= visible || selected < visible / 2 {
+        0
+    } else if selected + visible / 2 >= total {
+        total.saturating_sub(visible)
+    } else {
+        selected.saturating_sub(visible / 2)
+    }
+}
+
+fn elevate(c: Color, delta: u8) -> Color {
+    let (r, g, b) = to_rgb(c);
+    Color::Rgb(
+        r.saturating_add(delta),
+        g.saturating_add(delta),
+        b.saturating_add(delta),
+    )
+}
+
+fn contrast_ok(a: Color, b: Color) -> bool {
+    let (ar, ag, ab) = to_rgb(a);
+    let (br, bg, bb) = to_rgb(b);
+    let dr = (ar as i16 - br as i16).unsigned_abs();
+    let dg = (ag as i16 - bg as i16).unsigned_abs();
+    let db = (ab as i16 - bb as i16).unsigned_abs();
+    dr.max(dg).max(db) >= 40
+}
+
+fn to_rgb(c: Color) -> (u8, u8, u8) {
+    match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Black => (0, 0, 0),
+        Color::Red => (128, 0, 0),
+        Color::Green => (0, 128, 0),
+        Color::Yellow => (128, 128, 0),
+        Color::Blue => (0, 0, 128),
+        Color::Magenta => (128, 0, 128),
+        Color::Cyan => (0, 128, 128),
+        Color::Gray => (192, 192, 192),
+        Color::DarkGray => (128, 128, 128),
+        Color::LightRed => (255, 0, 0),
+        Color::LightGreen => (0, 255, 0),
+        Color::LightYellow => (255, 255, 0),
+        Color::LightBlue => (0, 0, 255),
+        Color::LightMagenta => (255, 0, 255),
+        Color::LightCyan => (0, 255, 255),
+        Color::White => (255, 255, 255),
+        Color::Indexed(i) => {
+            if (232..=255).contains(&i) {
+                let v = (i - 232) * 10 + 8;
+                (v, v, v)
+            } else if (16..=231).contains(&i) {
+                let n = i - 16;
+                let f = |v: u8| if v == 0 { 0 } else { v * 40 + 55 };
+                (f(n / 36), f((n % 36) / 6), f(n % 6))
+            } else {
+                (128, 128, 128)
+            }
+        }
+        _ => (0, 0, 0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paint_scrollbar_marks_thumb_cells() {
+        let area = Rect::new(0, 0, 10, 6);
+        let mut buf = Buffer::empty(area);
+        let sb = Rect::new(9, 0, 1, 6);
+        paint_scrollbar(
+            &mut buf,
+            sb,
+            15,
+            6,
+            0,
+            Color::Rgb(20, 20, 20),
+            Color::Rgb(90, 90, 90),
+        );
+        let thumb_bg = Color::Rgb(90, 90, 90);
+        let track_bg = Color::Rgb(20, 20, 20);
+        let top = buf.cell((9, 0)).expect("top cell");
+        assert_eq!(top.bg, thumb_bg, "top cell should be thumb at offset 0");
+        let bottom = buf.cell((9, 5)).expect("bottom cell");
+        assert_eq!(bottom.bg, track_bg, "bottom cell should be track");
+    }
+
+    #[test]
+    fn scroll_to_selected_keeps_cursor_visible() {
+        assert_eq!(scroll_to_selected(0, 20, 5), 0);
+        assert_eq!(scroll_to_selected(4, 20, 5), 0);
+        assert_eq!(scroll_to_selected(5, 20, 5), 1);
+        assert_eq!(scroll_to_selected(19, 20, 5), 15);
+        assert_eq!(scroll_to_selected(0, 3, 5), 0);
+    }
+
+    #[test]
+    fn scroll_center_centers_selection() {
+        assert_eq!(scroll_center(0, 20, 6), 0);
+        assert_eq!(scroll_center(2, 20, 6), 0);
+        assert_eq!(scroll_center(10, 20, 6), 7);
+        assert_eq!(scroll_center(19, 20, 6), 14);
+        assert_eq!(scroll_center(0, 4, 6), 0);
+    }
+}

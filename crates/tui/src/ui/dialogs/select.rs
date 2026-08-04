@@ -6,14 +6,18 @@
 //! a second copy of that is a second place for the highlight style to drift.
 //!
 //! Chrome matches Grok `ModalWindow` (via [`dialog_frame`]).
+//! When the list overflows the content area, a solid scrollbar is painted on
+//! the right edge.
 
 use ratatui::Frame;
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
 use super::base::dialog_frame;
 use crate::theme::ThemePalette;
+use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar, scroll_to_selected};
 
 /// One row: what to show, and an optional dimmed detail after it.
 pub struct SelectItem {
@@ -63,11 +67,22 @@ pub fn render_select(
         return;
     }
 
-    // Keep the cursor on screen for lists longer than the dialog.
-    let rows = (area.height as usize).max(1);
-    let start = selected
-        .saturating_sub(rows.saturating_sub(1))
-        .min(items.len().saturating_sub(rows.min(items.len())));
+    let total = items.len();
+    let visible = (area.height as usize).max(1);
+    let needs_scrollbar = total > visible;
+    let list_width = if needs_scrollbar {
+        area.width.saturating_sub(1)
+    } else {
+        area.width
+    };
+    let list_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: list_width,
+        height: area.height,
+    };
+
+    let start = scroll_to_selected(selected, total, visible);
 
     let mut lines: Vec<Line> = Vec::new();
 
@@ -77,7 +92,7 @@ pub fn render_select(
             Style::default().fg(palette.dim),
         )));
     } else {
-        for (i, item) in items.iter().enumerate().skip(start).take(rows) {
+        for (i, item) in items.iter().enumerate().skip(start).take(visible) {
             let current = i == selected;
             // Grok/fzf: selected row recolors text with accent, no full wash.
             let mut spans = vec![
@@ -104,19 +119,31 @@ pub fn render_select(
             }
             lines.push(Line::from(spans));
         }
-
-        if items.len() > rows {
-            lines.push(Line::from(Span::styled(
-                format!("   … {} of {}", selected + 1, items.len()),
-                Style::default().fg(palette.dim),
-            )));
-        }
     }
 
     frame.render_widget(
         Paragraph::new(lines).style(Style::default().bg(palette.bg)),
-        area,
+        list_area,
     );
+
+    if needs_scrollbar {
+        let colors = ScrollbarColors::from_palette(palette);
+        let sb = Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y,
+            width: 1,
+            height: area.height,
+        };
+        paint_scrollbar(
+            frame.buffer_mut(),
+            sb,
+            total,
+            visible,
+            start,
+            colors.track,
+            colors.thumb,
+        );
+    }
 }
 
 #[cfg(test)]

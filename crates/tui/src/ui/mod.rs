@@ -8,6 +8,7 @@ pub mod layout;
 pub mod markdown;
 pub mod prompt;
 pub mod render;
+pub mod scrollbar;
 pub mod sidebar;
 pub mod slash_suggest;
 pub mod status;

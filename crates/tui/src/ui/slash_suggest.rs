@@ -6,6 +6,7 @@
 
 use crate::app::{BUILTIN_SLASH_COMMANDS, TuiApp};
 use crate::theme::ThemePalette;
+use crate::ui::scrollbar::{paint_scrollbar, scroll_center};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -108,7 +109,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &TuiApp, palette: &Them
 
     let visible = rows as usize;
     let needs_scrollbar = total > visible;
-    let start = scroll_offset(suggest.selected, total, visible);
+    let start = scroll_center(suggest.selected, total, visible);
 
     let buf = frame.buffer_mut();
 
@@ -205,45 +206,6 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &TuiApp, palette: &Them
     }
 }
 
-/// Classic proportional scrollbar: track = solid dark cells, thumb = solid
-/// mid-gray cells. Grok uses the same model (█ with bg=fg so the glyph fills
-/// the whole cell box; a bare fg █ leaves line-gap stripes on many terminals).
-fn paint_scrollbar(
-    buf: &mut Buffer,
-    area: Rect,
-    total: usize,
-    visible: usize,
-    offset: usize,
-    track: Color,
-    thumb: Color,
-) {
-    if area.width == 0 || area.height == 0 || total <= visible {
-        return;
-    }
-    let h = area.height as usize;
-    // Thumb spans at least 1 cell; scales with viewport/content ratio.
-    let thumb_len = ((visible * h).div_ceil(total)).max(1).min(h);
-    let max_off = total - visible;
-    let thumb_pos = if max_off == 0 || h == thumb_len {
-        0
-    } else {
-        (offset * (h - thumb_len) + max_off / 2) / max_off
-    };
-
-    let track_style = Style::default().fg(track).bg(track);
-    let thumb_style = Style::default().fg(thumb).bg(thumb);
-    for row in 0..area.height {
-        let y = area.y + row;
-        let r = row as usize;
-        let on_thumb = r >= thumb_pos && r < thumb_pos + thumb_len;
-        // Full-block glyph + matching bg so the bar is a solid strip.
-        if let Some(cell) = buf.cell_mut((area.x, y)) {
-            cell.set_symbol("█");
-            cell.set_style(if on_thumb { thumb_style } else { track_style });
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn paint_row(
     buf: &mut Buffer,
@@ -318,17 +280,6 @@ fn fill_bg(buf: &mut Buffer, area: Rect, bg: Color) {
 fn set_line(buf: &mut Buffer, x: u16, y: u16, text: &str, width: u16, style: Style) {
     let line = Line::from(Span::styled(text.to_string(), style));
     let _ = buf.set_line(x, y, &line, width);
-}
-
-/// Scroll so the selected item stays near the vertical centre of the viewport.
-fn scroll_offset(selected: usize, total: usize, visible: usize) -> usize {
-    if total <= visible || selected < visible / 2 {
-        0
-    } else if selected + visible / 2 >= total {
-        total.saturating_sub(visible)
-    } else {
-        selected.saturating_sub(visible / 2)
-    }
 }
 
 fn truncate_to(s: &str, max: usize) -> String {
@@ -407,44 +358,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scroll_offset_centers_selection() {
-        assert_eq!(scroll_offset(0, 20, 6), 0);
-        assert_eq!(scroll_offset(2, 20, 6), 0);
-        assert_eq!(scroll_offset(10, 20, 6), 7);
-        assert_eq!(scroll_offset(19, 20, 6), 14);
-        assert_eq!(scroll_offset(0, 4, 6), 0);
-    }
-
-    #[test]
     fn truncate_to_short_and_long() {
         assert_eq!(truncate_to("hello", 10), "hello");
         assert_eq!(truncate_to("hello world", 8), "hello w…");
         assert_eq!(truncate_to("ab", 1), "…");
         assert_eq!(truncate_to("ab", 0), "");
-    }
-
-    #[test]
-    fn paint_scrollbar_marks_thumb_cells() {
-        let area = Rect::new(0, 0, 10, 6);
-        let mut buf = Buffer::empty(area);
-        let sb = Rect::new(9, 0, 1, 6);
-        // 15 items, 6 visible, offset 0 → thumb at top, length ~2-3
-        paint_scrollbar(
-            &mut buf,
-            sb,
-            15,
-            6,
-            0,
-            Color::Rgb(20, 20, 20),
-            Color::Rgb(90, 90, 90),
-        );
-        let thumb_bg = Color::Rgb(90, 90, 90);
-        let track_bg = Color::Rgb(20, 20, 20);
-        let top = buf.cell((9, 0)).expect("top cell");
-        assert_eq!(top.bg, thumb_bg, "top cell should be thumb at offset 0");
-        // Bottom cell should be track (thumb is only ~2 cells of 6)
-        let bottom = buf.cell((9, 5)).expect("bottom cell");
-        assert_eq!(bottom.bg, track_bg, "bottom cell should be track");
     }
 
     #[test]

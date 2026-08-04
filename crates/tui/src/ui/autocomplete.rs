@@ -194,7 +194,8 @@ pub fn render(frame: &mut Frame, area: Rect, autocomplete: &Autocomplete) {
         return;
     }
 
-    let num_rows = autocomplete.matches.len().min(10);
+    let total = autocomplete.matches.len();
+    let num_rows = total.min(10);
     let popup_height = (num_rows + 2) as u16;
     let popup_width = 50u16;
 
@@ -218,10 +219,11 @@ pub fn render(frame: &mut Frame, area: Rect, autocomplete: &Autocomplete) {
     frame.render_widget(Clear, popup_area);
 
     let max_visible = popup_height.saturating_sub(2) as usize;
+    let needs_scrollbar = total > max_visible;
     let start_idx = autocomplete
         .selected
         .saturating_sub(max_visible.saturating_sub(1))
-        .min(autocomplete.matches.len().saturating_sub(max_visible));
+        .min(total.saturating_sub(max_visible));
 
     let visible: Vec<&PathEntry> = autocomplete
         .matches
@@ -256,24 +258,6 @@ pub fn render(frame: &mut Frame, area: Rect, autocomplete: &Autocomplete) {
         )));
     }
 
-    // Show count if more items exist
-    let total = autocomplete.matches.len();
-    if total > max_visible {
-        let remaining = if start_idx > 0 {
-            format!(
-                " {} more above, {} more below",
-                start_idx,
-                total - start_idx - max_visible
-            )
-        } else {
-            format!(" {} more below", total - max_visible)
-        };
-        lines.push(Line::from(Span::styled(
-            remaining,
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
-
     let block = Paragraph::new(Text::from(lines))
         .block(
             Block::default()
@@ -285,4 +269,23 @@ pub fn render(frame: &mut Frame, area: Rect, autocomplete: &Autocomplete) {
         .wrap(Wrap { trim: true });
 
     frame.render_widget(block, popup_area);
+
+    if needs_scrollbar && popup_area.height > 2 && popup_area.width > 2 {
+        // Inner content (inside border) gets the bar on the right edge.
+        let sb = Rect {
+            x: popup_area.x + popup_area.width.saturating_sub(2),
+            y: popup_area.y + 1,
+            width: 1,
+            height: popup_area.height.saturating_sub(2),
+        };
+        crate::ui::scrollbar::paint_scrollbar(
+            frame.buffer_mut(),
+            sb,
+            total,
+            max_visible,
+            start_idx,
+            Color::Rgb(30, 30, 40),
+            Color::Rgb(100, 100, 120),
+        );
+    }
 }
