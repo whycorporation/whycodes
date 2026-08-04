@@ -99,19 +99,14 @@ pub struct Config {
 }
 
 /// When a hook runs relative to a tool call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HookEvent {
     /// Before the tool executes. Non-zero exit can block when `block_on_failure`.
+    #[default]
     PreTool,
     /// After the tool finishes. Failures are logged only.
     PostTool,
-}
-
-impl Default for HookEvent {
-    fn default() -> Self {
-        Self::PreTool
-    }
 }
 
 /// A single shell hook attached to tool execution.
