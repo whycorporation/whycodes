@@ -3,6 +3,11 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.sh | sh
 #
+# Public repos: no auth required.
+# Private repos: set GITHUB_TOKEN or GH_TOKEN (classic or fine-grained with
+# Contents read). Browser download URLs 404 on private releases; this script
+# falls back to the GitHub API asset endpoint when a token is present.
+#
 # POSIX sh on purpose: this runs on whatever shell a machine has before whycode
 # is on it. Every downloaded artifact is checked against the release's
 # SHA256SUMS before anything is written to the install directory.
@@ -12,12 +17,67 @@ set -eu
 REPO="whycorporation/whycode"
 INSTALL_DIR="${WHYCODE_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${WHYCODE_VERSION:-latest}"
+# Prefer GITHUB_TOKEN; accept GH_TOKEN (gh CLI).
+TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 need() {
     command -v "$1" >/dev/null 2>&1 || die "$1 is required but was not found"
+}
+
+# curl with optional Bearer auth.
+curl_auth() {
+    if [ -n "$TOKEN" ]; then
+        curl -fsSL -H "Authorization: Bearer ${TOKEN}" "$@"
+    else
+        curl -fsSL "$@"
+    fi
+}
+
+# Download a named asset. Tries public release URL first; on failure with a
+# token, uses the releases API asset id + Accept: application/octet-stream.
+download_asset() {
+    name="$1"
+    out="$2"
+    tag_or_latest="$3"
+
+    if [ "$tag_or_latest" = "latest" ]; then
+        public_url="https://github.com/${REPO}/releases/latest/download/${name}"
+        api_release_url="https://api.github.com/repos/${REPO}/releases/latest"
+    else
+        public_url="https://github.com/${REPO}/releases/download/${tag_or_latest}/${name}"
+        api_release_url="https://api.github.com/repos/${REPO}/releases/tags/${tag_or_latest}"
+    fi
+
+    if curl_auth "$public_url" -o "$out" 2>/dev/null; then
+        return 0
+    fi
+
+    [ -n "$TOKEN" ] || die "could not download $public_url
+hint: if the repository is private, export GITHUB_TOKEN or GH_TOKEN and retry"
+
+    # Resolve asset id from the release JSON, then stream the blob.
+    need python3
+    asset_id="$(
+        curl_auth -H "Accept: application/vnd.github+json" "$api_release_url" \
+            | python3 -c "
+import json,sys
+name=sys.argv[1]
+rel=json.load(sys.stdin)
+for a in rel.get('assets') or []:
+    if a.get('name')==name:
+        print(a['id']); raise SystemExit(0)
+raise SystemExit('asset not found: '+name)
+" "$name"
+    )" || die "could not resolve asset id for $name via API"
+
+    curl_auth \
+        -H "Accept: application/octet-stream" \
+        "https://api.github.com/repos/${REPO}/releases/assets/${asset_id}" \
+        -o "$out" \
+        || die "could not download asset $name via API"
 }
 
 detect_target() {
@@ -58,20 +118,19 @@ main() {
     target="$(detect_target)"
     archive="whycode-${target}.tar.gz"
 
-    if [ "$VERSION" = "latest" ]; then
-        base="https://github.com/${REPO}/releases/latest/download"
-    else
-        base="https://github.com/${REPO}/releases/download/${VERSION}"
-    fi
+    # Normalize optional leading v for tag URLs.
+    case "$VERSION" in
+        latest) tag_arg="latest" ;;
+        v*) tag_arg="$VERSION" ;;
+        *) tag_arg="v$VERSION" ;;
+    esac
 
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
 
     say "Downloading $archive"
-    curl -fsSL "$base/$archive" -o "$tmp/$archive" \
-        || die "could not download $base/$archive"
-    curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
-        || die "could not download the checksum file; refusing to install unverified"
+    download_asset "$archive" "$tmp/$archive" "$tag_arg"
+    download_asset "SHA256SUMS" "$tmp/SHA256SUMS" "$tag_arg"
 
     # Lines are either "hex  name" or "hex *name" (binary mode from sha256sum).
     expected="$(grep -E "[[:space:]](\\*)?${archive}\$" "$tmp/SHA256SUMS" | awk '{print $1}' | head -n1)"

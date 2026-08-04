@@ -17,14 +17,6 @@ use std::path::{Path, PathBuf};
 const REPO: &str = "whycorporation/whycode";
 const USER_AGENT: &str = concat!("whycode/", env!("CARGO_PKG_VERSION"));
 
-/// What a release offers for this machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Release {
-    pub tag: String,
-    pub version: String,
-    pub archive: String,
-}
-
 /// The release-artifact name for the platform this binary was built for.
 ///
 /// Must match the `matrix.target` values in `.github/workflows/release.yml`;
@@ -86,32 +78,98 @@ fn digest_of(bytes: &[u8]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Optional token for private repos (`GITHUB_TOKEN` or `GH_TOKEN`).
+///
+/// Public repos work without it. Private release assets only download via the
+/// GitHub API when authenticated — browser download URLs return 404.
+fn github_token() -> Option<String> {
+    for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Ok(v) = std::env::var(key)
+            && !v.is_empty()
+        {
+            return Some(v);
+        }
+    }
+    None
+}
+
 async fn get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
-    let response = client
-        .get(url)
-        .header("User-Agent", USER_AGENT)
+    let mut req = client.get(url).header("User-Agent", USER_AGENT);
+    if let Some(token) = github_token() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    let response = req
         .send()
         .await
         .with_context(|| format!("requesting {url}"))?;
     if !response.status().is_success() {
-        bail!("{url} returned {}", response.status());
+        let status = response.status();
+        let hint = if status.as_u16() == 404 && github_token().is_none() {
+            " (private repo? set GITHUB_TOKEN or GH_TOKEN, or publish the repository)"
+        } else {
+            ""
+        };
+        bail!("{url} returned {status}{hint}");
     }
     Ok(response)
 }
 
-/// Ask GitHub for the latest release.
-pub async fn latest_release(client: &reqwest::Client) -> Result<Release> {
+/// Download a release asset by name through the GitHub API.
+///
+/// Uses `Accept: application/octet-stream` on the asset id endpoint so private
+/// releases work when a token is present (browser `/releases/download/` URLs
+/// 404 on private repos even with a Bearer header).
+async fn download_asset(
+    client: &reqwest::Client,
+    release: &serde_json::Value,
+    name: &str,
+) -> Result<Vec<u8>> {
+    let assets = release["assets"]
+        .as_array()
+        .context("release has no assets array")?;
+    let asset = assets
+        .iter()
+        .find(|a| a["name"].as_str() == Some(name))
+        .with_context(|| format!("release has no asset named {name}"))?;
+    let id = asset["id"]
+        .as_u64()
+        .with_context(|| format!("asset {name} has no id"))?;
+    let url = format!("https://api.github.com/repos/{REPO}/releases/assets/{id}");
+    let mut req = client
+        .get(&url)
+        .header("User-Agent", USER_AGENT)
+        .header("Accept", "application/octet-stream");
+    if let Some(token) = github_token() {
+        req = req.header("Authorization", format!("Bearer {token}"));
+    }
+    let response = req
+        .send()
+        .await
+        .with_context(|| format!("downloading asset {name}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let hint = if status.as_u16() == 404 && github_token().is_none() {
+            " (private repo? set GITHUB_TOKEN or GH_TOKEN)"
+        } else {
+            ""
+        };
+        bail!("asset {name} returned {status}{hint}");
+    }
+    Ok(response
+        .bytes()
+        .await
+        .with_context(|| format!("reading asset {name}"))?
+        .to_vec())
+}
+
+/// Ask GitHub for the latest release (metadata + asset list).
+async fn latest_release_json(client: &reqwest::Client) -> Result<serde_json::Value> {
     let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let body: serde_json::Value = get(client, &url).await?.json().await?;
-    let tag = body["tag_name"]
-        .as_str()
-        .context("release has no tag_name")?
-        .to_string();
-    Ok(Release {
-        version: tag.trim_start_matches('v').to_string(),
-        archive: target_archive()?.to_string(),
-        tag,
-    })
+    get(client, &url)
+        .await?
+        .json()
+        .await
+        .context("parsing latest release JSON")
 }
 
 /// Extract the `whycode` executable from a downloaded archive.
@@ -193,40 +251,39 @@ fn current_binary() -> Result<PathBuf> {
 /// Run the upgrade. Returns the new version when one was installed.
 pub async fn run() -> Result<Option<String>> {
     let current = env!("CARGO_PKG_VERSION");
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .build()
+        .context("building HTTP client")?;
 
-    let release = latest_release(&client).await?;
-    if !is_newer(&release.version, current) {
+    let body = latest_release_json(&client).await?;
+    let tag = body["tag_name"]
+        .as_str()
+        .context("release has no tag_name")?
+        .to_string();
+    let version = tag.trim_start_matches('v').to_string();
+    let archive_name = target_archive()?.to_string();
+
+    if !is_newer(&version, current) {
         return Ok(None);
     }
 
-    let base = format!(
-        "https://github.com/{REPO}/releases/download/{}",
-        release.tag
-    );
+    let archive = download_asset(&client, &body, &archive_name).await?;
+    let sums_bytes = download_asset(&client, &body, "SHA256SUMS").await?;
+    let sums = String::from_utf8(sums_bytes).context("SHA256SUMS is not valid UTF-8")?;
 
-    let archive = get(&client, &format!("{base}/{}", release.archive))
-        .await?
-        .bytes()
-        .await?;
-    let sums = get(&client, &format!("{base}/SHA256SUMS"))
-        .await?
-        .text()
-        .await?;
-
-    let expected = expected_digest(&sums, &release.archive)
-        .with_context(|| format!("{} is not listed in SHA256SUMS", release.archive))?;
+    let expected = expected_digest(&sums, &archive_name)
+        .with_context(|| format!("{archive_name} is not listed in SHA256SUMS"))?;
     let actual = digest_of(&archive);
     if expected != actual {
         bail!(
-            "checksum mismatch for {}\n  expected {expected}\n  actual   {actual}\nNothing was installed.",
-            release.archive
+            "checksum mismatch for {archive_name}\n  expected {expected}\n  actual   {actual}\nNothing was installed."
         );
     }
 
-    let binary = extract(&archive, &release.archive)?;
+    let binary = extract(&archive, &archive_name)?;
     replace_binary(&current_binary()?, &binary)?;
-    Ok(Some(release.version))
+    Ok(Some(version))
 }
 
 #[cfg(test)]

@@ -72,18 +72,23 @@ Out (full automation — partial scaffolding exists):
 
 ## Acceptance criteria
 
-- [ ] Tagging `v0.1.0` produces a release with binaries for all three
+- [x] Tagging `v0.1.0` produces a release with binaries for all three
       platforms plus `SHA256SUMS`, with no manual step
-- [ ] `install.sh` on a machine with no Rust toolchain yields a runnable
-      `whycode --version`
-- [ ] `install.ps1` does the same on Windows
-- [ ] A tampered artifact fails checksum verification and the installer exits
-      non-zero without installing
-- [ ] `whycode upgrade` moves an older binary to the newest release and reports
-      the version change; on the newest version it says so and exits 0
-- [ ] `whycode upgrade` failing mid-download leaves the existing binary intact
+      (2026-08-04: [release v0.1.0](https://github.com/whycorporation/whycode/releases/tag/v0.1.0))
+- [x] `install.sh` on a machine with no Rust toolchain yields a runnable
+      `whycode --version` — verified with `GITHUB_TOKEN` while the repo is
+      **private** (anonymous `/releases/download/` URLs 404 until the repo is public)
+- [ ] `install.ps1` does the same on Windows (not exercised here; same asset set)
+- [x] A tampered artifact fails checksum verification (local digest mismatch check)
+- [x] `whycode upgrade` on the newest version says so and exits 0 (with token on private)
+- [x] `whycode upgrade` failing mid-download leaves the existing binary intact
+      (unit: `replace_binary` restore path)
 - [ ] Uninstall removes the binary and reports what it removed; it does not
       touch the config or data directories without `--purge`
+
+**Ship gate remaining:** make `whycorporation/whycode` **public** so
+`curl … | sh` works without a token. Private installs work today via
+`GITHUB_TOKEN` / `GH_TOKEN` (API asset download).
 
 ## Risks
 

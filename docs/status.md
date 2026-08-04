@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-04** (first release path: version meta + cut `v0.1.0`)
+Last updated: **2026-08-04** (`v0.1.0` published; repo still private → public install gate)
 
 ## Legend
 
@@ -21,7 +21,7 @@ Last updated: **2026-08-04** (first release path: version meta + cut `v0.1.0`)
 
 | Plan | Doc | Status | Notes |
 |---|---|---|---|
-| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented | Installers, `upgrade`, release workflow written. Unticked criteria need a published `v*` tag. |
+| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented | `v0.1.0` assets live. **Public install** needs repo visibility=public (or `GITHUB_TOKEN`). Homebrew formula still HEAD-only until `update_homebrew_formula.sh`. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | blocked | Owner: client registration + provider terms before any code. |
 | Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + benchmarks exist. Open: stats aggregation, subagent tokens, provider reconcile, optional CI ceilings. |
 | Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
@@ -50,7 +50,7 @@ Index of archives: [archive/README.md](archive/README.md).
 
 Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
 
-1. **First public release** — tag `v0.1.0`, green `release.yml`, smoke `install.sh` / `upgrade`.
+1. **First public release (almost done)** — `v0.1.0` cut + smoke OK with token. Remaining: **make repo public**, optional Homebrew binary formula, Windows install.ps1 smoke.
 2. **Product polish on the terminal path** — TUI, tools, providers, docs (`stats`, hooks/plugins). No ACP/web until after launch.
 3. **Performance residual** only if it blocks release confidence (stats schema is nice-to-have).
 4. **OAuth** stays blocked until owner decisions.
@@ -71,6 +71,7 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-04 | **ACP deferred until after product launch** | Ship terminal product first. Real ACP is post-release IDE surface work. |
 | 2026-08-04 | Archive completed phase docs; keep only open plans live | Numbered 1–9 cluttered the tree; done work lives under `docs/archive/`. |
 | 2026-08-04 | Network allowlist for HTTP tools (`webfetch` / search / GitHub) | Domain gate on agent egress; shell stays `sandbox_network` binary (no proxy). |
+| 2026-08-04 | Cut `v0.1.0` first release assets | Four targets + `SHA256SUMS`. Repo remains private until owner opens it for anonymous install. |
 
 ## Verification commands
 
