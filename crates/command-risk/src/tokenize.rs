@@ -29,12 +29,19 @@ pub struct Segment {
 }
 
 impl Segment {
-    /// The command name, ignoring leading `VAR=value` assignments and `sudo`.
+    /// The command name, ignoring leading `VAR=value` assignments, `sudo` and
+    /// shell control-flow keywords.
     pub fn command(&self) -> Option<&str> {
         self.words
             .iter()
             .map(|w| w.text.as_str())
-            .find(|w| !is_assignment(w) && *w != "sudo" && *w != "command" && *w != "env")
+            .find(|w| {
+                !is_assignment(w)
+                    && *w != "sudo"
+                    && *w != "command"
+                    && *w != "env"
+                    && !is_shell_keyword(w)
+            })
     }
 
     /// Arguments after the command name.
@@ -58,6 +65,20 @@ impl Segment {
     }
 }
 
+/// Shell control-flow keywords are transparent when looking for the command a
+/// segment runs: in `then rm -rf ~`, the command is `rm`, not `then`.
+///
+/// Regression: jcode#725 — `if`/`while`/`case` bodies bypassed the guardrail
+/// because the keyword sat in the command slot.
+const SHELL_KEYWORDS: &[&str] = &[
+    "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case",
+    "esac", "in", "select", "time", "coproc", "!", "{", "}",
+];
+
+fn is_shell_keyword(word: &str) -> bool {
+    SHELL_KEYWORDS.contains(&word)
+}
+
 fn is_assignment(word: &str) -> bool {
     match word.find('=') {
         Some(0) | None => false,
@@ -76,7 +97,11 @@ pub struct Tokenized {
 }
 
 /// Words that separate one simple command from the next.
-const SEPARATORS: &[&str] = &[";", "&&", "||", "|", "&", "\n"];
+/// Bare parentheses act as separators too: `( rm -rf ~ )` runs `rm` in a
+/// subshell, and a `case` arm's `)` closes the pattern. Quoted or escaped
+/// parens never reach this table, and `$(…)` is consumed earlier.
+/// Regression: jcode#725 — subshell bodies bypassed the guardrail.
+const SEPARATORS: &[&str] = &[";", "&&", "||", "|", "&", "\n", "(", ")"];
 
 /// Redirection operators, kept as their own words so a target can follow.
 const REDIRECTS: &[&str] = &[">", ">>", ">|", "&>", "&>>", "2>", "2>>", "1>", "1>>"];

@@ -37,6 +37,17 @@ pub fn home_dir() -> Option<PathBuf> {
     }
 }
 
+/// True for the null device: writing to it destroys nothing, whatever the
+/// redirect operator. `NUL` is the Windows spelling.
+///
+/// Regression: jcode#738/#709 — `echo hi 2>/dev/null` was gated because the
+/// redirect target lives under the protected `/dev` tree. Gating the most
+/// common stderr idiom in shell trains users to disable the gate.
+pub fn is_null_device(raw: &str) -> bool {
+    let s = raw.trim();
+    s == "/dev/null" || s.eq_ignore_ascii_case("nul")
+}
+
 /// Absolute paths that must never be a destructive target, whatever the
 /// command. Matching is on the path itself, not on the command name.
 const PROTECTED_PREFIXES: &[&str] = &[
@@ -367,6 +378,15 @@ mod tests {
         assert!(has_unresolved_variable("%APPDATA%"));
         assert!(!has_unresolved_variable("/plain/path"));
         assert!(!has_unresolved_variable("100%"));
+    }
+
+    #[test]
+    fn null_device_is_recognised() {
+        assert!(is_null_device("/dev/null"));
+        assert!(is_null_device("NUL"));
+        assert!(is_null_device("nul"));
+        assert!(!is_null_device("/dev/sda"));
+        assert!(!is_null_device("out.txt"));
     }
 
     #[test]

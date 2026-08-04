@@ -146,7 +146,8 @@ fn assess_segment(
         "chmod" | "chown" => assess_permission_change(command, &args, project, home),
         "mv" => assess_move(&args, project, home),
         "git" => assess_git(&args),
-        "sh" | "bash" | "zsh" | "fish" => assess_piped_shell(previous),
+        "sh" | "bash" | "zsh" | "fish" => assess_shell_invocation(&args, previous, project, home),
+        "eval" => assess_eval(&args, project, home),
         _ => Assessment::safe(),
     };
 
@@ -400,6 +401,58 @@ fn assess_piped_shell(previous: Option<&Segment>) -> Assessment {
     }
 }
 
+/// `-c`, including combined forms like `-lc` / `-xc`.
+fn is_c_flag(word: &str) -> bool {
+    word.starts_with('-') && !word.starts_with("--") && word.contains('c')
+}
+
+/// `bash -c "…"` runs the string as a command line, so a literal one is
+/// assessed recursively — otherwise the guardrail stops at the word `bash`.
+/// A substitution-built string is unknowable, so it escalates (promptable,
+/// never refused outright). Regression: jcode#725.
+fn assess_shell_invocation(
+    args: &[&Word],
+    previous: Option<&Segment>,
+    project: &Path,
+    home: Option<&Path>,
+) -> Assessment {
+    let piped = assess_piped_shell(previous);
+    let Some(pos) = args.iter().position(|w| is_c_flag(&w.text)) else {
+        return piped;
+    };
+    let Some(script) = args.get(pos + 1) else {
+        return piped;
+    };
+    if script.dynamic {
+        return piped.worse_of(Assessment::at(
+            RiskLevel::Destructive,
+            "shell runs a command string built by substitution, which cannot be checked",
+        ));
+    }
+    piped.worse_of(assess_with_home(&script.text, project, home))
+}
+
+/// `eval` joins its arguments and runs them as a command line; same recursion
+/// rule as `-c`. A variable-built string is equally unknowable.
+/// Regression: jcode#725.
+fn assess_eval(args: &[&Word], project: &Path, home: Option<&Path>) -> Assessment {
+    if args.is_empty() {
+        return Assessment::safe();
+    }
+    let joined = args
+        .iter()
+        .map(|w| w.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if args.iter().any(|w| w.dynamic) || paths::has_unresolved_variable(&joined) {
+        return Assessment::at(
+            RiskLevel::Destructive,
+            "`eval` runs a string built by substitution, which cannot be checked",
+        );
+    }
+    assess_with_home(&joined, project, home)
+}
+
 /// `> file` truncates whatever is there.
 fn assess_redirects(segment: &Segment, project: &Path, home: Option<&Path>) -> Assessment {
     let mut worst = Assessment::safe();
@@ -410,6 +463,11 @@ fn assess_redirects(segment: &Segment, project: &Path, home: Option<&Path>) -> A
             continue;
         }
         let Some(target) = words.peek() else { continue };
+        // `2>/dev/null` is the most common stderr idiom in shell; writing to
+        // the null device destroys nothing. Regression: jcode#738/#709.
+        if paths::is_null_device(&target.text) {
+            continue;
+        }
         let found = match paths::classify(&target.text, project, home) {
             PathScope::Catastrophic => Assessment::at(
                 RiskLevel::Catastrophic,
@@ -663,6 +721,77 @@ mod tests {
                 .reason
                 .is_none()
         );
+    }
+
+    // ── Rakip regresyonları (kaynak: whycode-watch) ─────────────────────
+
+    #[test]
+    fn null_device_redirects_are_not_gated() {
+        // jcode#738/#709/#751: rutin stderr susturma gate'lenmemeli.
+        assert_eq!(level("echo hi 2>/dev/null"), RiskLevel::Safe);
+        assert_eq!(level("grep -rn TODO . 2>/dev/null"), RiskLevel::Safe);
+        assert_eq!(level("cargo test 2>/dev/null >/dev/null"), RiskLevel::Safe);
+        assert_eq!(level("ls 2>NUL"), RiskLevel::Safe);
+        // Ama gerçek cihaz dosyaları ve home'un kendisi hâlâ korunuyor.
+        assert_eq!(level("echo x > /dev/sda"), RiskLevel::Destructive);
+        assert_eq!(level("> ~/.bashrc"), RiskLevel::Destructive);
+        assert_eq!(level("> ~"), RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn shell_c_literal_string_is_assessed_recursively() {
+        // jcode#725: guardrail kelimenin `bash` olmasında duruyordu.
+        assert_eq!(level(r#"bash -c "rm -rf ~""#), RiskLevel::Catastrophic);
+        assert_eq!(level(r#"sh -c "rm -rf /etc""#), RiskLevel::Catastrophic);
+        assert_eq!(level(r#"bash -lc "rm -rf target""#), RiskLevel::Caution);
+        // Zararsız string hâlâ serbest.
+        assert_eq!(level(r#"bash -c "ls -la""#), RiskLevel::Safe);
+        // İç içe: her seviye bir tırnak katmanı tüketir, sonuna gelinir.
+        assert_eq!(
+            level(r#"bash -c "bash -c 'rm -rf ~'""#),
+            RiskLevel::Catastrophic
+        );
+    }
+
+    #[test]
+    fn shell_c_dynamic_string_escalates_promptably() {
+        // jcode#725: bilinemeyen -c string'i refuse değil, prompt.
+        assert_eq!(level(r#"bash -c "$(build_cmd)""#), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn eval_is_assessed_recursively() {
+        assert_eq!(level(r#"eval "rm -rf ~""#), RiskLevel::Catastrophic);
+        assert_eq!(level(r#"eval "ls""#), RiskLevel::Safe);
+        assert_eq!(level(r#"eval "$cmd""#), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn subshell_and_control_flow_bodies_do_not_bypass() {
+        // jcode#725: subshell ve if/while gövdeleri guardrail'ı atlıyordu.
+        assert_eq!(level("( rm -rf ~ )"), RiskLevel::Catastrophic);
+        assert_eq!(level("if true; then rm -rf ~; fi"), RiskLevel::Catastrophic);
+        assert_eq!(
+            level(r#"while read -r f; do rm -rf "$f"; done < list"#),
+            RiskLevel::Destructive
+        );
+        // Zararsız kontrol akışı hâlâ serbest.
+        assert_eq!(level("if true; then ls; fi"), RiskLevel::Safe);
+    }
+
+    #[test]
+    fn compound_command_names_the_right_culprit() {
+        // claude-code#28240: prompt `cd`'ye değil `rm`'in hedefine işaret etmeli.
+        let r = reason("cd /tmp && rm -rf ~");
+        assert!(r.contains('~'), "{r}");
+        assert!(level("cd /tmp && rm -rf ~") == RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn variable_expansion_does_not_bypass() {
+        // claude-code#43713: expansion'lar guardrail'ı atlamamalı.
+        assert_eq!(level(r#"rm -rf "${HOME}""#), RiskLevel::Catastrophic);
+        assert_eq!(level(r#"rm -rf "$BUILD_DIR""#), RiskLevel::Destructive);
     }
 
     // ── Ordering ────────────────────────────────────────────────────────
