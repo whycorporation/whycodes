@@ -544,13 +544,15 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     }
 
     match mouse.kind {
+        // Wheel always moves the transcript (dialog path is handled above).
+        // Step ≈ ⅓ viewport so one notch is visible on tall terminals; min 3.
         MouseEventKind::ScrollDown => {
-            // Prefer chat when the pointer is over the transcript or its bar;
-            // still scroll chat from the prompt so wheel "just works".
-            app.scroll_rows(-3);
+            let step = chat_wheel_step(app);
+            app.scroll_rows(-step);
         }
         MouseEventKind::ScrollUp => {
-            app.scroll_rows(3);
+            let step = chat_wheel_step(app);
+            app.scroll_rows(step);
         }
         MouseEventKind::Moved => {
             // Position already updated above; next frame paints hover %.
@@ -657,6 +659,12 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         _ => {}
     }
     true
+}
+
+/// Rows per mouse-wheel notch for the chat transcript.
+fn chat_wheel_step(app: &TuiApp) -> isize {
+    let h = app.chat_viewport_rows.max(1) as isize;
+    (h / 3).clamp(3, 12)
 }
 
 /// Grab offset within the chat scrollbar thumb (top-origin track math).

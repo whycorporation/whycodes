@@ -1393,10 +1393,18 @@ impl TuiApp {
     }
 
     /// Scroll by display rows (positive = older / up).
+    ///
+    /// Prefer the last-paint line total (`chat_scroll_total`) so max offset
+    /// matches what the user actually sees; fall back to a live layout count
+    /// before the first session paint.
     pub fn scroll_rows(&mut self, delta: isize) {
-        let width = self.chat_content_width.max(20);
-        let total = crate::ui::chat::session_line_count_mut(self, width);
         let height = self.chat_viewport_rows.max(1) as usize;
+        let total = if self.chat_scroll_total > 0 {
+            self.chat_scroll_total
+        } else {
+            let width = self.chat_content_width.max(20);
+            crate::ui::chat::session_line_count_mut(self, width)
+        };
         let max_off = total.saturating_sub(height);
         if delta > 0 {
             self.scroll_offset = (self.scroll_offset + delta as usize).min(max_off);

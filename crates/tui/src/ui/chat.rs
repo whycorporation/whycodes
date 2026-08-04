@@ -215,10 +215,17 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         lines = padded;
     }
 
-    // Sparse writer: only paints real graphemes. Paragraph's set_style(area)
-    // would restyle every cell in the chat column; we still inherit the shell
-    // bg, but we never invent trailing pad spaces on content rows.
-    frame.render_widget(SparseLines { lines }, area);
+    // Clear-then-paint: ratatui diffs against the previous buffer, so a sparse
+    // writer that only touches non-empty cells leaves *ghost glyphs* after
+    // scroll (old rows still visible / garbled). Wipe the viewport first, then
+    // stamp content. Clipboard trims trailing pad spaces on copy.
+    frame.render_widget(
+        SparseLines {
+            lines,
+            bg: palette.bg,
+        },
+        area,
+    );
 
     let scrollbar_hit = if needs_bar {
         // Ratatui position is top-origin within the document. Convert from our
@@ -250,14 +257,16 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     app.apply_chat_paint(area, scrollbar_hit, total);
 }
 
-/// Writes each line's spans only — no invented trailing text.
+/// Paint chat lines after wiping the viewport.
 ///
-/// When a line carries a background (Grok user-prompt band), the rest of the
-/// row is filled with that bg so the elevated strip reads full-width without
-/// stuffing pad spaces into the Line content (clipboard still trims end pad
-/// when screen cells are selected).
+/// History: a pure sparse writer (only non-empty spans) left previous-frame
+/// glyphs in place after scroll — the transcript looked frozen or garbled
+/// because shorter/empty rows never overwrote the old cells. We now blank the
+/// area to `bg` first, then stamp content. Trailing spaces are still pad for
+/// the clipboard path (`text_from_cells` trims them).
 struct SparseLines {
     lines: Vec<Line<'static>>,
+    bg: ratatui::style::Color,
 }
 
 impl Widget for SparseLines {
@@ -265,6 +274,18 @@ impl Widget for SparseLines {
         if area.width == 0 || area.height == 0 {
             return;
         }
+        let clear = Style::default().fg(self.bg).bg(self.bg);
+        // Full wipe — every cell becomes a space with the chat background so
+        // scroll/resize cannot leave ghost characters from the last frame.
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_symbol(" ");
+                    cell.set_style(clear);
+                }
+            }
+        }
+
         let max = self.lines.len().min(area.height as usize);
         for (row, line) in self.lines.iter().take(max).enumerate() {
             let y = area.y + row as u16;
@@ -283,7 +304,6 @@ impl Widget for SparseLines {
                     continue;
                 }
                 let remaining = end - x;
-                // set_stringn stops at max width without padding the rest of the row.
                 buf.set_stringn(x, y, text, remaining as usize, span.style);
                 let w = text.width().min(remaining as usize) as u16;
                 x = x.saturating_add(w);
@@ -292,12 +312,10 @@ impl Widget for SparseLines {
             if let Some(bg) = band_bg {
                 while x < end {
                     if let Some(cell) = buf.cell_mut((x, y)) {
-                        // Only paint empty/bg cells so we don't clobber glyphs.
                         if cell.symbol() == " " || cell.symbol().is_empty() {
                             cell.set_symbol(" ");
                             cell.set_style(Style::default().bg(bg));
                         } else {
-                            // Preserve glyph; still tint background under it.
                             let mut st = cell.style();
                             st.bg = Some(bg);
                             cell.set_style(st);
@@ -985,6 +1003,41 @@ mod tests {
         assert_eq!(visible_range(5, 20, 0), (0, 5));
         assert_eq!(visible_range(5, 20, 10), (0, 5));
         assert_eq!(visible_range(0, 20, 0), (0, 0));
+    }
+
+    #[test]
+    fn sparse_lines_clears_previous_glyphs_before_paint() {
+        use super::SparseLines;
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::style::{Color, Style};
+        use ratatui::text::{Line, Span};
+        use ratatui::widgets::Widget;
+
+        let area = Rect::new(0, 0, 12, 3);
+        let mut buf = Buffer::empty(area);
+        // Simulate a previous frame full of leftovers.
+        for y in 0..3 {
+            buf.set_stringn(0, y, "OLDCONTENT!!", 12, Style::default());
+        }
+
+        SparseLines {
+            lines: vec![
+                Line::from(Span::raw("new")),
+                Line::from(""), // empty row must wipe old glyphs
+                Line::from(Span::raw("ok")),
+            ],
+            bg: Color::Black,
+        }
+        .render(area, &mut buf);
+
+        assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("n"));
+        // Rest of first row after "new" is blank, not "CONTENT!!"
+        assert_eq!(buf.cell((3, 0)).map(|c| c.symbol()), Some(" "));
+        // Empty middle row fully cleared
+        assert_eq!(buf.cell((0, 1)).map(|c| c.symbol()), Some(" "));
+        assert_eq!(buf.cell((5, 1)).map(|c| c.symbol()), Some(" "));
+        assert_eq!(buf.cell((0, 2)).map(|c| c.symbol()), Some("o"));
     }
 
     #[test]

@@ -101,18 +101,27 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-05 — Chat mouse scroll looked dead (SparseLines ghosts)
+
+**Symptom:** On the main message list (no dialog), mouse wheel / scroll did nothing useful — content stayed put or looked garbled. Dialogs were fine.
+
+**Root cause:** `SparseLines` only wrote non-empty spans into the ratatui buffer. After a scroll, shorter/empty rows never overwrote previous-frame cells, so old glyphs remained. Offset *did* change; the paint path made it look frozen.
+
+**Fix:** Wipe the chat viewport to spaces + bg before stamping lines. Clipboard still trims pad. Wheel step scales with viewport; scrollbar drag kept from prior fix.
+
+**Prevention:** Any widget that does not fill its area must clear first when the previous frame can leave symbols (ratatui double-buffer + diff).
+
+---
+
 ### 2026-08-05 — Chat transcript scrollbar was decorative only
 
-**Symptom:** Message list showed a scrollbar but mouse drag / track click did nothing; felt like “scroll doesn’t work with the mouse”.
+**Symptom:** Message list showed a scrollbar but mouse drag / track click did nothing.
 
-**Root cause:** Session chat painted a ratatui `Scrollbar` with no hit box and no mouse branch. Dialog lists already had `handle_dialog_mouse` + `dialog_scrollbar_hit`; chat only handled wheel via `scroll_rows` with no thumb interaction.
+**Root cause:** Session chat painted a ratatui `Scrollbar` with no hit box and no mouse branch.
 
-**Fix:**
-- `TuiApp::apply_chat_paint` / `chat_scrollbar_hit` / `chat_scrollbar_grab` after each session paint.
-- `handle_mouse`: left-down/drag/up on the chat bar → bottom-anchored `scroll_offset` (convert from top-origin `offset_from_pointer_y`).
-- Wheel still calls `scroll_rows` (±3). Hit width is 2 cells for easier grab.
+**Fix:** `apply_chat_paint` + drag/track handling; wheel → `scroll_rows`.
 
-**Prevention:** Any painted scrollbar needs a hit rect + drag path; visual-only bars read as broken input.
+**Prevention:** Painted scrollbars need hit rects.
 
 ---
 
