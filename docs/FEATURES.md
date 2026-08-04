@@ -32,7 +32,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Tek binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Install script (curl/irm) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Self-update (`upgrade`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Homebrew / paket yöneticisi | ❌ | ⚠️ | ✅ | ✅ | ✅ |
+| Homebrew / paket yöneticisi | ⚠️ | ⚠️ | ✅ | ✅ | ✅ |
 | Linux | ✅ | ✅ | ✅ | ✅ | ✅ |
 | macOS | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Windows native | ✅★ | ⚠️ | ⚠️ (WSL önerilir) | ✅ | ✅ |
@@ -252,7 +252,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | Side panel UI | jcode | Basit sidebar; Mermaid Unicode fenced blocks ✅ |
 | Image/video generation | Grok | Yok |
 | Self-dev hot reload | jcode | Yok |
-| Package manager taps (brew…) | hepsi | Install script + self-update var |
+| Package manager taps (brew…) | hepsi | ⚠️ in-repo `Formula/whycode.rb` + update script; bottles/winget/AUR later |
 
 ---
 

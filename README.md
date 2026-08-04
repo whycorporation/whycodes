@@ -38,6 +38,21 @@ warn on first run.
 `whycode upgrade` replaces the running binary with the newest release, checksum
 verified, and leaves the existing one in place if anything fails.
 
+### Homebrew (partial)
+
+macOS and Linux with [Homebrew](https://brew.sh). The formula lives in this
+repo (`Formula/whycode.rb`); a dedicated tap repo is not required yet.
+
+```bash
+brew tap whycorporation/whycode https://github.com/whycorporation/whycode
+brew install --HEAD whycode
+```
+
+`--HEAD` builds from `main` (Homebrew installs the Rust toolchain as a build
+dependency). After the first tagged release, `scripts/update_homebrew_formula.sh`
+switches the formula to prebuilt binaries; then `brew install whycode` works
+without compiling. Details: [`packaging/README.md`](packaging/README.md).
+
 From source, which needs a Rust toolchain:
 
 ```bash
