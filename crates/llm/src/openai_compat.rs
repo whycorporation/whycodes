@@ -320,19 +320,27 @@ pub fn sanitize_schema_for_openai(schema: &Value) -> Value {
         }
         let rewritten = match k.as_str() {
             // Map-of-schemas positions.
-            "properties" | "$defs" | "definitions" | "patternProperties"
-            | "dependentSchemas" => match v {
-                Value::Object(props) => Value::Object(
-                    props
-                        .iter()
-                        .map(|(name, sub)| (name.clone(), sanitize_schema_for_openai(sub)))
-                        .collect(),
-                ),
-                other => other.clone(),
-            },
+            "properties" | "$defs" | "definitions" | "patternProperties" | "dependentSchemas" => {
+                match v {
+                    Value::Object(props) => Value::Object(
+                        props
+                            .iter()
+                            .map(|(name, sub)| (name.clone(), sanitize_schema_for_openai(sub)))
+                            .collect(),
+                    ),
+                    other => other.clone(),
+                }
+            }
             // Single-schema positions.
-            "items" | "additionalProperties" | "contains" | "not" | "if" | "then" | "else"
-            | "unevaluatedItems" | "additionalItems" => sanitize_schema_for_openai(v),
+            "items"
+            | "additionalProperties"
+            | "contains"
+            | "not"
+            | "if"
+            | "then"
+            | "else"
+            | "unevaluatedItems"
+            | "additionalItems" => sanitize_schema_for_openai(v),
             // Array-of-schemas positions.
             "anyOf" | "oneOf" | "allOf" | "prefixItems" => match v {
                 Value::Array(arr) => {
@@ -648,7 +656,10 @@ mod tests {
             out.pointer("/properties/ids/items/type"),
             Some(&json!("string"))
         );
-        assert!(out.pointer("/properties/data/additionalProperties").is_some());
+        assert!(
+            out.pointer("/properties/data/additionalProperties")
+                .is_some()
+        );
     }
 
     #[test]
@@ -667,7 +678,9 @@ mod tests {
         // type'sız yaprak: tam birleşim (her JSON değeri kabul).
         assert_eq!(
             out.pointer("/properties/value/type"),
-            Some(&json!(["string", "number", "integer", "boolean", "object", "array", "null"]))
+            Some(&json!([
+                "string", "number", "integer", "boolean", "object", "array", "null"
+            ]))
         );
         // items taşıyan ama type'sız düğüm → array.
         let arr = sanitize_schema_for_openai(&json!({ "items": { "type": "string" } }));

@@ -32,16 +32,13 @@ impl Segment {
     /// The command name, ignoring leading `VAR=value` assignments, `sudo` and
     /// shell control-flow keywords.
     pub fn command(&self) -> Option<&str> {
-        self.words
-            .iter()
-            .map(|w| w.text.as_str())
-            .find(|w| {
-                !is_assignment(w)
-                    && *w != "sudo"
-                    && *w != "command"
-                    && *w != "env"
-                    && !is_shell_keyword(w)
-            })
+        self.words.iter().map(|w| w.text.as_str()).find(|w| {
+            !is_assignment(w)
+                && *w != "sudo"
+                && *w != "command"
+                && *w != "env"
+                && !is_shell_keyword(w)
+        })
     }
 
     /// Arguments after the command name.
@@ -71,8 +68,8 @@ impl Segment {
 /// Regression: jcode#725 — `if`/`while`/`case` bodies bypassed the guardrail
 /// because the keyword sat in the command slot.
 const SHELL_KEYWORDS: &[&str] = &[
-    "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case",
-    "esac", "in", "select", "time", "coproc", "!", "{", "}",
+    "if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac",
+    "in", "select", "time", "coproc", "!", "{", "}",
 ];
 
 fn is_shell_keyword(word: &str) -> bool {
