@@ -145,13 +145,14 @@ fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (i, (key, label)) in parts.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::styled(" · ".to_string(), Style::default().fg(palette.dim)));
+            spans.push(Span::styled(
+                " · ".to_string(),
+                Style::default().fg(palette.dim),
+            ));
         }
         spans.push(Span::styled(
             key.to_string(),
-            Style::default()
-                .fg(palette.fg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
             format!(" {label}"),
@@ -214,9 +215,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
         } else {
             format!("{icon} {branch_disp}")
         };
-        let git_style = Style::default()
-            .fg(palette.fg)
-            .add_modifier(Modifier::DIM);
+        let git_style = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
         let sep = Span::styled(" ", Style::default());
         path_start_cols = (git_text.width() + sep.content.as_ref().width()) as u16;
         spans.push(Span::styled(git_text, git_style));
@@ -231,10 +230,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
     let path_disp = truncate_start(&path_full, path_budget);
     let path_w = path_disp.width() as u16;
 
-    spans.push(Span::styled(
-        path_disp,
-        Style::default().fg(palette.dim),
-    ));
+    spans.push(Span::styled(path_disp, Style::default().fg(palette.dim)));
 
     // Absolute screen coords of the path text for click-to-copy.
     if path_w > 0 {
