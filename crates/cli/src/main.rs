@@ -804,7 +804,8 @@ async fn cmd_run(
             let seed = session
                 .first_user_text()
                 .unwrap_or_else(|| expanded.clone());
-            let _ = session.apply_heuristic_title(&seed);
+            // bool: whether the title changed (not a Result).
+            session.apply_heuristic_title(&seed);
         }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -1037,7 +1038,9 @@ async fn cmd_run(
                     continue;
                 }
                 "/sessions" => {
-                    let _ = cmd_session(&SessionCmd::List).await;
+                    if let Err(err) = cmd_session(&SessionCmd::List).await {
+                        eprintln!("{} {}", "✗".red(), err);
+                    }
                     continue;
                 }
                 "/resume" | "/continue" => {
@@ -1047,7 +1050,9 @@ async fn cmd_run(
                         whycode_tui::RESUME_LATEST.to_string()
                     } else {
                         // /resume with no id → list, same as /sessions
-                        let _ = cmd_session(&SessionCmd::List).await;
+                        if let Err(err) = cmd_session(&SessionCmd::List).await {
+                            eprintln!("{} {}", "✗".red(), err);
+                        }
                         println!("{}", "Tip: /resume <id> or /continue (latest)".dimmed());
                         continue;
                     };
@@ -1191,7 +1196,8 @@ async fn cmd_run(
             let seed = session
                 .first_user_text()
                 .unwrap_or_else(|| expanded.clone());
-            let _ = session.apply_heuristic_title(&seed);
+            // bool: whether the title changed (not a Result).
+            session.apply_heuristic_title(&seed);
         }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -2348,7 +2354,12 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                             whycode_session::session::Session::load_from_db(&db, &s.id)
                         && loaded.maybe_upgrade_title_from_history()
                     {
-                        let _ = loaded.save_to_db(&db);
+                        if let Err(err) = loaded.save_to_db(&db) {
+                            tracing::warn!(
+                                error = %err,
+                                "failed to persist backfilled session title"
+                            );
+                        }
                         title = loaded.title;
                     }
                     println!("  {} — {} ({} messages)", s.id.cyan(), title, msg_count);

@@ -1916,13 +1916,13 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
                 &title,
                 std::path::Path::new(&s.project_path),
             )
+            && let Ok(Some(mut loaded)) = Session::load_from_db(&db, &s.id)
+            && loaded.maybe_upgrade_title_from_history()
         {
-            if let Ok(Some(mut loaded)) = Session::load_from_db(&db, &s.id)
-                && loaded.maybe_upgrade_title_from_history()
-            {
-                let _ = loaded.save_to_db(&db);
-                title = loaded.title;
+            if let Err(err) = loaded.save_to_db(&db) {
+                tracing::warn!(error = %err, "failed to persist backfilled session title");
             }
+            title = loaded.title;
         }
         out.push(crate::app::SessionEntry {
             messages,
