@@ -215,7 +215,8 @@ Rakamlar **farklı makinelerde, farklı tarihlerde** alınmıştır; doğrudan �
 |---|---|---|---|---|---|
 | `--version` / boot (ms) | ~21 ms (Win, 2026-07-31) | — | ~1036 ms TTFF (jcode bench) | **~14 ms** TTFF | ~3437 ms TTFF |
 | Peak RSS (1 session) | ~10 MB (`--version`) | — | ~372 MB PSS | **~28 MB** PSS (embed off) | ~387 MB PSS |
-| 10 session PSS | — | — | ~3.2 GB | **~117 MB** (embed off) | ~2.3 GB |
+| 1 session PSS (idle TUI) | **~4.1 MB** | — | — | **~28 MB** (embed off) | — |
+| 10 session PSS | **~16.8 MB** (~1.4 MB/extra) | — | ~3.2 GB | **~117 MB** (embed off) | ~2.3 GB |
 | Kaynak | [benchmarks.md](benchmarks.md) | — | jcode bench tablosu | jcode README | jcode bench tablosu |
 
 whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; process-level startup ve hot-path criterion bench’ler mevcut.

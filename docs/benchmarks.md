@@ -11,10 +11,12 @@ Process level:
 ```bash
 cargo build --release -p whycode-cli
 python scripts/bench_startup.py --runs 20
-python scripts/bench_memory.py --runs 5      # needs psutil
+python scripts/bench_memory.py --runs 5                  # peak RSS + multi-session PSS
+python scripts/bench_memory.py --skip-cli --sessions 1 10  # just the 1 / 10 session PSS table
 ```
 
-Both accept `--json out.json` so a run can be recorded.
+Peak RSS needs `psutil`. Multi-session PSS needs Linux (`/proc/.../smaps_rollup`)
+and does not need psutil. Both accept `--json out.json` so a run can be recorded.
 
 Function level, for the two paths that run on a hot loop:
 
@@ -35,9 +37,18 @@ reports the median and p95. The first run is discarded: it pays for reading the
 binary off disk and every run after it does not, so including it measures the
 filesystem cache rather than the program.
 
-**Memory** (`bench_memory.py`) samples RSS every millisecond while the process
-runs and takes the peak. A tight loop is necessary because these processes live
-for tens of milliseconds; a slower sample misses the peak entirely.
+**Memory** (`bench_memory.py`) has two modes:
+
+1. **Peak RSS** of short CLI subcommands. Samples RSS every millisecond while
+   the process runs and takes the peak. A tight loop is necessary because these
+   processes live for tens of milliseconds; a slower sample misses the peak.
+2. **Multi-session PSS** of concurrent idle TUI sessions. Spawns N
+   `whycode run` processes under ptys, answers terminal capability probes so
+   the first frame actually paints, settles, then sums Proportional Set Size
+   from `/proc/<pid>/smaps_rollup` across each process tree. PSS is what the
+   comparison table uses for "10 session" figures (shared pages are not
+   counted N times). Default counts are 1 and 10; override with
+   `--sessions 1 5 10`. Linux only.
 
 Both refuse to guess: they require an existing binary and say which profile it
 came from, because a debug number is not worth quoting.
@@ -142,14 +153,38 @@ state mutation — and a missed one leaves a stale screen, which is a worse
 failure than a wasted repaint. The timeout change gets most of the benefit
 without that risk.
 
+## Multi-session PSS
+
+Taken 2026-08-04 on Linux x86_64, release profile. Idle TUI sessions (no
+provider key, no user input), 2 s settle after spawn, 3 runs, median:
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **4.1 MB** | one idle TUI |
+| 10 | **16.8 MB** | ten concurrent idle TUIs |
+| per added session | **~1.4 MB** | (10 − 1) / 9 |
+
+Method matches the shape jcode publishes: N live interactive processes, PSS
+from `smaps_rollup`, not RSS. These are idle sessions (prompt drawn, no
+agent turn), so they are a lower bound on a working multi-session desk — a
+turn with tool output will cost more private memory per session.
+
+Reproduce:
+
+```bash
+cargo build --release -p whycode-cli
+python scripts/bench_memory.py --skip-cli --sessions 1 10 --runs 3 --settle 2
+```
+
 ## What is deliberately not measured yet
 
 Being explicit, because a benchmark page that quietly omits things reads as
 though it covered them.
 
-- **Memory per additional session.** Requires driving a real session, which
-  requires a provider key.
-- **Token accounting.** Listed in 5.md; not implemented.
+- **Memory of a busy session.** Idle TUI only; a turn with tool output and a
+  long transcript is not exercised (would need a provider key or a fixture).
+- **Token accounting reconciliation.** Providers report usage; end-to-end
+  check against a real session is still open.
 
 ## Comparison with other tools
 
