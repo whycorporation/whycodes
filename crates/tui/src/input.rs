@@ -526,6 +526,12 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     let was_context_hover = app.context_hovered();
     app.mouse_pos = Some((mouse.column, mouse.row));
     let now_context_hover = app.context_hovered();
+    // Enter/leave context meter → swap idle label ↔ bold % on next paint.
+    // (run.rs also marks dirty on any event; this keeps the unit test honest
+    // and covers paths that call handle_mouse without that wrapper.)
+    if was_context_hover != now_context_hover {
+        app.mark_dirty();
+    }
 
     // Modal open: wheel scrolls the list, clicks hit [✗] / rows — do not
     // scroll the chat underneath (that looked like a dead scrollbar).
@@ -561,10 +567,6 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             app.scroll_rows(step);
         }
         MouseEventKind::Moved => {
-            // Enter/leave context meter → swap used/max ↔ % on next paint.
-            if was_context_hover != now_context_hover {
-                app.mark_dirty();
-            }
             return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {

@@ -228,7 +228,11 @@ fn truncate_start(s: &str, max: usize) -> String {
 }
 
 /// Bottom chrome: ` branch /path` (left, click-to-copy) and Grok-style
-/// context meter `1.2k / 200k` (right; hover → `1%`).
+/// context meter on the right.
+///
+/// Default always shows fill: `1.2k / 200k · 1%` (percent does not depend on
+/// mouse motion — many hosts never send `Moved`). Hover/click focuses the
+/// chip to a bold `%` only (same swap idea as Grok’s context ring).
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     app.cwd_hit = None;
     app.context_hit = None;
@@ -237,22 +241,27 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
     }
 
     // ── Right: context window meter (Grok top-right style, bottom-right here) ──
-    // Hit-box width is always the used/max form so hover → `%` does not shrink
-    // the region and flicker between the two labels.
     let max = app.max_context_tokens.max(1);
     let used = app.context_used;
     let pct = app.context_percent();
-    let base_label = crate::app::format_context_usage(used, max);
-    let right_w = base_label.width() as u16;
-    let right_label = if app.context_hovered() {
-        // Right-align % inside the reserved width (same footprint as used/max).
-        let pct_s = crate::app::format_context_percent(used, max);
+    let usage_s = crate::app::format_context_usage(used, max);
+    let pct_s = crate::app::format_context_percent(used, max);
+    // Idle label always includes % so the value is visible without hover.
+    let idle_label = format!("{usage_s} · {pct_s}");
+    // Reserve the wider form so hover → `%` never shrinks the hit box.
+    let right_w = idle_label.width().max(pct_s.width()) as u16;
+    let hovered = app.context_hovered();
+    let right_label = if hovered {
         let pad = right_w.saturating_sub(pct_s.width() as u16) as usize;
         format!("{}{pct_s}", " ".repeat(pad))
     } else {
-        base_label
+        let pad = right_w.saturating_sub(idle_label.width() as u16) as usize;
+        format!("{}{idle_label}", " ".repeat(pad))
     };
-    let right_style = Style::default().fg(context_meter_color(pct, palette));
+    let mut right_style = Style::default().fg(context_meter_color(pct, palette));
+    if hovered {
+        right_style = right_style.add_modifier(Modifier::BOLD);
+    }
     // Leave at least one space gap between path and meter.
     let right_reserve = right_w.saturating_add(1).min(area.width);
 
@@ -306,10 +315,14 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
     spans.push(Span::styled(right_label, right_style));
 
     if right_w > 0 && area.width >= right_w {
+        // Hit the whole right cluster (and one cell of gap when present) so
+        // easy hover; y is the footer row inside the safe inset (not the
+        // terminal’s very last row when SAFE_BOTTOM > 0).
+        let hit_w = right_w.saturating_add(if gap > 0 { 1 } else { 0 }).min(area.width);
         app.context_hit = Some(Rect {
-            x: area.x.saturating_add(area.width.saturating_sub(right_w)),
+            x: area.x.saturating_add(area.width.saturating_sub(hit_w)),
             y: area.y,
-            width: right_w,
+            width: hit_w,
             height: 1,
         });
     }

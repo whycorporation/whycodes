@@ -293,6 +293,11 @@ fn test_format_context_usage_and_percent() {
     assert_eq!(format_context_percent(0, 200_000), "0%");
     assert_eq!(format_context_percent(200_000, 200_000), "100%");
     assert_eq!(format_context_usage(12_400, 128_000), "12.4k / 128k");
+    // Footer idle form is always `used/max · %` (visible without mouse motion).
+    assert_eq!(
+        format!("{} · {}", format_context_usage(1_200, 200_000), format_context_percent(1_200, 200_000)),
+        "1.2k / 200k · 1%"
+    );
 
     let u = Usage {
         input_tokens: 1000,

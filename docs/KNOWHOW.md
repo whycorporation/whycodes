@@ -189,13 +189,13 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ### 2026-08-05 — Context meter hover % never appears
 
-**Symptom:** Bottom-right shows `1.2k / 200k` but hovering does not switch to Grok-style `1%`.
+**Symptom:** Bottom-right shows `1.2k / 200k` but hovering does not switch to Grok-style `1%`. Or: fix committed but `whycode` on PATH still old (`~/.cargo/bin` vs `target/debug`).
 
-**Root cause:** After the `handle_event=false` fix, `MouseEventKind::Moved` always returned `true` and updated `mouse_pos`, but never called `mark_dirty()`. The run loop only draws when `needs_redraw` (idle poll no longer forces a frame), so `context_hovered()` stayed true in state while the footer never repainted.
+**Root cause (paint):** After the `handle_event=false` fix, `Moved` updated `mouse_pos` but enter/leave did not always dirty for unit paths; more importantly many hosts never send hover motion at all, so swap-on-hover alone is unreliable.
 
-**Fix:** On mouse move, if enter/leave of `context_hit` flips, call `app.mark_dirty()`. Still always `return true` (keep running ≠ needs paint).
+**Fix:** Idle footer always shows `1.2k / 200k · 1%`. Hover/click focuses to bold `%` only. Enter/leave still `mark_dirty`. **Ship via `cargo install --path crates/cli --force`** (PATH binary), not only `cargo test`.
 
-**Prevention:** Hover chrome = two steps: track `mouse_pos` **and** dirty on enter/leave. See Rule 1 table.
+**Prevention:** Hover chrome = track `mouse_pos` + dirty on enter/leave; percent must also be visible without motion. After TUI UX fixes, reinstall the binary the user actually runs.
 
 ---
 
