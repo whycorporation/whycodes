@@ -135,12 +135,10 @@ impl LlmProvider for OllamaProvider {
         _api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
-        let client = reqwest::Client::new();
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = client
-            .post(self.default_base_url())
+        let resp = super::client_identity::post(self.default_base_url())
             .json(&body)
             .send()
             .await
@@ -183,7 +181,7 @@ impl LlmProvider for OllamaProvider {
                         .unwrap_or("")
                         .to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: func["arguments"].clone(),
+                    input: super::openai_compat::parse_tool_arguments(&func["arguments"]),
                 });
             }
         }
@@ -211,9 +209,7 @@ impl LlmProvider for OllamaProvider {
     {
         let body = self.build_body(request, model);
 
-        let client = reqwest::Client::new();
-        let resp = client
-            .post(self.default_base_url())
+        let resp = super::client_identity::post(self.default_base_url())
             .json(&body)
             .send()
             .await
@@ -267,10 +263,22 @@ impl LlmProvider for OllamaProvider {
                                     if let Some(tool_calls) = message["tool_calls"].as_array() {
                                         for tc in tool_calls {
                                             let func = &tc["function"];
+                                            let raw_args = &func["arguments"];
+                                            // Ollama may send object or JSON string.
+                                            let input = if raw_args.is_string() || raw_args.is_null()
+                                            {
+                                                super::openai_compat::parse_tool_arguments(raw_args)
+                                            } else {
+                                                raw_args.clone()
+                                            };
                                             yield Ok(StreamEvent::ToolUse {
-                                                id: tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                id: tc
+                                                    .get("id")
+                                                    .and_then(|v| v.as_str())
+                                                    .unwrap_or("")
+                                                    .to_string(),
                                                 name: func["name"].as_str().unwrap_or("").to_string(),
-                                                input: func["arguments"].clone(),
+                                                input,
                                             });
                                         }
                                     }

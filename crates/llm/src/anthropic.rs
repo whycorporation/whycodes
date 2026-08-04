@@ -136,12 +136,10 @@ impl LlmProvider for AnthropicProvider {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
-        let client = reqwest::Client::new();
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = client
-            .post(self.default_base_url())
+        let resp = super::client_identity::post(self.default_base_url())
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)
@@ -212,9 +210,7 @@ impl LlmProvider for AnthropicProvider {
         let body = self.build_body(request, model);
         let api_key = api_key.to_string();
 
-        let client = reqwest::Client::new();
-        let resp = client
-            .post(self.default_base_url())
+        let resp = super::client_identity::post(self.default_base_url())
             .header("x-api-key", &api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&body)

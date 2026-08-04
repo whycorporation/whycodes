@@ -51,12 +51,10 @@ impl LlmProvider for GoogleProvider {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
-        let client = reqwest::Client::new();
         let body = self.build_body(request);
 
         let url = self.build_complete_url(model, api_key);
-        let resp = client
-            .post(&url)
+        let resp = super::client_identity::post(&url)
             .json(&body)
             .send()
             .await
@@ -114,13 +112,11 @@ impl LlmProvider for GoogleProvider {
         model: &str,
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
-        let client = reqwest::Client::new();
         let mut body = self.build_body(request);
         body["generationConfig"] = serde_json::json!({});
 
         let url = self.build_url(model, api_key);
-        let resp = client
-            .post(&url)
+        let resp = super::client_identity::post(&url)
             .json(&body)
             .send()
             .await

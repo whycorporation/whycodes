@@ -6,7 +6,9 @@ use futures::stream::Stream;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::pin::Pin;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
+use whycode_core::types::{
+    ContentBlock, LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat, Usage,
+};
 
 use super::provider::LlmProvider;
 
@@ -19,12 +21,15 @@ use super::provider::LlmProvider;
 /// api_key = "sk-xxx"
 /// base_url = "https://api.example.com/v1/chat/completions"
 /// headers = { "X-Custom-Header" = "value" }
+/// # Only if the gateway requires bare JSON objects for tool args:
+/// # tool_arguments = "object"
 /// ```
 pub struct CustomProvider {
     name: String,
     base_url: String,
     api_key: Option<String>,
     headers: HashMap<String, String>,
+    tool_arguments: ToolArgumentsFormat,
 }
 
 impl CustomProvider {
@@ -40,23 +45,28 @@ impl CustomProvider {
             base_url: base_url.into(),
             api_key,
             headers,
+            tool_arguments: ToolArgumentsFormat::JsonString,
         }
     }
 
     /// Create from config
     pub fn from_config(config: &whycode_core::types::ProviderConfig) -> Self {
-        let url = config
-            .base_url
-            .clone()
-            .or_else(|| config.api_base.clone())
-            .unwrap_or_else(|| format!("https://api.{}/v1/chat/completions", config.name));
+        // Accept either a bare `/v1` base or a full chat-completions URL.
+        let url = normalize_chat_completions_url(
+            config
+                .base_url
+                .as_deref()
+                .or(config.api_base.as_deref())
+                .unwrap_or("https://api.openai.com/v1"),
+        );
 
         let mut headers = config.headers.clone().unwrap_or_default();
         // Add auth header if not already present
         if !headers.contains_key("Authorization")
             && let Some(key) = &config.api_key
+            && !key.is_empty()
         {
-            headers.insert("Authorization".to_string(), format!("Bearer {}", key));
+            headers.insert("Authorization".to_string(), format!("Bearer {key}"));
         }
 
         Self {
@@ -64,6 +74,7 @@ impl CustomProvider {
             base_url: url,
             api_key: config.api_key.clone(),
             headers,
+            tool_arguments: config.tool_arguments_format(),
         }
     }
 
@@ -94,66 +105,16 @@ impl CustomProvider {
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
-        let mut messages: Vec<Value> = Vec::new();
-        if !request.system.is_empty() {
-            messages.push(serde_json::json!({"role": "system", "content": request.system}));
-        }
-        for msg in &request.messages {
-            let role = match msg.role {
-                whycode_core::types::Role::Assistant => "assistant",
-                whycode_core::types::Role::User => "user",
-                whycode_core::types::Role::System => "system",
-                whycode_core::types::Role::Tool => "tool",
-            };
-            let content = match &msg.content {
-                whycode_core::types::MessageContent::Text(text) => Value::String(text.clone()),
-                whycode_core::types::MessageContent::Blocks(blocks) => Value::Array(
-                    blocks
-                        .iter()
-                        .map(|b| match b {
-                            ContentBlock::Text { text } => {
-                                serde_json::json!({"type": "text", "text": text})
-                            }
-                            ContentBlock::ToolResult {
-                                tool_use_id,
-                                content,
-                                ..
-                            } => {
-                                serde_json::json!({"tool_call_id": tool_use_id, "content": content})
-                            }
-                            _ => serde_json::json!({"type": "text", "text": "[block]"}),
-                        })
-                        .collect(),
-                ),
-            };
-            let mut obj = serde_json::json!({"role": role, "content": content});
-            if let Some(tcid) = &msg.tool_call_id {
-                obj["tool_call_id"] = Value::String(tcid.clone());
-            }
-            messages.push(obj);
-        }
-        messages
+        super::openai_compat::convert_messages_with_format(request, self.tool_arguments)
     }
 
     fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
-        tools
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }
-                })
-            })
-            .collect()
+        super::openai_compat::convert_tools(tools)
     }
 
     fn build_request(&self, body: &Value) -> reqwest::RequestBuilder {
-        let client = reqwest::Client::new();
-        let mut req = client.post(&self.base_url).json(body);
+        // Identity first; config `headers` may override (e.g. custom User-Agent).
+        let mut req = super::client_identity::post(&self.base_url).json(body);
 
         for (key, value) in &self.headers {
             req = req.header(key, value);
@@ -162,11 +123,26 @@ impl CustomProvider {
         // Fallback auth if no Authorization header set
         if !self.headers.contains_key("Authorization")
             && let Some(key) = &self.api_key
+            && !key.is_empty()
         {
-            req = req.header("Authorization", format!("Bearer {}", key));
+            req = req.header("Authorization", format!("Bearer {key}"));
         }
 
         req
+    }
+}
+
+/// Ensure `base` points at the OpenAI chat-completions endpoint.
+///
+/// Configs usually store `http://host:port/v1`; the HTTP client posts to
+/// `{base}/chat/completions`. If the path already ends with that suffix, leave
+/// it alone.
+pub fn normalize_chat_completions_url(base: &str) -> String {
+    let base = base.trim().trim_end_matches('/');
+    if base.ends_with("/chat/completions") {
+        base.to_string()
+    } else {
+        format!("{base}/chat/completions")
     }
 }
 
@@ -225,7 +201,7 @@ impl LlmProvider for CustomProvider {
                 content.push(ContentBlock::ToolUse {
                     id: tc["id"].as_str().unwrap_or("").to_string(),
                     name: f["name"].as_str().unwrap_or("").to_string(),
-                    input: f["arguments"].clone(),
+                    input: super::openai_compat::parse_tool_arguments(&f["arguments"]),
                 });
             }
         }
@@ -281,9 +257,8 @@ impl LlmProvider for CustomProvider {
                                 if let Some(t) = delta["content"].as_str()
                                     && !t.is_empty() { yield Ok(StreamEvent::TextDelta { text: t.to_string() }); }
                                 if let Some(tcs) = delta["tool_calls"].as_array() {
-                                    let tc = &tcs[0];
-                                    if let Some(id) = tc["id"].as_str() {
-                                        yield Ok(StreamEvent::ToolUse { id: id.to_string(), name: tc["function"]["name"].as_str().unwrap_or("").to_string(), input: tc["function"]["arguments"].clone() });
+                                    for ev in super::openai_compat::stream_events_for_tool_calls(tcs) {
+                                        yield Ok(ev);
                                     }
                                 }
                             }
@@ -314,6 +289,83 @@ mod tests {
             stop_sequences: None,
             thinking: None,
         }
+    }
+
+    #[test]
+    fn normalizes_v1_base_to_chat_completions() {
+        assert_eq!(
+            normalize_chat_completions_url("http://example.local:1234/v1"),
+            "http://example.local:1234/v1/chat/completions"
+        );
+        assert_eq!(
+            normalize_chat_completions_url("http://example.local:1234/v1/"),
+            "http://example.local:1234/v1/chat/completions"
+        );
+        assert_eq!(
+            normalize_chat_completions_url("http://example.local:1234/v1/chat/completions"),
+            "http://example.local:1234/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn from_config_uses_normalized_base_url() {
+        let pc = whycode_core::types::ProviderConfig {
+            name: "custom".into(),
+            api_key: Some("sk-test".into()),
+            api_base: None,
+            base_url: Some("http://example.local:1234/v1".into()),
+            headers: None,
+            models: vec!["some/model".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        };
+        let p = CustomProvider::from_config(&pc);
+        assert_eq!(
+            p.default_base_url(),
+            "http://example.local:1234/v1/chat/completions"
+        );
+        assert_eq!(p.name(), "custom");
+        assert_eq!(p.tool_arguments, ToolArgumentsFormat::JsonString);
+    }
+
+    #[test]
+    fn from_config_honors_tool_arguments_object() {
+        let pc = whycode_core::types::ProviderConfig {
+            name: "omniroute".into(),
+            api_key: Some("sk-test".into()),
+            api_base: None,
+            base_url: Some("http://127.0.0.1:9999/v1".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: Some(ToolArgumentsFormat::Object),
+            extra: Default::default(),
+        };
+        let p = CustomProvider::from_config(&pc);
+        assert_eq!(p.tool_arguments, ToolArgumentsFormat::Object);
+
+        let req = make_req();
+        let mut req = req;
+        // Build a body that includes a tool call in history.
+        use whycode_core::types::{ContentBlock, Message, MessageContent, Role};
+        req.messages = vec![Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
+                id: "c1".into(),
+                name: "websearch".into(),
+                input: serde_json::json!({"query": "nuxt"}),
+            }]),
+            tool_call_id: None,
+            name: None,
+        }];
+        let body = p.build_body(&req, "any/model");
+        let args = &body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "assistant")
+            .unwrap()["tool_calls"][0]["function"]["arguments"];
+        assert!(args.is_object(), "provider config asked for object: {args}");
+        assert_eq!(args["query"], "nuxt");
     }
 
     #[test]

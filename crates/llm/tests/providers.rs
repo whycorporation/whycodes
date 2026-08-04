@@ -201,6 +201,22 @@ fn test_openrouter_has_headers() {
 }
 
 #[test]
+fn test_openrouter_defaults_to_whycode_identity() {
+    let provider = OpenRouterProvider::new();
+    assert_eq!(
+        provider.site_url.as_deref(),
+        Some(whycode_llm::HTTP_REFERER)
+    );
+    assert_eq!(provider.site_name.as_deref(), Some(whycode_llm::X_TITLE));
+}
+
+#[test]
+fn test_client_identity_user_agent() {
+    assert!(whycode_llm::USER_AGENT.starts_with("whycode/"));
+    assert_eq!(whycode_llm::X_TITLE, "whycode");
+}
+
+#[test]
 fn test_openrouter_body_is_openai_compatible() {
     let provider = OpenRouterProvider::new();
     let request = make_basic_request();

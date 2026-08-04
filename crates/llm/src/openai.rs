@@ -49,97 +49,11 @@ impl OpenAiProvider {
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
-        let mut messages: Vec<Value> = Vec::new();
-
-        if !request.system.is_empty() {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": request.system
-            }));
-        }
-
-        for msg in &request.messages {
-            let role = match msg.role {
-                whycode_core::types::Role::Assistant => "assistant",
-                whycode_core::types::Role::User => "user",
-                whycode_core::types::Role::System => "system",
-                whycode_core::types::Role::Tool => "tool",
-            };
-
-            let content = match &msg.content {
-                whycode_core::types::MessageContent::Text(text) => Value::String(text.clone()),
-                whycode_core::types::MessageContent::Blocks(blocks) => {
-                    let parts: Vec<Value> = blocks
-                        .iter()
-                        .map(|b| match b {
-                            ContentBlock::Text { text } => {
-                                serde_json::json!({"type": "text", "text": text})
-                            }
-                            ContentBlock::Image { source } => match source {
-                                whycode_core::types::ImageSource::Base64 {
-                                    media_type,
-                                    data,
-                                } => serde_json::json!({
-                                    "type": "image_url",
-                                    "image_url": {"url": format!("data:{};base64,{}", media_type, data)}
-                                }),
-                                whycode_core::types::ImageSource::Url { url } => {
-                                    serde_json::json!({
-                                        "type": "image_url",
-                                        "image_url": {"url": url}
-                                    })
-                                }
-                            },
-                            ContentBlock::ToolUse { id, name, input } => serde_json::json!({
-                                "type": "tool_use", "id": id, "name": name, "input": input
-                            }),
-                            ContentBlock::ToolResult {
-                                tool_use_id,
-                                content,
-                                ..
-                            } => serde_json::json!({
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": content
-                            }),
-                        })
-                        .collect();
-                    Value::Array(parts)
-                }
-            };
-
-            let mut msg_obj = serde_json::json!({
-                "role": role,
-                "content": content
-            });
-
-            if let Some(tool_call_id) = &msg.tool_call_id {
-                msg_obj["tool_call_id"] = Value::String(tool_call_id.clone());
-            }
-            if let Some(name) = &msg.name {
-                msg_obj["name"] = Value::String(name.clone());
-            }
-
-            messages.push(msg_obj);
-        }
-
-        messages
+        super::openai_compat::convert_messages(request)
     }
 
     fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
-        tools
-            .iter()
-            .map(|t| {
-                serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": t.name,
-                        "description": t.description,
-                        "parameters": t.parameters
-                    }
-                })
-            })
-            .collect()
+        super::openai_compat::convert_tools(tools)
     }
 }
 
@@ -159,12 +73,10 @@ impl LlmProvider for OpenAiProvider {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
-        let client = reqwest::Client::new();
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = client
-            .post(self.default_base_url())
+        let resp = super::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
@@ -203,7 +115,7 @@ impl LlmProvider for OpenAiProvider {
                 content.push(ContentBlock::ToolUse {
                     id: tc["id"].as_str().unwrap_or("").to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: func["arguments"].clone(),
+                    input: super::openai_compat::parse_tool_arguments(&func["arguments"]),
                 });
             }
         }
@@ -231,9 +143,7 @@ impl LlmProvider for OpenAiProvider {
     {
         let body = self.build_body(request, model);
 
-        let client = reqwest::Client::new();
-        let resp = client
-            .post(self.default_base_url())
+        let resp = super::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
@@ -282,18 +192,8 @@ impl LlmProvider for OpenAiProvider {
                                     }
 
                                 if let Some(tool_calls) = delta["tool_calls"].as_array() {
-                                    let tc = &tool_calls[0];
-                                    if let Some(id) = tc["id"].as_str() {
-                                        yield Ok(StreamEvent::ToolUse {
-                                            id: id.to_string(),
-                                            name: tc["function"]["name"].as_str().unwrap_or("").to_string(),
-                                            input: tc["function"]["arguments"].clone(),
-                                        });
-                                    } else if let Some(args) = tc["function"]["arguments"].as_str() {
-                                        yield Ok(StreamEvent::ToolUseDelta {
-                                            id: tc.get("index").map(|i| i.to_string()).unwrap_or_default(),
-                                            input_json_delta: args.to_string(),
-                                        });
+                                    for ev in super::openai_compat::stream_events_for_tool_calls(tool_calls) {
+                                        yield Ok(ev);
                                     }
                                 }
 
