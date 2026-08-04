@@ -237,6 +237,7 @@ the cache hits, so the hasher cost is on the frame budget.
 
 **Math / token heuristics.** `chars_to_tokens_fallback` uses
 `chars.div_ceil(4).max(1)` so short Unicode strings are not under-counted as
-zero. Tiktoken BPE tables are cached in a process-wide map so repeated counts
-do not reload vocabularies.
+zero. Tiktoken uses the crate's process-wide BPE singletons
+(`cl100k_base_singleton` / `o200k_base_singleton`) so vocab load is paid once.
+`token_counter` is exported from `whycode-llm` (it was previously orphaned).
 
