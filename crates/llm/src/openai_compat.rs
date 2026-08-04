@@ -285,6 +285,89 @@ pub fn stream_events_for_tool_calls(tool_calls: &[Value]) -> Vec<whycode_core::t
         .collect()
 }
 
+/// JSON Schema keywords that strict OpenAI-compatible endpoints reject
+/// (regression: jcode#687 `uniqueItems`, jcode#754 `propertyNames`). One bad
+/// tool fails the *whole* request there, so these are stripped recursively.
+const OPENAI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &["uniqueItems", "propertyNames"];
+
+/// The full JSON type union, used when a schema omits `type` entirely: legal
+/// JSON Schema (accepts anything) but rejected by OpenAI's narrower subset
+/// (regression: jcode#713 — an MCP property with only a `description` 400'd
+/// the entire tool catalog).
+const ANY_JSON_TYPE: [&str; 7] = [
+    "string", "number", "integer", "boolean", "object", "array", "null",
+];
+
+/// Rewrite a JSON Schema into the subset strict OpenAI-compatible endpoints
+/// accept:
+///
+/// - unsupported keywords are stripped, recursively
+/// - schema nodes without a type discriminator gain one: `object` when they
+///   carry `properties`/`required`, `array` for `items`, otherwise the full
+///   union (a bare `{}` accepts any JSON value)
+///
+/// Only schema positions are rewritten. Annotation values — `default`,
+/// `examples`, `enum`, `const` — pass through untouched, so
+/// `{"default": {"x": 1}}` does not grow a spurious `"type": "object"`.
+pub fn sanitize_schema_for_openai(schema: &Value) -> Value {
+    let Value::Object(map) = schema else {
+        return schema.clone();
+    };
+    let mut out = serde_json::Map::with_capacity(map.len() + 1);
+    for (k, v) in map {
+        if OPENAI_UNSUPPORTED_SCHEMA_KEYS.contains(&k.as_str()) {
+            continue;
+        }
+        let rewritten = match k.as_str() {
+            // Map-of-schemas positions.
+            "properties" | "$defs" | "definitions" | "patternProperties"
+            | "dependentSchemas" => match v {
+                Value::Object(props) => Value::Object(
+                    props
+                        .iter()
+                        .map(|(name, sub)| (name.clone(), sanitize_schema_for_openai(sub)))
+                        .collect(),
+                ),
+                other => other.clone(),
+            },
+            // Single-schema positions.
+            "items" | "additionalProperties" | "contains" | "not" | "if" | "then" | "else"
+            | "unevaluatedItems" | "additionalItems" => sanitize_schema_for_openai(v),
+            // Array-of-schemas positions.
+            "anyOf" | "oneOf" | "allOf" | "prefixItems" => match v {
+                Value::Array(arr) => {
+                    Value::Array(arr.iter().map(sanitize_schema_for_openai).collect())
+                }
+                other => other.clone(),
+            },
+            // Everything else (type, description, default, examples, enum,
+            // const, required, minimum, …) is data, not schema: keep as-is.
+            _ => v.clone(),
+        };
+        out.insert(k.clone(), rewritten);
+    }
+
+    let has_discriminator = ["type", "anyOf", "oneOf", "allOf", "$ref", "not"]
+        .iter()
+        .any(|k| out.contains_key(*k));
+    if !has_discriminator {
+        let ty = if out.contains_key("properties") || out.contains_key("required") {
+            Value::String("object".into())
+        } else if out.contains_key("items") || out.contains_key("prefixItems") {
+            Value::String("array".into())
+        } else {
+            Value::Array(
+                ANY_JSON_TYPE
+                    .iter()
+                    .map(|t| Value::String((*t).into()))
+                    .collect(),
+            )
+        };
+        out.insert("type".into(), ty);
+    }
+    Value::Object(out)
+}
+
 /// Convert tool definitions to OpenAI `tools` array entries.
 pub fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
     tools
@@ -295,7 +378,7 @@ pub fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
                 "function": {
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.parameters
+                    "parameters": sanitize_schema_for_openai(&t.parameters)
                 }
             })
         })
@@ -532,5 +615,116 @@ mod tests {
             }
             other => panic!("expected ToolUseDelta, got {other:?}"),
         }
+    }
+
+    // ── Rakip regresyonları: OpenAI-uyum şema sanitize (whycode-watch) ─────
+
+    use serde_json::json;
+
+    #[test]
+    fn sanitize_strips_unsupported_keywords_recursively() {
+        // jcode#687 (uniqueItems) + jcode#754 (propertyNames): tek keyword
+        // tüm tool catalog'unu 400'e düşürüyordu.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "uniqueItems": true
+                },
+                "data": {
+                    "type": "object",
+                    "propertyNames": { "type": "string" },
+                    "additionalProperties": { "type": "string" }
+                }
+            }
+        });
+        let out = sanitize_schema_for_openai(&schema);
+        assert!(out.pointer("/properties/ids/uniqueItems").is_none());
+        assert!(out.pointer("/properties/data/propertyNames").is_none());
+        // Diğer her şey korunur.
+        assert_eq!(
+            out.pointer("/properties/ids/items/type"),
+            Some(&json!("string"))
+        );
+        assert!(out.pointer("/properties/data/additionalProperties").is_some());
+    }
+
+    #[test]
+    fn sanitize_adds_missing_types() {
+        // jcode#713: type'sız property OpenAI'ı 400'e düşürüyordu.
+        let schema = json!({
+            "properties": {
+                "key": { "type": "string" },
+                "value": { "description": "JSON type depends on the key." }
+            },
+            "required": ["key", "value"]
+        });
+        let out = sanitize_schema_for_openai(&schema);
+        // Kök: properties+required → object.
+        assert_eq!(out["type"], json!("object"));
+        // type'sız yaprak: tam birleşim (her JSON değeri kabul).
+        assert_eq!(
+            out.pointer("/properties/value/type"),
+            Some(&json!(["string", "number", "integer", "boolean", "object", "array", "null"]))
+        );
+        // items taşıyan ama type'sız düğüm → array.
+        let arr = sanitize_schema_for_openai(&json!({ "items": { "type": "string" } }));
+        assert_eq!(arr["type"], json!("array"));
+        // anyOf/$ref taşıyan düğümlere dokunulmaz.
+        let any = sanitize_schema_for_openai(&json!({ "anyOf": [{ "type": "string" }] }));
+        assert!(any.get("type").is_none());
+    }
+
+    #[test]
+    fn sanitize_leaves_annotation_values_untouched() {
+        // `default` içindeki veri şema değildir; type kazanmamalı.
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "opts": {
+                    "type": "object",
+                    "default": { "retries": 3 },
+                    "examples": [{ "retries": 1 }]
+                }
+            }
+        });
+        let out = sanitize_schema_for_openai(&schema);
+        assert_eq!(
+            out.pointer("/properties/opts/default"),
+            Some(&json!({ "retries": 3 }))
+        );
+        assert_eq!(
+            out.pointer("/properties/opts/examples"),
+            Some(&json!([{ "retries": 1 }]))
+        );
+    }
+
+    #[test]
+    fn convert_tools_sanitizes_parameters() {
+        let tools = vec![ToolDefinition {
+            name: "mcp__x__y".into(),
+            description: "d".into(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "ids": { "type": "array", "uniqueItems": true } }
+            }),
+        }];
+        let out = convert_tools(&tools);
+        assert!(
+            out[0]
+                .pointer("/function/parameters/properties/ids/uniqueItems")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn truncated_tool_arguments_yield_empty_object() {
+        // opencode#36766: stream yarım kaldığında panic/400 yerine zararsız {}.
+        let parsed = parse_tool_arguments(&json!(r#"{"patchText": "@@ -1,3"#));
+        assert_eq!(parsed, json!({}));
+        assert_eq!(parse_tool_arguments(&json!("")), json!({}));
+        assert_eq!(parse_tool_arguments(&Value::Null), json!({}));
     }
 }

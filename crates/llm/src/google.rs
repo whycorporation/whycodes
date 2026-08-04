@@ -231,7 +231,7 @@ impl GoogleProvider {
                     serde_json::json!({
                         "name": t.name,
                         "description": t.description,
-                        "parameters": t.parameters
+                        "parameters": super::openai_compat::sanitize_schema_for_openai(&t.parameters)
                     })
                 }).collect::<Vec<_>>()
             }]);
