@@ -8,8 +8,8 @@
 
 use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
 use whycode_llm::provider::LlmProvider;
-use whycode_session::title::sanitize_title;
 use whycode_session::Session;
+use whycode_session::title::sanitize_title;
 
 const TITLE_SYSTEM: &str = "\
 You name coding-agent chat sessions.
@@ -72,16 +72,7 @@ fn small_model_for(provider: &str, model: &str) -> Option<&'static str> {
 
 fn is_already_small(model: &str) -> bool {
     const MARKERS: &[&str] = &[
-        "haiku",
-        "mini",
-        "nano",
-        "flash",
-        "small",
-        "lite",
-        "8b",
-        "7b",
-        "3b",
-        "instant",
+        "haiku", "mini", "nano", "flash", "small", "lite", "8b", "7b", "3b", "instant",
     ];
     MARKERS.iter().any(|m| model.contains(m))
 }

@@ -719,7 +719,8 @@ async fn cmd_run(
         let expanded = expand_user_input(prompt, &project_dir);
         session.add_user_message(&expanded);
         if config.session.auto_title {
-            let _ = session.apply_heuristic_title(&expanded);
+            // bool return is intentional (whether title changed); not a Result.
+            session.apply_heuristic_title(&expanded);
         }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -839,14 +840,12 @@ async fn cmd_run(
                         );
                     } else {
                         session.set_title_manual(rest);
-                        if let Ok(db) = open_db() {
-                            let _ = db.update_title(&session.id, &session.title);
+                        if let Ok(db) = open_db()
+                            && let Err(err) = db.update_title(&session.id, &session.title)
+                        {
+                            tracing::warn!(error = %err, "failed to persist session title");
                         }
-                        println!(
-                            "{} Renamed to '{}'",
-                            "✓".green(),
-                            session.title.cyan()
-                        );
+                        println!("{} Renamed to '{}'", "✓".green(), session.title.cyan());
                     }
                     continue;
                 }
@@ -866,11 +865,7 @@ async fn cmd_run(
                             session.usage.total()
                         )
                     };
-                    println!(
-                        "Title: {} ({:?})",
-                        i.title.cyan(),
-                        session.title_source
-                    );
+                    println!("Title: {} ({:?})", i.title.cyan(), session.title_source);
                     println!(
                         "ID: {} | Messages: {} | {} | Agent: {} | {}/{}",
                         i.id, i.message_count, tokens, agent_name, provider, model
@@ -1080,7 +1075,7 @@ async fn cmd_run(
         history.push_before_turn(&session.messages, &project_dir);
         session.add_user_message(&expanded);
         if config.session.auto_title {
-            let _ = session.apply_heuristic_title(&expanded);
+            session.apply_heuristic_title(&expanded);
         }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)

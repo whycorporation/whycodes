@@ -257,13 +257,7 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
             Style::default().fg(palette.dim),
         )));
     } else {
-        for (i, (provider, model)) in ms
-            .models
-            .iter()
-            .enumerate()
-            .skip(start)
-            .take(list_budget)
-        {
+        for (i, (provider, model)) in ms.models.iter().enumerate().skip(start).take(list_budget) {
             let prefix = if i == ms.selected { "▸ " } else { "  " };
             let style = if i == ms.selected {
                 Style::default()

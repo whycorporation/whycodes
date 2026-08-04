@@ -102,15 +102,7 @@ pub fn content_with_scrollbar(
         width: 1,
         height: area.height,
     };
-    paint_scrollbar(
-        buf,
-        sb,
-        total,
-        visible,
-        offset,
-        colors.track,
-        colors.thumb,
-    );
+    paint_scrollbar(buf, sb, total, visible, offset, colors.track, colors.thumb);
     content
 }
 

@@ -233,14 +233,8 @@ impl Agent {
         };
 
         let assistant = session.first_assistant_snippet(400);
-        match crate::title::generate_title(
-            provider,
-            &key,
-            use_model,
-            &user,
-            assistant.as_deref(),
-        )
-        .await
+        match crate::title::generate_title(provider, &key, use_model, &user, assistant.as_deref())
+            .await
         {
             Ok(title) => crate::title::apply_refine_result(session, &title, use_model),
             Err(e) => {

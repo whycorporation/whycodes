@@ -89,11 +89,7 @@ fn short_id_suffix(session_id: &str) -> String {
         .take(2)
         .collect::<String>()
         .to_ascii_lowercase();
-    if hex.len() == 2 {
-        hex
-    } else {
-        "00".into()
-    }
+    if hex.len() == 2 { hex } else { "00".into() }
 }
 
 /// True when `title` still looks like an auto placeholder for this project.

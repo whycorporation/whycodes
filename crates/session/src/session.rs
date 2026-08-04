@@ -181,8 +181,10 @@ impl Session {
             .and_then(|m| m.content.as_text().map(|s| s.to_string()))
             .or_else(|| {
                 // Blocks-only user messages: join text blocks.
-                self.messages.iter().find(|m| m.role == Role::User).map(|m| {
-                    match &m.content {
+                self.messages
+                    .iter()
+                    .find(|m| m.role == Role::User)
+                    .map(|m| match &m.content {
                         MessageContent::Text(t) => t.clone(),
                         MessageContent::Blocks(blocks) => blocks
                             .iter()
@@ -192,8 +194,7 @@ impl Session {
                             })
                             .collect::<Vec<_>>()
                             .join("\n"),
-                    }
-                })
+                    })
             })
             .filter(|s| !s.trim().is_empty())
     }
