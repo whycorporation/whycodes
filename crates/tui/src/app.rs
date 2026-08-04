@@ -1116,13 +1116,19 @@ impl TuiApp {
     ///
     /// Keeps `chat_scrollbar_grab` across frames while the bar is still shown
     /// so a thumb drag survives repaints; drops the grab when the bar vanishes.
+    /// Also clamps `scroll_offset` to the painted document size so a shrink
+    /// (resize, collapse) cannot leave the viewport past the end.
     pub fn apply_chat_paint(&mut self, area: Rect, scrollbar_hit: Option<Rect>, total_rows: usize) {
         self.chat_area = Some(area);
         self.chat_scrollbar_hit = scrollbar_hit;
         self.chat_scroll_total = total_rows;
+        // Paint is the source of truth for viewport metrics used by scroll.
+        self.chat_viewport_rows = area.height;
+        self.chat_content_width = area.width;
         if scrollbar_hit.is_none() {
             self.chat_scrollbar_grab = None;
         }
+        self.clamp_chat_scroll();
     }
 
     /// Clear chat mouse targets (home / empty session).
@@ -1132,6 +1138,32 @@ impl TuiApp {
         self.chat_scroll_total = 0;
         // End any in-progress thumb drag when the bar goes away.
         self.chat_scrollbar_grab = None;
+    }
+
+    /// `(total_rows, viewport_height, max_scroll_offset)` for the transcript.
+    ///
+    /// Prefers last-paint totals so wheel/page math matches what is on screen.
+    pub fn chat_scroll_metrics(&mut self) -> (usize, usize, usize) {
+        let height = self.chat_viewport_rows.max(1) as usize;
+        let total = if self.chat_scroll_total > 0 {
+            self.chat_scroll_total
+        } else {
+            let width = self.chat_content_width.max(20);
+            crate::ui::chat::session_line_count_mut(self, width)
+        };
+        let max_off = total.saturating_sub(height);
+        (total, height, max_off)
+    }
+
+    /// Clamp `scroll_offset` into `[0, max_off]` after layout/paint changes.
+    pub fn clamp_chat_scroll(&mut self) {
+        let (_total, _height, max_off) = self.chat_scroll_metrics();
+        if self.scroll_offset > max_off {
+            self.scroll_offset = max_off;
+        }
+        if self.scroll_offset == 0 {
+            self.auto_scroll = true;
+        }
     }
 
     /// Map a screen cell to a list index when it falls inside the list body.
@@ -1392,30 +1424,22 @@ impl TuiApp {
         }
     }
 
-    /// Scroll by display rows (positive = older / up).
+    /// Scroll by display rows (positive = older / up toward history).
     ///
     /// Prefer the last-paint line total (`chat_scroll_total`) so max offset
     /// matches what the user actually sees; fall back to a live layout count
     /// before the first session paint.
     pub fn scroll_rows(&mut self, delta: isize) {
-        let height = self.chat_viewport_rows.max(1) as usize;
-        let total = if self.chat_scroll_total > 0 {
-            self.chat_scroll_total
-        } else {
-            let width = self.chat_content_width.max(20);
-            crate::ui::chat::session_line_count_mut(self, width)
-        };
-        let max_off = total.saturating_sub(height);
+        let (_total, _height, max_off) = self.chat_scroll_metrics();
         if delta > 0 {
             self.scroll_offset = (self.scroll_offset + delta as usize).min(max_off);
-            self.auto_scroll = false;
         } else {
             let down = (-delta) as usize;
             self.scroll_offset = self.scroll_offset.saturating_sub(down);
-            if self.scroll_offset == 0 {
-                self.auto_scroll = true;
-            }
         }
+        // At bottom (offset 0) always follow the stream — including the no-op
+        // case where content already fits the viewport (max_off == 0).
+        self.auto_scroll = self.scroll_offset == 0;
         self.mark_dirty();
     }
 
@@ -1425,10 +1449,8 @@ impl TuiApp {
     }
 
     pub fn scroll_to_top(&mut self) {
-        let width = self.chat_content_width.max(20);
-        let total = crate::ui::chat::session_line_count_mut(self, width);
-        let height = self.chat_viewport_rows.max(1) as usize;
-        self.scroll_offset = total.saturating_sub(height);
+        let (_total, _height, max_off) = self.chat_scroll_metrics();
+        self.scroll_offset = max_off;
         self.auto_scroll = false;
         if !self.messages.is_empty() {
             self.selected_msg = Some(0);

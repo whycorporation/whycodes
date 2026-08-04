@@ -662,7 +662,10 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 }
 
 /// Rows per mouse-wheel notch for the chat transcript.
-fn chat_wheel_step(app: &TuiApp) -> isize {
+///
+/// Public for unit tests; step scales with viewport so one notch is visible
+/// on both short and tall terminals.
+pub fn chat_wheel_step(app: &TuiApp) -> isize {
     let h = app.chat_viewport_rows.max(1) as isize;
     (h / 3).clamp(3, 12)
 }

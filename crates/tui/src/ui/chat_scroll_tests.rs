@@ -1,0 +1,626 @@
+//! Comprehensive chat transcript scroll tests (wheel, page, bar, paint).
+//!
+//! Loaded as `chat::scroll_tests`. Covers the paths users hit on the main
+//! message list (no dialog): geometry, clamping, mouse, keyboard page, and
+//! ghost-free paint after scroll.
+
+use super::{session_line_count, visible_range};
+use crate::app::{AppMode, ChatRole, DialogKind, TuiApp};
+use crate::config::TuiAppConfig;
+use crate::input::{self, chat_wheel_step};
+use crate::keymap::KeymapContext;
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+};
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
+use ratatui::layout::Rect;
+
+fn cfg() -> TuiAppConfig {
+    TuiAppConfig::default()
+}
+
+/// Fill the app with enough wrapped lines to overflow a small viewport.
+fn fill_overflowing_chat(app: &mut TuiApp, pairs: usize) {
+    for i in 0..pairs {
+        app.add_message(
+            ChatRole::User,
+            format!("user turn {i}: enough text to wrap at narrow width word word word word"),
+        );
+        app.add_message(
+            ChatRole::Assistant,
+            format!("assistant turn {i}: reply with more words for height word word word"),
+        );
+    }
+}
+
+fn paint_session(app: &mut TuiApp, width: u16, height: u16) {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| {
+            // Full area as chat viewport (no chrome) — matches unit focus on scroll.
+            super::render(f, f.area(), app, &palette);
+        })
+        .expect("draw");
+}
+
+fn mouse(kind: MouseEventKind, col: u16, row: u16) -> Event {
+    Event::Mouse(MouseEvent {
+        kind,
+        column: col,
+        row,
+        modifiers: KeyModifiers::NONE,
+    })
+}
+
+// ── Geometry ───────────────────────────────────────────────────────────
+
+#[test]
+fn visible_range_bottom_anchored_invariants() {
+    let total = 100usize;
+    let height = 20usize;
+    // Bottom stick
+    let (s, e) = visible_range(total, height, 0);
+    assert_eq!((s, e), (80, 100));
+    assert_eq!(e - s, height);
+
+    // Halfway
+    let (s, e) = visible_range(total, height, 40);
+    assert_eq!((s, e), (40, 60));
+    assert_eq!(e - s, height);
+
+    // Top (max offset)
+    let max_off = total - height;
+    let (s, e) = visible_range(total, height, max_off);
+    assert_eq!((s, e), (0, 20));
+
+    // Over-scroll clamps
+    let (s, e) = visible_range(total, height, max_off + 50);
+    assert_eq!((s, e), (0, 20));
+}
+
+#[test]
+fn visible_range_no_overflow_and_empty() {
+    assert_eq!(visible_range(5, 20, 0), (0, 5));
+    assert_eq!(visible_range(5, 20, 99), (0, 5));
+    assert_eq!(visible_range(0, 20, 0), (0, 0));
+    assert_eq!(visible_range(10, 0, 0), (0, 0));
+}
+
+// ── scroll_rows / page / top / bottom ──────────────────────────────────
+
+#[test]
+fn scroll_rows_clamps_and_toggles_auto_scroll() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 15);
+    app.chat_content_width = 40;
+    app.chat_viewport_rows = 8;
+    let total = session_line_count(&app, 40);
+    app.chat_scroll_total = total; // simulate post-paint
+    let max_off = total.saturating_sub(8);
+    assert!(
+        max_off > 5,
+        "need headroom, max_off={max_off} total={total}"
+    );
+
+    assert_eq!(app.scroll_offset, 0);
+    assert!(app.auto_scroll);
+
+    app.scroll_rows(4);
+    assert_eq!(app.scroll_offset, 4);
+    assert!(!app.auto_scroll);
+
+    // Cannot go past top
+    app.scroll_rows(max_off as isize + 100);
+    assert_eq!(app.scroll_offset, max_off);
+    assert!(!app.auto_scroll);
+
+    // Down toward bottom re-enables auto_scroll at 0
+    app.scroll_rows(-(max_off as isize) - 10);
+    assert_eq!(app.scroll_offset, 0);
+    assert!(app.auto_scroll);
+}
+
+#[test]
+fn scroll_rows_prefers_paint_total_over_live_layout() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 10);
+    app.chat_content_width = 40;
+    app.chat_viewport_rows = 5;
+    // Lie: paint said only 20 rows (e.g. stale/shrunk). Live layout is larger.
+    app.chat_scroll_total = 20;
+    let live = session_line_count(&app, 40);
+    assert!(live > 20, "live should exceed paint total for this test");
+
+    app.scroll_rows(100);
+    // max_off from paint total: 20 - 5 = 15
+    assert_eq!(app.scroll_offset, 15);
+}
+
+#[test]
+fn scroll_to_top_and_bottom_and_page() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 12);
+    app.chat_content_width = 40;
+    app.chat_viewport_rows = 8;
+    let total = session_line_count(&app, 40);
+    app.chat_scroll_total = total;
+    let max_off = total.saturating_sub(8);
+    assert!(max_off > 8);
+
+    app.scroll_to_top();
+    assert_eq!(app.scroll_offset, max_off);
+    assert!(!app.auto_scroll);
+    assert_eq!(app.selected_msg, Some(0));
+
+    app.scroll_page(false); // page toward newer
+    assert!(app.scroll_offset < max_off);
+
+    app.scroll_to_bottom();
+    assert_eq!(app.scroll_offset, 0);
+    assert!(app.auto_scroll);
+
+    app.scroll_page(true); // page toward older
+    assert!(app.scroll_offset >= 8.min(max_off));
+    assert!(!app.auto_scroll);
+}
+
+#[test]
+fn clamp_after_paint_when_total_shrinks() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 10);
+    app.chat_content_width = 40;
+    app.chat_viewport_rows = 8;
+    let total = session_line_count(&app, 40);
+    app.chat_scroll_total = total;
+    app.scroll_to_top();
+    let big_off = app.scroll_offset;
+    assert!(big_off > 5);
+
+    // Simulate resize/collapse: paint reports a much smaller document.
+    let area = Rect {
+        x: 0,
+        y: 0,
+        width: 40,
+        height: 8,
+    };
+    app.apply_chat_paint(area, None, 12); // max_off = 12-8 = 4
+    assert!(
+        app.scroll_offset <= 4,
+        "offset should clamp, got {}",
+        app.scroll_offset
+    );
+    assert!(app.scroll_offset < big_off);
+}
+
+// ── Mouse wheel ────────────────────────────────────────────────────────
+
+#[test]
+fn mouse_wheel_scrolls_transcript_both_directions() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 20);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 10,
+        },
+        Some(Rect {
+            x: 38,
+            y: 0,
+            width: 2,
+            height: 10,
+        }),
+        total,
+    );
+    let step = chat_wheel_step(&app) as usize;
+    assert!((3..=12).contains(&step));
+
+    let before = app.scroll_offset;
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollUp, 5, 3)
+    ));
+    assert_eq!(app.scroll_offset, before + step);
+    assert!(!app.auto_scroll);
+    assert!(app.needs_redraw);
+
+    let mid = app.scroll_offset;
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollDown, 5, 3)
+    ));
+    assert_eq!(app.scroll_offset, mid.saturating_sub(step));
+}
+
+#[test]
+fn mouse_wheel_at_bottom_down_is_noop_up_moves() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 15);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 8,
+        },
+        None,
+        total,
+    );
+    assert_eq!(app.scroll_offset, 0);
+
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollDown, 2, 2)
+    ));
+    assert_eq!(app.scroll_offset, 0, "already at bottom");
+    assert!(app.auto_scroll);
+
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollUp, 2, 2)
+    ));
+    assert!(app.scroll_offset > 0);
+}
+
+#[test]
+fn mouse_wheel_no_overflow_stays_at_zero() {
+    let mut app = TuiApp::new(cfg());
+    app.add_message(ChatRole::User, "hi");
+    app.add_message(ChatRole::Assistant, "yo");
+    // Huge viewport, tiny content
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 40,
+        },
+        None,
+        4,
+    );
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollUp, 1, 1)
+    ));
+    assert_eq!(app.scroll_offset, 0);
+    assert!(app.auto_scroll);
+}
+
+#[test]
+fn mouse_wheel_works_from_prompt_area_coordinates() {
+    // Wheel should scroll chat even when pointer is over the prompt (common UX).
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 12);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 12,
+        },
+        None,
+        total,
+    );
+    // Far below chat_area (simulating prompt row)
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollUp, 5, 50)
+    ));
+    assert!(app.scroll_offset > 0);
+}
+
+// ── Scrollbar drag / track ─────────────────────────────────────────────
+
+#[test]
+fn chat_scrollbar_track_click_and_drag_and_release() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 20);
+    let total = session_line_count(&app, 40);
+    let height = 10u16;
+    let area = Rect {
+        x: 2,
+        y: 1,
+        width: 40,
+        height,
+    };
+    let bar = Rect {
+        x: 40,
+        y: 1,
+        width: 2,
+        height,
+    };
+    app.apply_chat_paint(area, Some(bar), total);
+    let max_off = total.saturating_sub(height as usize);
+    assert!(max_off > 2);
+
+    // Track top → oldest
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 40, 1)
+    ));
+    assert!(
+        app.scroll_offset >= max_off.saturating_sub(2),
+        "top click offset={} max={max_off}",
+        app.scroll_offset
+    );
+    assert!(app.chat_scrollbar_grab.is_some());
+    assert!(app.mouse_sel.is_none(), "bar click must not start text sel");
+
+    // Drag toward bottom of track
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::Drag(MouseButton::Left), 40, 1 + height - 1)
+    ));
+    assert!(
+        app.scroll_offset <= 2,
+        "bottom drag should near bottom, got {}",
+        app.scroll_offset
+    );
+
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::Up(MouseButton::Left), 40, 1 + height - 1)
+    ));
+    assert!(app.chat_scrollbar_grab.is_none());
+}
+
+#[test]
+fn chat_scrollbar_hit_is_two_cells_wide() {
+    let mut app = TuiApp::new(cfg());
+    let bar = Rect {
+        x: 38,
+        y: 0,
+        width: 2,
+        height: 10,
+    };
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 10,
+        },
+        Some(bar),
+        50,
+    );
+    assert!(app.chat_scrollbar_contains(38, 3));
+    assert!(app.chat_scrollbar_contains(39, 3));
+    assert!(!app.chat_scrollbar_contains(37, 3));
+}
+
+// ── Dialog / help isolation ────────────────────────────────────────────
+
+#[test]
+fn dialog_open_wheel_does_not_scroll_chat() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 10);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 8,
+        },
+        None,
+        total,
+    );
+    app.scroll_rows(6);
+    let frozen = app.scroll_offset;
+
+    app.mode = AppMode::Dialog;
+    app.key_context = KeymapContext::Dialog;
+    app.dialogs.push(DialogKind::SessionList);
+    app.session_list.sessions = vec![crate::app::SessionEntry {
+        id: "a".into(),
+        title: "t".into(),
+        messages: 1,
+    }];
+    app.session_list.selected = 0;
+
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollUp, 10, 10)
+    ));
+    assert_eq!(
+        app.scroll_offset, frozen,
+        "dialog wheel must not move chat offset"
+    );
+}
+
+#[test]
+fn help_mode_wheel_scrolls_help_not_chat() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 8);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 8,
+        },
+        None,
+        total,
+    );
+    app.scroll_rows(5);
+    let chat_off = app.scroll_offset;
+
+    app.mode = AppMode::Help;
+    app.help_scroll = 0;
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::ScrollDown, 5, 5)
+    ));
+    assert_eq!(app.help_scroll, 3);
+    assert_eq!(app.scroll_offset, chat_off);
+}
+
+// ── Keyboard page (from either focus) ──────────────────────────────────
+
+#[test]
+fn page_up_down_keys_scroll_transcript() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 15);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 8,
+        },
+        None,
+        total,
+    );
+
+    let page_up = Event::Key(KeyEvent {
+        code: KeyCode::PageUp,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    assert!(input::handle_event(&mut app, page_up));
+    assert!(app.scroll_offset >= 8.min(total.saturating_sub(8)));
+
+    let page_down = Event::Key(KeyEvent {
+        code: KeyCode::PageDown,
+        modifiers: KeyModifiers::NONE,
+        kind: KeyEventKind::Press,
+        state: crossterm::event::KeyEventState::NONE,
+    });
+    let mid = app.scroll_offset;
+    assert!(input::handle_event(&mut app, page_down));
+    assert!(app.scroll_offset < mid || mid == 0);
+}
+
+// ── Full paint: scroll actually changes buffer content ─────────────────
+
+#[test]
+fn full_paint_scroll_changes_buffer_and_leaves_no_ghosts() {
+    let mut app = TuiApp::new(cfg());
+    // Distinct markers at start vs end of transcript
+    app.add_message(ChatRole::User, "AAA_TOP_MARKER unique alpha");
+    for i in 0..25 {
+        app.add_message(
+            ChatRole::User,
+            format!("mid filler {i} word word word word"),
+        );
+        app.add_message(ChatRole::Assistant, format!("mid reply {i} word word word"));
+    }
+    app.add_message(ChatRole::Assistant, "ZZZ_BOTTOM_MARKER unique omega");
+
+    let w = 48u16;
+    let h = 16u16;
+    paint_session(&mut app, w, h);
+    assert!(app.chat_scroll_total > h as usize);
+    assert_eq!(app.scroll_offset, 0);
+
+    // Capture bottom frame fingerprint (should include bottom marker somewhere)
+    let bottom_snap = paint_and_snapshot(&mut app, w, h);
+    let bottom_text = buffer_text(&bottom_snap);
+    assert!(
+        bottom_text.contains("ZZZ_BOTTOM") || bottom_text.contains("omega"),
+        "bottom view should show latest content, got: {bottom_text:.200}"
+    );
+
+    app.scroll_to_top();
+    let top_snap = paint_and_snapshot(&mut app, w, h);
+    let top_text = buffer_text(&top_snap);
+    assert!(
+        top_text.contains("AAA_TOP") || top_text.contains("alpha"),
+        "top view should show oldest content, got: {top_text:.200}"
+    );
+    assert_ne!(
+        bottom_text, top_text,
+        "scrolling must change painted content"
+    );
+
+    // Ghost check: after scrolling to top, bottom marker must not remain
+    assert!(
+        !top_text.contains("ZZZ_BOTTOM"),
+        "ghost of bottom content after scroll-to-top"
+    );
+
+    app.scroll_to_bottom();
+    let back = paint_and_snapshot(&mut app, w, h);
+    let back_text = buffer_text(&back);
+    assert!(
+        !back_text.contains("AAA_TOP"),
+        "ghost of top content after scroll-to-bottom"
+    );
+}
+
+#[test]
+fn paint_publishes_scrollbar_when_overflowing() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 20);
+    paint_session(&mut app, 40, 12);
+    assert!(app.chat_scroll_total > 12);
+    assert!(
+        app.chat_scrollbar_hit.is_some(),
+        "overflowing chat must expose scrollbar hit"
+    );
+    assert!(app.chat_area.is_some());
+}
+
+#[test]
+fn paint_home_clears_chat_hits() {
+    let mut app = TuiApp::new(cfg());
+    // Non-empty first so hits get set, then clear messages
+    fill_overflowing_chat(&mut app, 5);
+    paint_session(&mut app, 40, 12);
+    assert!(app.chat_area.is_some());
+
+    app.messages.clear();
+    paint_session(&mut app, 40, 12);
+    assert!(app.chat_area.is_none());
+    assert!(app.chat_scrollbar_hit.is_none());
+    assert_eq!(app.chat_scroll_total, 0);
+}
+
+#[test]
+fn wheel_step_scales_with_viewport() {
+    let mut app = TuiApp::new(cfg());
+    app.chat_viewport_rows = 6;
+    assert_eq!(chat_wheel_step(&app), 3); // clamp min
+    app.chat_viewport_rows = 30;
+    assert_eq!(chat_wheel_step(&app), 10); // 30/3
+    app.chat_viewport_rows = 60;
+    assert_eq!(chat_wheel_step(&app), 12); // clamp max
+}
+
+// ── helpers ────────────────────────────────────────────────────────────
+
+fn paint_and_snapshot(app: &mut TuiApp, width: u16, height: u16) -> ratatui::buffer::Buffer {
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("term");
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| {
+            super::render(f, f.area(), app, &palette);
+        })
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
+    let area = buf.area();
+    let mut out = String::new();
+    for y in area.y..area.y.saturating_add(area.height) {
+        for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+        out.push('\n');
+    }
+    out
+}

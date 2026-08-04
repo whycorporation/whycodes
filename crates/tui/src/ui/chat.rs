@@ -979,44 +979,19 @@ fn empty_dash(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{message_row_layout_mut, visible_range};
+    use super::{SparseLines, message_row_layout_mut};
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
-
-    #[test]
-    fn visible_range_pins_to_bottom_when_offset_zero() {
-        // total=100, height=20, offset=0 → last 20 rows
-        assert_eq!(visible_range(100, 20, 0), (80, 100));
-    }
-
-    #[test]
-    fn visible_range_scrolls_toward_top() {
-        assert_eq!(visible_range(100, 20, 30), (50, 70));
-        // fully scrolled to top
-        assert_eq!(visible_range(100, 20, 80), (0, 20));
-        // clamp past max
-        assert_eq!(visible_range(100, 20, 999), (0, 20));
-    }
-
-    #[test]
-    fn visible_range_short_content_shows_all() {
-        assert_eq!(visible_range(5, 20, 0), (0, 5));
-        assert_eq!(visible_range(5, 20, 10), (0, 5));
-        assert_eq!(visible_range(0, 20, 0), (0, 0));
-    }
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use ratatui::style::{Color, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Widget;
 
     #[test]
     fn sparse_lines_clears_previous_glyphs_before_paint() {
-        use super::SparseLines;
-        use ratatui::buffer::Buffer;
-        use ratatui::layout::Rect;
-        use ratatui::style::{Color, Style};
-        use ratatui::text::{Line, Span};
-        use ratatui::widgets::Widget;
-
         let area = Rect::new(0, 0, 12, 3);
         let mut buf = Buffer::empty(area);
-        // Simulate a previous frame full of leftovers.
         for y in 0..3 {
             buf.set_stringn(0, y, "OLDCONTENT!!", 12, Style::default());
         }
@@ -1024,7 +999,7 @@ mod tests {
         SparseLines {
             lines: vec![
                 Line::from(Span::raw("new")),
-                Line::from(""), // empty row must wipe old glyphs
+                Line::from(""),
                 Line::from(Span::raw("ok")),
             ],
             bg: Color::Black,
@@ -1032,9 +1007,7 @@ mod tests {
         .render(area, &mut buf);
 
         assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("n"));
-        // Rest of first row after "new" is blank, not "CONTENT!!"
         assert_eq!(buf.cell((3, 0)).map(|c| c.symbol()), Some(" "));
-        // Empty middle row fully cleared
         assert_eq!(buf.cell((0, 1)).map(|c| c.symbol()), Some(" "));
         assert_eq!(buf.cell((5, 1)).map(|c| c.symbol()), Some(" "));
         assert_eq!(buf.cell((0, 2)).map(|c| c.symbol()), Some("o"));
@@ -1051,14 +1024,16 @@ mod tests {
         let (starts2, total2) = message_row_layout_mut(&mut app, width);
         assert_eq!(starts1, starts2);
         assert_eq!(total1, total2);
-        // Same width + busy flag → cache entries unchanged.
         assert!(
             app.messages
                 .iter()
                 .all(|m| matches!(m.layout_cache, Some((w, _, _)) if w == width))
         );
-        // Content change invalidates.
         app.append_to_last(" more");
         assert!(app.messages.last().unwrap().layout_cache.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "chat_scroll_tests.rs"]
+mod scroll_tests;
