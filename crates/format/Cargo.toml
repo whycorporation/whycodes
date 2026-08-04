@@ -14,6 +14,8 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 # Bat's extended grammar set (~250+ languages), same stack as Grok TUI.
 two-face = { version = "0.4", default-features = false, features = ["syntect-fancy"] }
 regex = "1"
+# Pure-Rust Mermaid → Unicode box-drawing for fenced ```mermaid blocks.
+mermaid-text = "0.57"
 
 [dev-dependencies]
 criterion.workspace = true

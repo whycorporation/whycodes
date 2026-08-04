@@ -280,16 +280,27 @@ fn render_message(
             // Chronological layout: stream thinking first, emit `content` before
             // the first non-thinking block (or at the end if only thinking/text).
             // That way "Thought for Xs" sits above the answer, not below it.
+            // Content width for Mermaid compaction: leave room for SIDE_PAD and
+            // the diagram gutter ("│ ").
+            let md_width = (width as usize).saturating_sub(4).max(20);
             let mut content_emitted = msg.content.is_empty();
             let emit_content = |lines: &mut Vec<Line<'static>>| {
                 if !msg.content.is_empty() {
-                    lines.extend(super::markdown::render(&msg.content, palette));
+                    lines.extend(super::markdown::render_with_width(
+                        &msg.content,
+                        palette,
+                        Some(md_width),
+                    ));
                 }
             };
             for block in &msg.blocks {
                 match block {
                     ChatBlock::Text(t) if msg.content.is_empty() => {
-                        lines.extend(super::markdown::render(t, palette));
+                        lines.extend(super::markdown::render_with_width(
+                            t,
+                            palette,
+                            Some(md_width),
+                        ));
                         content_emitted = true;
                     }
                     ChatBlock::Text(_) => {}

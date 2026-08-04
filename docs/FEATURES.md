@@ -179,7 +179,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Markdown render | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Syntax highlighting | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Inline diff viewer | ✅ | ✅★ | ✅ | ✅ side panel | ✅ |
-| Mermaid diagrams | ❌ | ⚠️ vendored | ❌ | ✅★ native rust | ❌ |
+| Mermaid diagrams | ✅ Unicode (mermaid-text) | ⚠️ vendored | ❌ | ✅★ native rust | ❌ |
 | Theme sistemi | ✅ 29 + JSON | ✅ | ✅★ | ✅ | ⚠️ |
 | OpenCode theme JSON uyumu | ✅★ | ⚠️ | n/a | ❌ | ❌ |
 | Slash suggest popup | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -248,7 +248,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | Hooks + plugin marketplace | Grok, OpenCode, Claude | Plugin crate iskelet |
 | OS sandbox | Grok, Claude | Defence-in-depth risk parse var, sandbox yok |
 | Cloud share / remote control | OpenCode, Claude | Sadece local share |
-| Mermaid / side panel UI | jcode | Basit sidebar + markdown |
+| Side panel UI | jcode | Basit sidebar; Mermaid Unicode fenced blocks ✅ |
 | Image/video generation | Grok | Yok |
 | Self-dev hot reload | jcode | Yok |
 | Package manager taps (brew…) | hepsi | Install script + self-update var |

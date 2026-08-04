@@ -4,11 +4,13 @@
 //! interpret — they would reach the screen as literal bytes. This module
 //! consumes the structured parse instead and produces styled spans, so markdown
 //! picks up the active theme for prose; fenced code uses Tokyo Night via
-//! `whycode_format::highlight`.
+//! `whycode_format::highlight`. Fenced `mermaid` / `mmd` blocks render as
+//! Unicode box-drawing diagrams via `whycode_format::mermaid`.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use whycode_format::markdown::{Block, Inline, highlight_code_spans, parse_markdown};
+use whycode_format::mermaid::{is_mermaid_language, render_mermaid};
 
 use crate::theme::ThemePalette;
 
@@ -17,14 +19,31 @@ use crate::theme::ThemePalette;
 /// Lines start at content column 0 — the session shell already applies
 /// SIDE_PAD. An extra indent here stacked with tools/epilogue and made the
 /// transcript look over-nested.
+///
+/// `max_width` is the content column budget for Mermaid compaction (and future
+/// width-aware layout). Pass `None` when the terminal width is unknown.
 pub fn render(text: &str, palette: &ThemePalette) -> Vec<Line<'static>> {
+    render_with_width(text, palette, None)
+}
+
+/// Like [`render`], but passes `max_width` into Mermaid layout so diagrams try
+/// to fit the chat pane rather than overflow and wrap poorly.
+pub fn render_with_width(
+    text: &str,
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+) -> Vec<Line<'static>> {
     parse_markdown(text)
         .iter()
-        .flat_map(|block| render_block(block, palette))
+        .flat_map(|block| render_block(block, palette, max_width))
         .collect()
 }
 
-fn render_block(block: &Block, palette: &ThemePalette) -> Vec<Line<'static>> {
+fn render_block(
+    block: &Block,
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+) -> Vec<Line<'static>> {
     match block {
         Block::Blank => vec![Line::from("")],
 
@@ -65,7 +84,13 @@ fn render_block(block: &Block, palette: &ThemePalette) -> Vec<Line<'static>> {
             language,
             lines,
             closed,
-        } => render_code(language.as_deref(), lines, *closed, palette),
+        } => {
+            if is_mermaid_language(language.as_deref()) {
+                render_mermaid_block(lines, *closed, palette, max_width)
+            } else {
+                render_code(language.as_deref(), lines, *closed, palette)
+            }
+        }
     }
 }
 
@@ -103,6 +128,65 @@ fn render_code(
         out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
     }
     out
+}
+
+/// Render a ` ```mermaid ` fence as a Unicode diagram when the fence is closed.
+///
+/// While streaming (`closed == false`) the source is shown as a labelled code
+/// block so partial graphs do not thrash the layout on every token. On render
+/// failure the source is kept with a dim error note in the header.
+fn render_mermaid_block(
+    lines: &[String],
+    closed: bool,
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+) -> Vec<Line<'static>> {
+    let gutter = Style::default().fg(palette.dim);
+    let source = lines.join("\n");
+
+    if !closed {
+        // Streaming: show source so the user sees progress without paying for
+        // a full layout on every partial parse.
+        return render_code(Some("mermaid"), lines, false, palette);
+    }
+
+    match render_mermaid(&source, max_width) {
+        Ok(diagram) => {
+            let mut out = Vec::with_capacity(diagram.len() + 2);
+            out.push(Line::from(vec![
+                Span::styled("┌ ".to_string(), gutter),
+                Span::styled("mermaid".to_string(), gutter),
+            ]));
+            let body = Style::default().fg(palette.fg);
+            for line in diagram {
+                out.push(Line::from(vec![
+                    Span::styled("│ ".to_string(), gutter),
+                    Span::styled(line, body),
+                ]));
+            }
+            out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
+            out
+        }
+        Err(err) => {
+            let mut out = Vec::with_capacity(lines.len() + 2);
+            out.push(Line::from(vec![
+                Span::styled("┌ ".to_string(), gutter),
+                Span::styled(
+                    format!("mermaid (render failed: {err})"),
+                    Style::default().fg(palette.warning),
+                ),
+            ]));
+            let body = Style::default().fg(palette.fg);
+            for line in lines {
+                out.push(Line::from(vec![
+                    Span::styled("│ ".to_string(), gutter),
+                    Span::styled(line.clone(), body),
+                ]));
+            }
+            out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
+            out
+        }
+    }
 }
 
 /// Style one inline run. `base` lets a heading impose bold on everything inside
@@ -211,6 +295,30 @@ mod tests {
             !out.last().unwrap().contains('└'),
             "an open block should not be closed: {:?}",
             out
+        );
+    }
+
+    #[test]
+    fn mermaid_fence_renders_as_diagram() {
+        let out = rendered("```mermaid\ngraph LR; A[Build] --> B[Deploy]\n```");
+        let joined = out.join("\n");
+        assert!(joined.contains("mermaid"), "{joined}");
+        assert!(joined.contains("Build"), "{joined}");
+        assert!(joined.contains("Deploy"), "{joined}");
+        // Source header keyword should not remain as plain fence body.
+        assert!(!joined.contains("graph LR"), "{joined}");
+        assert!(out.last().unwrap().contains('└'), "{joined}");
+    }
+
+    #[test]
+    fn streaming_mermaid_shows_source_without_closing() {
+        let out = rendered("```mermaid\ngraph LR; A --> B");
+        let joined = out.join("\n");
+        assert!(joined.contains("mermaid"), "{joined}");
+        // Still open: no bottom edge yet.
+        assert!(
+            !out.last().unwrap().contains('└'),
+            "open mermaid fence should stay open: {joined}"
         );
     }
 

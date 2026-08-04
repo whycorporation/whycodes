@@ -1,6 +1,7 @@
 use regex::Regex;
 
 use crate::highlight::highlight_code;
+use crate::mermaid::{is_mermaid_language, render_mermaid};
 
 // ── Structured markdown ────────────────────────────────────────────────
 //
@@ -223,6 +224,7 @@ fn find(chars: &[char], from: usize, needle: &str) -> Option<usize> {
 /// - `*italic*` → ANSI italic
 /// - `` `code` `` → inverted colors
 /// - ` ```language ... ``` ` → syntax-highlighted via syntect
+/// - ` ```mermaid ... ``` ` → Unicode box-drawing diagram via `mermaid-text`
 /// - `# headers` → bold + underline
 /// - `- lists` → bullet points
 /// - `[links](url)` → cyan underlined
@@ -238,7 +240,7 @@ pub fn render_markdown(text: &str) -> String {
         if line.trim_start().starts_with("```") {
             if in_code_block {
                 // End of code block
-                output.push_str(&highlight_code_block(&code_buffer, &code_lang));
+                output.push_str(&render_fenced_block(&code_buffer, &code_lang));
                 code_buffer.clear();
                 code_lang.clear();
                 in_code_block = false;
@@ -293,10 +295,40 @@ pub fn render_markdown(text: &str) -> String {
 
     // Close any unclosed code block
     if in_code_block && !code_buffer.is_empty() {
-        output.push_str(&highlight_code_block(&code_buffer, &code_lang));
+        output.push_str(&render_fenced_block(&code_buffer, &code_lang));
     }
 
     output
+}
+
+/// Dispatch a closed (or trailing open) fence to Mermaid or syntax highlight.
+fn render_fenced_block(code: &str, language: &str) -> String {
+    let lang = if language.is_empty() {
+        None
+    } else {
+        Some(language)
+    };
+    if is_mermaid_language(lang) {
+        match render_mermaid(code, None) {
+            Ok(lines) => {
+                let mut out = String::from("\x1b[2m┌ mermaid\x1b[0m\n");
+                for line in lines {
+                    out.push_str(&format!("\x1b[2m│\x1b[0m {line}\n"));
+                }
+                out.push_str("\x1b[2m└\x1b[0m\n");
+                return out;
+            }
+            Err(err) => {
+                // Fall through to source with a dim error header so the user
+                // still sees the diagram text if layout fails.
+                return format!(
+                    "\x1b[2m┌ mermaid (render failed: {err})\x1b[0m\n{}\n",
+                    highlight_code_block(code, language)
+                );
+            }
+        }
+    }
+    highlight_code_block(code, language)
 }
 
 /// Apply inline markdown formatting to a single line.
@@ -380,6 +412,16 @@ mod tests {
         let result = render_markdown("```rust\nlet x = 1;\n```");
         // Should contain syntax-highlighted content, not raw backticks
         assert!(!result.contains("```"));
+    }
+
+    #[test]
+    fn mermaid_fence_renders_as_diagram_not_source() {
+        let result = render_markdown("```mermaid\ngraph LR; A[Build] --> B[Deploy]\n```");
+        assert!(result.contains("Build"), "{result}");
+        assert!(result.contains("Deploy"), "{result}");
+        assert!(result.contains("mermaid"), "{result}");
+        // The mermaid header keyword should not appear as plain source.
+        assert!(!result.contains("graph LR"), "{result}");
     }
 
     // ── Structured parsing ──────────────────────────────────────────────
