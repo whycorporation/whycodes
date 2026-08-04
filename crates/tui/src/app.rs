@@ -555,7 +555,7 @@ pub struct TuiApp {
     /// Re-fetch `GET /v1/models` for the active provider (config base + key).
     pub pending_catalog_refresh: bool,
 
-    /// Primary agent names for Tab cycling (OpenCode build/plan).
+    /// Primary agent names for Ctrl+T cycling (build/plan).
     pub primary_agents: Vec<String>,
     pub agent_cycle_idx: usize,
 

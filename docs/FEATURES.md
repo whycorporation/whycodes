@@ -84,7 +84,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
 |---|:---:|:---:|:---:|:---:|:---:|
 | Build / full-access agent | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Plan / read-only mode | ✅ Tab | ✅ Shift+Tab | ✅ Tab | ✅ | ✅ |
+| Plan / read-only mode | ✅ Ctrl+T | ✅ Shift+Tab | ✅ Tab | ✅ | ✅ |
 | Subagent (`task` vb.) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Built-in: general / explore / scout | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ |
 | Özel agent tanımları | ✅ config | ✅ | ✅ | ✅ | ✅ |

@@ -716,7 +716,7 @@ async fn cmd_run(
 
     println!(
         "{}",
-        "Interactive mode. Type /help for commands, Tab agents: build|plan. /exit to quit."
+        "Interactive mode. Type /help for commands, /agent build|plan to switch. /exit to quit."
             .dimmed()
     );
     loop {

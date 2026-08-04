@@ -95,11 +95,11 @@ Usage: whycode [OPTIONS] [COMMAND]
 Commands:
   run       Start an interactive session (default)
   generate  Generate code from a prompt (non-interactive)
-  acp       Agent Control Protocol (automated mode)
+  acp       Agent Control Protocol (not yet implemented)
   pr        Create a pull request from current changes
   github    GitHub operations
   serve     Start API server
-  web       Open web UI
+  web       Open web UI (not yet implemented; use serve + browser)
   mcp       MCP server management
   provider  Provider management (add, list, remove, default)
   model     Model management
@@ -116,6 +116,7 @@ Options (global):
   -a, --agent <AGENT>        Agent name to use
   -d, --dir <DIR>            Project directory (defaults to the current directory)
       --plain                Use plain stdin REPL instead of the full-screen TUI
+      --debug                Write debug logs under the data dir
 ```
 
 The prompt is a positional argument rather than a flag — `whycode generate
@@ -156,9 +157,14 @@ calls and thinking. `--plain` switches to a line-based stdin REPL.
 
 | Key | Action |
 |---|---|
-| `Tab` | Cycle primary agents (`build` ↔ `plan`), when idle |
-| `Esc` | Cancel the in-flight turn, keeping partial output; dismiss a dialog |
-| `Ctrl+C` / `Ctrl+Q` | Cancel the turn and quit |
+| `Tab` | Focus prompt ↔ scrollback |
+| `Ctrl+T` | Cycle primary agents (`build` ↔ `plan`), when idle |
+| `Esc` | Cancel the in-flight turn (keeps partial output); dismiss a dialog; double-Esc clears the draft |
+| `?` | Toggle the help / keybinding cheatsheet |
+| `:` | Enter command mode (`:theme`, `:q`, …) |
+| `Ctrl+P` / `Ctrl+M` | Provider setup / model selection |
+| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 
 Two input prefixes are available in both interfaces:
 
@@ -184,6 +190,7 @@ Available in both the TUI and the `--plain` REPL:
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact` `/summarize` | Compact the conversation context |
+| `/sessions` `/resume` `/continue` | List or resume a stored session |
 | `/models [provider/id]` | Show or switch the model |
 | `/agent [name]` | Show or switch the agent |
 | `/connect` | Provider and API key setup help |
@@ -200,7 +207,6 @@ TUI only:
 
 | Command | Description |
 |---|---|
-| `/sessions` `/resume` `/continue` | List stored sessions |
 | `/thinking` | Toggle display of thinking output |
 | `/themes` | List the available TUI themes |
 
@@ -216,7 +222,7 @@ removes the exported files.
 
 ## Agents
 
-Primary agents run the main conversation and are switched with `Tab` or
+Primary agents run the main conversation and are switched with `Ctrl+T` or
 `/agent`. Subagents are spawned by the `task` tool for scoped work and report
 back to the primary agent.
 
@@ -437,20 +443,26 @@ converged on, so a repository set up for another agent needs no changes:
 
 ```
 crates/
-├── core/      — Shared types, config, error handling
+├── core/         — Shared types, config, error handling
 ├── command-risk/ — Shell command risk classification
 ├── sandbox/      — OS sandbox for shell (bubblewrap on Linux)
-├── llm/       — LLM providers
-├── tools/     — Tool system and built-ins
-├── session/   — Conversation, compaction, undo/redo
-├── agent/     — Agent loop, subagents, AGENTS.md
-├── skill/     — Skill registry and plugins
-├── mcp/       — MCP client
-├── lsp/       — LSP tool
-├── storage/   — SQLite sessions
-├── server/    — HTTP API
-├── tui/       — Terminal UI (ratatui)
-└── cli/       — Command line entry point (clap)
+├── format/       — Markdown, syntax highlight, diffs, tables
+├── protocol/     — CI / stream-json event envelopes
+├── schema/       — Schema validation
+├── llm/          — LLM providers
+├── tools/        — Tool system and built-ins
+├── session/      — Conversation, compaction, undo/redo
+├── agent/        — Agent loop, subagents, AGENTS.md
+├── skill/        — Skill registry
+├── plugin/       — Plugin loader
+├── function/     — Function-tool helpers
+├── mcp/          — MCP client
+├── lsp/          — LSP tool
+├── storage/      — SQLite sessions
+├── server/       — HTTP API (local share)
+├── sdk/          — Library client API
+├── tui/          — Terminal UI (ratatui)
+└── cli/          — Command line entry point (clap)
 ```
 
 ## Development
@@ -478,7 +490,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 
 ### Roadmap
 
-`docs/status.md` tracks the phased plan; `docs/1.md` … `docs/7.md` are the
+`docs/status.md` tracks the phased plan; `docs/1.md` … `docs/9.md` are the
 phase definitions, each with its own scope and acceptance criteria.
 `docs/comparison.md` records the measurements the plan was derived from.
 

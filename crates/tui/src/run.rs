@@ -181,7 +181,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut config = opts.config.clone();
     config.load_command_files(&opts.project_dir);
 
-    // Primary agents for Tab cycle
+    // Primary agents for Ctrl+T cycle
     app.primary_agents = config
         .agents
         .iter()
