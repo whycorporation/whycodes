@@ -400,33 +400,45 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         loop {
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
-            app.toasts.prune(std::time::Instant::now());
-            let completed = match terminal.draw(|f| render::render(f, &mut app)) {
-                Ok(c) => c,
-                Err(e) => {
+            if app.toasts.prune(std::time::Instant::now()) {
+                app.mark_dirty();
+            }
+
+            // Animation paths that do not arrive as terminal events still need
+            // periodic paints (spinner, toast stack). Idle with a clean flag
+            // skips the draw entirely → 0 idle redraws/s.
+            let animate = agent_busy || !app.toasts.is_empty();
+            if app.needs_redraw || animate || first_frame {
+                let completed = match terminal.draw(|f| render::render(f, &mut app)) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        whycode_core::logging::emit(
+                            "whycode_tui",
+                            "error",
+                            "tui.draw_failed",
+                            Some(serde_json::json!({ "error": e.to_string() })),
+                        );
+                        return Err(e.into());
+                    }
+                };
+                if first_frame {
+                    first_frame = false;
                     whycode_core::logging::emit(
                         "whycode_tui",
-                        "error",
-                        "tui.draw_failed",
-                        Some(serde_json::json!({ "error": e.to_string() })),
+                        "info",
+                        "tui.first_frame",
+                        Some(serde_json::json!({
+                            "w": completed.area.width,
+                            "h": completed.area.height,
+                        })),
                     );
-                    return Err(e.into());
                 }
-            };
-            if first_frame {
-                first_frame = false;
-                whycode_core::logging::emit(
-                    "whycode_tui",
-                    "info",
-                    "tui.first_frame",
-                    Some(serde_json::json!({
-                        "w": completed.area.width,
-                        "h": completed.area.height,
-                    })),
-                );
+                app.screen_cells = snapshot_cells(completed.buffer);
+                crate::bench::record_draw();
+                // Stay dirty while animation is live; otherwise clear so the
+                // next idle poll does not repaint an unchanged screen.
+                app.needs_redraw = animate;
             }
-            app.screen_cells = snapshot_cells(completed.buffer);
-            crate::bench::record_draw();
 
             if let Some(ref bench) = bench
                 && crate::bench::should_stop(bench)
@@ -434,9 +446,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 break;
             }
 
-            // ── Stream events from agent ──────────────────────────────
-            while let Ok(ev) = event_rx.try_recv() {
-                apply_turn_event(&mut app, ev);
+            // ── Stream events from agent (coalesce text/thinking deltas) ──
+            if drain_turn_events(&mut app, &mut event_rx) {
+                app.mark_dirty();
             }
 
             // Spinner while generating (generic status only)
@@ -444,6 +456,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
                 spinner_frame = (spinner_frame + 1) % FRAMES.len();
                 app.spinner_frame = spinner_frame;
+                app.mark_dirty();
                 let generic = app.status_message.contains("Generating")
                     || app
                         .status_message
@@ -463,6 +476,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             while let Ok(req) = perm_rx.try_recv() {
                 pending_perm_reply = Some(req.reply);
                 app.ask_permission(req.tool_name, req.detail);
+                app.mark_dirty();
             }
 
             // ── Turn finished ─────────────────────────────────────────
@@ -470,6 +484,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 agent_busy = false;
                 cancel_flag = None;
                 let elapsed_ms = app.complete_turn_timing();
+                app.mark_dirty();
                 match outcome {
                     TurnOutcome::Ok {
                         text,
@@ -602,6 +617,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 if for_provider != provider || for_model != model {
                     continue; // stale in-flight result
                 }
+                app.mark_dirty();
                 app.set_api_context_window(
                     &for_provider,
                     &for_model,
@@ -764,18 +780,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Input ─────────────────────────────────────────────────
-            // How long to wait for a keystroke before looping again — which is
-            // also how often the screen is repainted, because the loop draws
-            // every iteration.
+            // How long to wait for a keystroke before looping again.
             //
-            // A fixed 40ms meant ~21 repaints a second with nobody typing, all
-            // of them painting an unchanged screen. Input latency is unaffected
-            // by lengthening it: `poll` returns the moment a key arrives. What
-            // the timeout does control is how quickly the loop notices things
-            // that do not arrive as terminal events — streamed tokens on a
-            // channel, the spinner, a toast reaching its expiry — so it stays
-            // short while any of those are live.
-            let idle = !agent_busy && app.toasts.is_empty();
+            // Paint is gated by `needs_redraw` / animation — poll timeout no
+            // longer implies a full redraw. Short timeout while the agent is
+            // busy or toasts are live so spinner / stream / expiry stay snappy;
+            // long timeout when idle so we do not spin the CPU.
+            let idle = !agent_busy && app.toasts.is_empty() && !app.needs_redraw;
             let poll_for = if idle {
                 Duration::from_millis(500)
             } else {
@@ -795,6 +806,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
             };
             if has_ev {
+                app.mark_dirty();
                 let ev = match event::read() {
                     Ok(ev) => ev,
                     Err(e) => {
@@ -1118,6 +1130,57 @@ fn format_turn_done_status(
     parts.join(" · ")
 }
 
+/// Drain the agent event channel, coalescing consecutive text/thinking deltas
+/// into one UI append each. Returns whether any event was applied.
+fn drain_turn_events(
+    app: &mut TuiApp,
+    event_rx: &mut mpsc::UnboundedReceiver<TurnEvent>,
+) -> bool {
+    let mut any = false;
+    let mut text_buf = String::new();
+    let mut think_buf = String::new();
+
+    let flush_text = |app: &mut TuiApp, buf: &mut String| {
+        if buf.is_empty() {
+            return;
+        }
+        app.finish_open_thinking();
+        app.current_agent_state = AgentState::Generating;
+        app.append_to_last(buf);
+        buf.clear();
+    };
+    let flush_think = |app: &mut TuiApp, buf: &mut String| {
+        if buf.is_empty() {
+            return;
+        }
+        app.current_agent_state = AgentState::Thinking;
+        app.append_thinking(buf);
+        buf.clear();
+    };
+
+    while let Ok(ev) = event_rx.try_recv() {
+        any = true;
+        match ev {
+            TurnEvent::TextDelta(t) => {
+                flush_think(app, &mut think_buf);
+                text_buf.push_str(&t);
+            }
+            TurnEvent::ThinkingDelta(t) => {
+                flush_text(app, &mut text_buf);
+                think_buf.push_str(&t);
+            }
+            other => {
+                flush_text(app, &mut text_buf);
+                flush_think(app, &mut think_buf);
+                apply_turn_event(app, other);
+            }
+        }
+    }
+    flush_text(app, &mut text_buf);
+    flush_think(app, &mut think_buf);
+    any
+}
+
 fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
     match ev {
         TurnEvent::TextDelta(t) => {
@@ -1143,6 +1206,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         }
         TurnEvent::Status(s) => {
             app.status_message = s;
+            app.mark_dirty();
         }
         TurnEvent::Usage(usage) => {
             app.turn_usage = Some(usage.clone());
@@ -1154,11 +1218,13 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             }
             parts.push(format_usage_short(&usage));
             app.status_message = parts.join(" · ");
+            app.mark_dirty();
         }
         TurnEvent::Cancelled => {
             app.finish_open_thinking();
             app.status_message = "Cancelled.".into();
             app.current_agent_state = AgentState::Idle;
+            app.mark_dirty();
         }
     }
 }

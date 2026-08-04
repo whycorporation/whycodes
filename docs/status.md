@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-04** (phase docs cleaned: done → `archive/`, open → `plan-*`)
+Last updated: **2026-08-04** (context economy + TUI dirty-draw / layout cache)
 
 ## Legend
 
@@ -24,6 +24,7 @@ Last updated: **2026-08-04** (phase docs cleaned: done → `archive/`, open → 
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented | Installers, `upgrade`, release workflow written. Unticked criteria need a published `v*` tag. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | blocked | Owner: client registration + provider terms before any code. |
 | Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + benchmarks exist. Open: stats aggregation, subagent tokens, provider reconcile, optional CI ceilings. |
+| Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
 | Semantic memory | [plan-memory.md](plan-memory.md) | not started | Needs model-distribution decision + RSS cost comfort. |
 
 ## Shipped (archived)

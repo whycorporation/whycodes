@@ -205,6 +205,16 @@ pub struct ChatMessage {
     pub duration_ms: Option<u128>,
     /// Image attachment labels shown on user bubbles (file names).
     pub image_labels: Vec<String>,
+    /// Cached display row count for `(width, busy_epilogue)` — see
+    /// [`ChatMessage::invalidate_layout`].
+    pub layout_cache: Option<(u16, bool, usize)>,
+}
+
+impl ChatMessage {
+    /// Drop cached height so the next layout pass re-measures this message.
+    pub fn invalidate_layout(&mut self) {
+        self.layout_cache = None;
+    }
 }
 
 /// How many trailing reasoning lines to show while the block is still streaming.
@@ -490,6 +500,9 @@ pub struct TuiApp {
     pub current_agent_state: AgentState,
     pub status_message: String,
     pub spinner_frame: usize,
+    /// Paint when true. Cleared after a successful draw unless animation
+    /// (spinner / live toast) still needs frames. See the TUI event loop.
+    pub needs_redraw: bool,
 
     // ── input ──
     pub input_buffer: String,
@@ -790,6 +803,11 @@ pub fn move_selection(selected: usize, len: usize, delta: isize) -> usize {
 }
 
 impl TuiApp {
+    /// Request a paint on the next event-loop iteration.
+    pub fn mark_dirty(&mut self) {
+        self.needs_redraw = true;
+    }
+
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
         Self {
             running: true,
@@ -800,6 +818,7 @@ impl TuiApp {
             current_agent_state: AgentState::Idle,
             status_message: String::from("Ready — press ? for help"),
             spinner_frame: 0,
+            needs_redraw: true,
             input_buffer: String::new(),
             input_lines: vec![],
             input_history: vec![],
@@ -1097,10 +1116,18 @@ impl TuiApp {
         if let Some(last) = self.messages.last_mut()
             && last.role == ChatRole::Assistant
         {
+            let mut changed = false;
             for block in &mut last.blocks {
-                if let ChatBlock::Thinking(t) = block {
+                if let ChatBlock::Thinking(t) = block
+                    && t.is_running()
+                {
                     t.finish();
+                    changed = true;
                 }
+            }
+            if changed {
+                last.invalidate_layout();
+                self.mark_dirty();
             }
         }
     }
@@ -1113,6 +1140,8 @@ impl TuiApp {
             for tc in &mut msg.tool_calls {
                 tc.collapsed = !msg.results_expanded;
             }
+            msg.invalidate_layout();
+            self.mark_dirty();
         }
     }
 
@@ -1178,7 +1207,7 @@ impl TuiApp {
         };
         let width = self.chat_content_width.max(20);
         let height = self.chat_viewport_rows.max(1) as usize;
-        let (starts, total) = crate::ui::chat::message_row_layout(self, width);
+        let (starts, total) = crate::ui::chat::message_row_layout_mut(self, width);
         if total == 0 || sel >= starts.len() {
             return;
         }
@@ -1203,7 +1232,7 @@ impl TuiApp {
     /// Scroll by display rows (positive = older / up).
     pub fn scroll_rows(&mut self, delta: isize) {
         let width = self.chat_content_width.max(20);
-        let total = crate::ui::chat::session_line_count(self, width);
+        let total = crate::ui::chat::session_line_count_mut(self, width);
         let height = self.chat_viewport_rows.max(1) as usize;
         let max_off = total.saturating_sub(height);
         if delta > 0 {
@@ -1216,6 +1245,7 @@ impl TuiApp {
                 self.auto_scroll = true;
             }
         }
+        self.mark_dirty();
     }
 
     pub fn scroll_page(&mut self, up: bool) {
@@ -1225,18 +1255,20 @@ impl TuiApp {
 
     pub fn scroll_to_top(&mut self) {
         let width = self.chat_content_width.max(20);
-        let total = crate::ui::chat::session_line_count(self, width);
+        let total = crate::ui::chat::session_line_count_mut(self, width);
         let height = self.chat_viewport_rows.max(1) as usize;
         self.scroll_offset = total.saturating_sub(height);
         self.auto_scroll = false;
         if !self.messages.is_empty() {
             self.selected_msg = Some(0);
         }
+        self.mark_dirty();
     }
 
     pub fn scroll_to_bottom(&mut self) {
         self.scroll_offset = 0;
         self.auto_scroll = true;
+        self.mark_dirty();
         if !self.messages.is_empty() {
             self.selected_msg = Some(self.messages.len() - 1);
         }
@@ -1290,7 +1322,9 @@ impl TuiApp {
             error: None,
             duration_ms: None,
             image_labels: vec![],
+            layout_cache: None,
         });
+        self.mark_dirty();
     }
 
     pub fn add_user_message_with_images(
@@ -1307,7 +1341,9 @@ impl TuiApp {
             error: None,
             duration_ms: None,
             image_labels,
+            layout_cache: None,
         });
+        self.mark_dirty();
     }
 
     /// Append text to the last assistant message (streaming).
@@ -1316,12 +1352,16 @@ impl TuiApp {
         if let Some(last) = self.messages.last_mut() {
             if last.role == ChatRole::Assistant {
                 last.content.push_str(text);
+                last.invalidate_layout();
             } else {
                 self.add_message(ChatRole::Assistant, text);
+                return;
             }
         } else {
             self.add_message(ChatRole::Assistant, text);
+            return;
         }
+        self.mark_dirty();
     }
 
     /// Append a thinking block to the last assistant message.
@@ -1339,6 +1379,8 @@ impl TuiApp {
                         .push(ChatBlock::Thinking(ThinkingBlock::new(text)));
                 }
             }
+            last.invalidate_layout();
+            self.mark_dirty();
             return;
         }
         // No assistant message yet — create one.
@@ -1351,8 +1393,10 @@ impl TuiApp {
             error: None,
             duration_ms: None,
             image_labels: vec![],
+            layout_cache: None,
         };
         self.messages.push(msg);
+        self.mark_dirty();
     }
 
     /// Add a tool-call to the last assistant message.
@@ -1376,6 +1420,8 @@ impl TuiApp {
                 input: tc.arguments.clone(),
             });
             last.tool_calls.push(tc);
+            last.invalidate_layout();
+            self.mark_dirty();
             return;
         }
 
@@ -1392,8 +1438,10 @@ impl TuiApp {
             error: None,
             duration_ms: None,
             image_labels: vec![],
+            layout_cache: None,
         };
         self.messages.push(msg);
+        self.mark_dirty();
     }
 
     /// Add a tool result to the most recent tool-call.
@@ -1415,6 +1463,8 @@ impl TuiApp {
                         content,
                         is_error,
                     });
+                    msg.invalidate_layout();
+                    self.mark_dirty();
                     return;
                 }
             }

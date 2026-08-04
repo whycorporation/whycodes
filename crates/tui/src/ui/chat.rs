@@ -25,8 +25,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
 }
 
 /// Display rows the session view occupies at this width.
+///
+/// Immutable entry: re-renders every message (tests / one-shot). Prefer
+/// [`session_line_count_mut`] on the hot scroll path so heights cache.
 pub fn session_line_count(app: &TuiApp, width: u16) -> usize {
     message_row_layout(app, width).1
+}
+
+/// Like [`session_line_count`] but fills per-message height caches.
+pub fn session_line_count_mut(app: &mut TuiApp, width: u16) -> usize {
+    message_row_layout_mut(app, width).1
 }
 
 /// Per-message start row (top-origin) and total display rows.
@@ -34,11 +42,45 @@ pub fn session_line_count(app: &TuiApp, width: u16) -> usize {
 /// Used for selection → viewport sync (Grok scrollback entry selection).
 pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
     let palette = app.config.palette();
+    let busy = app.is_busy();
     let mut starts = Vec::with_capacity(app.messages.len());
     let mut total = 0;
     for (i, msg) in app.messages.iter().enumerate() {
         starts.push(total);
+        if let Some((w, b, h)) = msg.layout_cache
+            && w == width
+            && b == busy
+        {
+            total += h;
+            continue;
+        }
         total += render_message(msg, app, &palette, i, width).len();
+    }
+    (starts, total)
+}
+
+/// Like [`message_row_layout`] but writes height caches on miss.
+pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usize) {
+    let busy = app.is_busy();
+    let n = app.messages.len();
+    let mut starts = Vec::with_capacity(n);
+    let mut total = 0;
+    for i in 0..n {
+        starts.push(total);
+        let h = if let Some((w, b, h)) = app.messages[i].layout_cache
+            && w == width
+            && b == busy
+        {
+            h
+        } else {
+            let h = {
+                let palette = app.config.palette();
+                render_message(&app.messages[i], app, &palette, i, width).len()
+            };
+            app.messages[i].layout_cache = Some((width, busy, h));
+            h
+        };
+        total += h;
     }
     (starts, total)
 }
@@ -906,7 +948,9 @@ fn empty_dash(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::visible_range;
+    use super::{message_row_layout_mut, visible_range};
+    use crate::app::{ChatRole, TuiApp};
+    use crate::config::TuiAppConfig;
 
     #[test]
     fn visible_range_pins_to_bottom_when_offset_zero() {
@@ -928,5 +972,27 @@ mod tests {
         assert_eq!(visible_range(5, 20, 0), (0, 5));
         assert_eq!(visible_range(5, 20, 10), (0, 5));
         assert_eq!(visible_range(0, 20, 0), (0, 0));
+    }
+
+    #[test]
+    fn layout_height_cache_hits_on_second_pass() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "hello");
+        app.add_message(ChatRole::Assistant, "world");
+        let width = 80u16;
+        let (starts1, total1) = message_row_layout_mut(&mut app, width);
+        assert!(app.messages.iter().all(|m| m.layout_cache.is_some()));
+        let (starts2, total2) = message_row_layout_mut(&mut app, width);
+        assert_eq!(starts1, starts2);
+        assert_eq!(total1, total2);
+        // Same width + busy flag → cache entries unchanged.
+        assert!(
+            app.messages
+                .iter()
+                .all(|m| matches!(m.layout_cache, Some((w, _, _)) if w == width))
+        );
+        // Content change invalidates.
+        app.append_to_last(" more");
+        assert!(app.messages.last().unwrap().layout_cache.is_none());
     }
 }

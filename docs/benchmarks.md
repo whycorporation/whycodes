@@ -179,6 +179,24 @@ inherits the console and the screen flickers briefly during a run.
 | Spawn to exit, `--idle-ms 0` | 27.4 ms | 26.5 ms | 28.8 ms |
 | Idle redraws per second | **1.96** | 1.95 | 1.97 |
 
+### Update, 2026-08-04 — dirty-draw + context economy
+
+See [plan-perf-context-tui.md](plan-perf-context-tui.md). After this work the
+event loop only paints when `needs_redraw` is set, the agent is busy (spinner),
+or a toast is live. Idle sessions with no input should report **~0 draws/s**
+after the first frame (re-measure with
+`python scripts/bench_first_frame.py --runs 10 --idle-ms 3000`). The previous
+~2/s figure came from repainting on every 500 ms poll timeout.
+
+Also landed in the same pass:
+
+- **Token-budget compact** — drops oldest messages until under `¾ · max_tokens`
+  (heuristic chars/4), keeps ≥4 tail messages, caps tool bodies at 32 768 chars.
+- **Layout height cache** — scroll/selection reuses per-message row counts
+  instead of full `render_message` for every bubble.
+- **Stream delta coalesce** — consecutive `TextDelta` / `ThinkingDelta` events
+  in one channel drain become a single append.
+
 The two timings decompose the wait. Inside the process, config loading through
 to a painted screen is 4.7 ms. Externally the same run takes 27.4 ms, so
 roughly 22 ms is process creation, dynamic linking and teardown — cost a user

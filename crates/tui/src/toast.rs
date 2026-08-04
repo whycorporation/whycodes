@@ -91,8 +91,13 @@ impl Toasts {
     }
 
     /// Drop the ones whose time is up. Called once per frame.
-    pub fn prune(&mut self, now: Instant) {
+    ///
+    /// Returns `true` when at least one toast was removed (caller should
+    /// request a redraw so the stack does not linger a frame past expiry).
+    pub fn prune(&mut self, now: Instant) -> bool {
+        let before = self.items.len();
         self.items.retain(|t| !t.is_expired(now));
+        self.items.len() != before
     }
 
     pub fn visible(&self) -> &[Toast] {

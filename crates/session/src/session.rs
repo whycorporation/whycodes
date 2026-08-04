@@ -4,6 +4,83 @@ use whycode_core::types::{
     ContentBlock, LlmRequest, Message, MessageContent, Role, SessionInfo, ToolDefinition,
 };
 
+/// Soft cap on tool result bodies kept in the transcript (Unicode scalars).
+///
+/// Large dumps (test output, full file reads) dominate context; the agent can
+/// re-read files if it needs more. ~32 KiB ≈ 8k tokens under the char/4 heuristic.
+pub const TOOL_RESULT_MAX_CHARS: usize = 32_768;
+
+/// Minimum number of tail messages retained by [`Session::compact`].
+const MIN_KEEP_MESSAGES: usize = 4;
+
+/// Reserved heuristic tokens for the summary line prepended by compact.
+const SUMMARY_TOKEN_SLACK: usize = 64;
+
+/// ~4 Unicode scalars per token (matches `whycode_llm` fallback family).
+fn estimate_tokens(text: &str) -> usize {
+    let n = text.chars().count();
+    if n == 0 {
+        0
+    } else {
+        n.div_ceil(4)
+    }
+}
+
+fn message_tokens(msg: &Message) -> usize {
+    match &msg.content {
+        MessageContent::Text(t) => estimate_tokens(t),
+        MessageContent::Blocks(b) => b
+            .iter()
+            .map(|block| match block {
+                ContentBlock::Text { text } => estimate_tokens(text),
+                ContentBlock::ToolResult { content, .. } => estimate_tokens(content),
+                ContentBlock::ToolUse { name, input, .. } => {
+                    estimate_tokens(name) + estimate_tokens(&input.to_string())
+                }
+                ContentBlock::Image { .. } => 100,
+            })
+            .sum(),
+    }
+}
+
+/// Cap a tool result string; no-op when already under the limit.
+fn cap_tool_text(text: String) -> String {
+    if text.chars().count() <= TOOL_RESULT_MAX_CHARS {
+        return text;
+    }
+    let mut out: String = text.chars().take(TOOL_RESULT_MAX_CHARS).collect();
+    let omitted = text.chars().count().saturating_sub(TOOL_RESULT_MAX_CHARS);
+    out.push_str(&format!(
+        "\n\n[... {omitted} characters truncated for context management]"
+    ));
+    out
+}
+
+fn summarize_trimmed(trimmed: &[Message]) -> String {
+    let mut users = 0usize;
+    let mut assistants = 0usize;
+    let mut tools = 0usize;
+    let mut other = 0usize;
+    for m in trimmed {
+        match m.role {
+            Role::User => users += 1,
+            Role::Assistant => assistants += 1,
+            Role::Tool => tools += 1,
+            Role::System => other += 1,
+        }
+    }
+    format!(
+        "[{n} earlier messages trimmed for context management \
+         (user={users}, assistant={assistants}, tool={tools}{other_part})]",
+        n = trimmed.len(),
+        other_part = if other > 0 {
+            format!(", other={other}")
+        } else {
+            String::new()
+        }
+    )
+}
+
 /// A conversation session
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
@@ -76,12 +153,12 @@ impl Session {
         self.touch();
     }
 
-    /// Add tool results
+    /// Add tool results (oversized bodies are capped for context economy).
     pub fn add_tool_results(&mut self, results: Vec<whycode_core::types::ToolResult>) {
         for result in results {
             self.messages.push(Message {
                 role: Role::Tool,
-                content: MessageContent::Text(result.content),
+                content: MessageContent::Text(cap_tool_text(result.content)),
                 tool_call_id: Some(result.tool_call_id),
                 name: None,
             });
@@ -145,55 +222,118 @@ impl Session {
         self.touch();
     }
 
-    /// Estimate token count (simple char-based heuristic)
+    /// Estimate token count (Unicode chars / 4, same family as the LLM fallback).
+    ///
+    /// Not provider BPE — good enough for compaction thresholds and the context
+    /// meter when usage has not been reported yet.
     pub fn token_count(&self) -> usize {
-        self.messages
-            .iter()
-            .map(|m| match &m.content {
-                MessageContent::Text(t) => t.len() / 4,
-                MessageContent::Blocks(b) => {
-                    b.iter()
-                        .map(|block| match block {
-                            ContentBlock::Text { text } => text.len() / 4,
-                            _ => 100, // rough estimate for non-text blocks
-                        })
-                        .sum()
-                }
-            })
-            .sum::<usize>()
-            + self.system_prompt.len() / 4
+        estimate_tokens(&self.system_prompt)
+            + self.messages.iter().map(message_tokens).sum::<usize>()
     }
 
-    /// Compact the conversation: keep system + last N tokens
+    /// Cap oversized tool result bodies already in the transcript.
+    ///
+    /// Returns how many messages were modified.
+    pub fn truncate_large_tool_results(&mut self) -> usize {
+        let mut n = 0;
+        for msg in &mut self.messages {
+            if msg.role != Role::Tool {
+                // Also shrink ToolResult blocks inside assistant content.
+                if let MessageContent::Blocks(blocks) = &mut msg.content {
+                    for block in blocks.iter_mut() {
+                        if let ContentBlock::ToolResult { content, .. } = block {
+                            let before = content.len();
+                            *content = cap_tool_text(std::mem::take(content));
+                            if content.len() != before {
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+            match &mut msg.content {
+                MessageContent::Text(t) => {
+                    let before = t.len();
+                    *t = cap_tool_text(std::mem::take(t));
+                    if t.len() != before {
+                        n += 1;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    for block in blocks.iter_mut() {
+                        if let ContentBlock::Text { text }
+                        | ContentBlock::ToolResult { content: text, .. } = block
+                        {
+                            let before = text.len();
+                            *text = cap_tool_text(std::mem::take(text));
+                            if text.len() != before {
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if n > 0 {
+            self.touch();
+        }
+        n
+    }
+
+    /// Compact the conversation toward a token budget.
+    ///
+    /// 1. Cap oversized tool results in place.
+    /// 2. If still over `¾ · max_tokens`, drop oldest messages until under
+    ///    budget or only [`MIN_KEEP_MESSAGES`] remain in the tail.
+    /// 3. Prepend a short stub summary of what was dropped.
+    ///
+    /// When already under budget after tool caps, the message list is not
+    /// reshuffled (avoids churn on `/compact` for small sessions).
     pub fn compact(&mut self, max_tokens: usize) {
-        let _target = max_tokens * 3 / 4;
-        let _system_tokens = self.system_prompt.len() / 4;
+        self.truncate_large_tool_results();
 
-        // Always keep at least last 4 messages
-        let keep = 4usize.min(self.messages.len());
+        let target = max_tokens.saturating_mul(3) / 4;
+        let target = target.max(1);
 
-        let mut kept_messages: Vec<Message> = Vec::new();
-        for msg in self.messages.iter().rev().take(keep).rev() {
-            kept_messages.push(msg.clone());
+        if self.token_count() <= target {
+            self.touch();
+            return;
         }
 
-        // Add summary of trimmed messages
-        let trimmed_count = self.messages.len() - keep;
-        if trimmed_count > 0 {
-            let summary = format!(
-                "[{} earlier messages trimmed for context management]",
-                trimmed_count
-            );
-            let mut new_messages = vec![Message {
-                role: Role::User,
-                content: MessageContent::Text(summary),
-                tool_call_id: None,
-                name: None,
-            }];
-            new_messages.extend(kept_messages);
-            self.messages = new_messages;
+        let min_keep = MIN_KEEP_MESSAGES.min(self.messages.len());
+        // Find the smallest `start` such that messages[start..] fit the budget
+        // (plus a small allowance for the summary line), never dropping below
+        // `min_keep` tail messages.
+        let mut start = 0usize;
+        while self.messages.len() - start > min_keep {
+            let tail = &self.messages[start..];
+            let tail_tokens: usize = tail.iter().map(message_tokens).sum();
+            let total = estimate_tokens(&self.system_prompt) + tail_tokens + SUMMARY_TOKEN_SLACK;
+            if total <= target {
+                break;
+            }
+            start += 1;
         }
 
+        if start == 0 {
+            // Tail alone still over budget (or nothing to drop). Leave as-is;
+            // tool caps already ran.
+            self.touch();
+            return;
+        }
+
+        let trimmed = &self.messages[..start];
+        let summary = summarize_trimmed(trimmed);
+        let mut new_messages = Vec::with_capacity(1 + self.messages.len() - start);
+        new_messages.push(Message {
+            role: Role::User,
+            content: MessageContent::Text(summary),
+            tool_call_id: None,
+            name: None,
+        });
+        new_messages.extend(self.messages[start..].iter().cloned());
+        self.messages = new_messages;
         self.touch();
     }
 
@@ -497,7 +637,7 @@ mod tests {
 
         // Empty session should just have system prompt tokens
         let base_tokens = session.token_count();
-        assert_eq!(base_tokens, "short prompt".len() / 4);
+        assert_eq!(base_tokens, estimate_tokens("short prompt"));
 
         // Add a text message
         session.add_user_message("hello world, this is a test message");
@@ -516,43 +656,49 @@ mod tests {
             },
         ]);
         let with_blocks = session.token_count();
-        // Non-text blocks count as 100 each
         assert!(with_blocks > with_msg);
     }
 
     #[test]
-    fn test_compact() {
+    fn test_compact_under_budget_is_noop() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        for i in 0..10 {
+            session.add_user_message(&format!("message {i}"));
+        }
+        let before = session.messages.len();
+        session.compact(1_000_000);
+        assert_eq!(session.messages.len(), before);
+        assert_eq!(session.messages[0].content.as_text(), Some("message 0"));
+    }
+
+    #[test]
+    fn test_compact_drops_to_token_budget() {
         let mut session = Session::new(test_project_path(), test_system_prompt());
 
-        // Add 10 messages
         for i in 0..10 {
-            session.add_user_message(&format!("message {}", i));
+            session.add_user_message(&format!("message {i} {}", "x".repeat(200)));
         }
-
         assert_eq!(session.messages.len(), 10);
 
-        session.compact(1000);
+        session.compact(200);
 
-        // After compaction, we should have: 1 summary message + 4 kept messages = 5
-        assert_eq!(
-            session.messages.len(),
-            5,
-            "should keep summary + last 4 messages"
-        );
-
-        // First message should be the summary
         let summary_text = session.messages[0].content.as_text().unwrap();
         assert!(
             summary_text.contains("earlier messages trimmed"),
-            "summary should mention trimmed messages: {}",
-            summary_text
+            "summary should mention trimmed messages: {summary_text}"
         );
-
-        // Last 4 should be the original last 4 messages
-        assert_eq!(session.messages[1].content.as_text(), Some("message 6"));
-        assert_eq!(session.messages[2].content.as_text(), Some("message 7"));
-        assert_eq!(session.messages[3].content.as_text(), Some("message 8"));
-        assert_eq!(session.messages[4].content.as_text(), Some("message 9"));
+        assert!(
+            session.messages.len() >= 5,
+            "summary + min keep, got {}",
+            session.messages.len()
+        );
+        assert!(
+            session.messages.len() < 11,
+            "should have dropped something, got {}",
+            session.messages.len()
+        );
+        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        assert!(last.starts_with("message 9"), "last was {last}");
     }
 
     #[test]
@@ -563,9 +709,22 @@ mod tests {
         let before = session.messages.len();
         session.compact(1000);
 
-        // With only 1 message, keep=1, trimmed=0 -> no change
         assert_eq!(session.messages.len(), before);
         assert_eq!(session.messages[0].content.as_text(), Some("only message"));
+    }
+
+    #[test]
+    fn test_add_tool_results_caps_huge_body() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        let huge = "a".repeat(TOOL_RESULT_MAX_CHARS + 5000);
+        session.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "t1".into(),
+            content: huge,
+            is_error: false,
+        }]);
+        let text = session.messages[0].content.as_text().unwrap();
+        assert!(text.contains("characters truncated for context management"));
+        assert!(text.chars().count() < TOOL_RESULT_MAX_CHARS + 200);
     }
 
     #[test]
