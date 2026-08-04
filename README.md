@@ -95,7 +95,7 @@ Usage: whycode [OPTIONS] [COMMAND]
 Commands:
   run       Start an interactive session (default)
   generate  Generate code from a prompt (non-interactive)
-  acp       Agent Control Protocol (not yet implemented)
+  acp       Agent Client Protocol (stub; after product launch)
   pr        Create a pull request from current changes
   github    GitHub operations
   serve     Start API server

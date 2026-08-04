@@ -23,6 +23,8 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | ❌ | Yok / planlanmamış veya roadmap’te |
 | ★ | Bu alanda belirgin güçlü yön |
 
+† whycode ACP: bilinçli **ürün sonrası** — karar `docs/status.md` decision log (2026-08-04).
+
 ---
 
 ## 1. Platform, dağıtım, runtime
@@ -54,7 +56,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | IDE extension (VS Code vb.) | ❌ | ⚠️ ACP | ✅ | ❌ | ✅ VS Code + JetBrains |
 | Web UI | ⚠️ stub | ❌ | ⚠️ | ❌ | ✅ claude.ai/code |
 | iOS / mobil | ❌ | ❌ | ❌ | ⚠️ planlı | ✅ app + remote |
-| ACP (Agent Client Protocol) | ⚠️ stub | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| ACP (Agent Client Protocol) | ⚠️ stub† | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | HTTP API / `serve` | ✅ (local share) | ⚠️ | ✅ | ✅ `serve`/`connect` | ⚠️ |
 | Streaming JSON / CI mode | ✅ | ✅ | ✅ | ✅ | ✅ |
 
@@ -245,7 +247,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | Semantic / cross-session memory | jcode★, Grok, Claude | Phase 6 — not started |
 | Swarm / multi-agent conflict | jcode★ | Phase 7 — dropped (bilinçli) |
 | Browser automation | jcode, Claude | Yok |
-| Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub |
+| Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub; **ACP ürün çıktıktan sonra** (`docs/status.md`) |
 | Hooks + plugin marketplace | Grok, OpenCode, Claude | Plugin crate iskelet |
 | OS sandbox (macOS/Windows backend) | Grok, Claude | Linux bwrap ✅; diğer platformlar fallback |
 | Cloud share / remote control | OpenCode, Claude | Sadece local share |
@@ -277,7 +279,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | `run` / varsayılan TUI | ✅ |
 | `generate` (one-shot) | ✅ |
 | `--format text\|json\|stream-json` (CI / NDJSON) | ✅ |
-| `acp` | ⚠️ stub |
+| `acp` | ⚠️ stub (ürün sonrası; Agent Client Protocol) |
 | `pr` / `github` | ✅ |
 | `serve` (API + local share) | ✅ |
 | `web` | ⚠️ stub |

@@ -57,6 +57,14 @@ Decisions that shaped this plan, so they are not re-litigated later.
 | 2026-07-31 | Unrecognised commands are `safe` | The alternative — unknown means dangerous — prompts on every build and script. Recorded as a limitation in the crate docs and README rather than hidden. |
 | 2026-07-31 | Added phase 8 (TUI), targeting opencode's look and feel | The original seven phases had no TUI phase, which was a gap: the TUI is the product surface. opencode's TUI is SolidJS on OpenTUI, so no code transfers — but its theme JSON schema does, and 33 themes come with it. |
 | 2026-08-04 | Shell OS sandbox defaults to `workspace` with network on and fallback allow | Risk parse is not a sandbox; bwrap workspace is the second lock. Network stays on so cargo/npm/git work; fallback allow avoids breaking macOS/Windows/CI without bwrap. |
+| 2026-08-04 | **ACP (Agent Client Protocol) deferred until after product launch** | Ship the terminal product first. `whycode acp` stays a stub. Real ACP (editor ↔ agent, JSON-RPC/stdio, per [agentclientprotocol.com](https://agentclientprotocol.com)) is post-release work for IDE surfaces — not agent-to-agent. Do not start ACP implementation before a first public product release. |
+
+## Deferred (post-release)
+
+| Item | Status | Notes |
+|---|---|---|
+| ACP — Agent Client Protocol | deferred | Owner: after product ships. Official name is **Agent Client Protocol** (not “Control”). Goal: whycode as ACP agent for Zed / other ACP clients. Stub only until then. |
+| `web` surface | stub | Same priority band as ACP; not blocking launch. |
 
 ## Verification commands
 

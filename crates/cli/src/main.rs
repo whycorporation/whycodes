@@ -85,7 +85,7 @@ pub enum Commands {
         format: OutputFormat,
     },
 
-    /// Agent Control Protocol (automated mode)
+    /// Agent Client Protocol (stub; after product launch)
     Acp,
 
     /// Create a pull request from current changes
@@ -1522,10 +1522,11 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
     }
 }
 
-/// `acp` — Agent Control Protocol (automated mode placeholder)
+/// `acp` — Agent Client Protocol stub (deferred until after product launch).
+/// Real target: editor ↔ agent (JSON-RPC), not agent-to-agent. See docs/status.md.
 async fn cmd_acp(_cli: &Cli) -> anyhow::Result<()> {
     println!("{} ACP mode — not yet implemented.", "ℹ".cyan());
-    println!("ACP will enable automated agent-to-agent communication.");
+    println!("Agent Client Protocol (editor ↔ agent) is planned after product launch.");
     Ok(())
 }
 
