@@ -691,8 +691,14 @@ fn chat_scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) 
 }
 
 /// Map a pointer y on the chat scrollbar to bottom-anchored `scroll_offset`.
+///
+/// Chat scroll is bottom-anchored (`0` = newest). The shared helper returns a
+/// top-origin `view_start`, which we invert. Track **ends snap** so the last
+/// track cell always yields offset 0 (true bottom) even when the grab point is
+/// the middle of a tall thumb — without this, "scroll to bottom" stopped a few
+/// rows short of the latest message.
 fn apply_chat_scrollbar_offset(app: &mut TuiApp, row: u16, grab: Option<u16>) {
-    use crate::ui::scrollbar::offset_from_pointer_y;
+    use crate::ui::scrollbar::{offset_from_pointer_y, scrollbar_metrics};
     let Some(track) = app.chat_scrollbar_hit else {
         return;
     };
@@ -701,9 +707,45 @@ fn apply_chat_scrollbar_offset(app: &mut TuiApp, row: u16, grab: Option<u16>) {
     if total == 0 || visible == 0 {
         return;
     }
-    let view_start = offset_from_pointer_y(row, track, total, visible, grab);
     let max_off = total.saturating_sub(visible);
-    app.scroll_offset = max_off.saturating_sub(view_start.min(max_off));
+    if max_off == 0 {
+        app.scroll_offset = 0;
+        app.auto_scroll = true;
+        app.mark_dirty();
+        return;
+    }
+
+    let height = track.height as usize;
+    // Clamp into the track; dragging past the ends pins to the end.
+    let y = if row < track.y {
+        track.y
+    } else if row >= track.y.saturating_add(track.height) {
+        track.y.saturating_add(track.height.saturating_sub(1))
+    } else {
+        row
+    };
+    let rel = (y - track.y) as usize;
+
+    let view_start = if rel == 0 {
+        // Top of track → oldest content.
+        0
+    } else if height > 0 && rel + 1 >= height {
+        // Bottom of track → newest content (bottom-anchored offset 0).
+        max_off
+    } else if let Some((thumb_len, _, travel)) = scrollbar_metrics(total, visible, height) {
+        let grab_u = grab.unwrap_or((thumb_len / 2) as u16) as usize;
+        let thumb_top = rel.saturating_sub(grab_u).min(travel);
+        // Thumb flush with track bottom → force document end.
+        if travel > 0 && thumb_top + thumb_len >= height {
+            max_off
+        } else {
+            offset_from_pointer_y(y, track, total, visible, grab).min(max_off)
+        }
+    } else {
+        offset_from_pointer_y(y, track, total, visible, grab).min(max_off)
+    };
+
+    app.scroll_offset = max_off.saturating_sub(view_start);
     app.auto_scroll = app.scroll_offset == 0;
     app.mark_dirty();
 }

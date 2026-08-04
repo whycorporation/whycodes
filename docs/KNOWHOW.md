@@ -101,6 +101,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-05 — Scrollbar “bottom” stopped a few rows short of newest
+
+**Symptom:** Dragging/clicking the chat scrollbar to the bottom did not show the latest messages (`scroll_offset` stayed > 0).
+
+**Root cause:** Track clicks used `grab = thumb_len/2`. On the last track cell the centered grab never produced `view_start == max_off`, so bottom-anchored `scroll_offset = max_off - view_start` stayed positive.
+
+**Fix:** Snap track ends (and thumb flush with track bottom) to document top/bottom before converting to bottom-anchored offset. Tests assert bottom cell → offset 0 and painted latest marker.
+
+**Prevention:** Any inverted (bottom-anchored) scrollbar must snap ends; do not rely on mid-thumb grab alone for edge positions.
+
+---
+
 ### 2026-08-05 — Chat mouse scroll looked dead (SparseLines ghosts)
 
 **Symptom:** On the main message list (no dialog), mouse wheel / scroll did nothing useful — content stayed put or looked garbled. Dialogs were fine.

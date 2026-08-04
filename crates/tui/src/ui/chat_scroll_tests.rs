@@ -345,30 +345,87 @@ fn chat_scrollbar_track_click_and_drag_and_release() {
         &mut app,
         mouse(MouseEventKind::Down(MouseButton::Left), 40, 1)
     ));
-    assert!(
-        app.scroll_offset >= max_off.saturating_sub(2),
-        "top click offset={} max={max_off}",
-        app.scroll_offset
+    assert_eq!(
+        app.scroll_offset, max_off,
+        "top of track must be exact document top"
     );
     assert!(app.chat_scrollbar_grab.is_some());
     assert!(app.mouse_sel.is_none(), "bar click must not start text sel");
 
-    // Drag toward bottom of track
+    // Drag toward bottom of track → exact newest (offset 0), not "almost bottom"
     assert!(input::handle_event(
         &mut app,
         mouse(MouseEventKind::Drag(MouseButton::Left), 40, 1 + height - 1)
     ));
-    assert!(
-        app.scroll_offset <= 2,
-        "bottom drag should near bottom, got {}",
-        app.scroll_offset
+    assert_eq!(
+        app.scroll_offset, 0,
+        "bottom of track must be exact document bottom"
     );
+    assert!(app.auto_scroll);
 
     assert!(input::handle_event(
         &mut app,
         mouse(MouseEventKind::Up(MouseButton::Left), 40, 1 + height - 1)
     ));
     assert!(app.chat_scrollbar_grab.is_none());
+}
+
+#[test]
+fn chat_scrollbar_bottom_click_is_exact_bottom_even_with_mid_thumb_grab() {
+    // Regression: track-click used grab=thumb_len/2, so the last track cell
+    // mapped to scroll_offset > 0 and the latest lines never appeared.
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 25);
+    let total = session_line_count(&app, 40);
+    let height = 12u16;
+    let bar = Rect {
+        x: 39,
+        y: 0,
+        width: 2,
+        height,
+    };
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height,
+        },
+        Some(bar),
+        total,
+    );
+    let max_off = total.saturating_sub(height as usize);
+    assert!(max_off > 5);
+
+    // Start from top so we can observe the jump.
+    app.scroll_to_top();
+    assert_eq!(app.scroll_offset, max_off);
+
+    // Press last track cell (simulates track click away from current thumb).
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 39, height - 1)
+    ));
+    assert_eq!(app.scroll_offset, 0);
+    assert!(app.auto_scroll);
+
+    // Full paint: bottom of buffer must show the newest marker-ish content.
+    app.add_message(ChatRole::Assistant, "BOTTOM_EXACT_MARKER_ZZZ");
+    // Recount after new message
+    let total2 = session_line_count(&app, 40);
+    app.chat_scroll_total = total2;
+    app.scroll_to_bottom();
+    let backend = TestBackend::new(40, height);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+    let text = buffer_text(terminal.backend().buffer());
+    assert!(
+        text.contains("BOTTOM_EXACT") || text.contains("MARKER_ZZZ"),
+        "at offset 0 the latest message must be painted: {text:.240}"
+    );
 }
 
 #[test]
