@@ -81,11 +81,16 @@ pub struct Config {
     pub security: SecurityConfig,
 }
 
-/// Settings for shell safety: risk classification and OS sandbox.
+/// Settings for shell safety: risk classification, OS sandbox, and network
+/// domain policy for HTTP tools.
 ///
 /// The risk classifier inspects the command *string* a model asked to run.
 /// The sandbox (when enabled) confines the process that runs it. They stack;
 /// neither replaces the other. See the README security section.
+///
+/// `network_allowlist` / `network_denylist` gate `webfetch`, `websearch`, and
+/// GitHub API tools by host pattern. Shell network stays binary
+/// (`sandbox_network`); domain filtering does not apply inside the shell.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Lowest risk level that requires confirmation: `caution`, `destructive`
@@ -107,6 +112,16 @@ pub struct SecurityConfig {
     /// `allow` (default — warn and run on host) or `deny` (fail the tool call).
     #[serde(default = "default_sandbox_fallback")]
     pub sandbox_fallback: String,
+
+    /// Host patterns allowed for outbound HTTP tools. Empty (default) means
+    /// unrestricted. See [`crate::network::NetworkPolicy`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_allowlist: Vec<String>,
+
+    /// Host patterns always blocked for outbound HTTP tools (wins over
+    /// allowlist).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_denylist: Vec<String>,
 }
 
 fn default_risk_threshold() -> String {
@@ -132,6 +147,18 @@ impl Default for SecurityConfig {
             sandbox: default_sandbox_mode(),
             sandbox_network: true,
             sandbox_fallback: default_sandbox_fallback(),
+            network_allowlist: Vec::new(),
+            network_denylist: Vec::new(),
+        }
+    }
+}
+
+impl SecurityConfig {
+    /// Build the HTTP-tool network policy from config lists.
+    pub fn network_policy(&self) -> crate::network::NetworkPolicy {
+        crate::network::NetworkPolicy {
+            allowlist: self.network_allowlist.clone(),
+            denylist: self.network_denylist.clone(),
         }
     }
 }
@@ -773,6 +800,12 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODE_SANDBOX_FALLBACK") {
             self.security.sandbox_fallback = val;
         }
+        if let Ok(val) = std::env::var("WHYCODE_NETWORK_ALLOWLIST") {
+            self.security.network_allowlist = crate::network::parse_domain_list(&val);
+        }
+        if let Ok(val) = std::env::var("WHYCODE_NETWORK_DENYLIST") {
+            self.security.network_denylist = crate::network::parse_domain_list(&val);
+        }
     }
 
     // ── Merging ─────────────────────────────────────────────────────────
@@ -943,6 +976,13 @@ impl Config {
         }
         if other.security.sandbox_fallback != default_sandbox_fallback() {
             merged.security.sandbox_fallback = other.security.sandbox_fallback.clone();
+        }
+        // Network lists: non-empty higher layer replaces (project can restrict).
+        if !other.security.network_allowlist.is_empty() {
+            merged.security.network_allowlist = other.security.network_allowlist.clone();
+        }
+        if !other.security.network_denylist.is_empty() {
+            merged.security.network_denylist = other.security.network_denylist.clone();
         }
 
         merged

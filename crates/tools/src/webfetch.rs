@@ -49,7 +49,7 @@ impl Tool for WebFetchTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let url = args["url"].as_str().unwrap_or("");
         let max_length = args["max_length"].as_u64().unwrap_or(8000) as usize;
 
@@ -57,6 +57,14 @@ impl Tool for WebFetchTool {
             return ToolResult {
                 tool_call_id: String::new(),
                 content: "URL is required.".to_string(),
+                is_error: true,
+            };
+        }
+
+        if let Err(msg) = ctx.network.check_url(url) {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: msg,
                 is_error: true,
             };
         }
@@ -256,6 +264,30 @@ fn truncate_chars(s: &str, max_length: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use whycode_core::NetworkPolicy;
+
+    #[tokio::test]
+    async fn network_allowlist_blocks_disallowed_host() {
+        let tool = WebFetchTool::new();
+        let mut ctx = ToolContext::unsandboxed("/tmp");
+        ctx.network = NetworkPolicy {
+            allowlist: vec!["allowed.example".into()],
+            denylist: vec![],
+        };
+        let result = tool
+            .execute(
+                json!({ "url": "https://evil.example/secret" }),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(
+            result.content.contains("Network policy blocked")
+                || result.content.contains("blocked host"),
+            "unexpected: {}",
+            result.content
+        );
+    }
 
     #[test]
     fn json_pretty_printed() {

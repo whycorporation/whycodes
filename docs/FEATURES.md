@@ -132,7 +132,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Shell **risk sınıflandırması** | ✅★ | ⚠️ | ⚠️ | ✅ safety system | ⚠️ |
 | Catastrophic komut hard-block | ✅★ (`rm -rf ~` asla onaylanmaz) | ⚠️ | ❌ | ⚠️ | ⚠️ |
 | Sandbox (OS / network) | ✅★ (Linux bwrap workspace; net opt-out) | ✅ | ❌ | ⚠️ | ✅ |
-| Network allowlist | ❌ | ⚠️ | ❌ | ⚠️ | ✅ |
+| Network allowlist | ✅ (HTTP tools; shell stays binary) | ⚠️ | ❌ | ⚠️ | ✅ |
 | Hooks (pre/post tool) | ⚠️ plugin iskelet | ✅★ | ✅★ | ⚠️ | ✅★ |
 
 ---
@@ -323,6 +323,8 @@ bash_risk_threshold = "destructive"  # caution | destructive | off
 sandbox = "workspace"                # off | workspace
 sandbox_network = true
 sandbox_fallback = "allow"           # allow | deny
+# network_allowlist = ["github.com", "crates.io"]
+# network_denylist = []
 ```
 
 ---

@@ -21,6 +21,7 @@ fn repo_ctx() -> ToolContext {
         working_dir: workspace_root.to_string_lossy().to_string(),
         session_id: None,
         sandbox: whycode_core::config::SandboxSettings::off(),
+        network: whycode_core::NetworkPolicy::unrestricted(),
     }
 }
 

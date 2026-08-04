@@ -16,6 +16,7 @@ fn neutral_ctx() -> ToolContext {
         working_dir: "/tmp".to_string(),
         session_id: None,
         sandbox: whycode_core::config::SandboxSettings::off(),
+        network: whycode_core::NetworkPolicy::unrestricted(),
     }
 }
 

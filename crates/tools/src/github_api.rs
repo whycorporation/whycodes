@@ -2,6 +2,7 @@
 use std::env;
 
 use reqwest::header::{HeaderMap, HeaderValue};
+use whycode_core::network::NetworkPolicy;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
 
@@ -48,8 +49,22 @@ pub async fn make_request(
     token: &str,
     body: Option<serde_json::Value>,
 ) -> Result<(reqwest::StatusCode, String), String> {
+    make_request_with_policy(client, method, path, token, body, &NetworkPolicy::unrestricted())
+        .await
+}
+
+/// Like [`make_request`], but enforces the session network allow/deny policy.
+pub async fn make_request_with_policy(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    path: &str,
+    token: &str,
+    body: Option<serde_json::Value>,
+    network: &NetworkPolicy,
+) -> Result<(reqwest::StatusCode, String), String> {
     let headers = github_headers(token)?;
     let url = api_url(path);
+    network.check_url(&url)?;
 
     let mut req = client.request(method, &url).headers(headers);
     if let Some(b) = body {

@@ -69,6 +69,7 @@ Priority for shipping the product (not a full backlog rewrite):
 | 2026-08-04 | Shell OS sandbox defaults to `workspace`, network on, fallback allow | Second lock beyond string risk; keep cargo/npm/git; don't break non-Linux. |
 | 2026-08-04 | **ACP deferred until after product launch** | Ship terminal product first. Real ACP is post-release IDE surface work. |
 | 2026-08-04 | Archive completed phase docs; keep only open plans live | Numbered 1–9 cluttered the tree; done work lives under `docs/archive/`. |
+| 2026-08-04 | Network allowlist for HTTP tools (`webfetch` / search / GitHub) | Domain gate on agent egress; shell stays `sandbox_network` binary (no proxy). |
 
 ## Verification commands
 

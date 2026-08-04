@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::config::SandboxSettings;
+use crate::network::NetworkPolicy;
 use crate::types::{PermissionSet, ToolDefinition, ToolResult};
 
 /// Context passed to tool execution
@@ -10,6 +11,8 @@ pub struct ToolContext {
     pub session_id: Option<String>,
     /// OS sandbox policy for shell tools (ignored by pure file tools).
     pub sandbox: SandboxSettings,
+    /// Domain allow/deny for HTTP tools (`webfetch`, `websearch`, GitHub API).
+    pub network: NetworkPolicy,
 }
 
 impl ToolContext {
@@ -18,6 +21,7 @@ impl ToolContext {
             working_dir: working_dir.into(),
             session_id: None,
             sandbox: SandboxSettings::default(),
+            network: NetworkPolicy::unrestricted(),
         }
     }
 
@@ -26,6 +30,7 @@ impl ToolContext {
             working_dir: working_dir.into(),
             session_id: None,
             sandbox: SandboxSettings::off(),
+            network: NetworkPolicy::unrestricted(),
         }
     }
 }

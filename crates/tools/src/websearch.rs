@@ -50,7 +50,7 @@ impl Tool for WebSearchTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let query = args["query"].as_str().unwrap_or("");
         let num_results = args["num_results"].as_u64().unwrap_or(10);
 
@@ -70,6 +70,14 @@ impl Tool for WebSearchTool {
                 api_key,
                 num_results
             );
+
+            if let Err(msg) = ctx.network.check_url(&url) {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
 
             match reqwest::get(&url).await {
                 Ok(response) => match response.json::<serde_json::Value>().await {
@@ -122,6 +130,14 @@ impl Tool for WebSearchTool {
 
         // Fallback: try DuckDuckGo HTML search
         let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
+
+        if let Err(msg) = ctx.network.check_url(&url) {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: msg,
+                is_error: true,
+            };
+        }
 
         match reqwest::get(&url).await {
             Ok(response) => match response.text().await {

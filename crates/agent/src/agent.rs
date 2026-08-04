@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use std::sync::Arc;
 use whycode_core::config::SandboxSettings;
+use whycode_core::network::NetworkPolicy;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{
     AgentInfo, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
@@ -30,6 +31,7 @@ pub struct Agent {
     permission_prompter: Arc<dyn PermissionPrompter>,
     risk_threshold: RiskThreshold,
     sandbox: SandboxSettings,
+    network: NetworkPolicy,
 }
 
 impl Agent {
@@ -41,6 +43,7 @@ impl Agent {
             permission_prompter: default_prompter(),
             risk_threshold: RiskThreshold::default(),
             sandbox: SandboxSettings::default(),
+            network: NetworkPolicy::unrestricted(),
         }
     }
 
@@ -74,9 +77,12 @@ impl Agent {
                 RiskThreshold::default()
             });
         self.sandbox = SandboxSettings::from_security(&config.security);
+        self.network = config.security.network_policy();
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
-            "shell sandbox policy"
+            network_allow = self.network.allowlist.len(),
+            network_deny = self.network.denylist.len(),
+            "shell sandbox and network policy"
         );
         self
     }
@@ -91,6 +97,7 @@ impl Agent {
             working_dir: session.project_path.to_string_lossy().to_string(),
             session_id: Some(session.id.clone()),
             sandbox,
+            network: self.network.clone(),
         }
     }
 
@@ -618,6 +625,7 @@ impl Agent {
             info,
             session.project_path.clone(),
             self.sandbox.clone(),
+            self.network.clone(),
         );
 
         match runner.run(task, provider_name, model, api_key).await {
@@ -675,6 +683,7 @@ impl Agent {
             self.info.clone(),
             project_path,
             self.sandbox.clone(),
+            self.network.clone(),
         );
 
         let result = runner.run(task, provider_name, model, api_key).await?;
@@ -709,6 +718,7 @@ impl Agent {
             self.info.clone(),
             project_path,
             self.sandbox.clone(),
+            self.network.clone(),
         ));
 
         let mut handles = Vec::with_capacity(goals.len());

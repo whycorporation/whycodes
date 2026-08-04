@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use whycode_core::config::SandboxSettings;
+use whycode_core::network::NetworkPolicy;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{AgentInfo, PermissionSet};
 use whycode_llm::provider::ProviderRegistry;
@@ -44,6 +45,7 @@ pub struct SubagentRunner {
     info: AgentInfo,
     project_path: std::path::PathBuf,
     sandbox: SandboxSettings,
+    network: NetworkPolicy,
 }
 
 impl SubagentRunner {
@@ -54,6 +56,7 @@ impl SubagentRunner {
         info: AgentInfo,
         project_path: std::path::PathBuf,
         sandbox: SandboxSettings,
+        network: NetworkPolicy,
     ) -> Self {
         Self {
             provider_registry,
@@ -61,6 +64,7 @@ impl SubagentRunner {
             info,
             project_path,
             sandbox,
+            network,
         }
     }
 
@@ -157,6 +161,7 @@ impl SubagentRunner {
             working_dir: session.project_path.to_string_lossy().to_string(),
             session_id: Some(session.id.clone()),
             sandbox,
+            network: self.network.clone(),
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {

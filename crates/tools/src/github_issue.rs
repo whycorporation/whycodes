@@ -81,7 +81,7 @@ impl Tool for GithubIssueTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let action = args["action"].as_str().unwrap_or("");
         let owner = args["owner"].as_str().unwrap_or("");
         let repo = args["repo"].as_str().unwrap_or("");
@@ -90,6 +90,14 @@ impl Tool for GithubIssueTool {
             return ToolResult {
                 tool_call_id: String::new(),
                 content: "owner and repo are required.".to_string(),
+                is_error: true,
+            };
+        }
+
+        if let Err(msg) = ctx.network.check_url("https://api.github.com/") {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: msg,
                 is_error: true,
             };
         }

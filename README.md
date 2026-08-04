@@ -395,6 +395,8 @@ bash_risk_threshold = "destructive"   # caution | destructive | off
 sandbox = "workspace"                 # off | workspace
 sandbox_network = true                # false → no network in sandboxed shell
 sandbox_fallback = "allow"            # allow | deny (when bwrap is missing)
+# network_allowlist = ["github.com", "crates.io", "*.npmjs.org"]
+# network_denylist = ["tracking.example.com"]
 ```
 
 | Env | Effect |
@@ -402,12 +404,32 @@ sandbox_fallback = "allow"            # allow | deny (when bwrap is missing)
 | `WHYCODE_SANDBOX` | `off` or `workspace` |
 | `WHYCODE_SANDBOX_NETWORK` | `0`/`1` (or true/false) |
 | `WHYCODE_SANDBOX_FALLBACK` | `allow` or `deny` |
+| `WHYCODE_NETWORK_ALLOWLIST` | comma/space-separated host patterns |
+| `WHYCODE_NETWORK_DENYLIST` | comma/space-separated host patterns |
 
 If `bwrap` is not installed (or you are on macOS/Windows), `sandbox_fallback =
 "allow"` warns and runs on the host; `"deny"` fails the tool call instead.
 This is still not a multi-tenant security boundary — it reduces blast radius
 for agent shell mistakes and obfuscated commands that slip past the risk
 classifier.
+
+### Network allowlist (HTTP tools)
+
+Domain policy for tools that open remote URLs: `webfetch`, `websearch` /
+`mcp_websearch`, and GitHub API tools (`github_issue`, `github_pr`). Empty
+allowlist (default) means unrestricted; a non-empty allowlist requires a host
+match; denylist always wins.
+
+| Pattern | Matches |
+|---|---|
+| `example.com` | apex and any subdomain (`api.example.com`) |
+| `*.example.com` | subdomains only (not the apex) |
+| `*` | any host |
+
+Shell network stays binary (`sandbox_network`). Domain filtering does not apply
+inside the sandboxed shell — only to the dedicated HTTP tools above. When you
+set an allowlist and still want search, include the provider hosts
+(`serpapi.com` and/or `html.duckduckgo.com`).
 
 ### Custom commands
 
