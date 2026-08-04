@@ -21,3 +21,4 @@ tracing.workspace = true
 futures.workspace = true
 async-stream.workspace = true
 async-trait = "0.1"
+chrono.workspace = true

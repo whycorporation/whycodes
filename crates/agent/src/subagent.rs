@@ -138,7 +138,9 @@ impl SubagentRunner {
         permission: &PermissionSet,
     ) -> whycode_core::Result<String> {
         use futures::StreamExt;
-        use whycode_core::types::{ContentBlock, StreamEvent, ToolCall};
+        use whycode_core::types::{ContentBlock, StreamEvent};
+
+        use super::tool_stream::ToolCallAssembler;
 
         // Get tool definitions filtered by the subagent's permission set
         let tools = self.tool_executor.get_definitions(permission);
@@ -177,10 +179,7 @@ impl SubagentRunner {
 
             // Stream response
             let mut accumulated_text = String::new();
-            let mut tool_calls: Vec<ToolCall> = Vec::new();
-            let mut current_tool_id = String::new();
-            let mut _current_tool_name = String::new();
-            let mut current_tool_args = String::new();
+            let mut assembler = ToolCallAssembler::new();
 
             let mut event_stream = provider.stream(&request, api_key, model).await?;
 
@@ -190,21 +189,13 @@ impl SubagentRunner {
                         accumulated_text.push_str(&text);
                     }
                     StreamEvent::ToolUse { id, name, input } => {
-                        current_tool_id = id.clone();
-                        _current_tool_name = name.clone();
-                        tool_calls.push(ToolCall {
-                            id,
-                            name,
-                            arguments: input,
-                        });
+                        assembler.on_tool_use(id, name, input);
                     }
                     StreamEvent::ToolUseDelta {
                         id,
                         input_json_delta,
                     } => {
-                        if id == current_tool_id {
-                            current_tool_args.push_str(&input_json_delta);
-                        }
+                        assembler.on_tool_use_delta(&id, &input_json_delta);
                     }
                     StreamEvent::Thinking { text } => {
                         tracing::debug!("Subagent thinking: {}", text);
@@ -226,6 +217,8 @@ impl SubagentRunner {
                 }
             }
 
+            let tool_calls = assembler.finish();
+
             // Build assistant content blocks
             let mut blocks: Vec<ContentBlock> = Vec::new();
 
@@ -244,7 +237,11 @@ impl SubagentRunner {
                 });
             }
 
-            session.add_assistant_message(blocks);
+            // Never persist an empty assistant turn — strict OpenAI-compatible
+            // APIs reject assistant messages with no text/tool_calls.
+            if !blocks.is_empty() {
+                session.add_assistant_message(blocks);
+            }
 
             // If no tool calls, we're done
             if tool_calls.is_empty() {

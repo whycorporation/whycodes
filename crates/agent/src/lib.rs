@@ -3,6 +3,7 @@ pub mod events;
 pub mod mcp_load;
 pub mod permission;
 pub mod subagent;
+pub mod tool_stream;
 #[cfg(test)]
 mod tests;
 

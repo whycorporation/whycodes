@@ -179,9 +179,10 @@ fn test_agent_system_prompt() {
     let info = make_test_agent_info("build");
     let agent = Agent::new(info);
 
-    // Agent should return the custom system_prompt from AgentInfo
+    // Agent should return the custom system_prompt from AgentInfo plus runtime context
     let prompt = agent.system_prompt();
-    assert_eq!(prompt, "You are a test agent.");
+    assert!(prompt.starts_with("You are a test agent."));
+    assert!(prompt.contains("Today's date:"));
 }
 
 #[test]
@@ -226,6 +227,38 @@ fn test_agent_system_prompt_for_unknown_falls_back() {
     let prompt = Agent::system_prompt_for("nonexistent_agent_xyz");
     // Unknown agents fall back to DEFAULT_SYSTEM_PROMPT
     assert!(!prompt.is_empty());
+}
+
+#[test]
+fn test_with_runtime_context_injects_date() {
+    let prompt = Agent::with_runtime_context("You are a test agent.");
+    assert!(prompt.contains("You are a test agent."));
+    assert!(prompt.contains("Today's date:"));
+    // YYYY-MM-DD
+    let date_line = prompt
+        .lines()
+        .find(|l| l.starts_with("Today's date:"))
+        .expect("date line");
+    let date = date_line.trim_start_matches("Today's date:").trim().trim_end_matches('.');
+    assert_eq!(date.len(), 10, "expected YYYY-MM-DD, got {date}");
+}
+
+#[test]
+fn test_with_runtime_context_is_idempotent() {
+    let once = Agent::with_runtime_context("base");
+    let twice = Agent::with_runtime_context(&once);
+    assert_eq!(once, twice);
+    assert_eq!(once.matches("Today's date:").count(), 1);
+}
+
+#[test]
+fn test_with_agents_md_includes_runtime_context() {
+    let dir = std::env::temp_dir().join(format!("whycode-agent-test-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let prompt = Agent::with_agents_md("base prompt", &dir);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(prompt.contains("base prompt"));
+    assert!(prompt.contains("Today's date:"));
 }
 
 #[test]

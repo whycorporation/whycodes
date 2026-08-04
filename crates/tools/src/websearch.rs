@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::tool::{Tool, ToolContext};
+use super::webfetch::html_to_text;
 use whycode_core::types::ToolResult;
 
 pub struct WebSearchTool;
@@ -25,7 +26,11 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the web using a search engine and return results. Requires SERPAPI_API_KEY environment variable."
+        "Search the web and return result snippets. Requires SERPAPI_API_KEY for best results \
+         (falls back to DuckDuckGo HTML). \
+         For 'latest version' questions: do not pin the query to a past calendar year \
+         (e.g. avoid '2024'/'2025'); search 'Nuxt latest release' or fetch canonical APIs \
+         via webfetch (npm registry, GitHub Releases, official docs)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -34,7 +39,7 @@ impl Tool for WebSearchTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The search query"
+                    "description": "The search query. Prefer current phrasing without a past year for 'latest' lookups."
                 },
                 "num_results": {
                     "type": "integer",
@@ -72,9 +77,9 @@ impl Tool for WebSearchTool {
                         let mut results = String::new();
                         if let Some(organic) = data["organic_results"].as_array() {
                             for (i, result) in organic.iter().enumerate() {
-                                let title = result["title"].as_str().unwrap_or("No title");
+                                let title = strip_markup(result["title"].as_str().unwrap_or("No title"));
                                 let link = result["link"].as_str().unwrap_or("No link");
-                                let snippet = result["snippet"].as_str().unwrap_or("");
+                                let snippet = strip_markup(result["snippet"].as_str().unwrap_or(""));
                                 results.push_str(&format!(
                                     "{}. {}\n   {}\n   {}\n\n",
                                     i + 1,
@@ -127,8 +132,10 @@ impl Tool for WebSearchTool {
                             && let Some(end) = line.rfind('<')
                             && start + 1 < end
                         {
-                            let snippet = &line[start + 1..end];
-                            results.push(snippet.trim().to_string());
+                            let snippet = strip_markup(&line[start + 1..end]);
+                            if !snippet.is_empty() {
+                                results.push(snippet);
+                            }
                         }
                     }
 
@@ -164,6 +171,15 @@ impl Tool for WebSearchTool {
     }
 }
 
+/// Strip residual HTML tags/entities from SERP snippets.
+fn strip_markup(s: &str) -> String {
+    if s.contains('<') || s.contains('&') {
+        html_to_text(s)
+    } else {
+        s.trim().to_string()
+    }
+}
+
 fn urlencoding(s: &str) -> String {
     s.chars()
         .map(|c| match c {
@@ -172,4 +188,18 @@ fn urlencoding(s: &str) -> String {
             _ => format!("%{:02X}", c as u8),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_markup_removes_nested_bold() {
+        let s = "Preparing for <b>Nuxt</b> 5";
+        let out = strip_markup(s);
+        assert!(!out.contains("<b>"));
+        assert!(out.contains("Nuxt"));
+        assert!(out.contains("5"));
+    }
 }

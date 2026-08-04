@@ -12,6 +12,7 @@ use whycode_session::session::Session;
 use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
 use super::subagent::{SubagentRunner, SubagentTask};
+use super::tool_stream::ToolCallAssembler;
 use whycode_command_risk::{Decision, RiskThreshold, assess, decide};
 
 /// Tool names that run an arbitrary shell command string.
@@ -86,12 +87,14 @@ impl Agent {
         self
     }
 
-    /// Get the system prompt for this agent
+    /// Get the system prompt for this agent (includes runtime context such as today's date).
     pub fn system_prompt(&self) -> String {
-        self.info
+        let base = self
+            .info
             .system_prompt
             .clone()
-            .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string())
+            .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string());
+        Self::with_runtime_context(&base)
     }
 
     /// Get the system prompt for a named agent.
@@ -99,6 +102,9 @@ impl Agent {
     /// If the agent has an explicit `system_prompt` set in its info, that wins.
     /// Otherwise falls back to loading the matching prompt file from
     /// `crates/agent/prompts/<name>.txt` at compile time.
+    ///
+    /// Does **not** attach AGENTS.md or runtime context — callers that build a
+    /// live session should pass the result through [`Self::with_agents_md`].
     pub fn system_prompt_for(agent_name: &str) -> String {
         match agent_name {
             "build" => include_str!("../prompts/build.txt").to_string(),
@@ -110,25 +116,46 @@ impl Agent {
         }
     }
 
-    /// Append project AGENTS.md (OpenCode rules file) to a system prompt if present.
+    /// Append runtime environment facts the model needs for time-sensitive work.
+    ///
+    /// Idempotent: if the prompt already contains `Today's date:`, it is returned unchanged.
+    pub fn with_runtime_context(system_prompt: &str) -> String {
+        if system_prompt.contains("Today's date:") {
+            return system_prompt.to_string();
+        }
+        let today = chrono::Local::now().format("%Y-%m-%d");
+        format!(
+            "{system_prompt}\n\n# Environment\n\n\
+             Today's date: {today}.\n\
+             When searching for the current or latest version of software, do not pin the query to a past year; \
+             prefer canonical sources (npm registry, GitHub Releases, official docs)."
+        )
+    }
+
+    /// Append project AGENTS.md (OpenCode rules file) and runtime context to a system prompt.
     pub fn with_agents_md(system_prompt: &str, project_path: &std::path::Path) -> String {
         let candidates = [
             project_path.join("AGENTS.md"),
             project_path.join("agents.md"),
             project_path.join(".whycode").join("AGENTS.md"),
         ];
-        for path in &candidates {
-            if let Ok(content) = std::fs::read_to_string(path) {
-                let trimmed = content.trim();
-                if !trimmed.is_empty() {
-                    return format!(
-                        "{}\n\n# Project Instructions (AGENTS.md)\n\n{}",
-                        system_prompt, trimmed
-                    );
+        let with_agents = {
+            let mut out = None;
+            for path in &candidates {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    let trimmed = content.trim();
+                    if !trimmed.is_empty() {
+                        out = Some(format!(
+                            "{}\n\n# Project Instructions (AGENTS.md)\n\n{}",
+                            system_prompt, trimmed
+                        ));
+                        break;
+                    }
                 }
             }
-        }
-        system_prompt.to_string()
+            out.unwrap_or_else(|| system_prompt.to_string())
+        };
+        Self::with_runtime_context(&with_agents)
     }
 
     /// Run a single conversation turn (no streaming UI events).
@@ -200,16 +227,14 @@ impl Agent {
 
             emit(
                 &events,
-                TurnEvent::Status(format!("LLM request (step {turn_count})…  [Esc cancel]")),
+                TurnEvent::Status(format!("LLM request (step {turn_count})…")),
             );
 
             let request = session.build_request(&tools, None, self.info.temperature, Some(true));
 
             let mut accumulated_text = String::new();
             let mut turn_usage = whycode_core::types::Usage::default();
-            let mut tool_calls: Vec<ToolCall> = Vec::new();
-            let mut current_tool_id = String::new();
-            let mut current_tool_args = String::new();
+            let mut assembler = ToolCallAssembler::new();
 
             let mut event_stream = provider.stream(&request, api_key, model).await?;
 
@@ -232,28 +257,15 @@ impl Agent {
                         accumulated_text.push_str(&text);
                     }
                     StreamEvent::ToolUse { id, name, input } => {
-                        current_tool_id = id.clone();
-                        emit(
-                            &events,
-                            TurnEvent::ToolStart {
-                                id: id.clone(),
-                                name: name.clone(),
-                                input: input.clone(),
-                            },
-                        );
-                        tool_calls.push(ToolCall {
-                            id,
-                            name,
-                            arguments: input,
-                        });
+                        // Defer ToolStart until after argument fragments are
+                        // merged — OpenAI streams send null/empty args first.
+                        assembler.on_tool_use(id, name, input);
                     }
                     StreamEvent::ToolUseDelta {
                         id,
                         input_json_delta,
                     } => {
-                        if id == current_tool_id {
-                            current_tool_args.push_str(&input_json_delta);
-                        }
+                        assembler.on_tool_use_delta(&id, &input_json_delta);
                     }
                     StreamEvent::Thinking { text } => {
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
@@ -290,6 +302,21 @@ impl Agent {
                 }
             }
 
+            // Merge streamed argument fragments into parsed JSON objects.
+            let tool_calls = assembler.finish();
+
+            // Emit ToolStart with final parsed arguments (not the empty first chunk).
+            for tc in &tool_calls {
+                emit(
+                    &events,
+                    TurnEvent::ToolStart {
+                        id: tc.id.clone(),
+                        name: tc.name.clone(),
+                        input: tc.arguments.clone(),
+                    },
+                );
+            }
+
             // Once per turn, after the stream closes and before any tool runs.
             // A provider that reports nothing produces no event, so a silent
             // provider is distinguishable from a zero-cost turn.
@@ -315,7 +342,11 @@ impl Agent {
                 });
             }
 
-            session.add_assistant_message(blocks);
+            // Never persist an empty assistant turn — strict OpenAI-compatible
+            // APIs reject assistant messages with no text/tool_calls.
+            if !blocks.is_empty() {
+                session.add_assistant_message(blocks);
+            }
 
             if tool_calls.is_empty() {
                 break;
@@ -329,7 +360,7 @@ impl Agent {
                 }
                 emit(
                     &events,
-                    TurnEvent::Status(format!("Running tool `{}`…  [Esc cancel]", tc.name)),
+                    TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
                 );
                 let result = self
                     .execute_with_permission(tc, session, &tool_ctx, provider_name, model, api_key)
