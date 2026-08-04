@@ -1,4 +1,5 @@
 // ── ui/dialogs/help.rs: Help / keybinding cheatsheet ──────────────────
+// Grok-style: ModalWindow chrome + section headers + key/desc columns.
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
@@ -11,85 +12,91 @@ use ratatui::{
 
 use super::base::dialog_frame;
 
-pub fn render_help_overlay(frame: &mut Frame, _app: &TuiApp, palette: &ThemePalette) {
-    let area = dialog_frame(frame, " Help ", palette, 65, 75);
+const KEY_COL: usize = 16;
+
+pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+    let chrome = dialog_frame(
+        frame,
+        "Help",
+        &["↑/↓ scroll", "Esc/?/q close"],
+        palette,
+        65,
+        75,
+    );
+    let area = chrome.content;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
+    let section = |label: &str| {
+        Line::from(Span::styled(
+            label.to_string(),
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+    };
+
+    let row = |key: &str, desc: &str| {
+        let key_pad = format!("{key:<width$}", width = KEY_COL);
+        Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                key_pad,
+                Style::default()
+                    .fg(palette.fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(desc.to_string(), Style::default().fg(palette.dim)),
+        ])
+    };
 
     let help_text = vec![
-        // ── General ──
-        Line::from(Span::styled(
-            " General ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
+        section("General"),
+        row("?", "Toggle this help"),
+        row("Tab", "Focus prompt ↔ scrollback"),
+        row("Ctrl+T", "Cycle primary agent"),
+        row(":", "Enter command mode"),
+        row("Esc", "Cancel turn · double-Esc clear draft"),
+        row("Ctrl+C", "Clear draft / quit"),
         Line::from(""),
-        Line::from("  ?           Toggle this help screen"),
-        Line::from("  :           Enter command mode"),
-        Line::from("  Ctrl+C, q   Quit"),
-        Line::from("  Esc         Exit current mode"),
+        section("Scrollback"),
+        row("j/k · ↑/↓", "Select message"),
+        row("Ctrl+↑/↓", "Scroll transcript"),
+        row("PgUp/PgDn", "Page scroll"),
+        row("g / G", "Top / bottom"),
+        row("Shift+←/→", "Prev / next user turn"),
+        row("y", "Copy selected message"),
+        row("e / h", "Toggle thinking fold"),
+        row("l", "Toggle tool results"),
+        row("Space / i", "Focus prompt"),
         Line::from(""),
-        // ── Commands ──
-        Line::from(Span::styled(
-            " Commands ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
+        section("Prompt"),
+        row("Enter", "Send message"),
+        row("Ctrl+Space", "File autocomplete"),
+        row("Ctrl+U", "Clear input"),
+        row("↑/↓", "History (empty prompt)"),
         Line::from(""),
-        Line::from("  :q, :quit    Quit whycode"),
-        Line::from("  :h, :help    Show help"),
-        Line::from("  :provider    Select / add provider"),
-        Line::from("  :model       Select model"),
-        Line::from("  :theme       Change theme"),
-        Line::from("  :clear       Clear session"),
-        Line::from("  :sidebar     Toggle sidebar"),
-        Line::from(""),
-        // ── Navigation ──
-        Line::from(Span::styled(
-            " Navigation ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("  ↑/k, ↓/j    Scroll messages"),
-        Line::from("  PgUp/PgDown   Scroll page"),
-        Line::from("  Home/End      Jump to top/bottom"),
-        Line::from("  Ctrl+A      Toggle auto-scroll"),
-        Line::from(""),
-        // ── Dialogs ──
-        Line::from(Span::styled(
-            " Dialogs ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("  Ctrl+P      Open provider dialog"),
-        Line::from("  Ctrl+M      Open model dialog"),
-        Line::from("  Ctrl+B      Toggle sidebar"),
-        Line::from("  Tab/↑↓      Navigate fields"),
-        Line::from("  Enter / y   Confirm"),
-        Line::from("  Esc / q / n Cancel"),
-        Line::from(""),
-        // ── Input ──
-        Line::from(Span::styled(
-            " Input ",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(""),
-        Line::from("  Ctrl+Space  File autocomplete"),
-        Line::from("  Ctrl+U      Clear input"),
-        Line::from("  ↑/↓          History navigation"),
-        Line::from(""),
-        Line::from(Span::styled(
-            " Press Esc, q, or ? to close help ",
-            Style::default().fg(palette.accent),
-        )),
+        section("Dialogs & commands"),
+        row("Ctrl+P", "Provider setup"),
+        row("Ctrl+M", "Model selection"),
+        row("Ctrl+B", "Toggle sidebar"),
+        row("Ctrl+A", "Toggle auto-scroll"),
+        row("Ctrl+L", "Clear session"),
+        row("/help", "This screen"),
+        row("/connect", "Provider help"),
+        row(":theme", "Change theme"),
+        row(":q", "Quit"),
     ];
 
-    let p = Paragraph::new(Text::from(help_text)).wrap(Wrap { trim: true });
+    // Scroll: skip leading lines per help_scroll, keep footer-safe window.
+    let max_rows = area.height as usize;
+    let max_scroll = help_text.len().saturating_sub(max_rows);
+    let start = app.help_scroll.min(max_scroll);
+    let visible: Vec<Line> = help_text.into_iter().skip(start).take(max_rows).collect();
+
+    let p = Paragraph::new(Text::from(visible))
+        .wrap(Wrap { trim: false })
+        .style(Style::default().bg(palette.bg));
     frame.render_widget(p, area);
 }

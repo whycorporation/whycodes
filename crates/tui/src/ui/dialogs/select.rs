@@ -4,6 +4,8 @@
 //! `dialog-select` component rather than writing each from scratch. The same
 //! applies here: a picker is a title, a list of rows, a cursor and a footer, and
 //! a second copy of that is a second place for the highlight style to drift.
+//!
+//! Chrome matches Grok `ModalWindow` (via [`dialog_frame`]).
 
 use ratatui::Frame;
 use ratatui::style::{Modifier, Style};
@@ -48,10 +50,21 @@ pub fn render_select(
     empty: &str,
     palette: &ThemePalette,
 ) {
-    let area = dialog_frame(frame, title, palette, 60, 60);
+    let chrome = dialog_frame(
+        frame,
+        title,
+        &["↑/↓ move", "Enter select", "Esc cancel"],
+        palette,
+        60,
+        60,
+    );
+    let area = chrome.content;
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
 
     // Keep the cursor on screen for lists longer than the dialog.
-    let rows = (area.height as usize).saturating_sub(3).max(1);
+    let rows = (area.height as usize).max(1);
     let start = selected
         .saturating_sub(rows.saturating_sub(1))
         .min(items.len().saturating_sub(rows.min(items.len())));
@@ -66,6 +79,7 @@ pub fn render_select(
     } else {
         for (i, item) in items.iter().enumerate().skip(start).take(rows) {
             let current = i == selected;
+            // Grok/fzf: selected row recolors text with accent, no full wash.
             let mut spans = vec![
                 Span::styled(
                     if current { " ▸ " } else { "   " }.to_string(),
@@ -99,13 +113,10 @@ pub fn render_select(
         }
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        " ↑/↓ move   Enter select   Esc cancel",
-        Style::default().fg(palette.dim),
-    )));
-
-    frame.render_widget(Paragraph::new(lines), area);
+    frame.render_widget(
+        Paragraph::new(lines).style(Style::default().bg(palette.bg)),
+        area,
+    );
 }
 
 #[cfg(test)]

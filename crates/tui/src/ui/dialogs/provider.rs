@@ -1,11 +1,11 @@
 // ── ui/dialogs/provider.rs: Provider dialog ────────────────────────────
 // Two modes: Select from list, or Add Custom.
+// Chrome matches Grok ModalWindow via dialog_frame.
 
 use crate::app::{AuthMethod, ProviderDialogMode, TuiApp};
 use crate::theme::ThemePalette;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
@@ -23,13 +23,21 @@ pub fn render_provider_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePa
 }
 
 fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
-    let area = dialog_frame(frame, " Select Provider ", palette, 60, 70);
+    let chrome = dialog_frame(
+        frame,
+        "Select Provider",
+        &["Enter select", "a add", "Esc close"],
+        palette,
+        60,
+        70,
+    );
+    let area = chrome.content;
     let pd = &app.provider_dialog;
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        " Choose a provider or add a custom one: ",
-        Style::default().fg(palette.fg),
+        "Choose a provider or add a custom one:",
+        Style::default().fg(palette.dim),
     )));
     lines.push(Line::from(""));
 
@@ -43,7 +51,7 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
             Style::default().fg(palette.fg)
         };
         lines.push(Line::from(Span::styled(
-            format!("{}{}", prefix, name),
+            format!("{prefix}{name}"),
             style,
         )));
     }
@@ -60,36 +68,30 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
     };
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        format!("{}+ Add Custom Provider...", prefix),
+        format!("{prefix}+ Add Custom Provider…"),
         style,
     )));
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        " Enter: select | a: add custom | Esc: close ",
-        Style::default().fg(palette.dim),
-    )));
-
-    let text = Text::from(lines);
-    let p = Paragraph::new(text).wrap(Wrap { trim: true });
+    let p = Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: true })
+        .style(Style::default().bg(palette.bg));
     frame.render_widget(p, area);
 }
 
 fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
-    let area = dialog_frame(frame, " Add Custom Provider ", palette, 70, 65);
+    let chrome = dialog_frame(
+        frame,
+        "Add Custom Provider",
+        &["Ctrl+S save", "Tab next", "Esc cancel"],
+        palette,
+        70,
+        65,
+    );
+    let area = chrome.content;
     let pd = &app.provider_dialog;
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(3)])
-        .split(area);
-
-    let body = chunks[0];
-    let footer = chunks[1];
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Form fields.
     let form_fields = [
         ("Name", &pd.form_name, "(e.g., groq, together)"),
         ("API Key", &pd.form_api_key, "(leave empty if not required)"),
@@ -123,13 +125,13 @@ fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) 
         };
 
         lines.push(Line::from(Span::styled(
-            format!("{}{: <10} {}", prefix, label, display_val),
+            format!("{prefix}{label:<10} {display_val}"),
             style,
         )));
 
         if active {
             lines.push(Line::from(Span::styled(
-                format!("              {}", hint),
+                format!("              {hint}"),
                 Style::default().fg(palette.dim),
             )));
         }
@@ -144,20 +146,18 @@ fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) 
         AuthMethod::None => "None",
     };
     lines.push(Line::from(Span::styled(
-        format!("  Auth Method: {}", auth_label),
+        format!("  Auth Method: {auth_label}"),
         Style::default().fg(palette.fg),
     )));
 
-    // Error.
     if let Some(ref err) = pd.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            format!(" ✗ {}", err),
+            format!(" ✗ {err}"),
             Style::default().fg(palette.error),
         )));
     }
 
-    // Saved.
     if pd.saved {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -166,27 +166,28 @@ fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) 
         )));
     }
 
-    let text = Text::from(lines);
-    let p = Paragraph::new(text).wrap(Wrap { trim: true });
-    frame.render_widget(p, body);
-
-    // Footer.
-    let footer_text = Span::styled(
-        " Ctrl+S: Save | Esc/Ctrl+C: Cancel | Tab: Next Field | Enter: Save ",
-        Style::default().fg(palette.dim),
-    );
-    let fp = Paragraph::new(Text::from(Line::from(footer_text)));
-    frame.render_widget(fp, footer);
+    let p = Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: true })
+        .style(Style::default().bg(palette.bg));
+    frame.render_widget(p, area);
 }
 
 pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
-    let area = dialog_frame(frame, " Select Model ", palette, 50, 50);
+    let chrome = dialog_frame(
+        frame,
+        "Select Model",
+        &["Enter select", "Esc close"],
+        palette,
+        50,
+        50,
+    );
+    let area = chrome.content;
     let ms = &app.model_selection;
 
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(Span::styled(
-        " Choose a model: ",
-        Style::default().fg(palette.fg),
+        "Choose a model:",
+        Style::default().fg(palette.dim),
     )));
     lines.push(Line::from(""));
 
@@ -206,19 +207,14 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
                 Style::default().fg(palette.fg)
             };
             lines.push(Line::from(Span::styled(
-                format!("{}{} / {}", prefix, provider, model),
+                format!("{prefix}{provider} / {model}"),
                 style,
             )));
         }
     }
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(Span::styled(
-        " Enter: select | Esc: close ",
-        Style::default().fg(palette.dim),
-    )));
-
-    let text = Text::from(lines);
-    let p = Paragraph::new(text).wrap(Wrap { trim: true });
+    let p = Paragraph::new(Text::from(lines))
+        .wrap(Wrap { trim: true })
+        .style(Style::default().bg(palette.bg));
     frame.render_widget(p, area);
 }

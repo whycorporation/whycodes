@@ -1,5 +1,6 @@
 // ── ui/dialogs/mod.rs: Dialog rendering system ────────────────────────
 // Renders modal overlays: provider, model, help, confirm, alert.
+// Chrome is Grok-style (ModalWindow) — see `base::dialog_frame`.
 
 mod alert;
 mod base;
