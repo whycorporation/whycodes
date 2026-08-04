@@ -2402,7 +2402,7 @@ async fn cmd_stats() -> anyhow::Result<()> {
     // Top sessions by total tokens (when any usage is stored).
     if !totals.usage.is_empty() {
         let mut sessions = db.list_sessions().unwrap_or_default();
-        sessions.sort_by(|a, b| b.usage.total().cmp(&a.usage.total()));
+        sessions.sort_by_key(|s| std::cmp::Reverse(s.usage.total()));
         let top: Vec<_> = sessions
             .into_iter()
             .filter(|s| !s.usage.is_empty())

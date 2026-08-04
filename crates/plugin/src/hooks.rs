@@ -23,6 +23,50 @@ pub struct HookContext {
     pub tool_output: Option<String>,
 }
 
+impl HookContext {
+    /// Build a pre-tool context (no result fields).
+    pub fn pre(
+        tool_name: impl Into<String>,
+        tool_id: impl Into<String>,
+        tool_input: impl Into<String>,
+        session_id: Option<String>,
+        working_dir: impl Into<String>,
+    ) -> Self {
+        Self {
+            event: HookEvent::PreTool,
+            tool_name: tool_name.into(),
+            tool_id: tool_id.into(),
+            tool_input: tool_input.into(),
+            session_id,
+            working_dir: working_dir.into(),
+            tool_is_error: None,
+            tool_output: None,
+        }
+    }
+
+    /// Build a post-tool context from the tool result.
+    pub fn post(
+        tool_name: impl Into<String>,
+        tool_id: impl Into<String>,
+        tool_input: impl Into<String>,
+        session_id: Option<String>,
+        working_dir: impl Into<String>,
+        is_error: bool,
+        output: &str,
+    ) -> Self {
+        Self {
+            event: HookEvent::PostTool,
+            tool_name: tool_name.into(),
+            tool_id: tool_id.into(),
+            tool_input: tool_input.into(),
+            session_id,
+            working_dir: working_dir.into(),
+            tool_is_error: Some(is_error),
+            tool_output: Some(truncate_output(output)),
+        }
+    }
+}
+
 /// Result of running one hook command.
 #[derive(Debug, Clone)]
 pub struct HookRunResult {
@@ -175,95 +219,61 @@ pub fn truncate_output(s: &str) -> String {
 }
 
 /// Run all matching pre-tool hooks. First blocking failure wins.
-pub async fn run_pre_hooks(
-    hooks: &[HookConfig],
-    tool_name: &str,
-    tool_id: &str,
-    tool_input: &str,
-    session_id: Option<&str>,
-    working_dir: &str,
-) -> PreHookDecision {
-    let matched = matching_hooks(hooks, HookEvent::PreTool, tool_name);
+pub async fn run_pre_hooks(hooks: &[HookConfig], ctx: &HookContext) -> PreHookDecision {
+    let matched = matching_hooks(hooks, HookEvent::PreTool, &ctx.tool_name);
     if matched.is_empty() {
         return PreHookDecision::Allow;
     }
-
-    let ctx = HookContext {
-        event: HookEvent::PreTool,
-        tool_name: tool_name.to_string(),
-        tool_id: tool_id.to_string(),
-        tool_input: tool_input.to_string(),
-        session_id: session_id.map(|s| s.to_string()),
-        working_dir: working_dir.to_string(),
-        tool_is_error: None,
-        tool_output: None,
-    };
 
     for hook in matched {
         if hook.command.trim().is_empty() {
             continue;
         }
         tracing::debug!(
-            tool = tool_name,
+            tool = %ctx.tool_name,
             command = %hook.command,
             "running pre_tool hook"
         );
-        let result = run_hook(hook, &ctx).await;
+        let result = run_hook(hook, ctx).await;
         if result.success() {
             continue;
         }
         let detail = format_failure(hook, &result);
         if hook.block_on_failure {
-            tracing::warn!(tool = tool_name, %detail, "pre_tool hook blocked tool");
+            tracing::warn!(tool = %ctx.tool_name, %detail, "pre_tool hook blocked tool");
             return PreHookDecision::Block {
-                reason: format!("pre_tool hook blocked `{tool_name}`: {detail}"),
+                reason: format!("pre_tool hook blocked `{}`: {detail}", ctx.tool_name),
             };
         }
-        tracing::warn!(tool = tool_name, %detail, "pre_tool hook failed (non-blocking)");
+        tracing::warn!(
+            tool = %ctx.tool_name,
+            %detail,
+            "pre_tool hook failed (non-blocking)"
+        );
     }
     PreHookDecision::Allow
 }
 
 /// Run all matching post-tool hooks. Failures are logged only.
-pub async fn run_post_hooks(
-    hooks: &[HookConfig],
-    tool_name: &str,
-    tool_id: &str,
-    tool_input: &str,
-    session_id: Option<&str>,
-    working_dir: &str,
-    is_error: bool,
-    output: &str,
-) {
-    let matched = matching_hooks(hooks, HookEvent::PostTool, tool_name);
+pub async fn run_post_hooks(hooks: &[HookConfig], ctx: &HookContext) {
+    let matched = matching_hooks(hooks, HookEvent::PostTool, &ctx.tool_name);
     if matched.is_empty() {
         return;
     }
-
-    let ctx = HookContext {
-        event: HookEvent::PostTool,
-        tool_name: tool_name.to_string(),
-        tool_id: tool_id.to_string(),
-        tool_input: tool_input.to_string(),
-        session_id: session_id.map(|s| s.to_string()),
-        working_dir: working_dir.to_string(),
-        tool_is_error: Some(is_error),
-        tool_output: Some(truncate_output(output)),
-    };
 
     for hook in matched {
         if hook.command.trim().is_empty() {
             continue;
         }
         tracing::debug!(
-            tool = tool_name,
+            tool = %ctx.tool_name,
             command = %hook.command,
             "running post_tool hook"
         );
-        let result = run_hook(hook, &ctx).await;
+        let result = run_hook(hook, ctx).await;
         if !result.success() {
             tracing::warn!(
-                tool = tool_name,
+                tool = %ctx.tool_name,
                 detail = %format_failure(hook, &result),
                 "post_tool hook failed"
             );
@@ -293,6 +303,10 @@ fn format_failure(hook: &HookConfig, result: &HookRunResult) -> String {
 mod tests {
     use super::*;
     use whycode_config::HookConfig;
+
+    fn work_dir() -> String {
+        std::env::temp_dir().to_str().unwrap_or(".").to_string()
+    }
 
     #[test]
     fn tool_matches_star_and_affixes() {
@@ -346,16 +360,8 @@ mod tests {
             block_on_failure: true,
             timeout_secs: 5,
         }];
-        match run_pre_hooks(
-            &hooks,
-            "bash",
-            "id1",
-            "{}",
-            None,
-            std::env::temp_dir().to_str().unwrap_or("."),
-        )
-        .await
-        {
+        let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
+        match run_pre_hooks(&hooks, &ctx).await {
             PreHookDecision::Block { reason } => {
                 assert!(reason.contains("blocked"), "{reason}");
             }
@@ -372,16 +378,8 @@ mod tests {
             block_on_failure: false,
             timeout_secs: 5,
         }];
-        match run_pre_hooks(
-            &hooks,
-            "bash",
-            "id1",
-            "{}",
-            None,
-            std::env::temp_dir().to_str().unwrap_or("."),
-        )
-        .await
-        {
+        let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
+        match run_pre_hooks(&hooks, &ctx).await {
             PreHookDecision::Allow => {}
             PreHookDecision::Block { reason } => panic!("should not block: {reason}"),
         }
@@ -396,16 +394,8 @@ mod tests {
             block_on_failure: true,
             timeout_secs: 5,
         }];
-        match run_pre_hooks(
-            &hooks,
-            "bash",
-            "id1",
-            "{}",
-            None,
-            std::env::temp_dir().to_str().unwrap_or("."),
-        )
-        .await
-        {
+        let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
+        match run_pre_hooks(&hooks, &ctx).await {
             PreHookDecision::Allow => {}
             PreHookDecision::Block { reason } => panic!("should allow: {reason}"),
         }
@@ -420,17 +410,16 @@ mod tests {
             block_on_failure: false,
             timeout_secs: 5,
         }];
-        run_post_hooks(
-            &hooks,
+        let ctx = HookContext::post(
             "read",
             "id1",
             r#"{"path":"x"}"#,
-            Some("sess"),
-            std::env::temp_dir().to_str().unwrap_or("."),
+            Some("sess".into()),
+            work_dir(),
             false,
             "ok",
-        )
-        .await;
+        );
+        run_post_hooks(&hooks, &ctx).await;
     }
 
     #[test]

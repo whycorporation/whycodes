@@ -17,7 +17,7 @@ use super::subagent::{SubagentRunner, SubagentTask};
 use super::tool_stream::ToolCallAssembler;
 use whycode_command_risk::{Decision, RiskThreshold, assess, decide};
 use whycode_config::HookConfig;
-use whycode_plugin::hooks::{PreHookDecision, run_post_hooks, run_pre_hooks};
+use whycode_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
 
 /// Tool names that run an arbitrary shell command string.
 const SHELL_TOOLS: &[&str] = &["bash", "shell"];
@@ -577,16 +577,14 @@ impl Agent {
 
         // Pre-tool hooks (after risk + permission, before execution).
         let tool_input = tc.arguments.to_string();
-        match run_pre_hooks(
-            &self.hooks,
-            &tc.name,
-            &tc.id,
-            &tool_input,
-            Some(session.id.as_str()),
-            &tool_ctx.working_dir,
-        )
-        .await
-        {
+        let pre_ctx = HookContext::pre(
+            tc.name.clone(),
+            tc.id.clone(),
+            tool_input.clone(),
+            Some(session.id.clone()),
+            tool_ctx.working_dir.clone(),
+        );
+        match run_pre_hooks(&self.hooks, &pre_ctx).await {
             PreHookDecision::Allow => {}
             PreHookDecision::Block { reason } => {
                 return ToolResult {
@@ -607,17 +605,16 @@ impl Agent {
         };
 
         // Post-tool hooks never block; failures are logged inside the runner.
-        run_post_hooks(
-            &self.hooks,
-            &tc.name,
-            &tc.id,
-            &tool_input,
-            Some(session.id.as_str()),
-            &tool_ctx.working_dir,
+        let post_ctx = HookContext::post(
+            tc.name.clone(),
+            tc.id.clone(),
+            tool_input,
+            Some(session.id.clone()),
+            tool_ctx.working_dir.clone(),
             result.is_error,
             &result.content,
-        )
-        .await;
+        );
+        run_post_hooks(&self.hooks, &post_ctx).await;
 
         result
     }
