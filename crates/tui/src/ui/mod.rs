@@ -9,6 +9,7 @@ pub mod markdown;
 pub mod prompt;
 pub mod render;
 pub mod sidebar;
+pub mod slash_suggest;
 pub mod status;
 pub mod toast;
 

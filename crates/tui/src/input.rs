@@ -1,10 +1,18 @@
 // ── input.rs: Input handler ────────────────────────────────────────────
 // Translates raw crossterm events into actions via the keymap,
 // then updates application state accordingly.
+//
+// Focus model (Grok Build): Prompt vs Scrollback own the keyboard.
+// Esc hierarchy: overlays → cancel turn (run loop) → double-Esc clear draft.
 
-use crate::app::{AppMode, ConfirmAction, DialogKind, TuiApp};
+use crate::app::{
+    AppMode, ConfirmAction, DialogKind, ESC_DOUBLE_MS, FocusPane, MouseSelection, TuiApp,
+};
 use crate::keymap::{Action, KeymapContext};
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, MouseEvent, MouseEventKind};
+use crossterm::event::{
+    Event, KeyCode, KeyEvent, KeyEventKind, MouseButton, MouseEvent, MouseEventKind,
+};
+use std::time::Instant;
 
 /// Process a single crossterm event and update application state.
 /// Returns `false` when the app should exit.
@@ -31,8 +39,8 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         return handle_dialog_key(app, &key);
     }
 
-    // Resolve and dispatch.
-    let action = crate::keymap::Keymap::new().resolve(ctx, &key);
+    // Resolve and dispatch (focus-aware).
+    let action = crate::keymap::Keymap::new().resolve(ctx, app.focus, &key);
 
     match action {
         Some(Action::Quit) => {
@@ -65,21 +73,78 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             true
         }
         Some(Action::EscapeMode) => {
-            match app.mode {
-                AppMode::Command => {
-                    app.mode = AppMode::Normal;
-                    app.key_context = KeymapContext::Normal;
-                    app.command.buffer.clear();
-                }
-                AppMode::Help => {
-                    app.mode = AppMode::Normal;
-                    app.key_context = KeymapContext::Normal;
-                }
-                _ => {}
+            handle_escape(app);
+            true
+        }
+        // Slash-suggest: Tab completes; Up/Down navigate the list.
+        Some(Action::ToggleFocus) if app.slash_suggest.active => {
+            if let Some(cmd) = app.slash_suggest.current()
+                && cmd.name != app.input_buffer
+            {
+                app.input_buffer = cmd.name.to_string();
+                app.input_cursor = app.input_buffer.len();
+                app.slash_suggest.refresh(&app.input_buffer);
             }
             true
         }
+        Some(Action::SelectPrev) if app.slash_suggest.active => {
+            app.slash_suggest.step(-1);
+            true
+        }
+        Some(Action::SelectNext) if app.slash_suggest.active => {
+            app.slash_suggest.step(1);
+            true
+        }
+        Some(Action::InputHistoryPrev) if app.slash_suggest.active => {
+            app.slash_suggest.step(-1);
+            true
+        }
+        Some(Action::InputHistoryNext) if app.slash_suggest.active => {
+            app.slash_suggest.step(1);
+            true
+        }
+        Some(Action::ToggleFocus) => {
+            app.toggle_focus();
+            true
+        }
+        Some(Action::FocusPrompt) => {
+            app.focus_prompt();
+            true
+        }
+        Some(Action::FocusScrollback) => {
+            app.focus_scrollback();
+            true
+        }
+        Some(Action::SelectPrev) => {
+            app.move_selection(-1);
+            true
+        }
+        Some(Action::SelectNext) => {
+            app.move_selection(1);
+            true
+        }
+        Some(Action::JumpPrevTurn) => {
+            app.jump_user_turn(false);
+            true
+        }
+        Some(Action::JumpNextTurn) => {
+            app.jump_user_turn(true);
+            true
+        }
+        Some(Action::CopySelection) => {
+            app.copy_selected_message();
+            true
+        }
+        Some(Action::ToggleThinking) => {
+            app.toggle_selected_thinking();
+            true
+        }
+        Some(Action::ToggleToolResult) => {
+            app.toggle_selected_tools();
+            true
+        }
         Some(Action::SubmitInput) => {
+            app.slash_suggest.dismiss();
             match app.mode {
                 AppMode::Normal => {
                     app.submit_input();
@@ -125,58 +190,67 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             true
         }
         Some(Action::SwitchAgent) => {
-            // Handled in run loop (needs Agent + Config); mark status only here.
-            app.status_message = "Tab: switch agent (run loop)".into();
+            // Handled in run loop (needs Agent + Config).
+            app.status_message = "Ctrl+T: switch agent (run loop)".into();
             true
         }
         Some(Action::ScrollUp) => {
-            app.auto_scroll = false;
-            if app.scroll_offset < app.messages.len().saturating_sub(1) {
-                app.scroll_offset += 1;
-            }
+            app.scroll_rows(-1);
             true
         }
         Some(Action::ScrollDown) => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(1);
-            if app.scroll_offset == 0 {
-                app.auto_scroll = true;
-            }
+            app.scroll_rows(1);
             true
         }
         Some(Action::ScrollPageUp) => {
-            app.auto_scroll = false;
-            app.scroll_offset = (app.scroll_offset + 10).min(app.messages.len().saturating_sub(1));
+            app.scroll_page(true);
             true
         }
         Some(Action::ScrollPageDown) => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(10);
-            if app.scroll_offset == 0 {
-                app.auto_scroll = true;
-            }
+            app.scroll_page(false);
             true
         }
         Some(Action::ScrollToTop) => {
-            app.auto_scroll = false;
-            app.scroll_offset = app.messages.len().saturating_sub(1);
+            app.scroll_to_top();
             true
         }
         Some(Action::ScrollToBottom) => {
-            app.scroll_offset = 0;
-            app.auto_scroll = true;
+            app.scroll_to_bottom();
             true
         }
         // Input editing actions
         Some(action) => {
+            // Typing implies prompt focus.
+            if matches!(
+                action,
+                Action::InputBackspace
+                    | Action::InputDelete
+                    | Action::InputLeft
+                    | Action::InputRight
+                    | Action::InputHome
+                    | Action::InputEnd
+                    | Action::InputNewline
+                    | Action::InputClear
+                    | Action::InputHistoryPrev
+                    | Action::InputHistoryNext
+            ) {
+                app.focus = FocusPane::Prompt;
+            }
             handle_input_action(app, action, &key);
             true
         }
         None => {
-            // Unmapped key — treat as text input in command/normal modes.
+            // Unmapped key — treat as text input. Grok simple mode: any letter
+            // while scrollback is focused auto-focuses the prompt.
             match app.mode {
                 AppMode::Normal => {
                     if let KeyCode::Char(c) = key.code {
-                        app.input_buffer.insert(app.input_cursor, c);
-                        app.input_cursor += 1;
+                        app.focus_prompt();
+                        let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+                        app.input_buffer.insert(pos, c);
+                        app.input_cursor = pos + c.len_utf8();
+                        app.slash_suggest.refresh(&app.input_buffer);
+                        app.esc_armed_at = None;
                     }
                 }
                 AppMode::Command => {
@@ -197,20 +271,96 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     }
 }
 
+/// Grok Esc hierarchy (steal-Esc first, then double-Esc clear).
+///
+/// Cancel-while-busy is owned by the run loop (has the CancelFlag); here we
+/// only handle idle clear / mode exit. Slash + help still steal Esc.
+fn handle_escape(app: &mut TuiApp) {
+    // 1. Steal: slash suggest
+    if app.slash_suggest.active {
+        app.slash_suggest.dismiss();
+        app.esc_armed_at = None;
+        return;
+    }
+    match app.mode {
+        AppMode::Command => {
+            app.mode = AppMode::Normal;
+            app.key_context = KeymapContext::Normal;
+            app.command.buffer.clear();
+            app.esc_armed_at = None;
+            return;
+        }
+        AppMode::Help => {
+            app.mode = AppMode::Normal;
+            app.key_context = KeymapContext::Normal;
+            app.esc_armed_at = None;
+            return;
+        }
+        _ => {}
+    }
+
+    // Busy cancel is handled in run.rs before this path; if we still get here
+    // while busy, do not clear the draft (Grok: Esc preserves draft on cancel).
+    if app.is_busy() {
+        app.esc_armed_at = None;
+        return;
+    }
+
+    // Double-Esc clear when prompt has a draft (Grok: 800ms window).
+    if !app.input_buffer.is_empty() {
+        let now = Instant::now();
+        if let Some(armed) = app.esc_armed_at
+            && now.duration_since(armed).as_millis() <= ESC_DOUBLE_MS
+        {
+            app.clear_prompt_draft();
+            app.toasts
+                .push(crate::toast::ToastKind::Info, "Prompt cleared");
+            return;
+        }
+        app.esc_armed_at = Some(now);
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "press Esc again to clear",
+        );
+        return;
+    }
+
+    // Empty prompt + scrollback focused → return to prompt
+    if app.focus == FocusPane::Scrollback {
+        app.focus_prompt();
+        app.esc_armed_at = None;
+        return;
+    }
+
+    app.esc_armed_at = None;
+}
+
 fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
     match action {
         Action::InputBackspace if app.input_cursor > 0 => {
-            app.input_cursor -= 1;
-            app.input_buffer.remove(app.input_cursor);
+            let end = clamp_cursor(&app.input_buffer, app.input_cursor);
+            let start = prev_boundary(&app.input_buffer, end);
+            app.input_buffer.replace_range(start..end, "");
+            app.input_cursor = start;
+            app.slash_suggest.refresh(&app.input_buffer);
         }
         Action::InputDelete if app.input_cursor < app.input_buffer.len() => {
-            app.input_buffer.remove(app.input_cursor);
+            let start = clamp_cursor(&app.input_buffer, app.input_cursor);
+            let end = next_boundary(&app.input_buffer, start);
+            app.input_buffer.replace_range(start..end, "");
+            app.input_cursor = start;
+            app.slash_suggest.refresh(&app.input_buffer);
+        }
+        Action::InputClear => {
+            app.input_buffer.clear();
+            app.input_cursor = 0;
+            app.slash_suggest.dismiss();
         }
         Action::InputLeft => {
-            app.input_cursor = app.input_cursor.saturating_sub(1);
+            app.input_cursor = prev_boundary(&app.input_buffer, app.input_cursor);
         }
         Action::InputRight if app.input_cursor < app.input_buffer.len() => {
-            app.input_cursor += 1;
+            app.input_cursor = next_boundary(&app.input_buffer, app.input_cursor);
         }
         Action::InputHome => {
             app.input_cursor = 0;
@@ -218,9 +368,11 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
         Action::InputEnd => {
             app.input_cursor = app.input_buffer.len();
         }
-        Action::InputClear => {
-            app.input_buffer.clear();
-            app.input_cursor = 0;
+        Action::InputNewline => {
+            let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+            app.input_buffer.insert(pos, '\n');
+            app.input_cursor = pos + 1;
+            app.slash_suggest.dismiss();
         }
         Action::InputHistoryPrev if !app.input_history.is_empty() && app.input_history_idx > 0 => {
             app.input_history_idx -= 1;
@@ -240,13 +392,133 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
     }
 }
 
+fn clamp_cursor(s: &str, idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    if s.is_char_boundary(idx) {
+        idx
+    } else {
+        prev_boundary(s, idx)
+    }
+}
+
+fn prev_boundary(s: &str, idx: usize) -> usize {
+    if idx == 0 {
+        return 0;
+    }
+    let mut i = idx.min(s.len()).saturating_sub(1);
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+fn next_boundary(s: &str, idx: usize) -> usize {
+    if idx >= s.len() {
+        return s.len();
+    }
+    let mut i = idx + 1;
+    while i < s.len() && !s.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
 fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
+    // Always track pointer for hover chrome (context % meter, etc.).
+    let prev_hover = app.context_hovered();
+    app.mouse_pos = Some((mouse.column, mouse.row));
+    let hover_changed = prev_hover != app.context_hovered();
+
     match mouse.kind {
         MouseEventKind::ScrollDown => {
-            app.scroll_offset = app.scroll_offset.saturating_sub(1);
+            app.scroll_rows(-3);
         }
-        MouseEventKind::ScrollUp if app.scroll_offset < app.messages.len().saturating_sub(1) => {
-            app.scroll_offset += 1;
+        MouseEventKind::ScrollUp => {
+            app.scroll_rows(3);
+        }
+        MouseEventKind::Moved => {
+            // Hover-only: repaint when the context meter enter/leave flips.
+            return hover_changed;
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Start a fresh selection. Shift+drag is left to the terminal for
+            // native select (when the host still delivers un-shifted events only).
+            app.mouse_sel = Some(MouseSelection {
+                anchor_x: mouse.column,
+                anchor_y: mouse.row,
+                focus_x: mouse.column,
+                focus_y: mouse.row,
+                dragging: true,
+            });
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(sel) = &mut app.mouse_sel {
+                sel.focus_x = mouse.column;
+                sel.focus_y = mouse.row;
+                sel.dragging = true;
+            } else {
+                app.mouse_sel = Some(MouseSelection {
+                    anchor_x: mouse.column,
+                    anchor_y: mouse.row,
+                    focus_x: mouse.column,
+                    focus_y: mouse.row,
+                    dragging: true,
+                });
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if let Some(sel) = &mut app.mouse_sel {
+                sel.focus_x = mouse.column;
+                sel.focus_y = mouse.row;
+                sel.dragging = false;
+                // Linear selection needs the real endpoints, not a normalized
+                // rectangle (that would pull in the empty corner of short lines).
+                let same_cell =
+                    sel.anchor_x == sel.focus_x && sel.anchor_y == sel.focus_y;
+                if same_cell {
+                    // Plain click (no drag): copy cwd if the path was hit.
+                    let col = mouse.column;
+                    let row = mouse.row;
+                    app.mouse_sel = None;
+                    if app.cwd_contains(col, row) {
+                        let path = app.project_dir.display().to_string();
+                        if crate::clipboard::copy_text(&path) {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Success,
+                                format!("Copied path: {path}"),
+                            );
+                        } else {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Warning,
+                                "Copy failed — no clipboard",
+                            );
+                        }
+                    }
+                } else {
+                    let text = crate::clipboard::text_from_cells(
+                        &app.screen_cells,
+                        sel.anchor_x,
+                        sel.anchor_y,
+                        sel.focus_x,
+                        sel.focus_y,
+                    );
+                    if text.is_empty() {
+                        app.mouse_sel = None;
+                    } else if crate::clipboard::copy_text(&text) {
+                        app.toasts.push(
+                            crate::toast::ToastKind::Info,
+                            format!("Copied {} chars", text.chars().count()),
+                        );
+                    } else {
+                        app.toasts.push(
+                            crate::toast::ToastKind::Warning,
+                            "Copy failed — no clipboard",
+                        );
+                    }
+                }
+            }
         }
         _ => {}
     }
@@ -255,7 +527,8 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
 // ── Dialog Key Handling ────────────────────────────────────────────────
 fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
-    let action = crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, key);
+    let action =
+        crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, app.focus, key);
 
     let active = match app.dialogs.active() {
         Some(d) => d.clone(),
@@ -333,6 +606,16 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
         },
         DialogKind::Alert { .. } => {
             // Close alert on confirm.
+        }
+        DialogKind::Model => {
+            if let Some((p, m)) = app
+                .model_selection
+                .models
+                .get(app.model_selection.selected)
+                .cloned()
+            {
+                app.pending_model = Some((p, m));
+            }
         }
         _ => {}
     }
@@ -413,6 +696,57 @@ fn open_provider_dialog(app: &mut TuiApp) {
 }
 
 // ── Dialog helpers ─────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod utf8_cursor_tests {
+    use super::*;
+
+    #[test]
+    fn insert_multibyte_advances_by_utf8_len() {
+        let mut buf = String::new();
+        let mut cursor = 0usize;
+        for c in ['ş', 'a', 'ğ'] {
+            let pos = clamp_cursor(&buf, cursor);
+            buf.insert(pos, c);
+            cursor = pos + c.len_utf8();
+        }
+        assert_eq!(buf, "şağ");
+        assert_eq!(cursor, buf.len());
+        assert!(buf.is_char_boundary(cursor));
+    }
+
+    #[test]
+    fn backspace_deletes_whole_grapheme_bytes() {
+        let mut buf = String::from("şa");
+        let mut cursor = buf.len();
+        let end = clamp_cursor(&buf, cursor);
+        let start = prev_boundary(&buf, end);
+        buf.replace_range(start..end, "");
+        cursor = start;
+        assert_eq!(buf, "ş");
+        assert_eq!(cursor, "ş".len());
+
+        let end = clamp_cursor(&buf, cursor);
+        let start = prev_boundary(&buf, end);
+        buf.replace_range(start..end, "");
+        cursor = start;
+        assert_eq!(buf, "");
+        assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn left_right_stay_on_char_boundaries() {
+        let s = "şxğ";
+        let mut c = s.len();
+        c = prev_boundary(s, c);
+        assert!(s.is_char_boundary(c));
+        assert_eq!(&s[..c], "şx");
+        c = prev_boundary(s, c);
+        assert_eq!(&s[..c], "ş");
+        c = next_boundary(s, c);
+        assert_eq!(&s[..c], "şx");
+    }
+}
 
 /// Open `dialog`, putting the app into dialog mode.
 pub fn open_dialog(app: &mut TuiApp, dialog: DialogKind) {

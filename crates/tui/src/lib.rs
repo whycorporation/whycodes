@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod bench;
+pub mod clipboard;
 pub mod config;
 pub mod input;
 pub mod keymap;
@@ -15,7 +16,7 @@ pub mod ui;
 pub mod widgets;
 
 pub use app::TuiApp;
-pub use run::{TuiRunOptions, run};
+pub use run::{tui_available, TuiRunOptions, run};
 
 #[cfg(test)]
 mod tests;

@@ -16,8 +16,9 @@
 //!   marginTop=1 between messages
 //!
 //! Assistant:
-//!   free-flow parts, paddingLeft≈3 for tools
-//!   epilogue: "▣ {agent} · {model}"
+//!   free-flow body at content col 0 (no extra indent — shell SIDE_PAD is enough)
+//!   tools / epilogue share a single 2-col meta gutter (not stacked deeper)
+//!   epilogue: "▣ {agent}" (+ optional duration)
 //!
 //! Home:
 //!   vertical center logo (4 rows) + gap + prompt (maxWidth 75 / 70%)
@@ -85,15 +86,36 @@ pub const LOGO_WHY_CODE: &[&str] = &[
 ];
 
 pub mod layout {
+    use ratatui::layout::Rect;
+
     /// home.tsx: maxWidth={75} or 70% of terminal
     pub const PROMPT_MAX_WIDTH: u16 = 75;
     pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
     /// session main paddingLeft/Right = 2
     pub const SIDE_PAD: u16 = 2;
-    /// user message paddingLeft = 2 (inside panel)
-    pub const USER_PAD: u16 = 2;
-    /// assistant tool paddingLeft = 3
-    pub const ASSISTANT_PAD: u16 = 3;
+    /// Gap under the prompt (bottom breathing room inside body)
+    pub const BOTTOM_PAD: u16 = 1;
+    /// Terminal edge breathing room (all four sides)
+    pub const SAFE_TOP: u16 = 1;
+    pub const SAFE_BOTTOM: u16 = 1;
+    pub const SAFE_LEFT: u16 = 1;
+    pub const SAFE_RIGHT: u16 = 1;
+    /// legacy OpenCode user rail gap (user prompts now use Grok `❯ ` prefix)
+    pub const USER_PAD: u16 = 1;
+    /// shared left gutter for tools / epilogue / meta under an assistant turn
+    pub const ASSISTANT_PAD: u16 = 2;
     /// sidebar width ≈ 42 cols
     pub const SIDEBAR_WIDTH: u16 = 42;
+
+    /// Shrink `area` by the safe-area insets on every edge.
+    pub fn inset_safe(area: Rect) -> Rect {
+        let h_pad = SAFE_LEFT.saturating_add(SAFE_RIGHT);
+        let v_pad = SAFE_TOP.saturating_add(SAFE_BOTTOM);
+        Rect {
+            x: area.x.saturating_add(SAFE_LEFT),
+            y: area.y.saturating_add(SAFE_TOP),
+            width: area.width.saturating_sub(h_pad),
+            height: area.height.saturating_sub(v_pad),
+        }
+    }
 }

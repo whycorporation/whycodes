@@ -245,6 +245,15 @@ pub struct ThemePalette {
 }
 
 impl ThemePalette {
+    /// Accent dimmed over bg — used for callout backgrounds so the panel reads
+    /// as a tinted wash, not a block of solid accent color.
+    pub fn callout_bg(&self, accent: Color) -> Color {
+        let (ar, ag, ab) = to_rgb(accent);
+        let (br, bgc, bb) = to_rgb(self.bg);
+        let mix = |a: u8, b: u8| ((a as u16 * 2 + b as u16 * 8) / 10) as u8;
+        Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
+    }
+
     /// Deterministic color for agent by cycle index.
     ///
     /// Uses hardcoded colors instead of palette semantic fields because
@@ -267,6 +276,68 @@ impl ThemePalette {
     }
 }
 
+// sRGB hex per X11 terminal convention; non-Rgb palette colors resolve through
+// this table so tint math stays stable across terminal emulators.
+fn to_rgb(c: Color) -> (u8, u8, u8) {
+    match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Black => (0, 0, 0),
+        Color::Red => (128, 0, 0),
+        Color::Green => (0, 128, 0),
+        Color::Yellow => (128, 128, 0),
+        Color::Blue => (0, 0, 128),
+        Color::Magenta => (128, 0, 128),
+        Color::Cyan => (0, 128, 128),
+        Color::Gray => (192, 192, 192),
+        Color::DarkGray => (128, 128, 128),
+        Color::LightRed => (255, 0, 0),
+        Color::LightGreen => (0, 255, 0),
+        Color::LightYellow => (255, 255, 0),
+        Color::LightBlue => (0, 0, 255),
+        Color::LightMagenta => (255, 0, 255),
+        Color::LightCyan => (0, 255, 255),
+        Color::White => (255, 255, 255),
+        Color::Indexed(i) => indexed_rgb(i),
+        _ => (0, 0, 0),
+    }
+}
+
+// xterm 256-color cube/gray ramp — avoids pulling in a lookup dependency.
+fn indexed_rgb(i: u8) -> (u8, u8, u8) {
+    match i {
+        16..=231 => {
+            let n = i - 16;
+            let r = n / 36;
+            let g = (n % 36) / 6;
+            let b = n % 6;
+            let f = |v: u8| if v == 0 { 0 } else { v * 40 + 55 };
+            (f(r), f(g), f(b))
+        }
+        232..=255 => {
+            let v = 8 + (i - 232) * 10;
+            (v, v, v)
+        }
+        _ => to_rgb(match i {
+            0 => Color::Black,
+            1 => Color::Red,
+            2 => Color::Green,
+            3 => Color::Yellow,
+            4 => Color::Blue,
+            5 => Color::Magenta,
+            6 => Color::Cyan,
+            7 => Color::White,
+            8 => Color::DarkGray,
+            9 => Color::LightRed,
+            10 => Color::LightGreen,
+            11 => Color::LightYellow,
+            12 => Color::LightBlue,
+            13 => Color::LightMagenta,
+            14 => Color::LightCyan,
+            _ => Color::White,
+        }),
+    }
+}
+
 // ── Palette factories ──────────────────────────────────────────────────
 #[allow(clippy::too_many_lines)]
 /// Default = exact OpenCode theme dark tokens (`theme/assets/opencode.json`).
@@ -277,8 +348,7 @@ fn palette_default_dark() -> ThemePalette {
         fg: TEXT,
         border: STEP7_BORDER,
         border_focused: PRIMARY,
-        // OpenCode primary is peach #fab283 — used as main accent
-        accent: PRIMARY,
+        accent: SECONDARY,
         user_msg: SECONDARY,
         assistant_msg: PRIMARY_BRIGHT,
         system_msg: TEXT_MUTED,
@@ -296,7 +366,7 @@ fn palette_default_dark() -> ThemePalette {
         input_fg: TEXT,
         sidebar_bg: STEP2_PANEL,
         dialog_bg: STEP3_ELEMENT,
-        dialog_border: PRIMARY,
+        dialog_border: SECONDARY,
         scrollbar: STEP6,
         diff_add: Color::Rgb(0x4f, 0xd6, 0xbe),
         diff_remove: Color::Rgb(0xc5, 0x3b, 0x53),

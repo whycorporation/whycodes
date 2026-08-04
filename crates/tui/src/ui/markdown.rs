@@ -3,7 +3,8 @@
 //! `whycode_format::render_markdown` emits ANSI escapes, which ratatui does not
 //! interpret — they would reach the screen as literal bytes. This module
 //! consumes the structured parse instead and produces styled spans, so markdown
-//! picks up the active theme rather than syntect's built-in colours.
+//! picks up the active theme for prose; fenced code uses Tokyo Night via
+//! `whycode_format::highlight`.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -11,11 +12,11 @@ use whycode_format::markdown::{Block, Inline, highlight_code_spans, parse_markdo
 
 use crate::theme::ThemePalette;
 
-/// Left margin applied to every rendered line, matching the plain-text path it
-/// replaces.
-const INDENT: &str = " ";
-
 /// Render `text` as markdown.
+///
+/// Lines start at content column 0 — the session shell already applies
+/// SIDE_PAD. An extra indent here stacked with tools/epilogue and made the
+/// transcript look over-nested.
 pub fn render(text: &str, palette: &ThemePalette) -> Vec<Line<'static>> {
     parse_markdown(text)
         .iter()
@@ -36,20 +37,24 @@ fn render_block(block: &Block, palette: &ThemePalette) -> Vec<Line<'static>> {
             if *level <= 2 {
                 style = style.add_modifier(Modifier::UNDERLINED);
             }
-            let mut out = vec![Span::raw(INDENT)];
-            out.extend(spans.iter().map(|s| inline_span(s, palette, Some(style))));
+            let out: Vec<Span> = spans
+                .iter()
+                .map(|s| inline_span(s, palette, Some(style)))
+                .collect();
             vec![Line::from(out)]
         }
 
         Block::Paragraph(spans) => {
-            let mut out = vec![Span::raw(INDENT)];
-            out.extend(spans.iter().map(|s| inline_span(s, palette, None)));
+            let out: Vec<Span> = spans
+                .iter()
+                .map(|s| inline_span(s, palette, None))
+                .collect();
             vec![Line::from(out)]
         }
 
         Block::ListItem { indent, spans } => {
             let mut out = vec![
-                Span::raw(format!("{INDENT}{}", " ".repeat(*indent))),
+                Span::raw(" ".repeat(*indent)),
                 Span::styled("• ".to_string(), Style::default().fg(palette.accent)),
             ];
             out.extend(spans.iter().map(|s| inline_span(s, palette, None)));
@@ -76,14 +81,13 @@ fn render_code(
     // A header naming the language, so an unhighlighted block is still
     // identifiable as code.
     out.push(Line::from(vec![
-        Span::raw(INDENT),
         Span::styled("┌ ".to_string(), gutter),
         Span::styled(language.unwrap_or("code").to_string(), gutter),
     ]));
 
     let highlighted = highlight_code_spans(&lines.join("\n"), language);
     for spans in &highlighted {
-        let mut line = vec![Span::raw(INDENT), Span::styled("│ ".to_string(), gutter)];
+        let mut line = vec![Span::styled("│ ".to_string(), gutter)];
         for ((r, g, b), text) in spans {
             line.push(Span::styled(
                 text.trim_end_matches('\n').to_string(),
@@ -96,10 +100,7 @@ fn render_code(
     // While streaming, the closing fence has not arrived. Leave the block open
     // rather than drawing a bottom edge that will move on the next frame.
     if closed {
-        out.push(Line::from(vec![
-            Span::raw(INDENT),
-            Span::styled("└".to_string(), gutter),
-        ]));
+        out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
     }
     out
 }
@@ -225,10 +226,19 @@ mod tests {
     }
 
     #[test]
-    fn every_line_is_indented() {
+    fn body_starts_at_content_column() {
+        // No synthetic left pad — SIDE_PAD lives in the shell.
         for line in render("# T\n\ntext\n\n- item", &palette()) {
             let s = text(&line);
-            assert!(s.is_empty() || s.starts_with(' '), "{s:?}");
+            if s.is_empty() {
+                continue;
+            }
+            assert!(
+                !s.starts_with("  "),
+                "body/list should not start with a double space pad: {s:?}"
+            );
         }
+        assert!(rendered("just words")[0].starts_with('j'));
+        assert!(rendered("# Title")[0].starts_with('T'));
     }
 }

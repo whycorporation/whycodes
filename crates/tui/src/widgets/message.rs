@@ -1,6 +1,6 @@
 // ── widgets/message.rs: Message renderer ───────────────────────────────
 
-use crate::app::{ChatBlock, ChatRole};
+use crate::app::{ChatBlock, ChatRole, ThinkingBlock};
 use crate::theme::ThemePalette;
 use ratatui::{
     style::{Modifier, Style},
@@ -13,7 +13,6 @@ pub struct MessageWidget {
     pub role: ChatRole,
     pub content: String,
     pub blocks: Vec<ChatBlock>,
-    pub thinking_collapsed: bool,
     pub results_expanded: bool,
     pub error: Option<String>,
 }
@@ -71,28 +70,8 @@ impl MessageWidget {
                         )));
                     }
                 }
-                ChatBlock::Thinking(text) => {
-                    if self.thinking_collapsed {
-                        lines.push(Line::from(Span::styled(
-                            "  💭 Thinking... (Enter to expand)",
-                            Style::default().fg(palette.thinking),
-                        )));
-                    } else {
-                        lines.push(Line::from(Span::styled(
-                            "  💭 Thinking:",
-                            Style::default()
-                                .fg(palette.thinking)
-                                .add_modifier(Modifier::BOLD),
-                        )));
-                        for line in text.lines() {
-                            lines.push(Line::from(Span::styled(
-                                format!("    {}", line),
-                                Style::default()
-                                    .fg(palette.thinking)
-                                    .add_modifier(Modifier::DIM),
-                            )));
-                        }
-                    }
+                ChatBlock::Thinking(t) => {
+                    lines.extend(thinking_widget_lines(t, palette));
                 }
                 ChatBlock::ToolUse { id: _, name, input } => {
                     lines.push(Line::from(Span::styled(
@@ -138,4 +117,49 @@ impl MessageWidget {
         lines.push(Line::from(""));
         lines
     }
+}
+
+fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    // Grok-style: muted bold header, dim primary body, full-height ┃ rail.
+    let label = Style::default()
+        .fg(palette.dim)
+        .add_modifier(Modifier::BOLD);
+    let detail = Style::default().fg(palette.dim);
+    let body = Style::default()
+        .fg(palette.fg)
+        .add_modifier(Modifier::DIM);
+    let show_rail = t.show_body();
+
+    let rail_prefix = |spans: Vec<Span<'static>>| -> Line<'static> {
+        let mut out = vec![Span::raw("  ")];
+        if show_rail {
+            out.push(Span::styled("┃".to_string(), detail));
+            out.push(Span::raw(" "));
+        }
+        out.extend(spans);
+        Line::from(out)
+    };
+
+    let mut header_spans: Vec<Span<'static>> = if t.is_running() {
+        vec![Span::styled("Thinking…".to_string(), label)]
+    } else {
+        vec![
+            Span::styled("Thought".to_string(), label),
+            Span::styled(format!(" for {}", t.format_elapsed()), detail),
+        ]
+    };
+    if !t.is_running() && t.collapsed {
+        header_spans.push(Span::styled("  (e expand)".to_string(), detail));
+    }
+    lines.push(rail_prefix(header_spans));
+    if show_rail {
+        if t.is_truncated_live() {
+            lines.push(rail_prefix(vec![Span::styled("…".to_string(), body)]));
+        }
+        for line in t.body_lines() {
+            lines.push(rail_prefix(vec![Span::styled(line.to_string(), body)]));
+        }
+    }
+    lines
 }

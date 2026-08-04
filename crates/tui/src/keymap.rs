@@ -1,6 +1,8 @@
 // ── keymap.rs: Centralized keybinding registry ────────────────────────
 // Context-aware bindings (normal / session / dialog modes).
+// Focus-aware: Prompt vs Scrollback (Grok Build model).
 
+use crate::app::FocusPane;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 // ── Keybinding Context ─────────────────────────────────────────────────
@@ -50,8 +52,20 @@ pub enum Action {
     ToggleToolCall,
     ToggleThinking,
     ToggleToolResult,
-    /// Cycle primary agents (OpenCode Tab)
+    /// Cycle primary agents (Ctrl+T; Tab is focus toggle — Grok)
     SwitchAgent,
+    /// Tab: Prompt ↔ Scrollback
+    ToggleFocus,
+    FocusPrompt,
+    FocusScrollback,
+    /// Move selection in scrollback (j/k)
+    SelectPrev,
+    SelectNext,
+    /// Jump to prev/next user turn (Shift+Left/Right)
+    JumpPrevTurn,
+    JumpNextTurn,
+    /// Copy selected message (y in scrollback)
+    CopySelection,
 }
 
 /// A single keybinding description for the help overlay.
@@ -114,42 +128,112 @@ impl Keymap {
         Self
     }
 
-    pub fn resolve(&self, ctx: KeymapContext, key: &KeyEvent) -> Option<Action> {
+    pub fn resolve(
+        &self,
+        ctx: KeymapContext,
+        focus: FocusPane,
+        key: &KeyEvent,
+    ) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
 
         match ctx {
-            KeymapContext::Normal | KeymapContext::Session => match (ctrl, key.code) {
-                // Global
-                (true, KeyCode::Char('c')) => Some(Action::Quit),
-                (false, KeyCode::Char('q')) => Some(Action::Quit),
-                (false, KeyCode::Char('?')) => Some(Action::ToggleHelp),
-                (false, KeyCode::Char(':')) => Some(Action::EnterCommand),
-                (false, KeyCode::Esc) => Some(Action::EscapeMode),
-                // Session / Chat
-                (false, KeyCode::Enter) => Some(Action::SubmitInput),
-                (false, KeyCode::Up) => Some(Action::ScrollDown),
-                (false, KeyCode::Down) => Some(Action::ScrollUp),
-                (false, KeyCode::Char('k')) => Some(Action::ScrollDown),
-                (false, KeyCode::Char('j')) => Some(Action::ScrollUp),
-                (false, KeyCode::PageUp) => Some(Action::ScrollPageUp),
-                (false, KeyCode::PageDown) => Some(Action::ScrollPageDown),
-                (false, KeyCode::Home) => Some(Action::ScrollToTop),
-                (false, KeyCode::End) => Some(Action::ScrollToBottom),
-                (true, KeyCode::Char('b')) => Some(Action::ToggleSidebar),
-                (true, KeyCode::Char('p')) => Some(Action::OpenProviderDialog),
-                (true, KeyCode::Char('m')) => Some(Action::OpenModelDialog),
-                (true, KeyCode::Char('a')) => Some(Action::ToggleAutoScroll),
-                (true, KeyCode::Char('l')) => Some(Action::ClearSession),
-                // OpenCode: Tab cycles primary agents
-                (false, KeyCode::Tab) => Some(Action::SwitchAgent),
-                // Input editing
-                (false, KeyCode::Backspace) => Some(Action::InputBackspace),
-                (false, KeyCode::Delete) => Some(Action::InputDelete),
-                (false, KeyCode::Left) => Some(Action::InputLeft),
-                (false, KeyCode::Right) => Some(Action::InputRight),
-                (true, KeyCode::Char('u')) => Some(Action::InputClear),
-                _ => None,
-            },
+            KeymapContext::Normal | KeymapContext::Session => {
+                // Shift/Alt+Enter insert a newline. Shift needs a terminal
+                // with the Kitty keyboard protocol; Alt works everywhere.
+                if key.code == KeyCode::Enter
+                    && key
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT)
+                {
+                    return Some(Action::InputNewline);
+                }
+                // Global chords first (both focus panes)
+                match (ctrl, key.code) {
+                    (true, KeyCode::Char('c')) => return Some(Action::Quit),
+                    (true, KeyCode::Char('q')) => return Some(Action::Quit),
+                    (false, KeyCode::Char('?')) => return Some(Action::ToggleHelp),
+                    (false, KeyCode::Char(':')) if focus == FocusPane::Prompt => {
+                        return Some(Action::EnterCommand);
+                    }
+                    (false, KeyCode::Esc) => return Some(Action::EscapeMode),
+                    (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
+                    (true, KeyCode::Char('p')) => return Some(Action::OpenProviderDialog),
+                    (true, KeyCode::Char('m')) => return Some(Action::OpenModelDialog),
+                    (true, KeyCode::Char('a')) => return Some(Action::ToggleAutoScroll),
+                    (true, KeyCode::Char('l')) => return Some(Action::ClearSession),
+                    // Grok: Tab toggles focus; Ctrl+T cycles agent (was bare Tab)
+                    (false, KeyCode::Tab) => return Some(Action::ToggleFocus),
+                    (true, KeyCode::Char('t')) => return Some(Action::SwitchAgent),
+                    // Page scroll works from either focus (Grok: PgUp/Dn from prompt)
+                    (false, KeyCode::PageUp) => return Some(Action::ScrollPageUp),
+                    (false, KeyCode::PageDown) => return Some(Action::ScrollPageDown),
+                    (false, KeyCode::Home) if focus == FocusPane::Scrollback => {
+                        return Some(Action::ScrollToTop);
+                    }
+                    (false, KeyCode::End) if focus == FocusPane::Scrollback => {
+                        return Some(Action::ScrollToBottom);
+                    }
+                    _ => {}
+                }
+
+                match focus {
+                    FocusPane::Prompt => match (ctrl, shift, key.code) {
+                        (false, _, KeyCode::Enter) => Some(Action::SubmitInput),
+                        // Arrows edit the draft; Up on empty → history
+                        (false, false, KeyCode::Up) => Some(Action::InputHistoryPrev),
+                        (false, false, KeyCode::Down) => Some(Action::InputHistoryNext),
+                        (false, false, KeyCode::Left) => Some(Action::InputLeft),
+                        (false, false, KeyCode::Right) => Some(Action::InputRight),
+                        // Shift+arrows: turn jump without leaving prompt
+                        (false, true, KeyCode::Left) => Some(Action::JumpPrevTurn),
+                        (false, true, KeyCode::Right) => Some(Action::JumpNextTurn),
+                        (false, _, KeyCode::Home) => Some(Action::InputHome),
+                        (false, _, KeyCode::End) => Some(Action::InputEnd),
+                        (false, _, KeyCode::Backspace) => Some(Action::InputBackspace),
+                        (false, _, KeyCode::Delete) => Some(Action::InputDelete),
+                        (true, _, KeyCode::Char('u')) => Some(Action::InputClear),
+                        // Ctrl+Up/Down: pure scroll while typing
+                        (true, _, KeyCode::Up) => Some(Action::ScrollDown),
+                        (true, _, KeyCode::Down) => Some(Action::ScrollUp),
+                        _ => None,
+                    },
+                    FocusPane::Scrollback => match (ctrl, shift, key.code) {
+                        (false, false, KeyCode::Enter) => Some(Action::FocusPrompt),
+                        (false, false, KeyCode::Char(' ')) => Some(Action::FocusPrompt),
+                        (false, false, KeyCode::Char('i')) => Some(Action::FocusPrompt),
+                        (false, false, KeyCode::Up) | (false, false, KeyCode::Char('k')) => {
+                            Some(Action::SelectPrev)
+                        }
+                        (false, false, KeyCode::Down) | (false, false, KeyCode::Char('j')) => {
+                            Some(Action::SelectNext)
+                        }
+                        (true, _, KeyCode::Up) | (true, _, KeyCode::Char('k')) => {
+                            Some(Action::ScrollDown)
+                        }
+                        (true, _, KeyCode::Down) | (true, _, KeyCode::Char('j')) => {
+                            Some(Action::ScrollUp)
+                        }
+                        (false, true, KeyCode::Left) | (false, true, KeyCode::Char('h')) => {
+                            Some(Action::JumpPrevTurn)
+                        }
+                        (false, true, KeyCode::Right) | (false, true, KeyCode::Char('l')) => {
+                            Some(Action::JumpNextTurn)
+                        }
+                        (false, false, KeyCode::Char('y')) => Some(Action::CopySelection),
+                        (false, false, KeyCode::Char('e')) => Some(Action::ToggleThinking),
+                        (false, false, KeyCode::Char('h')) => Some(Action::ToggleThinking),
+                        (false, false, KeyCode::Char('l')) => Some(Action::ToggleToolResult),
+                        (false, false, KeyCode::Char('g')) => Some(Action::ScrollToTop),
+                        (false, true, KeyCode::Char('g')) | (false, true, KeyCode::Char('G')) => {
+                            Some(Action::ScrollToBottom)
+                        }
+                        (false, false, KeyCode::Char('G')) => Some(Action::ScrollToBottom),
+                        (false, false, KeyCode::Backspace) => Some(Action::FocusPrompt),
+                        _ => None,
+                    },
+                }
+            }
             KeymapContext::Dialog => match (ctrl, key.code) {
                 (false, KeyCode::Esc) => Some(Action::DialogCancel),
                 (false, KeyCode::Char('q')) => Some(Action::DialogCancel),
@@ -187,12 +271,20 @@ impl Keymap {
 fn normal_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("?", "Toggle help", KeymapContext::Normal),
-        KeyBinding::new(":", "Enter command mode", KeymapContext::Normal),
-        KeyBinding::new("Esc", "Clear input / exit mode", KeymapContext::Normal),
-        KeyBinding::new("Enter", "Send message", KeymapContext::Normal),
-        KeyBinding::new("Up/k, Down/j", "Scroll chat history", KeymapContext::Normal),
+        KeyBinding::new("Tab", "Focus prompt ↔ scrollback", KeymapContext::Normal),
+        KeyBinding::new("Ctrl+T", "Cycle primary agent", KeymapContext::Normal),
+        KeyBinding::new(":", "Enter command mode (prompt)", KeymapContext::Normal),
+        KeyBinding::new("Esc", "Cancel turn / double-Esc clear draft", KeymapContext::Normal),
+        KeyBinding::new("Enter", "Send message (prompt)", KeymapContext::Normal),
+        KeyBinding::new("j/k · ↑/↓", "Select message (scrollback)", KeymapContext::Normal),
+        KeyBinding::new("Ctrl+↑/↓", "Scroll transcript", KeymapContext::Normal),
         KeyBinding::new("PgUp/PgDn", "Page scroll", KeymapContext::Normal),
-        KeyBinding::new("Home/End", "Jump to top/bottom", KeymapContext::Normal),
+        KeyBinding::new("g / G", "Top / bottom (scrollback)", KeymapContext::Normal),
+        KeyBinding::new("Shift+←/→", "Prev / next user turn", KeymapContext::Normal),
+        KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
+        KeyBinding::new("e / h", "Toggle thinking fold", KeymapContext::Normal),
+        KeyBinding::new("l", "Toggle tool results", KeymapContext::Normal),
+        KeyBinding::new("Space / i", "Focus prompt (scrollback)", KeymapContext::Normal),
         KeyBinding::new("Ctrl+P", "Provider setup", KeymapContext::Normal),
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),

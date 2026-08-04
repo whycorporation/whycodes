@@ -32,20 +32,24 @@ pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePa
         return;
     }
 
-    let width = MAX_WIDTH.min(area.width.saturating_sub(MARGIN * 2)).max(16);
+    let max_w = area.width.saturating_sub(MARGIN * 2).max(1);
+    let width = MAX_WIDTH.min(max_w).max(16).min(area.width);
     let inner = width.saturating_sub(4) as usize;
-    let mut top = area.y + MARGIN.min(area.height);
+    let mut top = area.y + MARGIN.min(area.height.saturating_sub(1));
 
     for toast in toasts {
-        // Two rows of text at most; a toast is a notice, not a transcript.
         let body = wrap(&toast.message, inner, 2);
         let height = body.len() as u16 + 2;
         if top + height > area.y + area.height {
             break;
         }
 
+        let x = area.x + area.width.saturating_sub(width + MARGIN);
+        if x < area.x {
+            break;
+        }
         let rect = Rect {
-            x: area.x + area.width.saturating_sub(width + MARGIN),
+            x,
             y: top,
             width,
             height,
