@@ -565,6 +565,8 @@ pub struct TuiApp {
     pub pending_prompt: Option<String>,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
+    /// Session id to load from the DB (picker Enter or `/resume <id>`).
+    pub pending_session_id: Option<String>,
     /// Re-fetch `GET /v1/models` for the active provider (config base + key).
     pub pending_catalog_refresh: bool,
 
@@ -692,7 +694,15 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "/sessions",
-        hint: "Pick a stored session and resume",
+        hint: "Pick a stored session and resume (Enter)",
+    },
+    SlashCommand {
+        name: "/resume",
+        hint: "[id] Resume a session (picker if no id)",
+    },
+    SlashCommand {
+        name: "/continue",
+        hint: "Resume the most recent session",
     },
     SlashCommand {
         name: "/rename",
@@ -853,6 +863,7 @@ impl TuiApp {
             config,
             pending_prompt: None,
             pending_model: None,
+            pending_session_id: None,
             pending_catalog_refresh: false,
             primary_agents: vec!["build".into(), "plan".into()],
             agent_cycle_idx: 0,
@@ -1318,6 +1329,27 @@ impl TuiApp {
         });
     }
 
+    /// Replace the chat view with a reconstructed transcript from a stored session.
+    ///
+    /// Used when resuming via the session picker, `/resume`, or `--continue`.
+    /// Tool-role messages are folded into the matching assistant tool-call when
+    /// possible so the UI matches live turns.
+    pub fn load_messages_from_session(&mut self, session: &whycode_session::session::Session) {
+        self.messages = chat_messages_from_session(session);
+        self.session_title = session.title.clone();
+        self.scroll_offset = 0;
+        self.auto_scroll = true;
+        self.selected_msg = None;
+        if session.usage.is_empty() {
+            self.context_used = session.token_count() as u64;
+            self.turn_usage = None;
+        } else {
+            self.set_context_from_usage(&session.usage);
+            self.turn_usage = Some(session.usage.clone());
+        }
+        self.mark_dirty();
+    }
+
     /// Add a message to the chat view.
     pub fn add_message(&mut self, role: ChatRole, content: impl Into<String>) {
         self.messages.push(ChatMessage {
@@ -1519,6 +1551,171 @@ impl TuiApp {
         self.focus_prompt();
         self.esc_armed_at = None;
     }
+}
+
+/// Build display messages from a persisted session transcript.
+pub fn chat_messages_from_session(
+    session: &whycode_session::session::Session,
+) -> Vec<ChatMessage> {
+    use whycode_core::types::{ContentBlock, MessageContent, Role};
+
+    let mut out: Vec<ChatMessage> = Vec::new();
+
+    for msg in &session.messages {
+        let role = match msg.role {
+            Role::User => ChatRole::User,
+            Role::Assistant => ChatRole::Assistant,
+            Role::System => ChatRole::System,
+            Role::Tool => ChatRole::Tool,
+        };
+
+        // Tool results: fold into the matching assistant tool-call when present.
+        if role == ChatRole::Tool {
+            let content = match &msg.content {
+                MessageContent::Text(t) => t.clone(),
+                MessageContent::Blocks(blocks) => blocks
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            };
+            if let Some(id) = msg.tool_call_id.as_deref() {
+                let mut attached = false;
+                for m in out.iter_mut().rev() {
+                    for tc in m.tool_calls.iter_mut() {
+                        if tc.id == id {
+                            tc.result = Some(content.clone());
+                            m.blocks.push(ChatBlock::ToolResult {
+                                id: id.to_string(),
+                                content: content.clone(),
+                                is_error: false,
+                            });
+                            m.invalidate_layout();
+                            attached = true;
+                            break;
+                        }
+                    }
+                    if attached {
+                        break;
+                    }
+                }
+                if attached {
+                    continue;
+                }
+            }
+            out.push(ChatMessage {
+                role: ChatRole::Tool,
+                content,
+                blocks: vec![],
+                results_expanded: false,
+                tool_calls: vec![],
+                error: None,
+                duration_ms: None,
+                image_labels: vec![],
+                layout_cache: None,
+            });
+            continue;
+        }
+
+        match &msg.content {
+            MessageContent::Text(t) => {
+                out.push(ChatMessage {
+                    role,
+                    content: t.clone(),
+                    blocks: vec![],
+                    results_expanded: false,
+                    tool_calls: vec![],
+                    error: None,
+                    duration_ms: None,
+                    image_labels: vec![],
+                    layout_cache: None,
+                });
+            }
+            MessageContent::Blocks(blocks) => {
+                let mut content = String::new();
+                let mut ui_blocks: Vec<ChatBlock> = Vec::new();
+                let mut tool_calls: Vec<ChatToolCall> = Vec::new();
+                let mut image_labels: Vec<String> = Vec::new();
+
+                for b in blocks {
+                    match b {
+                        ContentBlock::Text { text } => {
+                            if !content.is_empty() && !text.is_empty() {
+                                content.push('\n');
+                            }
+                            content.push_str(text);
+                            if !text.is_empty() {
+                                ui_blocks.push(ChatBlock::Text(text.clone()));
+                            }
+                        }
+                        ContentBlock::ToolUse { id, name, input } => {
+                            tool_calls.push(ChatToolCall {
+                                id: id.clone(),
+                                name: name.clone(),
+                                arguments: input.clone(),
+                                collapsed: true,
+                                result: None,
+                                is_error: false,
+                            });
+                            ui_blocks.push(ChatBlock::ToolUse {
+                                id: id.clone(),
+                                name: name.clone(),
+                                input: input.clone(),
+                            });
+                        }
+                        ContentBlock::ToolResult {
+                            tool_use_id,
+                            content: c,
+                            is_error,
+                        } => {
+                            let err = is_error.unwrap_or(false);
+                            if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == *tool_use_id)
+                            {
+                                tc.result = Some(c.clone());
+                                tc.is_error = err;
+                            }
+                            ui_blocks.push(ChatBlock::ToolResult {
+                                id: tool_use_id.clone(),
+                                content: c.clone(),
+                                is_error: err,
+                            });
+                        }
+                        ContentBlock::Image { source } => {
+                            let label = match source {
+                                whycode_core::types::ImageSource::Url { url } => {
+                                    url.rsplit('/').next().unwrap_or("image").to_string()
+                                }
+                                whycode_core::types::ImageSource::Base64 { media_type, .. } => {
+                                    format!("image ({media_type})")
+                                }
+                            };
+                            image_labels.push(label);
+                        }
+                    }
+                }
+
+                // Assistant text often lives only in Text blocks; keep content for
+                // the bubble and blocks for tools/thinking layout.
+                out.push(ChatMessage {
+                    role,
+                    content,
+                    blocks: ui_blocks,
+                    results_expanded: false,
+                    tool_calls,
+                    error: None,
+                    duration_ms: None,
+                    image_labels,
+                    layout_cache: None,
+                });
+            }
+        }
+    }
+
+    out
 }
 
 /// Resolve the current branch name for `dir`, if it is a git work tree.

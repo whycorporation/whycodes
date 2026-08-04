@@ -49,12 +49,16 @@ pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
                 .sessions
                 .iter()
                 .map(|s| {
-                    SelectItem::with_detail(s.title.clone(), format!("{} messages", s.messages))
+                    let short: String = s.id.chars().take(8).collect();
+                    SelectItem::with_detail(
+                        s.title.clone(),
+                        format!("{short} · {} messages", s.messages),
+                    )
                 })
                 .collect();
             render_select(
                 frame,
-                " Sessions ",
+                " Sessions  ·  Enter to resume ",
                 &items,
                 app.session_list.selected,
                 "No sessions yet — they are recorded as you use whycode.",

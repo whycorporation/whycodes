@@ -592,6 +592,76 @@ fn the_session_list_starts_empty() {
     assert_eq!(app.session_list.selected, 0);
 }
 
+#[test]
+fn session_list_selection_identifies_entry_for_resume() {
+    use crate::app::{DialogKind, SessionEntry};
+    use crate::input::open_dialog;
+
+    let mut app = TuiApp::new(test_config());
+    app.session_list.sessions = vec![
+        SessionEntry {
+            id: "aaa-111".into(),
+            title: "First".into(),
+            messages: 2,
+        },
+        SessionEntry {
+            id: "bbb-222".into(),
+            title: "Second".into(),
+            messages: 5,
+        },
+    ];
+    app.session_list.selected = 1;
+    open_dialog(&mut app, DialogKind::SessionList);
+    // Mirrors confirm_dialog(SessionList): queue the selected id for the run loop.
+    if let Some(entry) = app.session_list.sessions.get(app.session_list.selected) {
+        app.pending_session_id = Some(entry.id.clone());
+    }
+    assert_eq!(app.pending_session_id.as_deref(), Some("bbb-222"));
+}
+
+#[test]
+fn load_messages_from_session_restores_user_and_assistant() {
+    use crate::app::{ChatRole, chat_messages_from_session};
+    use whycode_core::types::ContentBlock;
+    use whycode_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.add_user_message("hello");
+    session.add_assistant_message(vec![
+        ContentBlock::Text {
+            text: "hi there".into(),
+        },
+        ContentBlock::ToolUse {
+            id: "t1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.rs"}),
+        },
+    ]);
+    session.add_tool_results(vec![whycode_core::types::ToolResult {
+        tool_call_id: "t1".into(),
+        content: "fn main() {}".into(),
+        is_error: false,
+    }]);
+
+    let msgs = chat_messages_from_session(&session);
+    assert_eq!(msgs.len(), 2, "tool result should fold into assistant");
+    assert_eq!(msgs[0].role, ChatRole::User);
+    assert_eq!(msgs[0].content, "hello");
+    assert_eq!(msgs[1].role, ChatRole::Assistant);
+    assert!(msgs[1].content.contains("hi there"));
+    assert_eq!(msgs[1].tool_calls.len(), 1);
+    assert_eq!(msgs[1].tool_calls[0].name, "read");
+    assert_eq!(
+        msgs[1].tool_calls[0].result.as_deref(),
+        Some("fn main() {}")
+    );
+
+    let mut app = TuiApp::new(test_config());
+    app.load_messages_from_session(&session);
+    assert_eq!(app.messages.len(), 2);
+    assert_eq!(app.session_title, session.title);
+}
+
 // ── Slash Suggest Tests ─────────────────────────────────────────────
 
 #[test]

@@ -83,6 +83,11 @@ whycode generate "Refactor utils" --format stream-json | jq -r '.type'
 # Interactive, seeded with an opening prompt
 whycode run "Where is the retry logic?" -d ./my-project
 
+# Resume the last saved session (same project dir recommended)
+whycode --continue
+# or a specific session id / unique prefix
+whycode --resume a1b2c3d4
+
 # A different provider and model
 whycode -P openai -m gpt-4o generate "Refactor this module"
 ```
@@ -115,6 +120,8 @@ Options (global):
   -m, --model <MODEL>        Model to use
   -a, --agent <AGENT>        Agent name to use
   -d, --dir <DIR>            Project directory (defaults to the current directory)
+  -c, --continue             Resume the most recently updated saved session
+  -r, --resume <SESSION_ID>  Resume a saved session (full id or unique prefix)
       --plain                Use plain stdin REPL instead of the full-screen TUI
       --debug                Write debug logs under the data dir
 ```
@@ -191,7 +198,9 @@ Available in both the TUI and the `--plain` REPL:
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact` `/summarize` | Compact the conversation context |
-| `/sessions` `/resume` `/continue` | List or resume a stored session |
+| `/sessions` | Open the session picker (Enter to resume) |
+| `/resume [id]` | Resume by id/prefix, or open the picker |
+| `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |
 | `/agent [name]` | Show or switch the agent |
 | `/connect` | Provider and API key setup help |

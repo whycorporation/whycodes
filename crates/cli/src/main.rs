@@ -60,6 +60,14 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub plain: bool,
 
+    /// Continue the most recently updated saved session
+    #[arg(short = 'c', long = "continue", global = true)]
+    pub continue_session: bool,
+
+    /// Resume a saved session by id (full id or unique prefix)
+    #[arg(short = 'r', long = "resume", global = true, value_name = "SESSION_ID")]
+    pub resume: Option<String>,
+
     /// Write debug logs under the data dir (`debug/whycode-*.log` + `debug/latest.log`)
     #[arg(long, global = true)]
     pub debug: bool,
@@ -527,6 +535,38 @@ fn is_missing_database(error: &anyhow::Error) -> bool {
     })
 }
 
+/// Map CLI `--continue` / `--resume` onto a session lookup key.
+///
+/// `--resume` wins when both are set. Returns `None` when neither flag is used.
+fn resolve_resume_want(cli: &Cli) -> Option<String> {
+    if let Some(id) = cli.resume.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        return Some(id.to_string());
+    }
+    if cli.continue_session {
+        return Some(whycode_tui::RESUME_LATEST.to_string());
+    }
+    None
+}
+
+/// Load `want` into `session`, preserving the current system prompt.
+///
+/// Returns `Ok(true)` when a session was loaded, `Ok(false)` when none matched.
+fn resume_session_into(
+    session: &mut whycode_session::session::Session,
+    want: &str,
+) -> anyhow::Result<bool> {
+    let db = open_db()?;
+    let Some(loaded) =
+        whycode_tui::resolve_and_load_session(&db, want).map_err(|e| anyhow::anyhow!("{e}"))?
+    else {
+        return Ok(false);
+    };
+    let system_prompt = session.system_prompt.clone();
+    *session = loaded;
+    session.system_prompt = system_prompt;
+    Ok(true)
+}
+
 fn open_db() -> anyhow::Result<whycode_storage::db::Database> {
     let data_dir = Config::data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
@@ -626,6 +666,8 @@ async fn cmd_run(
             std::io::stdout().is_terminal(),
         );
     }
+    let resume_want = resolve_resume_want(cli);
+
     if use_tui {
         return whycode_tui::run(whycode_tui::TuiRunOptions {
             project_dir,
@@ -636,6 +678,7 @@ async fn cmd_run(
             max_turns,
             initial_prompt: prompt.map(|s| s.to_string()),
             config,
+            resume_session_id: resume_want,
         })
         .await
         .map_err(|e| {
@@ -677,6 +720,33 @@ async fn cmd_run(
     let mut provider = provider;
     let mut model = model;
     let mut show_thinking = false;
+
+    // Plain-mode resume (same flags as TUI).
+    if let Some(ref want) = resume_want {
+        match resume_session_into(&mut session, want) {
+            Ok(true) => {
+                println!(
+                    "{} Resumed session {} ({}) — {} messages",
+                    "✓".green(),
+                    session.title.cyan(),
+                    session.id.chars().take(8).collect::<String>().dimmed(),
+                    session.messages.len()
+                );
+            }
+            Ok(false) => {
+                eprintln!(
+                    "{} No session to resume ({}).",
+                    "ℹ".yellow(),
+                    if want == whycode_tui::RESUME_LATEST {
+                        "none saved yet"
+                    } else {
+                        want.as_str()
+                    }
+                );
+            }
+            Err(e) => eprintln!("{} Resume failed: {e}", "✗".red()),
+        }
+    }
 
     println!(
         "{} {}",
@@ -952,8 +1022,43 @@ async fn cmd_run(
                     );
                     continue;
                 }
-                "/sessions" | "/resume" | "/continue" => {
+                "/sessions" => {
                     let _ = cmd_session(&SessionCmd::List).await;
+                    continue;
+                }
+                "/resume" | "/continue" => {
+                    let want = if !rest.is_empty() {
+                        rest.to_string()
+                    } else if cmd == "/continue" {
+                        whycode_tui::RESUME_LATEST.to_string()
+                    } else {
+                        // /resume with no id → list, same as /sessions
+                        let _ = cmd_session(&SessionCmd::List).await;
+                        println!(
+                            "{}",
+                            "Tip: /resume <id> or /continue (latest)".dimmed()
+                        );
+                        continue;
+                    };
+                    match resume_session_into(&mut session, &want) {
+                        Ok(true) => {
+                            history = whycode_session::SessionHistory::new();
+                            println!(
+                                "{} Resumed {} ({}) — {} messages",
+                                "✓".green(),
+                                session.title.cyan(),
+                                session.id.chars().take(8).collect::<String>().dimmed(),
+                                session.messages.len()
+                            );
+                        }
+                        Ok(false) => {
+                            eprintln!(
+                                "{} Session not found.",
+                                "✗".red()
+                            );
+                        }
+                        Err(e) => eprintln!("{} Resume failed: {e}", "✗".red()),
+                    }
                     continue;
                 }
                 "/models" => {
@@ -1171,6 +1276,8 @@ fn print_slash_help() {
     println!("  /share, /export        — Export session JSON");
     println!("  /compact, /summarize   — Compact long context");
     println!("  /sessions              — List saved sessions");
+    println!("  /resume [id]           — Resume a session (list if no id)");
+    println!("  /continue              — Resume the most recent session");
     println!("  /models [provider/id]  — List or switch models");
     println!("  /agent [name]          — List or switch agents (build|plan|…)");
     println!("  /connect               — Provider setup help");

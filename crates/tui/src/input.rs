@@ -705,6 +705,15 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_model = Some((p, m));
             }
         }
+        DialogKind::SessionList => {
+            if let Some(entry) = app
+                .session_list
+                .sessions
+                .get(app.session_list.selected)
+            {
+                app.pending_session_id = Some(entry.id.clone());
+            }
+        }
         _ => {}
     }
     app.dialogs.pop();

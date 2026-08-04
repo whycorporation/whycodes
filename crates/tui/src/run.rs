@@ -61,7 +61,15 @@ pub struct TuiRunOptions {
     pub max_turns: usize,
     pub initial_prompt: Option<String>,
     pub config: Config,
+    /// When set, load this session (or the latest if `"__latest__"`) before first paint.
+    ///
+    /// Used by CLI `--continue` / `--resume <id>`. In-session resume uses
+    /// `pending_session_id` on the app instead.
+    pub resume_session_id: Option<String>,
 }
+
+/// Sentinel for `TuiRunOptions::resume_session_id`: most recently updated session.
+pub const RESUME_LATEST: &str = "__latest__";
 
 /// True when a full-screen TUI can attach to a real terminal.
 ///
@@ -249,9 +257,41 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         .with_mcp(&config)
         .await;
 
-    let mut session = Session::new(opts.project_dir.clone(), system_prompt);
+    let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
     let mut history = SessionHistory::new();
+
+    // CLI `--continue` / `--resume`: hydrate before first paint when possible.
+    if let Some(ref want) = opts.resume_session_id {
+        match try_load_session(want) {
+            Ok(Some(loaded)) => {
+                let n = loaded.messages.len();
+                let title = loaded.title.clone();
+                session = loaded;
+                // system_prompt is not persisted yet — keep the live agent prompt.
+                session.system_prompt = system_prompt.clone();
+                app.load_messages_from_session(&session);
+                app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!("Resumed · {title} ({n} msgs)"),
+                );
+            }
+            Ok(None) => {
+                app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    if want == RESUME_LATEST {
+                        "No saved sessions to continue".into()
+                    } else {
+                        format!("Session not found: {want}")
+                    },
+                );
+            }
+            Err(e) => {
+                app.toasts
+                    .push(crate::toast::ToastKind::Error, format!("Resume failed: {e}"));
+            }
+        }
+    }
 
     let mut provider = opts.provider.clone();
     let mut model = opts.model.clone();
@@ -561,6 +601,51 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 })),
                             );
                             persist_session_best_effort(&session, "error");
+                        }
+                    }
+                }
+            }
+
+            // ── Apply session picker / /resume selection ──────────────
+            if let Some(id) = app.pending_session_id.take() {
+                // Don't switch mid-turn — re-queue and wait.
+                if agent_busy {
+                    app.pending_session_id = Some(id);
+                } else {
+                    match try_load_session(&id) {
+                        Ok(Some(loaded)) => {
+                            // Persist the current session first so nothing is lost
+                            // when switching away from an unsaved turn.
+                            if !session.messages.is_empty() {
+                                persist_session_best_effort(&session, "switch");
+                            }
+                            let n = loaded.messages.len();
+                            let title = loaded.title.clone();
+                            history = SessionHistory::new();
+                            session = loaded;
+                            session.system_prompt = Agent::with_agents_md(
+                                &agent.system_prompt(),
+                                &project_dir,
+                            );
+                            app.load_messages_from_session(&session);
+                            app.toasts.push(
+                                crate::toast::ToastKind::Success,
+                                format!("Resumed · {title} ({n} msgs)"),
+                            );
+                            app.status_message =
+                                format!("Resumed session {}", short_session_id(&session.id));
+                        }
+                        Ok(None) => {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Warning,
+                                format!("Session not found: {}", short_session_id(&id)),
+                            );
+                        }
+                        Err(e) => {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Error,
+                                format!("Resume failed: {e}"),
+                            );
                         }
                     }
                 }
@@ -1556,11 +1641,24 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
             }
         }
-        "/sessions" | "/resume" | "/continue" => {
-            // Previously only existed in the --plain REPL.
+        "/sessions" => {
             ctx.app.session_list.sessions = load_session_entries();
             ctx.app.session_list.selected = 0;
             crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+        }
+        "/resume" | "/continue" => {
+            // With an id (or prefix): resume immediately. Bare: open picker.
+            // `/continue` with no id resumes the most recently updated session
+            // (same semantics as CLI `--continue`).
+            if !rest.is_empty() {
+                ctx.app.pending_session_id = Some(rest.to_string());
+            } else if cmd == "/continue" {
+                ctx.app.pending_session_id = Some(RESUME_LATEST.to_string());
+            } else {
+                ctx.app.session_list.sessions = load_session_entries();
+                ctx.app.session_list.selected = 0;
+                crate::input::open_dialog(ctx.app, DialogKind::SessionList);
+            }
         }
         "/models" if rest.is_empty() => {
             ctx.app.model_selection.models = configured_models(ctx.config);
@@ -1798,6 +1896,61 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
             title: s.title,
         })
         .collect()
+}
+
+/// Shorten a UUID-style session id for status lines (`a1b2c3d4…`).
+fn short_session_id(id: &str) -> String {
+    let take = id.chars().take(8).collect::<String>();
+    if id.chars().count() > 8 {
+        format!("{take}…")
+    } else {
+        take
+    }
+}
+
+/// Load a session by exact id, unique prefix, or [`RESUME_LATEST`].
+fn try_load_session(want: &str) -> anyhow::Result<Option<Session>> {
+    let Some(db) = open_db_quiet() else {
+        anyhow::bail!("database unavailable");
+    };
+    resolve_and_load_session(&db, want)
+}
+
+/// Resolve `want` against the session table and load the full transcript.
+///
+/// - [`RESUME_LATEST`] → first row of `list_sessions` (ORDER BY updated_at DESC)
+/// - exact id match
+/// - otherwise unique prefix (case-insensitive); ambiguous prefix → error
+pub fn resolve_and_load_session(
+    db: &whycode_storage::db::Database,
+    want: &str,
+) -> anyhow::Result<Option<Session>> {
+    if want == RESUME_LATEST || want.eq_ignore_ascii_case("latest") {
+        let list = db.list_sessions()?;
+        let Some(row) = list.into_iter().next() else {
+            return Ok(None);
+        };
+        return Session::load_from_db(db, &row.id);
+    }
+
+    if let Some(s) = Session::load_from_db(db, want)? {
+        return Ok(Some(s));
+    }
+
+    // Prefix match (handy for typing the first 8 chars from `/sessions`).
+    let want_l = want.to_ascii_lowercase();
+    let list = db.list_sessions()?;
+    let matches: Vec<_> = list
+        .into_iter()
+        .filter(|s| s.id.to_ascii_lowercase().starts_with(&want_l))
+        .collect();
+    match matches.len() {
+        0 => Ok(None),
+        1 => Session::load_from_db(db, &matches[0].id),
+        n => anyhow::bail!(
+            "ambiguous session id prefix '{want}' ({n} matches); use a longer id"
+        ),
+    }
 }
 
 /// Session details for `/info`.
