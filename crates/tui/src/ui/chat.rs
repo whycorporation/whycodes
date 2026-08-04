@@ -16,8 +16,9 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     if app.messages.is_empty() {
+        app.clear_chat_hits();
         render_home(frame, area, app, palette);
         return;
     }
@@ -161,7 +162,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     );
 }
 
-fn render_session(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     let mut lines: Vec<Line> = Vec::new();
     // Shell already applies SIDE_PAD — don't pad again (extra spaces end up in mouse selection).
     // Keep wrap width == area.width so it matches `app.chat_content_width`
@@ -219,7 +220,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePa
     // bg, but we never invent trailing pad spaces on content rows.
     frame.render_widget(SparseLines { lines }, area);
 
-    if needs_bar {
+    let scrollbar_hit = if needs_bar {
         // Ratatui position is top-origin within the document. Convert from our
         // bottom-anchored scroll_offset via view_start. Drawn last so the
         // thumb sits on the right edge above any full-width content.
@@ -234,7 +235,19 @@ fn render_session(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePa
             .track_style(Style::default().fg(palette.scrollbar))
             .thumb_style(Style::default().fg(palette.accent));
         frame.render_stateful_widget(bar, area, &mut state);
-    }
+        // Widen the hit column slightly so the 1-cell track is easier to grab.
+        let hit_w = 2u16.min(area.width);
+        Some(Rect {
+            x: area.x + area.width.saturating_sub(hit_w),
+            y: area.y,
+            width: hit_w,
+            height: area.height,
+        })
+    } else {
+        None
+    };
+
+    app.apply_chat_paint(area, scrollbar_hit, total);
 }
 
 /// Writes each line's spans only — no invented trailing text.

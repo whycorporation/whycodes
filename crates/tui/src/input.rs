@@ -545,6 +545,8 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
+            // Prefer chat when the pointer is over the transcript or its bar;
+            // still scroll chat from the prompt so wheel "just works".
             app.scroll_rows(-3);
         }
         MouseEventKind::ScrollUp => {
@@ -555,6 +557,17 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // Chat scrollbar first: thumb drag / track jump (not text select).
+            if app.chat_scrollbar_contains(mouse.column, mouse.row)
+                && let Some(track) = app.chat_scrollbar_hit
+            {
+                let grab = chat_scrollbar_grab_at(app, mouse.row, track);
+                app.chat_scrollbar_grab = Some(grab);
+                apply_chat_scrollbar_offset(app, mouse.row, Some(grab));
+                app.mouse_sel = None;
+                return true;
+            }
+            app.chat_scrollbar_grab = None;
             // Start a fresh selection. Shift+drag is left to the terminal for
             // native select (when the host still delivers un-shifted events only).
             app.mouse_sel = Some(MouseSelection {
@@ -566,6 +579,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             });
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            if app.chat_scrollbar_grab.is_some() {
+                let grab = app.chat_scrollbar_grab;
+                apply_chat_scrollbar_offset(app, mouse.row, grab);
+                return true;
+            }
             if let Some(sel) = &mut app.mouse_sel {
                 sel.focus_x = mouse.column;
                 sel.focus_y = mouse.row;
@@ -581,6 +599,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
+            if app.chat_scrollbar_grab.take().is_some() {
+                app.mouse_sel = None;
+                app.mark_dirty();
+                return true;
+            }
             if let Some(sel) = &mut app.mouse_sel {
                 sel.focus_x = mouse.column;
                 sel.focus_y = mouse.row;
@@ -634,6 +657,44 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         _ => {}
     }
     true
+}
+
+/// Grab offset within the chat scrollbar thumb (top-origin track math).
+fn chat_scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) -> u16 {
+    use crate::ui::scrollbar::{scrollbar_metrics, thumb_top_for_offset};
+    let total = app.chat_scroll_total;
+    let visible = app.chat_viewport_rows.max(1) as usize;
+    let height = track.height as usize;
+    let Some((thumb_len, max_off, travel)) = scrollbar_metrics(total, visible, height) else {
+        return 0;
+    };
+    // Chat `scroll_offset` is bottom-anchored; convert to top-origin view_start.
+    let view_start = max_off.saturating_sub(app.scroll_offset.min(max_off));
+    let top = thumb_top_for_offset(view_start, max_off, travel);
+    let rel = row.saturating_sub(track.y) as usize;
+    if rel >= top && rel < top + thumb_len {
+        (rel - top) as u16
+    } else {
+        (thumb_len / 2) as u16
+    }
+}
+
+/// Map a pointer y on the chat scrollbar to bottom-anchored `scroll_offset`.
+fn apply_chat_scrollbar_offset(app: &mut TuiApp, row: u16, grab: Option<u16>) {
+    use crate::ui::scrollbar::offset_from_pointer_y;
+    let Some(track) = app.chat_scrollbar_hit else {
+        return;
+    };
+    let total = app.chat_scroll_total;
+    let visible = app.chat_viewport_rows.max(1) as usize;
+    if total == 0 || visible == 0 {
+        return;
+    }
+    let view_start = offset_from_pointer_y(row, track, total, visible, grab);
+    let max_off = total.saturating_sub(visible);
+    app.scroll_offset = max_off.saturating_sub(view_start.min(max_off));
+    app.auto_scroll = app.scroll_offset == 0;
+    app.mark_dirty();
 }
 
 /// Mouse while a modal is open: wheel moves the list, `[✗]` closes, click row selects,

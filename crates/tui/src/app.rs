@@ -529,6 +529,14 @@ pub struct TuiApp {
     pub chat_viewport_rows: u16,
     /// Chat content width in columns (updated each paint).
     pub chat_content_width: u16,
+    /// Last-paint message viewport (for wheel hit-testing).
+    pub chat_area: Option<Rect>,
+    /// Last-paint chat scrollbar track when content overflows.
+    pub chat_scrollbar_hit: Option<Rect>,
+    /// Total display rows of the transcript at last paint (scrollbar math).
+    pub chat_scroll_total: usize,
+    /// Active chat scrollbar thumb drag (`None` = not dragging).
+    pub chat_scrollbar_grab: Option<u16>,
 
     // ── mouse text selection (app-owned; native terminal select copies pad spaces) ──
     pub mouse_sel: Option<MouseSelection>,
@@ -862,6 +870,10 @@ impl TuiApp {
             selected_msg: None,
             chat_viewport_rows: 20,
             chat_content_width: 80,
+            chat_area: None,
+            chat_scrollbar_hit: None,
+            chat_scroll_total: 0,
+            chat_scrollbar_grab: None,
             mouse_sel: None,
             screen_cells: Vec::new(),
             dialogs: DialogManager::new(),
@@ -1079,6 +1091,47 @@ impl TuiApp {
         self.dialog_scrollbar_hit
             .map(|h| crate::ui::scrollbar::scrollbar_contains(h, col, row))
             .unwrap_or(false)
+    }
+
+    /// Whether `(col, row)` lands on the chat transcript scrollbar track.
+    pub fn chat_scrollbar_contains(&self, col: u16, row: u16) -> bool {
+        self.chat_scrollbar_hit
+            .map(|h| crate::ui::scrollbar::scrollbar_contains(h, col, row))
+            .unwrap_or(false)
+    }
+
+    /// Whether `(col, row)` is inside the message viewport (not prompt/footer).
+    pub fn chat_area_contains(&self, col: u16, row: u16) -> bool {
+        self.chat_area
+            .map(|a| {
+                col >= a.x
+                    && col < a.x.saturating_add(a.width)
+                    && row >= a.y
+                    && row < a.y.saturating_add(a.height)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Publish chat viewport + optional scrollbar hit box after a session paint.
+    ///
+    /// Keeps `chat_scrollbar_grab` across frames while the bar is still shown
+    /// so a thumb drag survives repaints; drops the grab when the bar vanishes.
+    pub fn apply_chat_paint(&mut self, area: Rect, scrollbar_hit: Option<Rect>, total_rows: usize) {
+        self.chat_area = Some(area);
+        self.chat_scrollbar_hit = scrollbar_hit;
+        self.chat_scroll_total = total_rows;
+        if scrollbar_hit.is_none() {
+            self.chat_scrollbar_grab = None;
+        }
+    }
+
+    /// Clear chat mouse targets (home / empty session).
+    pub fn clear_chat_hits(&mut self) {
+        self.chat_area = None;
+        self.chat_scrollbar_hit = None;
+        self.chat_scroll_total = 0;
+        // End any in-progress thumb drag when the bar goes away.
+        self.chat_scrollbar_grab = None;
     }
 
     /// Map a screen cell to a list index when it falls inside the list body.

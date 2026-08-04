@@ -1059,6 +1059,76 @@ fn scroll_rows_uses_display_height_not_message_count() {
 }
 
 #[test]
+fn chat_scrollbar_hit_and_mouse_wheel_scroll_transcript() {
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    for i in 0..20 {
+        app.add_message(ChatRole::User, format!("line {i} with enough text"));
+        app.add_message(ChatRole::Assistant, format!("reply {i}"));
+    }
+    app.chat_content_width = 40;
+    app.chat_viewport_rows = 8;
+    let total = crate::ui::chat::session_line_count(&app, 40);
+    assert!(total > 8, "need overflow, total={total}");
+
+    // Publish paint meta as if a frame just drew a scrollbar.
+    let area = Rect {
+        x: 2,
+        y: 1,
+        width: 40,
+        height: 8,
+    };
+    let bar = Rect {
+        x: 40,
+        y: 1,
+        width: 2,
+        height: 8,
+    };
+    app.apply_chat_paint(area, Some(bar), total);
+    assert!(app.chat_scrollbar_contains(40, 3));
+    assert!(app.chat_area_contains(10, 4));
+    assert!(!app.chat_area_contains(0, 0));
+
+    // Wheel up → older messages (increase bottom-anchored offset).
+    let wheel_up = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::ScrollUp,
+        column: 10,
+        row: 4,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, wheel_up));
+    assert!(app.scroll_offset >= 3, "offset={}", app.scroll_offset);
+    assert!(!app.auto_scroll);
+
+    // Click the track near the top → jump toward oldest (large offset).
+    let down = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 40,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, down));
+    let max_off = total.saturating_sub(8);
+    assert!(
+        app.scroll_offset >= max_off.saturating_sub(2),
+        "expected near top, offset={} max={max_off}",
+        app.scroll_offset
+    );
+    assert!(app.chat_scrollbar_grab.is_some());
+
+    let up = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
+        column: 40,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, up));
+    assert!(app.chat_scrollbar_grab.is_none());
+}
+
+#[test]
 fn scroll_to_top_and_bottom_match_visible_range() {
     let mut app = TuiApp::new(test_config());
     for i in 0..12 {
