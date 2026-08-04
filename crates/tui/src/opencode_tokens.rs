@@ -18,7 +18,7 @@
 //! Assistant:
 //!   free-flow body at content col 0 (no extra indent — shell SIDE_PAD is enough)
 //!   tools / epilogue share a single 2-col meta gutter (not stacked deeper)
-//!   epilogue: "▣ {agent}" (+ optional duration)
+//!   epilogue: Grok-style "Worked for 12s" (muted; was OpenCode "▣ agent")
 //!
 //! Home:
 //!   vertical center logo (4 rows) + gap + prompt (maxWidth 75 / 70%)

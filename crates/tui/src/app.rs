@@ -349,19 +349,29 @@ impl ThinkingBlock {
 /// Format elapsed wall time for display (`1.4s`, `12s`, `1m12s`).
 ///
 /// Used for thinking blocks and full agent-turn latency.
+/// Compact duration for chrome / turn footers (Grok `format_duration`).
+///
+/// - under 10s: `5.2s`
+/// - 10–59s: `32s`
+/// - 1–59m: `2m5s`
+/// - 1h+: `1h2m`
 pub fn format_elapsed_ms(ms: u128) -> String {
-    let secs = ms as f64 / 1000.0;
-    if secs < 60.0 {
-        if secs < 10.0 {
-            format!("{secs:.1}s")
-        } else {
-            format!("{:.0}s", secs)
-        }
-    } else {
-        let mins = (secs / 60.0).floor() as u32;
-        let remaining = secs - (mins as f64 * 60.0);
-        format!("{mins}m{remaining:.0}s")
+    let total_secs = ms / 1000;
+    if total_secs < 10 {
+        let secs = ms as f64 / 1000.0;
+        return format!("{secs:.1}s");
     }
+    if total_secs < 60 {
+        return format!("{total_secs}s");
+    }
+    let mins = total_secs / 60;
+    let secs = total_secs % 60;
+    if mins < 60 {
+        return format!("{mins}m{secs}s");
+    }
+    let hours = mins / 60;
+    let remaining_mins = mins % 60;
+    format!("{hours}h{remaining_mins}m")
 }
 
 /// Alias kept for call sites that name the thinking lifecycle.

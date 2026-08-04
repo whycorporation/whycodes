@@ -1,6 +1,6 @@
 // ── ui/chat.rs: session message list ───────────────────────────────────
 // User prompt: Grok-style elevated band + ❯ prefix (not OpenCode ┃ panel)
-// Assistant: free parts + "▣ agent" epilogue
+// Assistant: free parts + Grok turn footer ("Worked for 12s")
 // Home: centered dual-block logo
 
 use crate::app::{ChatBlock, ChatRole, TuiApp};
@@ -433,11 +433,10 @@ fn render_message(
                     ));
                 }
             }
-            // Epilogue only when the turn is finished (or the bubble has real
-            // content and we are not still streaming into it).
+            // Grok-style turn footer (session event marker), not OpenCode's
+            // "▣ agent · 12s" badge — past tense, muted, no agent name clutter.
             //
-            // Provider/model live under the prompt meta row once — never
-            // repeated here as `provider/model` next to every assistant line.
+            // Provider/model live under the prompt meta row once.
             let is_last = index + 1 == app.messages.len();
             let still_streaming = app.is_busy() && is_last;
             let empty = msg.content.is_empty()
@@ -445,23 +444,12 @@ fn render_message(
                 && msg.tool_calls.is_empty()
                 && msg.error.is_none();
             if !empty && !still_streaming {
-                let agent_color = palette.agent_color_by_index(app.agent_cycle_idx);
-                let mut epi = vec![
-                    meta_gutter(),
-                    Span::styled("▣ ".to_string(), Style::default().fg(agent_color)),
-                    Span::styled(
-                        app.agent_name.clone(),
-                        Style::default()
-                            .fg(agent_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ];
-                if let Some(ms) = msg.duration_ms {
-                    epi.push(Span::styled(
-                        format!(" · {}", crate::app::format_elapsed_ms(ms)),
-                        Style::default().fg(palette.dim),
-                    ));
-                }
+                let footer = turn_done_footer(msg, is_last, app);
+                let mut epi = vec![meta_gutter()];
+                epi.push(Span::styled(
+                    footer,
+                    Style::default().fg(palette.dim),
+                ));
                 lines.push(Line::from(""));
                 lines.push(Line::from(epi));
             }
@@ -585,6 +573,26 @@ fn accent_line(content: Vec<Span<'static>>, show_rail: bool, rail_style: Style) 
 /// Shared left gutter for tools / epilogue (one level under free-flow body).
 fn meta_gutter() -> Span<'static> {
     Span::raw(" ".repeat(oc::ASSISTANT_PAD as usize))
+}
+
+/// Grok session event: `Worked for 12s` (+ optional token usage on last turn).
+///
+/// Matches pager `SessionEvent::TurnCompleted` wording — past tense, no agent
+/// badge, no `▣`. Cancelled turns are separate system messages.
+fn turn_done_footer(msg: &crate::app::ChatMessage, is_last: bool, app: &TuiApp) -> String {
+    let mut s = match msg.duration_ms {
+        Some(ms) => format!("Worked for {}", crate::app::format_elapsed_ms(ms)),
+        None => "Done.".to_string(),
+    };
+    // Token summary only for the most recent finished turn (session totals live elsewhere).
+    if is_last
+        && let Some(ref usage) = app.turn_usage
+        && (usage.input_tokens > 0 || usage.output_tokens > 0)
+    {
+        s.push_str(" · ");
+        s.push_str(&crate::app::format_usage_short(usage));
+    }
+    s
 }
 
 /// Grok `prompt_arrow()`: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.

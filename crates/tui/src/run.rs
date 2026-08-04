@@ -1234,30 +1234,32 @@ fn snapshot_cells(buf: &Buffer) -> Vec<Vec<String>> {
     rows
 }
 
-/// Status line after a turn ends: `4.2s · 1.2k in / 340 out · agent=build  xai/model`.
+/// Status line after a turn ends (header chrome).
+///
+/// Grok-like: `Worked for 4.2s · 1.2k in / 340 out` — no `agent=` noise.
+/// Cancelled: `Turn cancelled in 4.2s`.
 fn format_turn_done_status(
     app: &TuiApp,
-    agent_name: &str,
-    provider: &str,
-    model: &str,
+    _agent_name: &str,
+    _provider: &str,
+    _model: &str,
     elapsed_ms: Option<u128>,
     cancelled: bool,
 ) -> String {
-    let mut parts = Vec::new();
     if cancelled {
-        parts.push("Cancelled".to_string());
+        return match elapsed_ms {
+            Some(ms) => format!("Turn cancelled in {}", format_elapsed_ms(ms)),
+            None => "Turn cancelled.".into(),
+        };
     }
+    let mut parts = Vec::new();
     if let Some(ms) = elapsed_ms {
-        parts.push(format_elapsed_ms(ms));
+        parts.push(format!("Worked for {}", format_elapsed_ms(ms)));
+    } else {
+        parts.push("Done".into());
     }
     if let Some(ref usage) = app.turn_usage {
         parts.push(format_usage_short(usage));
-    }
-    if !cancelled {
-        parts.push(format!("agent={agent_name}  {provider}/{model}"));
-    } else if parts.len() == 1 {
-        // "Cancelled" alone — keep a period for the old short form.
-        return "Cancelled.".into();
     }
     parts.join(" · ")
 }
