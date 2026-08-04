@@ -16,26 +16,25 @@ use ratatui::{
 
 use super::base::dialog_frame;
 
-pub fn render_provider_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
-    let pd = &app.provider_dialog;
-
-    match pd.mode {
+pub fn render_provider_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
+    match app.provider_dialog.mode {
         ProviderDialogMode::Select => render_provider_select(frame, app, palette),
         ProviderDialogMode::AddCustom => render_provider_add(frame, app, palette),
     }
 }
 
-fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let chrome = dialog_frame(
         frame,
         "Select Provider",
-        &["Enter select", "a add", "Esc close"],
+        &["↑/↓ / wheel", "Enter select", "Esc / [✗]"],
         palette,
         60,
         70,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
+        app.dialog_close_hit = chrome.close_hit;
         return;
     }
     let pd = &app.provider_dialog;
@@ -89,6 +88,13 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
         }
     }
 
+    // Clickable rows start below the fixed header.
+    let rows_area = Rect {
+        x: area.x,
+        y: area.y + HEADER_ROWS as u16,
+        width: list_width,
+        height: area.height.saturating_sub(HEADER_ROWS as u16),
+    };
     let list_area = Rect {
         x: area.x,
         y: area.y,
@@ -122,17 +128,26 @@ fn render_provider_select(frame: &mut Frame, app: &TuiApp, palette: &ThemePalett
             );
         }
     }
+
+    app.apply_select_paint(
+        chrome.close_hit,
+        Some(rows_area),
+        start,
+        list_budget,
+        item_count,
+    );
 }
 
-fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+fn render_provider_add(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let chrome = dialog_frame(
         frame,
         "Add Custom Provider",
-        &["Ctrl+S save", "Tab next", "Esc cancel"],
+        &["Ctrl+S save", "Tab next", "Esc / [✗]"],
         palette,
         70,
         65,
     );
+    app.dialog_close_hit = chrome.close_hit;
     let area = chrome.content;
     let pd = &app.provider_dialog;
 
@@ -218,17 +233,18 @@ fn render_provider_add(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) 
     frame.render_widget(p, area);
 }
 
-pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let chrome = dialog_frame(
         frame,
         "Select Model",
-        &["Enter select", "Esc close"],
+        &["↑/↓ / wheel", "Enter select", "Esc / [✗]"],
         palette,
         50,
         50,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
+        app.dialog_close_hit = chrome.close_hit;
         return;
     }
     let ms = &app.model_selection;
@@ -273,6 +289,12 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
         }
     }
 
+    let rows_area = Rect {
+        x: area.x,
+        y: area.y + HEADER_ROWS as u16,
+        width: list_width,
+        height: area.height.saturating_sub(HEADER_ROWS as u16),
+    };
     let list_area = Rect {
         x: area.x,
         y: area.y,
@@ -305,4 +327,12 @@ pub fn render_model_dialog(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
             );
         }
     }
+
+    app.apply_select_paint(
+        chrome.close_hit,
+        Some(rows_area),
+        start,
+        list_budget,
+        item_count,
+    );
 }

@@ -22,8 +22,9 @@ use ratatui::Frame;
 
 /// Main dialog render — dispatches to the correct dialog renderer
 /// based on the active dialog kind.
-pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
-    let active = match app.dialogs.active() {
+pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
+    app.clear_dialog_hits();
+    let active = match app.dialogs.active().cloned() {
         Some(d) => d,
         None => return,
     };
@@ -33,15 +34,18 @@ pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
         crate::app::DialogKind::Model => render_model_dialog(frame, app, palette),
         crate::app::DialogKind::Help => render_help_overlay(frame, app, palette),
         crate::app::DialogKind::Confirm { title, message, .. } => {
-            render_confirm_dialog(frame, title, message, palette)
+            let chrome = render_confirm_dialog(frame, &title, &message, palette);
+            app.dialog_close_hit = chrome.close_hit;
         }
         crate::app::DialogKind::Alert { title, message } => {
-            render_alert_dialog(frame, title, message, palette)
+            let chrome = render_alert_dialog(frame, &title, &message, palette);
+            app.dialog_close_hit = chrome.close_hit;
         }
         crate::app::DialogKind::Permission { tool_name, detail } => {
             let title = format!("Permission: {tool_name}");
             let message = format!("{detail}\n\n[y/a] Allow   [n/d/Esc] Deny");
-            render_confirm_dialog(frame, &title, &message, palette)
+            let chrome = render_confirm_dialog(frame, &title, &message, palette);
+            app.dialog_close_hit = chrome.close_hit;
         }
         crate::app::DialogKind::SessionList => {
             let items: Vec<SelectItem> = app
@@ -56,14 +60,22 @@ pub fn render(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
                     )
                 })
                 .collect();
-            render_select(
+            let selected = app.session_list.selected;
+            let info = render_select(
                 frame,
                 " Sessions  ·  Enter to resume ",
                 &items,
-                app.session_list.selected,
+                selected,
                 "No sessions yet — they are recorded as you use whycode.",
                 palette,
-            )
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scroll_start,
+                info.visible,
+                info.total,
+            );
         }
         _ => {}
     }

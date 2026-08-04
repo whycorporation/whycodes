@@ -593,6 +593,39 @@ fn the_session_list_starts_empty() {
 }
 
 #[test]
+fn dialog_close_hit_and_list_index_from_paint_meta() {
+    use ratatui::layout::Rect;
+    let mut app = TuiApp::new(test_config());
+    app.apply_select_paint(
+        Some(Rect {
+            x: 50,
+            y: 5,
+            width: 5,
+            height: 1,
+        }),
+        Some(Rect {
+            x: 10,
+            y: 8,
+            width: 40,
+            height: 10,
+        }),
+        3, // scroll_start
+        10,
+        25, // total
+    );
+    assert!(app.dialog_close_contains(52, 5));
+    assert!(!app.dialog_close_contains(52, 6));
+    // Row 0 of viewport → absolute index 3
+    assert_eq!(app.dialog_list_index_at(12, 8), Some(3));
+    // Row 2 → 5
+    assert_eq!(app.dialog_list_index_at(12, 10), Some(5));
+    // Outside list
+    assert_eq!(app.dialog_list_index_at(12, 7), None);
+    // Past total
+    assert_eq!(app.dialog_list_index_at(12, 8 + 22), None);
+}
+
+#[test]
 fn session_list_selection_identifies_entry_for_resume() {
     use crate::app::{DialogKind, SessionEntry};
     use crate::input::open_dialog;

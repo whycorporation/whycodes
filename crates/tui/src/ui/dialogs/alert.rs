@@ -9,13 +9,18 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::dialog_frame;
+use super::base::{DialogChrome, dialog_frame};
 
-pub fn render_alert_dialog(frame: &mut Frame, title: &str, message: &str, palette: &ThemePalette) {
-    let chrome = dialog_frame(frame, title, &["any-key dismiss"], palette, 50, 30);
+pub fn render_alert_dialog(
+    frame: &mut Frame,
+    title: &str,
+    message: &str,
+    palette: &ThemePalette,
+) -> DialogChrome {
+    let chrome = dialog_frame(frame, title, &["any-key / [✗]"], palette, 50, 30);
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
-        return;
+        return chrome;
     }
 
     let body = Paragraph::new(Text::from(vec![
@@ -25,4 +30,5 @@ pub fn render_alert_dialog(frame: &mut Frame, title: &str, message: &str, palett
     .wrap(Wrap { trim: true })
     .style(Style::default().bg(palette.bg));
     frame.render_widget(body, area);
+    chrome
 }

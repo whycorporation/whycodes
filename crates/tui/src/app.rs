@@ -137,7 +137,7 @@ impl Default for SidebarState {
 
 // ── Provider Dialog State ──────────────────────────────────────────────
 /// Two modes: select from list, or add custom.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderDialogMode {
     Select,
     AddCustom,
@@ -540,6 +540,16 @@ pub struct TuiApp {
     pub provider_dialog: ProviderDialogState,
     pub model_selection: ModelSelectionState,
     pub session_list: SessionListState,
+    /// Last-paint hit box for the modal `[✗]` control (click = cancel).
+    pub dialog_close_hit: Option<Rect>,
+    /// Last-paint list body for the active select-style dialog.
+    pub dialog_list_hit: Option<Rect>,
+    /// First visible row index of that list (for click → absolute index).
+    pub dialog_list_scroll_start: usize,
+    /// Viewport row capacity of that list.
+    pub dialog_list_visible: usize,
+    /// Total items in that list.
+    pub dialog_list_total: usize,
 
     // ── slash suggestion popup ──
     pub slash_suggest: SlashSuggestState,
@@ -854,6 +864,11 @@ impl TuiApp {
             provider_dialog: ProviderDialogState::default(),
             model_selection: ModelSelectionState::default(),
             session_list: SessionListState::default(),
+            dialog_close_hit: None,
+            dialog_list_hit: None,
+            dialog_list_scroll_start: 0,
+            dialog_list_visible: 0,
+            dialog_list_total: 0,
             slash_suggest: SlashSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
@@ -1006,6 +1021,57 @@ impl TuiApp {
             self.current_agent_state,
             AgentState::Generating | AgentState::Thinking | AgentState::WaitingForPermission
         )
+    }
+
+    /// Reset modal mouse targets (call at the start of each dialog paint).
+    pub fn clear_dialog_hits(&mut self) {
+        self.dialog_close_hit = None;
+        self.dialog_list_hit = None;
+        self.dialog_list_scroll_start = 0;
+        self.dialog_list_visible = 0;
+        self.dialog_list_total = 0;
+    }
+
+    /// Apply hit boxes from a select-style list paint.
+    pub fn apply_select_paint(
+        &mut self,
+        close_hit: Option<Rect>,
+        list_area: Option<Rect>,
+        scroll_start: usize,
+        visible: usize,
+        total: usize,
+    ) {
+        self.dialog_close_hit = close_hit;
+        self.dialog_list_hit = list_area;
+        self.dialog_list_scroll_start = scroll_start;
+        self.dialog_list_visible = visible;
+        self.dialog_list_total = total;
+    }
+
+    /// Whether `(col, row)` lands on the painted modal close control.
+    pub fn dialog_close_contains(&self, col: u16, row: u16) -> bool {
+        self.dialog_close_hit
+            .map(|h| col >= h.x && col < h.x.saturating_add(h.width) && row == h.y)
+            .unwrap_or(false)
+    }
+
+    /// Map a screen cell to a list index when it falls inside the list body.
+    pub fn dialog_list_index_at(&self, col: u16, row: u16) -> Option<usize> {
+        let hit = self.dialog_list_hit?;
+        if col < hit.x
+            || col >= hit.x.saturating_add(hit.width)
+            || row < hit.y
+            || row >= hit.y.saturating_add(hit.height)
+        {
+            return None;
+        }
+        let row_off = (row - hit.y) as usize;
+        let idx = self.dialog_list_scroll_start.saturating_add(row_off);
+        if idx < self.dialog_list_total {
+            Some(idx)
+        } else {
+            None
+        }
     }
 
     pub fn focus_prompt(&mut self) {

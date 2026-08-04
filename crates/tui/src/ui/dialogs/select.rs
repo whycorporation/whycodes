@@ -41,6 +41,20 @@ impl SelectItem {
     }
 }
 
+/// Hit-test metadata written during paint for mouse wheel / click handling.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SelectPaintInfo {
+    pub close_hit: Option<Rect>,
+    /// Rows of the list (not including the scrollbar gutter).
+    pub list_area: Option<Rect>,
+    /// First visible item index.
+    pub scroll_start: usize,
+    /// How many rows fit in the viewport.
+    pub visible: usize,
+    /// Total items (for clamping click indices).
+    pub total: usize,
+}
+
 /// Render a select dialog.
 ///
 /// `empty` is shown in place of the list when there is nothing to choose. A
@@ -53,18 +67,21 @@ pub fn render_select(
     selected: usize,
     empty: &str,
     palette: &ThemePalette,
-) {
+) -> SelectPaintInfo {
     let chrome = dialog_frame(
         frame,
         title,
-        &["↑/↓ move", "Enter select", "Esc cancel"],
+        &["↑/↓ / wheel", "Enter select", "Esc / [✗]"],
         palette,
         60,
         60,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
-        return;
+        return SelectPaintInfo {
+            close_hit: chrome.close_hit,
+            ..Default::default()
+        };
     }
 
     let total = items.len();
@@ -143,6 +160,14 @@ pub fn render_select(
             colors.track,
             colors.thumb,
         );
+    }
+
+    SelectPaintInfo {
+        close_hit: chrome.close_hit,
+        list_area: Some(list_area),
+        scroll_start: start,
+        visible,
+        total,
     }
 }
 

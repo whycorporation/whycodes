@@ -9,25 +9,25 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::dialog_frame;
+use super::base::{DialogChrome, dialog_frame};
 
 pub fn render_confirm_dialog(
     frame: &mut Frame,
     title: &str,
     message: &str,
     palette: &ThemePalette,
-) {
+) -> DialogChrome {
     let chrome = dialog_frame(
         frame,
         title,
-        &["y yes", "n no", "Enter confirm", "Esc cancel"],
+        &["y yes", "n no", "Enter confirm", "Esc / [✗]"],
         palette,
         50,
         30,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
-        return;
+        return chrome;
     }
 
     let body = Paragraph::new(Text::from(vec![
@@ -37,4 +37,5 @@ pub fn render_confirm_dialog(
     .wrap(Wrap { trim: true })
     .style(Style::default().bg(palette.bg));
     frame.render_widget(body, area);
+    chrome
 }

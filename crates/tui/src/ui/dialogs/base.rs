@@ -26,6 +26,28 @@ const FOOTER_LINES: u16 = 1;
 pub struct DialogChrome {
     /// Body content (inside padding, above footer).
     pub content: Rect,
+    /// Full modal rect (border inclusive).
+    pub modal: Rect,
+    /// Clickable `[✗]` on the top-right border (if painted).
+    pub close_hit: Option<Rect>,
+}
+
+/// Geometry of the top-right close control (` [✗] `, 5 cells).
+///
+/// Shared by paint and mouse hit-testing so the glyph and the click target
+/// never drift apart.
+pub fn close_button_rect(modal: Rect) -> Option<Rect> {
+    const W: u16 = 5; // ` [✗] `
+    if modal.width < W + 2 {
+        return None;
+    }
+    let x0 = modal.x + modal.width.saturating_sub(W + 2);
+    Some(Rect {
+        x: x0,
+        y: modal.y,
+        width: W,
+        height: 1,
+    })
 }
 
 /// Paint a Grok-style centered modal and return the content rect.
@@ -46,6 +68,8 @@ pub fn dialog_frame(
     if dialog_area.width < 12 || dialog_area.height < 5 {
         return DialogChrome {
             content: dialog_area,
+            modal: dialog_area,
+            close_hit: None,
         };
     }
 
@@ -77,7 +101,8 @@ pub fn dialog_frame(
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
-    // Top-right [✗] on the border (visual parity; Esc still closes).
+    // Top-right [✗] — painted and hit-testable (click = Esc).
+    let close_hit = close_button_rect(dialog_area);
     paint_close_button(frame, dialog_area, palette);
 
     let footer_h = if shortcuts.is_empty() {
@@ -102,7 +127,11 @@ pub fn dialog_frame(
         paint_footer_shortcuts(frame, footer, shortcuts, palette);
     }
 
-    DialogChrome { content }
+    DialogChrome {
+        content,
+        modal: dialog_area,
+        close_hit,
+    }
 }
 
 /// Create a centered rectangle as a percentage of `r`.
@@ -129,18 +158,16 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 // ── private chrome ─────────────────────────────────────────────────────
 
 fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette) {
-    // Five cells: ` [✗] `, inset 2 columns from the right edge.
-    let cells = [" ", "[", "✗", "]", " "];
-    let w = cells.len() as u16;
-    if modal.width < w + 2 {
+    let Some(hit) = close_button_rect(modal) else {
         return;
-    }
-    let x0 = modal.x + modal.width.saturating_sub(w + 2);
-    let y = modal.y;
+    };
+    // Five cells: ` [✗] ` (must match `close_button_rect` width).
+    let cells = [" ", "[", "✗", "]", " "];
+    debug_assert_eq!(cells.len() as u16, hit.width);
     let buf = frame.buffer_mut();
     let style = Style::default().fg(palette.dim).bg(palette.bg);
     for (i, sym) in cells.iter().enumerate() {
-        if let Some(cell) = buf.cell_mut((x0 + i as u16, y)) {
+        if let Some(cell) = buf.cell_mut((hit.x + i as u16, hit.y)) {
             cell.set_symbol(sym);
             cell.set_style(style);
         }
@@ -213,5 +240,21 @@ mod tests {
         assert_eq!(split_shortcut_label("Esc cancel"), ("Esc", " cancel"));
         assert_eq!(split_shortcut_label("Enter"), ("Enter", ""));
         assert_eq!(split_shortcut_label("↑/↓ move"), ("↑/↓", " move"));
+    }
+
+    #[test]
+    fn close_button_sits_on_top_right_of_modal() {
+        let modal = Rect {
+            x: 10,
+            y: 5,
+            width: 40,
+            height: 20,
+        };
+        let hit = close_button_rect(modal).expect("wide enough");
+        assert_eq!(hit.y, modal.y);
+        assert_eq!(hit.width, 5);
+        assert_eq!(hit.height, 1);
+        // Inset 2 from the right edge of the modal.
+        assert_eq!(hit.x + hit.width + 2, modal.x + modal.width);
     }
 }

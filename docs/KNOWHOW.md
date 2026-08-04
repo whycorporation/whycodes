@@ -101,6 +101,23 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-04 — Dialog scrollbar wheel + [✗] were decorative only
+
+**Symptom:** Sessions (and other) picker: mouse wheel scrolled the chat behind the modal; top-right `[✗]` did nothing.
+
+**Root cause:**
+- `handle_mouse` always called `app.scroll_rows` — no dialog branch.
+- `paint_close_button` was visual parity only; no hit rect, no click handler.
+
+**Fix:**
+- Paint stores `dialog_close_hit` / `dialog_list_hit` + scroll window on `TuiApp`.
+- `handle_dialog_mouse`: wheel → `move_in_dialog`, click `[✗]` → dismiss, click row → select (+ confirm for Session/Model/Provider).
+- Shared `close_button_rect` keeps glyph and hit target aligned.
+
+**Prevention:** Any new modal that paints chrome via `dialog_frame` must publish hit boxes if it wants click/wheel; never assume Esc-only is enough when UI shows `[✗]`.
+
+---
+
 ### 2026-08-04 — Image drag-drop / path paste on the prompt
 
 **What:** Dragging an image onto the terminal (or pasting its path) attaches it to the next user turn as multimodal content.

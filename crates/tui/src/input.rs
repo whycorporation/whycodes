@@ -521,6 +521,28 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     // EnableMouseCapture (seen as `tui.exit reason=handle_event=false`).
     app.mouse_pos = Some((mouse.column, mouse.row));
 
+    // Modal open: wheel scrolls the list, clicks hit [✗] / rows — do not
+    // scroll the chat underneath (that looked like a dead scrollbar).
+    if app.dialogs.is_open() || app.key_context == KeymapContext::Dialog {
+        return handle_dialog_mouse(app, mouse);
+    }
+
+    // Help overlay owns its own scroll offset.
+    if app.mode == AppMode::Help {
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                app.help_scroll = app.help_scroll.saturating_add(3);
+                app.mark_dirty();
+            }
+            MouseEventKind::ScrollUp => {
+                app.help_scroll = app.help_scroll.saturating_sub(3);
+                app.mark_dirty();
+            }
+            _ => {}
+        }
+        return true;
+    }
+
     match mouse.kind {
         MouseEventKind::ScrollDown => {
             app.scroll_rows(-3);
@@ -614,6 +636,130 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     true
 }
 
+/// Mouse while a modal is open: wheel moves the list, `[✗]` closes, click row selects.
+fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
+    let active = match app.dialogs.active().cloned() {
+        Some(d) => d,
+        None => return true,
+    };
+
+    match mouse.kind {
+        MouseEventKind::ScrollDown => {
+            move_in_dialog(app, &active, 1);
+            app.mark_dirty();
+        }
+        MouseEventKind::ScrollUp => {
+            move_in_dialog(app, &active, -1);
+            app.mark_dirty();
+        }
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Track click origin; confirm on Up only if it was a click not a drag.
+            app.mouse_sel = Some(MouseSelection {
+                anchor_x: mouse.column,
+                anchor_y: mouse.row,
+                focus_x: mouse.column,
+                focus_y: mouse.row,
+                dragging: false,
+            });
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some(sel) = &mut app.mouse_sel {
+                sel.focus_x = mouse.column;
+                sel.focus_y = mouse.row;
+                if sel.anchor_x != sel.focus_x || sel.anchor_y != sel.focus_y {
+                    sel.dragging = true;
+                }
+            }
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            let col = mouse.column;
+            let row = mouse.row;
+            let was_click = app
+                .mouse_sel
+                .as_ref()
+                .map(|s| !s.dragging && s.anchor_x == col && s.anchor_y == row)
+                .unwrap_or(true);
+            app.mouse_sel = None;
+            if !was_click {
+                return true;
+            }
+
+            // [✗] → cancel (same as Esc).
+            if app.dialog_close_contains(col, row) {
+                dismiss_dialog(app);
+                return true;
+            }
+
+            // Click a row → select (and for pickers, confirm immediately).
+            if let Some(idx) = app.dialog_list_index_at(col, row) {
+                match active {
+                    DialogKind::SessionList => {
+                        app.session_list.selected = idx;
+                        confirm_dialog(app, &active);
+                    }
+                    DialogKind::Model => {
+                        app.model_selection.selected = idx;
+                        confirm_dialog(app, &active);
+                    }
+                    DialogKind::Provider
+                        if app.provider_dialog.mode == crate::app::ProviderDialogMode::Select =>
+                    {
+                        app.provider_dialog.selected = idx;
+                        confirm_dialog(app, &active);
+                    }
+                    _ => {
+                        // List dialogs without click-to-confirm: just move highlight.
+                        move_in_dialog_to(app, &active, idx);
+                    }
+                }
+                app.mark_dirty();
+            }
+        }
+        MouseEventKind::Moved => {}
+        _ => {}
+    }
+    true
+}
+
+/// Pop the active dialog and leave dialog mode when the stack is empty.
+fn dismiss_dialog(app: &mut TuiApp) {
+    app.dialogs.pop();
+    app.mouse_sel = None;
+    if !app.dialogs.is_open() {
+        app.mode = AppMode::Normal;
+        app.key_context = KeymapContext::Normal;
+        app.clear_dialog_hits();
+    }
+    app.mark_dirty();
+}
+
+/// Jump the list cursor to an absolute index (clamped).
+fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
+    use crate::app::ProviderDialogMode;
+    match active {
+        DialogKind::Provider if app.provider_dialog.mode == ProviderDialogMode::AddCustom => {}
+        DialogKind::Provider => {
+            let len = app.provider_dialog.providers.len() + 1;
+            if len > 0 {
+                app.provider_dialog.selected = idx.min(len - 1);
+            }
+        }
+        DialogKind::Model => {
+            let len = app.model_selection.models.len();
+            if len > 0 {
+                app.model_selection.selected = idx.min(len - 1);
+            }
+        }
+        DialogKind::SessionList => {
+            let len = app.session_list.sessions.len();
+            if len > 0 {
+                app.session_list.selected = idx.min(len - 1);
+            }
+        }
+        _ => {}
+    }
+}
+
 // ── Dialog Key Handling ────────────────────────────────────────────────
 fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
     let action = crate::keymap::Keymap::new().resolve(KeymapContext::Dialog, app.focus, key);
@@ -631,19 +777,21 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
 
     match action {
         Some(Action::DialogCancel) => {
-            app.dialogs.pop();
-            if !app.dialogs.is_open() {
-                app.mode = AppMode::Normal;
-                app.key_context = KeymapContext::Normal;
-            }
+            dismiss_dialog(app);
         }
         Some(Action::DialogConfirm) => {
             confirm_dialog(app, &active);
         }
         // Up/Down are bound to next/prev field. In a form that means the next
         // input; in a list dialog it means the next row.
-        Some(Action::DialogNextField) => move_in_dialog(app, &active, 1),
-        Some(Action::DialogPrevField) => move_in_dialog(app, &active, -1),
+        Some(Action::DialogNextField) => {
+            move_in_dialog(app, &active, 1);
+            app.mark_dirty();
+        }
+        Some(Action::DialogPrevField) => {
+            move_in_dialog(app, &active, -1);
+            app.mark_dirty();
+        }
         Some(Action::InputBackspace) => {
             if matches!(active, DialogKind::Provider) {
                 let field_val = match app.provider_dialog.active_field {
@@ -657,6 +805,32 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             }
         }
         _ => {
+            // PageUp / PageDown jump by viewport size (list pickers).
+            let page = app.dialog_list_visible.max(1) as isize;
+            match key.code {
+                KeyCode::PageDown => {
+                    move_in_dialog(app, &active, page);
+                    app.mark_dirty();
+                    return true;
+                }
+                KeyCode::PageUp => {
+                    move_in_dialog(app, &active, -page);
+                    app.mark_dirty();
+                    return true;
+                }
+                KeyCode::Home => {
+                    move_in_dialog_to(app, &active, 0);
+                    app.mark_dirty();
+                    return true;
+                }
+                KeyCode::End => {
+                    let last = app.dialog_list_total.saturating_sub(1);
+                    move_in_dialog_to(app, &active, last);
+                    app.mark_dirty();
+                    return true;
+                }
+                _ => {}
+            }
             // Forward char input to provider form fields. Only in the add-custom
             // form: in select mode a keystroke is navigation, not text.
             if matches!(active, DialogKind::Provider)
@@ -706,21 +880,13 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             }
         }
         DialogKind::SessionList => {
-            if let Some(entry) = app
-                .session_list
-                .sessions
-                .get(app.session_list.selected)
-            {
+            if let Some(entry) = app.session_list.sessions.get(app.session_list.selected) {
                 app.pending_session_id = Some(entry.id.clone());
             }
         }
         _ => {}
     }
-    app.dialogs.pop();
-    if !app.dialogs.is_open() {
-        app.mode = AppMode::Normal;
-        app.key_context = KeymapContext::Normal;
-    }
+    dismiss_dialog(app);
 }
 
 // ── Command Execution ──────────────────────────────────────────────────
