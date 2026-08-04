@@ -609,10 +609,18 @@ fn dialog_close_hit_and_list_index_from_paint_meta() {
             width: 40,
             height: 10,
         }),
+        Some(Rect {
+            x: 50,
+            y: 8,
+            width: 1,
+            height: 10,
+        }),
         3, // scroll_start
         10,
         25, // total
     );
+    assert!(app.dialog_scrollbar_contains(50, 12));
+    assert!(!app.dialog_scrollbar_contains(49, 12));
     assert!(app.dialog_close_contains(52, 5));
     assert!(!app.dialog_close_contains(52, 6));
     // Row 0 of viewport → absolute index 3

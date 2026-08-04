@@ -117,6 +117,95 @@ pub fn scroll_to_selected(selected: usize, total: usize, visible: usize) -> usiz
         .min(total.saturating_sub(rows))
 }
 
+/// Thumb length, max scroll offset, and travel distance for a track of `height`.
+///
+/// Returns `None` when a scrollbar should not be shown (`total <= visible`).
+pub fn scrollbar_metrics(
+    total: usize,
+    visible: usize,
+    height: usize,
+) -> Option<(usize /* thumb_len */, usize /* max_off */, usize /* travel */)> {
+    if total <= visible || height == 0 || visible == 0 {
+        return None;
+    }
+    let thumb_len = ((visible * height).div_ceil(total)).max(1).min(height);
+    let max_off = total - visible;
+    let travel = height.saturating_sub(thumb_len);
+    Some((thumb_len, max_off, travel))
+}
+
+/// Pixel-row of the thumb top for a given content `offset` (matches [`paint_scrollbar`]).
+pub fn thumb_top_for_offset(offset: usize, max_off: usize, travel: usize) -> usize {
+    if max_off == 0 || travel == 0 {
+        0
+    } else {
+        (offset * travel + max_off / 2) / max_off
+    }
+}
+
+/// Content offset for a thumb whose top is at `thumb_top` track rows.
+pub fn offset_for_thumb_top(thumb_top: usize, max_off: usize, travel: usize) -> usize {
+    if max_off == 0 || travel == 0 {
+        0
+    } else {
+        (thumb_top.min(travel) * max_off + travel / 2) / travel
+    }
+}
+
+/// Map a pointer row on the scrollbar track to a content scroll offset.
+///
+/// `grab_in_thumb` is the row within the thumb where the user grabbed (0 = top
+/// of thumb). When `None`, the click is treated as positioning the thumb center
+/// under the pointer (track click).
+pub fn offset_from_pointer_y(
+    y: u16,
+    track: Rect,
+    total: usize,
+    visible: usize,
+    grab_in_thumb: Option<u16>,
+) -> usize {
+    let height = track.height as usize;
+    let Some((thumb_len, max_off, travel)) = scrollbar_metrics(total, visible, height) else {
+        return 0;
+    };
+    if y < track.y || y >= track.y.saturating_add(track.height) {
+        // Clamp to ends when the pointer leaves the track while dragging.
+        if y < track.y {
+            return 0;
+        }
+        return max_off;
+    }
+    let rel = (y - track.y) as usize;
+    let thumb_top = match grab_in_thumb {
+        Some(grab) => rel.saturating_sub(grab as usize),
+        None => rel.saturating_sub(thumb_len / 2),
+    };
+    offset_for_thumb_top(thumb_top, max_off, travel)
+}
+
+/// Selection index that makes [`scroll_to_selected`] yield exactly `offset`.
+///
+/// Picking the last visible row of the window pins the viewport top to `offset`.
+pub fn selection_for_offset(offset: usize, total: usize, visible: usize) -> usize {
+    if total == 0 {
+        return 0;
+    }
+    let vis = visible.min(total).max(1);
+    let max_off = total.saturating_sub(vis);
+    let offset = offset.min(max_off);
+    offset
+        .saturating_add(vis.saturating_sub(1))
+        .min(total.saturating_sub(1))
+}
+
+/// Whether `(col, row)` is inside the scrollbar track.
+pub fn scrollbar_contains(track: Rect, col: u16, row: u16) -> bool {
+    col >= track.x
+        && col < track.x.saturating_add(track.width.max(1))
+        && row >= track.y
+        && row < track.y.saturating_add(track.height)
+}
+
 /// Center-ish scroll used by slash suggest (selected near vertical middle).
 pub fn scroll_center(selected: usize, total: usize, visible: usize) -> usize {
     if total <= visible || selected < visible / 2 {
@@ -223,5 +312,26 @@ mod tests {
         assert_eq!(scroll_center(10, 20, 6), 7);
         assert_eq!(scroll_center(19, 20, 6), 14);
         assert_eq!(scroll_center(0, 4, 6), 0);
+    }
+
+    #[test]
+    fn selection_for_offset_pins_viewport_top() {
+        // visible=5, offset=3 → selected at last visible row so scroll_to_selected == 3
+        let sel = selection_for_offset(3, 20, 5);
+        assert_eq!(scroll_to_selected(sel, 20, 5), 3);
+        let sel0 = selection_for_offset(0, 20, 5);
+        assert_eq!(scroll_to_selected(sel0, 20, 5), 0);
+    }
+
+    #[test]
+    fn offset_from_pointer_roundtrips_thumb_ends() {
+        let track = Rect::new(10, 0, 1, 10);
+        // Top of track → offset 0
+        assert_eq!(offset_from_pointer_y(0, track, 30, 10, Some(0)), 0);
+        // Bottom of track with grab at thumb bottom-ish
+        let max_off = 20usize;
+        let bottom = offset_from_pointer_y(9, track, 30, 10, Some(0));
+        assert!(bottom <= max_off);
+        assert!(bottom >= max_off.saturating_sub(2), "near end: {bottom}");
     }
 }

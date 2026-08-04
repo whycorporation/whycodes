@@ -31,6 +31,7 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
         palette,
         60,
         70,
+        app.mouse_pos,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
@@ -106,6 +107,7 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
         .style(Style::default().bg(palette.bg));
     frame.render_widget(p, list_area);
 
+    let mut scrollbar_hit = None;
     if needs_scrollbar {
         let colors = ScrollbarColors::from_palette(palette);
         // Bar covers the list body only (below header).
@@ -126,12 +128,14 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
                 colors.track,
                 colors.thumb,
             );
+            scrollbar_hit = Some(sb);
         }
     }
 
     app.apply_select_paint(
         chrome.close_hit,
         Some(rows_area),
+        scrollbar_hit,
         start,
         list_budget,
         item_count,
@@ -146,6 +150,7 @@ fn render_provider_add(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalet
         palette,
         70,
         65,
+        app.mouse_pos,
     );
     app.dialog_close_hit = chrome.close_hit;
     let area = chrome.content;
@@ -241,6 +246,7 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         palette,
         50,
         50,
+        app.mouse_pos,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
@@ -306,6 +312,7 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         .style(Style::default().bg(palette.bg));
     frame.render_widget(p, list_area);
 
+    let mut scrollbar_hit = None;
     if needs_scrollbar && !ms.models.is_empty() {
         let colors = ScrollbarColors::from_palette(palette);
         let bar_h = area.height.saturating_sub(HEADER_ROWS as u16);
@@ -325,12 +332,14 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
                 colors.track,
                 colors.thumb,
             );
+            scrollbar_hit = Some(sb);
         }
     }
 
     app.apply_select_paint(
         chrome.close_hit,
         Some(rows_area),
+        scrollbar_hit,
         start,
         list_budget,
         item_count,

@@ -636,7 +636,8 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     true
 }
 
-/// Mouse while a modal is open: wheel moves the list, `[✗]` closes, click row selects.
+/// Mouse while a modal is open: wheel moves the list, `[✗]` closes, click row selects,
+/// scrollbar drag scrolls.
 fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     let active = match app.dialogs.active().cloned() {
         Some(d) => d,
@@ -653,7 +654,20 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             app.mark_dirty();
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            // Scrollbar first: start a thumb drag or jump on track click.
+            if app.dialog_scrollbar_contains(mouse.column, mouse.row)
+                && let Some(track) = app.dialog_scrollbar_hit
+            {
+                let grab = scrollbar_grab_at(app, mouse.row, track);
+                app.dialog_scrollbar_grab = Some(grab);
+                apply_scrollbar_offset(app, &active, mouse.row, Some(grab));
+                app.mouse_sel = None;
+                app.mark_dirty();
+                return true;
+            }
+
             // Track click origin; confirm on Up only if it was a click not a drag.
+            app.dialog_scrollbar_grab = None;
             app.mouse_sel = Some(MouseSelection {
                 anchor_x: mouse.column,
                 anchor_y: mouse.row,
@@ -663,6 +677,12 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             });
         }
         MouseEventKind::Drag(MouseButton::Left) => {
+            if app.dialog_scrollbar_grab.is_some() {
+                let grab = app.dialog_scrollbar_grab;
+                apply_scrollbar_offset(app, &active, mouse.row, grab);
+                app.mark_dirty();
+                return true;
+            }
             if let Some(sel) = &mut app.mouse_sel {
                 sel.focus_x = mouse.column;
                 sel.focus_y = mouse.row;
@@ -672,6 +692,13 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
+            // End scrollbar drag without treating it as a list-row click.
+            if app.dialog_scrollbar_grab.take().is_some() {
+                app.mouse_sel = None;
+                app.mark_dirty();
+                return true;
+            }
+
             let col = mouse.column;
             let row = mouse.row;
             let was_click = app
@@ -715,16 +742,63 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 app.mark_dirty();
             }
         }
-        MouseEventKind::Moved => {}
+        MouseEventKind::Moved => {
+            // Hover over [✗] needs a repaint for the color change.
+            // (Position already stored in handle_mouse; dirty always so hover
+            // updates even when the host only sends Move without Press.)
+            app.mark_dirty();
+        }
         _ => {}
     }
     true
+}
+
+/// Grab offset within the thumb for a press on the scrollbar track.
+fn scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) -> u16 {
+    use crate::ui::scrollbar::{scrollbar_metrics, thumb_top_for_offset};
+    let total = app.dialog_list_total;
+    let visible = app.dialog_list_visible.max(1);
+    let height = track.height as usize;
+    let Some((thumb_len, max_off, travel)) = scrollbar_metrics(total, visible, height) else {
+        return 0;
+    };
+    let offset = app.dialog_list_scroll_start;
+    let top = thumb_top_for_offset(offset, max_off, travel);
+    let rel = row.saturating_sub(track.y) as usize;
+    if rel >= top && rel < top + thumb_len {
+        (rel - top) as u16
+    } else {
+        // Track click: pin grab to thumb middle so the jump feels centered.
+        (thumb_len / 2) as u16
+    }
+}
+
+/// Scroll the list so the viewport matches a pointer y on the scrollbar.
+fn apply_scrollbar_offset(
+    app: &mut TuiApp,
+    active: &DialogKind,
+    row: u16,
+    grab: Option<u16>,
+) {
+    use crate::ui::scrollbar::{offset_from_pointer_y, selection_for_offset};
+    let Some(track) = app.dialog_scrollbar_hit else {
+        return;
+    };
+    let total = app.dialog_list_total;
+    let visible = app.dialog_list_visible.max(1);
+    if total == 0 {
+        return;
+    }
+    let offset = offset_from_pointer_y(row, track, total, visible, grab);
+    let sel = selection_for_offset(offset, total, visible);
+    move_in_dialog_to(app, active, sel);
 }
 
 /// Pop the active dialog and leave dialog mode when the stack is empty.
 fn dismiss_dialog(app: &mut TuiApp) {
     app.dialogs.pop();
     app.mouse_sel = None;
+    app.dialog_scrollbar_grab = None;
     if !app.dialogs.is_open() {
         app.mode = AppMode::Normal;
         app.key_context = KeymapContext::Normal;

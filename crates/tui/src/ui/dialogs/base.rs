@@ -55,6 +55,8 @@ pub fn close_button_rect(modal: Rect) -> Option<Rect> {
 /// `shortcuts` are labels like `"Esc cancel"` / `"Enter select"` — the first
 /// whitespace-separated token is the key (bold), the rest is the hint (dim),
 /// joined with `  |  ` and centered on the footer row.
+///
+/// `mouse_pos` drives hover styling on the top-right `[✗]` control.
 pub fn dialog_frame(
     frame: &mut Frame,
     title: &str,
@@ -62,6 +64,7 @@ pub fn dialog_frame(
     palette: &ThemePalette,
     percent_x: u16,
     percent_y: u16,
+    mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
     let area = frame.area();
     let dialog_area = centered_rect(percent_x, percent_y, area);
@@ -103,7 +106,13 @@ pub fn dialog_frame(
 
     // Top-right [✗] — painted and hit-testable (click = Esc).
     let close_hit = close_button_rect(dialog_area);
-    paint_close_button(frame, dialog_area, palette);
+    let close_hovered = match (close_hit, mouse_pos) {
+        (Some(hit), Some((c, r))) => {
+            c >= hit.x && c < hit.x.saturating_add(hit.width) && r == hit.y
+        }
+        _ => false,
+    };
+    paint_close_button(frame, dialog_area, palette, close_hovered);
 
     let footer_h = if shortcuts.is_empty() {
         0
@@ -157,7 +166,12 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 // ── private chrome ─────────────────────────────────────────────────────
 
-fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette) {
+fn paint_close_button(
+    frame: &mut Frame,
+    modal: Rect,
+    palette: &ThemePalette,
+    hovered: bool,
+) {
     let Some(hit) = close_button_rect(modal) else {
         return;
     };
@@ -165,7 +179,16 @@ fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette) {
     let cells = [" ", "[", "✗", "]", " "];
     debug_assert_eq!(cells.len() as u16, hit.width);
     let buf = frame.buffer_mut();
-    let style = Style::default().fg(palette.dim).bg(palette.bg);
+    // Idle: dim chrome. Hover: error red so the control reads as "close".
+    let fg = if hovered { palette.error } else { palette.dim };
+    let style = Style::default()
+        .fg(fg)
+        .bg(palette.bg)
+        .add_modifier(if hovered {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
     for (i, sym) in cells.iter().enumerate() {
         if let Some(cell) = buf.cell_mut((hit.x + i as u16, hit.y)) {
             cell.set_symbol(sym);

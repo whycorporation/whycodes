@@ -47,6 +47,8 @@ pub struct SelectPaintInfo {
     pub close_hit: Option<Rect>,
     /// Rows of the list (not including the scrollbar gutter).
     pub list_area: Option<Rect>,
+    /// Scrollbar track (when the list overflows); drag / click to scroll.
+    pub scrollbar_hit: Option<Rect>,
     /// First visible item index.
     pub scroll_start: usize,
     /// How many rows fit in the viewport.
@@ -67,6 +69,7 @@ pub fn render_select(
     selected: usize,
     empty: &str,
     palette: &ThemePalette,
+    mouse_pos: Option<(u16, u16)>,
 ) -> SelectPaintInfo {
     let chrome = dialog_frame(
         frame,
@@ -75,6 +78,7 @@ pub fn render_select(
         palette,
         60,
         60,
+        mouse_pos,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
@@ -143,7 +147,7 @@ pub fn render_select(
         list_area,
     );
 
-    if needs_scrollbar {
+    let scrollbar_hit = if needs_scrollbar {
         let colors = ScrollbarColors::from_palette(palette);
         let sb = Rect {
             x: area.x + area.width.saturating_sub(1),
@@ -160,11 +164,15 @@ pub fn render_select(
             colors.track,
             colors.thumb,
         );
-    }
+        Some(sb)
+    } else {
+        None
+    };
 
     SelectPaintInfo {
         close_hit: chrome.close_hit,
         list_area: Some(list_area),
+        scrollbar_hit,
         scroll_start: start,
         visible,
         total,

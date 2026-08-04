@@ -544,12 +544,16 @@ pub struct TuiApp {
     pub dialog_close_hit: Option<Rect>,
     /// Last-paint list body for the active select-style dialog.
     pub dialog_list_hit: Option<Rect>,
+    /// Last-paint scrollbar track (when the list overflows).
+    pub dialog_scrollbar_hit: Option<Rect>,
     /// First visible row index of that list (for click → absolute index).
     pub dialog_list_scroll_start: usize,
     /// Viewport row capacity of that list.
     pub dialog_list_visible: usize,
     /// Total items in that list.
     pub dialog_list_total: usize,
+    /// Active thumb drag: row within the thumb where the grab started (`None` = not dragging).
+    pub dialog_scrollbar_grab: Option<u16>,
 
     // ── slash suggestion popup ──
     pub slash_suggest: SlashSuggestState,
@@ -866,9 +870,11 @@ impl TuiApp {
             session_list: SessionListState::default(),
             dialog_close_hit: None,
             dialog_list_hit: None,
+            dialog_scrollbar_hit: None,
             dialog_list_scroll_start: 0,
             dialog_list_visible: 0,
             dialog_list_total: 0,
+            dialog_scrollbar_grab: None,
             slash_suggest: SlashSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
@@ -1024,9 +1030,13 @@ impl TuiApp {
     }
 
     /// Reset modal mouse targets (call at the start of each dialog paint).
+    ///
+    /// Does **not** clear `dialog_scrollbar_grab` — a drag spans frames and
+    /// must survive repaint.
     pub fn clear_dialog_hits(&mut self) {
         self.dialog_close_hit = None;
         self.dialog_list_hit = None;
+        self.dialog_scrollbar_hit = None;
         self.dialog_list_scroll_start = 0;
         self.dialog_list_visible = 0;
         self.dialog_list_total = 0;
@@ -1037,12 +1047,14 @@ impl TuiApp {
         &mut self,
         close_hit: Option<Rect>,
         list_area: Option<Rect>,
+        scrollbar_hit: Option<Rect>,
         scroll_start: usize,
         visible: usize,
         total: usize,
     ) {
         self.dialog_close_hit = close_hit;
         self.dialog_list_hit = list_area;
+        self.dialog_scrollbar_hit = scrollbar_hit;
         self.dialog_list_scroll_start = scroll_start;
         self.dialog_list_visible = visible;
         self.dialog_list_total = total;
@@ -1052,6 +1064,20 @@ impl TuiApp {
     pub fn dialog_close_contains(&self, col: u16, row: u16) -> bool {
         self.dialog_close_hit
             .map(|h| col >= h.x && col < h.x.saturating_add(h.width) && row == h.y)
+            .unwrap_or(false)
+    }
+
+    /// Whether the pointer is over the close control (for hover repaint).
+    pub fn dialog_close_hovered(&self) -> bool {
+        self.mouse_pos
+            .map(|(c, r)| self.dialog_close_contains(c, r))
+            .unwrap_or(false)
+    }
+
+    /// Whether `(col, row)` lands on the scrollbar track.
+    pub fn dialog_scrollbar_contains(&self, col: u16, row: u16) -> bool {
+        self.dialog_scrollbar_hit
+            .map(|h| crate::ui::scrollbar::scrollbar_contains(h, col, row))
             .unwrap_or(false)
     }
 

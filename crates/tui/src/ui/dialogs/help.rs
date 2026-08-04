@@ -25,6 +25,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
         palette,
         65,
         75,
+        app.mouse_pos,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {

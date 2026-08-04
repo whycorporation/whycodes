@@ -29,22 +29,23 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         None => return,
     };
 
+    let mouse = app.mouse_pos;
     match active {
         crate::app::DialogKind::Provider => render_provider_dialog(frame, app, palette),
         crate::app::DialogKind::Model => render_model_dialog(frame, app, palette),
         crate::app::DialogKind::Help => render_help_overlay(frame, app, palette),
         crate::app::DialogKind::Confirm { title, message, .. } => {
-            let chrome = render_confirm_dialog(frame, &title, &message, palette);
+            let chrome = render_confirm_dialog(frame, &title, &message, palette, mouse);
             app.dialog_close_hit = chrome.close_hit;
         }
         crate::app::DialogKind::Alert { title, message } => {
-            let chrome = render_alert_dialog(frame, &title, &message, palette);
+            let chrome = render_alert_dialog(frame, &title, &message, palette, mouse);
             app.dialog_close_hit = chrome.close_hit;
         }
         crate::app::DialogKind::Permission { tool_name, detail } => {
             let title = format!("Permission: {tool_name}");
             let message = format!("{detail}\n\n[y/a] Allow   [n/d/Esc] Deny");
-            let chrome = render_confirm_dialog(frame, &title, &message, palette);
+            let chrome = render_confirm_dialog(frame, &title, &message, palette, mouse);
             app.dialog_close_hit = chrome.close_hit;
         }
         crate::app::DialogKind::SessionList => {
@@ -68,10 +69,12 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 selected,
                 "No sessions yet — they are recorded as you use whycode.",
                 palette,
+                mouse,
             );
             app.apply_select_paint(
                 info.close_hit,
                 info.list_area,
+                info.scrollbar_hit,
                 info.scroll_start,
                 info.visible,
                 info.total,

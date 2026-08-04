@@ -16,6 +16,7 @@ pub fn render_confirm_dialog(
     title: &str,
     message: &str,
     palette: &ThemePalette,
+    mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
     let chrome = dialog_frame(
         frame,
@@ -24,6 +25,7 @@ pub fn render_confirm_dialog(
         palette,
         50,
         30,
+        mouse_pos,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
