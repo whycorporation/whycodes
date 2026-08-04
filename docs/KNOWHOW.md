@@ -187,6 +187,25 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-05 — Slow turns / inflated "Worked for Xs" (HTTP + title refine)
+
+**Symptom:** Simple chat ("selam") shows tens of seconds; first turn especially sluggish; multi-step tool loops feel cold every time.
+
+**Root cause:**
+1. `client_identity::http_client()` built a **new** `reqwest::Client` per request → no keep-alive / TLS session reuse.
+2. TUI **awaited** LLM title refine before releasing `agent_busy` (second API call after every first turn).
+3. Title refine also ran for trivial greetings where the offline heuristic is enough.
+
+**Fix:**
+- Process-wide `OnceLock` HTTP client (`pool_max_idle_per_host`, `tcp_nodelay`, keepalive).
+- `Agent::spawn_title_refine` + TUI channel `(session_id, title)` — turn completes immediately; title applies async (with race buffer).
+- `is_trivial_title_seed` skips refine for greetings/pings; 8s timeout on title complete.
+- Stable sorted tool definitions (prompt-cache friendly).
+
+**Prevention:** Never `Client::builder()` on the hot path. Never block `agent_busy` on niceties (title, telemetry).
+
+---
+
 ### 2026-08-05 — Grok-style chrome pack (HitArea, turn strip, status bar)
 
 **What:** Ported portable Grok Build TUI patterns (no xAI product chrome):

@@ -74,16 +74,23 @@ impl ToolExecutor {
         self.tools.get(name).map(|t| t.as_ref())
     }
 
-    /// Get all tool definitions for LLM requests, filtered by permissions
+    /// Get all tool definitions for LLM requests, filtered by permissions.
+    ///
+    /// Sorted by tool name so the tools array is byte-stable across process
+    /// restarts (FxHashMap order is not). Stable order helps provider prompt
+    /// caches (prefix match) and makes multi-turn TTFT more predictable.
     pub fn get_definitions(
         &self,
         permissions: &PermissionSet,
     ) -> Vec<whycode_core::types::ToolDefinition> {
-        self.tools
+        let mut defs: Vec<_> = self
+            .tools
             .values()
             .filter(|t| t.is_allowed(permissions))
             .map(|t| t.definition())
-            .collect()
+            .collect();
+        defs.sort_by(|a, b| a.name.cmp(&b.name));
+        defs
     }
 
     /// Execute a single tool call

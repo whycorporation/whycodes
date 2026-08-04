@@ -418,6 +418,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TurnEvent>();
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
+    // Async session titles (small-model refine) — never blocks agent_busy.
+    // Payload: (session_id, title) so a late refine cannot touch another session.
+    let (title_tx, mut title_rx) = mpsc::unbounded_channel::<(String, String)>();
     // Live context window from config provider's GET …/v1/models (only active model).
     // Channel payload is tiny: (provider, model, context_window) — never the full catalog.
     let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
@@ -427,6 +430,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut cancel_flag: Option<CancelFlag> = None;
     let mut spinner_frame: usize = 0;
     let mut pending_perm_reply: Option<tokio::sync::oneshot::Sender<bool>> = None;
+    // Title may arrive before TurnOutcome restores the real session; hold it.
+    let mut pending_async_title: Option<(String, String)> = None;
 
     // Keep home empty so OpenCode-style logo shows (no system spam).
     // Key missing is communicated via footer "Get started /connect".
@@ -528,12 +533,26 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 app.mark_dirty();
             }
 
+            // ── Async title refine (does not hold agent_busy) ─────────
+            while let Ok((sid, title)) = title_rx.try_recv() {
+                if session.id == sid {
+                    if session.apply_generated_title(&title) {
+                        app.session_title = session.title.clone();
+                        persist_session_best_effort(&session, "title_async");
+                        app.mark_dirty();
+                    }
+                } else {
+                    // Turn still restoring session, or user switched sessions.
+                    pending_async_title = Some((sid, title));
+                }
+            }
+
             // ── Turn finished ─────────────────────────────────────────
             if let Ok(outcome) = done_rx.try_recv() {
                 agent_busy = false;
                 cancel_flag = None;
-                // Stamp "Worked for Xs" from work_ms measured *before* title
-                // refine — otherwise auto-title LLM time inflates the footer.
+                // Stamp "Worked for Xs" from work_ms only (title refine is async
+                // and never included — see spawn_title_refine below).
                 let work_ms = match &outcome {
                     TurnOutcome::Ok { work_ms, .. } | TurnOutcome::Err { work_ms, .. } => *work_ms,
                 };
@@ -548,6 +567,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     } => {
                         agent = a;
                         session = s;
+                        // Apply a title that raced ahead of this restore.
+                        if let Some((sid, title)) = pending_async_title.take()
+                            && session.id == sid
+                        {
+                            let _ = session.apply_generated_title(&title);
+                        }
                         app.session_title = session.title.clone();
                         // Ensure final text is present
                         if !text.is_empty()
@@ -581,6 +606,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     } => {
                         agent = a;
                         session = s;
+                        if let Some((sid, title)) = pending_async_title.take()
+                            && session.id == sid
+                        {
+                            let _ = session.apply_generated_title(&title);
+                        }
                         app.session_title = session.title.clone();
                         app.finish_open_thinking();
                         if cancelled {
@@ -851,6 +881,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 let cancel2 = Some(flag);
                 let auto_title = config.session.auto_title;
                 let title_model = config.session.title_model.clone();
+                let title_tx2 = title_tx.clone();
 
                 // Move agent + session into background task
                 let ag = std::mem::replace(
@@ -875,8 +906,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     let agent = ag;
                     let mut session = sess;
-                    // Time only the agent loop — title refine is post-turn and
-                    // must not show up as "Worked for 37s" on a 2s chat.
+                    // Time only the agent loop. Title refine runs async *after*
+                    // we release agent_busy so the user can type immediately.
                     let work_t0 = std::time::Instant::now();
                     let result = agent
                         .run_turn_with_events(
@@ -890,18 +921,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         )
                         .await;
                     let work_ms = work_t0.elapsed().as_millis();
-                    // After the first successful turn, refine title with a small model
-                    // (user + assistant context beats first-message-only).
+                    // Kick off small-model title refine without awaiting — the
+                    // main loop applies the title when title_tx delivers.
                     if auto_title && result.is_ok() {
-                        agent
-                            .maybe_refine_title(
-                                &mut session,
-                                &provider2,
-                                &model2,
-                                &api_key2,
-                                title_model.as_deref(),
-                            )
-                            .await;
+                        let _ = agent.spawn_title_refine(
+                            &session,
+                            &provider2,
+                            &model2,
+                            &api_key2,
+                            title_model.as_deref(),
+                            title_tx2,
+                        );
                     }
                     match result {
                         Ok(text) => {

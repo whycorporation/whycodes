@@ -193,36 +193,32 @@ impl Agent {
         Self::with_runtime_context(&with_agents)
     }
 
-    /// Refine the session title with a small/fast model when still auto-titleable.
-    ///
-    /// Uses `api_key` for the session provider; for a cross-provider
-    /// `title_model` override, env `{PROVIDER}_API_KEY` is tried as a best effort.
-    pub async fn maybe_refine_title(
+    /// Resolve provider + model + key for a title refine call, or `None` if
+    /// the session should not refine / credentials are missing.
+    fn title_refine_target(
         &self,
-        session: &mut Session,
+        session: &Session,
         provider_name: &str,
         model: &str,
         api_key: &str,
         title_model_override: Option<&str>,
-    ) {
+    ) -> Option<(String, String, String, String, Option<String>)> {
         if !crate::title::should_refine_title(session) {
-            return;
+            return None;
         }
-        let Some(user) = session.first_user_text() else {
-            return;
-        };
+        let user = session.first_user_text()?;
 
         let (title_provider, title_model) =
             crate::title::resolve_title_model(provider_name, model, title_model_override);
 
         let (use_provider_name, use_model) =
             if self.provider_registry.get(&title_provider).is_some() {
-                (title_provider.as_str(), title_model.as_str())
+                (title_provider, title_model)
             } else if self.provider_registry.get(provider_name).is_some() {
-                (provider_name, model)
+                (provider_name.to_string(), model.to_string())
             } else {
                 tracing::debug!(%title_provider, "no provider for title refine");
-                return;
+                return None;
             };
 
         let key = if use_provider_name == provider_name {
@@ -232,22 +228,118 @@ impl Agent {
                 .unwrap_or_default()
         };
         if key.is_empty() {
-            return;
+            return None;
+        }
+        if self.provider_registry.get(&use_provider_name).is_none() {
+            return None;
         }
 
-        let Some(provider) = self.provider_registry.get(use_provider_name) else {
+        let assistant = session.first_assistant_snippet(400);
+        Some((use_provider_name, use_model, key, user, assistant))
+    }
+
+    /// Refine the session title with a small/fast model when still auto-titleable.
+    ///
+    /// Uses `api_key` for the session provider; for a cross-provider
+    /// `title_model` override, env `{PROVIDER}_API_KEY` is tried as a best effort.
+    /// Prefer [`Self::spawn_title_refine`] in interactive UIs so the turn can
+    /// finish without waiting on this secondary call.
+    pub async fn maybe_refine_title(
+        &self,
+        session: &mut Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        title_model_override: Option<&str>,
+    ) {
+        let Some((use_provider_name, use_model, key, user, assistant)) = self.title_refine_target(
+            session,
+            provider_name,
+            model,
+            api_key,
+            title_model_override,
+        ) else {
             return;
         };
 
-        let assistant = session.first_assistant_snippet(400);
-        match crate::title::generate_title(provider, &key, use_model, &user, assistant.as_deref())
-            .await
+        let Some(provider) = self.provider_registry.get(&use_provider_name) else {
+            return;
+        };
+
+        match crate::title::generate_title(
+            provider,
+            &key,
+            &use_model,
+            &user,
+            assistant.as_deref(),
+        )
+        .await
         {
-            Ok(title) => crate::title::apply_refine_result(session, &title, use_model),
+            Ok(title) => crate::title::apply_refine_result(session, &title, &use_model),
             Err(e) => {
                 tracing::debug!(error = %e, "session title refine failed");
             }
         }
+    }
+
+    /// Fire-and-forget title refine. Sends `(session_id, title)` on `title_tx`
+    /// when ready. Returns `true` if a background task was spawned.
+    ///
+    /// Does not hold the session lock — callers apply the title when the
+    /// channel delivers (TUI main loop). Skips trivial greetings and sessions
+    /// that already have a manual/generated title.
+    ///
+    /// The session id is included so a late title is never applied to a
+    /// different session (or the TUI placeholder held while the turn runs).
+    pub fn spawn_title_refine(
+        &self,
+        session: &Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        title_model_override: Option<&str>,
+        title_tx: tokio::sync::mpsc::UnboundedSender<(String, String)>,
+    ) -> bool {
+        let Some((use_provider_name, use_model, key, user, assistant)) = self.title_refine_target(
+            session,
+            provider_name,
+            model,
+            api_key,
+            title_model_override,
+        ) else {
+            return false;
+        };
+
+        let session_id = session.id.clone();
+        // ProviderRegistry is Arc-backed on the agent; clone the whole registry
+        // handle so the task outlives this method without needing the Agent.
+        let registry = Arc::clone(&self.provider_registry);
+        tokio::spawn(async move {
+            let Some(provider) = registry.get(&use_provider_name) else {
+                return;
+            };
+            match crate::title::generate_title(
+                provider,
+                &key,
+                &use_model,
+                &user,
+                assistant.as_deref(),
+            )
+            .await
+            {
+                Ok(title) if !title.is_empty() => {
+                    tracing::debug!(%title, model = %use_model, "session title refined (async)");
+                    let _ = title_tx.send((session_id, title));
+                }
+                Ok(_) => {
+                    tracing::debug!("title model returned empty; keeping heuristic/default");
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "session title refine failed (async)");
+                }
+            }
+        });
+        true
     }
 
     /// Run a single conversation turn (no streaming UI events).

@@ -110,7 +110,22 @@ pub async fn generate_title(
         thinking: None,
     };
 
-    let response = provider.complete(&request, api_key, model).await?;
+    // Title is a fire-and-forget nicety — never block the UI for long.
+    const TITLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+    let response = match tokio::time::timeout(
+        TITLE_TIMEOUT,
+        provider.complete(&request, api_key, model),
+    )
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Err(e),
+        Err(_) => {
+            return Err(whycode_core::Error::Llm(
+                "title refine timed out after 8s".into(),
+            ));
+        }
+    };
     let raw = response
         .content
         .iter()
@@ -148,13 +163,79 @@ fn truncate(s: &str, max_chars: usize) -> String {
 /// - First user turn (`user_message_count == 1`): normal path after heuristic.
 /// - Still on [`TitleSource::Default`] with a longer transcript: one chance to
 ///   replace legacy `New session - …` / `project-ab` placeholders on resume.
+/// - Skips trivial greetings / pings — offline heuristic is enough and an extra
+///   LLM round-trip would only add latency (e.g. "selam" → Worked for 30s+).
 pub fn should_refine_title(session: &Session) -> bool {
-    if !session.title_source.allows_llm() || session.first_user_text().is_none() {
+    if !session.title_source.allows_llm() {
+        return false;
+    }
+    let Some(user) = session.first_user_text() else {
+        return false;
+    };
+    if is_trivial_title_seed(&user) {
         return false;
     }
     session.user_message_count() == 1
         || session.title_source == whycode_session::TitleSource::Default
 }
+
+/// Short chit-chat / smoke pings where a model title adds little value.
+pub fn is_trivial_title_seed(text: &str) -> bool {
+    let t = text.trim();
+    if t.is_empty() {
+        return true;
+    }
+    // Long prompts always refine.
+    if t.chars().count() > 48 {
+        return false;
+    }
+    let lower = t.to_ascii_lowercase();
+    // Exact / near-exact greetings and health checks.
+    const EXACT: &[&str] = &[
+        "hi",
+        "hi!",
+        "hello",
+        "hello!",
+        "hey",
+        "hey!",
+        "yo",
+        "sup",
+        "selam",
+        "selam!",
+        "merhaba",
+        "merhaba!",
+        "sa",
+        "slm",
+        "test",
+        "ping",
+        "pong",
+        "ok",
+        "thanks",
+        "teşekkürler",
+        "tesekkurler",
+        "thx",
+        "ty",
+    ];
+    if EXACT.iter().any(|g| lower == *g) {
+        return true;
+    }
+    // "hi there", "selam nasılsın" — still casual, few tokens, no paths.
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    if words.len() <= 3
+        && !t.contains('/')
+        && !t.contains('\\')
+        && !t.contains('.')
+        && !t.contains('`')
+        && GREETING_HEADS.iter().any(|h| words.first() == Some(h))
+    {
+        return true;
+    }
+    false
+}
+
+const GREETING_HEADS: &[&str] = &[
+    "hi", "hello", "hey", "yo", "sup", "selam", "merhaba", "sa", "slm", "test", "ping",
+];
 
 /// Apply a generated title string, logging success/empty results.
 pub fn apply_refine_result(session: &mut Session, title: &str, model: &str) {
@@ -205,5 +286,20 @@ mod tests {
 
         session.title_source = whycode_session::TitleSource::Heuristic;
         assert!(!should_refine_title(&session)); // multi-turn + already heuristicked
+    }
+
+    #[test]
+    fn skips_trivial_greetings() {
+        assert!(is_trivial_title_seed("selam"));
+        assert!(is_trivial_title_seed("Hi!"));
+        assert!(is_trivial_title_seed("merhaba nasılsın"));
+        assert!(is_trivial_title_seed("ping"));
+        assert!(!is_trivial_title_seed("fix the auth retry bug in session.rs"));
+        assert!(!is_trivial_title_seed("read crates/tui/src/run.rs"));
+
+        let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
+        session.title_source = whycode_session::TitleSource::Heuristic;
+        session.add_user_message("selam");
+        assert!(!should_refine_title(&session));
     }
 }
