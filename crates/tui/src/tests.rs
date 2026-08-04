@@ -304,6 +304,62 @@ fn test_format_context_usage_and_percent() {
     assert_eq!(context_tokens_from_usage(&u), 1500);
 }
 
+/// Grok-style hover: enter/leave context meter must request a repaint so the
+/// footer can swap `used/max` ↔ `%` under the paint-gated event loop.
+#[test]
+fn context_meter_hover_marks_dirty_on_enter_leave() {
+    use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    // Simulate a painted footer hit-box (right side of row 40).
+    app.context_hit = Some(Rect {
+        x: 70,
+        y: 40,
+        width: 12,
+        height: 1,
+    });
+    app.needs_redraw = false;
+
+    // Move onto the meter → dirty + hovered.
+    let enter = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 75,
+        row: 40,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, enter));
+    assert!(app.context_hovered());
+    assert!(app.needs_redraw, "enter context meter must mark_dirty");
+
+    // Move within the meter → still hovered; no need to re-dirty (already true,
+    // but enter/leave only flips on boundary — clear flag to prove no re-dirty).
+    app.needs_redraw = false;
+    let stay = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 78,
+        row: 40,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, stay));
+    assert!(app.context_hovered());
+    assert!(
+        !app.needs_redraw,
+        "move inside meter should not re-dirty every pixel"
+    );
+
+    // Leave the meter → dirty so paint restores used/max.
+    let leave = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 10,
+        row: 40,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, leave));
+    assert!(!app.context_hovered());
+    assert!(app.needs_redraw, "leave context meter must mark_dirty");
+}
+
 #[test]
 fn test_thinking_new_block_after_tool() {
     let mut app = TuiApp::new(test_config());

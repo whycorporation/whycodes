@@ -49,11 +49,12 @@ true   →  continue
 
 | Wrong | Right |
 |-------|--------|
-| `MouseEventKind::Moved => return hover_changed` | Always `return true` for move; state is updated for next frame |
+| `MouseEventKind::Moved => return hover_changed` | Always `return true` for move (keep running ≠ needs paint) |
+| Move updates `mouse_pos` but never `mark_dirty` | On enter/leave hover chrome, call `app.mark_dirty()` so gated paint runs |
 | `return false` meaning “skip rest of match” | Use `return true` or restructure control flow |
 
 **File:** `crates/tui/src/input.rs` — `handle_event` / `handle_mouse`  
-**Loop:** `crates/tui/src/run.rs` — `if !input::handle_event(...) { break; }`
+**Loop:** `crates/tui/src/run.rs` — `if !input::handle_event(...) { break; }` (paint only if `needs_redraw`)
 
 ### 2. TUI draw target when stdout is not a TTY
 
@@ -186,6 +187,18 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-05 — Context meter hover % never appears
+
+**Symptom:** Bottom-right shows `1.2k / 200k` but hovering does not switch to Grok-style `1%`.
+
+**Root cause:** After the `handle_event=false` fix, `MouseEventKind::Moved` always returned `true` and updated `mouse_pos`, but never called `mark_dirty()`. The run loop only draws when `needs_redraw` (idle poll no longer forces a frame), so `context_hovered()` stayed true in state while the footer never repainted.
+
+**Fix:** On mouse move, if enter/leave of `context_hit` flips, call `app.mark_dirty()`. Still always `return true` (keep running ≠ needs paint).
+
+**Prevention:** Hover chrome = two steps: track `mouse_pos` **and** dirty on enter/leave. See Rule 1 table.
+
+---
+
 ### 2026-08-04 — TUI dies right after first frame (`handle_event=false`)
 
 **Symptom:** Full-screen TUI flashed open then closed in ~0.5s. Clean exit (`ok: true`). No panic under `crash/`.
@@ -199,7 +212,7 @@ With `position = view_start = total - height` that never reaches the track end.
 
 **Root cause:** Context-meter hover tracking returned `hover_changed` from `MouseEventKind::Moved`. After `EnableMouseCapture`, the first mouse-move with no hover flip returned **`false`**, which the run loop treats as quit.
 
-**Fix:** Always return `true` from mouse-move handling; only update `mouse_pos` for the next paint.
+**Fix:** Always return `true` from mouse-move handling; only update `mouse_pos` for the next paint. *(Follow-up 2026-08-05: also `mark_dirty` on hover enter/leave — paint is gated.)*
 
 **Prevention:** Rule 1 above. If adding any `return false` in input handlers, grep for `handle_event=false` and confirm you mean **exit the process**.
 

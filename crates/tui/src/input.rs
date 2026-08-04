@@ -519,7 +519,13 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     // event loop (`false` = quit the app). Never return `false` for ordinary
     // mouse motion — that was killing the TUI on the first mouse-move after
     // EnableMouseCapture (seen as `tui.exit reason=handle_event=false`).
+    //
+    // Hover chrome also needs `mark_dirty()` when enter/leave changes — the
+    // paint loop is gated on `needs_redraw` and will not repaint on idle
+    // mouse motion alone (so `1.2k / 200k` never swapped to `1%`).
+    let was_context_hover = app.context_hovered();
     app.mouse_pos = Some((mouse.column, mouse.row));
+    let now_context_hover = app.context_hovered();
 
     // Modal open: wheel scrolls the list, clicks hit [✗] / rows — do not
     // scroll the chat underneath (that looked like a dead scrollbar).
@@ -555,7 +561,10 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             app.scroll_rows(step);
         }
         MouseEventKind::Moved => {
-            // Position already updated above; next frame paints hover %.
+            // Enter/leave context meter → swap used/max ↔ % on next paint.
+            if was_context_hover != now_context_hover {
+                app.mark_dirty();
+            }
             return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {
