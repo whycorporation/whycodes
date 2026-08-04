@@ -629,6 +629,45 @@ fn paint_publishes_scrollbar_when_overflowing() {
 }
 
 #[test]
+fn painted_scrollbar_thumb_at_bottom_when_scroll_offset_zero() {
+    // Regression: ratatui Scrollbar left the thumb near ~70% at true bottom.
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 30);
+    let w = 40u16;
+    let h = 16u16;
+    app.scroll_to_bottom();
+    assert_eq!(app.scroll_offset, 0);
+
+    let backend = TestBackend::new(w, h);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+
+    let buf = terminal.backend().buffer();
+    let bar_x = w - 1;
+    let bottom_y = h - 1;
+    // Bottom track cell must be the thumb (accent/scrollbar), not empty track-only.
+    let bottom = buf.cell((bar_x, bottom_y)).expect("bottom bar cell");
+    let top = buf.cell((bar_x, 0)).expect("top bar cell");
+    // At bottom, last cell is thumb; top cell should differ (track) when content
+    // is long enough that the thumb doesn't fill the whole track.
+    assert_eq!(
+        bottom.symbol(),
+        "█",
+        "scrollbar column should paint solid cells"
+    );
+    if app.chat_scroll_total > (h as usize) * 3 {
+        assert_ne!(
+            bottom.bg, top.bg,
+            "at document bottom, thumb (bottom) and track (top) must differ; both={:?}",
+            bottom.bg
+        );
+    }
+}
+
+#[test]
 fn paint_home_clears_chat_hits() {
     let mut app = TuiApp::new(cfg());
     // Non-empty first so hits get set, then clear messages

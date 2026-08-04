@@ -6,13 +6,14 @@
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::opencode_tokens::{LOGO_WHY, LOGO_WHY_CODE, layout as oc};
 use crate::theme::ThemePalette;
+use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget},
+    widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -228,20 +229,28 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     );
 
     let scrollbar_hit = if needs_bar {
-        // Ratatui position is top-origin within the document. Convert from our
-        // bottom-anchored scroll_offset via view_start. Drawn last so the
-        // thumb sits on the right edge above any full-width content.
-        let mut state = ScrollbarState::new(total)
-            .position(view_start)
-            .viewport_content_length(height);
-        let bar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .begin_symbol(None)
-            .end_symbol(None)
-            .track_symbol(Some("│"))
-            .thumb_symbol("█")
-            .track_style(Style::default().fg(palette.scrollbar))
-            .thumb_style(Style::default().fg(palette.accent));
-        frame.render_stateful_widget(bar, area, &mut state);
+        // Use our proportional painter — not ratatui::Scrollbar. Ratatui's
+        // thumb math (`position * track / (content-1 + viewport)`) parks the
+        // handle around ~70% when `position = view_start` at the last page,
+        // so "at bottom" never looked like the bottom. Ours maps
+        // top-origin `view_start` with `thumb_pos = view_start * travel / max_off`,
+        // matching drag math in `ui/scrollbar` (0 → top, max_off → flush bottom).
+        let sb = Rect {
+            x: area.x + area.width.saturating_sub(1),
+            y: area.y,
+            width: 1,
+            height: area.height,
+        };
+        let colors = ScrollbarColors::from_palette(palette);
+        paint_scrollbar(
+            frame.buffer_mut(),
+            sb,
+            total,
+            height,
+            view_start,
+            colors.track,
+            colors.thumb,
+        );
         // Widen the hit column slightly so the 1-cell track is easier to grab.
         let hit_w = 2u16.min(area.width);
         Some(Rect {

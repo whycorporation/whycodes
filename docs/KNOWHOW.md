@@ -101,6 +101,20 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-05 — Scrollbar thumb stuck near ~70% at true bottom
+
+**Symptom:** Content at newest messages (`scroll_offset = 0`) but the thumb sat mid/lower track (~70%), not flush with the bottom.
+
+**Root cause:** `ratatui::widgets::Scrollbar` uses  
+`thumb_start = position * track / (content_length - 1 + viewport)`.  
+With `position = view_start = total - height` that never reaches the track end.
+
+**Fix:** Paint chat with our proportional `paint_scrollbar` (`offset * travel / max_off`), same geometry as drag hit-testing. At `view_start = max_off` the thumb is flush bottom.
+
+**Prevention:** Do not use ratatui Scrollbar for bottom-anchored chat without remapping position into its odd end model.
+
+---
+
 ### 2026-08-05 — Scrollbar “bottom” stopped a few rows short of newest
 
 **Symptom:** Dragging/clicking the chat scrollbar to the bottom did not show the latest messages (`scroll_offset` stayed > 0).

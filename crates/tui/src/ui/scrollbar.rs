@@ -338,4 +338,57 @@ mod tests {
         assert!(bottom <= max_off);
         assert!(bottom >= max_off.saturating_sub(2), "near end: {bottom}");
     }
+
+    #[test]
+    fn thumb_is_flush_with_track_bottom_when_offset_is_max() {
+        // Chat "at bottom" uses top-origin view_start = max_off. Thumb must
+        // sit on the last cells of the track — not ~70% like ratatui::Scrollbar.
+        let area = Rect::new(0, 0, 1, 20);
+        let mut buf = Buffer::empty(area);
+        let total = 100usize;
+        let visible = 20usize;
+        let max_off = total - visible;
+        let thumb = Color::Rgb(200, 200, 200);
+        let track = Color::Rgb(40, 40, 40);
+        paint_scrollbar(&mut buf, area, total, visible, max_off, track, thumb);
+
+        let (thumb_len, _, _) = scrollbar_metrics(total, visible, 20).unwrap();
+        // Last cell of track must be thumb
+        assert_eq!(
+            buf.cell((0, 19)).map(|c| c.bg),
+            Some(thumb),
+            "bottom cell should be thumb at max offset"
+        );
+        // Cell just above thumb block should be track (if thumb doesn't fill all)
+        if thumb_len < 20 {
+            let above = 19u16 - thumb_len as u16;
+            assert_eq!(
+                buf.cell((0, above)).map(|c| c.bg),
+                Some(track),
+                "cell above thumb should be track"
+            );
+        }
+        // Top cell should be track
+        assert_eq!(buf.cell((0, 0)).map(|c| c.bg), Some(track));
+    }
+
+    #[test]
+    fn thumb_is_flush_with_track_top_when_offset_is_zero() {
+        let area = Rect::new(0, 0, 1, 20);
+        let mut buf = Buffer::empty(area);
+        paint_scrollbar(
+            &mut buf,
+            area,
+            100,
+            20,
+            0,
+            Color::Rgb(40, 40, 40),
+            Color::Rgb(200, 200, 200),
+        );
+        assert_eq!(
+            buf.cell((0, 0)).map(|c| c.bg),
+            Some(Color::Rgb(200, 200, 200)),
+            "top cell should be thumb at offset 0"
+        );
+    }
 }
