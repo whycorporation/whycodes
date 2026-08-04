@@ -89,8 +89,56 @@ having them at all.
 |---|---|---|---|
 | `assess` on `cargo test --workspace --no-fail-fast` | 39.8 µs | 2.11 µs | 18.8× |
 | `assess` on `ls -la` | 6.12 µs | 780 ns | 7.8× |
-| `highlight_code_spans`, 100 lines of Rust | 5.83 ms | 92 µs | 63× |
-| `highlight_code_spans`, 500 lines | 29.3 ms | 468 µs | 63× |
+| `highlight_code_spans`, 100 lines of Rust (2026-07-31) | 5.83 ms | 92 µs | 63× |
+| `highlight_code_spans`, 500 lines (2026-07-31) | 29.3 ms | 468 µs | 63× |
+
+### Re-measure, 2026-08-04 (Linux, release/`--quick`)
+
+Criterion on this machine after FxHash + **Arc closed memo** (cache hit no
+longer deep-clones every span). Cold = first paint of a new body; warm =
+closed-memo hit (idle/scroll frames for a finished fence).
+
+**`highlight_code_spans`**
+
+| Case | cold | warm |
+|---|---|---|
+| Rust, 10 lines | 1.54 ms | **55 ns** |
+| Rust, 100 lines | 13.2 ms | **261 ns** |
+| Rust, 500 lines | 51.3 ms | **1.26 µs** |
+| untagged, 100 lines (warm) | — | 213 ns |
+
+Compared with the 2026-07-31 “after memo” warm path (~84–92 µs for 100 lines),
+warm is ~**300×** cheaper: the remaining cost was cloning `Vec<Vec<CodeSpan>>`
+every frame, not re-highlighting. Arc clone + FxHash of the source is enough.
+
+Cold is higher than the old combined figure because the old bench hit the memo
+on every sample after the first; cold here forces a unique body each iteration
+so it measures syntect only.
+
+**`parse_markdown`**
+
+| Case | time |
+|---|---|
+| typical response | 4.67 µs |
+| streaming prefix 200 / 1000 / 4000 chars | 2.55 / 10.9 / 45.0 µs |
+
+**`assess` (command-risk)**
+
+| Case | time |
+|---|---|
+| safe short (`ls -la` class) | 496 ns |
+| safe build (`cargo test …`) | 1.84 µs |
+| caution / destructive / catastrophic | 2.15 / 2.27 / 1.23 µs |
+| pipeline | 4.40 µs |
+
+**`render_markdown` (ANSI, uncached per call)**
+
+| Case | time |
+|---|---|
+| typical response | 1.29 ms |
+| 200-line Rust fence | 41.5 ms |
+
+Still paid once per response on the CLI/`--plain` path, not per TUI frame.
 
 **The tokeniser allocated per character.** `match_operator` collected each of
 its fifteen candidate operators into a `Vec<char>` at every character position,

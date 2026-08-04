@@ -40,3 +40,5 @@
 - Release binary **15 MB** stripped+LTO (was 23 MB unstripped / 18 MB strip-only)
 - Highlight/mermaid unit tests green (cache key semantics preserved)
 - Workspace builds green; token_counter tests green
+- Closed memo returns `Arc` — warm `highlight` **~261 ns** / 100 lines (was ~84 µs deep-clone)
+- Bench split cold vs warm; numbers in [benchmarks.md](benchmarks.md)

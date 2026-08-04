@@ -111,7 +111,7 @@ fn render_code(
     ]));
 
     let highlighted = highlight_code_spans(&lines.join("\n"), language);
-    for spans in &highlighted {
+    for spans in highlighted.iter() {
         let mut line = vec![Span::styled("│ ".to_string(), gutter)];
         for ((r, g, b), text) in spans {
             line.push(Span::styled(
@@ -158,10 +158,10 @@ fn render_mermaid_block(
                 Span::styled("mermaid".to_string(), gutter),
             ]));
             let body = Style::default().fg(palette.fg);
-            for line in diagram {
+            for line in diagram.iter() {
                 out.push(Line::from(vec![
                     Span::styled("│ ".to_string(), gutter),
-                    Span::styled(line, body),
+                    Span::styled(line.clone(), body),
                 ]));
             }
             out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));

@@ -8,7 +8,7 @@
 //! so closed diagrams are memoised by `(source, max_width)`.
 
 use std::hash::{Hash, Hasher};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use rustc_hash::FxHashMap;
 
@@ -26,13 +26,18 @@ pub fn is_mermaid_language(language: Option<&str>) -> bool {
 ///
 /// On parse/layout failure returns `Err` with a short human-readable reason so
 /// callers can fall back to the raw fence body.
-pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Vec<String>, String> {
+/// Returns shared lines so a TUI frame that re-renders a closed diagram only
+/// clones an [`Arc`], not every box-drawing string.
+pub fn render_mermaid(
+    source: &str,
+    max_width: Option<usize>,
+) -> Result<Arc<Vec<String>>, String> {
     let key = cache_key(source, max_width);
     if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
         return hit;
     }
 
-    let result = render_uncached(source, max_width);
+    let result = render_uncached(source, max_width).map(Arc::new);
     if let Ok(mut c) = cache().lock() {
         if c.len() >= CACHE_ENTRIES {
             c.clear();
@@ -45,7 +50,7 @@ pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Vec<Stri
 /// Most diagram renders held at once (same budget idea as the highlight memo).
 const CACHE_ENTRIES: usize = 32;
 
-type MermaidCache = Mutex<FxHashMap<u64, Result<Vec<String>, String>>>;
+type MermaidCache = Mutex<FxHashMap<u64, Result<Arc<Vec<String>>, String>>>;
 
 fn cache() -> &'static MermaidCache {
     static CACHE: OnceLock<MermaidCache> = OnceLock::new();

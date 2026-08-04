@@ -376,7 +376,7 @@ fn render_fenced_block(code: &str, language: &str) -> String {
         match render_mermaid(code, None) {
             Ok(lines) => {
                 let mut out = String::from("\x1b[2m┌ mermaid\x1b[0m\n");
-                for line in lines {
+                for line in lines.iter() {
                     out.push_str(&format!("\x1b[2m│\x1b[0m {line}\n"));
                 }
                 out.push_str("\x1b[2m└\x1b[0m\n");

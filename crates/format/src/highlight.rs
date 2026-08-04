@@ -12,7 +12,7 @@
 
 use std::io::Cursor;
 use std::path::Path;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{
@@ -102,7 +102,10 @@ pub fn highlight_code(code: &str, language: &str) -> String {
 /// 1. Exact-content memo (closed / stable blocks)
 /// 2. Append-only open-stream cache (growing fenced body)
 /// 3. Full batch highlight, then seed the stream cache
-pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Vec<Vec<CodeSpan>> {
+///
+/// Returns [`Arc`] so a closed-cache hit is O(1) pointer clone rather than
+/// deep-copying every span every frame (the TUI pays this per visible block).
+pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Arc<Vec<Vec<CodeSpan>>> {
     let key = cache_key(code, language);
     if let Some(hit) = closed_cache()
         .lock()
@@ -121,28 +124,29 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Vec<Vec<CodeS
         // Memo fully-committed bodies (no partial trailing line). Intermediate
         // streaming prefixes are left out so a long stream does not thrash the
         // closed-block cache.
+        let arc = Arc::new(lines);
         if stream.is_fully_committed(code) {
-            insert_closed(key, lines.clone());
+            insert_closed(key, Arc::clone(&arc));
         }
-        return lines;
+        return arc;
     }
 
-    let computed = highlight_uncached(code, language);
-    insert_closed(key, computed.clone());
+    let computed = Arc::new(highlight_uncached(code, language));
+    insert_closed(key, Arc::clone(&computed));
     computed
 }
 
 /// Most highlighted blocks held at once in the closed-content memo.
 const CACHE_ENTRIES: usize = 64;
 
-type HighlightCache = Mutex<rustc_hash::FxHashMap<u64, Vec<Vec<CodeSpan>>>>;
+type HighlightCache = Mutex<rustc_hash::FxHashMap<u64, Arc<Vec<Vec<CodeSpan>>>>>;
 
 fn closed_cache() -> &'static HighlightCache {
     static CACHE: OnceLock<HighlightCache> = OnceLock::new();
     CACHE.get_or_init(Default::default)
 }
 
-fn insert_closed(key: u64, value: Vec<Vec<CodeSpan>>) {
+fn insert_closed(key: u64, value: Arc<Vec<Vec<CodeSpan>>>) {
     if let Ok(mut cache) = closed_cache().lock() {
         if cache.len() >= CACHE_ENTRIES {
             cache.clear();
@@ -472,7 +476,7 @@ mod tests {
         let first = highlight_code_spans(code, Some("rust"));
         let second = highlight_code_spans(code, Some("rust"));
         assert_eq!(first, second);
-        assert_eq!(first, highlight_uncached(code, Some("rust")));
+        assert_eq!(first.as_ref(), &highlight_uncached(code, Some("rust")));
     }
 
     #[test]
@@ -614,7 +618,7 @@ mod tests {
             let prefix = &full[..end];
             let got = highlight_code_spans(prefix, Some("yaml"));
             let batch = highlight_uncached(prefix, Some("yaml"));
-            assert_eq!(got, batch, "prefix len {end}");
+            assert_eq!(got.as_ref(), &batch, "prefix len {end}");
         }
     }
 

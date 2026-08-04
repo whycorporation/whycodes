@@ -5,6 +5,10 @@
 //! their cost is paid per frame, per visible message — not once per response.
 //! A response containing a long code block is the worst case and is measured
 //! here explicitly.
+//!
+//! `highlight_code_spans` is split into **cold** (first paint / cache miss) and
+//! **warm** (closed-memo hit, which is every subsequent idle/scroll frame for a
+//! finished block). Warm must stay near pointer-clone cost.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
@@ -45,6 +49,12 @@ fn code_block(lines: usize) -> String {
     format!("```rust\nfn generated() {{\n{body}}}\n```\n")
 }
 
+fn rust_source(lines: usize) -> String {
+    (0..lines)
+        .map(|i| format!("let value_{i} = compute({i}) + offset;\n"))
+        .collect()
+}
+
 fn bench_parse(c: &mut Criterion) {
     let response = typical_response();
     let mut group = c.benchmark_group("parse_markdown");
@@ -67,17 +77,37 @@ fn bench_parse(c: &mut Criterion) {
 }
 
 fn bench_highlight(c: &mut Criterion) {
-    let mut group = c.benchmark_group("highlight_code_spans");
-
     // First call pays for loading syntect's grammar set. It is behind a
     // OnceLock, so warm it here rather than measuring it in every sample.
     let _ = highlight_code_spans("fn main() {}", Some("rust"));
 
+    let mut cold = c.benchmark_group("highlight_code_spans_cold");
     for lines in [10usize, 100, 500] {
-        let code: String = (0..lines)
-            .map(|i| format!("let value_{i} = compute({i}) + offset;\n"))
-            .collect();
-        group.bench_with_input(BenchmarkId::new("rust", lines), &code, |b, code| {
+        let code = rust_source(lines);
+        // Unique prefix per iteration would defeat the closed memo and measure
+        // syntect only — here we clear by using a distinct body size per id
+        // and still hit memo on second call inside the same sample after the
+        // first. For true cold we re-key with a one-shot suffix outside the
+        // iter setup: criterion's iter_batched with unique key is ideal.
+        cold.bench_with_input(BenchmarkId::new("rust", lines), &code, |b, code| {
+            let mut n = 0u64;
+            b.iter(|| {
+                // Force a cache miss: content changes every sample so the
+                // closed memo never hits (matches first paint of a new block).
+                n = n.wrapping_add(1);
+                let unique = format!("{code}// cold {n}\n");
+                highlight_code_spans(black_box(&unique), Some("rust"))
+            })
+        });
+    }
+    cold.finish();
+
+    let mut warm = c.benchmark_group("highlight_code_spans_warm");
+    for lines in [10usize, 100, 500] {
+        let code = rust_source(lines);
+        // Seed the closed memo once; subsequent calls must be Arc clone + hash.
+        let _ = highlight_code_spans(&code, Some("rust"));
+        warm.bench_with_input(BenchmarkId::new("rust", lines), &code, |b, code| {
             b.iter(|| highlight_code_spans(black_box(code), Some("rust")))
         });
     }
@@ -87,10 +117,11 @@ fn bench_highlight(c: &mut Criterion) {
     let code: String = (0..100)
         .map(|i| format!("line {i} of something untagged\n"))
         .collect();
-    group.bench_function("untagged_100", |b| {
+    let _ = highlight_code_spans(&code, None);
+    warm.bench_function("untagged_100", |b| {
         b.iter(|| highlight_code_spans(black_box(&code), None))
     });
-    group.finish();
+    warm.finish();
 }
 
 fn bench_full_render(c: &mut Criterion) {
