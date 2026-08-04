@@ -225,22 +225,55 @@ pub struct ToolDefinition {
     pub parameters: serde_json::Value, // JSON Schema
 }
 
+/// Wire encoding for OpenAI-compatible `tool_calls[].function.arguments`.
+///
+/// This is a **provider** property (the API's expected request shape), not
+/// something inferred from model id strings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolArgumentsFormat {
+    /// OpenAI chat-completions: JSON *string* of an object (`"{\"q\":1}"`).
+    #[default]
+    JsonString,
+    /// Bare JSON object (`{"q":1}`). Some gateways/templates require this.
+    Object,
+}
+
 /// Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub name: String,
+    #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
     pub api_base: Option<String>,
     /// Custom base URL for the provider API (overrides api_base if set)
+    #[serde(default)]
     pub base_url: Option<String>,
     /// Custom HTTP headers to include with provider requests
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<HashMap<String, String>>,
+    /// Known model ids for this provider (optional in config.toml).
+    #[serde(default)]
     pub models: Vec<String>,
+    /// How this API expects `function.arguments` on assistant tool calls.
+    ///
+    /// `None` → OpenAI-style JSON string. Set to `object` only when the
+    /// gateway requires a bare object. This is provider config, not a
+    /// model-name heuristic.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_arguments: Option<ToolArgumentsFormat>,
+    /// Provider-specific extra fields (optional in config.toml).
+    #[serde(default)]
     pub extra: HashMap<String, serde_json::Value>,
 }
 
 impl ProviderConfig {
+    /// Resolved tool-arguments wire format (OpenAI JSON string when unset).
+    pub fn tool_arguments_format(&self) -> ToolArgumentsFormat {
+        self.tool_arguments.unwrap_or_default()
+    }
+
     /// Resolve the full API URL for a given model.
     ///
     /// Priority: `base_url` field > `api_base` field > provider-specific default.
@@ -282,7 +315,15 @@ impl ProviderConfig {
 pub struct ModelConfig {
     pub model_id: String,
     pub provider_id: String,
+    /// Max *completion* tokens per response (sent as `max_tokens` to the API).
     pub max_tokens: Option<u32>,
+    /// Context window size in tokens (used / max meter, compaction).
+    ///
+    /// Distinct from [`Self::max_tokens`]: that caps the reply; this is the
+    /// full prompt+completion budget for the model. When `None`, the runtime
+    /// falls back to a built-in catalog then `session.max_context_tokens`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub thinking: Option<bool>,
@@ -601,6 +642,7 @@ mod tests {
             base_url: None,
             headers: None,
             models: vec![],
+            tool_arguments: None,
             extra: HashMap::new(),
         };
         assert_eq!(
@@ -615,6 +657,7 @@ mod tests {
             base_url: Some("https://custom.example.com/api".to_string()),
             headers: None,
             models: vec![],
+            tool_arguments: None,
             extra: HashMap::new(),
         };
         assert_eq!(

@@ -393,7 +393,15 @@ impl Config {
         let path = Self::default_path()?;
         if path.exists() {
             let content = std::fs::read_to_string(&path)?;
-            Ok(toml::from_str(&content).map_err(|e| crate::Error::Config(e.to_string()))?)
+            let mut cfg: Config =
+                toml::from_str(&content).map_err(|e| crate::Error::Config(e.to_string()))?;
+            // When a table is keyed `[providers.foo]` but omits `name`, use the key.
+            for (key, provider) in &mut cfg.providers {
+                if provider.name.is_empty() {
+                    provider.name = key.clone();
+                }
+            }
+            Ok(cfg)
         } else {
             Ok(Self::default())
         }
@@ -438,8 +446,16 @@ impl Config {
         let mut config = Self::default();
 
         // Layer 2: global config
-        if let Ok(global) = Self::load() {
-            config = config.merge_with(&global);
+        match Self::load() {
+            Ok(global) => {
+                config = config.merge_with(&global);
+            }
+            Err(e) => {
+                // Don't silently drop a broken config.toml — that falls back to
+                // hard-coded anthropic and looks like "default model ignored".
+                tracing::error!("Failed to load global config: {e}");
+                return Err(e);
+            }
         }
 
         // Layer 3: project config
@@ -495,6 +511,7 @@ impl Config {
                         base_url: None,
                         headers: None,
                         models: Vec::new(),
+                        tool_arguments: None,
                         extra: HashMap::new(),
                     },
                 );
@@ -508,6 +525,7 @@ impl Config {
                     model_id: model_name,
                     provider_id: provider_name,
                     max_tokens: None,
+                    context_window: None,
                     temperature: None,
                     top_p: None,
                     thinking: None,
@@ -525,6 +543,7 @@ impl Config {
                     model_id: model_name,
                     provider_id: String::new(),
                     max_tokens: None,
+                    context_window: None,
                     temperature: None,
                     top_p: None,
                     thinking: None,
@@ -583,6 +602,9 @@ impl Config {
                     if !provider.models.is_empty() {
                         existing.models = provider.models.clone();
                     }
+                    if provider.tool_arguments.is_some() {
+                        existing.tool_arguments = provider.tool_arguments;
+                    }
                     if !provider.extra.is_empty() {
                         existing.extra = provider.extra.clone();
                     }
@@ -598,6 +620,9 @@ impl Config {
                 .and_modify(|existing| {
                     if model.max_tokens.is_some() {
                         existing.max_tokens = model.max_tokens;
+                    }
+                    if model.context_window.is_some() {
+                        existing.context_window = model.context_window;
                     }
                     if model.temperature.is_some() {
                         existing.temperature = model.temperature;
@@ -1071,6 +1096,26 @@ impl Config {
             .find(|m| m.provider_id == provider && m.model_id == model)
     }
 
+    /// Explicit `context_window` from config for this provider/model, if any.
+    ///
+    /// Does not consult the built-in catalog — call
+    /// `whycode_llm::resolve_context_window` for the full chain.
+    pub fn configured_context_window(&self, provider: &str, model: &str) -> Option<u32> {
+        self.get_model(provider, model)
+            .and_then(|m| m.context_window)
+            .or_else(|| {
+                self.default_model.as_ref().and_then(|m| {
+                    if m.model_id == model
+                        && (m.provider_id.is_empty() || m.provider_id == provider)
+                    {
+                        m.context_window
+                    } else {
+                        None
+                    }
+                })
+            })
+    }
+
     /// Get agent by name
     pub fn get_agent(&self, name: &str) -> Option<&AgentInfo> {
         self.agents.iter().find(|a| a.name == name)
@@ -1145,6 +1190,7 @@ mod tests {
             base_url: None,
             headers: None,
             models: vec![],
+            tool_arguments: None,
             extra: HashMap::new(),
         }
     }
@@ -1154,6 +1200,7 @@ mod tests {
             model_id: model.to_string(),
             provider_id: provider.to_string(),
             max_tokens: Some(4096),
+            context_window: None,
             temperature: None,
             top_p: None,
             thinking: None,
@@ -1385,6 +1432,7 @@ mod tests {
                 base_url: None,
                 headers: None,
                 models: vec![],
+                tool_arguments: None,
                 extra: HashMap::new(),
             },
         );
@@ -1399,6 +1447,7 @@ mod tests {
                 base_url: None,
                 headers: None,
                 models: vec![],
+                tool_arguments: None,
                 extra: HashMap::new(),
             },
         );
