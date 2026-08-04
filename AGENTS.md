@@ -1,0 +1,48 @@
+# Whycode — agent rules
+
+## Build after every change (required)
+
+Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilation:
+
+1. **Rebuild before finishing the turn.** Do not leave the workspace uncompiled.
+2. Prefer a targeted check first, then widen if needed:
+
+   ```bash
+   # Touched a single crate
+   cargo check -p whycode-<crate>
+
+   # Multiple crates or workspace-wide impact
+   cargo check --workspace
+
+   # CLI / binary path changed
+   cargo build -p whycode-cli
+   ```
+
+3. If the change is non-trivial (logic, API, providers, agent loop, TUI), also run the relevant tests:
+
+   ```bash
+   cargo test -p whycode-<crate>
+   # or
+   cargo test -p whycode-<crate> --lib
+   ```
+
+4. **Fix compile errors in the same turn** before reporting done. A “done” response with a red `cargo check` is incomplete.
+5. Docs-only, comment-only, or pure markdown/config prose that cannot affect the build may skip compile — when unsure, run `cargo check -p …` anyway.
+
+### Why
+
+Agents and the developer rely on a green tree. Unverified edits accumulate; the next session pays for them. Auto-build keeps feedback local and cheap.
+
+## Workspace map (short)
+
+| Crate | Path | Notes |
+|-------|------|--------|
+| `whycode-cli` | `crates/cli` | Binary entrypoint (`whycode`) |
+| `whycode-tui` | `crates/tui` | Terminal UI |
+| `whycode-agent` | `crates/agent` | Agent loop / tools orchestration |
+| `whycode-llm` | `crates/llm` | Providers (OpenAI-compat, Anthropic, …) |
+| `whycode-core` | `crates/core` | Shared types, config, errors |
+| `whycode-session` | `crates/session` | Conversation session |
+| `whycode-tools` | `crates/tools` | Built-in tools |
+
+Package names use the `whycode-` prefix even when the directory is shorter (e.g. `crates/llm` → `-p whycode-llm`).

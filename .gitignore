@@ -1,3 +1,6 @@
 .cargo
 target/
 **/*.rs.bk
+
+# Local agent/session scratch (do not commit)
+.omo/
