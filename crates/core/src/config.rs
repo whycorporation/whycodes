@@ -316,9 +316,9 @@ impl McpServerConfig {
         match (&self.url, &self.command) {
             (Some(_), _) => Ok(McpTransportKind::Auto),
             (None, Some(_)) => Ok(McpTransportKind::Stdio),
-            (None, None) => Err(
-                "MCP server config needs either `command` (stdio) or `url` (http/sse)".into(),
-            ),
+            (None, None) => {
+                Err("MCP server config needs either `command` (stdio) or `url` (http/sse)".into())
+            }
         }
     }
 
@@ -1708,7 +1708,10 @@ mod tests {
             url = "http://127.0.0.1:9/sse"
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.mcp_servers["legacy"].resolved_transport().unwrap(), McpTransportKind::Sse);
+        assert_eq!(
+            cfg.mcp_servers["legacy"].resolved_transport().unwrap(),
+            McpTransportKind::Sse
+        );
     }
 
     #[test]
@@ -1724,5 +1727,4 @@ mod tests {
         };
         assert!(s.resolved_transport().is_err());
     }
-
 }

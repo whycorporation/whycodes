@@ -30,8 +30,8 @@ fn header_map(extra: &HashMap<String, String>) -> Result<HeaderMap> {
     for (k, v) in extra {
         let name = HeaderName::from_bytes(k.as_bytes())
             .with_context(|| format!("invalid header name: {k}"))?;
-        let value = HeaderValue::from_str(v)
-            .with_context(|| format!("invalid header value for {k}"))?;
+        let value =
+            HeaderValue::from_str(v).with_context(|| format!("invalid header value for {k}"))?;
         map.insert(name, value);
     }
     Ok(map)
@@ -64,7 +64,8 @@ pub fn resolve_endpoint_url(sse_url: &str, endpoint: &str) -> Result<String> {
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
         return Ok(endpoint.to_string());
     }
-    let base = reqwest::Url::parse(sse_url).with_context(|| format!("invalid SSE URL: {sse_url}"))?;
+    let base =
+        reqwest::Url::parse(sse_url).with_context(|| format!("invalid SSE URL: {sse_url}"))?;
     if endpoint.starts_with('/') {
         let mut abs = base;
         abs.set_path(endpoint.split('?').next().unwrap_or(endpoint));
@@ -83,10 +84,11 @@ pub fn resolve_endpoint_url(sse_url: &str, endpoint: &str) -> Result<String> {
 
 fn extract_jsonrpc_result_from_sse(body: &str, expected_id: u64) -> Result<serde_json::Value> {
     let events = parse_sse_body(body);
-    if events.is_empty() && !body.trim().is_empty() {
-        if let Ok(rpc) = serde_json::from_str::<JsonRpcResponse>(body.trim()) {
-            return unwrap_rpc(rpc, expected_id);
-        }
+    if events.is_empty()
+        && !body.trim().is_empty()
+        && let Ok(rpc) = serde_json::from_str::<JsonRpcResponse>(body.trim())
+    {
+        return unwrap_rpc(rpc, expected_id);
     }
     for ev in &events {
         if ev.data.trim().is_empty() {
@@ -429,7 +431,11 @@ impl LegacySseTransport {
             let rpc: JsonRpcResponse = serde_json::from_value(value)
                 .context("failed to parse JSON-RPC response from SSE message")?;
             if rpc.id != expected_id {
-                warn!(expected = expected_id, got = rpc.id, "SSE response id mismatch");
+                warn!(
+                    expected = expected_id,
+                    got = rpc.id,
+                    "SSE response id mismatch"
+                );
                 continue;
             }
             return unwrap_rpc(rpc, expected_id);
@@ -485,8 +491,8 @@ mod tests {
 
     #[test]
     fn resolve_relative_path_endpoint() {
-        let u = resolve_endpoint_url("http://localhost:3000/sse", "/messages?sessionId=abc")
-            .unwrap();
+        let u =
+            resolve_endpoint_url("http://localhost:3000/sse", "/messages?sessionId=abc").unwrap();
         assert_eq!(u, "http://localhost:3000/messages?sessionId=abc");
     }
 

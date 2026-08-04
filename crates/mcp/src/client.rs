@@ -296,7 +296,11 @@ async fn read_stdio_response(
     let response: JsonRpcResponse = serde_json::from_str(&line)
         .with_context(|| format!("failed to parse MCP response: {}", line))?;
     if response.id != expected_id {
-        warn!(expected = expected_id, got = response.id, "MCP response id mismatch");
+        warn!(
+            expected = expected_id,
+            got = response.id,
+            "MCP response id mismatch"
+        );
     }
     if let Some(error) = response.error {
         bail!("MCP error [{}]: {}", error.code, error.message);

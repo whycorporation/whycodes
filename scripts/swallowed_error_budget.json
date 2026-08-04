@@ -17,5 +17,6 @@
   "skill": 0,
   "storage": 1,
   "tools": 11,
-  "tui": 25
+  "tui": 25,
+  "sandbox": 0
 }

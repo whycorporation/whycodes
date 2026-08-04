@@ -154,17 +154,31 @@ pub fn write_results(config: &BenchConfig) {
 mod tests {
     use super::*;
 
-    /// The counters are global, so the tests that touch them run as one case
-    /// rather than racing each other under the test harness.
+    /// The counters are global, so every test that mutates them lives in this
+    /// single case. Parallel libtest workers would otherwise race on the
+    /// atomics (seen as a macOS-only flake on CI).
     #[test]
     fn counters_record_the_first_frame_and_the_total() {
         ENABLED.store(true, Ordering::Relaxed);
         DRAWS.store(0, Ordering::Relaxed);
         FIRST_FRAME_NANOS.store(0, Ordering::Relaxed);
 
+        let config = BenchConfig {
+            output: std::path::PathBuf::from("unused"),
+            duration: Duration::ZERO,
+        };
+        assert!(
+            !should_stop(&config),
+            "with no frame drawn there is nothing to have measured"
+        );
+
         record_draw();
         let first = FIRST_FRAME_NANOS.load(Ordering::Relaxed);
         assert!(first > 0, "the first draw should have been timed");
+        assert!(
+            should_stop(&config),
+            "zero duration means stop as soon as the first frame is up"
+        );
 
         record_draw();
         record_draw();
@@ -214,18 +228,5 @@ mod tests {
         if std::env::var("WHYCODE_BENCH").is_err() {
             assert!(config_from_env().is_none());
         }
-    }
-
-    #[test]
-    fn a_run_does_not_stop_before_it_has_drawn() {
-        FIRST_FRAME_NANOS.store(0, Ordering::Relaxed);
-        let config = BenchConfig {
-            output: std::path::PathBuf::from("unused"),
-            duration: Duration::ZERO,
-        };
-        assert!(
-            !should_stop(&config),
-            "with no frame drawn there is nothing to have measured"
-        );
     }
 }

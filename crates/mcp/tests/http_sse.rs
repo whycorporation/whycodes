@@ -77,7 +77,11 @@ fn handle_mcp_method(
     }
 }
 
-async fn streamable_post(State(state): State<MockState>, headers: HeaderMap, body: String) -> Response {
+async fn streamable_post(
+    State(state): State<MockState>,
+    headers: HeaderMap,
+    body: String,
+) -> Response {
     state.posts.lock().await.push(body.clone());
     let value: serde_json::Value = match serde_json::from_str(&body) {
         Ok(v) => v,
@@ -87,7 +91,11 @@ async fn streamable_post(State(state): State<MockState>, headers: HeaderMap, bod
         return StatusCode::ACCEPTED.into_response();
     }
     let id = value.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
-    let method = value.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let method = value
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
     let params = value.get("params").cloned();
 
     if method == "initialize" {
@@ -176,7 +184,11 @@ async fn legacy_messages_post(State(state): State<MockState>, body: String) -> i
         return StatusCode::ACCEPTED;
     }
     let id = value.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
-    let method = value.get("method").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let method = value
+        .get("method")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
     let params = value.get("params").cloned();
     let result = handle_mcp_method(&method, id, params.as_ref(), &state.tool_name);
     let payload = json_rpc_result(id, result);

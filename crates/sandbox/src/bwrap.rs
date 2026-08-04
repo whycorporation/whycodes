@@ -47,8 +47,8 @@ pub fn prepare_bwrap(
     working_dir: &Path,
     network: bool,
 ) -> Result<PreparedCommand, SandboxError> {
-    let bwrap = bwrap_path()
-        .ok_or_else(|| SandboxError::Unavailable("bwrap not found on PATH".into()))?;
+    let bwrap =
+        bwrap_path().ok_or_else(|| SandboxError::Unavailable("bwrap not found on PATH".into()))?;
 
     let cwd = working_dir.to_path_buf();
     let cwd_str = cwd.to_string_lossy().into_owned();

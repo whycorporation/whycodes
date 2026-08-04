@@ -1753,9 +1753,7 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 Some("sse") => Some(whycode_core::config::McpTransportKind::Sse),
                 Some("auto") => Some(whycode_core::config::McpTransportKind::Auto),
                 Some(other) => {
-                    anyhow::bail!(
-                        "unknown MCP transport '{other}' (expected stdio|http|sse|auto)"
-                    );
+                    anyhow::bail!("unknown MCP transport '{other}' (expected stdio|http|sse|auto)");
                 }
             };
 
