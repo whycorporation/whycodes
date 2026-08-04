@@ -73,7 +73,8 @@ main() {
     curl -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
         || die "could not download the checksum file; refusing to install unverified"
 
-    expected="$(grep " $archive\$" "$tmp/SHA256SUMS" | cut -d' ' -f1)"
+    # Lines are either "hex  name" or "hex *name" (binary mode from sha256sum).
+    expected="$(grep -E "[[:space:]](\\*)?${archive}\$" "$tmp/SHA256SUMS" | awk '{print $1}' | head -n1)"
     [ -n "$expected" ] || die "$archive is not listed in SHA256SUMS"
     actual="$(sha256_of "$tmp/$archive")"
     if [ "$expected" != "$actual" ]; then

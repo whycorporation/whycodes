@@ -12,9 +12,30 @@ use whycode_config::Config;
 use whycode_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet, ProviderConfig};
 use whycode_protocol::{CiEvent, OutputFormat, ResultMeta};
 
+/// Crate version only (semver from Cargo.toml).
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Full version string: `0.1.0 (abc1234 2026-08-04)`.
+///
+/// Git hash and build date come from `build.rs` so release binaries and
+/// `whycode --version` / install smoke checks identify an exact build.
+const VERSION_LONG: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("WHYCODE_GIT_HASH"),
+    " ",
+    env!("WHYCODE_BUILD_DATE"),
+    ")"
+);
+
 /// Whycode — An AI coding agent built in Rust
 #[derive(Parser, Debug)]
-#[command(name = "whycode", version, about = "AI-powered coding agent", long_about = None)]
+#[command(
+    name = "whycode",
+    version = VERSION_LONG,
+    about = "AI-powered coding agent",
+    long_about = None
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
@@ -2316,7 +2337,7 @@ async fn cmd_stats() -> anyhow::Result<()> {
 /// `debug` — Show debug information
 async fn cmd_debug() -> anyhow::Result<()> {
     println!("{} Debug Information:", "🔧".bold());
-    println!("  Version:     {}", env!("CARGO_PKG_VERSION").cyan());
+    println!("  Version:     {}", VERSION_LONG.cyan());
 
     // Config path
     match Config::default_path() {
@@ -2421,9 +2442,9 @@ async fn cmd_debug() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `upgrade` — Show upgrade instructions
+/// `upgrade` — Self-update from the latest GitHub release
 async fn cmd_upgrade() -> anyhow::Result<()> {
-    let current = env!("CARGO_PKG_VERSION");
+    let current = PKG_VERSION;
     println!("{} Whycode Upgrade", "⬆".bold());
     println!("  Current version: {}", current.cyan());
     println!("  Checking for a newer release…");

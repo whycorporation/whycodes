@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-04** (context economy + TUI dirty-draw / layout cache)
+Last updated: **2026-08-04** (first release path: version meta + cut `v0.1.0`)
 
 ## Legend
 
@@ -48,10 +48,10 @@ Index of archives: [archive/README.md](archive/README.md).
 
 ## Current focus
 
-Priority for shipping the product (not a full backlog rewrite):
+Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
 
-1. **First public release** — tag `v*`, exercise installers / `upgrade` (closes residual distribution criteria).
-2. **Product polish on the terminal path** — TUI, tools, providers, docs. No ACP/web until after launch.
+1. **First public release** — tag `v0.1.0`, green `release.yml`, smoke `install.sh` / `upgrade`.
+2. **Product polish on the terminal path** — TUI, tools, providers, docs (`stats`, hooks/plugins). No ACP/web until after launch.
 3. **Performance residual** only if it blocks release confidence (stats schema is nice-to-have).
 4. **OAuth** stays blocked until owner decisions.
 5. **Memory** stays not-started until deliberately scheduled.

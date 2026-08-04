@@ -62,18 +62,17 @@ Out (full automation — partial scaffolding exists):
 - [x] `scripts/uninstall.sh` and `scripts/uninstall.ps1`
 - [x] Implement `cmd_upgrade` against the GitHub releases API, with atomic
       replacement (download to a temp path, verify, rename over the target)
-- [ ] `--version` reports version, short commit hash and build date — not
-      done; needs a build script to capture the hash, and it is not on the path
-      to a working install
+- [x] `--version` reports version, short commit hash and build date
+      (`crates/cli/build.rs` → `whycode 0.1.0 (<hash> <YYYY-MM-DD>)`)
 - [x] README: install section leads with the scripts, source build second
 - [x] Partial Homebrew: `Formula/whycode.rb` (HEAD/source) +
       `scripts/update_homebrew_formula.sh` for post-release binary formula
-- [ ] Homebrew: run update script from `release.yml` and/or first published tag
+- [ ] Homebrew: run update script after first published tag (manual or CI)
 - [ ] winget / AUR / Nix (on demand)
 
 ## Acceptance criteria
 
-- [ ] Tagging `v0.1.1` produces a release with binaries for all three
+- [ ] Tagging `v0.1.0` produces a release with binaries for all three
       platforms plus `SHA256SUMS`, with no manual step
 - [ ] `install.sh` on a machine with no Rust toolchain yields a runnable
       `whycode --version`
@@ -114,12 +113,14 @@ the workflow.
 To exercise them:
 
 ```bash
-git tag v0.1.1 && git push origin v0.1.1
+git tag v0.1.0 && git push origin v0.1.0
 ```
 
 That runs `.github/workflows/release.yml`, which builds all four targets,
 generates `SHA256SUMS` and publishes the release. The installers and
 `whycode upgrade` can then be run against it, and the remaining boxes ticked.
+After a green release, run `scripts/update_homebrew_formula.sh v0.1.0` and
+commit the formula if bottles are desired.
 
 Unit-tested without a release: version comparison, `SHA256SUMS` parsing
 (including the `*` binary marker `sha256sum` writes), and that `replace_binary`
