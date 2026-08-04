@@ -450,11 +450,21 @@ impl Session {
     }
 
     /// Persist this session and all messages to the SQLite database.
+    ///
+    /// Session metadata (including provider-reported token usage) is upserted.
+    /// Messages are replaced as a set so repeated saves do not duplicate rows.
     pub fn save_to_db(&self, db: &whycode_storage::db::Database) -> anyhow::Result<()> {
-        // Upsert the session row (INSERT OR REPLACE so repeated saves work).
-        db.create_session(&self.id, &self.title, &self.project_path.to_string_lossy())?;
+        db.upsert_session(
+            &self.id,
+            &self.title,
+            &self.project_path.to_string_lossy(),
+            &self.created_at.to_rfc3339(),
+            &self.updated_at.to_rfc3339(),
+            &self.usage,
+        )?;
 
-        // Store each message as a JSON-serialized row.
+        // Full replace keeps message_count honest across multi-turn persists.
+        db.delete_messages(&self.id)?;
         for msg in &self.messages {
             let msg_json = serde_json::to_string(msg)?;
             let role_str = serde_json::to_string(&msg.role)?
@@ -505,12 +515,71 @@ impl Session {
             project_path,
             created_at,
             updated_at,
-            // Usage is not persisted per session yet; a loaded session starts
-            // its accounting from zero rather than reporting a wrong total.
-            usage: Default::default(),
+            usage: row.usage,
         }))
     }
+}
 
+#[cfg(test)]
+mod persist_tests {
+    use super::*;
+    use whycode_core::types::Usage;
+
+    #[test]
+    fn save_and_load_restores_usage_and_messages() {
+        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+        session.add_user_message("hello");
+        session.add_usage(&Usage {
+            input_tokens: 42,
+            output_tokens: 7,
+            cache_creation_input_tokens: Some(1),
+            cache_read_input_tokens: Some(2),
+        });
+        session.save_to_db(&db).unwrap();
+
+        // Second save must not duplicate messages.
+        session.add_assistant_message(vec![ContentBlock::Text { text: "hi".into() }]);
+        session.save_to_db(&db).unwrap();
+
+        let loaded = Session::load_from_db(&db, &session.id)
+            .unwrap()
+            .expect("session row");
+        assert_eq!(loaded.usage.input_tokens, 42);
+        assert_eq!(loaded.usage.output_tokens, 7);
+        assert_eq!(loaded.usage.cache_creation_input_tokens, Some(1));
+        assert_eq!(loaded.usage.cache_read_input_tokens, Some(2));
+        assert_eq!(loaded.messages.len(), 2);
+        assert_eq!(db.message_count(&session.id).unwrap(), 2);
+    }
+
+    #[test]
+    fn usage_totals_reflect_saved_sessions() {
+        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let mut a = Session::new(std::path::PathBuf::from("/a"), "s".into());
+        a.add_usage(&Usage {
+            input_tokens: 10,
+            output_tokens: 1,
+            ..Default::default()
+        });
+        a.save_to_db(&db).unwrap();
+        let mut b = Session::new(std::path::PathBuf::from("/b"), "s".into());
+        b.add_usage(&Usage {
+            input_tokens: 20,
+            output_tokens: 2,
+            ..Default::default()
+        });
+        b.save_to_db(&db).unwrap();
+
+        let totals = db.usage_totals().unwrap();
+        assert_eq!(totals.session_count, 2);
+        assert_eq!(totals.usage.input_tokens, 30);
+        assert_eq!(totals.usage.output_tokens, 3);
+    }
+}
+
+// Keep export methods on Session.
+impl Session {
     /// Export the session as a shareable JSON file.
     /// Writes to .whycode/shares/{session_id}.json and returns the file path.
     pub fn export_share(&self) -> anyhow::Result<String> {

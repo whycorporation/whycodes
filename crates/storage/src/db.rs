@@ -1,6 +1,7 @@
 use crate::migrations::run_migrations;
-use crate::models::{MessageRow, SessionRow};
+use crate::models::{MessageRow, SessionRow, UsageTotals};
 use rusqlite::Connection;
+use whycode_core::types::Usage;
 
 /// Core database wrapper
 pub struct Database {
@@ -38,49 +39,122 @@ impl Database {
         Ok(Self { conn })
     }
 
-    pub fn create_session(&self, id: &str, title: &str, project_path: &str) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
+    /// Insert or update a session row, preserving `created_at` on conflict.
+    pub fn upsert_session(
+        &self,
+        id: &str,
+        title: &str,
+        project_path: &str,
+        created_at: &str,
+        updated_at: &str,
+        usage: &Usage,
+    ) -> anyhow::Result<()> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, project_path) VALUES (?1, ?2, ?3, ?3, ?4)",
-            rusqlite::params![id, title, now, project_path],
+            "INSERT INTO sessions (
+                id, title, created_at, updated_at, project_path,
+                input_tokens, output_tokens,
+                cache_creation_input_tokens, cache_read_input_tokens
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                updated_at = excluded.updated_at,
+                project_path = excluded.project_path,
+                input_tokens = excluded.input_tokens,
+                output_tokens = excluded.output_tokens,
+                cache_creation_input_tokens = excluded.cache_creation_input_tokens,
+                cache_read_input_tokens = excluded.cache_read_input_tokens",
+            rusqlite::params![
+                id,
+                title,
+                created_at,
+                updated_at,
+                project_path,
+                usage.input_tokens as i64,
+                usage.output_tokens as i64,
+                usage.cache_creation_input_tokens.map(|v| v as i64),
+                usage.cache_read_input_tokens.map(|v| v as i64),
+            ],
         )?;
         Ok(())
     }
 
+    /// Convenience for tests / simple creates (zero usage, now timestamps).
+    pub fn create_session(&self, id: &str, title: &str, project_path: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.upsert_session(id, title, project_path, &now, &now, &Usage::default())
+    }
+
     pub fn get_session(&self, id: &str) -> anyhow::Result<Option<SessionRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, created_at, updated_at, project_path FROM sessions WHERE id = ?1",
+            "SELECT id, title, created_at, updated_at, project_path,
+                    input_tokens, output_tokens,
+                    cache_creation_input_tokens, cache_read_input_tokens
+             FROM sessions WHERE id = ?1",
         )?;
-        let mut rows = stmt.query_map(rusqlite::params![id], |row| {
-            Ok(SessionRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                created_at: row.get(2)?,
-                updated_at: row.get(3)?,
-                project_path: row.get(4)?,
-            })
-        })?;
+        let mut rows = stmt.query_map(rusqlite::params![id], map_session_row)?;
         Ok(rows.next().transpose()?)
     }
 
     pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionRow>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, title, created_at, updated_at, project_path FROM sessions ORDER BY updated_at DESC"
+            "SELECT id, title, created_at, updated_at, project_path,
+                    input_tokens, output_tokens,
+                    cache_creation_input_tokens, cache_read_input_tokens
+             FROM sessions ORDER BY updated_at DESC",
         )?;
-        let rows = stmt.query_map([], |row| {
-            Ok(SessionRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                created_at: row.get(2)?,
-                updated_at: row.get(3)?,
-                project_path: row.get(4)?,
-            })
-        })?;
+        let rows = stmt.query_map([], map_session_row)?;
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);
         }
         Ok(result)
+    }
+
+    /// Sum provider-reported usage and message counts across all sessions.
+    pub fn usage_totals(&self) -> anyhow::Result<UsageTotals> {
+        let (session_count, input, output, cache_create, cache_read): (
+            i64,
+            i64,
+            i64,
+            Option<i64>,
+            Option<i64>,
+        ) = self.conn.query_row(
+            "SELECT
+                COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(output_tokens), 0),
+                SUM(cache_creation_input_tokens),
+                SUM(cache_read_input_tokens)
+             FROM sessions",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+
+        let message_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))?;
+
+        // SUM of all-NULL cache columns is NULL; keep Option semantics.
+        let usage = Usage {
+            input_tokens: input as u64,
+            output_tokens: output as u64,
+            cache_creation_input_tokens: cache_create.map(|v| v as u64),
+            cache_read_input_tokens: cache_read.map(|v| v as u64),
+        };
+
+        Ok(UsageTotals {
+            session_count: session_count as usize,
+            message_count: message_count as usize,
+            usage,
+        })
     }
 
     pub fn update_title(&self, id: &str, title: &str) -> anyhow::Result<()> {
@@ -93,6 +167,10 @@ impl Database {
     }
 
     pub fn delete_session(&self, id: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            rusqlite::params![id],
+        )?;
         self.conn
             .execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![id])?;
         Ok(())
@@ -111,6 +189,15 @@ impl Database {
         self.conn.execute(
             "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![msg_id, session_id, role, content, tool_call_id, name, now],
+        )?;
+        Ok(())
+    }
+
+    /// Drop all messages for a session (used before full re-persist).
+    pub fn delete_messages(&self, session_id: &str) -> anyhow::Result<()> {
+        self.conn.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            rusqlite::params![session_id],
         )?;
         Ok(())
     }
@@ -169,6 +256,26 @@ impl Database {
     }
 }
 
+fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {
+    let input: i64 = row.get(5)?;
+    let output: i64 = row.get(6)?;
+    let cache_create: Option<i64> = row.get(7)?;
+    let cache_read: Option<i64> = row.get(8)?;
+    Ok(SessionRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        created_at: row.get(2)?,
+        updated_at: row.get(3)?,
+        project_path: row.get(4)?,
+        usage: Usage {
+            input_tokens: input as u64,
+            output_tokens: output as u64,
+            cache_creation_input_tokens: cache_create.map(|v| v as u64),
+            cache_read_input_tokens: cache_read.map(|v| v as u64),
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +322,88 @@ mod tests {
         db.create_session("s1", "Test", "/tmp").unwrap();
         let s = db.get_session("s1").unwrap().unwrap();
         assert_eq!(s.title, "Test");
+        assert!(s.usage.is_empty());
+    }
+
+    #[test]
+    fn test_upsert_preserves_created_at_and_stores_usage() {
+        let db = test_db();
+        let created = "2020-01-01T00:00:00+00:00";
+        let usage = Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_creation_input_tokens: Some(1),
+            cache_read_input_tokens: Some(2),
+        };
+        db.upsert_session("s1", "Old", "/tmp", created, created, &usage)
+            .unwrap();
+
+        let updated = "2021-06-15T12:00:00+00:00";
+        let usage2 = Usage {
+            input_tokens: 100,
+            output_tokens: 200,
+            cache_creation_input_tokens: Some(3),
+            cache_read_input_tokens: Some(4),
+        };
+        db.upsert_session("s1", "New", "/proj", created, updated, &usage2)
+            .unwrap();
+
+        let s = db.get_session("s1").unwrap().unwrap();
+        assert_eq!(s.title, "New");
+        assert_eq!(s.created_at, created);
+        assert_eq!(s.updated_at, updated);
+        assert_eq!(s.project_path, "/proj");
+        assert_eq!(s.usage.input_tokens, 100);
+        assert_eq!(s.usage.output_tokens, 200);
+        assert_eq!(s.usage.cache_creation_input_tokens, Some(3));
+        assert_eq!(s.usage.cache_read_input_tokens, Some(4));
+    }
+
+    #[test]
+    fn test_usage_totals() {
+        let db = test_db();
+        let now = chrono::Utc::now().to_rfc3339();
+        db.upsert_session(
+            "a",
+            "A",
+            "/a",
+            &now,
+            &now,
+            &Usage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_creation_input_tokens: Some(1),
+                cache_read_input_tokens: None,
+            },
+        )
+        .unwrap();
+        db.upsert_session(
+            "b",
+            "B",
+            "/b",
+            &now,
+            &now,
+            &Usage {
+                input_tokens: 20,
+                output_tokens: 7,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: Some(4),
+            },
+        )
+        .unwrap();
+        db.insert_message("m1", "a", "user", "hi", None, None)
+            .unwrap();
+        db.insert_message("m2", "a", "assistant", "yo", None, None)
+            .unwrap();
+
+        let t = db.usage_totals().unwrap();
+        assert_eq!(t.session_count, 2);
+        assert_eq!(t.message_count, 2);
+        assert_eq!(t.usage.input_tokens, 30);
+        assert_eq!(t.usage.output_tokens, 12);
+        assert_eq!(t.usage.cache_creation_input_tokens, Some(1));
+        assert_eq!(t.usage.cache_read_input_tokens, Some(4));
+        assert_eq!(t.usage.total(), 30 + 12 + 1 + 4);
     }
 
     #[test]
@@ -237,8 +426,11 @@ mod tests {
     fn test_delete_session() {
         let db = test_db();
         db.create_session("s1", "Test", "/tmp").unwrap();
+        db.insert_message("m1", "s1", "user", "hi", None, None)
+            .unwrap();
         db.delete_session("s1").unwrap();
         assert!(db.get_session("s1").unwrap().is_none());
+        assert!(db.get_messages("s1").unwrap().is_empty());
     }
 
     #[test]
@@ -252,6 +444,16 @@ mod tests {
         let msgs = db.get_messages("s1").unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, "user");
+    }
+
+    #[test]
+    fn test_delete_messages() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        db.insert_message("m1", "s1", "user", "hi", None, None)
+            .unwrap();
+        db.delete_messages("s1").unwrap();
+        assert_eq!(db.message_count("s1").unwrap(), 0);
     }
 
     #[test]

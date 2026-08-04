@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use whycode_core::types::Usage;
 
 /// A row from the sessions table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -8,6 +9,17 @@ pub struct SessionRow {
     pub created_at: String,
     pub updated_at: String,
     pub project_path: String,
+    /// Provider-reported token totals for this session.
+    #[serde(default)]
+    pub usage: Usage,
+}
+
+/// Aggregated usage across all sessions (for `whycode stats`).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UsageTotals {
+    pub session_count: usize,
+    pub message_count: usize,
+    pub usage: Usage,
 }
 
 /// A row from the messages table.

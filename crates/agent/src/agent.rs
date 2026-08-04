@@ -16,6 +16,8 @@ use super::permission::{PermissionPrompter, default_prompter};
 use super::subagent::{SubagentRunner, SubagentTask};
 use super::tool_stream::ToolCallAssembler;
 use whycode_command_risk::{Decision, RiskThreshold, assess, decide};
+use whycode_config::HookConfig;
+use whycode_plugin::hooks::{PreHookDecision, run_post_hooks, run_pre_hooks};
 
 /// Tool names that run an arbitrary shell command string.
 const SHELL_TOOLS: &[&str] = &["bash", "shell"];
@@ -32,6 +34,8 @@ pub struct Agent {
     risk_threshold: RiskThreshold,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
+    /// Config-driven pre/post tool hooks (empty by default).
+    hooks: Vec<HookConfig>,
 }
 
 impl Agent {
@@ -44,6 +48,7 @@ impl Agent {
             risk_threshold: RiskThreshold::default(),
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
+            hooks: Vec::new(),
         }
     }
 
@@ -78,11 +83,13 @@ impl Agent {
             });
         self.sandbox = config.security.sandbox_settings();
         self.network = config.security.network_policy();
+        self.hooks = config.hooks.clone();
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
             network_deny = self.network.denylist.len(),
-            "shell sandbox and network policy"
+            hooks = self.hooks.len(),
+            "shell sandbox, network policy, and hooks"
         );
         self
     }
@@ -568,14 +575,51 @@ impl Agent {
             PermissionAction::Allow => {}
         }
 
-        if tc.name == "task" {
+        // Pre-tool hooks (after risk + permission, before execution).
+        let tool_input = tc.arguments.to_string();
+        match run_pre_hooks(
+            &self.hooks,
+            &tc.name,
+            &tc.id,
+            &tool_input,
+            Some(session.id.as_str()),
+            &tool_ctx.working_dir,
+        )
+        .await
+        {
+            PreHookDecision::Allow => {}
+            PreHookDecision::Block { reason } => {
+                return ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    content: reason,
+                    is_error: true,
+                };
+            }
+        }
+
+        let result = if tc.name == "task" {
             self.execute_task_tool(tc, session, provider_name, model, api_key)
                 .await
         } else {
             self.tool_executor
                 .execute(tc, tool_ctx, &self.info.permission)
                 .await
-        }
+        };
+
+        // Post-tool hooks never block; failures are logged inside the runner.
+        run_post_hooks(
+            &self.hooks,
+            &tc.name,
+            &tc.id,
+            &tool_input,
+            Some(session.id.as_str()),
+            &tool_ctx.working_dir,
+            result.is_error,
+            &result.content,
+        )
+        .await;
+
+        result
     }
 
     /// Execute the `task` tool by spawning a real subagent (OpenCode Task tool parity).

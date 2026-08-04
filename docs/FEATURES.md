@@ -133,7 +133,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Catastrophic komut hard-block | ✅★ (`rm -rf ~` asla onaylanmaz) | ⚠️ | ❌ | ⚠️ | ⚠️ |
 | Sandbox (OS / network) | ✅★ (Linux bwrap workspace; net opt-out) | ✅ | ❌ | ⚠️ | ✅ |
 | Network allowlist | ✅ (HTTP tools; shell stays binary) | ⚠️ | ❌ | ⚠️ | ✅ |
-| Hooks (pre/post tool) | ⚠️ plugin iskelet | ✅★ | ✅★ | ⚠️ | ✅★ |
+| Hooks (pre/post tool) | ✅ config shell hooks | ✅★ | ✅★ | ⚠️ | ✅★ |
 
 ---
 
@@ -168,7 +168,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Session search (geçmiş RAG) | ❌ | ⚠️ | ❌ | ✅ | ⚠️ |
 | Share link | ✅ local only | ✅ | ✅ cloud | ⚠️ | ⚠️ |
 | Export transcript | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| Token / cost / usage stats | ⚠️ `stats` | ✅ `/usage` | ⚠️ | ⚠️ cache warn | ✅ `/cost` |
+| Token / cost / usage stats | ✅ `stats` + session usage | ✅ `/usage` | ⚠️ | ⚠️ cache warn | ✅ `/cost` |
 
 ---
 
@@ -248,7 +248,7 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | Swarm / multi-agent conflict | jcode★ | dropped ([archive](archive/phase-7-multi-agent.md)) |
 | Browser automation | jcode, Claude | Yok |
 | Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub; **ACP ürün çıktıktan sonra** (`docs/status.md`) |
-| Hooks + plugin marketplace | Grok, OpenCode, Claude | Plugin crate iskelet |
+| Hooks + plugin marketplace | Grok, OpenCode, Claude | Config shell hooks ✅; marketplace / plugin load still iskelet |
 | OS sandbox (macOS/Windows backend) | Grok, Claude | Linux bwrap ✅; diğer platformlar fallback |
 | Cloud share / remote control | OpenCode, Claude | Sadece local share |
 | Side panel UI | jcode | Basit sidebar; Mermaid Unicode fenced blocks ✅ |

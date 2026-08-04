@@ -2966,6 +2966,7 @@ dependencies = [
  "whycode-core",
  "whycode-llm",
  "whycode-mcp",
+ "whycode-plugin",
  "whycode-sandbox",
  "whycode-session",
  "whycode-tools",
@@ -3130,7 +3131,9 @@ dependencies = [
  "anyhow",
  "serde",
  "serde_json",
+ "tokio",
  "tracing",
+ "whycode-config",
  "whycode-core",
 ]
 

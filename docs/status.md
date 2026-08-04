@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-04** (`v0.1.0` published; repo still private → public install gate)
+Last updated: **2026-08-04** (usage persistence + pre/post tool hooks; `v0.1.0` public install still gated on repo visibility)
 
 ## Legend
 
@@ -23,7 +23,7 @@ Last updated: **2026-08-04** (`v0.1.0` published; repo still private → public 
 |---|---|---|---|
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented | `v0.1.0` assets live. **Public install** needs repo visibility=public (or `GITHUB_TOKEN`). Homebrew formula still HEAD-only until `update_homebrew_formula.sh`. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | blocked | Owner: client registration + provider terms before any code. |
-| Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + benchmarks exist. Open: stats aggregation, subagent tokens, provider reconcile, optional CI ceilings. |
+| Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + usage persistence + `whycode stats`. Open: subagent tokens, provider reconcile, optional CI ceilings. |
 | Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
 | Semantic memory | [plan-memory.md](plan-memory.md) | not started | Needs model-distribution decision + RSS cost comfort. |
 
@@ -51,8 +51,8 @@ Index of archives: [archive/README.md](archive/README.md).
 Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
 
 1. **First public release (almost done)** — `v0.1.0` cut + smoke OK with token. Remaining: **make repo public**, optional Homebrew binary formula, Windows install.ps1 smoke.
-2. **Product polish on the terminal path** — TUI, tools, providers, docs (`stats`, hooks/plugins). No ACP/web until after launch.
-3. **Performance residual** only if it blocks release confidence (stats schema is nice-to-have).
+2. **Product polish on the terminal path** — TUI, tools, providers. **Shipped this turn:** real `whycode stats` + session usage columns; config-driven pre/post tool hooks. Next polish: richer plugins, subagent token fold.
+3. **Performance residual** — stats done; optional CI ceilings / subagent tokens remain.
 4. **OAuth** stays blocked until owner decisions.
 5. **Memory** stays not-started until deliberately scheduled.
 
@@ -72,6 +72,8 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-04 | Archive completed phase docs; keep only open plans live | Numbered 1–9 cluttered the tree; done work lives under `docs/archive/`. |
 | 2026-08-04 | Network allowlist for HTTP tools (`webfetch` / search / GitHub) | Domain gate on agent egress; shell stays `sandbox_network` binary (no proxy). |
 | 2026-08-04 | Cut `v0.1.0` first release assets | Four targets + `SHA256SUMS`. Repo remains private until owner opens it for anonymous install. |
+| 2026-08-04 | Persist session token usage + real `stats` | Provider-reported totals in SQLite; no more message×500 estimate. |
+| 2026-08-04 | Config pre/post tool hooks | Shell hooks around tool calls; `block_on_failure` on pre only. Marketplace later. |
 
 ## Verification commands
 

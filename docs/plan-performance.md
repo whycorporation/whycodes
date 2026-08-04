@@ -55,7 +55,7 @@ Out:
 - [x] `scripts/count_idle_draws.py`: redraws in 10s with no input; the target
       is zero
 - [x] Structured token accounting on every turn, surfaced by `/info`
-      (`whycode stats` needs per-session persistence — see below)
+- [x] Per-session usage persisted in SQLite; `whycode stats` aggregates it
 - [x] `docs/benchmarks.md` recording the method precisely enough to reproduce:
       machine, build profile, terminal, run count
 - [ ] `bench-results.json` committed per run
@@ -120,16 +120,19 @@ Token accounting also landed. Providers were already emitting
 {}`. It now accumulates per turn, folds into the session, and `/info` reports
 the provider's own numbers in both the TUI and the plain REPL.
 
-Three things are still open, each for a specific reason rather than for lack of
-time:
+## Update, 2026-08-04 — usage persistence
 
-- **`whycode stats` aggregation.** Needs usage persisted per session, which
-  needs a schema migration. `Session::load_from_db` currently starts a loaded
-  session's accounting at zero rather than reporting a wrong total.
+- Sessions table stores `input_tokens`, `output_tokens`, and optional cache
+  columns; `Session::save_to_db` / `load_from_db` round-trip them.
+- `whycode stats` prints provider-reported totals and top sessions (no more
+  500×message heuristic).
+- Message rows are replaced on each save (fixes duplicate-message inflate).
+
+Still open:
+
 - **Subagent tokens.** A subagent's tokens are billed to the same account but it
   does not own the session, and routing them to the parent needs a channel
   `SubagentRunner` does not have. `subagent.rs` says so at the discard site.
-- **Reconciliation against a provider's own reported usage.** That is the
-  acceptance criterion, and it needs a real session against a real key. The
-  arithmetic is unit-tested; the wiring is not, and the difference is stated
-  here rather than assumed away.
+- **Reconciliation against a provider's own reported usage.** Needs a real
+  session against a real key. Arithmetic is unit-tested.
+- **CI ceilings / `bench-results.json`** (unchanged residual).

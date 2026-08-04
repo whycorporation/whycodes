@@ -5,6 +5,7 @@
     "core",
     "llm",
     "mcp",
+    "plugin",
     "sandbox",
     "session",
     "tools"
@@ -43,6 +44,7 @@
     "core"
   ],
   "plugin": [
+    "config",
     "core"
   ],
   "protocol": [

@@ -14,6 +14,7 @@ whycode-session = { path = "../session" }
 whycode-mcp = { path = "../mcp" }
 whycode-command-risk = { path = "../command-risk" }
 whycode-sandbox = { path = "../sandbox" }
+whycode-plugin = { path = "../plugin" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

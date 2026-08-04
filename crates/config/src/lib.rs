@@ -92,6 +92,83 @@ pub struct Config {
     /// Shell command risk gating.
     #[serde(default)]
     pub security: SecurityConfig,
+
+    /// Pre/post tool hooks (shell commands). Empty by default.
+    #[serde(default)]
+    pub hooks: Vec<HookConfig>,
+}
+
+/// When a hook runs relative to a tool call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HookEvent {
+    /// Before the tool executes. Non-zero exit can block when `block_on_failure`.
+    PreTool,
+    /// After the tool finishes. Failures are logged only.
+    PostTool,
+}
+
+impl Default for HookEvent {
+    fn default() -> Self {
+        Self::PreTool
+    }
+}
+
+/// A single shell hook attached to tool execution.
+///
+/// ```toml
+/// [[hooks]]
+/// event = "pre_tool"
+/// match = "bash"           # tool name; `*` or `prefix*` / `*suffix`
+/// command = "echo check"
+/// block_on_failure = true  # pre_tool only: non-zero exit refuses the tool
+/// timeout_secs = 30
+/// ```
+///
+/// Environment for the command: `WHYCODE_HOOK_EVENT`, `WHYCODE_TOOL_NAME`,
+/// `WHYCODE_TOOL_INPUT` (JSON), `WHYCODE_TOOL_ID`, `WHYCODE_SESSION_ID`,
+/// `WHYCODE_WORKING_DIR`. Post-tool also sets `WHYCODE_TOOL_IS_ERROR` and
+/// `WHYCODE_TOOL_OUTPUT` (truncated).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookConfig {
+    /// `pre_tool` or `post_tool`.
+    #[serde(default)]
+    pub event: HookEvent,
+
+    /// Tool name pattern. Default `*` (all tools).
+    #[serde(default = "default_hook_match", rename = "match")]
+    pub tool_match: String,
+
+    /// Shell command (run via `sh -c` / `cmd /C`).
+    pub command: String,
+
+    /// When true on `pre_tool`, a non-zero exit refuses the tool call.
+    #[serde(default)]
+    pub block_on_failure: bool,
+
+    /// Kill the hook after this many seconds. Default 30.
+    #[serde(default = "default_hook_timeout")]
+    pub timeout_secs: u64,
+}
+
+fn default_hook_match() -> String {
+    "*".to_string()
+}
+
+fn default_hook_timeout() -> u64 {
+    30
+}
+
+impl Default for HookConfig {
+    fn default() -> Self {
+        Self {
+            event: HookEvent::PreTool,
+            tool_match: default_hook_match(),
+            command: String::new(),
+            block_on_failure: false,
+            timeout_secs: default_hook_timeout(),
+        }
+    }
 }
 
 /// Settings for shell safety: risk classification, OS sandbox, and network
@@ -448,6 +525,7 @@ impl Default for Config {
             permission: HashMap::new(),
             commands: HashMap::new(),
             security: SecurityConfig::default(),
+            hooks: Vec::new(),
         }
     }
 }
@@ -926,6 +1004,11 @@ impl Config {
         }
         if !other.security.network_denylist.is_empty() {
             merged.security.network_denylist = other.security.network_denylist.clone();
+        }
+
+        // Hooks: non-empty higher layer replaces (project can define its own set).
+        if !other.hooks.is_empty() {
+            merged.hooks = other.hooks.clone();
         }
 
         merged
@@ -1668,6 +1751,56 @@ mod tests {
         assert_eq!(s.command.as_deref(), Some("npx"));
         assert_eq!(s.resolved_transport().unwrap(), McpTransportKind::Stdio);
         assert!(!s.is_remote());
+    }
+
+    #[test]
+    fn hooks_table_deserializes() {
+        let toml = r#"
+            [[hooks]]
+            event = "pre_tool"
+            match = "bash"
+            command = "echo pre"
+            block_on_failure = true
+            timeout_secs = 10
+
+            [[hooks]]
+            event = "post_tool"
+            match = "*"
+            command = "true"
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.hooks.len(), 2);
+        assert_eq!(cfg.hooks[0].event, HookEvent::PreTool);
+        assert_eq!(cfg.hooks[0].tool_match, "bash");
+        assert!(cfg.hooks[0].block_on_failure);
+        assert_eq!(cfg.hooks[0].timeout_secs, 10);
+        assert_eq!(cfg.hooks[1].event, HookEvent::PostTool);
+        assert_eq!(cfg.hooks[1].tool_match, "*");
+        assert!(!cfg.hooks[1].block_on_failure);
+        assert_eq!(cfg.hooks[1].timeout_secs, 30); // default
+    }
+
+    #[test]
+    fn merge_hooks_nonempty_replaces() {
+        let mut base = Config::default();
+        base.hooks.push(HookConfig {
+            event: HookEvent::PreTool,
+            tool_match: "bash".into(),
+            command: "base".into(),
+            block_on_failure: false,
+            timeout_secs: 5,
+        });
+        let mut overlay = Config::default();
+        overlay.hooks.push(HookConfig {
+            event: HookEvent::PostTool,
+            tool_match: "*".into(),
+            command: "overlay".into(),
+            block_on_failure: false,
+            timeout_secs: 5,
+        });
+        let merged = base.merge_with(&overlay);
+        assert_eq!(merged.hooks.len(), 1);
+        assert_eq!(merged.hooks[0].command, "overlay");
     }
 
     #[test]

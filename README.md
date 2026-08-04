@@ -437,6 +437,30 @@ inside the sandboxed shell — only to the dedicated HTTP tools above. When you
 set an allowlist and still want search, include the provider hosts
 (`serpapi.com` and/or `html.duckduckgo.com`).
 
+### Tool hooks
+
+Run shell commands before or after each tool call (primary agent path):
+
+```toml
+[[hooks]]
+event = "pre_tool"
+match = "bash"              # tool name; `*`, `prefix*`, or `*suffix`
+command = "echo checking $WHYCODE_TOOL_NAME"
+block_on_failure = true     # non-zero exit refuses the tool (pre only)
+timeout_secs = 30
+
+[[hooks]]
+event = "post_tool"
+match = "*"
+command = "logger -t whycode \"done $WHYCODE_TOOL_NAME err=$WHYCODE_TOOL_IS_ERROR\""
+```
+
+Environment: `WHYCODE_HOOK_EVENT`, `WHYCODE_TOOL_NAME`, `WHYCODE_TOOL_ID`,
+`WHYCODE_TOOL_INPUT` (JSON), `WHYCODE_SESSION_ID`, `WHYCODE_WORKING_DIR`.
+Post-tool also sets `WHYCODE_TOOL_IS_ERROR` (`0`/`1`) and `WHYCODE_TOOL_OUTPUT`
+(truncated). Hooks run after the risk gate and permission prompt, before
+execution. Subagent tool loops do not invoke hooks yet.
+
 ### Custom commands
 
 Markdown files become slash commands named after the file. They are read from
