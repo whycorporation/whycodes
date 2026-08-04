@@ -12,8 +12,13 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    let brand = Span::styled(
-        " whycode ",
+    // Dual-tone wordmark matches the top status bar brand treatment.
+    let brand_why = Span::styled(
+        " why",
+        Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+    );
+    let brand_code = Span::styled(
+        "code ",
         Style::default()
             .fg(palette.accent)
             .add_modifier(Modifier::BOLD),
@@ -43,8 +48,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     );
 
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(vec![brand, agent, rest])))
-            .style(Style::default().bg(palette.status_bar_bg)),
+        Paragraph::new(Text::from(Line::from(vec![
+            brand_why, brand_code, agent, rest,
+        ])))
+        .style(Style::default().bg(palette.status_bar_bg)),
         area,
     );
 }

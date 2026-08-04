@@ -1,5 +1,5 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: status dot + project label · shortcuts.
+// Top: upright status square + dual-tone brand · project · shortcuts.
 // Bottom: git branch + cwd (click-to-copy) · context used/max (hover → %).
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
@@ -15,6 +15,12 @@ use std::sync::OnceLock;
 use unicode_width::UnicodeWidthStr;
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Filled upright square (not a round bullet). U+25AE BLACK VERTICAL RECTANGLE
+/// stands taller in the cell — a solid status chip rather than a flat disk.
+const STATUS_SQUARE: &str = "▮";
+/// Hollow upright square while waiting on the user.
+const STATUS_SQUARE_OPEN: &str = "▯";
 
 /// Grok-style branch glyph (process-lifetime cache).
 ///
@@ -42,27 +48,64 @@ fn branch_icon() -> &'static str {
     })
 }
 
+/// Dual-tone wordmark: bold fg `why` + bold accent `code`.
+fn brand_spans(palette: &ThemePalette) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            "why",
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "code",
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]
+}
+
+fn status_glyph(app: &TuiApp, palette: &ThemePalette) -> Span<'static> {
+    match &app.current_agent_state {
+        AgentState::Generating | AgentState::Thinking => Span::styled(
+            SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()].to_string(),
+            Style::default().fg(palette.accent),
+        ),
+        AgentState::WaitingForPermission => Span::styled(
+            STATUS_SQUARE_OPEN.to_string(),
+            Style::default().fg(palette.warning),
+        ),
+        AgentState::Error(_) => Span::styled(
+            STATUS_SQUARE.to_string(),
+            Style::default().fg(palette.error),
+        ),
+        AgentState::Idle => Span::styled(
+            STATUS_SQUARE.to_string(),
+            Style::default().fg(palette.success),
+        ),
+    }
+}
+
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     if area.height == 0 || area.width < 8 {
         return;
     }
 
-    // Idle = green; busy = spinner; permission = amber; error = red.
-    // (Previously Idle painted error-red — Grok/OpenCode use calm ready.)
-    let dot = match &app.current_agent_state {
-        AgentState::Generating | AgentState::Thinking => Span::styled(
-            SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()],
-            Style::default().fg(palette.accent),
-        ),
-        AgentState::WaitingForPermission => Span::styled("◆", Style::default().fg(palette.warning)),
-        AgentState::Error(_) => Span::styled("●", Style::default().fg(palette.error)),
-        AgentState::Idle => Span::styled("●", Style::default().fg(palette.success)),
-    };
+    let glyph = status_glyph(app, palette);
+    let brand = brand_spans(palette);
 
-    let dir = truncate_start(
-        &app.project_label,
-        ((area.width / 4).max(10)).min(area.width / 3) as usize,
-    );
+    // Project basename after the wordmark when it adds information (skip when
+    // the folder is already called "whycode").
+    let dir_raw = app.project_label.trim();
+    let show_dir =
+        !dir_raw.is_empty() && !dir_raw.eq_ignore_ascii_case("whycode") && dir_raw != ".";
+    let dir = if show_dir {
+        truncate_start(
+            dir_raw,
+            ((area.width / 5).max(8)).min(area.width / 4) as usize,
+        )
+    } else {
+        String::new()
+    };
 
     let no_key = app.status_message.contains("no API key")
         || app.status_message.contains("/connect")
@@ -81,8 +124,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    let left_prefix = format!("{} {dir}", dot.content.as_ref());
-    let left_w = left_prefix.width();
+    // Layout: ▮  whycode [· dir] …… shortcuts
+    let mut left: Vec<Span<'_>> = vec![glyph, Span::raw("  ")];
+    left.extend(brand);
+    if !dir.is_empty() {
+        left.push(Span::styled(
+            format!("  ·  {dir}"),
+            Style::default().fg(palette.dim),
+        ));
+    }
+
+    let left_w: usize = left.iter().map(|s| s.content.as_ref().width()).sum();
     let right_w: usize = right.iter().map(|s| s.content.as_ref().width()).sum();
     let mid = area
         .width
@@ -90,11 +142,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         .saturating_sub(right_w as u16)
         .saturating_sub(1) as usize;
 
-    let mut spans: Vec<Span<'_>> = vec![
-        dot,
-        Span::styled(format!(" {dir}"), Style::default().fg(palette.dim)),
-        Span::raw(" ".repeat(mid)),
-    ];
+    let mut spans: Vec<Span<'_>> = left;
+    spans.push(Span::raw(" ".repeat(mid)));
     spans.extend(right);
 
     frame.render_widget(
