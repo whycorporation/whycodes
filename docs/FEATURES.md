@@ -189,7 +189,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Toast notifications | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | `@file` mention | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `!shell` prefix | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| Image drag-drop prompt | ❌ | ⚠️ | ✅ | ⚠️ | ✅ |
+| Image drag-drop prompt | ✅ path paste/drop | ⚠️ | ✅ | ⚠️ | ✅ |
 | 1000+ fps claim / flicker-free | ❌ | ⚠️ | ❌ | ✅★ | ✅ `/tui` flicker-free |
 
 ---

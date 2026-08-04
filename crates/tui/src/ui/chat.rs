@@ -274,7 +274,13 @@ fn render_message(
         ChatRole::User => {
             let selected = app.selected_msg == Some(index)
                 && app.focus == crate::app::FocusPane::Scrollback;
-            lines.extend(user_prompt_lines(&msg.content, palette, width, selected));
+            lines.extend(user_prompt_lines(
+                &msg.content,
+                &msg.image_labels,
+                palette,
+                width,
+                selected,
+            ));
         }
         ChatRole::Assistant => {
             // Chronological layout: stream thinking first, emit `content` before
@@ -528,6 +534,7 @@ const PROMPT_ARROW_WIDTH: u16 = 2;
 /// - no left `┃` rail (accent is the arrow, not a border)
 fn user_prompt_lines(
     content: &str,
+    image_labels: &[String],
     palette: &ThemePalette,
     width: u16,
     is_selected: bool,
@@ -541,23 +548,52 @@ fn user_prompt_lines(
     let band_style = Style::default().bg(band);
     let prefix_style = Style::default().fg(palette.user_msg).bg(band);
     let body_style = Style::default().fg(palette.fg).bg(band);
+    let img_style = Style::default()
+        .fg(palette.accent)
+        .bg(band)
+        .add_modifier(Modifier::DIM);
 
     let mut lines = Vec::new();
     // vpad top (Grok PromptConfig.vpad = true)
     lines.push(band_pad_line(band_style));
 
-    let content_w = width.saturating_sub(PROMPT_ARROW_WIDTH).max(4) as usize;
-    let text = content.trim_end_matches('\n');
-
-    if text.is_empty() {
+    // Image attachment chips (file names from drag-drop / paste).
+    if !image_labels.is_empty() {
+        let chips = image_labels
+            .iter()
+            .map(|l| format!("🖼 {l}"))
+            .collect::<Vec<_>>()
+            .join("  ");
         lines.push(Line::from(vec![
             Span::styled(PROMPT_ARROW.to_string(), prefix_style),
-            Span::styled(" ".to_string(), body_style),
+            Span::styled(chips, img_style),
         ]));
+    }
+
+    let content_w = width.saturating_sub(PROMPT_ARROW_WIDTH).max(4) as usize;
+    // When we already showed image chips with the arrow, indent body lines.
+    let text = content.trim_end_matches('\n');
+    // Skip redundant "[Image: …]" body when labels already render chips and
+    // content is the synthetic image-only placeholder.
+    let skip_body = !image_labels.is_empty()
+        && (text.starts_with("[Image:") || text.starts_with("[Images:"));
+    if skip_body {
+        lines.push(band_pad_line(band_style));
+        return lines;
+    }
+
+    if text.is_empty() {
+        if image_labels.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled(PROMPT_ARROW.to_string(), prefix_style),
+                Span::styled(" ".to_string(), body_style),
+            ]));
+        }
     } else {
         // Soft-wrap per logical line so explicit newlines stay as hard breaks
         // (same shape as Grok wrap_prompt_lines).
-        let mut first_visual = true;
+        // If chips already used the ❯ line, body lines are indented continuations.
+        let mut first_visual = image_labels.is_empty();
         for logical in text.split('\n') {
             if logical.is_empty() {
                 // Empty logical line: show arrow / indent only.

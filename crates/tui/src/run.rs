@@ -6,8 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -129,6 +130,7 @@ fn restore_terminal_on(out: &mut impl Write) {
     let _ = disable_raw_mode();
     let _ = execute!(
         out,
+        DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen,
         crossterm::cursor::Show
@@ -304,7 +306,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     })?;
     // Mouse capture: we own drag-select so clipboard text can be trimmed of
     // background pad spaces. Shift+drag is still native select in many hosts.
-    execute!(tui_out, EnterAlternateScreen, EnableMouseCapture).map_err(|e| {
+    // Bracketed paste: terminals deliver drag-dropped file paths as Event::Paste
+    // (and multi-line pastes as one string instead of key spam).
+    execute!(
+        tui_out,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )
+    .map_err(|e| {
         let _ = disable_raw_mode();
         whycode_core::logging::emit(
             "whycode_tui",
@@ -620,6 +630,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Start turn if needed ──────────────────────────────────
             if !agent_busy && let Some(prompt) = app.pending_prompt.take() {
+                let submit_images = std::mem::take(&mut app.pending_submit_images);
+
                 // Lazy-load API key from env/config when user first chats
                 if api_key.is_empty() {
                     if let Ok(cfg) = Config::load()
@@ -652,6 +664,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         crate::toast::ToastKind::Warning,
                         format!("Missing {provider} API key"),
                     );
+                    // Images already shown on the user bubble; don't re-queue.
+                    let _ = submit_images;
                     continue;
                 }
 
@@ -673,7 +687,26 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
                 let expanded = expand_at_files(&prompt, &project_dir);
                 history.push_before_turn(&session.messages, &project_dir);
-                session.add_user_message(&expanded);
+                if submit_images.is_empty() {
+                    session.add_user_message(&expanded);
+                } else {
+                    match crate::images::build_user_blocks(&expanded, &submit_images) {
+                        Ok(blocks) => session.add_user_message_blocks(blocks),
+                        Err(e) => {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Warning,
+                                format!("Image attach failed: {e}"),
+                            );
+                            if expanded.trim().is_empty() {
+                                session.add_user_message(&format!(
+                                    "(failed to load image: {e})"
+                                ));
+                            } else {
+                                session.add_user_message(&expanded);
+                            }
+                        }
+                    }
+                }
 
                 let provider2 = provider.clone();
                 let model2 = model.clone();
@@ -991,6 +1024,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
     let _ = execute!(
         terminal.backend_mut(),
+        DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen
     );

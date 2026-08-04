@@ -54,6 +54,17 @@ impl Session {
         self.touch();
     }
 
+    /// Add a user message with structured content blocks (text + images, etc.).
+    pub fn add_user_message_blocks(&mut self, blocks: Vec<ContentBlock>) {
+        self.messages.push(Message {
+            role: Role::User,
+            content: MessageContent::Blocks(blocks),
+            tool_call_id: None,
+            name: None,
+        });
+        self.touch();
+    }
+
     /// Add an assistant message with content blocks
     pub fn add_assistant_message(&mut self, blocks: Vec<ContentBlock>) {
         self.messages.push(Message {

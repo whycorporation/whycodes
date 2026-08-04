@@ -5,6 +5,7 @@ pub mod app;
 pub mod bench;
 pub mod clipboard;
 pub mod config;
+pub mod images;
 pub mod input;
 pub mod keymap;
 pub mod opencode_tokens;

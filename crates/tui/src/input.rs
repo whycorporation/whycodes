@@ -20,9 +20,63 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
     match event {
         Event::Key(key) => handle_key(app, key),
         Event::Mouse(mouse) => handle_mouse(app, mouse),
+        Event::Paste(data) => {
+            handle_paste(app, &data);
+            true
+        }
         Event::Resize(_, _) => true,
         _ => true,
     }
+}
+
+/// Bracketed paste / drag-drop: image paths become attachments; other text
+/// inserts at the cursor. Dragging a file onto most terminals pastes its path.
+fn handle_paste(app: &mut TuiApp, data: &str) {
+    // Only while the prompt can accept input.
+    if app.mode != AppMode::Normal && app.mode != AppMode::Session {
+        return;
+    }
+    if app.focus != FocusPane::Prompt && app.mode != AppMode::Normal {
+        // Still allow paste to land on the prompt (common when focus drifted).
+    }
+    app.focus_prompt();
+
+    let classified = crate::images::classify_paste(data);
+    let mut attached = 0usize;
+    let mut last_err: Option<String> = None;
+    for path in classified.images {
+        match app.attach_image(&path) {
+            Ok(()) => attached += 1,
+            Err(e) => last_err = Some(e),
+        }
+    }
+    if attached > 0 {
+        let label = if attached == 1 {
+            app.pending_images
+                .last()
+                .map(|i| format!("Attached {}", i.label))
+                .unwrap_or_else(|| "Image attached".into())
+        } else {
+            format!("Attached {attached} images")
+        };
+        app.toasts
+            .push(crate::toast::ToastKind::Success, label);
+    }
+    if let Some(err) = last_err {
+        app.toasts
+            .push(crate::toast::ToastKind::Warning, err);
+    }
+
+    let text = classified.text;
+    if text.is_empty() {
+        return;
+    }
+    // Insert remaining text at the cursor (same path as typed chars).
+    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+    app.input_buffer.insert_str(pos, &text);
+    app.input_cursor = pos + text.len();
+    app.slash_suggest.refresh(&app.input_buffer);
+    app.esc_armed_at = None;
 }
 
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
@@ -306,8 +360,8 @@ fn handle_escape(app: &mut TuiApp) {
         return;
     }
 
-    // Double-Esc clear when prompt has a draft (Grok: 800ms window).
-    if !app.input_buffer.is_empty() {
+    // Double-Esc clear when prompt has a draft or staged images (Grok: 800ms).
+    if app.prompt_has_content() {
         let now = Instant::now();
         if let Some(armed) = app.esc_armed_at
             && now.duration_since(armed).as_millis() <= ESC_DOUBLE_MS
@@ -344,6 +398,17 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.input_cursor = start;
             app.slash_suggest.refresh(&app.input_buffer);
         }
+        // Empty buffer + staged images: Backspace peels off the last attachment.
+        Action::InputBackspace
+            if app.input_cursor == 0 && app.input_buffer.is_empty() && !app.pending_images.is_empty() =>
+        {
+            if let Some(img) = app.pop_pending_image() {
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    format!("Removed {}", img.label),
+                );
+            }
+        }
         Action::InputDelete if app.input_cursor < app.input_buffer.len() => {
             let start = clamp_cursor(&app.input_buffer, app.input_cursor);
             let end = next_boundary(&app.input_buffer, start);
@@ -354,6 +419,7 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
         Action::InputClear => {
             app.input_buffer.clear();
             app.input_cursor = 0;
+            app.pending_images.clear();
             app.slash_suggest.dismiss();
         }
         Action::InputLeft => {

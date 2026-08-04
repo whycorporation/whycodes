@@ -25,5 +25,8 @@ whycode-storage = { path = "../storage" }
 unicode-width = "0.2"
 base64.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 screenshot = []

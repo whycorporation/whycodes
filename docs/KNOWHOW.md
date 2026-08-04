@@ -101,6 +101,22 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-04 — Image drag-drop / path paste on the prompt
+
+**What:** Dragging an image onto the terminal (or pasting its path) attaches it to the next user turn as multimodal content.
+
+**How:**
+- `EnableBracketedPaste` so hosts deliver drop/paste as `Event::Paste` (not char spam).
+- `images::classify_paste` detects existing image paths (quotes, `file://`, `~`).
+- Staged on `TuiApp.pending_images`; chips in the prompt box; Backspace on empty buffer peels the last one.
+- On submit: base64 `ContentBlock::Image` via `session.add_user_message_blocks` (OpenAI/Anthropic paths already serialize images).
+
+**Limits:** 10 images/turn, 20 MB each; extensions png/jpg/gif/webp/bmp/tiff/svg/heic/avif/ico.
+
+**Not covered:** Raw clipboard bitmap paste (no path) — host-dependent; path drop is the portable path.
+
+---
+
 ### 2026-08-04 — TUI dies right after first frame (`handle_event=false`)
 
 **Symptom:** Full-screen TUI flashed open then closed in ~0.5s. Clean exit (`ok: true`). No panic under `crash/`.

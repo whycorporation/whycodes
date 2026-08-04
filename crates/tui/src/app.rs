@@ -203,6 +203,8 @@ pub struct ChatMessage {
     pub error: Option<String>,
     /// Wall-clock duration of the agent turn that produced this assistant reply.
     pub duration_ms: Option<u128>,
+    /// Image attachment labels shown on user bubbles (file names).
+    pub image_labels: Vec<String>,
 }
 
 /// How many trailing reasoning lines to show while the block is still streaming.
@@ -503,6 +505,10 @@ pub struct TuiApp {
     pub input_cursor: usize,
     /// First Esc of a double-Esc clear/cancel gesture.
     pub esc_armed_at: Option<std::time::Instant>,
+    /// Images staged on the prompt (drag-drop / path paste). Sent with the next turn.
+    pub pending_images: Vec<crate::images::PromptImage>,
+    /// Images consumed with `pending_prompt` by the run loop (taken on submit).
+    pub pending_submit_images: Vec<crate::images::PromptImage>,
 
     // ── scroll / selection ──
     /// Display rows scrolled up from the newest line (not message count).
@@ -546,6 +552,7 @@ pub struct TuiApp {
     pub config: crate::config::TuiAppConfig,
 
     /// Prompt waiting to be sent to the agent (set by submit / slash commands).
+    /// Images for this turn live in `pending_submit_images` until the run loop takes them.
     pub pending_prompt: Option<String>,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
@@ -781,6 +788,8 @@ impl TuiApp {
             input_history_idx: 0,
             input_cursor: 0,
             esc_armed_at: None,
+            pending_images: vec![],
+            pending_submit_images: vec![],
             scroll_offset: 0,
             auto_scroll: true,
             selected_msg: None,
@@ -984,8 +993,39 @@ impl TuiApp {
         self.input_buffer.clear();
         self.input_lines.clear();
         self.input_cursor = 0;
+        self.pending_images.clear();
         self.slash_suggest.dismiss();
         self.esc_armed_at = None;
+    }
+
+    /// Attach an image path to the prompt (deduped by path). Returns true if added.
+    pub fn attach_image(&mut self, path: &std::path::Path) -> Result<(), String> {
+        if self.pending_images.len() >= crate::images::MAX_ATTACHMENTS {
+            return Err(format!(
+                "max {} images per message",
+                crate::images::MAX_ATTACHMENTS
+            ));
+        }
+        let img = crate::images::load_prompt_image(path)?;
+        if self
+            .pending_images
+            .iter()
+            .any(|p| p.path == img.path)
+        {
+            return Ok(()); // already attached
+        }
+        self.pending_images.push(img);
+        Ok(())
+    }
+
+    /// Remove the last staged image (Backspace on empty buffer).
+    pub fn pop_pending_image(&mut self) -> Option<crate::images::PromptImage> {
+        self.pending_images.pop()
+    }
+
+    /// True when the prompt has staged images and/or non-empty text.
+    pub fn prompt_has_content(&self) -> bool {
+        !self.input_buffer.trim().is_empty() || !self.pending_images.is_empty()
     }
 
     /// Jump selection to previous/next user message (Grok turn navigation).
@@ -1240,6 +1280,24 @@ impl TuiApp {
             tool_calls: vec![],
             error: None,
             duration_ms: None,
+            image_labels: vec![],
+        });
+    }
+
+    pub fn add_user_message_with_images(
+        &mut self,
+        content: impl Into<String>,
+        image_labels: Vec<String>,
+    ) {
+        self.messages.push(ChatMessage {
+            role: ChatRole::User,
+            content: content.into(),
+            blocks: vec![],
+            results_expanded: false,
+            tool_calls: vec![],
+            error: None,
+            duration_ms: None,
+            image_labels,
         });
     }
 
@@ -1283,6 +1341,7 @@ impl TuiApp {
             tool_calls: vec![],
             error: None,
             duration_ms: None,
+            image_labels: vec![],
         };
         self.messages.push(msg);
     }
@@ -1323,6 +1382,7 @@ impl TuiApp {
             tool_calls: vec![tc],
             error: None,
             duration_ms: None,
+            image_labels: vec![],
         };
         self.messages.push(msg);
     }
@@ -1355,15 +1415,34 @@ impl TuiApp {
     /// Submit current input as user message and queue it for the agent.
     pub fn submit_input(&mut self) {
         let text = self.input_buffer.trim().to_string();
-        if text.is_empty() {
+        let has_images = !self.pending_images.is_empty();
+        if text.is_empty() && !has_images {
             return;
         }
-        // Slash commands are handled by the run loop before submit.
-        if text.starts_with('/') {
+        // Slash commands are handled by the run loop before submit (text-only).
+        if text.starts_with('/') && !has_images {
             return;
         }
-        self.input_history.push(text.clone());
-        self.add_message(ChatRole::User, text.clone());
+        if !text.is_empty() {
+            self.input_history.push(text.clone());
+        }
+        let labels: Vec<String> = self
+            .pending_images
+            .iter()
+            .map(|i| i.label.clone())
+            .collect();
+        let display = if text.is_empty() && has_images {
+            // Chat bubble still needs a line of content.
+            if labels.len() == 1 {
+                format!("[Image: {}]", labels[0])
+            } else {
+                format!("[Images: {}]", labels.join(", "))
+            }
+        } else {
+            text.clone()
+        };
+        self.add_user_message_with_images(display, labels);
+        self.pending_submit_images = std::mem::take(&mut self.pending_images);
         self.pending_prompt = Some(text);
         self.input_buffer.clear();
         self.input_lines.clear();

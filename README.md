@@ -117,6 +117,11 @@ Two input prefixes are available in both interfaces:
 - `!ls -la` runs a shell command and attaches its output to the conversation.
 - `@src/main.rs` inlines a file's contents into the prompt.
 
+In the TUI you can also **drag-drop or paste image file paths** onto the prompt
+(png, jpeg, gif, webp, …). Staged images show as chips above the input; Enter
+sends them as multimodal content with your text. Backspace on an empty draft
+removes the last attachment.
+
 ### Slash commands
 
 Available in both the TUI and the `--plain` REPL:

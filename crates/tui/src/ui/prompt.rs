@@ -37,6 +37,8 @@ const OUTER_TOP_GAP: u16 = 2;
 const VPAD_TOP: u16 = 1;
 /// Bottom border / info row (`╰─ model ─╯`).
 const INFO_BLOCK: u16 = 1;
+/// Extra inner row when one or more images are staged on the prompt.
+const ATTACH_ROW: u16 = 1;
 
 /// Inner padding between side borders and content (Grok: left 2, right 1).
 const PAD_LEFT: u16 = 2;
@@ -63,9 +65,23 @@ pub fn input_row_count(app: &TuiApp, area_width: u16) -> u16 {
         .clamp(1, MAX_INPUT_ROWS as usize) as u16
 }
 
+/// Rows used by staged image chips (0 or 1).
+pub fn attach_row_count(app: &TuiApp) -> u16 {
+    if app.pending_images.is_empty() {
+        0
+    } else {
+        ATTACH_ROW
+    }
+}
+
 /// Total height of the prompt block (gap + top + text + bottom), plus home hint.
 pub fn prompt_height(app: &TuiApp, area_width: u16) -> u16 {
-    OUTER_TOP_GAP + input_row_count(app, area_width) + VPAD_TOP + INFO_BLOCK + HINT_GAP
+    OUTER_TOP_GAP
+        + input_row_count(app, area_width)
+        + attach_row_count(app)
+        + VPAD_TOP
+        + INFO_BLOCK
+        + HINT_GAP
 }
 
 /// Inner width available for input text inside a prompt area.
@@ -128,15 +144,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         wrap_text(buf, text_w)
     };
     let input_rows = rows.len().max(1).min(MAX_INPUT_ROWS as usize) as u16;
+    let attach_rows = attach_row_count(app);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(OUTER_TOP_GAP), // breathing room above the box
             Constraint::Length(VPAD_TOP),      // ╭─╮
-            Constraint::Length(input_rows),    // text
-            Constraint::Length(INFO_BLOCK),    // ╰─ meta ─╯
-            Constraint::Min(0),                // home hint
+            Constraint::Length(attach_rows),  // image chips (0–1)
+            Constraint::Length(input_rows),   // text
+            Constraint::Length(INFO_BLOCK),   // ╰─ meta ─╯
+            Constraint::Min(0),               // home hint
         ])
         .split(area);
 
@@ -149,6 +167,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         paint_h_border(frame, top_border, border_style, true);
     }
 
+    // ── Attachment chips: │  🖼 shot.png · 2 images  │ ─────────────
+    let attach_area = chunks[2];
+    let content_x = area.x.saturating_add(PAD_LEFT);
+    if attach_rows > 0 && attach_area.height > 0 {
+        paint_attach_row(frame, attach_area, area, app, palette, border_style);
+    }
+
     // ── Text rows: │  ❯ body…  │ ────────────────────────────────────
     // Prefix is always 2 columns. Placeholder only when empty + unfocused
     // (Grok); focused empty keeps a bare caret after ❯.
@@ -157,19 +182,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         _ if busy && app.input_buffer.is_empty() && prompt_focused => "… ",
         _ => "❯ ",
     };
-    let placeholder: Option<&str> = if !buf.is_empty() || prompt_focused {
+    let placeholder: Option<&str> = if !buf.is_empty() || prompt_focused || !app.pending_images.is_empty()
+    {
         None
     } else {
         match app.mode {
             AppMode::Command => Some("command…"),
-            _ if app.messages.is_empty() => Some("Ask anything…"),
+            _ if app.messages.is_empty() => Some("Ask anything…  (drop images)"),
             // Scrollback owns focus — nudge how to get back.
             _ => Some("Tab/i/Space → prompt · j/k select"),
         }
     };
 
-    let text_area = chunks[2];
-    let content_x = area.x.saturating_add(PAD_LEFT);
+    let text_area = chunks[3];
     let mut lines: Vec<Line> = Vec::with_capacity(input_rows as usize);
 
     let prefix_style = Style::default()
@@ -250,16 +275,24 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
 
     // Side borders │ on each text row (overwrite left/right edges).
     paint_side_borders(frame, text_area, area, border_style);
+    if attach_rows > 0 {
+        paint_side_borders(frame, attach_area, area, border_style);
+    }
 
     // ── Bottom: ╰──── agent · provider/model ──╯ ────────────────────
-    let bottom = chunks[3];
+    let bottom = chunks[4];
     if bottom.height > 0 {
         paint_h_border(frame, bottom, border_style, false);
         paint_bottom_meta(frame, bottom, app, caption_style);
     }
 
     // Home rotating hint under the box.
-    if app.messages.is_empty() && app.input_buffer.is_empty() && !busy && chunks[4].height > 0 {
+    if app.messages.is_empty()
+        && app.input_buffer.is_empty()
+        && app.pending_images.is_empty()
+        && !busy
+        && chunks[5].height > 0
+    {
         let hint = Line::from(vec![
             Span::raw(" "),
             Span::styled(
@@ -267,8 +300,68 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
                 Style::default().fg(palette.dim),
             ),
         ]);
-        frame.render_widget(Paragraph::new(Text::from(hint)), chunks[4]);
+        frame.render_widget(Paragraph::new(Text::from(hint)), chunks[5]);
     }
+}
+
+/// One row of staged image labels inside the prompt box.
+fn paint_attach_row(
+    frame: &mut Frame,
+    row: Rect,
+    full: Rect,
+    app: &TuiApp,
+    palette: &ThemePalette,
+    border_style: Style,
+) {
+    let _ = border_style;
+    let _ = full;
+    let labels: Vec<String> = app
+        .pending_images
+        .iter()
+        .map(|i| format!("🖼 {}", i.label))
+        .collect();
+    let n = labels.len();
+    let joined = labels.join("  ·  ");
+    let max_w = row
+        .width
+        .saturating_sub(PAD_LEFT + PAD_RIGHT)
+        .max(4) as usize;
+    let mut line = if UnicodeWidthStr::width(joined.as_str()) > max_w {
+        // Prefer a compact summary when many/long names.
+        let summary = if n == 1 {
+            labels[0].clone()
+        } else {
+            format!("🖼 {n} images · Backspace removes last")
+        };
+        truncate_to_width(&summary, max_w)
+    } else {
+        joined
+    };
+    // Hint on the right when there is room.
+    let hint = " ⌫ ";
+    let hint_w = UnicodeWidthStr::width(hint);
+    let line_w = UnicodeWidthStr::width(line.as_str());
+    if line_w + hint_w + 1 < max_w {
+        let pad = max_w.saturating_sub(line_w + hint_w);
+        line = format!("{line}{}{hint}", " ".repeat(pad));
+    }
+
+    let content_x = row.x.saturating_add(PAD_LEFT);
+    let text_rect = Rect {
+        x: content_x,
+        y: row.y,
+        width: row.width.saturating_sub(PAD_LEFT + PAD_RIGHT).max(1),
+        height: 1,
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            line,
+            Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::DIM),
+        ))),
+        text_rect,
+    );
 }
 
 /// Horizontal border row: corners + fill `─`.
@@ -368,6 +461,7 @@ fn truncate_to_width(s: &str, max_w: usize) -> String {
 
 const HINTS: &[&str] = &[
     "/ for commands",
+    "drop or paste image paths into the prompt",
     "tab toggles scrollback focus",
     "ctrl+t cycles agent",
     "esc cancels · double-esc clears",

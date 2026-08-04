@@ -419,6 +419,53 @@ fn test_submit_input_skips_empty() {
     assert!(app.pending_prompt.is_none());
 }
 
+#[test]
+fn test_submit_input_with_images_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("shot.png");
+    std::fs::write(&path, b"\x89PNG").unwrap();
+
+    let mut app = TuiApp::new(test_config());
+    app.attach_image(&path).unwrap();
+    assert_eq!(app.pending_images.len(), 1);
+    app.submit_input();
+    assert_eq!(app.pending_prompt.as_deref(), Some(""));
+    assert!(app.pending_images.is_empty());
+    assert_eq!(app.pending_submit_images.len(), 1);
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.messages[0].image_labels, vec!["shot.png".to_string()]);
+}
+
+#[test]
+fn test_paste_image_path_attaches() {
+    use crossterm::event::Event;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("ui.jpg");
+    std::fs::write(&path, b"jpeg").unwrap();
+
+    let mut app = TuiApp::new(test_config());
+    let paste = Event::Paste(path.to_string_lossy().to_string());
+    assert!(crate::input::handle_event(&mut app, paste));
+    assert_eq!(app.pending_images.len(), 1);
+    assert!(app.input_buffer.is_empty());
+}
+
+#[test]
+fn test_backspace_removes_last_image() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.webp");
+    std::fs::write(&path, b"w").unwrap();
+
+    let mut app = TuiApp::new(test_config());
+    app.attach_image(&path).unwrap();
+    let backspace = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    assert!(crate::input::handle_event(&mut app, backspace));
+    assert!(app.pending_images.is_empty());
+}
+
 // ── Dialog Manager Tests ────────────────────────────────────────────
 
 #[test]
