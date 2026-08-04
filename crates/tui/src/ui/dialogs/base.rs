@@ -166,12 +166,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 // ── private chrome ─────────────────────────────────────────────────────
 
-fn paint_close_button(
-    frame: &mut Frame,
-    modal: Rect,
-    palette: &ThemePalette,
-    hovered: bool,
-) {
+fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette, hovered: bool) {
     let Some(hit) = close_button_rect(modal) else {
         return;
     };

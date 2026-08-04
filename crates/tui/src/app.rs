@@ -1646,9 +1646,7 @@ impl TuiApp {
 }
 
 /// Build display messages from a persisted session transcript.
-pub fn chat_messages_from_session(
-    session: &whycode_session::session::Session,
-) -> Vec<ChatMessage> {
+pub fn chat_messages_from_session(session: &whycode_session::session::Session) -> Vec<ChatMessage> {
     use whycode_core::types::{ContentBlock, MessageContent, Role};
 
     let mut out: Vec<ChatMessage> = Vec::new();
@@ -1765,8 +1763,7 @@ pub fn chat_messages_from_session(
                             is_error,
                         } => {
                             let err = is_error.unwrap_or(false);
-                            if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == *tool_use_id)
-                            {
+                            if let Some(tc) = tool_calls.iter_mut().find(|t| t.id == *tool_use_id) {
                                 tc.result = Some(c.clone());
                                 tc.is_error = err;
                             }

@@ -774,12 +774,7 @@ fn scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) -> u1
 }
 
 /// Scroll the list so the viewport matches a pointer y on the scrollbar.
-fn apply_scrollbar_offset(
-    app: &mut TuiApp,
-    active: &DialogKind,
-    row: u16,
-    grab: Option<u16>,
-) {
+fn apply_scrollbar_offset(app: &mut TuiApp, active: &DialogKind, row: u16, grab: Option<u16>) {
     use crate::ui::scrollbar::{offset_from_pointer_y, selection_for_offset};
     let Some(track) = app.dialog_scrollbar_hit else {
         return;

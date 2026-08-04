@@ -539,7 +539,12 @@ fn is_missing_database(error: &anyhow::Error) -> bool {
 ///
 /// `--resume` wins when both are set. Returns `None` when neither flag is used.
 fn resolve_resume_want(cli: &Cli) -> Option<String> {
-    if let Some(id) = cli.resume.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(id) = cli
+        .resume
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         return Some(id.to_string());
     }
     if cli.continue_session {
@@ -564,6 +569,12 @@ fn resume_session_into(
     let system_prompt = session.system_prompt.clone();
     *session = loaded;
     session.system_prompt = system_prompt;
+    // Legacy `New session - …` / placeholder titles: name from first user msg.
+    if session.maybe_upgrade_title_from_history()
+        && let Err(err) = session.save_to_db(&db)
+    {
+        tracing::warn!(error = %err, "failed to persist backfilled session title");
+    }
     Ok(true)
 }
 
@@ -789,8 +800,11 @@ async fn cmd_run(
         let expanded = expand_user_input(prompt, &project_dir);
         session.add_user_message(&expanded);
         if config.session.auto_title {
-            // bool return is intentional (whether title changed); not a Result.
-            session.apply_heuristic_title(&expanded);
+            // Prefer first user message (resume of placeholder-titled sessions).
+            let seed = session
+                .first_user_text()
+                .unwrap_or_else(|| expanded.clone());
+            let _ = session.apply_heuristic_title(&seed);
         }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -1034,10 +1048,7 @@ async fn cmd_run(
                     } else {
                         // /resume with no id → list, same as /sessions
                         let _ = cmd_session(&SessionCmd::List).await;
-                        println!(
-                            "{}",
-                            "Tip: /resume <id> or /continue (latest)".dimmed()
-                        );
+                        println!("{}", "Tip: /resume <id> or /continue (latest)".dimmed());
                         continue;
                     };
                     match resume_session_into(&mut session, &want) {
@@ -1052,10 +1063,7 @@ async fn cmd_run(
                             );
                         }
                         Ok(false) => {
-                            eprintln!(
-                                "{} Session not found.",
-                                "✗".red()
-                            );
+                            eprintln!("{} Session not found.", "✗".red());
                         }
                         Err(e) => eprintln!("{} Resume failed: {e}", "✗".red()),
                     }
@@ -1180,7 +1188,10 @@ async fn cmd_run(
         history.push_before_turn(&session.messages, &project_dir);
         session.add_user_message(&expanded);
         if config.session.auto_title {
-            session.apply_heuristic_title(&expanded);
+            let seed = session
+                .first_user_text()
+                .unwrap_or_else(|| expanded.clone());
+            let _ = session.apply_heuristic_title(&seed);
         }
         match agent
             .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -2326,7 +2337,21 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                 println!("{} Sessions:", "📋".bold());
                 for s in &sessions {
                     let msg_count = db.message_count(&s.id).unwrap_or(0);
-                    println!("  {} — {} ({} messages)", s.id.cyan(), s.title, msg_count);
+                    let mut title = s.title.clone();
+                    // Backfill legacy placeholders so the list is scannable.
+                    if msg_count > 0
+                        && whycode_session::title::looks_like_default_title(
+                            &title,
+                            std::path::Path::new(&s.project_path),
+                        )
+                        && let Ok(Some(mut loaded)) =
+                            whycode_session::session::Session::load_from_db(&db, &s.id)
+                        && loaded.maybe_upgrade_title_from_history()
+                    {
+                        let _ = loaded.save_to_db(&db);
+                        title = loaded.title;
+                    }
+                    println!("  {} — {} ({} messages)", s.id.cyan(), title, msg_count);
                     println!("    Created: {}  Updated: {}", s.created_at, s.updated_at);
                     if !s.project_path.is_empty() && s.project_path != "/" {
                         println!("    Project: {}", s.project_path);

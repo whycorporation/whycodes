@@ -144,6 +144,20 @@ impl Session {
         true
     }
 
+    /// Upgrade a placeholder title from the transcript's first user message.
+    ///
+    /// Used on resume and when listing sessions so legacy `New session - …`
+    /// rows (and unfinished `project-ab` placeholders) pick up a real name
+    /// without waiting for another turn.
+    ///
+    /// Returns `true` when the title changed.
+    pub fn maybe_upgrade_title_from_history(&mut self) -> bool {
+        let Some(text) = self.first_user_text() else {
+            return false;
+        };
+        self.apply_heuristic_title(&text)
+    }
+
     /// Apply a small-model title when still auto-titleable.
     ///
     /// Returns `true` when the title changed.
@@ -749,6 +763,25 @@ mod tests {
         assert!(!session.apply_heuristic_title("something else"));
         assert!(!session.apply_generated_title("model title"));
         assert_eq!(session.title, "My locked name");
+    }
+
+    #[test]
+    fn upgrade_from_history_uses_first_user_message() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        // Simulate a legacy placeholder still marked Default.
+        session.title = "New session - 2026-01-01".into();
+        session.title_source = crate::title::TitleSource::Default;
+        session.add_user_message("Please fix the stripe webhook timeout");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "Looking into it.".into(),
+        }]);
+        session.add_user_message("also check retries");
+
+        assert!(session.maybe_upgrade_title_from_history());
+        assert_eq!(session.title_source, crate::title::TitleSource::Heuristic);
+        assert!(session.title.to_ascii_lowercase().contains("stripe"));
+        // Second call is a no-op (no longer Default).
+        assert!(!session.maybe_upgrade_title_from_history());
     }
 
     #[test]

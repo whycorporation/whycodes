@@ -266,10 +266,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         match try_load_session(want) {
             Ok(Some(loaded)) => {
                 let n = loaded.messages.len();
-                let title = loaded.title.clone();
                 session = loaded;
                 // system_prompt is not persisted yet — keep the live agent prompt.
                 session.system_prompt = system_prompt.clone();
+                if opts.config.session.auto_title && session.maybe_upgrade_title_from_history() {
+                    persist_session_best_effort(&session, "title_backfill");
+                }
+                let title = session.title.clone();
                 app.load_messages_from_session(&session);
                 app.toasts.push(
                     crate::toast::ToastKind::Success,
@@ -287,8 +290,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 );
             }
             Err(e) => {
-                app.toasts
-                    .push(crate::toast::ToastKind::Error, format!("Resume failed: {e}"));
+                app.toasts.push(
+                    crate::toast::ToastKind::Error,
+                    format!("Resume failed: {e}"),
+                );
             }
         }
     }
@@ -620,13 +625,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 persist_session_best_effort(&session, "switch");
                             }
                             let n = loaded.messages.len();
-                            let title = loaded.title.clone();
                             history = SessionHistory::new();
                             session = loaded;
-                            session.system_prompt = Agent::with_agents_md(
-                                &agent.system_prompt(),
-                                &project_dir,
-                            );
+                            session.system_prompt =
+                                Agent::with_agents_md(&agent.system_prompt(), &project_dir);
+                            if config.session.auto_title
+                                && session.maybe_upgrade_title_from_history()
+                            {
+                                persist_session_best_effort(&session, "title_backfill");
+                            }
+                            let title = session.title.clone();
                             app.load_messages_from_session(&session);
                             app.toasts.push(
                                 crate::toast::ToastKind::Success,
@@ -804,9 +812,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 }
 
-                // Instant offline title from the first user prompt (no API cost).
-                if config.session.auto_title && session.apply_heuristic_title(&expanded) {
-                    app.session_title = session.title.clone();
+                // Instant offline title (no API cost). Prefer the transcript's
+                // first user message so resumed legacy placeholders name from
+                // the original topic, not the latest follow-up.
+                if config.session.auto_title {
+                    let seed = session
+                        .first_user_text()
+                        .unwrap_or_else(|| expanded.clone());
+                    if session.apply_heuristic_title(&seed) {
+                        app.session_title = session.title.clone();
+                    }
                 }
 
                 let provider2 = provider.clone();
@@ -1879,6 +1894,10 @@ fn configured_models(config: &Config) -> Vec<(String, String)> {
 /// A database that will not open is not worth interrupting the user for here —
 /// the picker shows its empty state, and `whycode session list` reports the
 /// actual error.
+///
+/// While building the list, backfill placeholder titles (`New session - …`,
+/// `project-ab`) from the first user message so the picker stays useful for
+/// sessions created before auto-title or never refined.
 fn load_session_entries() -> Vec<crate::app::SessionEntry> {
     let Ok(data_dir) = Config::data_dir() else {
         return Vec::new();
@@ -1887,15 +1906,31 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
     let Ok(db) = whycode_storage::db::Database::open(&path.to_string_lossy()) else {
         return Vec::new();
     };
-    db.list_sessions()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|s| crate::app::SessionEntry {
-            messages: db.message_count(&s.id).unwrap_or(0),
+    let rows = db.list_sessions().unwrap_or_default();
+    let mut out = Vec::with_capacity(rows.len());
+    for s in rows {
+        let messages = db.message_count(&s.id).unwrap_or(0);
+        let mut title = s.title;
+        if messages > 0
+            && whycode_session::title::looks_like_default_title(
+                &title,
+                std::path::Path::new(&s.project_path),
+            )
+        {
+            if let Ok(Some(mut loaded)) = Session::load_from_db(&db, &s.id)
+                && loaded.maybe_upgrade_title_from_history()
+            {
+                let _ = loaded.save_to_db(&db);
+                title = loaded.title;
+            }
+        }
+        out.push(crate::app::SessionEntry {
+            messages,
             id: s.id,
-            title: s.title,
-        })
-        .collect()
+            title,
+        });
+    }
+    out
 }
 
 /// Shorten a UUID-style session id for status lines (`a1b2c3d4…`).
@@ -1947,9 +1982,7 @@ pub fn resolve_and_load_session(
     match matches.len() {
         0 => Ok(None),
         1 => Session::load_from_db(db, &matches[0].id),
-        n => anyhow::bail!(
-            "ambiguous session id prefix '{want}' ({n} matches); use a longer id"
-        ),
+        n => anyhow::bail!("ambiguous session id prefix '{want}' ({n} matches); use a longer id"),
     }
 }
 

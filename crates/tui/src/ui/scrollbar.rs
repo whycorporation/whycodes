@@ -124,7 +124,11 @@ pub fn scrollbar_metrics(
     total: usize,
     visible: usize,
     height: usize,
-) -> Option<(usize /* thumb_len */, usize /* max_off */, usize /* travel */)> {
+) -> Option<(
+    usize, /* thumb_len */
+    usize, /* max_off */
+    usize, /* travel */
+)> {
     if total <= visible || height == 0 || visible == 0 {
         return None;
     }

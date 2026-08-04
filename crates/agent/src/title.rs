@@ -144,10 +144,16 @@ fn truncate(s: &str, max_chars: usize) -> String {
 }
 
 /// Whether this session is eligible for an LLM title pass right now.
+///
+/// - First user turn (`user_message_count == 1`): normal path after heuristic.
+/// - Still on [`TitleSource::Default`] with a longer transcript: one chance to
+///   replace legacy `New session - …` / `project-ab` placeholders on resume.
 pub fn should_refine_title(session: &Session) -> bool {
-    session.title_source.allows_llm()
-        && session.user_message_count() == 1
-        && session.first_user_text().is_some()
+    if !session.title_source.allows_llm() || session.first_user_text().is_none() {
+        return false;
+    }
+    session.user_message_count() == 1
+        || session.title_source == whycode_session::TitleSource::Default
 }
 
 /// Apply a generated title string, logging success/empty results.
@@ -185,5 +191,19 @@ mod tests {
         let (p, m) = resolve_title_model("openai", "gpt-4o-mini", None);
         assert_eq!(p, "openai");
         assert_eq!(m, "gpt-4o-mini");
+    }
+
+    #[test]
+    fn refine_gate_allows_legacy_default_multi_turn() {
+        let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
+        // Placeholder still Default after two user turns (pre-auto-title rows).
+        session.title = "New session - 2026-01-01".into();
+        session.title_source = whycode_session::TitleSource::Default;
+        session.add_user_message("fix auth");
+        session.add_user_message("also retries");
+        assert!(should_refine_title(&session));
+
+        session.title_source = whycode_session::TitleSource::Heuristic;
+        assert!(!should_refine_title(&session)); // multi-turn + already heuristicked
     }
 }
