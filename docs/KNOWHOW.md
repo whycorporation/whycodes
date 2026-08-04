@@ -187,15 +187,18 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
-### 2026-08-05 — Context meter hover % never appears
+### 2026-08-05 — Context meter hover never swaps (always tokens)
 
-**Symptom:** Bottom-right shows `1.2k / 200k` but hovering does not switch to Grok-style `1%`. Or: fix committed but `whycode` on PATH still old (`~/.cargo/bin` vs `target/debug`).
+**Symptom:** Bottom-right stays `1.2k / 200k`; hover does not show Grok’s bar+`%`.
 
-**Root cause (paint):** After the `handle_event=false` fix, `Moved` updated `mouse_pos` but enter/leave did not always dirty for unit paths; more importantly many hosts never send hover motion at all, so swap-on-hover alone is unreliable.
+**Root cause:** `render_footer` cleared `context_hit = None` then called `context_hovered()` which hit-tests that rect → **always false during paint**. Sticky hover was never used. Grok keeps `HitArea.hovered` set from mouse events against the *previous* frame’s rect, and only updates `rect` at paint end.
 
-**Fix:** Idle footer always shows `1.2k / 200k · 1%`. Hover/click focuses to bold `%` only. Enter/leave still `mark_dirty`. **Ship via `cargo install --path crates/cli --force`** (PATH binary), not only `cargo test`.
+**Fix (match Grok `context_bar` + `HitArea`):**
+- Sticky `app.context_hovered` updated only from mouse (`update_context_hover`).
+- Default: `used / total`; hover: `████░ 42.0%` same width.
+- Install PATH binary: `cargo install --path crates/cli --force`.
 
-**Prevention:** Hover chrome = track `mouse_pos` + dirty on enter/leave; percent must also be visible without motion. After TUI UX fixes, reinstall the binary the user actually runs.
+**Prevention:** Never recompute hover from a hit box you just cleared in the same paint.
 
 ---
 

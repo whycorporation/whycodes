@@ -520,16 +520,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     // mouse motion — that was killing the TUI on the first mouse-move after
     // EnableMouseCapture (seen as `tui.exit reason=handle_event=false`).
     //
-    // Hover chrome also needs `mark_dirty()` when enter/leave changes — the
-    // paint loop is gated on `needs_redraw` and will not repaint on idle
-    // mouse motion alone (so `1.2k / 200k` never swapped to `1%`).
-    let was_context_hover = app.context_hovered();
+    // Sticky hover (Grok HitArea): update mouse_pos, then recompute against
+    // the *previous frame’s* context_hit. Never recompute hover during paint
+    // after clearing the rect — that always returned false.
     app.mouse_pos = Some((mouse.column, mouse.row));
-    let now_context_hover = app.context_hovered();
-    // Enter/leave context meter → swap idle label ↔ bold % on next paint.
-    // (run.rs also marks dirty on any event; this keeps the unit test honest
-    // and covers paths that call handle_mouse without that wrapper.)
-    if was_context_hover != now_context_hover {
+    if app.update_context_hover() {
         app.mark_dirty();
     }
 

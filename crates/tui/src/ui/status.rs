@@ -230,38 +230,41 @@ fn truncate_start(s: &str, max: usize) -> String {
 /// Bottom chrome: ` branch /path` (left, click-to-copy) and Grok-style
 /// context meter on the right.
 ///
-/// Default always shows fill: `1.2k / 200k · 1%` (percent does not depend on
-/// mouse motion — many hosts never send `Moved`). Hover/click focuses the
-/// chip to a bold `%` only (same swap idea as Grok’s context ring).
+/// Mirrors Grok Build `context_bar` (top-right there; bottom-right here):
+/// - default: `1.2k / 200k` (tokens, colored by fill)
+/// - hover:   `████░ 42.0%` (progress bar + fixed-width %, same total width)
+///
+/// Hover uses sticky `app.context_hovered` set from mouse events against the
+/// previous frame’s hit box — do not recompute after clearing `context_hit`.
 pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     app.cwd_hit = None;
+    // Keep sticky hover; only refresh the hit rect at the end of paint.
     app.context_hit = None;
     if area.height == 0 || area.width < 4 {
         return;
     }
 
-    // ── Right: context window meter (Grok top-right style, bottom-right here) ──
+    // ── Right: context window meter (Grok context_bar, bottom-right) ──
     let max = app.max_context_tokens.max(1);
     let used = app.context_used;
     let pct = app.context_percent();
-    let usage_s = crate::app::format_context_usage(used, max);
-    let pct_s = crate::app::format_context_percent(used, max);
-    // Idle label always includes % so the value is visible without hover.
-    let idle_label = format!("{usage_s} · {pct_s}");
-    // Reserve the wider form so hover → `%` never shrinks the hit box.
-    let right_w = idle_label.width().max(pct_s.width()) as u16;
     let hovered = app.context_hovered();
+    // Both forms share the same display width (Grok invariant — no layout shift).
+    let idle_label = crate::app::format_context_usage(used, max);
+    let hover_label = crate::app::format_context_hover(used, max);
+    let right_w = idle_label
+        .width()
+        .max(hover_label.width()) as u16;
     let right_label = if hovered {
-        let pad = right_w.saturating_sub(pct_s.width() as u16) as usize;
-        format!("{}{pct_s}", " ".repeat(pad))
+        // Pad if needed (should already match).
+        let pad = right_w.saturating_sub(hover_label.width() as u16) as usize;
+        format!("{}{hover_label}", " ".repeat(pad))
     } else {
         let pad = right_w.saturating_sub(idle_label.width() as u16) as usize;
-        format!("{}{idle_label}", " ".repeat(pad))
+        // Right-pad so natural short strings (e.g. `0 / 9`) still match hover width.
+        format!("{idle_label}{}", " ".repeat(pad))
     };
-    let mut right_style = Style::default().fg(context_meter_color(pct, palette));
-    if hovered {
-        right_style = right_style.add_modifier(Modifier::BOLD);
-    }
+    let right_style = Style::default().fg(context_meter_color(pct, palette));
     // Leave at least one space gap between path and meter.
     let right_reserve = right_w.saturating_add(1).min(area.width);
 
@@ -315,14 +318,12 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
     spans.push(Span::styled(right_label, right_style));
 
     if right_w > 0 && area.width >= right_w {
-        // Hit the whole right cluster (and one cell of gap when present) so
-        // easy hover; y is the footer row inside the safe inset (not the
-        // terminal’s very last row when SAFE_BOTTOM > 0).
-        let hit_w = right_w.saturating_add(if gap > 0 { 1 } else { 0 }).min(area.width);
+        // Footer row is inside the safe inset (not the terminal’s last row
+        // when SAFE_BOTTOM > 0) — hover the text, not the padding row below.
         app.context_hit = Some(Rect {
-            x: area.x.saturating_add(area.width.saturating_sub(hit_w)),
+            x: area.x.saturating_add(area.width.saturating_sub(right_w)),
             y: area.y,
-            width: hit_w,
+            width: right_w,
             height: 1,
         });
     }

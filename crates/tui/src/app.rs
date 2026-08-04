@@ -415,7 +415,7 @@ pub fn context_tokens_from_usage(usage: &whycode_core::types::Usage) -> u64 {
         + usage.cache_read_input_tokens.unwrap_or(0)
 }
 
-/// Grok-style default: `1.2k / 200k`.
+/// Grok-style default context label: `1.2k / 200k`.
 pub fn format_context_usage(used: u64, max: u64) -> String {
     format!(
         "{} / {}",
@@ -424,11 +424,64 @@ pub fn format_context_usage(used: u64, max: u64) -> String {
     )
 }
 
-/// Grok-style hover: whole percentage of context used (`0%`…`100%+`).
+/// Context fill as a fraction of capacity (`0.0`…`100.0+`).
+pub fn context_usage_pct(used: u64, max: u64) -> f64 {
+    let max = max.max(1) as f64;
+    (used as f64 / max) * 100.0
+}
+
+/// Grok `fmt_pct5`: fixed 5-char percentage for hover (`0.00%`…`99.9%` / `MAX %`).
 pub fn format_context_percent(used: u64, max: u64) -> String {
-    let max = max.max(1);
-    let pct = ((used as f64 / max as f64) * 100.0).round() as u64;
-    format!("{pct}%")
+    fmt_pct5(context_usage_pct(used, max))
+}
+
+/// Fixed-width 5-char percent (matches Grok Build `context_bar::fmt_pct5`).
+pub fn fmt_pct5(pct: f64) -> String {
+    if pct >= 100.0 {
+        "MAX %".to_string()
+    } else if pct < 10.0 {
+        format!("{pct:.2}%")
+    } else {
+        format!("{pct:.1}%")
+    }
+}
+
+/// Unicode block progress bar for context hover (same width invariant as Grok).
+///
+/// `fill` is `0.0..=1.0`. Empty cells use a light track glyph so the bar stays
+/// visible on both light and dark themes.
+pub fn context_progress_bar(width: u16, fill: f64) -> String {
+    if width == 0 {
+        return String::new();
+    }
+    let fill = fill.clamp(0.0, 1.0);
+    let filled = ((fill * width as f64).round() as u16).min(width);
+    let mut s = String::with_capacity(width as usize);
+    for i in 0..width {
+        if i < filled {
+            s.push('█');
+        } else {
+            s.push('░');
+        }
+    }
+    s
+}
+
+/// Grok hover line: progress bar + gap + 5-char %, same display width as
+/// the default `used / total` token string (no layout shift).
+pub fn format_context_hover(used: u64, max: u64) -> String {
+    let mut token_str = format_context_usage(used, max);
+    // Min width = gap(1) + pct(5) so degenerate `0 / 9` still matches hover.
+    const MIN_W: usize = 6;
+    let natural = token_str.chars().count();
+    if natural < MIN_W {
+        token_str.push_str(&" ".repeat(MIN_W - natural));
+    }
+    let total_w = natural.max(MIN_W);
+    let bar_w = (total_w - MIN_W) as u16;
+    let pct = context_usage_pct(used, max);
+    let bar = context_progress_bar(bar_w, pct / 100.0);
+    format!("{bar} {}", fmt_pct5(pct))
 }
 
 /// A rendered tool-call chunk for display.
@@ -610,8 +663,15 @@ pub struct TuiApp {
     pub git_branch: Option<String>,
     /// Screen hit-box of the clickable cwd path (updated each paint).
     pub cwd_hit: Option<Rect>,
-    /// Screen hit-box of the context-usage meter (bottom-right; hover → %).
+    /// Screen hit-box of the context-usage meter (bottom-right; hover → bar+%).
+    /// Updated at end of paint; used by mouse handlers (previous frame’s rect).
     pub context_hit: Option<Rect>,
+    /// Sticky hover flag for the context meter (Grok `HitArea.hovered`).
+    ///
+    /// Must **not** be recomputed during paint after clearing `context_hit` —
+    /// that always returned false. Updated only from mouse events via
+    /// [`Self::update_context_hover`].
+    pub context_hovered: bool,
     /// Last known mouse cell (for hover tooltips).
     pub mouse_pos: Option<(u16, u16)>,
 
@@ -909,6 +969,7 @@ impl TuiApp {
             git_branch: None,
             cwd_hit: None,
             context_hit: None,
+            context_hovered: false,
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
@@ -946,11 +1007,21 @@ impl TuiApp {
             && row < hit.y.saturating_add(hit.height)
     }
 
-    /// Whether the pointer is currently over the context meter.
+    /// Sticky: pointer is over the context meter (set by mouse, read by paint).
     pub fn context_hovered(&self) -> bool {
-        self.mouse_pos
+        self.context_hovered
+    }
+
+    /// Recompute sticky context hover from `mouse_pos` + last paint’s hit box.
+    /// Returns `true` when the flag flipped (caller should `mark_dirty`).
+    pub fn update_context_hover(&mut self) -> bool {
+        let now = self
+            .mouse_pos
             .map(|(c, r)| self.context_contains(c, r))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        let changed = now != self.context_hovered;
+        self.context_hovered = now;
+        changed
     }
 
     /// Update context fill from a provider usage event (per LLM step).

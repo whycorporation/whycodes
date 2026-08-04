@@ -285,19 +285,36 @@ fn test_format_usage_short() {
 
 #[test]
 fn test_format_context_usage_and_percent() {
-    use crate::app::{context_tokens_from_usage, format_context_percent, format_context_usage};
+    use crate::app::{
+        context_tokens_from_usage, format_context_hover, format_context_percent,
+        format_context_usage, fmt_pct5,
+    };
     use whycode_core::types::Usage;
+    use unicode_width::UnicodeWidthStr;
 
     assert_eq!(format_context_usage(1_200, 200_000), "1.2k / 200k");
-    assert_eq!(format_context_percent(1_200, 200_000), "1%");
-    assert_eq!(format_context_percent(0, 200_000), "0%");
-    assert_eq!(format_context_percent(200_000, 200_000), "100%");
     assert_eq!(format_context_usage(12_400, 128_000), "12.4k / 128k");
-    // Footer idle form is always `used/max · %` (visible without mouse motion).
-    assert_eq!(
-        format!("{} · {}", format_context_usage(1_200, 200_000), format_context_percent(1_200, 200_000)),
-        "1.2k / 200k · 1%"
-    );
+    // Grok fmt_pct5: fixed 5 chars.
+    assert_eq!(fmt_pct5(0.0), "0.00%");
+    assert_eq!(fmt_pct5(1.0), "1.00%");
+    assert_eq!(fmt_pct5(42.0), "42.0%");
+    assert_eq!(fmt_pct5(100.0), "MAX %");
+    assert_eq!(format_context_percent(1_200, 200_000), "0.60%");
+    assert_eq!(format_context_percent(200_000, 200_000), "MAX %");
+
+    // Hover width matches default (no layout shift) — Grok invariant.
+    for (used, max) in [(1_200u64, 200_000u64), (0, 9), (84_000, 200_000)] {
+        let idle = format_context_usage(used, max);
+        let hover = format_context_hover(used, max);
+        assert_eq!(
+            idle.width().max(6),
+            hover.width(),
+            "idle={idle:?} hover={hover:?}"
+        );
+    }
+    let hover = format_context_hover(84_000, 200_000);
+    assert!(hover.contains("42.0%"), "hover={hover:?}");
+    assert!(hover.contains('█') || hover.contains('░'), "hover={hover:?}");
 
     let u = Usage {
         input_tokens: 1000,
@@ -309,8 +326,8 @@ fn test_format_context_usage_and_percent() {
     assert_eq!(context_tokens_from_usage(&u), 1500);
 }
 
-/// Grok-style hover: enter/leave context meter must request a repaint so the
-/// footer can swap `used/max` ↔ `%` under the paint-gated event loop.
+/// Sticky hover (Grok HitArea): enter/leave flips flag + dirty; paint must
+/// read the sticky flag, not recompute after clearing context_hit.
 #[test]
 fn context_meter_hover_marks_dirty_on_enter_leave() {
     use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
@@ -325,8 +342,9 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
         height: 1,
     });
     app.needs_redraw = false;
+    assert!(!app.context_hovered());
 
-    // Move onto the meter → dirty + hovered.
+    // Move onto the meter → sticky hover + dirty.
     let enter = Event::Mouse(MouseEvent {
         kind: MouseEventKind::Moved,
         column: 75,
@@ -337,8 +355,20 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
     assert!(app.context_hovered());
     assert!(app.needs_redraw, "enter context meter must mark_dirty");
 
-    // Move within the meter → still hovered; no need to re-dirty (already true,
-    // but enter/leave only flips on boundary — clear flag to prove no re-dirty).
+    // Simulate paint clearing the hit box (old bug: that made hover always false).
+    app.context_hit = None;
+    assert!(
+        app.context_hovered(),
+        "sticky hover must survive paint clearing context_hit"
+    );
+
+    // Restore hit for leave hit-test (next frame would set it after paint).
+    app.context_hit = Some(Rect {
+        x: 70,
+        y: 40,
+        width: 12,
+        height: 1,
+    });
     app.needs_redraw = false;
     let stay = Event::Mouse(MouseEvent {
         kind: MouseEventKind::Moved,
@@ -353,7 +383,7 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
         "move inside meter should not re-dirty every pixel"
     );
 
-    // Leave the meter → dirty so paint restores used/max.
+    // Leave the meter → sticky clear + dirty so paint restores used/max.
     let leave = Event::Mouse(MouseEvent {
         kind: MouseEventKind::Moved,
         column: 10,
