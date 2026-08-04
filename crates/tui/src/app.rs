@@ -1129,6 +1129,14 @@ impl TuiApp {
     /// Returns the measured duration when a turn was in progress.
     pub fn complete_turn_timing(&mut self) -> Option<u128> {
         let ms = self.turn_elapsed_ms()?;
+        Some(self.complete_turn_timing_ms(ms))
+    }
+
+    /// Stamp a pre-measured work duration (excludes post-turn title refine).
+    ///
+    /// Prefer this when the agent task reports `work_ms` separately so
+    /// "Worked for Xs" is the real turn, not wall time until the UI is free.
+    pub fn complete_turn_timing_ms(&mut self, ms: u128) -> u128 {
         self.turn_started_at = None;
         if let Some(last) = self
             .messages
@@ -1138,7 +1146,7 @@ impl TuiApp {
         {
             last.duration_ms = Some(ms);
         }
-        Some(ms)
+        ms
     }
 
     pub fn is_busy(&self) -> bool {

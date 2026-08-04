@@ -267,6 +267,24 @@ fn test_turn_timing_stamps_assistant_duration() {
 }
 
 #[test]
+fn test_complete_turn_timing_ms_uses_reported_work_not_wall() {
+    // Title refine (or any post-turn work) must not inflate the footer.
+    let mut app = TuiApp::new(test_config());
+    app.add_message(ChatRole::User, "hi");
+    app.add_message(ChatRole::Assistant, "yo");
+    app.mark_turn_started();
+    // Pretend wall clock ran long (title refine), but work was 2.5s.
+    let stamped = app.complete_turn_timing_ms(2_500);
+    assert_eq!(stamped, 2_500);
+    assert!(app.turn_started_at.is_none());
+    assert_eq!(
+        app.messages.last().and_then(|m| m.duration_ms),
+        Some(2_500)
+    );
+    assert_eq!(crate::app::format_elapsed_ms(2_500), "2.5s");
+}
+
+#[test]
 fn test_format_usage_short() {
     use crate::app::format_usage_short;
     use whycode_core::types::Usage;

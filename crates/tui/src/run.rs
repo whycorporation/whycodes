@@ -150,12 +150,15 @@ enum TurnOutcome {
         text: String,
         agent: Agent,
         session: Session,
+        /// Wall time for `run_turn` only (excludes post-turn title refine).
+        work_ms: u128,
     },
     Err {
         error: String,
         agent: Agent,
         session: Session,
         cancelled: bool,
+        work_ms: u128,
     },
 }
 
@@ -529,13 +532,19 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             if let Ok(outcome) = done_rx.try_recv() {
                 agent_busy = false;
                 cancel_flag = None;
-                let elapsed_ms = app.complete_turn_timing();
+                // Stamp "Worked for Xs" from work_ms measured *before* title
+                // refine — otherwise auto-title LLM time inflates the footer.
+                let work_ms = match &outcome {
+                    TurnOutcome::Ok { work_ms, .. } | TurnOutcome::Err { work_ms, .. } => *work_ms,
+                };
+                let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
                 app.mark_dirty();
                 match outcome {
                     TurnOutcome::Ok {
                         text,
                         agent: a,
                         session: s,
+                        work_ms: _,
                     } => {
                         agent = a;
                         session = s;
@@ -568,6 +577,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         agent: a,
                         session: s,
                         cancelled,
+                        work_ms: _,
                     } => {
                         agent = a;
                         session = s;
@@ -865,6 +875,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     let agent = ag;
                     let mut session = sess;
+                    // Time only the agent loop — title refine is post-turn and
+                    // must not show up as "Worked for 37s" on a 2s chat.
+                    let work_t0 = std::time::Instant::now();
                     let result = agent
                         .run_turn_with_events(
                             &mut session,
@@ -876,6 +889,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             cancel2,
                         )
                         .await;
+                    let work_ms = work_t0.elapsed().as_millis();
                     // After the first successful turn, refine title with a small model
                     // (user + assistant context beats first-message-only).
                     if auto_title && result.is_ok() {
@@ -895,6 +909,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 text,
                                 agent,
                                 session,
+                                work_ms,
                             });
                         }
                         Err(e) => {
@@ -905,6 +920,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 agent,
                                 session,
                                 cancelled,
+                                work_ms,
                             });
                         }
                     }
