@@ -34,11 +34,12 @@ reproduced these. Note that the memory figure is stated with local embeddings
 disabled, and that jcode's embedding crate loads an ONNX `all-MiniLM-L6-v2`
 model in-process, so the enabled figure will be materially higher.
 
-whycode measurements (release, see [benchmarks.md](benchmarks.md)): ~21 ms
-`--version`, ~9.6 MB peak RSS for CLI floor, ~4.7 ms in-process first TUI
-frame, and multi-session idle PSS of **~4.1 MB** (1 session) / **~16.8 MB**
-(10 sessions) on Linux. jcode's published 27.8 MB / 117 MB figures remain its
-own claims.
+whycode measurements (release, see [benchmarks.md](benchmarks.md)): **~1.3 ms**
+`--version` on Linux after the 2026-08-05 boot-path cut (Windows baseline was
+~21 ms on a larger binary), ~9.6 MB peak RSS for CLI floor, ~4.7 ms in-process
+first TUI frame, and multi-session idle PSS of **~4.1 MB** (1 session) /
+**~16.8 MB** (10 sessions) on Linux. jcode's published 27.8 MB / 117 MB figures
+remain its own claims.
 
 ## What whycode has that is worth keeping
 

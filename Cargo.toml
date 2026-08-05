@@ -64,7 +64,9 @@ rustc-hash = "2"
 
 # Release: smaller binary + better inlining on hot paths (format, risk, TUI).
 # thin LTO keeps CI/dev rebuilds reasonable vs full `lto = true`.
+# panic=abort drops unwinding tables — less to page in on Boot/TTFF (`--version`).
 [profile.release]
 lto = "thin"
 codegen-units = 1
 strip = true
+panic = "abort"

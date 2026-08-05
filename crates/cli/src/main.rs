@@ -335,10 +335,17 @@ pub enum SessionCmd {
     },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    // First statement: everything after it is time a user waits for, and the
-    // first-frame benchmark measures from here.
+fn main() -> anyhow::Result<()> {
+    // Floor path for Boot/TTFF (`whycode --version` / `-V`):
+    // never build a Tokio runtime, never run clap, never touch config/logging.
+    // The old `#[tokio::main]` wrapper paid for a multi-thread executor on
+    // every invocation — including the ones that only print a version string.
+    if early_print_version() {
+        return Ok(());
+    }
+
+    // First statement on the real path: everything after it is time a user
+    // waits for, and the first-frame benchmark measures from here.
     whycode_tui::bench::mark_process_start();
 
     // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
@@ -346,8 +353,76 @@ async fn main() -> anyhow::Result<()> {
     // the TUI (which draws on /dev/tty) keeps running.
     ignore_sigpipe();
 
+    // Parse before building any runtime so `--help` (and mixed `--version`
+    // forms clap still handles) exit without a thread pool.
     let cli = Cli::parse();
 
+    let rt = runtime_for(&cli)?;
+    rt.block_on(async_main(cli))
+}
+
+/// `whycode --version` / `whycode -V` only — same format clap would print.
+///
+/// Returns true when the process should exit immediately (caller returns Ok).
+fn early_print_version() -> bool {
+    let mut args = std::env::args_os().skip(1);
+    let Some(only) = args.next() else {
+        return false;
+    };
+    // Single-flag only so we never disagree with clap on combined argv.
+    if args.next().is_some() {
+        return false;
+    }
+    if only == "--version" || only == "-V" {
+        // clap's default: "{bin-name} {version}"
+        println!("whycode {VERSION_LONG}");
+        return true;
+    }
+    false
+}
+
+/// Light subcommands (config/session/stats/…) use a current-thread runtime so
+/// they do not pay for worker-thread spawn. Interactive / network / agent paths
+/// keep the multi-thread pool.
+fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
+    if command_needs_multi_thread(cli) {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+    } else {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+    }
+}
+
+fn command_needs_multi_thread(cli: &Cli) -> bool {
+    match &cli.command {
+        // Default bare invoke → interactive TUI / agent.
+        None => true,
+        Some(cmd) => match cmd {
+            Commands::Run { .. }
+            | Commands::Generate { .. }
+            | Commands::Acp
+            | Commands::Pr { .. }
+            | Commands::Github { .. }
+            | Commands::Serve { .. }
+            | Commands::Web
+            | Commands::Mcp { .. }
+            | Commands::Upgrade => true,
+            // Local file / sqlite / print-only commands.
+            Commands::Provider { .. }
+            | Commands::Model { .. }
+            | Commands::Agent { .. }
+            | Commands::Config { .. }
+            | Commands::Session { .. }
+            | Commands::Stats
+            | Commands::Debug => false,
+        },
+    }
+}
+
+async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODE_LOG_FILE to capture human logs).

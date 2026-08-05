@@ -102,6 +102,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-05 — Boot/TTFF: do not put Tokio before `--version`
+
+**Symptom:** `whycode --version` (Boot floor in comparison tables) paid multi-ms for a multi-thread Tokio runtime that never ran work. Windows baseline ~21 ms was mostly binary page-in + that setup.
+
+**Root cause:** `#[tokio::main]` builds the runtime *before* the async body runs, so clap’s version exit still started worker threads. 16 MB binary also meant more pages faulted in.
+
+**Fix:** Sync `main`: early `--version`/`-V` prints and returns (no clap, no Tokio); `Cli::parse()` before any runtime so `--help` is free of the pool; light subcommands use `current_thread`; release `panic = "abort"` (~14 MB).
+
+**Prevention:** Never restore `#[tokio::main]` on the CLI entry. Keep Boot/TTFF on the early path. Measure with `python scripts/bench_startup.py`.
+
+---
+
 ### 2026-08-05 — Scrollbar thumb stuck near ~70% at true bottom
 
 **Symptom:** Content at newest messages (`scroll_offset = 0`) but the thumb sat mid/lower track (~70%), not flush with the bottom.
