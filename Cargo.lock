@@ -2934,6 +2934,7 @@ dependencies = [
  "whycode-core",
  "whycode-format",
  "whycode-llm",
+ "whycode-memory",
  "whycode-protocol",
  "whycode-server",
  "whycode-session",
@@ -3057,6 +3058,21 @@ dependencies = [
  "tower",
  "tracing",
  "whycode-core",
+]
+
+[[package]]
+name = "whycode-memory"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "uuid",
+ "whycode-core",
+ "whycode-storage",
 ]
 
 [[package]]
@@ -3192,6 +3208,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
+ "directories",
  "futures",
  "glob",
  "regex",
@@ -3206,6 +3223,7 @@ dependencies = [
  "whycode-core",
  "whycode-format",
  "whycode-lsp",
+ "whycode-memory",
  "whycode-sandbox",
  "whycode-skill",
 ]
@@ -3231,6 +3249,7 @@ dependencies = [
  "whycode-core",
  "whycode-format",
  "whycode-llm",
+ "whycode-memory",
  "whycode-session",
  "whycode-storage",
  "whycode-tools",

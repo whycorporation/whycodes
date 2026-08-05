@@ -25,7 +25,7 @@ Last updated: **2026-08-05** (latency P0/P1 + FEATURES.md refresh; `v0.1.0` publ
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | blocked | Owner: client registration + provider terms before any code. |
 | Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + usage persistence + `whycode stats`. Open: subagent tokens, provider reconcile, optional CI ceilings. |
 | Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
-| Semantic memory | [plan-memory.md](plan-memory.md) | not started | Needs model-distribution decision + RSS cost comfort. |
+| Semantic memory | [plan-memory.md](plan-memory.md) | **shipped v1** | Hash embedder + MEMORY.md + auto-recall; ONNX deferred. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
 | FEATURES accuracy | [plan-features-improvements.md](plan-features-improvements.md) | done | Matrix fixed; `/tools` `/info` surface latency knobs. |
 
@@ -56,7 +56,7 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 2. **Terminal product polish** — latency stack + mouse TUI + FEATURES matrix accurate (2026-08-05). Next: plugins depth, subagent token fold.
 3. **Performance residual** — stats done; optional CI ceilings / subagent tokens remain.
 4. **OAuth** stays blocked until owner decisions.
-5. **Memory** stays not-started until deliberately scheduled.
+5. **Memory v1** shipped (hash embed + MEMORY.md). Optional ONNX / auto-extract later.
 
 ## Decision log
 

@@ -59,6 +59,8 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 | `whycode-config` | `crates/config` | Config load/merge/validate (depends on core only) |
 | `whycode-session` | `crates/session` | Conversation session |
 | `whycode-tools` | `crates/tools` | Built-in tools (`file/`, `git/`, `github/`, `web/`, `agent_tools/`) |
+| `whycode-memory` | `crates/memory` | Cross-session semantic / auto memory (MEMORY.md + hash embed) |
+| `whycode-storage` | `crates/storage` | SQLite sessions + memories |
 
 Package names use the `whycode-` prefix even when the directory is shorter (e.g. `crates/llm` → `-p whycode-llm`).
 

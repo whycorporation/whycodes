@@ -21,6 +21,7 @@ members = [
     "crates/plugin",
     "crates/command-risk",
     "crates/sandbox",
+    "crates/memory",
 ]
 resolver = "2"
 

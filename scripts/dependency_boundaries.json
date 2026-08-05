@@ -14,7 +14,9 @@
     "agent",
     "config",
     "core",
+    "format",
     "llm",
+    "memory",
     "protocol",
     "server",
     "session",
@@ -39,6 +41,10 @@
   ],
   "lsp": [
     "core"
+  ],
+  "memory": [
+    "core",
+    "storage"
   ],
   "mcp": [
     "core"
@@ -86,6 +92,7 @@
     "core",
     "format",
     "lsp",
+    "memory",
     "sandbox",
     "skill"
   ],
@@ -95,6 +102,7 @@
     "core",
     "format",
     "llm",
+    "memory",
     "session",
     "storage",
     "tools"

@@ -72,6 +72,10 @@ pub struct Cli {
     /// Write debug logs under the data dir (`debug/whycode-*.log` + `debug/latest.log`)
     #[arg(long, global = true)]
     pub debug: bool,
+
+    /// Disable cross-session semantic / auto memory for this process
+    #[arg(long = "no-memory", global = true)]
+    pub no_memory: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -180,6 +184,12 @@ pub enum Commands {
     Session {
         #[command(subcommand)]
         cmd: SessionCmd,
+    },
+
+    /// Cross-session memory (list, search, add, delete, clear, path)
+    Memory {
+        #[command(subcommand)]
+        cmd: MemoryCmd,
     },
 
     /// Show usage statistics
@@ -311,6 +321,29 @@ pub enum ConfigCmd {
 }
 
 #[derive(Subcommand, Debug)]
+pub enum MemoryCmd {
+    /// List memories for the current project
+    List {
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Semantic search over stored memories
+    Search {
+        query: String,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Add a durable fact
+    Add { text: Vec<String> },
+    /// Delete a memory by id or unique prefix
+    Delete { id: String },
+    /// Clear all memories for this project
+    Clear,
+    /// Print MEMORY.md path for this project
+    Path,
+}
+
+#[derive(Subcommand, Debug)]
 pub enum SessionCmd {
     /// List all sessions
     List,
@@ -421,6 +454,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Agent { .. }
             | Commands::Config { .. }
             | Commands::Session { .. }
+            | Commands::Memory { .. }
             | Commands::Stats
             | Commands::Debug => false,
         },
@@ -534,6 +568,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Agent { name } => cmd_agent(name.as_deref()).await,
         Commands::Config { cmd: config_cmd } => cmd_config(config_cmd).await,
         Commands::Session { cmd: session_cmd } => cmd_session(session_cmd).await,
+        Commands::Memory { cmd: memory_cmd } => cmd_memory(cli, memory_cmd).await,
         Commands::Stats => cmd_stats().await,
         Commands::Debug => cmd_debug().await,
         #[cfg(feature = "self-update")]
@@ -733,6 +768,9 @@ async fn cmd_run(
     let mut config = Config::load_layered(&project_dir_early)
         .or_else(|_| Config::load())
         .unwrap_or_default();
+    if cli.no_memory {
+        config.memory.enabled = false;
+    }
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
@@ -801,7 +839,12 @@ async fn cmd_run(
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
-    let system_prompt = Agent::with_agents_md(&base_prompt, &project_dir);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&base_prompt, &project_dir),
+        &project_dir,
+        &config,
+        None,
+    );
 
     let mut agent_name = agent_name;
     let mut agent = Agent::new(agent_info)
@@ -880,6 +923,7 @@ async fn cmd_run(
             return Ok(());
         }
         let expanded = expand_user_input(prompt, &project_dir);
+        refresh_session_memory(&mut session, &agent, &project_dir, &config, Some(&expanded));
         session.add_user_message(&expanded);
         if config.session.auto_title {
             // Prefer first user message (resume of placeholder-titled sessions).
@@ -970,6 +1014,13 @@ async fn cmd_run(
                 }
                 println!("{} /{} → prompt", "⚡".bold(), name.cyan());
                 history.push_before_turn(&session.messages, &project_dir);
+                refresh_session_memory(
+                    &mut session,
+                    &agent,
+                    &project_dir,
+                    &config,
+                    Some(&rendered),
+                );
                 session.add_user_message(&rendered);
                 match agent
                     .run_turn(&mut session, &provider, &model, &api_key, max_turns)
@@ -995,7 +1046,12 @@ async fn cmd_run(
                     history = whycode_session::SessionHistory::new();
                     session = whycode_session::session::Session::new(
                         project_dir.clone(),
-                        Agent::with_agents_md(&agent.system_prompt(), &project_dir),
+                        with_project_memory(
+                            &Agent::with_agents_md(&agent.system_prompt(), &project_dir),
+                            &project_dir,
+                            &config,
+                            None,
+                        ),
                     );
                     println!(
                         "{} New session started ({})",
@@ -1068,10 +1124,15 @@ async fn cmd_run(
                         ),
                         Err(e) => eprintln!("{} /init failed: {}", "✗".red(), e),
                     }
-                    // Reload system prompt with new AGENTS.md
-                    session.set_system_prompt(&Agent::with_agents_md(
-                        &Agent::system_prompt_for(&agent_name),
+                    // Reload system prompt with new AGENTS.md + memory
+                    session.set_system_prompt(&with_project_memory(
+                        &Agent::with_agents_md(
+                            &Agent::system_prompt_for(&agent_name),
+                            &project_dir,
+                        ),
                         &project_dir,
+                        &config,
+                        None,
                     ));
                     continue;
                 }
@@ -1264,6 +1325,59 @@ async fn cmd_run(
                     }
                     continue;
                 }
+                "/remember" => {
+                    if rest.is_empty() {
+                        println!("Usage: /remember <text to store>");
+                    } else {
+                        match whycode_memory::MemoryService::open(
+                            &project_dir,
+                            Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                            memory_settings(&config),
+                        ) {
+                            Ok(svc) => match svc.remember(rest, Some(&session.id)) {
+                                Ok(id) => println!(
+                                    "{} Remembered {} — {}",
+                                    "✓".green(),
+                                    id.chars().take(8).collect::<String>().cyan(),
+                                    rest
+                                ),
+                                Err(e) => eprintln!("{} {e}", "✗".red()),
+                            },
+                            Err(e) => eprintln!("{} {e}", "✗".red()),
+                        }
+                    }
+                    continue;
+                }
+                "/memory" => {
+                    match whycode_memory::MemoryService::open(
+                        &project_dir,
+                        Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
+                        memory_settings(&config),
+                    ) {
+                        Ok(svc) => {
+                            let n = svc.list(1000).map(|r| r.len()).unwrap_or(0);
+                            println!(
+                                "Memory: enabled={}  entries={}  path={}",
+                                config.memory.enabled,
+                                n,
+                                svc.memory_md_path().display()
+                            );
+                            println!("  project_key={}", svc.project_key.dimmed());
+                            println!("  CLI: whycode memory list|search|add|delete|clear");
+                            if let Ok(rows) = svc.list(10) {
+                                for r in rows {
+                                    println!(
+                                        "  · {}  {}",
+                                        r.id.chars().take(8).collect::<String>().dimmed(),
+                                        r.text
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("{} {e}", "✗".red()),
+                    }
+                    continue;
+                }
                 other => {
                     println!("Unknown command: {}. Type /help", other);
                     continue;
@@ -1279,6 +1393,7 @@ async fn cmd_run(
         }
 
         history.push_before_turn(&session.messages, &project_dir);
+        refresh_session_memory(&mut session, &agent, &project_dir, &config, Some(&expanded));
         session.add_user_message(&expanded);
         if config.session.auto_title {
             let seed = session
@@ -1380,6 +1495,8 @@ fn print_slash_help() {
     println!("  /redo                  — Redo previously undone turn");
     println!("  /share, /export        — Export session JSON");
     println!("  /compact, /summarize   — Compact long context");
+    println!("  /remember <text>       — Save a durable project memory");
+    println!("  /memory                — Show memory path and entry count");
     println!("  /sessions              — List saved sessions");
     println!("  /resume [id]           — Resume a session (list if no id)");
     println!("  /continue              — Resume the most recent session");
@@ -1395,6 +1512,8 @@ fn print_slash_help() {
     println!("  !cmd                   — Run shell command, add output to chat");
     println!("  @path/to/file          — Include file contents in your message");
     println!("  Custom commands        — .whycode/commands/*.md or config [commands]");
+    println!("  whycode memory …       — list|search|add|delete|clear|path");
+    println!("  whycode --no-memory    — disable memory for this process");
     println!("  whycode --plain        — readline REPL instead of TUI");
 }
 
@@ -1404,6 +1523,141 @@ fn split_slash_command(input: &str) -> (&str, &str) {
         Some(i) => (&s[..i], s[i..].trim()),
         None => (s, ""),
     }
+}
+
+/// Settings bag for `whycode-memory` from config (config does not depend on memory).
+fn memory_settings(config: &Config) -> whycode_memory::MemorySettings {
+    let m = &config.memory;
+    whycode_memory::MemorySettings {
+        enabled: m.enabled,
+        auto_inject: m.auto_inject,
+        max_index_lines: m.max_index_lines,
+        max_index_bytes: m.max_index_bytes,
+        recall_top_k: m.recall_top_k,
+        recall_min_score: m.recall_min_score,
+        recall_token_budget: m.recall_token_budget,
+        embed_dim: m.embed_dim,
+    }
+}
+
+fn with_project_memory(
+    system_prompt: &str,
+    project_dir: &std::path::Path,
+    config: &Config,
+    query: Option<&str>,
+) -> String {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    whycode_memory::apply_memory_prompt(
+        system_prompt,
+        project_dir,
+        &data_dir,
+        &memory_settings(config),
+        query,
+    )
+}
+
+/// Rebuild system prompt with AGENTS.md + memory recall for the current query.
+fn refresh_session_memory(
+    session: &mut whycode_session::session::Session,
+    agent: &Agent,
+    project_dir: &std::path::Path,
+    config: &Config,
+    query: Option<&str>,
+) {
+    let base = Agent::with_agents_md(&agent.system_prompt(), project_dir);
+    session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));
+}
+
+fn open_memory_service(
+    cli: &Cli,
+    config: &Config,
+) -> anyhow::Result<whycode_memory::MemoryService> {
+    let project_dir = resolve_dir(cli);
+    let data_dir = Config::data_dir()?;
+    whycode_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
+}
+
+async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
+    let project_dir = resolve_dir(cli);
+    let mut config = Config::load_layered(&project_dir)
+        .or_else(|_| Config::load())
+        .unwrap_or_default();
+    if cli.no_memory {
+        config.memory.enabled = false;
+    }
+    let svc = open_memory_service(cli, &config)?;
+
+    match cmd {
+        MemoryCmd::List { limit } => {
+            let rows = svc.list(*limit)?;
+            if rows.is_empty() {
+                println!("{} No memories for this project.", "ℹ".cyan());
+            } else {
+                println!(
+                    "{} {} memories ({})",
+                    "🧠".bold(),
+                    rows.len(),
+                    svc.project_key.dimmed()
+                );
+                for r in rows {
+                    println!(
+                        "  {}  {}",
+                        r.id.chars().take(8).collect::<String>().dimmed(),
+                        r.text
+                    );
+                }
+            }
+        }
+        MemoryCmd::Search { query, limit } => {
+            let hits = svc.search(query, *limit, config.memory.recall_min_score.min(0.15))?;
+            if hits.is_empty() {
+                println!("{} No matches.", "ℹ".cyan());
+            } else {
+                for h in hits {
+                    println!(
+                        "  [{:.2}] {}  {}",
+                        h.score,
+                        h.entry.id.chars().take(8).collect::<String>().dimmed(),
+                        h.entry.text
+                    );
+                }
+            }
+        }
+        MemoryCmd::Add { text } => {
+            let text = text.join(" ");
+            if text.trim().is_empty() {
+                anyhow::bail!("usage: whycode memory add <text>");
+            }
+            let id = svc.remember(&text, None)?;
+            println!(
+                "{} Saved {} — {}",
+                "✓".green(),
+                id.chars().take(8).collect::<String>().cyan(),
+                text
+            );
+        }
+        MemoryCmd::Delete { id } => {
+            if svc.delete(id)? {
+                println!("{} Deleted {id}", "✓".green());
+            } else {
+                println!("{} No memory matching '{id}'", "ℹ".cyan());
+            }
+        }
+        MemoryCmd::Clear => {
+            let n = svc.clear()?;
+            println!("{} Cleared {n} memories", "✓".green());
+        }
+        MemoryCmd::Path => {
+            println!("{}", svc.memory_md_path().display());
+            println!(
+                "{} project_key={} enabled={}",
+                "ℹ".dimmed(),
+                svc.project_key,
+                config.memory.enabled
+            );
+        }
+    }
+    Ok(())
 }
 
 fn switch_agent(
@@ -1422,7 +1676,12 @@ fn switch_agent(
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(name));
-    let prompt = Agent::with_agents_md(&base, project_dir);
+    let prompt = with_project_memory(
+        &Agent::with_agents_md(&base, project_dir),
+        project_dir,
+        config,
+        None,
+    );
     let agent = Agent::new(info);
     Ok((name.to_string(), agent, prompt))
 }
@@ -1598,9 +1857,12 @@ async fn cmd_generate(
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     let project_dir = resolve_dir(cli);
-    let config = Config::load_layered(&project_dir)
+    let mut config = Config::load_layered(&project_dir)
         .or_else(|_| Config::load())
         .unwrap_or_default();
+    if cli.no_memory {
+        config.memory.enabled = false;
+    }
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
@@ -1627,7 +1889,13 @@ async fn cmd_generate(
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(&agent_name));
-    let system_prompt = Agent::with_agents_md(&base_prompt, &project_dir);
+    let expanded = expand_user_input(prompt, &project_dir);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&base_prompt, &project_dir),
+        &project_dir,
+        &config,
+        Some(&expanded),
+    );
 
     // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
     // Catastrophic shell risk still hard-blocks regardless of this.
@@ -1650,7 +1918,6 @@ async fn cmd_generate(
         );
     }
 
-    let expanded = expand_user_input(prompt, &project_dir);
     session.add_user_message(&expanded);
 
     run_headless_turn(

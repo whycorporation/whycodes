@@ -246,7 +246,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(&opts.agent_name));
-    let system_prompt = Agent::with_agents_md(&base, &opts.project_dir);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&base, &opts.project_dir),
+        &opts.project_dir,
+        &config,
+        None,
+    );
 
     // Permission channel: agent blocks until TUI replies (shared across agent switches)
     let (perm_prompter, mut perm_rx) = ChannelPermissionPrompter::new();
@@ -683,8 +688,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             let n = loaded.messages.len();
                             history = SessionHistory::new();
                             session = loaded;
-                            session.system_prompt =
-                                Agent::with_agents_md(&agent.system_prompt(), &project_dir);
+                            session.system_prompt = with_project_memory(
+                                &Agent::with_agents_md(&agent.system_prompt(), &project_dir),
+                                &project_dir,
+                                &config,
+                                None,
+                            );
                             if config.session.auto_title
                                 && session.maybe_upgrade_title_from_history()
                             {
@@ -878,6 +887,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
                 let expanded = expand_at_files(&prompt, &project_dir);
                 history.push_before_turn(&session.messages, &project_dir);
+                // Auto-recall memories relevant to this user turn (Grok/jcode style).
+                refresh_session_memory(
+                    &mut session,
+                    &agent,
+                    &project_dir,
+                    &config,
+                    Some(&expanded),
+                );
                 if submit_images.is_empty() {
                     session.add_user_message(&expanded);
                 } else {
@@ -1507,7 +1524,12 @@ async fn cycle_agent(
             .system_prompt
             .clone()
             .unwrap_or_else(|| Agent::system_prompt_for(&name));
-        let prompt = Agent::with_agents_md(&base, project_dir);
+        let prompt = with_project_memory(
+            &Agent::with_agents_md(&base, project_dir),
+            project_dir,
+            config,
+            None,
+        );
         *agent = Agent::new(info)
             .with_config(config)
             .with_permission_prompter(
@@ -1638,7 +1660,12 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             *ctx.history = SessionHistory::new();
             *ctx.session = Session::new(
                 ctx.project_dir.to_path_buf(),
-                Agent::with_agents_md(&ctx.agent.system_prompt(), ctx.project_dir),
+                with_project_memory(
+                    &Agent::with_agents_md(&ctx.agent.system_prompt(), ctx.project_dir),
+                    ctx.project_dir,
+                    ctx.config,
+                    None,
+                ),
             );
             ctx.app.session_title = ctx.session.title.clone();
             ctx.app.messages.clear();
@@ -1689,6 +1716,65 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             // Provider usage is stale after trim — fall back to the char heuristic.
             ctx.app.context_used = ctx.session.token_count() as u64;
             ctx.app.status_message = format!("Compacted {before} → {}", ctx.session.messages.len());
+        }
+        "/remember" => {
+            let text = rest.trim();
+            if text.is_empty() {
+                ctx.app.status_message = "Usage: /remember <text>".into();
+            } else {
+                match memory_service(ctx.project_dir, ctx.config) {
+                    Ok(svc) => match svc.remember(text, Some(&ctx.session.id)) {
+                        Ok(id) => {
+                            ctx.app.toasts.push(
+                                crate::toast::ToastKind::Success,
+                                format!("Remembered {}", &id[..8.min(id.len())]),
+                            );
+                            ctx.app.status_message = format!("Saved memory: {text}");
+                        }
+                        Err(e) => {
+                            ctx.app
+                                .toasts
+                                .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
+                        }
+                    },
+                    Err(e) => {
+                        ctx.app
+                            .toasts
+                            .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
+                    }
+                }
+            }
+        }
+        "/memory" => {
+            match memory_service(ctx.project_dir, ctx.config) {
+                Ok(svc) => {
+                    let n = svc.list(1000).map(|r| r.len()).unwrap_or(0);
+                    let path = svc.memory_md_path();
+                    let mut msg = format!(
+                        "Memory enabled={} · {} entries · {}\nproject_key={}",
+                        ctx.config.memory.enabled,
+                        n,
+                        path.display(),
+                        svc.project_key
+                    );
+                    if let Ok(rows) = svc.list(8) {
+                        for r in rows {
+                            msg.push_str(&format!(
+                                "\n· {}  {}",
+                                &r.id[..8.min(r.id.len())],
+                                r.text
+                            ));
+                        }
+                    }
+                    ctx.app.add_message(ChatRole::System, msg);
+                    ctx.app.status_message = format!("Memory · {n} entries");
+                }
+                Err(e) => {
+                    ctx.app
+                        .toasts
+                        .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
+                }
+            }
         }
         "/share" | "/export" => match ctx.session.export_share() {
             Ok(p) => {
@@ -1790,7 +1876,12 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     .system_prompt
                     .clone()
                     .unwrap_or_else(|| Agent::system_prompt_for(rest));
-                let prompt = Agent::with_agents_md(&base, ctx.project_dir);
+                let prompt = with_project_memory(
+                    &Agent::with_agents_md(&base, ctx.project_dir),
+                    ctx.project_dir,
+                    ctx.config,
+                    None,
+                );
                 *ctx.agent = Agent::new(info)
                     .with_config(ctx.config)
                     .with_permission_prompter(Arc::clone(&ctx.perm_prompter)
@@ -2126,6 +2217,55 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
         });
     }
     out
+}
+
+fn memory_settings(config: &Config) -> whycode_memory::MemorySettings {
+    let m = &config.memory;
+    whycode_memory::MemorySettings {
+        enabled: m.enabled,
+        auto_inject: m.auto_inject,
+        max_index_lines: m.max_index_lines,
+        max_index_bytes: m.max_index_bytes,
+        recall_top_k: m.recall_top_k,
+        recall_min_score: m.recall_min_score,
+        recall_token_budget: m.recall_token_budget,
+        embed_dim: m.embed_dim,
+    }
+}
+
+fn with_project_memory(
+    system_prompt: &str,
+    project_dir: &std::path::Path,
+    config: &Config,
+    query: Option<&str>,
+) -> String {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    whycode_memory::apply_memory_prompt(
+        system_prompt,
+        project_dir,
+        &data_dir,
+        &memory_settings(config),
+        query,
+    )
+}
+
+fn refresh_session_memory(
+    session: &mut Session,
+    agent: &Agent,
+    project_dir: &std::path::Path,
+    config: &Config,
+    query: Option<&str>,
+) {
+    let base = Agent::with_agents_md(&agent.system_prompt(), project_dir);
+    session.set_system_prompt(&with_project_memory(&base, project_dir, config, query));
+}
+
+fn memory_service(
+    project_dir: &std::path::Path,
+    config: &Config,
+) -> anyhow::Result<whycode_memory::MemoryService> {
+    let data_dir = Config::data_dir()?;
+    whycode_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
 }
 
 /// Shorten a UUID-style session id for status lines (`a1b2c3d4…`).

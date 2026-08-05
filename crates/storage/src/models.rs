@@ -40,3 +40,17 @@ pub struct StateRow {
     pub key: String,
     pub value: String,
 }
+
+/// A row from the memories table (cross-session semantic / auto memory).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryRow {
+    pub id: String,
+    pub project_key: String,
+    pub text: String,
+    /// Little-endian f32 embedding blob.
+    pub embedding: Vec<u8>,
+    pub source_session: Option<String>,
+    pub created_at: String,
+    pub last_recalled_at: Option<String>,
+    pub recall_count: i64,
+}

@@ -176,7 +176,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Cross-harness resume | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | ❌ |
 | Undo / redo | ✅ git | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ branch | ✅ IDE |
 | Context compact | ✅ drop+prune | ✅ | ✅★ | ✅ | ✅ | ⚠️ | ✅ token caching | ✅ compaction | ✅ |
-| Semantic / auto memory | ❌ | ✅ | ❌ | ✅★ | ✅ | ✅ memories md | ⚠️ | ❌ | ⚠️ |
+| Semantic / auto memory | ✅ | ✅ | ❌ | ✅★ | ✅ | ✅ memories md | ⚠️ | ❌ | ⚠️ |
 | Share / export | ✅ local | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅ HF share tooling | ⚠️ |
 | Usage / cost stats | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ telemetry | ⚠️ | ✅ `/usage` |
 
@@ -261,7 +261,7 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 | Boşluk | Kimde var | Not |
 |---|---|---|
 | OAuth / subscription login | jcode, OC, CC, Grok, Codex, Gemini, Pi `/login`, Cursor | [plan-oauth](plan-oauth.md) |
-| Semantic memory | jcode★, Grok, Claude, Codex memories | [plan-memory](plan-memory.md) |
+| Semantic memory | whycode ✅ (hash embed + MEMORY.md), jcode★ ONNX, Grok, Claude | [plan-memory](plan-memory.md) shipped v1 |
 | Swarm | jcode★ | dropped |
 | Browser automation | jcode, Claude, Cursor★ | Yok |
 | Desktop / IDE | OpenCode, Claude, Codex app/IDE, **Cursor★** | `web` + `acp` stub |

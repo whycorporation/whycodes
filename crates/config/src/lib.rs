@@ -96,6 +96,10 @@ pub struct Config {
     /// Pre/post tool hooks (shell commands). Empty by default.
     #[serde(default)]
     pub hooks: Vec<HookConfig>,
+
+    /// Cross-session semantic / auto memory.
+    #[serde(default)]
+    pub memory: MemoryConfig,
 }
 
 /// When a hook runs relative to a tool call.
@@ -521,8 +525,101 @@ impl Default for Config {
             commands: HashMap::new(),
             security: SecurityConfig::default(),
             hooks: Vec::new(),
+            memory: MemoryConfig::default(),
         }
     }
+}
+
+/// Cross-session semantic / auto memory (Claude-style index + local recall).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryConfig {
+    /// Master switch. Default on (cheap hashing embedder; no ONNX).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Auto-inject top-k semantic hits for the current user message.
+    #[serde(default = "default_true")]
+    pub auto_inject: bool,
+    /// Max lines of MEMORY.md loaded into every session (Claude parity: 200).
+    #[serde(default = "default_memory_index_lines")]
+    pub max_index_lines: usize,
+    /// Max bytes of MEMORY.md loaded into every session (Claude parity: 25 KiB).
+    #[serde(default = "default_memory_index_bytes")]
+    pub max_index_bytes: usize,
+    /// Max recalled facts injected per turn.
+    #[serde(default = "default_memory_top_k")]
+    pub recall_top_k: usize,
+    /// Minimum cosine similarity for a fact to be recalled.
+    #[serde(default = "default_memory_min_score")]
+    pub recall_min_score: f32,
+    /// Token budget for recalled facts (chars ≈ tokens × 4).
+    #[serde(default = "default_memory_token_budget")]
+    pub recall_token_budget: usize,
+    /// Hashing embedder dimension (stored BLOB width).
+    #[serde(default = "default_memory_embed_dim")]
+    pub embed_dim: usize,
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_inject: true,
+            max_index_lines: default_memory_index_lines(),
+            max_index_bytes: default_memory_index_bytes(),
+            recall_top_k: default_memory_top_k(),
+            recall_min_score: default_memory_min_score(),
+            recall_token_budget: default_memory_token_budget(),
+            embed_dim: default_memory_embed_dim(),
+        }
+    }
+}
+
+fn default_memory_index_lines() -> usize {
+    200
+}
+fn default_memory_index_bytes() -> usize {
+    25_600
+}
+fn default_memory_top_k() -> usize {
+    5
+}
+fn default_memory_min_score() -> f32 {
+    0.28
+}
+fn default_memory_token_budget() -> usize {
+    800
+}
+fn default_memory_embed_dim() -> usize {
+    256
+}
+
+impl MemoryConfig {
+    /// Convert to a plain settings bag for `whycode-memory` (no config dep there).
+    pub fn to_settings(&self) -> MemorySettingsSnapshot {
+        MemorySettingsSnapshot {
+            enabled: self.enabled,
+            auto_inject: self.auto_inject,
+            max_index_lines: self.max_index_lines,
+            max_index_bytes: self.max_index_bytes,
+            recall_top_k: self.recall_top_k,
+            recall_min_score: self.recall_min_score,
+            recall_token_budget: self.recall_token_budget,
+            embed_dim: self.embed_dim,
+        }
+    }
+}
+
+/// Plain copy of memory knobs for crates that must not depend on full Config.
+#[derive(Debug, Clone)]
+pub struct MemorySettingsSnapshot {
+    pub enabled: bool,
+    pub auto_inject: bool,
+    pub max_index_lines: usize,
+    pub max_index_bytes: usize,
+    pub recall_top_k: usize,
+    pub recall_min_score: f32,
+    pub recall_token_budget: usize,
+    pub embed_dim: usize,
 }
 
 fn default_agent() -> String {
@@ -835,6 +932,23 @@ impl Config {
         if let Ok(val) = std::env::var("WHYCODE_NETWORK_DENYLIST") {
             self.security.network_denylist = network::parse_domain_list(&val);
         }
+
+        // WHYCODE_NO_MEMORY=1 disables cross-session memory inject/write.
+        if let Ok(val) = std::env::var("WHYCODE_NO_MEMORY") {
+            if matches!(
+                val.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ) {
+                self.memory.enabled = false;
+            }
+        }
+        if let Ok(val) = std::env::var("WHYCODE_MEMORY") {
+            match val.to_ascii_lowercase().as_str() {
+                "0" | "false" | "no" | "off" => self.memory.enabled = false,
+                "1" | "true" | "yes" | "on" => self.memory.enabled = true,
+                _ => {}
+            }
+        }
     }
 
     // ── Merging ─────────────────────────────────────────────────────────
@@ -1035,6 +1149,33 @@ impl Config {
         // Hooks: non-empty higher layer replaces (project can define its own set).
         if !other.hooks.is_empty() {
             merged.hooks = other.hooks.clone();
+        }
+
+        // Memory: higher layer wins on explicit non-default knobs; enabled can
+        // only be turned off by a higher layer (default is on).
+        if !other.memory.enabled {
+            merged.memory.enabled = false;
+        }
+        if !other.memory.auto_inject {
+            merged.memory.auto_inject = false;
+        }
+        if other.memory.max_index_lines != default_memory_index_lines() {
+            merged.memory.max_index_lines = other.memory.max_index_lines;
+        }
+        if other.memory.max_index_bytes != default_memory_index_bytes() {
+            merged.memory.max_index_bytes = other.memory.max_index_bytes;
+        }
+        if other.memory.recall_top_k != default_memory_top_k() {
+            merged.memory.recall_top_k = other.memory.recall_top_k;
+        }
+        if (other.memory.recall_min_score - default_memory_min_score()).abs() > f32::EPSILON {
+            merged.memory.recall_min_score = other.memory.recall_min_score;
+        }
+        if other.memory.recall_token_budget != default_memory_token_budget() {
+            merged.memory.recall_token_budget = other.memory.recall_token_budget;
+        }
+        if other.memory.embed_dim != default_memory_embed_dim() {
+            merged.memory.embed_dim = other.memory.embed_dim;
         }
 
         merged

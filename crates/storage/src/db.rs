@@ -1,5 +1,5 @@
 use crate::migrations::run_migrations;
-use crate::models::{MessageRow, SessionRow, UsageTotals};
+use crate::models::{MemoryRow, MessageRow, SessionRow, UsageTotals};
 use rusqlite::Connection;
 use whycode_core::types::Usage;
 
@@ -254,6 +254,103 @@ impl Database {
             .execute("DELETE FROM state WHERE key = ?1", rusqlite::params![key])?;
         Ok(())
     }
+
+    // ── Memories (semantic / auto memory) ────────────────────────────────
+
+    pub fn insert_memory(
+        &self,
+        id: &str,
+        project_key: &str,
+        text: &str,
+        embedding: &[u8],
+        source_session: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO memories (
+                id, project_key, text, embedding, source_session,
+                created_at, last_recalled_at, recall_count
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, 0)",
+            rusqlite::params![id, project_key, text, embedding, source_session, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_memory(&self, id: &str) -> anyhow::Result<Option<MemoryRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_key, text, embedding, source_session,
+                    created_at, last_recalled_at, recall_count
+             FROM memories WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(rusqlite::params![id], map_memory_row)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn list_memories(&self, project_key: &str, limit: usize) -> anyhow::Result<Vec<MemoryRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_key, text, embedding, source_session,
+                    created_at, last_recalled_at, recall_count
+             FROM memories WHERE project_key = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![project_key, limit as i64],
+            map_memory_row,
+        )?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn delete_memory(&self, id: &str) -> anyhow::Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])?;
+        Ok(n > 0)
+    }
+
+    pub fn clear_memories(&self, project_key: &str) -> anyhow::Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM memories WHERE project_key = ?1",
+            rusqlite::params![project_key],
+        )?;
+        Ok(n)
+    }
+
+    pub fn touch_memory_recall(&self, id: &str) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "UPDATE memories SET last_recalled_at = ?1, recall_count = recall_count + 1
+             WHERE id = ?2",
+            rusqlite::params![now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn count_memories(&self, project_key: &str) -> anyhow::Result<usize> {
+        let n: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM memories WHERE project_key = ?1",
+            rusqlite::params![project_key],
+            |row| row.get(0),
+        )?;
+        Ok(n as usize)
+    }
+}
+
+fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
+    Ok(MemoryRow {
+        id: row.get(0)?,
+        project_key: row.get(1)?,
+        text: row.get(2)?,
+        embedding: row.get(3)?,
+        source_session: row.get(4)?,
+        created_at: row.get(5)?,
+        last_recalled_at: row.get(6)?,
+        recall_count: row.get(7)?,
+    })
 }
 
 fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionRow> {

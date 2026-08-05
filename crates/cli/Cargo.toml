@@ -32,6 +32,7 @@ whycode-tools = { path = "../tools" }
 whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }
 whycode-storage = { path = "../storage" }
+whycode-memory = { path = "../memory" }
 whycode-server = { path = "../server", optional = true }
 whycode-protocol = { path = "../protocol" }
 whycode-tui = { path = "../tui" }

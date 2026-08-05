@@ -756,6 +756,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Compact the conversation",
     },
     SlashCommand {
+        name: "/remember",
+        hint: "[text] Save a durable project memory",
+    },
+    SlashCommand {
+        name: "/memory",
+        hint: "Show memory path and recent entries",
+    },
+    SlashCommand {
         name: "/share",
         hint: "Export session share link",
     },

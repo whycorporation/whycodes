@@ -62,7 +62,7 @@ Snapshot from 2026-07-31, with current status (2026-08-04):
 | API keys only | open | **blocked** — [plan-oauth](plan-oauth.md) (owner terms decision) |
 | No quality budgets | open | **done** — [budgets.md](budgets.md), [archive/phase-4](archive/phase-4-ci-budgets.md) |
 | No benchmarks | open | **mostly done** — [benchmarks.md](benchmarks.md), residual [plan-performance](plan-performance.md) |
-| No memory across sessions | open | **not started** — [plan-memory](plan-memory.md) |
+| No memory across sessions | open | **shipped v1** — [plan-memory](plan-memory.md) (hash embed + MEMORY.md) |
 | No multi-agent coordination | open | **dropped** — [archive/phase-7](archive/phase-7-multi-agent.md) |
 
 Living feature matrix vs other products: [FEATURES.md](FEATURES.md).

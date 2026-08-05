@@ -23,6 +23,7 @@ whycode-llm = { path = "../llm" }
 whycode-tools = { path = "../tools" }
 whycode-format = { path = "../format" }
 whycode-storage = { path = "../storage" }
+whycode-memory = { path = "../memory" }
 unicode-width = "0.2"
 base64.workspace = true
 

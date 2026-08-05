@@ -57,6 +57,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "glob",
     "grep",
     "list",
+    "memory",
     "read",
     "shell", // legacy alias of bash
     "task",

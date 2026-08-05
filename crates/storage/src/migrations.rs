@@ -47,6 +47,23 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
     ensure_column(conn, "sessions", "cache_creation_input_tokens", "INTEGER")?;
     ensure_column(conn, "sessions", "cache_read_input_tokens", "INTEGER")?;
 
+    // Cross-session semantic / auto memory (plan-memory).
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS memories (
+            id               TEXT PRIMARY KEY,
+            project_key      TEXT NOT NULL,
+            text             TEXT NOT NULL,
+            embedding        BLOB NOT NULL,
+            source_session   TEXT,
+            created_at       TEXT NOT NULL,
+            last_recalled_at TEXT,
+            recall_count     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_key);
+        ",
+    )?;
+
     Ok(())
 }
 
@@ -118,6 +135,23 @@ mod tests {
         assert!(column_exists(&conn, "sessions", "cache_read_input_tokens").unwrap());
 
         // Idempotent.
+        run_migrations(&conn).unwrap();
+        assert!(column_exists(&conn, "memories", "embedding").unwrap_or(false)
+            || table_exists(&conn, "memories").unwrap());
+    }
+
+    fn table_exists(conn: &Connection, table: &str) -> Result<bool, rusqlite::Error> {
+        let mut stmt =
+            conn.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1 LIMIT 1")?;
+        let mut rows = stmt.query(rusqlite::params![table])?;
+        Ok(rows.next()?.is_some())
+    }
+
+    #[test]
+    fn memories_table_created() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        assert!(table_exists(&conn, "memories").unwrap());
         run_migrations(&conn).unwrap();
     }
 }

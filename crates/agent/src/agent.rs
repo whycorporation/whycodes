@@ -41,6 +41,7 @@ const SERIAL_TOOLS: &[&str] = &[
     "code_mode",
     "skill",
     "external_directory",
+    "memory",
 ];
 
 /// Whether this tool can safely run beside other tools in the same step.
