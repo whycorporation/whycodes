@@ -558,7 +558,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | Doc | What it is |
 |---|---|
 | [docs/status.md](docs/status.md) | Living roadmap: open work, deferred items, decision log |
-| [docs/FEATURES.md](docs/FEATURES.md) | Feature matrix vs Grok Build, OpenCode, jcode, Claude Code |
+| [docs/FEATURES.md](docs/FEATURES.md) | Feature matrix vs Grok Build, OpenCode, jcode, Claude Code, Codex, Gemini CLI, Pi, Cursor |
 | [docs/KNOWHOW.md](docs/KNOWHOW.md) | Hard-won bugs (TUI, tty, silent exits) — read before event-loop changes |
 | [docs/benchmarks.md](docs/benchmarks.md) | How to measure startup, RSS, first frame, idle draws |
 | [docs/budgets.md](docs/budgets.md) | CI quality budgets (panic, swallow, dependency edges) |

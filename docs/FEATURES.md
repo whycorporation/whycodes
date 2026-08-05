@@ -1,264 +1,236 @@
 # Özellikler ve karşılaştırmalı tablo
 
-Terminal coding agent’ların özellik matrisi: **whycode**, **Grok Build**, **OpenCode**, **jcode**, **Claude Code**.
+Terminal coding agent’ların özellik matrisi.
 
-Son güncelleme: **2026-08-05** (ürün özeti yeniden biçimlendi). Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
+**Terminal / harness:** whycode · Grok Build · OpenCode · jcode · Codex CLI · Gemini CLI · Pi  
+
+**Ürün yüzeyi (karşılaştırma için):** Claude Code · Cursor
+
+Son güncelleme: **2026-08-05**. Kaynaklar bölüm sonundadır. Rakip sütunları “var / kısmi / yok” seviyesinde konumlandırma içindir; her minor sürüm bire bir doğrulanmaz.
+
+### Sembol
+
+| | |
+|:---:|---|
+| ✅ | Var / production |
+| ⚠️ | Kısmi, iskelet veya sınırlı |
+| ❌ | Yok / roadmap |
+| ★ | Bu alanda belirgin güçlü yön |
+
+† whycode ACP: bilinçli **ürün sonrası** (`docs/status.md`, 2026-08-04).
+
+---
 
 ## Ürün özeti
 
-Karşılaştırma kısa tutulmuştur. Ayrıntılar aşağıdaki matris bölümlerindedir.
-
-| | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| **Tür** | Terminal agent | Terminal agent | Multi-surface agent | Agent harness | Resmi ürün ajanı |
-| **Yüzeyler** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI |
-| **Dil** | Rust | Rust | TypeScript | Rust | Kapalı kaynak |
-| **Lisans** | MIT | Apache-2.0 | MIT | MIT | Proprietary |
-| **Kimlik** | API key | xAI login + API | API + OAuth | API + OAuth | Claude abonelik / API |
-| **Modeller** | Çoklu provider | Grok 4.5 + custom | 75+ provider | Çoklu + OAuth | Claude (+ sınırlı 3. parti) |
-| **Açık kaynak** | Evet | Evet | Evet | Evet | Hayır |
+| | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Tür** | Terminal agent | Terminal agent | Multi-surface | Agent harness | Resmi ürün ajanı | Terminal agent | Terminal agent | Minimal harness | AI IDE |
+| **Yüzey** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI | TUI, CLI | TUI, CLI | TUI, CLI | IDE, agent, cloud |
+| **Dil** | Rust | Rust | TypeScript | Rust | Kapalı | Rust | TypeScript | TypeScript | Kapalı (VS Code tabanlı) |
+| **Lisans** | MIT | Apache-2.0 | MIT | MIT | Proprietary | Apache-2.0 | Apache-2.0 | MIT | Proprietary |
+| **Kimlik** | API key | xAI login + API | API + OAuth | API + OAuth | Claude sub / API | ChatGPT / API | Google / API | API key (BYOK) | Cursor hesap + modeller |
+| **Model** | Çoklu provider | Grok + custom | 75+ provider | Çoklu + OAuth | Claude (+ sınırlı) | OpenAI ailesi | Gemini | Çoklu BYOK | Claude / GPT / Gemini / Composer |
+| **Açık kaynak** | Evet | Evet | Evet | Evet | Hayır | Evet | Evet | Evet | Hayır |
 
 | Ürün | Konum |
 |---|---|
 | **whycode** | Shell safety, latency stack, mouse TUI, Windows CI |
-| **Grok Build** | Zengin TUI; skills, plugins, hooks; ACP |
-| **OpenCode** | Geniş ekosistem; terminal + desktop + IDE |
+| **Grok Build** | Zengin TUI; skills / plugins / hooks; ACP |
+| **OpenCode** | Geniş OSS ekosistem; TUI + desktop + IDE |
 | **jcode** | Düşük RAM / boot; swarm; semantic memory |
 | **Claude Code** | Anthropic ürün yüzeyi (web, desktop, IDE, CI) |
-
-### Sembol açıklaması
-
-| Sembol | Anlam |
-|:---:|---|
-| ✅ | Var / production |
-| ⚠️ | Kısmi, iskelet, stub veya sınırlı |
-| ❌ | Yok / planlanmamış veya roadmap’te |
-| ★ | Bu alanda belirgin güçlü yön |
-
-† whycode ACP: bilinçli **ürün sonrası** — karar `docs/status.md` decision log (2026-08-04).
+| **Codex CLI** | OpenAI terminal agent; sandbox / headless; Terminal-Bench |
+| **Gemini CLI** | Google terminal agent; ücretsiz kota; geniş context |
+| **Pi** | Minimal, okunabilir harness; az araç; self-extend |
+| **Cursor** | IDE-first agent; tab + Agent mode; multi-model |
 
 ---
 
 ## 1. Platform, dağıtım, runtime
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Tek binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Install script (curl/irm) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Self-update (`upgrade`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Homebrew / paket yöneticisi | ⚠️ HEAD formula | ⚠️ | ✅ | ✅ | ✅ |
-| Linux | ✅ | ✅ | ✅ | ✅ | ✅ |
-| macOS | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Windows native | ✅★ | ⚠️ | ⚠️ (WSL önerilir) | ✅ | ✅ |
-| Cross-platform CI (tam suite) | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ |
-| Runtime bağımlılık (Node vs) | ❌ yok | ❌ yok | ⚠️ npm yolu var | ❌ yok | ❌ (native) |
-| In-process arama (rg gerekmez) | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ |
-| Açık kaynak | ✅ | ✅ | ✅ | ✅ | ❌ |
+Kısa başlıklar: **why** whycode · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Claude Code · **Codex** · **Gem** Gemini CLI · **Pi** · **Cur** Cursor
+
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Tek binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ IDE |
+| Install (curl / npm / brew) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ app |
+| Self-update | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ✅ app |
+| Homebrew / paket | ⚠️ HEAD | ⚠️ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| Linux / macOS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Windows native | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
+| Cross-platform CI (full) | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | n/a |
+| Runtime bağımlılık yok | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ Node | ⚠️ Node | n/a |
+| In-process arama (rg yok) | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | n/a IDE |
+| Açık kaynak | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
 
 ---
 
 ## 2. Arayüzler (surfaces)
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Fullscreen TUI | ✅ | ✅★ | ✅★ | ✅★ | ✅ |
-| Plain / headless REPL | ✅ `--plain` | ✅ `-p` | ✅ | ✅ `run` | ✅ `-p` |
-| Mouse-interactive TUI | ✅★ HitArea, stop, scrollbar, slash | ✅★ | ⚠️ | ⚠️ | ⚠️ |
-| Desktop app | ❌ | ❌ | ✅ | ❌ | ✅ |
-| IDE extension (VS Code vb.) | ❌ | ⚠️ ACP | ✅ | ❌ | ✅ VS Code + JetBrains |
-| Web UI | ⚠️ stub | ❌ | ⚠️ | ❌ | ✅ claude.ai/code |
-| iOS / mobil | ❌ | ❌ | ❌ | ⚠️ planlı | ✅ app + remote |
-| ACP (Agent Client Protocol) | ⚠️ stub† | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| HTTP API / `serve` | ✅ (local share) | ⚠️ | ✅ | ✅ `serve`/`connect` | ⚠️ |
-| Streaming JSON / CI mode | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Fullscreen TUI | ✅ | ✅★ | ✅★ | ✅★ | ✅ | ✅ | ✅ | ✅ | ❌ (IDE) |
+| Headless / plain | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ agent CLI |
+| Mouse-interactive TUI | ✅★ | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | n/a |
+| Desktop app | ❌ | ❌ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅★ IDE |
+| IDE extension | ❌ | ⚠️ ACP | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ❌ | n/a (IDE) |
+| Web UI | ⚠️ stub | ❌ | ⚠️ | ❌ | ✅ | ⚠️ cloud | ⚠️ | ❌ | ⚠️ |
+| ACP | ⚠️ stub† | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| HTTP / serve | ✅ local | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ cloud |
+| Streaming JSON / CI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ |
 
 ---
 
-## 3. LLM provider ve kimlik doğrulama
+## 3. LLM provider ve kimlik
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Çoklu provider (API key) | ✅ | ✅ custom | ✅★ 75+ | ✅★ | ⚠️ 3. parti |
-| Anthropic | ✅ | ⚠️ | ✅ | ✅ OAuth | ✅ native |
-| OpenAI | ✅ | ⚠️ | ✅ | ✅ OAuth | ⚠️ |
-| Google / Gemini | ✅ | ⚠️ | ✅ | ✅ OAuth | ⚠️ |
-| xAI / Grok | ✅ | ✅★ | ✅ | ✅ | ❌ |
-| Groq, DeepSeek, Mistral, Together | ✅ | ⚠️ | ✅ | ✅ | ❌ |
-| OpenRouter | ✅ | ⚠️ | ✅ | ✅ | ❌ |
-| Ollama / local | ✅ | ⚠️ | ✅ | ✅ | ❌ |
-| OpenAI-compatible custom | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| OAuth (Claude / ChatGPT / Copilot) | ❌ | ✅ (xAI login) | ✅ | ✅★ | ✅ |
-| Multi-account switch | ❌ | ⚠️ | ⚠️ | ✅ | ⚠️ |
-| Credential import (diğer CLI’lerden) | ❌ | ⚠️ Claude import | ⚠️ | ✅★ | n/a |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Çoklu provider (API) | ✅ | ✅ custom | ✅★ | ✅★ | ⚠️ | ⚠️ OpenAI | ⚠️ Gemini | ✅★ BYOK | ✅ multi |
+| Anthropic | ✅ | ⚠️ | ✅ | ✅ OAuth | ✅ | ❌ | ❌ | ✅ | ✅ |
+| OpenAI | ✅ | ⚠️ | ✅ | ✅ OAuth | ⚠️ | ✅★ | ❌ | ✅ | ✅ |
+| Google / Gemini | ✅ | ⚠️ | ✅ | ✅ OAuth | ⚠️ | ❌ | ✅★ | ✅ | ✅ |
+| xAI / Grok | ✅ | ✅★ | ✅ | ✅ | ❌ | ❌ | ❌ | ⚠️ | ✅ |
+| OpenRouter / Ollama | ✅ | ⚠️ | ✅ | ✅ | ❌ | ⚠️ | ⚠️ | ✅ | ⚠️ |
+| OpenAI-compatible | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ |
+| OAuth / subscription | ❌ | ✅ xAI | ✅ | ✅★ | ✅ | ✅ ChatGPT | ✅ Google | ❌ | ✅ Cursor |
+| Credential import | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | n/a |
 
 ---
 
 ## 4. Agent sistemi
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Build / full-access agent | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Plan / read-only mode | ✅ Ctrl+T | ✅ Shift+Tab | ✅ Tab | ✅ | ✅ |
-| Subagent (`task` vb.) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Built-in: general / explore / scout | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ |
-| Özel agent tanımları | ✅ config | ✅ | ✅ | ✅ | ✅ |
-| Parallel multi-session (aynı repo) | ❌ | ⚠️ fork | ✅ | ✅★ swarm | ✅ background |
-| Swarm + conflict notify | ❌ | ❌ | ❌ | ✅★ | ⚠️ teams |
-| Agent-to-agent messaging | ❌ | ⚠️ | ❌ | ✅★ | ⚠️ |
-| Coordinator + worker spawn | ⚠️ tek `task` | ✅ | ⚠️ | ✅★ | ✅ |
-| Plan file gate (sadece plan edit) | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅ |
-| Max turns / loop koruması | ✅★ max turns + doom-loop | ✅ | ✅ doom_loop | ⚠️ | ✅ |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Full-access agent | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ Agent |
+| Plan / read-only | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ plan |
+| Subagent | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Built-in explore / scout | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ minimal | ⚠️ |
+| Özel agent tanımları | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Parallel multi-session | ❌ | ⚠️ | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Swarm + conflict notify | ❌ | ❌ | ❌ | ✅★ | ⚠️ | ❌ | ❌ | ❌ | ⚠️ |
+| Max turns / loop guard | ✅★ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
 ---
 
 ## 5. Araçlar (tools)
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| read / write / edit | ✅ | ✅ | ✅ | ✅ | ✅ |
-| apply_patch / multi-hunk | ✅ | ✅ | ✅ | ✅ | ✅ |
-| grep / glob / list | ✅ | ✅ | ✅ | ✅★ agent-grep | ✅ |
-| bash / shell | ✅ | ✅ | ✅ | ✅ | ✅ |
-| websearch / webfetch | ✅ | ✅ | ⚠️ skill/MCP | ⚠️ | ✅ |
-| git status/diff/log/blame/commit | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
-| GitHub issue / PR | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ Actions/review |
-| todowrite / todoread | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| question (kullanıcıya sor) | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| plan tool | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| LSP tool | ✅★ crate | ⚠️ | ✅ auto-load | ❌ ayrı crate yok | ⚠️ |
-| code_mode / external_directory | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ |
-| Core tool profile (küçük schema) | ✅★ default `core` | ⚠️ | ⚠️ | ⚠️ curated OAuth | ✅ defer |
-| Parallel tool execution | ✅★ safe fan-out | ✅ | ⚠️ | ⚠️ | ✅ |
-| Browser automation | ❌ | ⚠️ | ⚠️ | ✅★ Firefox bridge | ✅ Chrome |
-| Image gen (`/imagine`) | ❌ | ✅ | ❌ | ❌ | ⚠️ |
-| Video gen | ❌ | ✅ | ❌ | ❌ | ❌ |
-| Dictation / STT | ❌ | ❌ | ❌ | ✅ | ⚠️ |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| read / write / edit | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| apply_patch / multi-hunk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
+| grep / glob / list | ✅ | ✅ | ✅ | ✅★ | ✅ | ✅ | ✅ | ⚠️ az araç | ✅ |
+| bash / shell | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| websearch / fetch | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ grounding | ⚠️ | ✅ |
+| git tools | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| GitHub issue / PR | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ |
+| todo / plan / question | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ minimal | ⚠️ |
+| LSP | ✅★ | ⚠️ | ✅ | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ | ✅ IDE |
+| Core tool profile | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅★ az araç | ⚠️ |
+| Parallel tools | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Browser automation | ❌ | ⚠️ | ⚠️ | ✅★ | ✅ | ⚠️ | ⚠️ | ❌ | ✅ |
+| Image / video gen | ❌ | ✅★ | ❌ | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 
 ---
 
 ## 6. Güvenlik ve izinler
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Tool permission: allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Permission globs (`mymcp_*`) | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| Multi-ask permission queue | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| Auto-approve / auto-deny env | ✅ | ✅ always-approve | ⚠️ | ⚠️ | ✅ |
-| Shell **risk sınıflandırması** | ✅★ | ⚠️ | ⚠️ | ✅ safety system | ⚠️ |
-| Catastrophic komut hard-block | ✅★ (`rm -rf ~` asla onaylanmaz) | ⚠️ | ❌ | ⚠️ | ⚠️ |
-| Sandbox (OS / network) | ✅★ (Linux bwrap workspace; net opt-out) | ✅ | ❌ | ⚠️ | ✅ |
-| Network allowlist | ✅ (HTTP tools; shell stays binary) | ⚠️ | ❌ | ⚠️ | ✅ |
-| Hooks (pre/post tool) | ✅ config shell hooks | ✅★ | ✅★ | ⚠️ | ✅★ |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| Permission globs | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Multi-ask queue | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Auto-approve env | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ✅ full-auto | ⚠️ | ⚠️ | ✅ |
+| Shell risk sınıflandırması | ✅★ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Catastrophic hard-block | ✅★ | ⚠️ | ❌ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| OS sandbox | ✅★ bwrap | ✅ | ❌ | ⚠️ | ✅ | ✅★ | ⚠️ | ⚠️ | ⚠️ |
+| Network allowlist | ✅ HTTP tools | ⚠️ | ❌ | ⚠️ | ✅ | ✅ net-off mode | ⚠️ | ⚠️ | ⚠️ |
+| Hooks pre/post tool | ✅ | ✅★ | ✅★ | ⚠️ | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 
 ---
 
-## 7. Uzantılar: MCP, skills, plugins, commands
+## 7. Uzantılar: MCP, skills, plugins
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| MCP client (stdio) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MCP HTTP/SSE | ✅ | ⚠️ | ✅ | ❌ (skip) | ✅ |
-| MCP yönetim CLI | ✅ | ✅ `/mcps` | ✅ | ✅ mcp.json | ✅ |
-| Skills (SKILL.md) | ✅ | ✅★ + marketplace | ✅ | ✅ semantic inject | ✅★ |
-| Plugins / extensions | ⚠️ iskelet | ✅★ marketplace | ✅★ JS/TS | Self-dev★ | ⚠️ |
-| Hooks marketplace | ❌ | ✅ | ✅ | ❌ | ⚠️ |
-| Markdown custom slash commands | ✅ | ✅ skills as cmds | ✅ | ✅ | ✅ |
-| `.opencode/commands` okuma | ✅ | ⚠️ | n/a | ⚠️ | ❌ |
-| AGENTS.md / CLAUDE.md | ✅ AGENTS.md | ✅ | ✅ AGENTS.md | ✅ | ✅ CLAUDE.md |
-| Self-dev (kendi kaynak kodunu edit+reload) | ❌ | ❌ | ❌ | ✅★ | ❌ |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| MCP client | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| MCP HTTP/SSE | ✅ | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Skills (SKILL.md) | ✅ | ✅★ | ✅ | ✅ | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Plugins / marketplace | ⚠️ | ✅★ | ✅★ | Self-dev★ | ⚠️ | ⚠️ | ⚠️ extensions | ⚠️ | ✅ |
+| Custom slash / commands | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| AGENTS.md / CLAUDE.md | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ rules |
+| Self-dev hot reload | ❌ | ❌ | ❌ | ✅★ | ❌ | ❌ | ❌ | ⚠️ self-extend | ❌ |
 
 ---
 
 ## 8. Oturum, bellek, context
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| SQLite / kalıcı session | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Session list / rename / delete | ✅ TUI + plain | ✅ | ✅ | ✅ | ✅ |
-| Resume session | ✅ TUI `/sessions` `/resume` + CLI | ✅ | ✅ | ✅ | ✅ |
-| Auto-title (heuristic + LLM refine) | ✅ async small-model | ✅ | ✅ | ⚠️ | ✅ |
-| Cross-harness resume (Claude/Codex/…) | ❌ | ⚠️ import Claude | ⚠️ | ✅★ | n/a |
-| Undo / redo (git restore) | ✅ | ✅ rewind | ✅ | ⚠️ | ⚠️ |
-| Context compact / summarize | ✅ drop + tool prune | ✅ | ✅★ LLM compact | ✅ | ✅ |
-| Semantic memory (embedding) | ❌ roadmap | ✅ `/memory` `/dream` | ❌ | ✅★ | ✅ auto memory |
-| Session search (geçmiş RAG) | ❌ | ⚠️ | ❌ | ✅ | ⚠️ |
-| Share link | ✅ local only | ✅ | ✅ cloud | ⚠️ | ⚠️ |
-| Export transcript | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| Token / cost / usage stats | ✅ `stats` + session usage + cache tokens | ✅ `/usage` | ⚠️ | ⚠️ cache warn | ✅ `/cost` |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Kalıcı session | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| Resume | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| Cross-harness resume | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | ❌ |
+| Undo / redo | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ IDE |
+| Context compact | ✅ | ✅ | ✅★ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Semantic memory | ❌ | ✅ | ❌ | ✅★ | ✅ | ❌ | ⚠️ | ❌ | ⚠️ |
+| Share / export | ✅ local | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Usage / cost stats | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 
 ---
 
-## 9. TUI deneyimi
+## 9. TUI / UX
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Live streaming text + tools | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Thinking / reasoning gösterimi | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Markdown render | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Syntax highlighting | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Inline diff viewer | ✅ | ✅★ | ✅ | ✅ side panel | ✅ |
-| Mermaid diagrams | ✅ Unicode (mermaid-text) | ⚠️ vendored | ❌ | ✅★ native rust | ❌ |
-| Theme sistemi | ✅ 29 + JSON | ✅ | ✅★ | ✅ | ⚠️ |
-| OpenCode theme JSON uyumu | ✅★ | ⚠️ | n/a | ❌ | ❌ |
-| Slash suggest popup | ✅ + mouse hover/click | ✅ | ✅ | ✅ | ✅ |
-| Turn strip + **Worked for Xs** | ✅★ Grok-style | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| Context meter (tokens ↔ % hover) | ✅★ sticky HitArea | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| Mouse stop / scrollbar / path hover | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| Which-key / keybind hints | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| Vim mode scrollback | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
-| Side panel / info widgets | ⚠️ sidebar | ⚠️ | ⚠️ | ✅★ | ⚠️ |
-| Toast notifications | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| `@file` mention (capped inline) | ✅ 24k cap | ✅ | ✅ | ✅ | ✅ |
-| `!shell` prefix | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| Image drag-drop prompt | ✅ path paste/drop | ⚠️ | ✅ | ⚠️ | ✅ |
-| 1000+ fps claim / flicker-free | ❌ | ⚠️ | ❌ | ✅★ | ✅ `/tui` flicker-free |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Live stream text + tools | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Thinking gösterimi | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
+| Markdown + highlight | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅★ |
+| Inline diff | ✅ | ✅★ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅★ |
+| Mermaid | ✅ | ⚠️ | ❌ | ✅★ | ❌ | ❌ | ❌ | ❌ | ⚠️ |
+| Theme sistemi | ✅ 29+JSON | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ IDE |
+| Mouse chrome (stop / scroll) | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | n/a |
+| `@file` / image attach | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
 
 ---
 
-## 10. Latency / agent-loop hızı (whycode odağı)
+## 10. Latency / agent-loop (whycode odağı)
 
-Bu satırlar **agent TTFT / multi-step wall-clock** için; process RSS ile karıştırılmamalı. Detay: [plan-latency-competitors.md](plan-latency-competitors.md).
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Shared HTTP keep-alive | ✅★ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | n/a |
+| Prompt cache | ✅★ | ⚠️ | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Parallel safe tools | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Core / minimal tools | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅★ | ⚠️ |
+| Doom-loop guard | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Tool result prune | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| TTFT metrik JSONL | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Shared HTTP keep-alive | ✅★ | ✅ | ✅ | ✅ server | ✅ |
-| Anthropic prompt cache (system+tools+latest user) | ✅★ OpenCode-parity | ⚠️ | ✅★ auto | ⚠️ | ✅ |
-| Parallel safe tools + perm queue | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ |
-| Core tool profile (default) | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ |
-| Trivial chat: no tools + fast model route | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| Doom-loop refuse (3× same tool) | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ |
-| Per-step tool prune (old dumps → 2k) | ✅★ | ⚠️ | ✅ prune | ⚠️ | ⚠️ |
-| Async title (UI’yi bloklamaz) | ✅★ | ✅ | ✅ | ⚠️ | ✅ |
-| JSONL `ttft_ms` / `tool_batch_ms` / cache | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+Detay: [plan-latency-competitors.md](plan-latency-competitors.md).
 
 ---
 
 ## 11. Çoklu ajan, arka plan, otomasyon
 
-| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Background tasks UI | ❌ | ✅ `/tasks` | ⚠️ | ✅ | ✅ |
-| Scheduled / loop prompts | ❌ | ✅ `/loop` | ❌ | ⚠️ ambient | ✅ `/loop` + routines |
-| Cloud / remote session | ❌ | ❌ | ❌ | ⚠️ iOS plan | ✅★ teleport/remote |
-| Slack / chat channels | ❌ | ❌ | ❌ | ❌ | ✅ |
-| GitHub Actions / CI agent | ❌ | ⚠️ headless | ⚠️ | ⚠️ | ✅★ |
-| Multi-agent same-dir (worktree’siz) | ❌ | ❌ | ⚠️ | ✅★ | ⚠️ worktree |
+| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Background tasks UI | ❌ | ✅ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ✅★ |
+| Scheduled / loop | ❌ | ✅ | ❌ | ⚠️ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ |
+| Cloud / remote session | ❌ | ❌ | ❌ | ⚠️ | ✅★ | ✅ cloud | ⚠️ | ❌ | ✅ cloud agents |
+| CI / headless agent | ✅ format | ⚠️ | ⚠️ | ⚠️ | ✅★ | ✅ | ✅ | ⚠️ | ⚠️ |
+| Same-dir multi-agent | ❌ | ❌ | ⚠️ | ✅★ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 
 ---
 
 ## 12. Performans (yayınlanan / ölçülen)
 
-Rakamlar **farklı makinelerde, farklı tarihlerde** alınmıştır; doğrudan “daha hızlı” iddiası için değil, mertebe göstermek için.
+Farklı makineler / tarihler; mertebe içindir.
 
-| Metrik | whycode | Grok Build | OpenCode | jcode | Claude Code |
+| Metrik | whycode | OpenCode | jcode | Claude Code | Codex / Gemini / Pi / Cursor |
 |---|---|---|---|---|---|
-| `--version` / boot (ms) | ~21 ms (Win, 2026-07-31) | — | ~1036 ms TTFF (jcode bench) | **~14 ms** TTFF | ~3437 ms TTFF |
-| Peak RSS (1 session) | ~10 MB (`--version`) | — | ~372 MB PSS | **~28 MB** PSS (embed off) | ~387 MB PSS |
-| 1 session PSS (idle TUI) | **~4.1 MB** | — | — | **~28 MB** (embed off) | — |
-| 10 session PSS | **~16.8 MB** (~1.4 MB/extra) | — | ~3.2 GB | **~117 MB** (embed off) | ~2.3 GB |
-| Kaynak | [benchmarks.md](benchmarks.md) | — | jcode bench tablosu | jcode README | jcode bench tablosu |
-
-whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TTFT artık JSONL `turn.step` ile ölçülebilir (`ttft_ms`, `cache_read_tokens`).
+| Boot / TTFF | ~21 ms `--version` | ~1.0 s TTFF (jcode bench) | **~14 ms** TTFF | ~3.4 s TTFF | jcode bench: Codex ~0.9 s; Gem/Pi ölçümler değişir; Cursor IDE |
+| 1 session PSS | **~4.1 MB** | ~372 MB | **~28 MB** (embed off) | ~387 MB | — |
+| 10 session PSS | **~16.8 MB** | ~3.2 GB | **~117 MB** | ~2.3 GB | — |
+| Kaynak | [benchmarks.md](benchmarks.md) | jcode bench | jcode README | jcode bench | jcode / public benches |
 
 ---
 
@@ -266,35 +238,33 @@ whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TT
 
 | Alan | Detay |
 |---|---|
-| **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic`. Catastrophic **asla onaylanmaz**. |
-| **Latency stack** | Core tools, OpenCode-parity cache, parallel reads, doom-loop, fast-route trivial chat, async title. |
-| **Mouse TUI chrome** | Sticky HitArea: context %, stop, scrollbar, slash hover, path underline. |
-| **LSP crate** | Ayrı `whycode-lsp` crate. |
-| **Windows CI** | Linux + macOS + Windows full test. |
-| **Küçük kod tabanı** | ~50k LOC Rust crates — okunabilir, fork edilebilir. |
-| **OpenCode interop** | Theme JSON, AGENTS.md, `.opencode/commands`, permission modeli, agent isimleri. |
-| **In-process grep** | `ripgrep`/`grep` PATH’te olmasa da çalışır. |
-| **Yerel share** | `/share` → `http://127.0.0.1:3030/s/...` — veri makineden çıkmaz. |
+| **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic` (sonuncusu asla onaylanmaz) |
+| **Latency stack** | Core tools, prompt cache, parallel reads, doom-loop, fast-route, async title |
+| **Mouse TUI** | HitArea: context %, stop, scrollbar, slash hover |
+| **LSP crate** | Ayrı `whycode-lsp` |
+| **Windows CI** | Linux + macOS + Windows full suite |
+| **Küçük kod tabanı** | ~50k LOC Rust |
+| **OpenCode interop** | Theme JSON, AGENTS.md, `.opencode/commands` |
+| **In-process grep** | `rg` PATH’te olmasa da çalışır |
+| **Yerel share** | `127.0.0.1` only |
 
 ---
 
-## 14. whycode’da olmayan / zayıf kalan (rakiplere göre)
+## 14. whycode’da olmayan / zayıf (rakiplere göre)
 
 | Boşluk | Kimde var | Not |
 |---|---|---|
-| OAuth + subscription login | jcode, OpenCode, Claude, Grok | [plan-oauth](plan-oauth.md) — blocked |
-| Semantic / cross-session memory | jcode★, Grok, Claude | [plan-memory](plan-memory.md) — not started |
-| Swarm / multi-agent conflict | jcode★ | dropped ([archive](archive/phase-7-multi-agent.md)) |
-| Browser automation | jcode, Claude | Yok |
-| Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub; **ACP ürün sonrası** |
-| Hooks + plugin marketplace | Grok, OpenCode, Claude | Config shell hooks ✅; marketplace iskelet |
-| OS sandbox (macOS/Windows backend) | Grok, Claude | Linux bwrap ✅; diğer platformlar fallback |
-| Cloud share / remote control | OpenCode, Claude | Sadece local share |
-| Side panel UI | jcode | Basit sidebar; Mermaid Unicode ✅ |
-| Image/video generation | Grok | Yok |
-| Self-dev hot reload | jcode | Yok |
-| LLM-summary compact (OpenCode agent) | OpenCode★ | Drop+prune var; LLM summary P2 |
-| Package manager taps (brew bottles…) | hepsi | ⚠️ HEAD formula; bottles later |
+| OAuth / subscription login | jcode, OC, CC, Grok, Codex, Gemini, Cursor | [plan-oauth](plan-oauth.md) |
+| Semantic memory | jcode★, Grok, Claude | [plan-memory](plan-memory.md) |
+| Swarm | jcode★ | dropped |
+| Browser automation | jcode, Claude, Cursor | Yok |
+| Desktop / IDE | OpenCode, Claude, **Cursor★** | `web` + `acp` stub |
+| Plugin marketplace | Grok, OpenCode, Cursor | Config hooks ✅ |
+| OS sandbox (non-Linux) | Grok, Claude, **Codex★** | Linux bwrap ✅ |
+| Cloud agents | Claude, Codex, Cursor | Yok |
+| Free Gemini kota | **Gemini CLI★** | Yok |
+| Minimal harness (az araç) | **Pi★** | Core profile var; Pi kadar minimal değil |
+| Self-dev | jcode | Yok |
 
 ---
 
@@ -302,10 +272,14 @@ whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TT
 
 | İhtiyaç | Yön |
 |---|---|
-| En düşük RAM, çok paralel session | **jcode** |
-| Claude aboneliği + web / desktop / IDE / CI | **Claude Code** |
-| Model özgürlüğü + desktop / IDE + community | **OpenCode** |
-| Grok + zengin TUI + plugins / ACP | **Grok Build** |
+| En düşük RAM, swarm, memory | **jcode** |
+| Claude abonelik + web/desktop/IDE/CI | **Claude Code** |
+| Model özgürlüğü + OSS multi-surface | **OpenCode** |
+| Grok + plugins + ACP | **Grok Build** |
+| OpenAI + sandbox / Terminal-Bench | **Codex CLI** |
+| Ücretsiz kota + Gemini context | **Gemini CLI** |
+| Minimal, hackable harness | **Pi** |
+| IDE-first agent + tab complete | **Cursor** |
 | Shell safety + latency + mouse TUI + Windows CI | **whycode** |
 
 ---
@@ -390,10 +364,14 @@ sandbox_fallback = "allow"           # allow | deny (bwrap yoksa)
 
 ## Kaynaklar
 
-- whycode: [README.md](../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](benchmarks.md), [plan-latency-competitors.md](plan-latency-competitors.md)
-- OpenCode: <https://opencode.ai/> · <https://opencode.ai/docs/>
+- whycode: [README.md](../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](benchmarks.md)
+- OpenCode: <https://opencode.ai/>
 - jcode: <https://github.com/1jehuang/jcode> · <https://jcode.sh>
 - Grok Build: <https://docs.x.ai/build/overview> · <https://github.com/xai-org/grok-build>
 - Claude Code: <https://code.claude.com/docs/en/overview>
+- Codex CLI: <https://github.com/openai/codex>
+- Gemini CLI: <https://github.com/google-gemini/gemini-cli> · <https://geminicli.com/>
+- Pi: <https://pi.dev/> · <https://github.com/badlogic/pi-mono>
+- Cursor: <https://cursor.com/>
 
-Bu tablo living snapshot’tır. Büyük özellik veya rakip konum değişince aynı PR’da güncelle.
+Bu tablo living snapshot’tır. Rakip hücreleri ürün dokümantasyonu ve halka açık konumlandırmaya dayanır; her minor sürüm bire bir doğrulanmaz. Büyük özellik veya rakip konum değişince aynı PR’da güncelle.
