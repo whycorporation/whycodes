@@ -3923,6 +3923,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "chrono",
  "futures",
  "reqwest",
  "reqwest-eventsource",
