@@ -423,8 +423,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let (title_tx, mut title_rx) = mpsc::unbounded_channel::<(String, String)>();
     // Live context window from config provider's GET …/v1/models (only active model).
     // Channel payload is tiny: (provider, model, context_window) — never the full catalog.
+    //
+    // Do **not** spawn at TUI open: a slow/hanging catalog races the first chat
+    // on the same gateway host and can serialize the turn (wall ≫ server Duration).
+    // Queue a fetch after the first turn finishes, or on model switch when idle.
     let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
-    spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
+    let mut catalog_fetch_pending = false;
 
     let mut agent_busy = false;
     let mut cancel_flag: Option<CancelFlag> = None;
@@ -558,6 +562,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             if let Ok(outcome) = done_rx.try_recv() {
                 agent_busy = false;
                 cancel_flag = None;
+                // One deferred catalog pass if we still lack a live window.
+                // Avoid re-fetching after every turn (would race fast follow-ups).
+                if app.api_context_window.is_none() {
+                    catalog_fetch_pending = true;
+                }
                 // Stamp "Worked for Xs" from work_ms only (title refine is async
                 // and never included — see spawn_title_refine below).
                 let work_ms = match &outcome {
@@ -708,7 +717,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Apply model picker selection ──────────────────────────
             if let Some((p, m)) = app.pending_model.take() {
-                let provider_changed = p != provider;
                 provider = p.clone();
                 model = m.clone();
                 app.provider_name = p.clone();
@@ -720,19 +728,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 {
                     api_key = k;
                 }
-                if provider_changed {
-                    // Different base_url/key — drop stale window and re-fetch.
-                    app.clear_api_context_window();
-                    spawn_model_context_fetch(
-                        &config,
-                        &provider,
-                        &model,
-                        &api_key,
-                        catalog_tx.clone(),
-                    );
+                // Drop stale window; re-fetch when idle so we never contend with a turn.
+                app.clear_api_context_window();
+                if agent_busy {
+                    catalog_fetch_pending = true;
                 } else {
-                    // Same provider, new model id — re-fetch that model's window.
-                    app.clear_api_context_window();
+                    catalog_fetch_pending = false;
                     spawn_model_context_fetch(
                         &config,
                         &provider,
@@ -752,7 +753,35 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             if app.pending_catalog_refresh {
                 app.pending_catalog_refresh = false;
                 app.clear_api_context_window();
-                spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
+                if agent_busy {
+                    // Don't contend with the in-flight turn; retry when idle.
+                    catalog_fetch_pending = true;
+                } else {
+                    catalog_fetch_pending = false;
+                    spawn_model_context_fetch(
+                        &config,
+                        &provider,
+                        &model,
+                        &api_key,
+                        catalog_tx.clone(),
+                    );
+                }
+            }
+
+            // Deferred / idle catalog: never race the first (or any) user turn.
+            if catalog_fetch_pending
+                && !agent_busy
+                && app.pending_prompt.is_none()
+                && !missing_key
+            {
+                catalog_fetch_pending = false;
+                spawn_model_context_fetch(
+                    &config,
+                    &provider,
+                    &model,
+                    &api_key,
+                    catalog_tx.clone(),
+                );
             }
 
             // ── Apply async single-model context_length from gateway ──

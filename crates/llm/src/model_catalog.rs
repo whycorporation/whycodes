@@ -279,8 +279,11 @@ pub async fn fetch_model_context_window(
         http = http.header("Authorization", format!("Bearer {key}"));
     }
 
+    // Keep this short: a hung catalog on the same host as chat can queue the
+    // first user turn on gateways with low concurrency (seen: 15s catalog
+    // timeout → "Worked for 28s" while OmniRoute Duration was ~2s).
     let resp = http
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(3))
         .send()
         .await
         .map_err(|e| whycode_core::Error::Llm(format!("models list HTTP: {e}")))?;

@@ -16,10 +16,18 @@ pub const X_TITLE: &str = "whycode";
 /// App / project URL (`HTTP-Referer`).
 pub const HTTP_REFERER: &str = "https://github.com/whycorporation/whycode";
 
+/// TCP connect budget. Without this, a dead Tailscale/VPN hop can sit in SYN
+/// retries for 20–75s and inflate "Worked for Xs" far above gateway Duration.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Process-wide HTTP client. Reusing one `reqwest::Client` keeps the connection
 /// pool and TLS sessions warm across LLM turns (title refine, multi-step tools,
 /// catalog fetch). Building a new client per request forces a full handshake
 /// every time and can add hundreds of ms–seconds of TTFT.
+///
+/// No client-wide request timeout — streaming chat completions must be free to
+/// run for minutes. Call sites that need a budget (catalog) set `.timeout()` on
+/// the request builder.
 fn shared_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
@@ -28,6 +36,7 @@ fn shared_client() -> &'static reqwest::Client {
             .pool_max_idle_per_host(8)
             .tcp_nodelay(true)
             .tcp_keepalive(std::time::Duration::from_secs(30))
+            .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .unwrap_or_else(|_| reqwest::Client::new())
     })
@@ -87,5 +96,13 @@ mod tests {
         // Clones are cheap and keep the pool warm.
         let _a = http_client();
         let _b = http_client();
+    }
+
+    #[test]
+    fn connect_timeout_is_finite() {
+        // Guard against regressions that drop connect_timeout and re-inflate
+        // "Worked for Xs" on dead VPN/Tailscale hops.
+        assert!(CONNECT_TIMEOUT.as_secs() >= 1);
+        assert!(CONNECT_TIMEOUT.as_secs() <= 10);
     }
 }

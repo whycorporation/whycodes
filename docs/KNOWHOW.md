@@ -228,6 +228,22 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-05 — "Worked for 28s" vs gateway Duration ~2s (catalog race)
+
+**Symptom:** First turn ("selam") shows `Worked for 28s`; OmniRoute (or similar) panel reports request Duration ~1.8s. JSONL: `ttft_ms≈27953`, `step_ms≈28307`, and `GET /v1/models failed` exactly ~15s after `tui.first_frame`.
+
+**Root cause:** TUI spawned `GET /v1/models` at open with a **15s** request timeout on the **same host** as chat. Gateways with low concurrency effectively serialize: catalog holds the slot; chat waits; wall clock ≫ model Duration. No `connect_timeout` on the shared client made dead hops worse (long SYN retries).
+
+**Repro (outside whycode):** hang/slow `/v1/models` + concurrent `/v1/chat/completions` → chat TTFT balloons; alone chat stays ~2–3s.
+
+**Fix:**
+- Do **not** fetch catalog at TUI open; queue after turn complete / model switch when `!agent_busy`.
+- Catalog timeout **3s**; shared client `connect_timeout` **5s** (no client-wide body timeout — streams stay open).
+
+**Prevention:** Never start non-critical gateway traffic concurrent with a user turn on the same base URL. Prefer local context fallback until idle.
+
+---
+
 ### 2026-08-05 — Grok-style chrome pack (HitArea, turn strip, status bar)
 
 **What:** Ported portable Grok Build TUI patterns (no xAI product chrome):
