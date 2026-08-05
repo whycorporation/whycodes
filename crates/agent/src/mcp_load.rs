@@ -77,9 +77,25 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
 }
 
 pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) -> usize {
+    // Connect all servers concurrently so multi-MCP cold start is max(latency),
+    // not sum — list_tools still runs after each connect succeeds.
+    let connect_futs: Vec<_> = config
+        .mcp_servers
+        .iter()
+        .map(|(server_name, server)| {
+            let server_name = server_name.clone();
+            let server = server.clone();
+            async move {
+                let result = connect_mcp_server(&server).await;
+                (server_name, server, result)
+            }
+        })
+        .collect();
+    let connected = futures::future::join_all(connect_futs).await;
+
     let mut count = 0usize;
-    for (server_name, server) in &config.mcp_servers {
-        match connect_mcp_server(server).await {
+    for (server_name, server, result) in connected {
+        match result {
             Ok(client) => {
                 let transport = client.transport_name();
                 let client = Arc::new(Mutex::new(client));

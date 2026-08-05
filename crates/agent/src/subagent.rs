@@ -315,7 +315,7 @@ impl SubagentRunner {
                 results
             };
 
-            session.add_tool_results(results.clone());
+            session.add_tool_results(results);
         }
 
         Ok(final_text)

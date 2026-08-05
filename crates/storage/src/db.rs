@@ -202,6 +202,58 @@ impl Database {
         Ok(())
     }
 
+    /// Replace every message for a session in one transaction.
+    ///
+    /// Full rewrite keeps the table honest across multi-turn persists; the
+    /// transaction avoids half-written transcripts if a process dies mid-loop.
+    pub fn replace_messages(
+        &self,
+        session_id: &str,
+        messages: &[(
+            String,         // msg id
+            String,         // role
+            String,         // content json
+            Option<String>, // tool_call_id
+            Option<String>, // name
+        )],
+    ) -> anyhow::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM messages WHERE session_id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        let now = chrono::Utc::now().to_rfc3339();
+        for (msg_id, role, content, tool_call_id, name) in messages {
+            tx.execute(
+                "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![msg_id, session_id, role, content, tool_call_id, name, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Message counts for every session in one query (session picker).
+    pub fn message_counts_by_session(
+        &self,
+    ) -> anyhow::Result<std::collections::HashMap<String, usize>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT session_id, COUNT(*) FROM messages GROUP BY session_id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let n: i64 = row.get(1)?;
+            Ok((id, n as usize))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for row in rows {
+            let (id, n) = row?;
+            map.insert(id, n);
+        }
+        Ok(map)
+    }
+
     pub fn get_messages(&self, session_id: &str) -> anyhow::Result<Vec<MessageRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, role, content, tool_call_id, name, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"

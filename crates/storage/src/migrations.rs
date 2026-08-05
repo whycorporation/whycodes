@@ -23,6 +23,8 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
             created_at   TEXT,
             FOREIGN KEY (session_id) REFERENCES sessions(id)
         );
+        -- Speeds delete/list/count by session (full replace on every persist).
+        CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
 
         CREATE TABLE IF NOT EXISTS state (
             key   TEXT PRIMARY KEY,
@@ -164,6 +166,21 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         run_migrations(&conn).unwrap();
         assert!(table_exists(&conn, "memories").unwrap());
+        run_migrations(&conn).unwrap();
+    }
+
+    #[test]
+    fn messages_session_index_created() {
+        let conn = Connection::open_in_memory().unwrap();
+        run_migrations(&conn).unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_messages_session'",
+            )
+            .unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        assert!(rows.next().unwrap().is_some());
+        // Idempotent on legacy DBs that already had messages without the index.
         run_migrations(&conn).unwrap();
     }
 }

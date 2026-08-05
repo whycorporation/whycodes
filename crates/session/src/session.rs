@@ -53,11 +53,17 @@ fn cap_tool_text(text: String) -> String {
 }
 
 fn cap_tool_text_to(text: String, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
+    // Single walk: byte length is a cheap upper bound (UTF-8 ≥ 1 byte/scalar).
+    // When under the limit in bytes we cannot exceed max_chars; skip counting.
+    if text.len() <= max_chars {
+        return text;
+    }
+    let total = text.chars().count();
+    if total <= max_chars {
         return text;
     }
     let mut out: String = text.chars().take(max_chars).collect();
-    let omitted = text.chars().count().saturating_sub(max_chars);
+    let omitted = total - max_chars;
     out.push_str(&format!(
         "\n\n[... {omitted} characters truncated for context management]"
     ));
@@ -580,23 +586,23 @@ impl Session {
             &self.usage,
         )?;
 
-        // Full replace keeps message_count honest across multi-turn persists.
-        db.delete_messages(&self.id)?;
+        // Full replace in one transaction (honest counts; no half-written rows).
+        let mut rows = Vec::with_capacity(self.messages.len());
         for msg in &self.messages {
             let msg_json = serde_json::to_string(msg)?;
             let role_str = serde_json::to_string(&msg.role)?
                 .trim_matches('"')
                 .to_string();
             let msg_id = uuid::Uuid::new_v4().to_string();
-            db.insert_message(
-                &msg_id,
-                &self.id,
-                &role_str,
-                &msg_json,
-                msg.tool_call_id.as_deref(),
-                msg.name.as_deref(),
-            )?;
+            rows.push((
+                msg_id,
+                role_str,
+                msg_json,
+                msg.tool_call_id.clone(),
+                msg.name.clone(),
+            ));
         }
+        db.replace_messages(&self.id, &rows)?;
 
         Ok(())
     }

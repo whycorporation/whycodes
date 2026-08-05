@@ -545,7 +545,9 @@ fn ignore_sigpipe() {}
 fn init_logging(cli: &Cli) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     let log_file = std::env::var_os("WHYCODE_LOG_FILE").map(PathBuf::from);
+    // Prefer env so we skip a full TOML/config walk on the common path.
     let log_level = std::env::var("WHYCODE_LOG_LEVEL").ok().or_else(|| {
+        // Only open config when no env override — light commands stay cheap.
         Config::load()
             .ok()
             .and_then(|c| c.general.log_level.clone())

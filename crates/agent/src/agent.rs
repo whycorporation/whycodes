@@ -827,8 +827,7 @@ impl Agent {
                 results
             };
 
-            session.add_tool_results(results.clone());
-
+            // Capture failures before move — avoid cloning large tool bodies.
             let failed_tools: Vec<String> = results
                 .iter()
                 .filter(|r| r.is_error)
@@ -839,6 +838,8 @@ impl Agent {
                     )
                 })
                 .collect();
+
+            session.add_tool_results(results);
 
             if !failed_tools.is_empty() {
                 let recovery_msg = failed_tools.join("\n");

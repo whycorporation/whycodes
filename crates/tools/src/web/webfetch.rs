@@ -1,8 +1,24 @@
+use std::sync::OnceLock;
+
 use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
+
+/// Process-wide client so TLS/connection pool stays warm across fetches.
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .user_agent(concat!("whycode-webfetch/", env!("CARGO_PKG_VERSION")))
+            .pool_max_idle_per_host(4)
+            .tcp_nodelay(true)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
 
 pub struct WebFetchTool;
 
@@ -69,21 +85,7 @@ impl Tool for WebFetchTool {
             };
         }
 
-        let client = match reqwest::Client::builder()
-            .user_agent("whycode-webfetch/1.0 (+https://github.com/whycode)")
-            .build()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Error building HTTP client: {e}"),
-                    is_error: true,
-                };
-            }
-        };
-
-        let request = client.get(url).header(
+        let request = http_client().get(url).header(
             reqwest::header::ACCEPT,
             "application/json, text/markdown;q=0.9, text/plain;q=0.8, text/html;q=0.5, */*;q=0.1",
         );

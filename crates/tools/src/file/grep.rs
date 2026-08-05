@@ -74,7 +74,7 @@ impl Tool for GrepTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let pattern = args["pattern"].as_str().unwrap_or("");
+        let pattern = args["pattern"].as_str().unwrap_or("").to_string();
         if pattern.is_empty() {
             return ToolResult {
                 tool_call_id: String::new(),
@@ -83,11 +83,12 @@ impl Tool for GrepTool {
             };
         }
 
+        let working_dir = ctx.working_dir.clone();
         let search_path = args["path"]
             .as_str()
-            .map(|s| resolve_path(&ctx.working_dir, s))
-            .unwrap_or_else(|| Path::new(&ctx.working_dir).to_path_buf());
-        let file_glob = args["include"].as_str();
+            .map(|s| resolve_path(&working_dir, s))
+            .unwrap_or_else(|| Path::new(&working_dir).to_path_buf());
+        let file_glob = args["include"].as_str().map(|s| s.to_string());
         let case_insensitive = args["case_insensitive"].as_bool().unwrap_or(false);
         let context = args["context"]
             .as_u64()
@@ -100,16 +101,23 @@ impl Tool for GrepTool {
             .unwrap_or(DEFAULT_MAX_RESULTS)
             .clamp(1, HARD_MAX_RESULTS);
 
-        match Self::search(
-            pattern,
-            &search_path,
-            file_glob,
-            case_insensitive,
-            context,
-            max_results,
-            &ctx.working_dir,
-        ) {
-            Ok(output) => ToolResult {
+        // FS walk + regex on a blocking pool so parallel tool batches do not
+        // pin Tokio workers (stream drain / permission UI stay responsive).
+        let result = tokio::task::spawn_blocking(move || {
+            Self::search(
+                &pattern,
+                &search_path,
+                file_glob.as_deref(),
+                case_insensitive,
+                context,
+                max_results,
+                &working_dir,
+            )
+        })
+        .await;
+
+        match result {
+            Ok(Ok(output)) => ToolResult {
                 tool_call_id: String::new(),
                 content: if output.is_empty() {
                     "No matches found.".to_string()
@@ -118,9 +126,14 @@ impl Tool for GrepTool {
                 },
                 is_error: false,
             },
-            Err(e) => ToolResult {
+            Ok(Err(e)) => ToolResult {
                 tool_call_id: String::new(),
                 content: format!("Error: {}", e),
+                is_error: true,
+            },
+            Err(e) => ToolResult {
+                tool_call_id: String::new(),
+                content: format!("Error: grep task failed: {e}"),
                 is_error: true,
             },
         }

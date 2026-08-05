@@ -167,7 +167,6 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
 }
 
 fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    let mut lines: Vec<Line> = Vec::new();
     // Shell already applies SIDE_PAD — don't pad again (extra spaces end up in mouse selection).
     // Keep wrap width == area.width so it matches `app.chat_content_width`
     // (scroll math / ensure_selected_visible). Scrollbar is painted over the
@@ -175,10 +174,26 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     let height = area.height as usize;
     let content_width = area.width;
 
-    for (i, msg) in app.messages.iter().enumerate() {
+    // Virtualize paint: height-cache all messages, but only `render_message`
+    // those that intersect the viewport. Long transcripts no longer re-parse
+    // every finished bubble on every spinner frame.
+    let (starts, total) = message_row_layout_mut(app, content_width);
+    let (view_start, view_end) = visible_range(total, height, app.scroll_offset);
+    let needs_bar = total > height && area.width > 1;
+
+    let mut lines: Vec<Line> = Vec::with_capacity(height.saturating_add(8));
+    let n = app.messages.len();
+    for i in 0..n {
+        let msg_start = starts[i];
+        let msg_end = if i + 1 < n { starts[i + 1] } else { total };
+        // Skip bubbles wholly above or below the viewport.
+        if msg_end <= view_start || msg_start >= view_end {
+            continue;
+        }
+
         let selected =
             app.selected_msg == Some(i) && app.focus == crate::app::FocusPane::Scrollback;
-        let mut msg_lines = render_message(msg, app, palette, i, content_width);
+        let mut msg_lines = render_message(&app.messages[i], app, palette, i, content_width);
         if selected {
             // Grok: selected entry gets a left caret on its first content row.
             let caret = Span::styled(
@@ -193,19 +208,13 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
                 line.spans = spans;
             }
         }
-        lines.extend(msg_lines);
-    }
 
-    // scroll_offset = display rows up from the newest line (0 = stick bottom).
-    // Previous logic drained the *top* and kept the last `scroll_offset` rows,
-    // which inverted the viewport: auto-scroll showed oldest content and
-    // scrolling "up" walked toward the bottom.
-    let total = lines.len();
-    let (view_start, view_end) = visible_range(total, height, app.scroll_offset);
-    let needs_bar = total > height && area.width > 1;
-
-    if view_start > 0 || view_end < total {
-        lines = lines.drain(view_start..view_end).collect();
+        // Slice the bubble to the viewport (partial top/bottom visibility).
+        let slice_from = view_start.saturating_sub(msg_start);
+        let slice_to = (view_end.saturating_sub(msg_start)).min(msg_lines.len());
+        if slice_from < slice_to {
+            lines.extend(msg_lines.drain(slice_from..slice_to));
+        }
     }
 
     // Pin messages to the bottom (chat-style). Empty space sits above the

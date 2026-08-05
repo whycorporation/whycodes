@@ -504,7 +504,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         })),
                     );
                 }
-                app.screen_cells = snapshot_cells(completed.buffer);
+                // Cell snapshot is only for mouse text selection → clipboard.
+                // Skip the ~4k String allocs/frame when nothing is selected.
+                if app.mouse_sel.is_some() {
+                    app.screen_cells = snapshot_cells(completed.buffer);
+                } else if !app.screen_cells.is_empty() {
+                    app.screen_cells.clear();
+                }
                 crate::bench::record_draw();
                 // Stay dirty while animation is live; otherwise clear so the
                 // next idle poll does not repaint an unchanged screen.
@@ -1377,38 +1383,50 @@ fn print_session_summary(summary: &str) {
 
 /// Best-effort session flush (success, error, or cancel) + structured log.
 fn persist_session_best_effort(session: &Session, reason: &str) {
-    match open_db_quiet() {
-        Some(db) => match session.save_to_db(&db) {
-            Ok(()) => {
-                whycode_core::logging::emit_sid(
-                    "session",
-                    "info",
-                    "session.persist",
-                    Some(session.id.as_str()),
-                    Some(serde_json::json!({
-                        "reason": reason,
-                        "messages": session.messages.len(),
-                    })),
-                );
-            }
-            Err(e) => {
-                whycode_core::logging::emit_sid(
-                    "session",
-                    "warn",
-                    "session.persist_failed",
-                    Some(session.id.as_str()),
-                    Some(serde_json::json!({
-                        "reason": reason,
-                        "error": e.to_string(),
-                    })),
-                );
-                tracing::warn!(error = %e, reason, "failed to persist session");
-            }
-        },
+    let outcome = with_session_db(|db| session.save_to_db(db));
+    match outcome {
+        Some(Ok(())) => {
+            whycode_core::logging::emit_sid(
+                "session",
+                "info",
+                "session.persist",
+                Some(session.id.as_str()),
+                Some(serde_json::json!({
+                    "reason": reason,
+                    "messages": session.messages.len(),
+                })),
+            );
+        }
+        Some(Err(e)) => {
+            whycode_core::logging::emit_sid(
+                "session",
+                "warn",
+                "session.persist_failed",
+                Some(session.id.as_str()),
+                Some(serde_json::json!({
+                    "reason": reason,
+                    "error": e.to_string(),
+                })),
+            );
+            tracing::warn!(error = %e, reason, "failed to persist session");
+        }
         None => {
             tracing::debug!(reason, "no database available for session persist");
         }
     }
+}
+
+/// Process-lifetime SQLite handle for the TUI (avoids re-running migrations
+/// and reopening the file on every turn persist).
+fn with_session_db<T>(f: impl FnOnce(&whycode_storage::db::Database) -> T) -> Option<T> {
+    use std::sync::{Mutex, OnceLock};
+    static DB: OnceLock<Mutex<Option<whycode_storage::db::Database>>> = OnceLock::new();
+    let lock = DB.get_or_init(|| Mutex::new(None));
+    let mut guard = lock.lock().ok()?;
+    if guard.is_none() {
+        *guard = open_db_quiet();
+    }
+    guard.as_ref().map(f)
 }
 
 /// Flatten the drawn buffer into `[row][col]` symbols for selection → clipboard.
@@ -2233,30 +2251,43 @@ fn configured_models(config: &Config) -> Vec<(String, String)> {
 /// `project-ab`) from the first user message so the picker stays useful for
 /// sessions created before auto-title or never refined.
 fn load_session_entries() -> Vec<crate::app::SessionEntry> {
-    let Ok(data_dir) = Config::data_dir() else {
+    let Some(db) = with_session_db(|d| {
+        // Clone rows we need while the lock is held; do backfill with a second
+        // borrow after we drop the map borrow (same connection).
+        let rows = d.list_sessions().unwrap_or_default();
+        let counts = d.message_counts_by_session().unwrap_or_default();
+        (rows, counts)
+    }) else {
         return Vec::new();
     };
-    let path = data_dir.join("whycode.db");
-    let Ok(db) = whycode_storage::db::Database::open(&path.to_string_lossy()) else {
-        return Vec::new();
-    };
-    let rows = db.list_sessions().unwrap_or_default();
+    let (rows, counts) = db;
     let mut out = Vec::with_capacity(rows.len());
     for s in rows {
-        let messages = db.message_count(&s.id).unwrap_or(0);
+        let messages = counts.get(&s.id).copied().unwrap_or(0);
         let mut title = s.title;
         if messages > 0
             && whycode_session::title::looks_like_default_title(
                 &title,
                 std::path::Path::new(&s.project_path),
             )
-            && let Ok(Some(mut loaded)) = Session::load_from_db(&db, &s.id)
-            && loaded.maybe_upgrade_title_from_history()
         {
-            if let Err(err) = loaded.save_to_db(&db) {
-                tracing::warn!(error = %err, "failed to persist backfilled session title");
+            // Backfill under the shared handle so we do not re-open the DB.
+            let upgraded = with_session_db(|d| {
+                if let Ok(Some(mut loaded)) = Session::load_from_db(d, &s.id)
+                    && loaded.maybe_upgrade_title_from_history()
+                {
+                    if let Err(err) = loaded.save_to_db(d) {
+                        tracing::warn!(error = %err, "failed to persist backfilled session title");
+                    }
+                    Some(loaded.title)
+                } else {
+                    None
+                }
+            })
+            .flatten();
+            if let Some(t) = upgraded {
+                title = t;
             }
-            title = loaded.title;
         }
         out.push(crate::app::SessionEntry {
             messages,
@@ -2340,10 +2371,10 @@ fn short_session_id(id: &str) -> String {
 
 /// Load a session by exact id, unique prefix, or [`RESUME_LATEST`].
 fn try_load_session(want: &str) -> anyhow::Result<Option<Session>> {
-    let Some(db) = open_db_quiet() else {
-        anyhow::bail!("database unavailable");
-    };
-    resolve_and_load_session(&db, want)
+    match with_session_db(|db| resolve_and_load_session(db, want)) {
+        Some(r) => r,
+        None => anyhow::bail!("database unavailable"),
+    }
 }
 
 /// Resolve `want` against the session table and load the full transcript.
