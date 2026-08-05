@@ -311,22 +311,37 @@ impl SubagentRunner {
 }
 
 /// Inject subagent-scoped auto memory into the system prompt (bank = agent name).
+///
+/// Honors `WHYCODE_NO_MEMORY` and `WHYCODE_SUBAGENT_BANKS=0` (config is not
+/// threaded into SubagentRunner today; env mirrors `[memory] subagent_banks`).
 fn inject_subagent_memory(
     system_prompt: &str,
     project_path: &std::path::Path,
     agent_name: &str,
     query: &str,
 ) -> String {
-    // Honor WHYCODE_NO_MEMORY and config is not available here — check env only.
     if std::env::var("WHYCODE_NO_MEMORY")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
     {
         return system_prompt.to_string();
     }
-    let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .map(|d| d.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    // Default on; set WHYCODE_SUBAGENT_BANKS=0 to share the main bank.
+    if std::env::var("WHYCODE_SUBAGENT_BANKS")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(false)
+    {
+        // Still inject main-bank memory for the subagent.
+        let data_dir = memory_data_dir();
+        return whycode_memory::apply_memory_prompt(
+            system_prompt,
+            project_path,
+            &data_dir,
+            &whycode_memory::MemorySettings::default(),
+            Some(query),
+        );
+    }
+    let data_dir = memory_data_dir();
     let mut settings = whycode_memory::MemorySettings::default();
     settings.agent_bank = Some(agent_name.to_string());
     whycode_memory::apply_memory_prompt(
@@ -336,4 +351,10 @@ fn inject_subagent_memory(
         &settings,
         Some(query),
     )
+}
+
+fn memory_data_dir() -> std::path::PathBuf {
+    directories::ProjectDirs::from("com", "whycorporation", "whycode")
+        .map(|d| d.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }

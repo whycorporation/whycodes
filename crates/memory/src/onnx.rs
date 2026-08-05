@@ -109,23 +109,14 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
         .into_optimized()?
         .into_runnable()?;
 
-    let ids_arr = ndarray::Array2::from_shape_vec((1, len), ids)?;
-    let mask_arr = ndarray::Array2::from_shape_vec((1, len), mask)?;
-    let type_arr = ndarray::Array2::from_shape_vec((1, len), type_ids)?;
+    let ids_t = Tensor::from_shape(&[1, len], &ids)?;
+    let mask_t = Tensor::from_shape(&[1, len], &mask)?;
+    let type_t = Tensor::from_shape(&[1, len], &type_ids)?;
 
     // Try 3-input then 2-input signatures used by different MiniLM ONNX exports.
     let result = model
-        .run(tvec!(
-            ids_arr.clone().into_tensor().into(),
-            mask_arr.clone().into_tensor().into(),
-            type_arr.into_tensor().into()
-        ))
-        .or_else(|_| {
-            model.run(tvec!(
-                ids_arr.into_tensor().into(),
-                mask_arr.into_tensor().into()
-            ))
-        })?;
+        .run(tvec!(ids_t.clone().into(), mask_t.clone().into(), type_t.into()))
+        .or_else(|_| model.run(tvec!(ids_t.into(), mask_t.into())))?;
 
     let output = result[0].to_array_view::<f32>()?;
     let shape = output.shape();
