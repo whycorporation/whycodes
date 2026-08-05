@@ -1,5 +1,5 @@
 use crate::migrations::run_migrations;
-use crate::models::{MemoryRow, MessageRow, SessionRow, UsageTotals};
+use crate::models::{CodeChunkRow, MemoryRow, MessageRow, SessionRow, UsageTotals};
 use rusqlite::Connection;
 use whycode_core::types::Usage;
 
@@ -338,6 +338,67 @@ impl Database {
         )?;
         Ok(n as usize)
     }
+
+    // ── Code chunks (codebase RAG) ───────────────────────────────────────
+
+    pub fn insert_code_chunk(
+        &self,
+        id: &str,
+        project_key: &str,
+        path: &str,
+        start_line: i64,
+        end_line: i64,
+        text: &str,
+        embedding: &[u8],
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO code_chunks (
+                id, project_key, path, start_line, end_line, text, embedding, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                id,
+                project_key,
+                path,
+                start_line,
+                end_line,
+                text,
+                embedding,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_code_chunks(
+        &self,
+        project_key: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<CodeChunkRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_key, path, start_line, end_line, text, embedding, updated_at
+             FROM code_chunks WHERE project_key = ?1
+             ORDER BY path ASC, start_line ASC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![project_key, limit as i64],
+            map_code_chunk_row,
+        )?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
+
+    pub fn clear_code_chunks(&self, project_key: &str) -> anyhow::Result<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM code_chunks WHERE project_key = ?1",
+            rusqlite::params![project_key],
+        )?;
+        Ok(n)
+    }
 }
 
 fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
@@ -350,6 +411,19 @@ fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
         created_at: row.get(5)?,
         last_recalled_at: row.get(6)?,
         recall_count: row.get(7)?,
+    })
+}
+
+fn map_code_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CodeChunkRow> {
+    Ok(CodeChunkRow {
+        id: row.get(0)?,
+        project_key: row.get(1)?,
+        path: row.get(2)?,
+        start_line: row.get(3)?,
+        end_line: row.get(4)?,
+        text: row.get(5)?,
+        embedding: row.get(6)?,
+        updated_at: row.get(7)?,
     })
 }
 

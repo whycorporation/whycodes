@@ -20,8 +20,10 @@ pub fn embed(text: &str, dim: usize) -> Vec<f32> {
         }
         accumulate(&mut v, tok, 1.0);
         // Prefixes help partial matches ("cargo" ↔ "cargo check")
-        if tok.len() > 4 {
-            accumulate(&mut v, &tok[..4], 0.35);
+        // Must respect UTF-8 char boundaries (Turkish ı, etc.).
+        if tok.chars().count() > 4 {
+            let prefix: String = tok.chars().take(4).collect();
+            accumulate(&mut v, &prefix, 0.35);
         }
     }
 

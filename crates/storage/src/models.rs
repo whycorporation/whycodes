@@ -45,6 +45,7 @@ pub struct StateRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRow {
     pub id: String,
+    /// Bank key: project key, optionally `project::agent`.
     pub project_key: String,
     pub text: String,
     /// Little-endian f32 embedding blob.
@@ -53,4 +54,17 @@ pub struct MemoryRow {
     pub created_at: String,
     pub last_recalled_at: Option<String>,
     pub recall_count: i64,
+}
+
+/// Indexed source chunk for lightweight code RAG.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodeChunkRow {
+    pub id: String,
+    pub project_key: String,
+    pub path: String,
+    pub start_line: i64,
+    pub end_line: i64,
+    pub text: String,
+    pub embedding: Vec<u8>,
+    pub updated_at: String,
 }

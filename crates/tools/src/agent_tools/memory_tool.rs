@@ -57,8 +57,8 @@ impl Tool for MemoryTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["write", "list", "search", "delete"],
-                    "description": "write: store a fact; list: recent facts; search: semantic search; delete: remove by id"
+                    "enum": ["write", "list", "search", "delete", "code_search", "index"],
+                    "description": "write/list/search/delete facts; code_search over indexed code; index the codebase for RAG"
                 },
                 "text": {
                     "type": "string",
@@ -183,10 +183,51 @@ impl Tool for MemoryTool {
                     Err(e) => Err(e.to_string()),
                 }
             }
+            "code_search" => {
+                let q = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if q.is_empty() {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: "code_search requires `text` query".into(),
+                        is_error: true,
+                    };
+                }
+                match svc.search_code(q, limit, 0.12) {
+                    Ok(hits) if hits.is_empty() => Ok(
+                        "No code hits. Run memory action=index first (or `whycode memory index`)."
+                            .into(),
+                    ),
+                    Ok(hits) => {
+                        let mut out = format!("{} code hits:\n", hits.len());
+                        for h in hits {
+                            out.push_str(&format!(
+                                "- [{:.2}] {}:{}-{}\n{}\n",
+                                h.score,
+                                h.entry.path,
+                                h.entry.start_line,
+                                h.entry.end_line,
+                                h.entry.text.lines().take(6).collect::<Vec<_>>().join("\n")
+                            ));
+                        }
+                        Ok(out)
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
+            }
+            "index" => match svc.index_codebase(2000, 8000) {
+                Ok(n) => Ok(format!("Indexed {n} code chunks for this project.")),
+                Err(e) => Err(e.to_string()),
+            },
             _ => {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("unknown action '{action}'; use write|list|search|delete"),
+                    content: format!(
+                        "unknown action '{action}'; use write|list|search|delete|code_search|index"
+                    ),
                     is_error: true,
                 };
             }

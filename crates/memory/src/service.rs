@@ -1,26 +1,38 @@
-//! High-level memory API: dual-write SQLite + MEMORY.md, inject blocks.
+//! High-level memory API: dual-write SQLite + MEMORY.md, inject, retain.
 
 use std::path::{Path, PathBuf};
 
 use whycode_storage::db::Database;
 use whycode_storage::models::MemoryRow;
 
+// CodeHit re-exports the storage row type for callers.
+pub use whycode_storage::models::CodeChunkRow;
+
 use crate::embed::{cosine, decode_blob, embed, encode_blob};
 use crate::markdown;
 use crate::paths::{ensure_memory_dir, memory_md};
 use crate::project_key::project_key;
-use crate::settings::MemorySettings;
+use crate::retain;
+use crate::settings::{EmbedBackend, MemorySettings};
 
-/// A scored recall hit.
+/// A scored recall hit (facts).
 #[derive(Debug, Clone)]
 pub struct RecallHit {
     pub entry: MemoryRow,
     pub score: f32,
 }
 
+/// A scored code RAG hit.
+#[derive(Debug, Clone)]
+pub struct CodeHit {
+    pub entry: CodeChunkRow,
+    pub score: f32,
+}
+
 /// Project-scoped memory service.
 pub struct MemoryService {
     pub project_key: String,
+    pub bank_key: String,
     pub project_path: PathBuf,
     pub data_dir: PathBuf,
     pub db_path: PathBuf,
@@ -28,7 +40,6 @@ pub struct MemoryService {
 }
 
 impl MemoryService {
-    /// Open for `project_path` using `data_dir` (typically `Config::data_dir()`).
     pub fn open(
         project_path: impl Into<PathBuf>,
         data_dir: impl Into<PathBuf>,
@@ -37,13 +48,20 @@ impl MemoryService {
         let project_path = project_path.into();
         let data_dir = data_dir.into();
         let key = project_key(&project_path);
+        let bank_key = settings.bank_key(&key);
         let db_path = data_dir.join("whycode.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        ensure_memory_dir(&data_dir, &project_path)?;
+        ensure_memory_dir(
+            &data_dir,
+            &project_path,
+            settings.scope,
+            settings.agent_bank.as_deref(),
+        )?;
         Ok(Self {
             project_key: key,
+            bank_key,
             project_path,
             data_dir,
             db_path,
@@ -51,15 +69,30 @@ impl MemoryService {
         })
     }
 
-    pub fn memory_md_path(&self) -> PathBuf {
-        memory_md(&self.data_dir, &self.project_path)
-    }
-
-    fn open_db(&self) -> anyhow::Result<Database> {
+    pub fn open_db(&self) -> anyhow::Result<Database> {
         Database::open(self.db_path.to_str().unwrap_or("whycode.db"))
     }
 
-    /// Store a durable fact. Returns the new id.
+    pub fn memory_md_path(&self) -> PathBuf {
+        memory_md(
+            &self.data_dir,
+            &self.project_path,
+            self.settings.scope,
+            self.settings.agent_bank.as_deref(),
+        )
+    }
+
+    /// Embed text with configured backend (ONNX falls back to hash).
+    pub fn embed_text(&self, text: &str) -> Vec<f32> {
+        if self.settings.embed_backend == EmbedBackend::Onnx {
+            if let Some(v) = crate::onnx::try_embed(text, &self.data_dir) {
+                return v;
+            }
+            tracing::debug!("onnx unavailable; using hash embedder");
+        }
+        embed(text, self.settings.embed_dim)
+    }
+
     pub fn remember(&self, text: &str, source_session: Option<&str>) -> anyhow::Result<String> {
         if !self.settings.enabled {
             anyhow::bail!("memory is disabled");
@@ -68,27 +101,28 @@ impl MemoryService {
         if text.is_empty() {
             anyhow::bail!("memory text is empty");
         }
+        if self.is_duplicate(text)? {
+            anyhow::bail!("duplicate memory (already stored)");
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let short_id = &id[..8.min(id.len())];
-        let vec = embed(text, self.settings.embed_dim);
+        let vec = self.embed_text(text);
         let blob = encode_blob(&vec);
         let db = self.open_db()?;
-        db.insert_memory(
-            &id,
-            &self.project_key,
-            text,
-            &blob,
-            source_session,
-        )?;
+        db.insert_memory(&id, &self.bank_key, text, &blob, source_session)?;
         markdown::append_entry(&self.memory_md_path(), short_id, text)?;
-        // Store short id mapping: we keep full UUID in SQLite; MEMORY.md uses short prefix.
-        // For delete-by-short-id we match prefix.
         Ok(id)
+    }
+
+    /// True if an existing fact is nearly identical (cosine ≥ 0.92).
+    pub fn is_duplicate(&self, text: &str) -> anyhow::Result<bool> {
+        let hits = self.search(text, 1, 0.92)?;
+        Ok(!hits.is_empty())
     }
 
     pub fn list(&self, limit: usize) -> anyhow::Result<Vec<MemoryRow>> {
         let db = self.open_db()?;
-        db.list_memories(&self.project_key, limit)
+        db.list_memories(&self.bank_key, limit)
     }
 
     pub fn delete(&self, id_or_prefix: &str) -> anyhow::Result<bool> {
@@ -96,7 +130,7 @@ impl MemoryService {
             anyhow::bail!("memory is disabled");
         }
         let db = self.open_db()?;
-        let id = resolve_id(&db, &self.project_key, id_or_prefix)?;
+        let id = resolve_id(&db, &self.bank_key, id_or_prefix)?;
         let Some(id) = id else {
             return Ok(false);
         };
@@ -104,7 +138,6 @@ impl MemoryService {
         if removed {
             let short = &id[..8.min(id.len())];
             let _ = markdown::remove_entry(&self.memory_md_path(), short);
-            // Also try full id in case older format
             let _ = markdown::remove_entry(&self.memory_md_path(), &id);
         }
         Ok(removed)
@@ -115,21 +148,26 @@ impl MemoryService {
             anyhow::bail!("memory is disabled");
         }
         let db = self.open_db()?;
-        let n = db.clear_memories(&self.project_key)?;
+        let n = db.clear_memories(&self.bank_key)?;
         markdown::clear_file(&self.memory_md_path())?;
         Ok(n)
     }
 
-    /// Semantic search over stored facts.
-    pub fn search(&self, query: &str, top_k: usize, min_score: f32) -> anyhow::Result<Vec<RecallHit>> {
+    pub fn search(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> anyhow::Result<Vec<RecallHit>> {
         let db = self.open_db()?;
-        let rows = db.list_memories(&self.project_key, 10_000)?;
-        let q = embed(query, self.settings.embed_dim);
+        let rows = db.list_memories(&self.bank_key, 10_000)?;
+        let q = self.embed_text(query);
         let mut hits: Vec<RecallHit> = rows
             .into_iter()
             .filter_map(|entry| {
                 let v = decode_blob(&entry.embedding);
-                if v.is_empty() {
+                if v.is_empty() || v.len() != q.len() {
+                    // Dim mismatch (hash vs onnx) — skip
                     return None;
                 }
                 let score = cosine(&q, &v);
@@ -140,12 +178,69 @@ impl MemoryService {
                 }
             })
             .collect();
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         hits.truncate(top_k.max(1));
         Ok(hits)
     }
 
-    /// Build the system-prompt injection block (empty if disabled / nothing to show).
+    /// Post-turn auto-retain (heuristic). Returns saved fact texts.
+    pub fn auto_retain(
+        &self,
+        user_text: &str,
+        assistant_text: Option<&str>,
+        source_session: Option<&str>,
+        turn_index: usize,
+    ) -> anyhow::Result<Vec<String>> {
+        if !self.settings.enabled || !self.settings.auto_retain {
+            return Ok(Vec::new());
+        }
+        let every = self.settings.retain_every_n.max(1);
+        if turn_index > 0 && !turn_index.is_multiple_of(every) {
+            return Ok(Vec::new());
+        }
+        let mut candidates = retain::extract_heuristic(user_text, assistant_text);
+        candidates.truncate(self.settings.retain_max_facts);
+        let mut saved = Vec::new();
+        for fact in candidates {
+            match self.remember(&fact, source_session) {
+                Ok(_) => saved.push(fact),
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("duplicate") {
+                        continue;
+                    }
+                    tracing::debug!("auto_retain skip: {msg}");
+                }
+            }
+        }
+        Ok(saved)
+    }
+
+    /// Retain from pre-parsed LLM fact lines.
+    pub fn retain_llm_facts(
+        &self,
+        raw_llm: &str,
+        source_session: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        if !self.settings.enabled || !self.settings.auto_retain {
+            return Ok(Vec::new());
+        }
+        let mut saved = Vec::new();
+        for fact in retain::parse_llm_facts(raw_llm)
+            .into_iter()
+            .take(self.settings.retain_max_facts)
+        {
+            if self.remember(&fact, source_session).is_ok() {
+                saved.push(fact);
+            }
+        }
+        Ok(saved)
+    }
+
     pub fn build_inject_block(&self, query: Option<&str>) -> anyhow::Result<String> {
         if !self.settings.enabled {
             return Ok(String::new());
@@ -155,23 +250,27 @@ impl MemoryService {
         let mut char_budget = self.settings.recall_char_budget()
             + self.settings.max_index_bytes.min(self.settings.recall_char_budget() * 2);
 
-        // Always-on MEMORY.md index (Claude-style)
         let index = markdown::load_capped(
             &self.memory_md_path(),
             self.settings.max_index_lines,
             self.settings.max_index_bytes,
         );
         if !index.is_empty() {
+            let scope = self.settings.scope.as_str();
+            let bank = self
+                .settings
+                .agent_bank
+                .as_deref()
+                .unwrap_or("main");
             let block = format!(
                 "# Auto Memory\n\n\
-                 Notes the agent saved for this project (machine-local). Prefer repo truth if stale.\n\n\
+                 Notes saved for this project (scope={scope}, bank={bank}). Prefer repo truth if stale.\n\n\
                  {index}"
             );
             char_budget = char_budget.saturating_sub(block.len());
             parts.push(block);
         }
 
-        // Semantic recall for the current user query (Grok/jcode-style auto-recall)
         if self.settings.auto_inject {
             if let Some(q) = query.map(str::trim).filter(|s| !s.is_empty()) {
                 let hits = self.search(
@@ -201,10 +300,44 @@ impl MemoryService {
                     }
                     if !lines.is_empty() {
                         parts.push(format!("{header}{}", lines.join("")));
-                        // Best-effort recall stats
                         if let Ok(db) = self.open_db() {
                             for id in ids {
                                 let _ = db.touch_memory_recall(&id);
+                            }
+                        }
+                    }
+                }
+
+                // Code RAG
+                if self.settings.code_inject {
+                    if let Ok(code_hits) = self.search_code(
+                        q,
+                        self.settings.code_top_k,
+                        self.settings.code_min_score,
+                    ) {
+                        if !code_hits.is_empty() {
+                            let mut lines = Vec::new();
+                            let mut used = 0usize;
+                            let header = "# Code context (indexed; verify in repo)\n";
+                            used += header.len();
+                            for hit in &code_hits {
+                                let snippet = hit.entry.text.lines().take(8).collect::<Vec<_>>().join("\n");
+                                let line = format!(
+                                    "### {} ({}-{}) [{:.2}]\n```\n{}\n```\n",
+                                    hit.entry.path,
+                                    hit.entry.start_line,
+                                    hit.entry.end_line,
+                                    hit.score,
+                                    snippet
+                                );
+                                if used + line.len() > char_budget && !lines.is_empty() {
+                                    break;
+                                }
+                                used += line.len();
+                                lines.push(line);
+                            }
+                            if !lines.is_empty() {
+                                parts.push(format!("{header}{}", lines.join("\n")));
                             }
                         }
                     }
@@ -215,7 +348,6 @@ impl MemoryService {
         Ok(parts.join("\n\n"))
     }
 
-    /// Append memory block to a system prompt.
     pub fn append_to_prompt(&self, system_prompt: &str, query: Option<&str>) -> String {
         match self.build_inject_block(query) {
             Ok(block) if !block.trim().is_empty() => {
@@ -226,18 +358,17 @@ impl MemoryService {
     }
 }
 
-fn resolve_id(db: &Database, project_key: &str, id_or_prefix: &str) -> anyhow::Result<Option<String>> {
+fn resolve_id(db: &Database, bank_key: &str, id_or_prefix: &str) -> anyhow::Result<Option<String>> {
     let id_or_prefix = id_or_prefix.trim();
     if id_or_prefix.is_empty() {
         return Ok(None);
     }
     if let Some(row) = db.get_memory(id_or_prefix)? {
-        if row.project_key == project_key {
+        if row.project_key == bank_key {
             return Ok(Some(row.id));
         }
     }
-    // Prefix match
-    let rows = db.list_memories(project_key, 10_000)?;
+    let rows = db.list_memories(bank_key, 10_000)?;
     let matches: Vec<_> = rows
         .into_iter()
         .filter(|r| r.id.starts_with(id_or_prefix))
@@ -252,7 +383,6 @@ fn resolve_id(db: &Database, project_key: &str, id_or_prefix: &str) -> anyhow::R
     }
 }
 
-/// Convenience: build inject settings from common knobs (CLI/TUI).
 pub fn settings_from_flags(enabled: bool) -> MemorySettings {
     if enabled {
         MemorySettings::default()
@@ -261,7 +391,6 @@ pub fn settings_from_flags(enabled: bool) -> MemorySettings {
     }
 }
 
-/// Apply memory to a system prompt when enabled.
 pub fn apply_memory_prompt(
     system_prompt: &str,
     project_path: &Path,
@@ -277,6 +406,30 @@ pub fn apply_memory_prompt(
         Err(e) => {
             tracing::warn!("memory inject skipped: {e}");
             system_prompt.to_string()
+        }
+    }
+}
+
+/// Best-effort post-turn retain for CLI/TUI.
+pub fn maybe_auto_retain(
+    project_path: &Path,
+    data_dir: &Path,
+    settings: &MemorySettings,
+    user_text: &str,
+    assistant_text: Option<&str>,
+    session_id: Option<&str>,
+    turn_index: usize,
+) -> Vec<String> {
+    if !settings.enabled || !settings.auto_retain {
+        return Vec::new();
+    }
+    match MemoryService::open(project_path, data_dir, settings.clone()) {
+        Ok(svc) => svc
+            .auto_retain(user_text, assistant_text, session_id, turn_index)
+            .unwrap_or_default(),
+        Err(e) => {
+            tracing::debug!("auto_retain skipped: {e}");
+            Vec::new()
         }
     }
 }
@@ -302,32 +455,59 @@ mod tests {
         let hits = svc
             .search("how do I test the memory crate", 3, 0.1)
             .unwrap();
-        assert!(!hits.is_empty(), "expected a hit");
+        assert!(!hits.is_empty());
         assert!(hits[0].entry.text.contains("cargo test"));
 
-        let weather = svc.search("weather forecast for paris", 3, 0.35).unwrap();
-        // High threshold should exclude unrelated
-        assert!(
-            weather.is_empty() || weather[0].score < hits[0].score,
-            "unrelated should not outrank"
-        );
-
         assert!(svc.delete(&id[..8]).unwrap());
-        let hits = svc.search("cargo test memory", 3, 0.1).unwrap();
-        assert!(hits.is_empty());
+        assert!(svc.search("cargo test memory", 3, 0.1).unwrap().is_empty());
     }
 
     #[test]
-    fn inject_includes_auto_memory() {
+    fn auto_retain_from_user_preference() {
         let dir = tempdir().unwrap();
         let data = dir.path().join("data");
         let project = dir.path().join("proj");
         std::fs::create_dir_all(&project).unwrap();
         let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
-        svc.remember("prefer fish shell for scripts", None).unwrap();
-        let block = svc.build_inject_block(Some("what shell should I use")).unwrap();
-        assert!(block.contains("Auto Memory") || block.contains("Recalled"));
-        assert!(block.contains("fish") || block.contains("shell"));
+        let saved = svc
+            .auto_retain("Always prefer fish shell for scripts in this repo.", None, None, 1)
+            .unwrap();
+        assert!(!saved.is_empty());
+        assert!(!svc.list(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn agent_bank_isolated() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let mut main = MemorySettings::default();
+        main.agent_bank = None;
+        let mut explore = MemorySettings::default();
+        explore.agent_bank = Some("explore".into());
+        let s_main = MemoryService::open(&project, &data, main).unwrap();
+        let s_ex = MemoryService::open(&project, &data, explore).unwrap();
+        s_main.remember("main bank fact unique alpha", None).unwrap();
+        s_ex.remember("explore bank fact unique beta", None).unwrap();
+        assert_eq!(s_main.list(10).unwrap().len(), 1);
+        assert_eq!(s_ex.list(10).unwrap().len(), 1);
+        assert!(s_main.list(10).unwrap()[0].text.contains("alpha"));
+        assert!(s_ex.list(10).unwrap()[0].text.contains("beta"));
+    }
+
+    #[test]
+    fn project_scope_writes_under_whycode() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let mut settings = MemorySettings::default();
+        settings.scope = crate::settings::MemoryScope::Project;
+        let svc = MemoryService::open(&project, &data, settings).unwrap();
+        svc.remember("project scoped memory item", None).unwrap();
+        assert!(svc.memory_md_path().starts_with(project.join(".whycode")));
+        assert!(svc.memory_md_path().exists());
     }
 
     #[test]

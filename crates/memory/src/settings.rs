@@ -1,16 +1,81 @@
-//! Runtime settings for memory inject / recall (decoupled from config crate).
+//! Runtime settings for memory inject / recall / retain / index.
+
+/// Where durable memory lives (Claude-style scopes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MemoryScope {
+    /// Machine-local under data_dir (default; Claude auto-memory parity).
+    #[default]
+    User,
+    /// Project-local under `.whycode/memory/` (git-shareable cross-machine).
+    Project,
+}
+
+impl MemoryScope {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "project" | "repo" | "local" => Self::Project,
+            _ => Self::User,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Project => "project",
+        }
+    }
+}
+
+/// Embedding backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmbedBackend {
+    #[default]
+    Hash,
+    /// MiniLM via ONNX (optional cargo feature `onnx`; falls back to hash if unavailable).
+    Onnx,
+}
+
+impl EmbedBackend {
+    pub fn parse(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "onnx" | "minilm" | "neural" => Self::Onnx,
+            _ => Self::Hash,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Hash => "hash",
+            Self::Onnx => "onnx",
+        }
+    }
+}
 
 /// Inject and store settings used by [`crate::MemoryService`].
 #[derive(Debug, Clone)]
 pub struct MemorySettings {
     pub enabled: bool,
     pub auto_inject: bool,
+    /// Post-turn auto-retain (Hindsight-style). Default on with heuristic extract.
+    pub auto_retain: bool,
+    /// Only run retain every N completed user turns (1 = every turn).
+    pub retain_every_n: usize,
+    /// Max new facts retained per turn.
+    pub retain_max_facts: usize,
     pub max_index_lines: usize,
     pub max_index_bytes: usize,
     pub recall_top_k: usize,
     pub recall_min_score: f32,
     pub recall_token_budget: usize,
     pub embed_dim: usize,
+    pub scope: MemoryScope,
+    pub embed_backend: EmbedBackend,
+    /// Optional agent bank suffix (subagent-scoped memory). Empty = main bank.
+    pub agent_bank: Option<String>,
+    /// Inject top-k code RAG hits when query present.
+    pub code_inject: bool,
+    pub code_top_k: usize,
+    pub code_min_score: f32,
 }
 
 impl Default for MemorySettings {
@@ -18,18 +83,26 @@ impl Default for MemorySettings {
         Self {
             enabled: true,
             auto_inject: true,
+            auto_retain: true,
+            retain_every_n: 1,
+            retain_max_facts: 3,
             max_index_lines: 200,
             max_index_bytes: 25_600,
             recall_top_k: 5,
             recall_min_score: 0.28,
             recall_token_budget: 800,
             embed_dim: crate::embed::DEFAULT_DIM,
+            scope: MemoryScope::User,
+            embed_backend: EmbedBackend::Hash,
+            agent_bank: None,
+            code_inject: true,
+            code_top_k: 4,
+            code_min_score: 0.22,
         }
     }
 }
 
 impl MemorySettings {
-    /// Disabled settings (no inject, writes should refuse at call sites).
     pub fn disabled() -> Self {
         Self {
             enabled: false,
@@ -37,8 +110,27 @@ impl MemorySettings {
         }
     }
 
-    /// Approximate char budget from token budget (same heuristic as sessions).
     pub fn recall_char_budget(&self) -> usize {
         self.recall_token_budget.saturating_mul(4)
     }
+
+    /// Bank key for SQLite rows: `project` or `project::agent`.
+    pub fn bank_key(&self, project_key: &str) -> String {
+        match &self.agent_bank {
+            Some(a) if !a.is_empty() => format!("{project_key}::{}", sanitize_bank(a)),
+            _ => project_key.to_string(),
+        }
+    }
+}
+
+fn sanitize_bank(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }

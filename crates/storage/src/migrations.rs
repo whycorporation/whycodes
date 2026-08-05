@@ -61,6 +61,18 @@ pub fn run_migrations(conn: &Connection) -> Result<(), rusqlite::Error> {
             recall_count     INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_memories_project ON memories(project_key);
+
+        CREATE TABLE IF NOT EXISTS code_chunks (
+            id          TEXT PRIMARY KEY,
+            project_key TEXT NOT NULL,
+            path        TEXT NOT NULL,
+            start_line  INTEGER NOT NULL,
+            end_line    INTEGER NOT NULL,
+            text        TEXT NOT NULL,
+            embedding   BLOB NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_chunks_project ON code_chunks(project_key);
         ",
     )?;
 

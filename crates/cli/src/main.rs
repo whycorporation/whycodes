@@ -341,6 +341,30 @@ pub enum MemoryCmd {
     Clear,
     /// Print MEMORY.md path for this project
     Path,
+    /// Export memories to a JSON file (cross-machine sync)
+    Export {
+        /// Output path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Import memories from a JSON export
+    Import {
+        /// Input JSON path
+        path: PathBuf,
+    },
+    /// Index the codebase for lightweight code RAG
+    Index {
+        #[arg(long, default_value = "2000")]
+        max_files: usize,
+        #[arg(long, default_value = "8000")]
+        max_chunks: usize,
+    },
+    /// Semantic search over the code index
+    CodeSearch {
+        query: String,
+        #[arg(long, default_value = "8")]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -958,6 +982,13 @@ async fn cmd_run(
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
+                run_auto_retain(
+                    &project_dir,
+                    &config,
+                    &session,
+                    &expanded,
+                    Some(response.as_str()),
+                );
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
@@ -1421,6 +1452,13 @@ async fn cmd_run(
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
+                run_auto_retain(
+                    &project_dir,
+                    &config,
+                    &session,
+                    &expanded,
+                    Some(response.as_str()),
+                );
                 println!();
                 // Persist session best-effort (success)
                 if let Ok(db) = open_db() {
@@ -1527,16 +1565,32 @@ fn split_slash_command(input: &str) -> (&str, &str) {
 
 /// Settings bag for `whycode-memory` from config (config does not depend on memory).
 fn memory_settings(config: &Config) -> whycode_memory::MemorySettings {
+    memory_settings_for(config, None)
+}
+
+fn memory_settings_for(
+    config: &Config,
+    agent_bank: Option<String>,
+) -> whycode_memory::MemorySettings {
     let m = &config.memory;
     whycode_memory::MemorySettings {
         enabled: m.enabled,
         auto_inject: m.auto_inject,
+        auto_retain: m.auto_retain,
+        retain_every_n: m.retain_every_n,
+        retain_max_facts: m.retain_max_facts,
         max_index_lines: m.max_index_lines,
         max_index_bytes: m.max_index_bytes,
         recall_top_k: m.recall_top_k,
         recall_min_score: m.recall_min_score,
         recall_token_budget: m.recall_token_budget,
         embed_dim: m.embed_dim,
+        scope: whycode_memory::MemoryScope::parse(&m.scope),
+        embed_backend: whycode_memory::EmbedBackend::parse(&m.embed_backend),
+        agent_bank,
+        code_inject: m.code_inject,
+        code_top_k: m.code_top_k,
+        code_min_score: m.code_min_score,
     }
 }
 
@@ -1650,14 +1704,94 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
         MemoryCmd::Path => {
             println!("{}", svc.memory_md_path().display());
             println!(
-                "{} project_key={} enabled={}",
+                "{} project_key={} bank={} scope={} backend={} enabled={} onnx_build={}",
                 "ℹ".dimmed(),
                 svc.project_key,
-                config.memory.enabled
+                svc.bank_key,
+                config.memory.scope,
+                config.memory.embed_backend,
+                config.memory.enabled,
+                whycode_memory::onnx::onnx_available()
             );
+        }
+        MemoryCmd::Export { output } => {
+            let json = svc.export_json()?;
+            match output {
+                Some(path) => {
+                    std::fs::write(path, &json)?;
+                    println!("{} Exported to {}", "✓".green(), path.display());
+                }
+                None => println!("{json}"),
+            }
+        }
+        MemoryCmd::Import { path } => {
+            let json = std::fs::read_to_string(path)?;
+            let (added, skipped) = svc.import_json(&json)?;
+            println!(
+                "{} Import complete: {added} added, {skipped} skipped",
+                "✓".green()
+            );
+        }
+        MemoryCmd::Index {
+            max_files,
+            max_chunks,
+        } => {
+            println!("{} Indexing codebase…", "⚡".bold());
+            let n = svc.index_codebase(*max_files, *max_chunks)?;
+            println!("{} Indexed {n} code chunks", "✓".green());
+        }
+        MemoryCmd::CodeSearch { query, limit } => {
+            let hits = svc.search_code(query, *limit, config.memory.code_min_score.min(0.1))?;
+            if hits.is_empty() {
+                println!(
+                    "{} No code hits. Run `whycode memory index` first.",
+                    "ℹ".cyan()
+                );
+            } else {
+                for h in hits {
+                    println!(
+                        "  [{:.2}] {}:{}-{}",
+                        h.score, h.entry.path, h.entry.start_line, h.entry.end_line
+                    );
+                    for line in h.entry.text.lines().take(4) {
+                        println!("      {}", line.dimmed());
+                    }
+                }
+            }
         }
     }
     Ok(())
+}
+
+fn run_auto_retain(
+    project_dir: &std::path::Path,
+    config: &Config,
+    session: &whycode_session::session::Session,
+    user_text: &str,
+    assistant_text: Option<&str>,
+) {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let turn_index = session.user_message_count().max(1);
+    let saved = whycode_memory::maybe_auto_retain(
+        project_dir,
+        &data_dir,
+        &memory_settings(config),
+        user_text,
+        assistant_text,
+        Some(&session.id),
+        turn_index,
+    );
+    if !saved.is_empty() {
+        println!(
+            "{} Auto-retained {} memor{}",
+            "🧠".dimmed(),
+            saved.len(),
+            if saved.len() == 1 { "y" } else { "ies" }
+        );
+        for f in &saved {
+            println!("  · {}", f.dimmed());
+        }
+    }
 }
 
 fn switch_agent(

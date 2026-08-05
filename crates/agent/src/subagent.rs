@@ -94,12 +94,19 @@ impl SubagentRunner {
             permission.allowed_tools = Some(tool_names.clone());
         }
 
-        // Create a fresh session for this subagent
-        let system_prompt = self
+        // Create a fresh session for this subagent. Inject agent-scoped memory
+        // bank (Claude subagent memory parity) when configured.
+        let mut system_prompt = self
             .info
             .system_prompt
             .clone()
             .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string());
+        system_prompt = inject_subagent_memory(
+            &system_prompt,
+            &self.project_path,
+            &self.info.name,
+            &user_message,
+        );
 
         let mut session = Session::new(self.project_path.clone(), system_prompt);
         session.add_user_message(&user_message);
@@ -301,4 +308,32 @@ impl SubagentRunner {
 
         Ok(final_text)
     }
+}
+
+/// Inject subagent-scoped auto memory into the system prompt (bank = agent name).
+fn inject_subagent_memory(
+    system_prompt: &str,
+    project_path: &std::path::Path,
+    agent_name: &str,
+    query: &str,
+) -> String {
+    // Honor WHYCODE_NO_MEMORY and config is not available here — check env only.
+    if std::env::var("WHYCODE_NO_MEMORY")
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .unwrap_or(false)
+    {
+        return system_prompt.to_string();
+    }
+    let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
+        .map(|d| d.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let mut settings = whycode_memory::MemorySettings::default();
+    settings.agent_bank = Some(agent_name.to_string());
+    whycode_memory::apply_memory_prompt(
+        system_prompt,
+        project_path,
+        &data_dir,
+        &settings,
+        Some(query),
+    )
 }

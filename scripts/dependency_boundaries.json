@@ -5,6 +5,7 @@
     "core",
     "llm",
     "mcp",
+    "memory",
     "plugin",
     "sandbox",
     "session",

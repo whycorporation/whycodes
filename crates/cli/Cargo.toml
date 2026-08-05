@@ -23,6 +23,8 @@ extended-syntax = ["whycode-format/extended-syntax", "whycode-tui/extended-synta
 self-update = ["dep:sha2", "dep:flate2", "dep:tar", "dep:zip"]
 # `whycode serve` — axum HTTP API.
 server = ["dep:whycode-server", "dep:axum"]
+# MiniLM ONNX embedder (downloads model on first use; larger binary / RSS).
+onnx = ["whycode-memory/onnx", "whycode-tools/onnx", "whycode-agent/onnx"]
 
 [dependencies]
 whycode-core = { path = "../core" }

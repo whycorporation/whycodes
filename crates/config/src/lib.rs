@@ -539,6 +539,15 @@ pub struct MemoryConfig {
     /// Auto-inject top-k semantic hits for the current user message.
     #[serde(default = "default_true")]
     pub auto_inject: bool,
+    /// Post-turn auto-retain (heuristic extraction). Default on.
+    #[serde(default = "default_true")]
+    pub auto_retain: bool,
+    /// Run retain every N user turns (1 = every turn).
+    #[serde(default = "default_retain_every_n")]
+    pub retain_every_n: usize,
+    /// Max facts retained per turn.
+    #[serde(default = "default_retain_max_facts")]
+    pub retain_max_facts: usize,
     /// Max lines of MEMORY.md loaded into every session (Claude parity: 200).
     #[serde(default = "default_memory_index_lines")]
     pub max_index_lines: usize,
@@ -557,6 +566,22 @@ pub struct MemoryConfig {
     /// Hashing embedder dimension (stored BLOB width).
     #[serde(default = "default_memory_embed_dim")]
     pub embed_dim: usize,
+    /// `user` (data_dir, default) or `project` (`.whycode/memory`, git-shareable).
+    #[serde(default = "default_memory_scope")]
+    pub scope: String,
+    /// `hash` (default) or `onnx` (MiniLM; needs `--features onnx`).
+    #[serde(default = "default_memory_backend")]
+    pub embed_backend: String,
+    /// Inject code-index hits when available.
+    #[serde(default = "default_true")]
+    pub code_inject: bool,
+    #[serde(default = "default_code_top_k")]
+    pub code_top_k: usize,
+    #[serde(default = "default_code_min_score")]
+    pub code_min_score: f32,
+    /// Give subagents their own memory bank (`project::agent_name`).
+    #[serde(default = "default_true")]
+    pub subagent_banks: bool,
 }
 
 impl Default for MemoryConfig {
@@ -564,12 +589,21 @@ impl Default for MemoryConfig {
         Self {
             enabled: true,
             auto_inject: true,
+            auto_retain: true,
+            retain_every_n: default_retain_every_n(),
+            retain_max_facts: default_retain_max_facts(),
             max_index_lines: default_memory_index_lines(),
             max_index_bytes: default_memory_index_bytes(),
             recall_top_k: default_memory_top_k(),
             recall_min_score: default_memory_min_score(),
             recall_token_budget: default_memory_token_budget(),
             embed_dim: default_memory_embed_dim(),
+            scope: default_memory_scope(),
+            embed_backend: default_memory_backend(),
+            code_inject: true,
+            code_top_k: default_code_top_k(),
+            code_min_score: default_code_min_score(),
+            subagent_banks: true,
         }
     }
 }
@@ -592,34 +626,23 @@ fn default_memory_token_budget() -> usize {
 fn default_memory_embed_dim() -> usize {
     256
 }
-
-impl MemoryConfig {
-    /// Convert to a plain settings bag for `whycode-memory` (no config dep there).
-    pub fn to_settings(&self) -> MemorySettingsSnapshot {
-        MemorySettingsSnapshot {
-            enabled: self.enabled,
-            auto_inject: self.auto_inject,
-            max_index_lines: self.max_index_lines,
-            max_index_bytes: self.max_index_bytes,
-            recall_top_k: self.recall_top_k,
-            recall_min_score: self.recall_min_score,
-            recall_token_budget: self.recall_token_budget,
-            embed_dim: self.embed_dim,
-        }
-    }
+fn default_retain_every_n() -> usize {
+    1
 }
-
-/// Plain copy of memory knobs for crates that must not depend on full Config.
-#[derive(Debug, Clone)]
-pub struct MemorySettingsSnapshot {
-    pub enabled: bool,
-    pub auto_inject: bool,
-    pub max_index_lines: usize,
-    pub max_index_bytes: usize,
-    pub recall_top_k: usize,
-    pub recall_min_score: f32,
-    pub recall_token_budget: usize,
-    pub embed_dim: usize,
+fn default_retain_max_facts() -> usize {
+    3
+}
+fn default_memory_scope() -> String {
+    "user".into()
+}
+fn default_memory_backend() -> String {
+    "hash".into()
+}
+fn default_code_top_k() -> usize {
+    4
+}
+fn default_code_min_score() -> f32 {
+    0.22
 }
 
 fn default_agent() -> String {
@@ -1159,6 +1182,15 @@ impl Config {
         if !other.memory.auto_inject {
             merged.memory.auto_inject = false;
         }
+        if !other.memory.auto_retain {
+            merged.memory.auto_retain = false;
+        }
+        if other.memory.retain_every_n != default_retain_every_n() {
+            merged.memory.retain_every_n = other.memory.retain_every_n;
+        }
+        if other.memory.retain_max_facts != default_retain_max_facts() {
+            merged.memory.retain_max_facts = other.memory.retain_max_facts;
+        }
         if other.memory.max_index_lines != default_memory_index_lines() {
             merged.memory.max_index_lines = other.memory.max_index_lines;
         }
@@ -1176,6 +1208,24 @@ impl Config {
         }
         if other.memory.embed_dim != default_memory_embed_dim() {
             merged.memory.embed_dim = other.memory.embed_dim;
+        }
+        if other.memory.scope != default_memory_scope() {
+            merged.memory.scope = other.memory.scope.clone();
+        }
+        if other.memory.embed_backend != default_memory_backend() {
+            merged.memory.embed_backend = other.memory.embed_backend.clone();
+        }
+        if !other.memory.code_inject {
+            merged.memory.code_inject = false;
+        }
+        if other.memory.code_top_k != default_code_top_k() {
+            merged.memory.code_top_k = other.memory.code_top_k;
+        }
+        if (other.memory.code_min_score - default_code_min_score()).abs() > f32::EPSILON {
+            merged.memory.code_min_score = other.memory.code_min_score;
+        }
+        if !other.memory.subagent_banks {
+            merged.memory.subagent_banks = false;
         }
 
         merged

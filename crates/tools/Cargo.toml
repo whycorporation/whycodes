@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+onnx = ["whycode-memory/onnx"]
+
 [dependencies]
 whycode-core = { path = "../core" }
 whycode-format = { path = "../format" }

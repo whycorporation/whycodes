@@ -3,20 +3,56 @@
 use std::path::{Path, PathBuf};
 
 use crate::project_key::project_key;
+use crate::settings::MemoryScope;
 
-/// `{data_dir}/memory/<project_key>/`
-pub fn memory_dir(data_dir: &Path, project_path: &Path) -> PathBuf {
-    data_dir.join("memory").join(project_key(project_path))
+/// Directory holding MEMORY.md for this bank.
+///
+/// - **User scope:** `{data_dir}/memory/<project_key>[/agents/<bank>]/`
+/// - **Project scope:** `{project}/.whycode/memory[/agents/<bank>]` (git-shareable)
+pub fn memory_dir(
+    data_dir: &Path,
+    project_path: &Path,
+    scope: MemoryScope,
+    agent_bank: Option<&str>,
+) -> PathBuf {
+    let base = match scope {
+        MemoryScope::User => data_dir.join("memory").join(project_key(project_path)),
+        MemoryScope::Project => project_path.join(".whycode").join("memory"),
+    };
+    match agent_bank {
+        Some(a) if !a.is_empty() => base.join("agents").join(sanitize_component(a)),
+        _ => base,
+    }
 }
 
-/// `{memory_dir}/MEMORY.md`
-pub fn memory_md(data_dir: &Path, project_path: &Path) -> PathBuf {
-    memory_dir(data_dir, project_path).join("MEMORY.md")
+pub fn memory_md(
+    data_dir: &Path,
+    project_path: &Path,
+    scope: MemoryScope,
+    agent_bank: Option<&str>,
+) -> PathBuf {
+    memory_dir(data_dir, project_path, scope, agent_bank).join("MEMORY.md")
 }
 
-/// Ensure the memory directory exists.
-pub fn ensure_memory_dir(data_dir: &Path, project_path: &Path) -> std::io::Result<PathBuf> {
-    let dir = memory_dir(data_dir, project_path);
+pub fn ensure_memory_dir(
+    data_dir: &Path,
+    project_path: &Path,
+    scope: MemoryScope,
+    agent_bank: Option<&str>,
+) -> std::io::Result<PathBuf> {
+    let dir = memory_dir(data_dir, project_path, scope, agent_bank);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
+}
+
+fn sanitize_component(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }

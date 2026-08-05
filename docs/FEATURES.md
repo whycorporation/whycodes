@@ -261,7 +261,7 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 | Boşluk | Kimde var | Not |
 |---|---|---|
 | OAuth / subscription login | jcode, OC, CC, Grok, Codex, Gemini, Pi `/login`, Cursor | [plan-oauth](plan-oauth.md) |
-| Semantic memory | whycode ✅ (hash embed + MEMORY.md), jcode★ ONNX, Grok, Claude | [plan-memory](plan-memory.md) shipped v1 |
+| Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [plan-memory](plan-memory.md) |
 | Swarm | jcode★ | dropped |
 | Browser automation | jcode, Claude, Cursor★ | Yok |
 | Desktop / IDE | OpenCode, Claude, Codex app/IDE, **Cursor★** | `web` + `acp` stub |

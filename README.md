@@ -579,7 +579,7 @@ Still-open work with acceptance criteria:
 | [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; residual stats / CI ceilings |
 | [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done |
 | [docs/plan-features-improvements.md](docs/plan-features-improvements.md) | FEATURES matrix + TUI discoverability |
-| [docs/plan-memory.md](docs/plan-memory.md) | Shipped v1 (hash embed + MEMORY.md) |
+| [docs/plan-memory.md](docs/plan-memory.md) | Shipped v1+v2 (retain, sync, code RAG, ONNX opt) |
 
 ### Archived phases
 
