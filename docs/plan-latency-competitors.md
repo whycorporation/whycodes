@@ -1,142 +1,282 @@
 # Plan — Competitive latency research & whycode roadmap
 
-**Status:** active · **Priority:** P0 (user-facing speed) · **Related:** [plan-perf-hotpath.md](plan-perf-hotpath.md), [plan-perf-context-tui.md](plan-perf-context-tui.md), [KNOWHOW.md](KNOWHOW.md)
+**Status:** active (revised) · **Priority:** P0 · **Last review:** 2026-08-05  
+**Related:** [plan-perf-hotpath.md](plan-perf-hotpath.md), [plan-perf-context-tui.md](plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
+**Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
 ## Goal
 
-Match or beat industry coding agents on **time-to-first-token (TTFT)** and
-**time-to-useful-result** without sacrificing correctness (permissions, risk
-gate, streaming UI).
+Match or beat peer coding agents on **time-to-first-token (TTFT)** and
+**time-to-useful-result**, without sacrificing correctness (permissions, shell
+risk, streaming UI).
 
-## Competitor scan (what the fast ones do)
+This revision **re-checks** the earlier plan against real OpenCode source and
+jcode architecture signals. Several backlog rows were wrong or stale.
 
-| Technique | Claude Code | OpenCode | Codex / OpenAI | Aider | Cursor | Whycode (before this plan) |
-|-----------|:-----------:|:--------:|:--------------:|:-----:|:------:|:--------------------------:|
-| Streaming tokens to UI | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ |
-| Prompt caching (API) | ✅ Anthropic `cache_control` | ⚠️ provider-dep | ✅ / automatic | — | ✅ | ❌ → **done** Anthropic |
-| Parallel tool execution | ✅ prompt + runtime | ✅ issue #24764 | ✅ parallel function calls | — | ✅ | ❌ sequential → **done** safe fan-out |
-| Stable tool schema order | ✅ | ✅ | ✅ | — | ✅ | ❌ → **done** sort-by-name |
-| Shared HTTP / keep-alive | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ → **done** OnceLock client |
-| Non-blocking niceties (title, telemetry) | ✅ | ✅ | ✅ | — | ✅ | ❌ await title → **done** async |
-| Skip work on trivial chat | — | — | — | — | fast mode | ❌ → **done** trivial title skip |
-| Repo map / tree index (offline) | ✅ | ✅ | ⚠️ | ✅ map | ✅ | ❌ |
-| Deferred / progressive tools | ✅ defer_loading | ⚠️ | — | small tool surface | modes | ❌ full ~25 tools always |
-| Speculative / prefetch reads | — | — | — | — | ⚠️ | ❌ |
-| Auto-compact mid-session | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ compact exists; not auto-before-request |
-| Fast model routing (simple vs hard) | ⚠️ | Zen models | mini paths | weak model edits | Auto | ❌ single model |
-| Semantic / exact response cache | — | — | gateways | — | — | ❌ |
-| Connection warm on startup | ✅ | ✅ | ✅ | — | ✅ | ⚠️ catalog fetch only |
+---
 
-Sources (public docs / issues): Anthropic prompt caching + tool-use caching;
-OpenAI latency optimization guide (parallelize, stream, smaller models);
-OpenCode parallel tools #24764; Aider repository map; Codex parallel tool calling.
-
-## Latency budget (where seconds go)
-
-For a typical multi-step coding turn:
+## Latency budget (unchanged physics)
 
 ```
 [DNS/TLS] ──► [TTFT: prefill system+tools+history] ──► stream text/tools
                 ▲                                    │
-                │                                    ▼
-         cache miss = slow                    tool run (serial N×)
+         cache miss = slow                    tool batch (serial Σ vs parallel max)
                                                     │
                                                     ▼
-                                              next LLM step …
+                                              next LLM step (× N agent steps)
 ```
 
-**Rules of thumb**
+1. Prefill cost ∝ **stable prefix** (system, tools) + **growing suffix** (history, tool dumps).
+2. Intra-turn multi-step loops only win on cache if breakpoints sit on a **stable** boundary (OpenCode: last tool + system + **latest user message**).
+3. Independent tools sequential ⇒ wall ≈ sum; parallel ⇒ wall ≈ max.
+4. Niceties (title, telemetry, animation) must never hold `agent_busy`.
 
-1. **Prefill cost ∝ input tokens.** System + AGENTS.md + full tool JSON + history.
-2. **Cache hit** on system+tools can cut multi-step TTFT dramatically (often 50–90% on that prefix).
-3. **N independent greps/reads sequential** ≈ N × tool latency; parallel ≈ max(latency).
-4. **Second LLM call after the turn** (title refine) must never block the UI — already fixed.
+---
 
-## Shipped in this wave
+## Deep dive: OpenCode
 
-| Item | Where | Effect |
-|------|--------|--------|
-| Shared HTTP client + nodelay/keepalive | `llm/client_identity.rs` | Multi-turn TLS reuse |
-| Async title refine + trivial skip + 8s cap | `agent/title.rs`, `tui/run.rs` | First-turn UI free |
-| Sorted tool definitions | `tools/executor.rs` | Stable cache prefix |
-| Anthropic system+last-tool `cache_control` | `llm/anthropic.rs` | Multi-step TTFT |
-| Parallel safe tool fan-out | `agent/agent.rs`, `subagent.rs` | Explore steps 2–5× |
-| OpenAI `parallel_tool_calls: true` | `llm/openai.rs` | Model emits multi-tool |
+**Sources:** shallow clone of [anomalyco/opencode](https://github.com/anomalyco/opencode) (`packages/opencode`, `packages/llm`), public perf issues (#24764 parallel tools, #20285 session loop, #14195 / #29638 subtask serial, #29819 parallel subtasks PR).
 
-## Next backlog (ordered by ROI × effort)
+### Architecture (latency-relevant)
 
-### P0 — next implementation sprint
+| Piece | What they do | Why it matters |
+|-------|----------------|----------------|
+| **Client / server** | Long-lived server + TUI/desktop/web clients | Keeps model catalog, MCP, sessions warm across reconnects |
+| **`packages/llm` + `cache-policy.ts`** | Default `cache: "auto"` injects Anthropic/Bedrock breakpoints | Production-grade prompt cache |
+| **`SessionCompaction`** | Overflow detect → dedicated compaction agent + **LLM summary** + prune tool outputs | Context stays usable; smarter than drop-only |
+| **`doom_loop` permission** | Same tool + same args N times → ask user | Stops silent infinite tool loops (wall-clock killer) |
+| **Tool surface** | Core set similar to whycode (`read`/`write`/`edit`/`grep`/`glob`/`bash`/`task`/`lsp`/…) | Same order of schema cost |
+| **Shell prompt** | Explicitly tells model to emit **multiple bash calls in one message** when independent | Encourages parallel *intent* |
+| **Instruction load** | `Effect.forEach(..., { concurrency: 8 })` for AGENTS/instruction files | Parallel I/O at session build |
+| **Subagents / task** | Task tool can spawn sessions; historically **pop one-at-a-time** (issues #14195, #29638) | Parallel *agents* still a weak spot |
 
-1. **Auto-compact before each LLM request** when `token_count() > ¾ · context_window`
-   - Hook in `run_turn_with_events` before `build_request`.
-   - Prevents death spiral of slow prefill on long sessions.
+### OpenCode prompt-cache policy (copy-worthy)
 
-2. **Core tool profile / deferred tools**
-   - Default send ~8–12 “hot” tools (`read`, `write`, `edit`, `grep`, `glob`, `list`, `bash`, `todo_*`).
-   - Meta-tool `enable_tools` or skill pack loads github/mcp/lsp on demand.
-   - Matches Anthropic `defer_loading` spirit; smaller schema → faster TTFT always.
+From `packages/llm/src/cache-policy.ts` (verbatim intent):
 
-3. **OpenAI-compat prompt cache headers** where supported
-   - OpenRouter / some gateways: `cache_control` on system message content parts.
-   - xAI / Groq: document what they honor; no-op if unsupported.
+- **Default is on** (`undefined` → `"auto"`).
+- Auto markers:
+  1. **Last tool definition** (`cache_control` on last tool)
+  2. **Last system part**
+  3. **Latest user message** (last text/content part)
+- Protocols that ignore inline hints (OpenAI implicit, Gemini) skip the pass.
+- Rationale: during one user turn the agent does many assistant/tool round-trips; caching at the **user message** boundary makes every *intra-turn* API call a cache hit on the prefix.
 
-4. **Connection warm at TUI ready**
-   - Lightweight `GET /v1/models` or HEAD already partially done via catalog — ensure it always fires before first user keystroke.
+**Whycode gap vs OpenCode (critical):** we mark system + last tool only. We do **not** yet mark the **latest user message**. That is the highest-ROI OpenCode technique we still lack for multi-step turns.
+
+There is a stub `crates/llm/src/cache.rs` (`CacheConfig { system, messages }`) that is **not wired** into request building.
+
+### OpenCode parallel tools — status nuance
+
+- Issue **#24764** frames parallel tool execution as still needed (~30–50% tool-heavy latency).
+- Shell *prompt* asks for parallel bash calls; runtime fan-out is **not** clearly universal for all tools (tool-runtime `dispatch` is one-call).
+- Subtasks often still serial (queue / `pop`).
+
+**Implication:** whycode’s **safe parallel fan-out** (read-class tools) is already competitive; do not assume OpenCode is “done” here. Keep mutators/shell serial (they do).
+
+### OpenCode session-loop perf ideas (#20285 class)
+
+Issue themes (not all merged; treat as backlog inspiration):
+
+- Message / tool **definition memoization** (rebuild less per step)
+- Doom-loop early stop
+- Summary **debounce** (don’t compact thrash)
+- Parallel plugin events
+
+### OpenCode → whycode takeaways
+
+| Take | Action |
+|------|--------|
+| Cache `auto` = tools + system + **latest user** | **P0** wire into Anthropic body builder |
+| Compaction agent + prune tool dumps | P1: optional LLM summary compact (we only drop+stub) |
+| Doom-loop gate | P0/P1: detect N identical tool calls → refuse or ask |
+| Warm server process | P2: optional `whycode serve` long-lived (exists partially) |
+| Parallel subagents | Keep phase-7 drop unless product needs swarm |
+
+---
+
+## Deep dive: jcode
+
+**Sources:** local binary `jcode` **v0.64.2** (`2026-07-30`), `~/.jcode/config.toml` (features: `memory`, `swarm`), public GitHub issues dump (`/tmp/opencode/jcode_*.json`), whycode docs ([comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [archive/phase-7](archive/phase-7-multi-agent.md)).
+
+### Architecture (latency-relevant)
+
+| Piece | Evidence | Latency angle |
+|-------|----------|----------------|
+| **Always-on shared server** | Issues: first launch spawns fixed-socket daemon; `jcode serve` / `connect` | Process + connection warm; multi-client share MCP/catalog |
+| **Swarm** | `features.swarm = true`, swarm panel keybind, many swarm bugs | Wall-clock on *wide* tasks via multi-agent, not single-turn TTFT |
+| **Memory + embeddings** | `features.memory = true`; ONNX `all-MiniLM` called out in comparison.md | Cross-session recall vs RAM cost (claimed 27.8 MB RSS with embeddings off) |
+| **agentgrep** | Dedicated in-process search; display flag `show_agentgrep_output` | Fewer shell-outs to `rg`; faster local search |
+| **Compaction family** | Issues: `hard_compact`, emergency compact loops, OpenAI encrypted compaction state | Aggressive context control under load — also a bug surface |
+| **OAuth providers** | Claude / ChatGPT / Copilot paths | Product friction; not pure latency |
+| **Curated Claude tools on OAuth** | Issue: Anthropic OAuth route forces curated Claude Code tool set | Smaller/stable tool schema → better cache + TTFT on that route |
+| **MCP `locked_tools` race** | Tools missing until async register finishes | Cold-start tool set instability |
+| **Effort / model switch hotkeys** | config keybindings | Fast human routing between heavy/light |
+
+### jcode claims we treat carefully
+
+| Claim | Treatment |
+|-------|-----------|
+| 14 ms TTFT frame / 27.8 MB RSS | **Unverified** (comparison.md). Our release floor is different metric family (CLI/`--version`, TUI first paint). |
+| Swarm “faster” | Only when work decomposes; whycode phase-7 **dropped** for same reason on ~25k LOC projects. |
+| Memory always on | Latency + correctness tradeoff; embeddings add load. |
+
+### jcode pain → whycode avoid-list
+
+From open issues (latency/correctness adjacency):
+
+- Compaction that **doesn’t shrink** or **loops emergency compact**
+- MCP tools **not registered** when first LLM call fires
+- Streaming without terminal **usage** chunk (meter/compact blind)
+- Swarm spawn mid-turn races / ignored `swarm_model`
+- Model list / context window **wrong** → wrong compact budget
+
+### jcode → whycode takeaways
+
+| Take | Action |
+|------|--------|
+| In-process search (agentgrep spirit) | Already: Rust `grep`/`glob` tools; keep **no shell dependency** |
+| Warm daemon optional | P2: document/strengthen `serve` for multi-session |
+| Curated tool set on heavy providers | **P0** core tool profile |
+| Memory | Separate plan ([plan-memory.md](plan-memory.md)); not TTFT P0 |
+| Swarm | Stay **out** of latency P0; revisit only for huge monorepos |
+| Effort / fast model switch | **P0/P1** model routing + keybind |
+
+---
+
+## Comparison matrix (revised)
+
+| Technique | Claude Code | OpenCode | jcode | Codex | Whycode now |
+|-----------|:-----------:|:--------:|:-----:|:-----:|:-----------:|
+| Streaming UI | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Prompt cache system+tools | ✅ | ✅ `auto` | ⚠️ OAuth curated | ✅/implicit | ✅ Anthropic partial |
+| Cache **latest user msg** | ✅ | ✅ **auto** | ⚠️ | ⚠️ | ❌ **gap** |
+| Parallel safe tools | ✅ | ⚠️ issue #24764 | ⚠️ | ✅ | ✅ safe fan-out |
+| Parallel subagents / swarm | ⚠️ teams | ⚠️ serial tasks | ✅★ swarm | ⚠️ | ❌ (dropped) |
+| Shared HTTP / keep-alive | ✅ | ✅ | ✅ server | ✅ | ✅ OnceLock |
+| Non-blocking title/telemetry | ✅ | ✅ | ✅ | ✅ | ✅ async title |
+| Auto context compact | ✅ | ✅ LLM+prune | ✅ hard/soft (buggy edge) | ✅ | ✅ threshold drop (+ stub summary) |
+| Doom-loop guard | ✅ | ✅ permission | ⚠️ | ⚠️ | ❌ **gap** |
+| Core / deferred tools | ✅ | ⚠️ | ⚠️ curated OAuth | — | ❌ full ~25 always |
+| Repo map / memory index | ✅ | ⚠️ | ✅ memory+embed | ⚠️ | ❌ |
+| Model routing / effort | ⚠️ | Zen models | ✅ effort keys | mini | ❌ |
+| Warm long-lived process | ⚠️ | ✅ server | ✅★ daemon | ⚠️ | ⚠️ `serve` |
+
+---
+
+## Shipped already (do not re-list as “next”)
+
+| Item | Commit era | Notes |
+|------|------------|--------|
+| Shared HTTP client | `b2ffb3c` | OnceLock, nodelay, keepalive |
+| Async title + trivial skip + 8s | `b2ffb3c` | UI not blocked |
+| Sorted tool definitions | `b2ffb3c` | Stable cache prefix |
+| Anthropic system + last-tool cache | `9d1f62c` | **Missing latest-user** |
+| Parallel safe tools | `9d1f62c` | Reads only; shell/mutators serial |
+| OpenAI-compat `parallel_tool_calls` | `9d1f62c` | Encourage multi-tool emit |
+| Auto-compact before LLM step | `9d1f62c` | Heuristic drop at `compaction_threshold` |
+
+---
+
+## Corrected backlog (ROI × effort × peer evidence)
+
+### P0 — next sprint (do these)
+
+1. **OpenCode-parity cache policy**  
+   - Wire `CacheConfig` / `apply_cache_policy` into Anthropic (and Bedrock if added).  
+   - Markers: last tool + system + **latest user message content block**.  
+   - Cap at 4 breakpoints (Anthropic limit; OpenCode tracks this).  
+   - Expose config: `cache = "auto" | "none" | { … }`.
+
+2. **Doom-loop detection** (OpenCode `doom_loop`)  
+   - If last N tool calls share name+args JSON → emit recovery user msg or permission ask; stop silent spin.
+
+3. **Core tool profile** (jcode OAuth curated + Claude defer spirit)  
+   - Default ~8–12 tools for build agent.  
+   - `skill` / `enable_tools` / agent mode expands surface.  
+   - Biggest always-on TTFT win after cache.
+
+4. **Metrics in JSONL**  
+   - `ttft_ms`, `step_ms`, `tool_batch_ms`, `cache_read_tokens`, `cache_creation_tokens`.  
+   - Success: multi-step Anthropic shows `cache_read > 0` after step 1.
 
 ### P1 — architecture speed
 
-5. **Offline repo map** (Aider-style)
-   - Background: file tree + symbol sketch (ctags/tree-sitter light) into a compact string injected once, cache-marked.
-   - Reduces “grep wander” rounds (biggest wall-clock killer).
+5. **Smarter compaction** (OpenCode-style)  
+   - Optional LLM summary agent when over budget (not only drop).  
+   - Prune old tool outputs more aggressively (OpenCode `TOOL_OUTPUT_MAX_CHARS` / prune protect skill).
 
-6. **Speculative prefetch**
-   - When user pastes a path or `@file`, start `read` before the model returns.
-   - Or: on assistant `ToolStart` stream of `read`, begin I/O before JSON args fully closed when path is known early.
+6. **Model routing** (jcode effort + OpenCode Zen)  
+   - `models.fast` / `default` / `heavy`; chit-chat → fast.
 
-7. **Model routing**
-   - Config: `models.fast` / `models.default` / `models.heavy`.
-   - Heuristic: short chit-chat + no file intent → fast; multi-file edit → default; plan mode → heavy.
-   - Huge UX win for “selam” / “ok” without dumbing down hard tasks.
+7. **Speculative / prefetch reads**  
+   - `@file` and early stream path → start `read` before model finishes args.
 
-8. **Parallel *with* permission queue**
-   - TUI multi-slot permission or batch-approve; then more tools can fan out.
+8. **Permission queue**  
+   - Multi-ask so more tools can parallelize safely.
 
-### P2 — advanced / research
+### P2 — product-scale (jcode/OpenCode parity optional)
 
-9. **Semantic response cache** for identical system+user within TTL (dev loops).
-10. **Provider failover with racing** (first token wins) for flaky gateways.
-11. **Local small model** for title / classifier / tool-arg repair.
-12. **HTTP/2 + regional endpoint** selection; measure p50/p95 TTFT in `WHYCODE_BENCH`.
+9. Long-lived daemon multi-session warm (jcode default; OpenCode server).  
+10. Cross-session memory (plan-memory) — not single-turn TTFT.  
+11. Swarm — only if monorepo workload appears (phase-7 still holds).  
+12. First-token race failover / semantic response cache.
 
-## Correctness constraints (do not “optimize” away)
+---
 
-- Shell risk gate + permission ask stay **serial**.
-- Mutating tools (`write`/`edit`/`apply_patch`/`git_commit`) stay **serial** (same-file races).
-- Never block `agent_busy` on title, analytics, or non-critical network.
-- Cache breakpoints only on **stable** prefixes (system, tools, not live user draft).
+## Correctness constraints (keep)
 
-## Measurement
+- Shell risk + permission **serial**.  
+- Mutators (`write`/`edit`/`apply_patch`/`git_commit`) **serial**.  
+- Never block `agent_busy` on title/analytics.  
+- Cache breakpoints only on **stable** prefixes (not live incomplete draft).  
+- Compaction must **not** thrash (jcode emergency-compact bug class).
 
-Add / track in JSONL or bench:
+---
 
-| Metric | Definition |
-|--------|------------|
-| `ttft_ms` | User submit → first `TextDelta` or `ToolStart` |
-| `tool_batch_ms` | Start of batch → all tools done |
-| `step_ms` | One LLM stream open→close |
-| `cache_read_tokens` | From provider `Usage` |
-| `worked_ms` | Already in TUI footer (work only) |
+## Measurement & acceptance
 
-Success criteria for P0 complete:
+| Metric | Definition | Target |
+|--------|------------|--------|
+| `ttft_ms` | submit → first TextDelta/ToolStart | Track p50/p95; no absolute claim yet |
+| `tool_batch_ms` | batch start → all tools done | 3× parallel reads ≈ max(single) |
+| `cache_read_tokens` | provider Usage | >0 on Anthropic step ≥2 of same turn |
+| `worked_ms` | footer | excludes title refine |
+| Doom-loop | N identical tools | stopped ≤ N+1 without user Esc |
 
-- Multi-step Anthropic sessions show non-zero `cache_read_input_tokens` after step 1.
-- Explore-style turns with 3+ greps/reads: tool wall time ≈ max(single), not sum.
-- Trivial greeting: no second LLM call; next prompt immediately available.
+---
 
 ## Decision log
 
 | Date | Decision |
 |------|----------|
-| 2026-08-05 | Ship HTTP pool, async title, tool sort (first latency PR). |
-| 2026-08-05 | Ship Anthropic cache_control + parallel safe tools + competitor plan. |
-| TBD | Core tool profile vs full tools default — product choice; prefer core+expand. |
+| 2026-08-05 | Ship HTTP pool, async title, tool sort. |
+| 2026-08-05 | Ship Anthropic system+tool cache, parallel safe tools, first plan draft. |
+| 2026-08-05 | **Revise plan:** deep OpenCode (`cache-policy`, doom_loop, compaction) + jcode (daemon, swarm, memory, agentgrep, compaction bugs). Mark auto-compact **shipped**. Elevate **latest-user cache** + doom-loop + core tools to P0. Swarm stays non-P0. |
+| TBD | Core tool list final membership (product). |
+| TBD | Whether LLM-summary compact is default-on or `/compact` only. |
+
+---
+
+## Appendix A — OpenCode file map (for implementers)
+
+| Path | Topic |
+|------|--------|
+| `packages/llm/src/cache-policy.ts` | Auto cache breakpoints |
+| `packages/llm/test/cache-policy.test.ts` | Expected Anthropic body shape |
+| `packages/llm/src/protocols/anthropic-messages.ts` | ≤4 breakpoints, wire format |
+| `packages/opencode/src/session/compaction.ts` | LLM compact + prune |
+| `packages/opencode/src/session/overflow.ts` | When to compact |
+| `packages/opencode/src/session/processor.ts` | `doom_loop` permission |
+| `packages/opencode/src/tool/shell/prompt.ts` | Parallel bash instruction |
+| Issues #24764, #20285, #14195, #29638 | Perf / parallel backlog |
+
+## Appendix B — jcode signals (for implementers)
+
+| Signal | Where |
+|--------|--------|
+| Binary version | `jcode version` → v0.64.2 |
+| Features | `~/.jcode/config.toml` `[features] memory/swarm` |
+| Architecture notes | [comparison.md](comparison.md), [FEATURES.md](FEATURES.md) |
+| Swarm decision | [archive/phase-7-multi-agent.md](archive/phase-7-multi-agent.md) dropped |
+| Issue themes | compaction loops, MCP lock race, daemon, swarm_model ignore |

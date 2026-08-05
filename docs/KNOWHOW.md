@@ -193,12 +193,15 @@ With `position = view_start = total - height` that never reaches the track end.
 
 | Piece | Behavior |
 |-------|----------|
-| Anthropic `cache_control` | system block + last tool ephemeral |
+| Anthropic `cache_control` | system block + last tool ephemeral (**still missing** OpenCode’s *latest user message* breakpoint) |
 | Parallel tools | fan-out read-safe tools; shell/mutators serial |
 | OpenAI-compat | `parallel_tool_calls: true` |
 | Auto-compact | before each LLM step when over `compaction_threshold` |
 
-**Roadmap:** [plan-latency-competitors.md](plan-latency-competitors.md)
+**Roadmap (revised w/ OpenCode source + jcode analysis):** [plan-latency-competitors.md](plan-latency-competitors.md)
+
+**OpenCode must-copy:** `packages/llm/src/cache-policy.ts` auto = tools + system + latest user.  
+**jcode note:** always-on daemon + swarm help *wide* work / warm process, not single-turn TTFT; avoid their compaction thrash bugs.
 
 **Prevention:** Do not reintroduce sequential-only tool loops or string-only Anthropic `system` without cache markers.
 
