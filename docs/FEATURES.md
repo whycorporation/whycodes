@@ -2,17 +2,17 @@
 
 Terminal coding agent’ların özellik matrisi: **whycode**, **Grok Build**, **OpenCode**, **jcode**, **Claude Code**.
 
-Son güncelleme: **2026-08-05** (envanter: tool adları + core profile + config). Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
+Son güncelleme: **2026-08-05** (ürün özeti + envanter doğrulaması). Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
 
 ## Ürün özeti
 
 | | **whycode** | **Grok Build** | **OpenCode** | **jcode** | **Claude Code** |
 |---|---|---|---|---|
-| **Ne** | Rust terminal coding agent | SpaceXAI / xAI coding agent + TUI | Açık kaynak agent (TUI + desktop + IDE) | RAM-efficient Rust harness | Anthropic resmi coding agent |
-| **Dil** | Rust | Rust | TypeScript / Effect (TUI + desktop + server) | Rust | Native binary (eski: Node) |
-| **Lisans** | MIT | Apache-2.0 (açık kaynak) | Açık kaynak (MIT benzeri) | MIT | Proprietary (kapalı kaynak) |
-| **Varsayılan model** | Herhangi (API key) | Grok 4.5 + özel modeller | 75+ provider | Herhangi + OAuth | Claude (Opus/Sonnet) + 3. parti |
-| **Konum** | Hafif, shell-safe, latency stack, Windows CI | Zengin TUI, skills/plugins/hooks, ACP | Geniş ekosistem, multi-surface | Performans + swarm + bellek | Ürün yüzeyi (web/desktop/IDE/CI) |
+| **Ne** | Terminal coding agent (TUI + headless CLI) | xAI coding agent (TUI, headless, ACP) | Açık kaynak coding agent (TUI + desktop + IDE) | Coding-agent harness (swarm + memory) | Anthropic resmi coding agent |
+| **Dil** | Rust | Rust | TypeScript (Effect / Bun monorepo) | Rust | Proprietary native binary (önceden Node paketi) |
+| **Lisans** | MIT | Apache-2.0 | MIT | MIT | Proprietary |
+| **Model / auth** | API key; çoklu provider (varsayılan yok) | Grok 4.5 + custom endpoint; xAI login | 75+ provider (Models.dev); OAuth (Claude / ChatGPT / Copilot) | API key + OAuth (Claude / ChatGPT / Copilot / Gemini / …) | Claude abonelik / API; 3. parti sınırlı |
+| **Konum** | Shell safety, latency stack, mouse TUI, Windows CI | Zengin TUI, skills/plugins/hooks, ACP | Geniş ekosistem, multi-surface | En düşük RAM / boot, swarm, semantic memory | Full product surface (web / desktop / IDE / CI) |
 
 ### Sembol açıklaması
 
