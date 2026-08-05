@@ -11,11 +11,13 @@ use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
+use whycode_format::diff::looks_like_diff;
+use whycode_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     if app.messages.is_empty() {
@@ -398,7 +400,14 @@ fn render_message(
                             emit_content(&mut lines);
                             content_emitted = true;
                         }
-                        lines.extend(tool_block(name, input, None, false, palette));
+                        lines.extend(tool_block(
+                            name,
+                            input,
+                            None,
+                            false,
+                            palette,
+                            msg.results_expanded,
+                        ));
                     }
                     ChatBlock::ToolResult {
                         content, is_error, ..
@@ -407,7 +416,13 @@ fn render_message(
                             emit_content(&mut lines);
                             content_emitted = true;
                         }
-                        lines.extend(tool_result(content, *is_error, palette));
+                        lines.extend(tool_result(
+                            content,
+                            *is_error,
+                            palette,
+                            msg.results_expanded,
+                            ToolOutHint::Auto,
+                        ));
                     }
                 }
             }
@@ -421,7 +436,14 @@ fn render_message(
                     .any(|b| matches!(b, ChatBlock::ToolUse { id, .. } if id == &tc.id));
                 if dup {
                     if let Some(ref r) = tc.result {
-                        lines.extend(tool_result(r, tc.is_error, palette));
+                        let hint = tool_out_hint(&tc.name, &tc.arguments, r);
+                        lines.extend(tool_result(
+                            r,
+                            tc.is_error,
+                            palette,
+                            msg.results_expanded,
+                            hint,
+                        ));
                     }
                 } else {
                     lines.extend(tool_block(
@@ -430,6 +452,7 @@ fn render_message(
                         tc.result.as_deref(),
                         tc.is_error,
                         palette,
+                        msg.results_expanded,
                     ));
                 }
             }
@@ -458,7 +481,13 @@ fn render_message(
             lines.extend(system_callout(&msg.content, palette, width));
         }
         ChatRole::Tool => {
-            lines.extend(tool_result(&msg.content, false, palette));
+            lines.extend(tool_result(
+                &msg.content,
+                false,
+                palette,
+                msg.results_expanded,
+                ToolOutHint::Auto,
+            ));
         }
     }
 
@@ -869,12 +898,42 @@ fn system_callout(content: &str, palette: &ThemePalette, _width: u16) -> Vec<Lin
     lines
 }
 
+/// How to paint a tool result body (Grok-like: diffs + syntax, not flat dim).
+#[derive(Debug, Clone)]
+enum ToolOutHint {
+    /// Inspect content (and fall back to plain).
+    Auto,
+    /// Unified / edit-preview diff: green `+`, red `-`, cyan hunks.
+    Diff,
+    /// Syntax-highlight body with this language token (e.g. `"rust"`).
+    Code(Option<String>),
+}
+
+fn tool_out_hint(name: &str, input: &serde_json::Value, result: &str) -> ToolOutHint {
+    match name {
+        "git_diff" | "apply_patch" => ToolOutHint::Diff,
+        "edit" if looks_like_diff(result) => ToolOutHint::Diff,
+        "read" => {
+            let path = input
+                .get("path")
+                .or_else(|| input.get("file_path"))
+                .or_else(|| input.get("file"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            ToolOutHint::Code(detect_language(path).map(str::to_string))
+        }
+        _ if looks_like_diff(result) => ToolOutHint::Diff,
+        _ => ToolOutHint::Auto,
+    }
+}
+
 fn tool_block(
     name: &str,
     input: &serde_json::Value,
     result: Option<&str>,
     is_error: bool,
     palette: &ThemePalette,
+    expanded: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let color = if is_error {
@@ -894,33 +953,257 @@ fn tool_block(
         Span::styled(summary, Style::default().fg(palette.dim)),
     ]));
     if let Some(r) = result {
-        lines.extend(tool_result(r, is_error, palette));
+        let hint = tool_out_hint(name, input, r);
+        lines.extend(tool_result(r, is_error, palette, expanded, hint));
     }
     lines
 }
 
-fn tool_result(content: &str, is_error: bool, palette: &ThemePalette) -> Vec<Line<'static>> {
+/// Collapsed previews stay short; expanded (toggle with `l`) shows a long tail.
+const TOOL_RESULT_PREVIEW: usize = 16;
+const TOOL_RESULT_EXPANDED: usize = 120;
+const TOOL_RESULT_DIFF_PREVIEW: usize = 32;
+
+fn tool_result(
+    content: &str,
+    is_error: bool,
+    palette: &ThemePalette,
+    expanded: bool,
+    hint: ToolOutHint,
+) -> Vec<Line<'static>> {
+    if content.is_empty() {
+        return Vec::new();
+    }
+
+    let mode = match &hint {
+        ToolOutHint::Diff => ToolOutHint::Diff,
+        ToolOutHint::Code(lang) => ToolOutHint::Code(lang.clone()),
+        ToolOutHint::Auto => {
+            if looks_like_diff(content) {
+                ToolOutHint::Diff
+            } else if let Some(path) = content
+                .lines()
+                .next()
+                .and_then(|l| l.strip_prefix("# "))
+                .filter(|l| !l.is_empty())
+            {
+                // `read` tool header: `# path/to/file`
+                ToolOutHint::Code(detect_language(path).map(str::to_string))
+            } else {
+                ToolOutHint::Auto
+            }
+        }
+    };
+
+    match mode {
+        ToolOutHint::Diff => tool_result_diff(content, is_error, palette, expanded),
+        ToolOutHint::Code(lang) => tool_result_code(content, is_error, palette, expanded, lang),
+        ToolOutHint::Auto => tool_result_plain(content, is_error, palette, expanded),
+    }
+}
+
+fn tool_result_line_budget(expanded: bool, is_diff: bool) -> usize {
+    if expanded {
+        TOOL_RESULT_EXPANDED
+    } else if is_diff {
+        TOOL_RESULT_DIFF_PREVIEW
+    } else {
+        TOOL_RESULT_PREVIEW
+    }
+}
+
+fn tool_result_plain(
+    content: &str,
+    is_error: bool,
+    palette: &ThemePalette,
+    expanded: bool,
+) -> Vec<Line<'static>> {
     let color = if is_error { palette.error } else { palette.dim };
-    let mut lines = Vec::new();
+    let budget = tool_result_line_budget(expanded, false);
     let total = content.lines().count();
-    for line in content.lines().take(8) {
+    let mut lines = Vec::new();
+    for line in content.lines().take(budget) {
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
             Span::styled(line.to_string(), Style::default().fg(color)),
         ]));
     }
-    if total > 8 {
+    if total > budget {
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
             Span::styled(
-                format!("… {} more lines", total - 8),
+                format!("… {} more lines  ·  l expand", total - budget),
                 Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
             ),
         ]));
     }
     lines
+}
+
+fn tool_result_diff(
+    content: &str,
+    is_error: bool,
+    palette: &ThemePalette,
+    expanded: bool,
+) -> Vec<Line<'static>> {
+    let budget = tool_result_line_budget(expanded, true);
+    let total = content.lines().count();
+    let mut lines = Vec::new();
+    for line in content.lines().take(budget) {
+        let (prefix_color, body_color) = if is_error {
+            (palette.error, palette.error)
+        } else if line.starts_with("+++") || line.starts_with("---") {
+            (palette.dim, palette.fg)
+        } else if line.starts_with("@@") || line.starts_with("diff --git") {
+            (palette.diff_hunk, palette.diff_hunk)
+        } else if line.starts_with('+') {
+            (palette.diff_add, palette.diff_add)
+        } else if line.starts_with('-') {
+            (palette.diff_remove, palette.diff_remove)
+        } else if line.starts_with("Edited ") || line.starts_with('…') {
+            (palette.dim, palette.fg)
+        } else {
+            (palette.border, palette.dim)
+        };
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), Style::default().fg(prefix_color)),
+            Span::styled(line.to_string(), Style::default().fg(body_color)),
+        ]));
+    }
+    if total > budget {
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
+            Span::styled(
+                format!("… {} more lines  ·  l expand", total - budget),
+                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+            ),
+        ]));
+    }
+    lines
+}
+
+/// Syntax-highlight tool output (read/write previews). Line-numbered `read`
+/// rows keep the gutter dim and highlight only the code after `|`.
+fn tool_result_code(
+    content: &str,
+    is_error: bool,
+    palette: &ThemePalette,
+    expanded: bool,
+    language: Option<String>,
+) -> Vec<Line<'static>> {
+    if is_error {
+        return tool_result_plain(content, true, palette, expanded);
+    }
+
+    let budget = tool_result_line_budget(expanded, false);
+    let all: Vec<&str> = content.lines().collect();
+    let total = all.len();
+    let slice = &all[..total.min(budget)];
+
+    // Split read-style `   12|code` lines so we can highlight only the body.
+    let mut code_body = String::new();
+    let mut meta: Vec<(bool, String, String)> = Vec::with_capacity(slice.len());
+    // (is_code_row, gutter_or_full, code_part)
+    for line in slice {
+        if let Some((gutter, code)) = split_read_line(line) {
+            meta.push((true, gutter, code.to_string()));
+            code_body.push_str(code);
+            code_body.push('\n');
+        } else {
+            meta.push((false, (*line).to_string(), String::new()));
+        }
+    }
+
+    let highlighted = if language.is_some() && meta.iter().any(|(is_code, _, _)| *is_code) {
+        Some(highlight_code_spans(
+            code_body.trim_end_matches('\n'),
+            language.as_deref(),
+        ))
+    } else if language.is_some() && !meta.iter().any(|(is_code, _, _)| *is_code) {
+        // Whole body is source (e.g. write preview / bare dump).
+        Some(highlight_code_spans(
+            &slice.join("\n"),
+            language.as_deref(),
+        ))
+    } else {
+        None
+    };
+
+    let mut lines = Vec::new();
+    let mut code_idx = 0usize;
+    match highlighted {
+        Some(hl) if meta.iter().any(|(is_code, _, _)| *is_code) => {
+            for (is_code, left, _) in &meta {
+                if *is_code {
+                    let mut spans = vec![
+                        meta_gutter(),
+                        Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
+                        Span::styled(left.clone(), Style::default().fg(palette.dim)),
+                    ];
+                    if let Some(row) = hl.get(code_idx) {
+                        for ((r, g, b), text) in row.iter() {
+                            spans.push(Span::styled(
+                                text.trim_end_matches('\n').to_string(),
+                                Style::default().fg(Color::Rgb(*r, *g, *b)),
+                            ));
+                        }
+                    }
+                    code_idx += 1;
+                    lines.push(Line::from(spans));
+                } else {
+                    lines.push(Line::from(vec![
+                        meta_gutter(),
+                        Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
+                        Span::styled(left.clone(), Style::default().fg(palette.dim)),
+                    ]));
+                }
+            }
+        }
+        Some(hl) => {
+            for row in hl.iter().take(budget) {
+                let mut spans = vec![
+                    meta_gutter(),
+                    Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
+                ];
+                for ((r, g, b), text) in row.iter() {
+                    spans.push(Span::styled(
+                        text.trim_end_matches('\n').to_string(),
+                        Style::default().fg(Color::Rgb(*r, *g, *b)),
+                    ));
+                }
+                lines.push(Line::from(spans));
+            }
+        }
+        None => return tool_result_plain(content, is_error, palette, expanded),
+    }
+
+    if total > budget {
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), Style::default().fg(palette.border)),
+            Span::styled(
+                format!("… {} more lines  ·  l expand", total - budget),
+                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+            ),
+        ]));
+    }
+    lines
+}
+
+/// `read` tool lines look like `   12|contents` (6-wide line no + `|`).
+fn split_read_line(line: &str) -> Option<(String, &str)> {
+    let pipe = line.find('|')?;
+    let (left, right) = line.split_at(pipe);
+    // Gutter is digits/spaces only.
+    if left.is_empty() || !left.chars().all(|c| c.is_ascii_digit() || c == ' ') {
+        return None;
+    }
+    // Keep `|` on the gutter side so code starts clean.
+    Some((format!("{left}|"), right.trim_start_matches('|')))
 }
 
 fn tool_summary(input: &serde_json::Value) -> String {

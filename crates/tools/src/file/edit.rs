@@ -1,8 +1,10 @@
 use async_trait::async_trait;
 use serde_json::json;
 
+use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
+use whycode_format::diff::format_edit_preview;
 
 pub struct EditTool;
 
@@ -68,15 +70,29 @@ impl Tool for EditTool {
                 .to_string()
         };
 
+        let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
+
         match std::fs::read_to_string(&full_path) {
             Ok(original) => {
                 if replace_all {
-                    let modified = original.replace(old_string, new_string);
                     let count = original.matches(old_string).count();
+                    if count == 0 {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: "Could not find the specified text in the file.".to_string(),
+                            is_error: true,
+                        };
+                    }
+                    let modified = original.replace(old_string, new_string);
                     match std::fs::write(&full_path, &modified) {
                         Ok(_) => ToolResult {
                             tool_call_id: String::new(),
-                            content: format!("Replaced {} occurrences in '{}'", count, full_path),
+                            content: format_edit_preview(
+                                &shown,
+                                old_string,
+                                new_string,
+                                count,
+                            ),
                             is_error: false,
                         },
                         Err(e) => ToolResult {
@@ -107,7 +123,12 @@ impl Tool for EditTool {
                         match std::fs::write(&full_path, &modified) {
                             Ok(_) => ToolResult {
                                 tool_call_id: String::new(),
-                                content: "Successfully applied edit.".to_string(),
+                                content: format_edit_preview(
+                                    &shown,
+                                    old_string,
+                                    new_string,
+                                    1,
+                                ),
                                 is_error: false,
                             },
                             Err(e) => ToolResult {

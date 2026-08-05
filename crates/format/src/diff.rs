@@ -1,3 +1,96 @@
+/// Max body lines (each of remove/add) shown in a compact edit preview.
+const PREVIEW_BODY_LINES: usize = 40;
+
+/// Plain unified-style preview of a string replacement (no ANSI).
+///
+/// TUI paints `+`/`-`/`@@` with theme colours; this only shapes the text so
+/// both CLI and TUI can share the same shape.
+///
+/// ```text
+/// Edited path/to/file.rs
+///
+/// - old line
+/// + new line
+/// ```
+pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usize) -> String {
+    let mut out = String::new();
+    if replace_count > 1 {
+        out.push_str(&format!(
+            "Edited {path}  ·  {replace_count} replacements\n\n"
+        ));
+    } else {
+        out.push_str(&format!("Edited {path}\n\n"));
+    }
+
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+
+    // Single-line swap: one-liners read better without a full LCS dump.
+    if old_lines.len() <= 1 && new_lines.len() <= 1 {
+        if old.is_empty() && !new.is_empty() {
+            for line in new_lines.iter().take(PREVIEW_BODY_LINES) {
+                out.push_str(&format!("+{line}\n"));
+            }
+        } else if new.is_empty() && !old.is_empty() {
+            for line in old_lines.iter().take(PREVIEW_BODY_LINES) {
+                out.push_str(&format!("-{line}\n"));
+            }
+        } else {
+            out.push_str(&format!("-{}\n", old_lines.first().copied().unwrap_or("")));
+            out.push_str(&format!("+{}\n", new_lines.first().copied().unwrap_or("")));
+        }
+        return out;
+    }
+
+    // Multi-line: emit removals then additions (compact, Grok-like).
+    let old_trunc = old_lines.len() > PREVIEW_BODY_LINES;
+    let new_trunc = new_lines.len() > PREVIEW_BODY_LINES;
+    for line in old_lines.iter().take(PREVIEW_BODY_LINES) {
+        out.push_str(&format!("-{line}\n"));
+    }
+    if old_trunc {
+        out.push_str(&format!(
+            "… {} more removed lines\n",
+            old_lines.len() - PREVIEW_BODY_LINES
+        ));
+    }
+    for line in new_lines.iter().take(PREVIEW_BODY_LINES) {
+        out.push_str(&format!("+{line}\n"));
+    }
+    if new_trunc {
+        out.push_str(&format!(
+            "… {} more added lines\n",
+            new_lines.len() - PREVIEW_BODY_LINES
+        ));
+    }
+    out
+}
+
+/// True when `text` looks like a unified / edit preview diff the TUI should
+/// colour as add/remove rather than plain dim text.
+pub fn looks_like_diff(text: &str) -> bool {
+    let mut plus = 0usize;
+    let mut minus = 0usize;
+    for line in text.lines().take(60) {
+        if line.starts_with("diff --git")
+            || line.starts_with("@@ ")
+            || line.starts_with("+++ ")
+            || line.starts_with("--- ")
+        {
+            return true;
+        }
+        // Edit preview: bare `+` / `-` prefixes (not list bullets like `- item`
+        // without a following token that looks like code — still allow both).
+        if line.starts_with('+') && !line.starts_with("+++") {
+            plus += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            minus += 1;
+        }
+    }
+    // Need both sides so a plain markdown list doesn't light up green/red.
+    plus > 0 && minus > 0
+}
+
 /// Render a simple line-by-line diff with ANSI colors:
 /// - `+` lines in green
 /// - `-` lines in red
@@ -123,5 +216,21 @@ mod tests {
         assert!(result.contains("\x1b[36m@@ -1,3 +1,4 @@\x1b[0m"));
         assert!(result.contains("\x1b[31m-old\x1b[0m"));
         assert!(result.contains("\x1b[32m+new\x1b[0m"));
+    }
+
+    #[test]
+    fn edit_preview_shapes_single_line_swap() {
+        let p = format_edit_preview("src/a.rs", "old", "new", 1);
+        assert!(p.contains("Edited src/a.rs"));
+        assert!(p.contains("-old"));
+        assert!(p.contains("+new"));
+        assert!(looks_like_diff(&p));
+    }
+
+    #[test]
+    fn looks_like_diff_rejects_plain_lists() {
+        assert!(!looks_like_diff("- only removals\n- more"));
+        assert!(!looks_like_diff("hello\nworld"));
+        assert!(looks_like_diff("diff --git a/x b/x\n"));
     }
 }

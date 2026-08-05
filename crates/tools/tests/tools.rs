@@ -191,8 +191,10 @@ async fn test_edit_tool_single_occurrence() {
 
     assert!(!result.is_error, "edit should succeed: {}", result.content);
     assert!(
-        result.content.contains("Successfully applied edit"),
-        "should report success: {}",
+        result.content.contains("Edited editme.txt")
+            && result.content.contains("-OLD_TO_REPLACE")
+            && result.content.contains("+NEW_VALUE"),
+        "should show edit preview: {}",
         result.content
     );
 
@@ -226,8 +228,10 @@ async fn test_edit_tool_replace_all() {
         result.content
     );
     assert!(
-        result.content.contains("Replaced 3 occurrences"),
-        "should report 3 replacements: {}",
+        result.content.contains("3 replacements")
+            && result.content.contains("-X")
+            && result.content.contains("+Y"),
+        "should show multi-replace preview: {}",
         result.content
     );
 
