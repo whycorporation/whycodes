@@ -869,6 +869,10 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.model_selection.selected = idx;
                         confirm_dialog(app, &active);
                     }
+                    DialogKind::Theme => {
+                        app.theme_selected = idx;
+                        confirm_dialog(app, &active);
+                    }
                     DialogKind::Provider
                         if app.provider_dialog.mode == crate::app::ProviderDialogMode::Select =>
                     {
@@ -964,6 +968,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
             let len = app.session_list.sessions.len();
             if len > 0 {
                 app.session_list.selected = idx.min(len - 1);
+            }
+        }
+        DialogKind::Theme => {
+            let len = crate::theme::ThemeName::ALL.len();
+            if len > 0 {
+                app.theme_selected = idx.min(len - 1);
             }
         }
         _ => {}
@@ -1094,6 +1104,18 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_session_id = Some(entry.id.clone());
             }
         }
+        DialogKind::Theme => {
+            use crate::theme::ThemeName;
+            if let Some(t) = ThemeName::ALL.get(app.theme_selected).copied() {
+                app.theme = t;
+                app.config.theme = t;
+                // Drop file-override so the built-in palette is visible immediately.
+                app.config.theme_override = None;
+                app.status_message = format!("Theme → {}", t.name());
+                app.toasts
+                    .push(crate::toast::ToastKind::Success, format!("Theme · {}", t.name()));
+            }
+        }
         _ => {}
     }
     dismiss_dialog(app);
@@ -1204,6 +1226,13 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
             app.session_list.selected = move_selection(
                 app.session_list.selected,
                 app.session_list.sessions.len(),
+                delta,
+            );
+        }
+        DialogKind::Theme => {
+            app.theme_selected = move_selection(
+                app.theme_selected,
+                crate::theme::ThemeName::ALL.len(),
                 delta,
             );
         }

@@ -11,6 +11,10 @@ tool use — either in a full-screen TUI or as a one-shot CLI invocation.
   Mistral, Together, and any OpenAI-compatible endpoint.
 - Reads the project's `AGENTS.md`, connects to MCP servers, and drives language
   servers over LSP.
+- Latency-focused agent loop: core tool profile, Anthropic prompt cache,
+  parallel safe tools, trivial-chat fast model route, doom-loop guard — see
+  [docs/FEATURES.md](docs/FEATURES.md) §10 and
+  [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md).
 
 ## Installation
 
@@ -571,6 +575,8 @@ Still-open work with acceptance criteria:
 | [docs/plan-distribution.md](docs/plan-distribution.md) | Implemented; first `v*` release exercises remaining criteria |
 | [docs/plan-oauth.md](docs/plan-oauth.md) | Blocked on owner (client id + terms) |
 | [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; residual stats / CI ceilings |
+| [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done |
+| [docs/plan-features-improvements.md](docs/plan-features-improvements.md) | FEATURES matrix + TUI discoverability |
 | [docs/plan-memory.md](docs/plan-memory.md) | Not started |
 
 ### Archived phases

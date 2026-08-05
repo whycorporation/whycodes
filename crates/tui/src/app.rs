@@ -617,6 +617,8 @@ pub struct TuiApp {
 
     // ── theme ──
     pub theme: ThemeName,
+    /// Cursor in the Theme picker dialog (`ThemeName::ALL` index).
+    pub theme_selected: usize,
 
     // ── config ──
     pub config: crate::config::TuiAppConfig,
@@ -792,6 +794,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/connect",
         hint: "Provider / API key help",
+    },
+    SlashCommand {
+        name: "/theme",
+        hint: "[name] Switch theme (picker if no name)",
+    },
+    SlashCommand {
+        name: "/themes",
+        hint: "Open the theme picker",
     },
     SlashCommand {
         name: "/unshare",
@@ -977,6 +987,10 @@ impl TuiApp {
             sidebar: SidebarState::default(),
             command: CommandState::default(),
             theme: config.theme,
+            theme_selected: ThemeName::ALL
+                .iter()
+                .position(|t| *t == config.theme)
+                .unwrap_or(0),
             config,
             pending_prompt: None,
             pending_model: None,

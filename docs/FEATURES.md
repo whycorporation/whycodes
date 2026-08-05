@@ -317,7 +317,7 @@ whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TT
 
 ### Slash commands (TUI)
 
-`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info` — custom: `.whycode/commands/*.md`. Plain ek: `/thinking`, `/themes` (REPL).
+`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info`, `/theme`/`/themes` — custom: `.whycode/commands/*.md`. Plain ek: `/thinking` (REPL).
 
 ### Built-in tools
 

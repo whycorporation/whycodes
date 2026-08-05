@@ -1901,6 +1901,35 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 session_details(ctx.session, &ctx.agent.info.name, ctx.app, ctx.config),
             );
         }
+        "/theme" | "/themes" => {
+            use crate::theme::ThemeName;
+            if rest.is_empty() {
+                // Open picker; select current theme.
+                ctx.app.theme_selected = ThemeName::ALL
+                    .iter()
+                    .position(|t| *t == ctx.app.theme)
+                    .unwrap_or(0);
+                crate::input::open_dialog(ctx.app, DialogKind::Theme);
+            } else if let Ok(t) = rest.parse::<ThemeName>() {
+                ctx.app.theme = t;
+                ctx.app.config.theme = t;
+                ctx.app.config.theme_override = None;
+                ctx.app.theme_selected = ThemeName::ALL
+                    .iter()
+                    .position(|x| *x == t)
+                    .unwrap_or(0);
+                ctx.app.status_message = format!("Theme → {}", t.name());
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!("Theme · {}", t.name()),
+                );
+            } else {
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    format!("Unknown theme '{rest}' — try /theme"),
+                );
+            }
+        }
         "/init" => {
             ctx.app.add_message(
                 ChatRole::User,

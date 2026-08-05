@@ -80,6 +80,34 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.total,
             );
         }
+        crate::app::DialogKind::Theme => {
+            use crate::theme::ThemeName;
+            let items: Vec<SelectItem> = ThemeName::ALL
+                .iter()
+                .map(|t| {
+                    let mark = if *t == app.theme { " · current" } else { "" };
+                    SelectItem::with_detail(t.name().to_string(), format!("built-in{mark}"))
+                })
+                .collect();
+            let selected = app.theme_selected.min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                " Themes  ·  Enter to apply ",
+                &items,
+                selected,
+                "No themes.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+            );
+        }
         _ => {}
     }
 }
