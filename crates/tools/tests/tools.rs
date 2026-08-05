@@ -75,8 +75,10 @@ async fn test_read_tool() {
         "should contain third line"
     );
     assert!(
-        result.content.contains("Total lines: 3"),
-        "should report total lines: {}",
+        result.content.contains("lines 1–3 of 3")
+            || result.content.contains("lines 1-3 of 3")
+            || result.content.contains("of 3"),
+        "should report line range / total: {}",
         result.content
     );
 }

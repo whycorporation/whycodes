@@ -1,11 +1,12 @@
 use async_trait::async_trait;
 use serde_json::json;
-use std::process::Command;
 
+use super::paths::{display_path, human_size, list_dir_entries, resolve_path};
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 
 /// Tool that lists a directory and truncates the output to fit context.
+/// In-process (no shell `ls`) — consistent with `list`.
 pub struct TruncationDirTool;
 
 impl Default for TruncationDirTool {
@@ -48,69 +49,55 @@ impl Tool for TruncationDirTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path = args["path"]
-            .as_str()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| ctx.working_dir.clone());
+        let path_arg = args["path"].as_str().unwrap_or(".");
+        let path = resolve_path(&ctx.working_dir, path_arg);
+        let shown = display_path(&path, &ctx.working_dir);
         let max_entries = args["max_entries"].as_u64().unwrap_or(50) as usize;
 
-        let output = match Command::new("ls").arg("-la").arg(&path).output() {
-            Ok(o) => o,
+        if !path.exists() {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: format!("Path does not exist: {}", shown),
+                is_error: true,
+            };
+        }
+        if !path.is_dir() {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: format!("Not a directory: {}", shown),
+                is_error: true,
+            };
+        }
+
+        let entries = match list_dir_entries(&path, &[]) {
+            Ok(e) => e,
             Err(e) => {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Error running ls: {e}"),
+                    content: e,
                     is_error: true,
                 };
             }
         };
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: format!("ls failed: {stderr}"),
-                is_error: true,
-            };
+        let total = entries.len();
+        let shown_entries = entries.into_iter().take(max_entries);
+
+        let mut result = format!("Contents of {} ({} entries):\n", shown, total);
+        for e in shown_entries {
+            if e.is_dir {
+                result.push_str(&format!("  {}/\n", e.name));
+            } else {
+                let sz = e.size.map(human_size).unwrap_or_else(|| "?".into());
+                result.push_str(&format!("  {}  ({})\n", e.name, sz));
+            }
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = stdout.lines().collect();
-        let total = lines.len();
-
-        // The first line is typically the "total N" line; keep it.
-        // Then take up to max_entries more lines.
-        let header_idx = if lines.first().is_some_and(|l| l.starts_with("total ")) {
-            1
-        } else {
-            0
-        };
-
-        let content_lines: Vec<&str> = lines[header_idx..]
-            .iter()
-            .take(max_entries)
-            .copied()
-            .collect();
-
-        let mut result = String::new();
-
-        // Include the "total" line if present
-        if header_idx > 0 {
-            result.push_str(lines[0]);
-            result.push('\n');
-        }
-
-        for line in &content_lines {
-            result.push_str(line);
-            result.push('\n');
-        }
-
-        let shown = content_lines.len();
-        if shown < total.saturating_sub(header_idx) {
+        if total > max_entries {
             result.push_str(&format!(
                 "\n[... {} entries truncated from {} total]",
-                total.saturating_sub(header_idx + shown),
-                total.saturating_sub(header_idx)
+                total - max_entries,
+                total
             ));
         }
 

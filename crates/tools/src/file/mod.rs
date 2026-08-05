@@ -4,6 +4,7 @@ pub mod external_directory;
 pub mod glob;
 pub mod grep;
 pub mod list;
+pub mod paths;
 pub mod read;
 pub mod truncate_tool;
 pub mod truncation_dir;

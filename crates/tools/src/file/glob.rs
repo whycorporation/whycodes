@@ -1,8 +1,13 @@
 use async_trait::async_trait;
 use serde_json::json;
+use std::path::Path;
 
+use super::paths::{display_path, resolve_path, walk_files};
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
+
+const DEFAULT_MAX: usize = 200;
+const HARD_MAX: usize = 2000;
 
 pub struct GlobTool;
 
@@ -25,7 +30,8 @@ impl Tool for GlobTool {
     }
 
     fn description(&self) -> &str {
-        "Find files matching a glob pattern. Fast, file-based search."
+        "Find files by glob pattern under the project (e.g. `**/*.rs`, `crates/**/mod.rs`). \
+         Skips heavy dirs (target, node_modules, .git, …) for speed. Prefer over shell find."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -34,11 +40,15 @@ impl Tool for GlobTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Glob pattern to match (e.g., '*.rs', 'src/**/*.ts')"
+                    "description": "Glob pattern (e.g. '*.rs', 'src/**/*.ts', '**/Cargo.toml')"
                 },
                 "path": {
                     "type": "string",
-                    "description": "Root directory for the search (default: current directory)"
+                    "description": "Root directory for the search (default: project root)"
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum paths to return (default: 200)"
                 }
             },
             "required": ["pattern"]
@@ -46,59 +56,153 @@ impl Tool for GlobTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let pattern_str = args["pattern"].as_str().unwrap_or("");
-        let root = args["path"]
-            .as_str()
-            .unwrap_or(&ctx.working_dir)
-            .to_string();
+        let pattern_str = args["pattern"].as_str().unwrap_or("").trim();
+        if pattern_str.is_empty() {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: "Missing required parameter `pattern`.".into(),
+                is_error: true,
+            };
+        }
 
-        let full_pattern = format!("{}/{}", root, pattern_str);
+        let root_arg = args["path"].as_str().unwrap_or(&ctx.working_dir);
+        let root = resolve_path(&ctx.working_dir, root_arg);
+        let root_shown = display_path(&root, &ctx.working_dir);
 
-        match glob::glob(&full_pattern) {
-            Ok(paths) => {
-                let mut results: Vec<String> = Vec::new();
-                for entry in paths {
-                    match entry {
-                        Ok(path) => {
-                            if let Ok(relative) = path.strip_prefix(&root) {
-                                results.push(relative.to_string_lossy().to_string());
-                            } else {
-                                results.push(path.to_string_lossy().to_string());
-                            }
-                        }
-                        Err(e) => {
-                            results.push(format!("Error: {}", e));
-                        }
+        if !root.exists() {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: format!("Path not found: {}", root_shown),
+                is_error: true,
+            };
+        }
+
+        let max_results = args["max_results"]
+            .as_u64()
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_MAX)
+            .clamp(1, HARD_MAX);
+
+        // Normalize pattern: if it has no `**`/`/` and is a simple suffix like `*.rs`,
+        // match against file name; otherwise match relative path.
+        let pattern = match glob::Pattern::new(pattern_str) {
+            Ok(p) => p,
+            Err(e) => {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Invalid glob pattern: {}", e),
+                    is_error: true,
+                };
+            }
+        };
+
+        // Also try matching against basename for patterns like `*.rs`
+        let match_name_only = !pattern_str.contains('/') && !pattern_str.contains("**");
+
+        let mut results: Vec<String> = Vec::new();
+        let mut total = 0usize;
+        let mut hit_cap = false;
+
+        walk_files(&root, &mut |path, rel| {
+            let name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
+            let ok = if match_name_only {
+                pattern.matches(&name) || pattern.matches(rel)
+            } else {
+                pattern.matches(rel)
+                    // Also allow patterns that include leading ** implicitly
+                    || pattern.matches(&format!("./{rel}"))
+            };
+
+            if ok {
+                total += 1;
+                if results.len() < max_results {
+                    results.push(rel.to_string());
+                } else {
+                    hit_cap = true;
+                    // Keep counting a bit for accurate totals, but stop walk if way over
+                    if total > max_results.saturating_mul(5) {
+                        return false;
                     }
                 }
+            }
+            true
+        });
 
-                // Sort results
-                results.sort();
-
-                // Limit to 200 results
-                let total = results.len();
-                results.truncate(200);
-
-                let mut output = results.join("\n");
-                if total > 200 {
-                    output.push_str(&format!("\n... and {} more", total - 200));
-                }
-
-                ToolResult {
-                    tool_call_id: String::new(),
-                    content: if output.is_empty() {
-                        "No files matched the pattern.".to_string()
+        // Fallback: if the walk found nothing, try the classic glob crate on the
+        // joined pattern once — covers odd absolute patterns without exploding
+        // into target/ when the walk already pruned correctly and truly found nothing.
+        if results.is_empty() && total == 0 {
+            let joined = if Path::new(pattern_str).is_absolute() {
+                pattern_str.to_string()
+            } else {
+                format!(
+                    "{}{}{}",
+                    root.display(),
+                    std::path::MAIN_SEPARATOR,
+                    pattern_str
+                )
+            };
+            if let Ok(paths) = glob::glob(&joined) {
+                for entry in paths.flatten() {
+                    // Skip anything under pruned directory names
+                    if entry.components().any(|c| {
+                        let s = c.as_os_str().to_string_lossy();
+                        super::paths::is_skip_dir(&s)
+                    }) {
+                        continue;
+                    }
+                    total += 1;
+                    if results.len() < max_results {
+                        let rel = entry
+                            .strip_prefix(&root)
+                            .map(|p| p.to_string_lossy().replace('\\', "/"))
+                            .unwrap_or_else(|_| entry.display().to_string());
+                        results.push(rel);
                     } else {
-                        format!("Found {} files:\n{}", total, output)
-                    },
-                    is_error: false,
+                        hit_cap = true;
+                        break;
+                    }
                 }
             }
-            Err(e) => ToolResult {
+        }
+
+        results.sort();
+
+        if results.is_empty() {
+            return ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Invalid glob pattern: {}", e),
-                is_error: true,
-            },
+                content: format!(
+                    "No files matched `{}` under {} (heavy dirs skipped).",
+                    pattern_str, root_shown
+                ),
+                is_error: false,
+            };
+        }
+
+        let mut output = format!(
+            "Found {} file{} under {} matching `{}`:\n{}",
+            total,
+            if total == 1 { "" } else { "s" },
+            root_shown,
+            pattern_str,
+            results.join("\n")
+        );
+        if hit_cap || total > results.len() {
+            output.push_str(&format!(
+                "\n… showing {} of {} (raise max_results for more)",
+                results.len(),
+                total
+            ));
+        }
+
+        ToolResult {
+            tool_call_id: String::new(),
+            content: output,
+            is_error: false,
         }
     }
 }

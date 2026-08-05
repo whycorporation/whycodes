@@ -1,10 +1,15 @@
 use async_trait::async_trait;
 use serde_json::json;
-use std::fs;
 use std::path::Path;
 
+use super::paths::{display_path, human_size, is_skip_dir, list_dir_entries, resolve_path};
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
+
+/// Default max entries returned for a single list call.
+const DEFAULT_MAX_ENTRIES: usize = 200;
+const HARD_MAX_ENTRIES: usize = 2000;
+const DEFAULT_MAX_DEPTH: usize = 3;
 
 /// List files and directories — OpenCode `list` tool equivalent.
 pub struct ListTool;
@@ -28,7 +33,9 @@ impl Tool for ListTool {
     }
 
     fn description(&self) -> &str {
-        "List files and directories in a path. Returns names sorted with directories first, then files."
+        "List files and directories in a path (dirs first, with sizes). \
+         Prefer this over shell `ls`. Optional recursive listing skips heavy \
+         dirs (target, node_modules, .git, …). Use `glob` for pattern search."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -37,12 +44,24 @@ impl Tool for ListTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Directory path to list (relative to project root or absolute). Defaults to project root."
+                    "description": "Directory path (relative to project root or absolute). Defaults to project root."
                 },
                 "ignore": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Glob patterns to ignore (optional)"
+                    "description": "Glob patterns to ignore (e.g. '*.o', 'tmp*')"
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "Recurse into subdirectories (default: false). Heavy dirs are pruned."
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Max recursion depth when recursive=true (default: 3)"
+                },
+                "max_entries": {
+                    "type": "integer",
+                    "description": "Max entries to return (default: 200)"
                 }
             },
             "required": []
@@ -51,24 +70,20 @@ impl Tool for ListTool {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let rel = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-        let base = Path::new(&ctx.working_dir);
-        let target = if Path::new(rel).is_absolute() {
-            Path::new(rel).to_path_buf()
-        } else {
-            base.join(rel)
-        };
+        let target = resolve_path(&ctx.working_dir, rel);
+        let shown = display_path(&target, &ctx.working_dir);
 
         if !target.exists() {
             return ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Path does not exist: {}", target.display()),
+                content: format!("Path does not exist: {}", shown),
                 is_error: true,
             };
         }
         if !target.is_dir() {
             return ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Not a directory: {}", target.display()),
+                content: format!("Not a directory: {} (use `read` for files)", shown),
                 is_error: true,
             };
         }
@@ -83,54 +98,88 @@ impl Tool for ListTool {
             })
             .unwrap_or_default();
 
-        let mut dirs = Vec::new();
-        let mut files = Vec::new();
+        let recursive = args
+            .get("recursive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let max_depth = args
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_MAX_DEPTH)
+            .clamp(1, 20);
+        let max_entries = args
+            .get("max_entries")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(DEFAULT_MAX_ENTRIES)
+            .clamp(1, HARD_MAX_ENTRIES);
 
-        match fs::read_dir(&target) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if name.starts_with('.') && name != ".gitignore" {
-                        // still show hidden? OpenCode list typically shows them
-                    }
-                    if ignore.iter().any(|pat| name_matches(&name, pat)) {
-                        continue;
-                    }
-                    match entry.file_type() {
-                        Ok(ft) if ft.is_dir() => dirs.push(format!("{}/", name)),
-                        Ok(_) => files.push(name),
-                        Err(_) => files.push(name),
-                    }
+        let (entries, truncated, dir_count, file_count) = if recursive {
+            list_recursive(&target, &ignore, max_depth, max_entries)
+        } else {
+            match list_dir_entries(&target, &ignore) {
+                Ok(all) => {
+                    let dir_count = all.iter().filter(|e| e.is_dir).count();
+                    let file_count = all.len() - dir_count;
+                    let truncated = all.len() > max_entries;
+                    let entries: Vec<(String, bool, Option<u64>)> = all
+                        .into_iter()
+                        .take(max_entries)
+                        .map(|e| (e.name, e.is_dir, e.size))
+                        .collect();
+                    (entries, truncated, dir_count, file_count)
+                }
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: e,
+                        is_error: true,
+                    };
                 }
             }
-            Err(e) => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Failed to list {}: {}", target.display(), e),
-                    is_error: true,
-                };
-            }
-        }
+        };
 
-        dirs.sort();
-        files.sort();
-
-        let mut out = format!("Contents of {}:\n", target.display());
-        if dirs.is_empty() && files.is_empty() {
+        let mut out = format!("Contents of {}:\n", shown);
+        if entries.is_empty() {
             out.push_str("(empty)\n");
         } else {
-            for d in &dirs {
-                out.push_str(&format!("  {}\n", d));
-            }
-            for f in &files {
-                out.push_str(&format!("  {}\n", f));
+            // Column width for names
+            let name_w = entries
+                .iter()
+                .map(|(n, is_dir, _)| n.len() + if *is_dir { 1 } else { 0 })
+                .max()
+                .unwrap_or(8)
+                .min(60);
+
+            for (name, is_dir, size) in &entries {
+                if *is_dir {
+                    out.push_str(&format!("  {:<width$}/\n", name, width = name_w));
+                } else {
+                    let sz = size.map(human_size).unwrap_or_else(|| "?".into());
+                    out.push_str(&format!(
+                        "  {:<width$}  {:>10}\n",
+                        name,
+                        sz,
+                        width = name_w
+                    ));
+                }
             }
         }
+
         out.push_str(&format!(
             "\n{} directories, {} files",
-            dirs.len(),
-            files.len()
+            dir_count, file_count
         ));
+        if truncated {
+            out.push_str(&format!(
+                " (showing first {} — raise max_entries or narrow path)",
+                entries.len()
+            ));
+        }
+        if recursive {
+            out.push_str(&format!(" [recursive depth≤{}]", max_depth));
+        }
 
         ToolResult {
             tool_call_id: String::new(),
@@ -140,16 +189,97 @@ impl Tool for ListTool {
     }
 }
 
-fn name_matches(name: &str, pattern: &str) -> bool {
-    // Simple glob: * and exact match
-    if pattern == "*" {
-        return true;
+/// Recursive listing with depth limit and skip-dir pruning.
+/// Returns (display_name, is_dir, size), truncated flag, total dir/file counts.
+fn list_recursive(
+    root: &Path,
+    ignore: &[String],
+    max_depth: usize,
+    max_entries: usize,
+) -> (
+    Vec<(String, bool, Option<u64>)>,
+    bool,
+    usize,
+    usize,
+) {
+    let mut entries = Vec::new();
+    let mut dir_count = 0usize;
+    let mut file_count = 0usize;
+    let mut truncated = false;
+
+    fn walk(
+        root: &Path,
+        dir: &Path,
+        depth: usize,
+        max_depth: usize,
+        ignore: &[String],
+        max_entries: usize,
+        entries: &mut Vec<(String, bool, Option<u64>)>,
+        dir_count: &mut usize,
+        file_count: &mut usize,
+        truncated: &mut bool,
+    ) {
+        if *truncated {
+            return;
+        }
+        let Ok(level) = list_dir_entries(dir, ignore) else {
+            return;
+        };
+        for e in level {
+            if e.is_dir {
+                *dir_count += 1;
+            } else {
+                *file_count += 1;
+            }
+
+            if entries.len() >= max_entries {
+                *truncated = true;
+                return;
+            }
+
+            let rel = e
+                .path
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_else(|_| e.name.clone());
+
+            entries.push((rel, e.is_dir, e.size));
+
+            if e.is_dir && depth < max_depth && !is_skip_dir(&e.name) {
+                walk(
+                    root,
+                    &e.path,
+                    depth + 1,
+                    max_depth,
+                    ignore,
+                    max_entries,
+                    entries,
+                    dir_count,
+                    file_count,
+                    truncated,
+                );
+            }
+        }
     }
-    if let Some(suffix) = pattern.strip_prefix('*') {
-        return name.ends_with(suffix);
-    }
-    if let Some(prefix) = pattern.strip_suffix('*') {
-        return name.starts_with(prefix);
-    }
-    name == pattern
+
+    walk(
+        root,
+        root,
+        1,
+        max_depth,
+        ignore,
+        max_entries,
+        &mut entries,
+        &mut dir_count,
+        &mut file_count,
+        &mut truncated,
+    );
+
+    // Keep dirs-first-ish: directories first, then name
+    entries.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()))
+    });
+
+    (entries, truncated, dir_count, file_count)
 }

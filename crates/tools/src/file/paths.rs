@@ -1,0 +1,357 @@
+//! Shared path resolution and directory walking for file tools.
+//!
+//! Keeps `read` / `list` / `glob` / `grep` consistent and avoids re-walking
+//! heavy trees (`target/`, `node_modules/`, cargo registry, …).
+
+use std::fs;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+/// Directories pruned during recursive walks (grep/glob/list recursive).
+/// Mirrors common ripgrep / IDE defaults plus Rust/JS build artifacts.
+pub const SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+    ".next",
+    ".nuxt",
+    ".turbo",
+    ".cache",
+    "__pycache__",
+    ".tox",
+    "coverage",
+    ".cargo",
+    "vendor",
+    ".idea",
+    ".vscode",
+];
+
+/// Bytes sniffed for a NUL (binary) marker.
+pub const BINARY_SNIFF_LEN: usize = 8192;
+
+/// Soft cap for full-file materialization in tools (bytes).
+pub const MAX_FULL_READ_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Soft cap for a single file grepped fully (bytes).
+pub const MAX_GREP_FILE_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Resolve a user path against the tool working directory.
+///
+/// Empty / `.` → working dir. Relative paths join `working_dir`. Absolute
+/// paths are used as-is. Does not require the path to exist.
+pub fn resolve_path(working_dir: &str, path: &str) -> PathBuf {
+    let p = path.trim();
+    if p.is_empty() || p == "." {
+        return PathBuf::from(working_dir);
+    }
+    let path = Path::new(p);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        Path::new(working_dir).join(path)
+    }
+}
+
+/// Display path relative to `working_dir` when possible.
+pub fn display_path(path: &Path, working_dir: &str) -> String {
+    let base = Path::new(working_dir);
+    path.strip_prefix(base)
+        .map(|r| {
+            let s = r.to_string_lossy();
+            if s.is_empty() {
+                ".".into()
+            } else {
+                s.into_owned()
+            }
+        })
+        .unwrap_or_else(|_| path.display().to_string())
+}
+
+/// Whether a directory name should be pruned from recursive walks.
+pub fn is_skip_dir(name: &str) -> bool {
+    if name == "." || name == ".." {
+        return true;
+    }
+    // Hidden dirs except a few useful project markers
+    if name.starts_with('.')
+        && !matches!(
+            name,
+            ".whycode" | ".github" | ".config" | ".cargo" // .cargo at project root can hold config; still skip deep
+        )
+    {
+        // Always skip VCS / env / cache style hidden dirs
+        if matches!(
+            name,
+            ".git" | ".svn" | ".hg" | ".venv" | ".tox" | ".cache" | ".next" | ".nuxt" | ".turbo"
+        ) {
+            return true;
+        }
+        // Other hidden: skip by default for speed (models rarely need .*)
+        return true;
+    }
+    SKIP_DIRS.contains(&name)
+}
+
+/// Human-readable byte size (e.g. `12.4 KB`).
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut v = bytes as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{} {}", bytes, UNITS[0])
+    } else {
+        format!("{:.1} {}", v, UNITS[i])
+    }
+}
+
+/// True if the first `BINARY_SNIFF_LEN` bytes contain a NUL.
+pub fn is_binary_bytes(bytes: &[u8]) -> bool {
+    bytes.iter().take(BINARY_SNIFF_LEN).any(|b| *b == 0)
+}
+
+/// Sniff the start of a file for binary content without reading everything.
+pub fn is_binary_file(path: &Path) -> bool {
+    let Ok(mut f) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = [0u8; BINARY_SNIFF_LEN];
+    match f.read(&mut buf) {
+        Ok(n) => is_binary_bytes(&buf[..n]),
+        Err(_) => false,
+    }
+}
+
+/// Simple `*` glob match against a single path segment or full relative path.
+/// Supports `*` wildcards (not full brace expansion).
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    // Fast paths
+    if !pattern.contains('*') {
+        return pattern == text;
+    }
+    match glob::Pattern::new(pattern) {
+        Ok(p) => p.matches(text),
+        Err(_) => pattern == text,
+    }
+}
+
+/// Suggest similar names in a directory when a path is missing.
+pub fn suggest_similar(missing: &Path, limit: usize) -> Vec<String> {
+    let Some(parent) = missing.parent() else {
+        return Vec::new();
+    };
+    let Some(want) = missing.file_name().and_then(|s| s.to_str()) else {
+        return Vec::new();
+    };
+    let want_l = want.to_ascii_lowercase();
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Vec::new();
+    };
+
+    let mut scored: Vec<(usize, String)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let name_l = name.to_ascii_lowercase();
+            // Prefer prefix / substring matches
+            let score = if name_l == want_l {
+                0
+            } else if name_l.starts_with(&want_l) || want_l.starts_with(&name_l) {
+                1
+            } else if name_l.contains(&want_l) || want_l.contains(&name_l) {
+                2
+            } else {
+                // crude edit distance proxy: shared prefix length
+                let common = name_l
+                    .chars()
+                    .zip(want_l.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                if common >= 2 {
+                    10 - common.min(9)
+                } else {
+                    return None;
+                }
+            };
+            Some((score, name))
+        })
+        .collect();
+
+    scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    scored.dedup_by(|a, b| a.1 == b.1);
+    scored.into_iter().take(limit).map(|(_, n)| n).collect()
+}
+
+/// Directory entry for listing / walking.
+#[derive(Debug, Clone)]
+pub struct DirEntryInfo {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub size: Option<u64>,
+}
+
+/// Read one directory level (non-recursive). Sorted: dirs first, then files.
+pub fn list_dir_entries(dir: &Path, ignore: &[String]) -> Result<Vec<DirEntryInfo>, String> {
+    let rd = fs::read_dir(dir).map_err(|e| format!("Failed to list {}: {}", dir.display(), e))?;
+
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == "." || name == ".." {
+            continue;
+        }
+        if ignore.iter().any(|pat| glob_match(pat, &name)) {
+            continue;
+        }
+        let path = entry.path();
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        let size = if is_dir {
+            None
+        } else {
+            entry.metadata().ok().map(|m| m.len())
+        };
+        out.push(DirEntryInfo {
+            name,
+            path,
+            is_dir,
+            size,
+        });
+    }
+
+    out.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+    });
+    Ok(out)
+}
+
+/// Callback for recursive file visits. Return `false` to stop the walk.
+pub type VisitFn<'a> = dyn FnMut(&Path, &str /* relative path */) -> bool + 'a;
+
+/// Walk files under `root`, pruning `SKIP_DIRS` / hidden dirs.
+///
+/// `relative` paths use `/` separators. Stops early when visitor returns false.
+pub fn walk_files(root: &Path, visit: &mut VisitFn<'_>) {
+    fn walk_inner(root: &Path, dir: &Path, visit: &mut VisitFn<'_>) -> bool {
+        let Ok(rd) = fs::read_dir(dir) else {
+            return true;
+        };
+        // Collect + sort for stable results across filesystems
+        let mut paths: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+        paths.sort();
+
+        for path in paths {
+            let name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
+            let is_dir = path.is_dir();
+            if is_dir {
+                if is_skip_dir(&name) {
+                    continue;
+                }
+                if !walk_inner(root, &path, visit) {
+                    return false;
+                }
+            } else {
+                let rel = path
+                    .strip_prefix(root)
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_else(|_| path.display().to_string());
+                if !visit(&path, &rel) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    if root.is_file() {
+        let rel = root
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.display().to_string());
+        let _ = visit(root, &rel);
+        return;
+    }
+    walk_inner(root, root, visit);
+}
+
+/// Seek-friendly check: file size via metadata.
+pub fn file_len(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|m| m.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn resolve_relative_and_absolute() {
+        let abs = if cfg!(windows) {
+            r"C:\tmp\x"
+        } else {
+            "/tmp/x"
+        };
+        assert_eq!(resolve_path("/proj", abs), PathBuf::from(abs));
+        assert_eq!(resolve_path("/proj", "src/a.rs"), PathBuf::from("/proj/src/a.rs"));
+        assert_eq!(resolve_path("/proj", "."), PathBuf::from("/proj"));
+        assert_eq!(resolve_path("/proj", ""), PathBuf::from("/proj"));
+    }
+
+    #[test]
+    fn skip_dirs_include_target_and_git() {
+        assert!(is_skip_dir("target"));
+        assert!(is_skip_dir(".git"));
+        assert!(is_skip_dir("node_modules"));
+        assert!(!is_skip_dir("src"));
+        assert!(!is_skip_dir("crates"));
+    }
+
+    #[test]
+    fn human_size_formats() {
+        assert_eq!(human_size(500), "500 B");
+        assert!(human_size(2048).contains("KB"));
+    }
+
+    #[test]
+    fn walk_skips_target() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        fs::create_dir_all(dir.path().join("target/debug")).unwrap();
+        fs::write(dir.path().join("src/main.rs"), "fn main(){}").unwrap();
+        fs::write(dir.path().join("target/debug/foo.o"), "bin").unwrap();
+
+        let mut found = Vec::new();
+        walk_files(dir.path(), &mut |_p, rel| {
+            found.push(rel.to_string());
+            true
+        });
+        assert!(found.iter().any(|f| f.contains("main.rs")));
+        assert!(!found.iter().any(|f| f.contains("foo.o")));
+    }
+
+    #[test]
+    fn suggest_similar_finds_neighbor() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("readme.md"), "x").unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "x").unwrap();
+        let miss = dir.path().join("Readme.md");
+        let s = suggest_similar(&miss, 3);
+        assert!(s.iter().any(|n| n.eq_ignore_ascii_case("readme.md")));
+    }
+}
