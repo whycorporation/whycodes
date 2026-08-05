@@ -1335,10 +1335,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     persist_session_best_effort(&session, "exit");
     let model_label = format!("{provider}/{model}");
     let summary = session.format_exit_summary(session_started.elapsed(), &model_label, "whycode");
-    // Prefer stdout so the shell owns the line; fall back to stderr if needed.
-    if writeln!(io::stdout(), "{summary}").is_err() {
-        let _ = writeln!(io::stderr(), "{summary}");
-    }
+    print_session_summary(&summary);
 
     whycode_core::logging::emit(
         "whycode_tui",
@@ -1353,6 +1350,29 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     );
 
     result
+}
+
+/// Print the exit summary where the user will see it after alt-screen leave.
+///
+/// The TUI draws on `/dev/tty`; after restore, prefer that same device so the
+/// lines land in the real terminal scrollback even when stdout is captured.
+/// Fall back to stdout, then stderr.
+fn print_session_summary(summary: &str) {
+    #[cfg(unix)]
+    {
+        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
+            if writeln!(tty, "{summary}").is_ok() && tty.flush().is_ok() {
+                return;
+            }
+        }
+    }
+    let mut out = io::stdout();
+    if writeln!(out, "{summary}").is_ok() && out.flush().is_ok() {
+        return;
+    }
+    let mut err = io::stderr();
+    let _ = writeln!(err, "{summary}");
+    let _ = err.flush();
 }
 
 /// Best-effort session flush (success, error, or cancel) + structured log.
