@@ -47,13 +47,10 @@ const SERIAL_TOOLS: &[&str] = &[
 ///
 /// Industry pattern (OpenCode issue #24764, Codex parallel function calls):
 /// fan out independent reads; keep mutators and permission-gated tools serial.
-fn is_parallel_safe_tool(name: &str, permission: &whycode_core::types::PermissionSet) -> bool {
-    if SERIAL_TOOLS.contains(&name) {
-        return false;
-    }
-    // Interactive ask cannot share the TUI's single pending_perm_reply slot.
-    use whycode_core::types::PermissionAction;
-    permission.action_for(name) == PermissionAction::Allow
+fn is_parallel_safe_tool(name: &str, _permission: &whycode_core::types::PermissionSet) -> bool {
+    // Mutators/shell stay serial. Permission Ask is fine in parallel now that
+    // the TUI queues permission dialogs (VecDeque), not a single slot.
+    !SERIAL_TOOLS.contains(&name)
 }
 
 /// Default system prompt (loaded from prompts/build.txt at compile time)
@@ -75,6 +72,10 @@ pub struct Agent {
     compaction_threshold: usize,
     /// Tools schema sent to the model (`core` = smaller TTFT).
     tool_profile: ToolProfile,
+    /// When false, Anthropic bodies skip cache_control markers.
+    use_prompt_cache: bool,
+    /// Optional fast model for trivial chat (`provider/model` or bare id).
+    model_fast: Option<String>,
 }
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
@@ -123,6 +124,8 @@ impl Agent {
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
             tool_profile: ToolProfile::Core,
+            use_prompt_cache: true,
+            model_fast: None,
         }
     }
 
@@ -160,6 +163,9 @@ impl Agent {
         self.hooks = config.hooks.clone();
         self.compaction_threshold = config.session.compaction_threshold;
         self.tool_profile = ToolProfile::parse(&config.session.tool_profile);
+        self.use_prompt_cache =
+            !matches!(config.session.prompt_cache.trim().to_ascii_lowercase().as_str(), "none" | "off" | "false" | "0");
+        self.model_fast = config.session.model_fast.clone();
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -167,6 +173,7 @@ impl Agent {
             hooks = self.hooks.len(),
             compaction_threshold = self.compaction_threshold,
             tool_profile = self.tool_profile.as_str(),
+            use_prompt_cache = self.use_prompt_cache,
             "shell sandbox, network policy, and hooks"
         );
         self
@@ -175,6 +182,10 @@ impl Agent {
     pub fn with_tool_profile(mut self, profile: ToolProfile) -> Self {
         self.tool_profile = profile;
         self
+    }
+
+    pub fn model_fast(&self) -> Option<&str> {
+        self.model_fast.as_deref()
     }
 
     /// Build tool context for a session, applying permission network flags.
@@ -526,7 +537,9 @@ impl Agent {
                 TurnEvent::Status(format!("LLM request (step {turn_count})…")),
             );
 
-            let request = session.build_request(&tools, None, self.info.temperature, Some(true));
+            let mut request =
+                session.build_request(&tools, None, self.info.temperature, Some(true));
+            request.use_prompt_cache = self.use_prompt_cache;
 
             let mut accumulated_text = String::new();
             let mut turn_usage = whycode_core::types::Usage::default();

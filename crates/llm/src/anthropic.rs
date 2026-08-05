@@ -52,10 +52,12 @@ impl AnthropicProvider {
         }
 
         // OpenCode-parity: last tool + system + latest user message.
-        super::cache::apply_anthropic_cache_policy(
-            &mut body,
-            &super::cache::CacheConfig::default(),
-        );
+        if request.use_prompt_cache {
+            super::cache::apply_anthropic_cache_policy(
+                &mut body,
+                &super::cache::CacheConfig::default(),
+            );
+        }
 
         body
     }

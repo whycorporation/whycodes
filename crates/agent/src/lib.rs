@@ -2,6 +2,7 @@ pub mod agent;
 pub mod events;
 pub mod mcp_load;
 pub mod permission;
+pub mod routing;
 pub mod subagent;
 #[cfg(test)]
 mod tests;
@@ -14,4 +15,7 @@ pub use permission::{
     AutoApprovePrompter, AutoDenyPrompter, ChannelPermissionPrompter, PermissionPrompter,
     PermissionRequest, StdinPrompter, default_prompter,
 };
-pub use title::{generate_title, resolve_title_model, should_refine_title};
+pub use routing::resolve_turn_model;
+pub use title::{
+    generate_title, is_trivial_title_seed, resolve_title_model, should_refine_title,
+};

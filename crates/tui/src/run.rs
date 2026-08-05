@@ -429,7 +429,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut agent_busy = false;
     let mut cancel_flag: Option<CancelFlag> = None;
     let mut spinner_frame: usize = 0;
-    let mut pending_perm_reply: Option<tokio::sync::oneshot::Sender<bool>> = None;
+    // Permission queue: multiple tool asks can complete without serializing
+    // the whole parallel tool batch on a single oneshot slot.
+    let mut pending_perm_queue: std::collections::VecDeque<whycode_agent::PermissionRequest> =
+        std::collections::VecDeque::new();
     // Title may arrive before TurnOutcome restores the real session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
 
@@ -526,10 +529,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
             }
 
-            // ── Permission requests ───────────────────────────────────
+            // ── Permission requests (queued; show next when idle) ─────
             while let Ok(req) = perm_rx.try_recv() {
-                pending_perm_reply = Some(req.reply);
-                app.ask_permission(req.tool_name, req.detail);
+                pending_perm_queue.push_back(req);
+            }
+            if !matches!(app.current_agent_state, AgentState::WaitingForPermission)
+                && let Some(front) = pending_perm_queue.front()
+            {
+                app.ask_permission(front.tool_name.clone(), front.detail.clone());
                 app.mark_dirty();
             }
 
@@ -873,8 +880,33 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 }
 
-                let provider2 = provider.clone();
-                let model2 = model.clone();
+                // Fast model for trivial chat (selam/hi) — sibling or config.
+                let (route_provider, route_model) = whycode_agent::resolve_turn_model(
+                    &provider,
+                    &model,
+                    &expanded,
+                    agent.model_fast().or(config.session.model_fast.as_deref()),
+                );
+                if route_model != model || route_provider != provider {
+                    tracing::info!(
+                        from = %format!("{provider}/{model}"),
+                        to = %format!("{route_provider}/{route_model}"),
+                        "routed trivial turn to fast model"
+                    );
+                    whycode_core::logging::emit_sid(
+                        "tui",
+                        "info",
+                        "turn.route_fast",
+                        Some(session.id.as_str()),
+                        Some(serde_json::json!({
+                            "from": format!("{provider}/{model}"),
+                            "to": format!("{route_provider}/{route_model}"),
+                        })),
+                    );
+                }
+
+                let provider2 = route_provider;
+                let model2 = route_model;
                 let api_key2 = api_key.clone();
                 let event_tx2 = event_tx.clone();
                 let done_tx2 = done_tx.clone();
@@ -882,6 +914,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 let auto_title = config.session.auto_title;
                 let title_model = config.session.title_model.clone();
                 let title_tx2 = title_tx.clone();
+                // Title refine still uses session provider/model (or title_model).
+                let title_provider = provider.clone();
+                let title_session_model = model.clone();
 
                 // Move agent + session into background task
                 let ag = std::mem::replace(
@@ -926,8 +961,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     if auto_title && result.is_ok() {
                         let _ = agent.spawn_title_refine(
                             &session,
-                            &provider2,
-                            &model2,
+                            &title_provider,
+                            &title_session_model,
                             &api_key2,
                             title_model.as_deref(),
                             title_tx2,
@@ -1009,14 +1044,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         | KeyCode::Char('a')
                         | KeyCode::Char('A')
                         | KeyCode::Enter => {
-                            if let Some(reply) = pending_perm_reply.take() {
-                                let _ = reply.send(true);
+                            if let Some(req) = pending_perm_queue.pop_front() {
+                                let _ = req.reply.send(true);
                             }
                             app.dialogs.pop();
                             app.mode = AppMode::Normal;
                             app.key_context = KeymapContext::Normal;
-                            app.current_agent_state = AgentState::Generating;
-                            app.status_message = "Allowed — continuing…".into();
+                            if let Some(next) = pending_perm_queue.front() {
+                                app.ask_permission(next.tool_name.clone(), next.detail.clone());
+                                app.status_message = format!(
+                                    "Allowed — {} more permission(s)…",
+                                    pending_perm_queue.len()
+                                );
+                            } else {
+                                app.current_agent_state = AgentState::Generating;
+                                app.status_message = "Allowed — continuing…".into();
+                            }
                             continue;
                         }
                         KeyCode::Char('n')
@@ -1024,14 +1067,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         | KeyCode::Char('d')
                         | KeyCode::Char('D')
                         | KeyCode::Esc => {
-                            if let Some(reply) = pending_perm_reply.take() {
-                                let _ = reply.send(false);
+                            if let Some(req) = pending_perm_queue.pop_front() {
+                                let _ = req.reply.send(false);
                             }
                             app.dialogs.pop();
                             app.mode = AppMode::Normal;
                             app.key_context = KeymapContext::Normal;
-                            app.current_agent_state = AgentState::Generating;
-                            app.status_message = "Denied tool".into();
+                            if let Some(next) = pending_perm_queue.front() {
+                                app.ask_permission(next.tool_name.clone(), next.detail.clone());
+                                app.status_message = format!(
+                                    "Denied — {} more permission(s)…",
+                                    pending_perm_queue.len()
+                                );
+                            } else {
+                                app.current_agent_state = AgentState::Generating;
+                                app.status_message = "Denied tool".into();
+                            }
                             continue;
                         }
                         _ => {}
@@ -1185,9 +1236,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
     .await;
 
-    // Deny any hanging permission so agent task can finish
-    if let Some(reply) = pending_perm_reply.take() {
-        let _ = reply.send(false);
+    // Deny any hanging permissions so agent tasks can finish
+    while let Some(req) = pending_perm_queue.pop_front() {
+        let _ = req.reply.send(false);
     }
 
     if let Err(ref e) = result {
@@ -1437,6 +1488,9 @@ async fn cycle_agent(
     }
 }
 
+/// Max chars inlined per `@file` (speculative context without blowing prefill).
+const AT_FILE_MAX_CHARS: usize = 24_000;
+
 fn expand_at_files(input: &str, project_dir: &std::path::Path) -> String {
     let mut result = String::new();
     let mut rest = input;
@@ -1459,8 +1513,20 @@ fn expand_at_files(input: &str, project_dir: &std::path::Path) -> String {
         };
         match std::fs::read_to_string(&path) {
             Ok(content) => {
+                let n = content.chars().count();
+                let body = if n <= AT_FILE_MAX_CHARS {
+                    content
+                } else {
+                    let mut t: String = content.chars().take(AT_FILE_MAX_CHARS).collect();
+                    t.push_str(&format!(
+                        "\n\n[... {} characters omitted from @{} — use the read tool for the rest]",
+                        n - AT_FILE_MAX_CHARS,
+                        path_str
+                    ));
+                    t
+                };
                 result.push_str(&format!(
-                    "\n\n--- file: {path_str} ---\n{content}\n--- end file ---\n\n"
+                    "\n\n--- file: {path_str} ---\n{body}\n--- end file ---\n\n"
                 ));
             }
             Err(_) => {

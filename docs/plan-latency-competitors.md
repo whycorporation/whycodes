@@ -150,17 +150,17 @@ From open issues (latency/correctness adjacency):
 |-----------|:-----------:|:--------:|:-----:|:-----:|:-----------:|
 | Streaming UI | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Prompt cache system+tools | ✅ | ✅ `auto` | ⚠️ OAuth curated | ✅/implicit | ✅ Anthropic partial |
-| Cache **latest user msg** | ✅ | ✅ **auto** | ⚠️ | ⚠️ | ❌ **gap** |
-| Parallel safe tools | ✅ | ⚠️ issue #24764 | ⚠️ | ✅ | ✅ safe fan-out |
+| Cache **latest user msg** | ✅ | ✅ **auto** | ⚠️ | ⚠️ | ✅ |
+| Parallel safe tools | ✅ | ⚠️ issue #24764 | ⚠️ | ✅ | ✅ + perm queue |
 | Parallel subagents / swarm | ⚠️ teams | ⚠️ serial tasks | ✅★ swarm | ⚠️ | ❌ (dropped) |
 | Shared HTTP / keep-alive | ✅ | ✅ | ✅ server | ✅ | ✅ OnceLock |
 | Non-blocking title/telemetry | ✅ | ✅ | ✅ | ✅ | ✅ async title |
-| Auto context compact | ✅ | ✅ LLM+prune | ✅ hard/soft (buggy edge) | ✅ | ✅ threshold drop (+ stub summary) |
-| Doom-loop guard | ✅ | ✅ permission | ⚠️ | ⚠️ | ❌ **gap** |
-| Core / deferred tools | ✅ | ⚠️ | ⚠️ curated OAuth | — | ❌ full ~25 always |
-| Repo map / memory index | ✅ | ⚠️ | ✅ memory+embed | ⚠️ | ❌ |
-| Model routing / effort | ⚠️ | Zen models | ✅ effort keys | mini | ❌ |
-| Warm long-lived process | ⚠️ | ✅ server | ✅★ daemon | ⚠️ | ⚠️ `serve` |
+| Auto context compact | ✅ | ✅ LLM+prune | ✅ hard/soft (buggy edge) | ✅ | ✅ drop + **old-tool prune 2k** |
+| Doom-loop guard | ✅ | ✅ permission | ⚠️ | ⚠️ | ✅ 3× refuse |
+| Core / deferred tools | ✅ | ⚠️ | ⚠️ curated OAuth | — | ✅ `tool_profile=core` |
+| Repo map / memory index | ✅ | ⚠️ | ✅ memory+embed | ⚠️ | ❌ P2 |
+| Model routing / effort | ⚠️ | Zen models | ✅ effort keys | mini | ✅ trivial→fast |
+| Warm long-lived process | ⚠️ | ✅ server | ✅★ daemon | ⚠️ | ⚠️ catalog + pool |
 
 ---
 
@@ -179,13 +179,19 @@ From open issues (latency/correctness adjacency):
 | **Doom-loop** (3× same tool+args) | P0.2 | refuse + error tool result |
 | **Core tool profile** (default) | P0.3 | `session.tool_profile = "core"\|"full"` |
 | **JSONL metrics** | P0.4 | `turn.step` / `turn.done` (`ttft_ms`, `step_ms`, `tool_batch_ms`, cache tokens) |
+| **Old-tool prune (2k)** | P1 | OpenCode-style shrink of older tool dumps in compact |
+| **Model routing** | P1 | trivial chat → `model_fast` or small sibling |
+| **Permission queue** | P1 | VecDeque multi-ask; Ask tools can parallelize |
+| **@file cap** | P1 | 24k chars per inlined file |
+| **prompt_cache wire** | P1 | `session.prompt_cache=none` disables markers |
 
 ### Config knobs
 
 ```toml
 [session]
 tool_profile = "core"   # or "full"
-prompt_cache = "auto"   # reserved; Anthropic uses auto today
+prompt_cache = "auto"   # or "none"
+model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional
 compaction_threshold = 150000
 ```
 
@@ -193,33 +199,16 @@ compaction_threshold = 150000
 
 ## Remaining backlog
 
-### P0 — complete
+### P0 + P1 core — complete
 
-_(all four P0 items implemented)_
+### P2 — optional product scale
 
-### P1 — next after this sprint
-
-### P1 — architecture speed
-
-5. **Smarter compaction** (OpenCode-style)  
-   - Optional LLM summary agent when over budget (not only drop).  
-   - Prune old tool outputs more aggressively (OpenCode `TOOL_OUTPUT_MAX_CHARS` / prune protect skill).
-
-6. **Model routing** (jcode effort + OpenCode Zen)  
-   - `models.fast` / `default` / `heavy`; chit-chat → fast.
-
-7. **Speculative / prefetch reads**  
-   - `@file` and early stream path → start `read` before model finishes args.
-
-8. **Permission queue**  
-   - Multi-ask so more tools can parallelize safely.
-
-### P2 — product-scale (jcode/OpenCode parity optional)
-
-9. Long-lived daemon multi-session warm (jcode default; OpenCode server).  
-10. Cross-session memory (plan-memory) — not single-turn TTFT.  
-11. Swarm — only if monorepo workload appears (phase-7 still holds).  
-12. First-token race failover / semantic response cache.
+1. LLM-summary compact agent — only if prune+drop insufficient  
+2. Speculative stream-arg early `read` (I/O before JSON closes)  
+3. Long-lived daemon multi-session warm  
+4. Cross-session memory ([plan-memory.md](plan-memory.md))  
+5. Swarm — monorepo only (phase-7 still holds)  
+6. First-token race failover / semantic response cache
 
 ---
 
@@ -253,8 +242,8 @@ _(all four P0 items implemented)_
 | 2026-08-05 | Ship Anthropic system+tool cache, parallel safe tools, first plan draft. |
 | 2026-08-05 | **Revise plan:** deep OpenCode (`cache-policy`, doom_loop, compaction) + jcode (daemon, swarm, memory, agentgrep, compaction bugs). Mark auto-compact **shipped**. Elevate **latest-user cache** + doom-loop + core tools to P0. Swarm stays non-P0. |
 | 2026-08-05 | **Implement P0.1–P0.4:** OpenCode cache policy, doom-loop, core tools default, JSONL latency metrics. |
-| TBD | Whether LLM-summary compact is default-on or `/compact` only. |
-| TBD | Wire `session.prompt_cache = "none"` into Anthropic body (field reserved). |
+| 2026-08-05 | **Implement P1:** tool prune 2k, model routing, perm queue, @file cap, prompt_cache wire. |
+| TBD | LLM-summary compact only if prune+drop insufficient in production metrics. |
 
 ---
 

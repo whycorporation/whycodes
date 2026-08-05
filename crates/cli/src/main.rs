@@ -807,8 +807,14 @@ async fn cmd_run(
             // bool: whether the title changed (not a Result).
             session.apply_heuristic_title(&seed);
         }
+        let (run_provider, run_model) = whycode_agent::resolve_turn_model(
+            &provider,
+            &model,
+            &expanded,
+            config.session.model_fast.as_deref(),
+        );
         match agent
-            .run_turn(&mut session, &provider, &model, &api_key, max_turns)
+            .run_turn(&mut session, &run_provider, &run_model, &api_key, max_turns)
             .await
         {
             Ok(response) => {

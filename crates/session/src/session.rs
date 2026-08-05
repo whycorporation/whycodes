@@ -10,6 +10,14 @@ use whycode_core::types::{
 /// re-read files if it needs more. ~32 KiB ≈ 8k tokens under the char/4 heuristic.
 pub const TOOL_RESULT_MAX_CHARS: usize = 32_768;
 
+/// Cap for *older* tool results during compact (OpenCode-style prune ~2k chars).
+/// Recent tool dumps stay at [`TOOL_RESULT_MAX_CHARS`] so the model can still
+/// use the last step's output; older steps shrink hard for TTFT.
+pub const TOOL_RESULT_PRUNE_CHARS: usize = 2_048;
+
+/// How many recent tool-role messages keep the large cap when pruning.
+const PRUNE_KEEP_RECENT_TOOLS: usize = 4;
+
 /// Minimum number of tail messages retained by [`Session::compact`].
 const MIN_KEEP_MESSAGES: usize = 4;
 
@@ -41,11 +49,15 @@ fn message_tokens(msg: &Message) -> usize {
 
 /// Cap a tool result string; no-op when already under the limit.
 fn cap_tool_text(text: String) -> String {
-    if text.chars().count() <= TOOL_RESULT_MAX_CHARS {
+    cap_tool_text_to(text, TOOL_RESULT_MAX_CHARS)
+}
+
+fn cap_tool_text_to(text: String, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
         return text;
     }
-    let mut out: String = text.chars().take(TOOL_RESULT_MAX_CHARS).collect();
-    let omitted = text.chars().count().saturating_sub(TOOL_RESULT_MAX_CHARS);
+    let mut out: String = text.chars().take(max_chars).collect();
+    let omitted = text.chars().count().saturating_sub(max_chars);
     out.push_str(&format!(
         "\n\n[... {omitted} characters truncated for context management]"
     ));
@@ -310,6 +322,7 @@ impl Session {
             top_k: None,
             stop_sequences: None,
             thinking: None,
+            use_prompt_cache: true,
         }
     }
 
@@ -416,8 +429,62 @@ impl Session {
     ///
     /// When already under budget after tool caps, the message list is not
     /// reshuffled (avoids churn on `/compact` for small sessions).
+    /// Shrink older tool outputs more aggressively (OpenCode prune spirit).
+    ///
+    /// Keeps the last [`PRUNE_KEEP_RECENT_TOOLS`] tool-role messages at the
+    /// normal cap; everything older is cut to [`TOOL_RESULT_PRUNE_CHARS`].
+    pub fn prune_old_tool_results(&mut self) -> usize {
+        let tool_indices: Vec<usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::Tool)
+            .map(|(i, _)| i)
+            .collect();
+        if tool_indices.len() <= PRUNE_KEEP_RECENT_TOOLS {
+            return 0;
+        }
+        let keep_from = tool_indices.len() - PRUNE_KEEP_RECENT_TOOLS;
+        let prune_set: std::collections::HashSet<usize> =
+            tool_indices[..keep_from].iter().copied().collect();
+        let mut n = 0;
+        for (i, msg) in self.messages.iter_mut().enumerate() {
+            if !prune_set.contains(&i) {
+                continue;
+            }
+            match &mut msg.content {
+                MessageContent::Text(t) => {
+                    let before = t.len();
+                    *t = cap_tool_text_to(std::mem::take(t), TOOL_RESULT_PRUNE_CHARS);
+                    if t.len() != before {
+                        n += 1;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    for block in blocks.iter_mut() {
+                        if let ContentBlock::Text { text }
+                        | ContentBlock::ToolResult { content: text, .. } = block
+                        {
+                            let before = text.len();
+                            *text =
+                                cap_tool_text_to(std::mem::take(text), TOOL_RESULT_PRUNE_CHARS);
+                            if text.len() != before {
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if n > 0 {
+            self.touch();
+        }
+        n
+    }
+
     pub fn compact(&mut self, max_tokens: usize) {
         self.truncate_large_tool_results();
+        self.prune_old_tool_results();
 
         let target = max_tokens.saturating_mul(3) / 4;
         let target = target.max(1);

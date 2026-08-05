@@ -196,6 +196,14 @@ pub struct LlmRequest {
     pub top_k: Option<u32>,
     pub stop_sequences: Option<Vec<String>>,
     pub thinking: Option<serde_json::Value>,
+    /// When true (default), providers that support inline prompt caching
+    /// (Anthropic) attach OpenCode-style cache breakpoints.
+    #[serde(default = "default_use_prompt_cache")]
+    pub use_prompt_cache: bool,
+}
+
+fn default_use_prompt_cache() -> bool {
+    true
 }
 
 /// LLM response

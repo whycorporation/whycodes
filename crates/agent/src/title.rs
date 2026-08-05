@@ -108,6 +108,7 @@ pub async fn generate_title(
         top_k: None,
         stop_sequences: None,
         thinking: None,
+        use_prompt_cache: false,
     };
 
     // Title is a fire-and-forget nicety — never block the UI for long.

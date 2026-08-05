@@ -577,6 +577,10 @@ pub struct SessionConfig {
     /// Anthropic-style prompt cache policy: `auto` (default) or `none`.
     #[serde(default = "default_prompt_cache")]
     pub prompt_cache: String,
+    /// Fast model for trivial chat (`provider/model` or bare model id).
+    /// Empty = auto-pick small sibling of the session model (haiku/mini/flash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_fast: Option<String>,
 }
 
 impl Default for SessionConfig {
@@ -589,6 +593,7 @@ impl Default for SessionConfig {
             title_model: None,
             tool_profile: default_tool_profile(),
             prompt_cache: default_prompt_cache(),
+            model_fast: None,
         }
     }
 }
@@ -970,6 +975,9 @@ impl Config {
         }
         if other.session.prompt_cache != default_prompt_cache() {
             merged.session.prompt_cache = other.session.prompt_cache.clone();
+        }
+        if other.session.model_fast.is_some() {
+            merged.session.model_fast = other.session.model_fast.clone();
         }
 
         // TUI

@@ -409,6 +409,7 @@ mod tests {
             top_k: None,
             stop_sequences: None,
             thinking: None,
+            use_prompt_cache: true,
         }
     }
 
