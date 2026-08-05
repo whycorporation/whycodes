@@ -2,17 +2,29 @@
 
 Terminal coding agent’ların özellik matrisi: **whycode**, **Grok Build**, **OpenCode**, **jcode**, **Claude Code**.
 
-Son güncelleme: **2026-08-05** (ürün özeti + envanter doğrulaması). Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
+Son güncelleme: **2026-08-05** (ürün özeti yeniden biçimlendi). Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
 
 ## Ürün özeti
 
-| | **whycode** | **Grok Build** | **OpenCode** | **jcode** | **Claude Code** |
-|---|---|---|---|---|
-| **Ne** | Terminal coding agent (TUI + headless CLI) | xAI coding agent (TUI, headless, ACP) | Açık kaynak coding agent (TUI + desktop + IDE) | Coding-agent harness (swarm + memory) | Anthropic resmi coding agent |
-| **Dil** | Rust | Rust | TypeScript (Effect / Bun monorepo) | Rust | Proprietary native binary (önceden Node paketi) |
+Karşılaştırma kısa tutulmuştur. Ayrıntılar aşağıdaki matris bölümlerindedir.
+
+| | whycode | Grok Build | OpenCode | jcode | Claude Code |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Tür** | Terminal agent | Terminal agent | Multi-surface agent | Agent harness | Resmi ürün ajanı |
+| **Yüzeyler** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI |
+| **Dil** | Rust | Rust | TypeScript | Rust | Kapalı kaynak |
 | **Lisans** | MIT | Apache-2.0 | MIT | MIT | Proprietary |
-| **Model / auth** | API key; çoklu provider (varsayılan yok) | Grok 4.5 + custom endpoint; xAI login | 75+ provider (Models.dev); OAuth (Claude / ChatGPT / Copilot) | API key + OAuth (Claude / ChatGPT / Copilot / Gemini / …) | Claude abonelik / API; 3. parti sınırlı |
-| **Konum** | Shell safety, latency stack, mouse TUI, Windows CI | Zengin TUI, skills/plugins/hooks, ACP | Geniş ekosistem, multi-surface | En düşük RAM / boot, swarm, semantic memory | Full product surface (web / desktop / IDE / CI) |
+| **Kimlik** | API key | xAI login + API | API + OAuth | API + OAuth | Claude abonelik / API |
+| **Modeller** | Çoklu provider | Grok 4.5 + custom | 75+ provider | Çoklu + OAuth | Claude (+ sınırlı 3. parti) |
+| **Açık kaynak** | Evet | Evet | Evet | Evet | Hayır |
+
+| Ürün | Konum |
+|---|---|
+| **whycode** | Shell safety, latency stack, mouse TUI, Windows CI |
+| **Grok Build** | Zengin TUI; skills, plugins, hooks; ACP |
+| **OpenCode** | Geniş ekosistem; terminal + desktop + IDE |
+| **jcode** | Düşük RAM / boot; swarm; semantic memory |
+| **Claude Code** | Anthropic ürün yüzeyi (web, desktop, IDE, CI) |
 
 ### Sembol açıklaması
 
@@ -288,13 +300,13 @@ whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TT
 
 ## 15. Hızlı “kim ne için?”
 
-| İhtiyaç | Önerilen yön |
+| İhtiyaç | Yön |
 |---|---|
-| En düşük RAM / en çok paralel session | **jcode** |
-| Claude aboneliği + web/desktop/IDE/CI ekosistemi | **Claude Code** |
-| Model özgürlüğü + masaüstü + IDE + büyük community | **OpenCode** |
-| xAI Grok, zengin TUI, skills/plugins/hooks, ACP | **Grok Build** |
-| Hafif Rust, shell safety, mouse TUI, latency stack, Windows CI | **whycode** |
+| En düşük RAM, çok paralel session | **jcode** |
+| Claude aboneliği + web / desktop / IDE / CI | **Claude Code** |
+| Model özgürlüğü + desktop / IDE + community | **OpenCode** |
+| Grok + zengin TUI + plugins / ACP | **Grok Build** |
+| Shell safety + latency + mouse TUI + Windows CI | **whycode** |
 
 ---
 
