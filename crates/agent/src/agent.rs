@@ -507,8 +507,10 @@ impl Agent {
                 )));
             }
 
-            // Auto-compact before prefill when over budget — long sessions
-            // otherwise pay full TTFT on dead history every step.
+            // Always shrink oversized / old tool dumps before prefill (cheap).
+            // Full compact only when over the configured token threshold.
+            let _ = session.truncate_large_tool_results();
+            let _ = session.prune_old_tool_results();
             if self.compaction_threshold > 0 {
                 let before = session.token_count();
                 if before > self.compaction_threshold {

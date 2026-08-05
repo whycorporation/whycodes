@@ -198,6 +198,9 @@ With `position = view_start = total - height` that never reaches the track end.
 | Doom-loop | 3× same tool+args → refuse (OpenCode `doom_loop`) |
 | Core tools | default `session.tool_profile = "core"` (~12 tools); `"full"` for all |
 | Metrics | JSONL `turn.step` / `turn.done` (`ttft_ms`, `step_ms`, `tool_batch_ms`, cache tokens) |
+| Model routing | trivial chat → `model_fast` or haiku/mini sibling |
+| Perm queue | multi-ask VecDeque; parallel Ask-safe tools |
+| Tool prune | every step: cap + older tools → 2k chars; compact when over threshold |
 | Auto-compact | before each LLM step when over `compaction_threshold` |
 
 **Roadmap:** [plan-latency-competitors.md](plan-latency-competitors.md)

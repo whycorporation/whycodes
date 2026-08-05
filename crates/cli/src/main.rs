@@ -1345,6 +1345,9 @@ fn switch_agent(
     Ok((name.to_string(), agent, prompt))
 }
 
+/// Max chars inlined per `@file` (matches TUI; keeps prefill bounded).
+const AT_FILE_MAX_CHARS: usize = 24_000;
+
 /// Expand `@path` file references and return the full prompt text.
 fn expand_user_input(input: &str, project_dir: &std::path::Path) -> String {
     let mut result = String::new();
@@ -1369,9 +1372,20 @@ fn expand_user_input(input: &str, project_dir: &std::path::Path) -> String {
         };
         match std::fs::read_to_string(&path) {
             Ok(content) => {
+                let n = content.chars().count();
+                let body = if n <= AT_FILE_MAX_CHARS {
+                    content
+                } else {
+                    let mut t: String = content.chars().take(AT_FILE_MAX_CHARS).collect();
+                    t.push_str(&format!(
+                        "\n\n[... {} characters omitted from @{} — use the read tool for the rest]",
+                        n - AT_FILE_MAX_CHARS,
+                        path_str
+                    ));
+                    t
+                };
                 result.push_str(&format!(
-                    "\n\n--- file: {} ---\n{}\n--- end file ---\n\n",
-                    path_str, content
+                    "\n\n--- file: {path_str} ---\n{body}\n--- end file ---\n\n"
                 ));
             }
             Err(_) => {
