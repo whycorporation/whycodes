@@ -236,8 +236,13 @@ impl LlmProvider for CustomProvider {
             .map_err(|e| whycode_core::Error::Llm(format!("HTTP: {e}")))?;
 
         if !resp.status().is_success() {
+            let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(text));
+            // Include (NNN) so retry_with_backoff / is_retryable can see 5xx.
+            return Err(whycode_core::Error::Llm(format!(
+                "{} API error ({}): {}",
+                self.name, status.as_u16(), text
+            )));
         }
 
         let s = stream! {

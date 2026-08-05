@@ -211,7 +211,12 @@ impl SubagentRunner {
             let mut accumulated_text = String::new();
             let mut assembler = ToolCallAssembler::new();
 
-            let mut event_stream = provider.stream(&request, api_key, model).await?;
+            let mut event_stream = whycode_llm::retry::retry_with_backoff(
+                || provider.stream(&request, api_key, model),
+                whycode_llm::retry::DEFAULT_MAX_RETRIES,
+                whycode_llm::retry::DEFAULT_BASE_DELAY_MS,
+            )
+            .await?;
 
             while let Some(event) = event_stream.next().await {
                 match event? {
