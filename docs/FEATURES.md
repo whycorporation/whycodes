@@ -2,7 +2,7 @@
 
 Terminal coding agent’ların özellik matrisi: **whycode**, **Grok Build**, **OpenCode**, **jcode**, **Claude Code**.
 
-Son güncelleme: **2026-08-05**. Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
+Son güncelleme: **2026-08-05** (envanter: tool adları + core profile + config). Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
 
 ## Ürün özeti
 
@@ -110,7 +110,7 @@ Son güncelleme: **2026-08-05**. Kaynaklar: whycode README + codebase, [opencode
 | websearch / webfetch | ✅ | ✅ | ⚠️ skill/MCP | ⚠️ | ✅ |
 | git status/diff/log/blame/commit | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
 | GitHub issue / PR | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ Actions/review |
-| todo write/read | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| todowrite / todoread | ✅ | ✅ | ✅ | ⚠️ | ✅ |
 | question (kullanıcıya sor) | ✅ | ✅ | ✅ | ⚠️ | ✅ |
 | plan tool | ✅ | ✅ | ✅ | ⚠️ | ✅ |
 | LSP tool | ✅★ crate | ⚠️ | ✅ auto-load | ❌ ayrı crate yok | ⚠️ |
@@ -317,57 +317,62 @@ whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TT
 
 ### Slash commands (TUI)
 
-`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info`, `/theme`/`/themes` — custom: `.whycode/commands/*.md`. Plain ek: `/thinking` (REPL).
+`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info`, `/theme`/`/themes` (picker + isimle uygula) — custom: `.whycode/commands/*.md` ve `.opencode/commands`. Plain ek: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
 
 ### Built-in tools
 
-**Core profile (default, LLM’e giden):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash`/`shell`, `todo_*`, `task`.
+**Core profile (default, LLM şemasına giden):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash` (alias `shell`), `todowrite` (alias `todo`), `todoread`, `task`.
 
-**Full profile:** + `git_*`, `github_*`, `webfetch`, `websearch`, `plan`, `question`, `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, MCP `{server}_{tool}`.
+**Full profile:** + `git_status`/`git_diff`/`git_log`/`git_blame`/`git_commit`, `github_issue`/`github_pr`, `webfetch`, `websearch`, `plan`, `question`, `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, MCP `{server}_{tool}`.
 
 ### Agents
 
 | Agent | Mod |
 |---|---|
-| `build` | primary, full access |
-| `plan` | primary, read-only |
-| `general` | subagent |
+| `build` | primary, full access (varsayılan) |
+| `plan` | primary, read-only (`Ctrl+T` ile cycle) |
+| `general` | subagent (`task`) |
 | `explore` | subagent, read-only search |
 | `scout` | subagent, docs/deps research |
 
-### Config (latency-relevant)
+### Config (latency + güvenlik)
 
 ```toml
 [session]
 tool_profile = "core"     # or "full"
 prompt_cache = "auto"     # or "none"
-model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional
+model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional trivial-chat route
 compaction_threshold = 150000
 auto_title = true
+# title_model = "anthropic/claude-haiku-4-5-20251001"
 
 [permission]
 bash = "ask"
 edit = "allow"
-
-[security]
-bash_risk_threshold = "destructive"
-sandbox = "workspace"
-sandbox_network = true
-```
-
-### Güvenlik (kısa)
-
-```toml
-[permission]
-bash = "ask"
-edit = "allow"
+# "mymcp_*" = "deny"
 
 [security]
 bash_risk_threshold = "destructive"  # caution | destructive | off
 sandbox = "workspace"                # off | workspace
 sandbox_network = true
-sandbox_fallback = "allow"           # allow | deny
+sandbox_fallback = "allow"           # allow | deny (bwrap yoksa)
+# network_allowlist = ["github.com", "crates.io"]
+# network_denylist = ["tracking.example.com"]
+
+# [[hooks]]
+# event = "pre_tool"   # or post_tool
+# match = "bash"
+# command = "echo $WHYCODE_TOOL_NAME"
+# block_on_failure = true
 ```
+
+### Güvenlik (kısa)
+
+- Tool izin: `allow` / `ask` / `deny` + glob; TUI **multi-ask queue** (paralel ask birikimi).
+- Shell risk: `safe` → `caution` → `destructive` → `catastrophic` (sonuncusu asla onaylanmaz).
+- OS sandbox: Linux `bwrap` workspace; diğer OS fallback.
+- HTTP tool domain allow/denylist; shell ağı binary (`sandbox_network`).
+- Config shell hooks (`pre_tool` / `post_tool`); plugin marketplace iskelet.
 
 ---
 

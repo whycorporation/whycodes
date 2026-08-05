@@ -48,6 +48,8 @@ impl ToolProfile {
 }
 
 /// Stable, sorted-friendly core set. Keep ≤ ~12 primary names for TTFT.
+/// Names must match `Tool::name()` registrations in `executor.rs`
+/// (`todowrite` / `todoread` / alias `todo` — not snake_case).
 const CORE_TOOL_NAMES: &[&str] = &[
     "apply_patch",
     "bash",
@@ -58,9 +60,9 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "read",
     "shell", // legacy alias of bash
     "task",
-    "todo",       // alias
-    "todo_read",
-    "todo_write",
+    "todo", // alias of todowrite
+    "todoread",
+    "todowrite",
     "write",
 ];
 
@@ -76,5 +78,15 @@ mod tests {
         assert!(!ToolProfile::Core.includes("github_pr"));
         assert!(!ToolProfile::Core.includes("lsp"));
         assert!(ToolProfile::Full.includes("webfetch"));
+    }
+
+    #[test]
+    fn core_includes_todo_tools_under_real_names() {
+        assert!(ToolProfile::Core.includes("todowrite"));
+        assert!(ToolProfile::Core.includes("todoread"));
+        assert!(ToolProfile::Core.includes("todo"));
+        // Wrong snake_case names must not be the filter keys
+        assert!(!ToolProfile::Core.includes("todo_write"));
+        assert!(!ToolProfile::Core.includes("todo_read"));
     }
 }
