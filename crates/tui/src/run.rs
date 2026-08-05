@@ -652,14 +652,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             // Still flush so cancel mid-turn is not lost on crash.
                             persist_session_best_effort(&session, "cancelled");
                         } else {
-                            app.current_agent_state = AgentState::Error(error.clone());
+                            // Clean user-facing copy; full wire body stays in logs.
+                            let display = whycode_llm::format_turn_error(
+                                &whycode_core::Error::Llm(error.clone()),
+                            );
+                            app.current_agent_state = AgentState::Error(display.clone());
                             let dur = elapsed_ms
                                 .map(|ms| format!("{} · ", format_elapsed_ms(ms)))
                                 .unwrap_or_default();
                             app.status_message = format!("{dur}error — see chat");
-                            app.add_message(ChatRole::System, format!("Error: {error}"));
-                            app.toasts
-                                .push(crate::toast::ToastKind::Error, truncate_toast(&error, 48));
+                            app.add_message(ChatRole::System, format!("Error: {display}"));
+                            app.toasts.push(
+                                crate::toast::ToastKind::Error,
+                                truncate_toast(&display, 48),
+                            );
                             whycode_core::logging::emit_sid(
                                 "tui",
                                 "error",
@@ -667,6 +673,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 Some(session.id.as_str()),
                                 Some(serde_json::json!({
                                     "error": error,
+                                    "display": display,
                                     "elapsed_ms": elapsed_ms,
                                 })),
                             );

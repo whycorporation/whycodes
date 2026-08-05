@@ -121,21 +121,19 @@ async fn llm_extract_facts(
         use_prompt_cache: false,
     };
 
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
-    let response = match tokio::time::timeout(
-        TIMEOUT,
-        use_provider.complete(&request, api_key, &use_model),
-    )
-    .await
-    {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => return Err(e),
-        Err(_) => {
-            return Err(whycode_core::Error::Llm(
-                "memory retain LLM timed out after 12s".into(),
-            ));
-        }
+    let transport = whycode_llm::LlmTransport {
+        complete_timeout: Some(std::time::Duration::from_secs(12)),
+        retry: whycode_llm::RetryPolicy {
+            max_retries: 1,
+            initial_backoff: std::time::Duration::from_millis(300),
+            max_backoff: std::time::Duration::from_secs(3),
+            max_elapsed: std::time::Duration::from_secs(12),
+            full_jitter: true,
+        },
     };
+    let response = transport
+        .complete(use_provider, &request, api_key, &use_model)
+        .await?;
 
     let raw = response
         .content

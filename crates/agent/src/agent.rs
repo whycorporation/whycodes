@@ -583,14 +583,11 @@ impl Agent {
             let mut assembler = ToolCallAssembler::new();
             let step_t0 = Instant::now();
 
-            // Open stream with retry on 429 / 5xx (omniroute-style [500], etc.).
+            // Professional transport: classify + full-jitter backoff + Retry-After.
             // Only the HTTP open is retried — mid-stream drops stay single-shot.
-            let mut event_stream = whycode_llm::retry::retry_with_backoff(
-                || provider.stream(&request, api_key, model),
-                whycode_llm::retry::DEFAULT_MAX_RETRIES,
-                whycode_llm::retry::DEFAULT_BASE_DELAY_MS,
-            )
-            .await?;
+            let mut event_stream = whycode_llm::default_transport()
+                .stream(provider, &request, api_key, model)
+                .await?;
 
             while let Some(event) = event_stream.next().await {
                 if is_cancelled(&cancel) {

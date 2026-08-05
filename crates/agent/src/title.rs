@@ -111,22 +111,18 @@ pub async fn generate_title(
         use_prompt_cache: false,
     };
 
-    // Title is a fire-and-forget nicety — never block the UI for long.
-    const TITLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
-    let response = match tokio::time::timeout(
-        TITLE_TIMEOUT,
-        provider.complete(&request, api_key, model),
-    )
-    .await
-    {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => return Err(e),
-        Err(_) => {
-            return Err(whycode_core::Error::Llm(
-                "title refine timed out after 8s".into(),
-            ));
-        }
+    // Title is a fire-and-forget nicety — short timeout + light retry.
+    let transport = whycode_llm::LlmTransport {
+        complete_timeout: Some(std::time::Duration::from_secs(8)),
+        retry: whycode_llm::RetryPolicy {
+            max_retries: 1,
+            initial_backoff: std::time::Duration::from_millis(200),
+            max_backoff: std::time::Duration::from_secs(2),
+            max_elapsed: std::time::Duration::from_secs(8),
+            full_jitter: true,
+        },
     };
+    let response = transport.complete(provider, &request, api_key, model).await?;
     let raw = response
         .content
         .iter()
