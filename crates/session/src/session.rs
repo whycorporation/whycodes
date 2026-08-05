@@ -338,6 +338,42 @@ impl Session {
         }
     }
 
+    /// Cline-style exit summary printed after the terminal is restored.
+    ///
+    /// `model_label` is typically `provider/model`. `binary` is the CLI name
+    /// used in the resume hint (e.g. `"whycode"`).
+    pub fn format_exit_summary(
+        &self,
+        duration: std::time::Duration,
+        model_label: &str,
+        binary: &str,
+    ) -> String {
+        // Labels padded to 8 so values line up (matches Cline's "Session Summary").
+        let mut out = String::from("\nSession Summary\n");
+        out.push_str(&format!("  {:8}  {}\n", "ID", self.id));
+        out.push_str(&format!(
+            "  {:8}  {}s\n",
+            "Duration",
+            duration.as_secs()
+        ));
+        out.push_str(&format!("  {:8}  {}\n", "Model", model_label));
+        out.push_str(&format!(
+            "  {:8}  {}\n",
+            "CWD",
+            self.project_path.display()
+        ));
+        out.push_str(&format!(
+            "  {:8}  {}\n",
+            "Messages",
+            self.messages.len()
+        ));
+        out.push_str(&format!(
+            "  {:8}  {} --resume {}\n",
+            "Continue", binary, self.id
+        ));
+        out
+    }
+
     /// Get conversation as a readable string (for display)
     pub fn conversation_text(&self) -> String {
         let mut out = String::new();
@@ -795,6 +831,27 @@ mod tests {
 
     fn test_system_prompt() -> String {
         "You are a helpful assistant.".to_string()
+    }
+
+    #[test]
+    fn test_format_exit_summary() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("hello");
+        let text = session.format_exit_summary(
+            std::time::Duration::from_secs(42),
+            "openai/gpt-4o",
+            "whycode",
+        );
+        assert!(text.contains("Session Summary"), "{text}");
+        assert!(text.contains(&session.id), "{text}");
+        assert!(text.contains("Duration  42s"), "{text}");
+        assert!(text.contains("Model     openai/gpt-4o"), "{text}");
+        assert!(text.contains("CWD       /tmp/test-project"), "{text}");
+        assert!(text.contains("Messages  1"), "{text}");
+        assert!(
+            text.contains(&format!("whycode --resume {}", session.id)),
+            "{text}"
+        );
     }
 
     #[test]

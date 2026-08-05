@@ -3,7 +3,7 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -164,6 +164,9 @@ enum TurnOutcome {
 
 /// Run the full-screen TUI until the user quits.
 pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
+    // Wall clock for the Cline-style exit summary (process open → quit).
+    let session_started = Instant::now();
+
     let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
     let mut app = TuiApp::new(tui_cfg);
 
@@ -1328,11 +1331,25 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         crate::bench::write_results(bench);
     }
 
+    // Final flush + Cline-style summary on the normal terminal (scrollback).
+    persist_session_best_effort(&session, "exit");
+    let model_label = format!("{provider}/{model}");
+    let summary = session.format_exit_summary(session_started.elapsed(), &model_label, "whycode");
+    // Prefer stdout so the shell owns the line; fall back to stderr if needed.
+    if writeln!(io::stdout(), "{summary}").is_err() {
+        let _ = writeln!(io::stderr(), "{summary}");
+    }
+
     whycode_core::logging::emit(
         "whycode_tui",
         "info",
         "tui.stopped",
-        Some(serde_json::json!({ "ok": result.is_ok() })),
+        Some(serde_json::json!({
+            "ok": result.is_ok(),
+            "session_id": session.id,
+            "messages": session.messages.len(),
+            "duration_s": session_started.elapsed().as_secs(),
+        })),
     );
 
     result

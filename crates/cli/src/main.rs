@@ -873,6 +873,9 @@ async fn cmd_run(
         None,
     );
 
+    // Wall clock for the Cline-style exit summary (process open → quit).
+    let session_started = std::time::Instant::now();
+
     let mut agent_name = agent_name;
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
@@ -987,12 +990,23 @@ async fn cmd_run(
                     println!("\n{}", response);
                 }
                 // Retain runs inside Agent::run_turn (heuristic + optional LLM).
+                if let Ok(db) = open_db() {
+                    let _ = session.save_to_db(&db);
+                }
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
+                if let Ok(db) = open_db() {
+                    let _ = session.save_to_db(&db);
+                }
                 return Err(anyhow::anyhow!("{}", e));
             }
         }
+        let model_label = format!("{provider}/{model}");
+        print!(
+            "{}",
+            session.format_exit_summary(session_started.elapsed(), &model_label, "whycode")
+        );
         return Ok(());
     }
 
@@ -1487,7 +1501,15 @@ async fn cmd_run(
             }
         }
     }
-    println!("{}", "Goodbye!".cyan());
+    // Final flush + Cline-style summary (same shape as the TUI exit path).
+    if let Ok(db) = open_db() {
+        let _ = session.save_to_db(&db);
+    }
+    let model_label = format!("{provider}/{model}");
+    print!(
+        "{}",
+        session.format_exit_summary(session_started.elapsed(), &model_label, "whycode")
+    );
     Ok(())
 }
 
