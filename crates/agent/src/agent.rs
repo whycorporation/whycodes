@@ -469,9 +469,33 @@ impl Agent {
         events: Option<EventSink>,
         cancel: Option<CancelFlag>,
     ) -> whycode_core::Result<String> {
-        let tools = self
-            .tool_executor
-            .get_definitions_profile(&self.info.permission, self.tool_profile);
+        // Trivial chit-chat: omit tools entirely (huge prefill savings).
+        // Only on short single-user sessions — once tools were used, keep them.
+        let last_user = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == whycode_core::types::Role::User)
+            .and_then(|m| m.content.as_text().map(|s| s.to_string()))
+            .unwrap_or_default();
+        let tools_free_chat = crate::title::is_trivial_title_seed(&last_user)
+            && session.user_message_count() <= 1
+            && !session.messages.iter().any(|m| {
+                matches!(m.role, whycode_core::types::Role::Tool)
+                    || matches!(
+                        &m.content,
+                        whycode_core::types::MessageContent::Blocks(b)
+                            if b.iter().any(|x| matches!(x, ContentBlock::ToolUse { .. }))
+                    )
+            });
+
+        let tools = if tools_free_chat {
+            tracing::debug!("trivial chat — omitting tools from request for TTFT");
+            Vec::new()
+        } else {
+            self.tool_executor
+                .get_definitions_profile(&self.info.permission, self.tool_profile)
+        };
 
         let tool_ctx = self.tool_context(session);
 
