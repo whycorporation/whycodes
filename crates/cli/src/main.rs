@@ -365,6 +365,9 @@ pub enum MemoryCmd {
         #[arg(long, default_value = "8")]
         limit: usize,
     },
+    /// Download MiniLM (if needed), verify checksums, run a probe embed
+    /// (requires binary built with `--features onnx`)
+    OnnxSmoke,
 }
 
 #[derive(Subcommand, Debug)]
@@ -876,6 +879,7 @@ async fn cmd_run(
         .with_mcp(&config)
         .await;
     let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
+    maybe_session_auto_index(&project_dir, &config);
     let mut history = whycode_session::SessionHistory::new();
     let mut provider = provider;
     let mut model = model;
@@ -982,13 +986,7 @@ async fn cmd_run(
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
-                run_auto_retain(
-                    &project_dir,
-                    &config,
-                    &session,
-                    &expanded,
-                    Some(response.as_str()),
-                );
+                // Retain runs inside Agent::run_turn (heuristic + optional LLM).
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
@@ -1452,13 +1450,7 @@ async fn cmd_run(
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
-                run_auto_retain(
-                    &project_dir,
-                    &config,
-                    &session,
-                    &expanded,
-                    Some(response.as_str()),
-                );
+                // Retain runs inside Agent::run_turn (heuristic + optional LLM).
                 println!();
                 // Persist session best-effort (success)
                 if let Ok(db) = open_db() {
@@ -1572,25 +1564,18 @@ fn memory_settings_for(
     config: &Config,
     agent_bank: Option<String>,
 ) -> whycode_memory::MemorySettings {
-    let m = &config.memory;
-    whycode_memory::MemorySettings {
-        enabled: m.enabled,
-        auto_inject: m.auto_inject,
-        auto_retain: m.auto_retain,
-        retain_every_n: m.retain_every_n,
-        retain_max_facts: m.retain_max_facts,
-        max_index_lines: m.max_index_lines,
-        max_index_bytes: m.max_index_bytes,
-        recall_top_k: m.recall_top_k,
-        recall_min_score: m.recall_min_score,
-        recall_token_budget: m.recall_token_budget,
-        embed_dim: m.embed_dim,
-        scope: whycode_memory::MemoryScope::parse(&m.scope),
-        embed_backend: whycode_memory::EmbedBackend::parse(&m.embed_backend),
-        agent_bank,
-        code_inject: m.code_inject,
-        code_top_k: m.code_top_k,
-        code_min_score: m.code_min_score,
+    let mut s = whycode_agent::memory_settings_from_config(config);
+    s.agent_bank = agent_bank;
+    s
+}
+
+/// Best-effort code index on session start (skips if already indexed).
+fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config) {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Some(n) =
+        whycode_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+    {
+        println!("{} Auto-indexed {n} code chunks", "📇".dimmed());
     }
 }
 
@@ -1759,39 +1744,26 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
                 }
             }
         }
-    }
-    Ok(())
-}
-
-fn run_auto_retain(
-    project_dir: &std::path::Path,
-    config: &Config,
-    session: &whycode_session::session::Session,
-    user_text: &str,
-    assistant_text: Option<&str>,
-) {
-    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let turn_index = session.user_message_count().max(1);
-    let saved = whycode_memory::maybe_auto_retain(
-        project_dir,
-        &data_dir,
-        &memory_settings(config),
-        user_text,
-        assistant_text,
-        Some(&session.id),
-        turn_index,
-    );
-    if !saved.is_empty() {
-        println!(
-            "{} Auto-retained {} memor{}",
-            "🧠".dimmed(),
-            saved.len(),
-            if saved.len() == 1 { "y" } else { "ies" }
-        );
-        for f in &saved {
-            println!("  · {}", f.dimmed());
+        MemoryCmd::OnnxSmoke => {
+            if !whycode_memory::onnx::onnx_available() {
+                anyhow::bail!(
+                    "ONNX not in this binary. Rebuild with: cargo build -p whycode-cli --features onnx"
+                );
+            }
+            let data_dir = Config::data_dir()?;
+            println!("{} Running ONNX smoke (download + checksum + embed)…", "⚡".bold());
+            let (dim, norm) = whycode_memory::onnx::smoke_embed(&data_dir)?;
+            println!(
+                "{} OK — embedding dim={dim}, L2-norm={norm:.4} (≈1.0 expected)",
+                "✓".green()
+            );
+            println!(
+                "  model dir: {}",
+                whycode_memory::onnx::model_dir(&data_dir).display()
+            );
         }
     }
+    Ok(())
 }
 
 fn switch_agent(

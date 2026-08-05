@@ -23,6 +23,7 @@ pub use embed::{DEFAULT_DIM, cosine, decode_blob, embed, encode_blob};
 pub use project_key::{project_key, project_root};
 pub use retain::{extract_heuristic, llm_retain_prompt, parse_llm_facts};
 pub use service::{
-    CodeHit, MemoryService, RecallHit, apply_memory_prompt, maybe_auto_retain, settings_from_flags,
+    CodeHit, MemoryService, RecallHit, apply_memory_prompt, maybe_auto_index, maybe_auto_retain,
+    settings_from_flags,
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};

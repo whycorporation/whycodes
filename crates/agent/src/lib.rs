@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod events;
 pub mod mcp_load;
+pub mod memory_retain;
 pub mod permission;
 pub mod routing;
 pub mod subagent;
@@ -9,7 +10,7 @@ mod tests;
 pub mod title;
 pub mod tool_stream;
 
-pub use agent::Agent;
+pub use agent::{Agent, memory_settings_from_config};
 pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
 pub use permission::{
     AutoApprovePrompter, AutoDenyPrompter, ChannelPermissionPrompter, PermissionPrompter,

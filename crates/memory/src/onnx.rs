@@ -3,6 +3,9 @@
 //! Without the feature, [`try_embed`] returns `None` and callers use the
 //! hashing embedder. With `--features onnx`, downloads MiniLM into
 //! `{data_dir}/models/minilm/` on first use and runs mean-pooled inference.
+//!
+//! Downloaded files are verified with SHA-256 (pinned when known; otherwise
+//! a sidecar `.sha256` is written after the first successful download).
 
 use std::path::{Path, PathBuf};
 
@@ -17,7 +20,13 @@ pub fn model_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("models").join("minilm")
 }
 
-/// Ensure model + tokenizer files exist (download if needed).
+/// Optional pinned SHA-256 for the tokenizer (stable HF file).
+/// Empty model pin: first download writes a sidecar and subsequent loads verify it.
+const TOKENIZER_SHA256: &str =
+    // May drift if HF rewrites tokenizer.json — sidecar still protects after first pull.
+    "";
+
+/// Ensure model + tokenizer files exist (download + checksum if needed).
 pub fn ensure_model(data_dir: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
     let dir = model_dir(data_dir);
     std::fs::create_dir_all(&dir)?;
@@ -29,13 +38,132 @@ pub fn ensure_model(data_dir: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
     const TOK_URL: &str =
         "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
 
-    if !onnx_path.exists() {
-        download(ONNX_URL, &onnx_path)?;
-    }
-    if !tok_path.exists() {
-        download(TOK_URL, &tok_path)?;
-    }
+    ensure_file(&onnx_path, ONNX_URL, None)?;
+    ensure_file(
+        &tok_path,
+        TOK_URL,
+        if TOKENIZER_SHA256.is_empty() {
+            None
+        } else {
+            Some(TOKENIZER_SHA256)
+        },
+    )?;
     Ok((onnx_path, tok_path))
+}
+
+fn ensure_file(path: &Path, url: &str, pinned: Option<&str>) -> anyhow::Result<()> {
+    let sidecar = sha_sidecar(path);
+    if path.exists() {
+        verify_or_repair(path, &sidecar, pinned)?;
+        return Ok(());
+    }
+    download(url, path)?;
+    let digest = sha256_file(path)?;
+    if let Some(expected) = pinned {
+        if !digest.eq_ignore_ascii_case(expected) {
+            let _ = std::fs::remove_file(path);
+            anyhow::bail!(
+                "checksum mismatch for {}: got {digest}, expected {expected}",
+                path.display()
+            );
+        }
+    }
+    write_sidecar(&sidecar, &digest)?;
+    Ok(())
+}
+
+fn verify_or_repair(path: &Path, sidecar: &Path, pinned: Option<&str>) -> anyhow::Result<()> {
+    let digest = sha256_file(path)?;
+    if let Some(expected) = pinned {
+        if !digest.eq_ignore_ascii_case(expected) {
+            anyhow::bail!(
+                "checksum mismatch for {}: got {digest}, expected {expected}. Delete the file to re-download.",
+                path.display()
+            );
+        }
+        // Keep sidecar in sync
+        let _ = write_sidecar(sidecar, &digest);
+        return Ok(());
+    }
+    if sidecar.exists() {
+        let expected = std::fs::read_to_string(sidecar)?.trim().to_string();
+        if !expected.is_empty() && !digest.eq_ignore_ascii_case(&expected) {
+            anyhow::bail!(
+                "checksum mismatch for {} (sidecar). got {digest}, expected {expected}. Delete both to re-download.",
+                path.display()
+            );
+        }
+    } else {
+        write_sidecar(sidecar, &digest)?;
+    }
+    Ok(())
+}
+
+fn sha_sidecar(path: &Path) -> PathBuf {
+    let mut s = path.as_os_str().to_os_string();
+    s.push(".sha256");
+    PathBuf::from(s)
+}
+
+fn write_sidecar(path: &Path, digest: &str) -> anyhow::Result<()> {
+    std::fs::write(path, format!("{digest}\n"))?;
+    Ok(())
+}
+
+/// SHA-256 hex digest of a file (streaming).
+pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256Hasher::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize_hex())
+}
+
+/// Minimal pure-Rust SHA-256 (avoids pulling sha2 into default builds).
+struct Sha256Hasher {
+    // Use sha2 when available via optional dep; otherwise implement via `sha2` always
+    // for correctness. Memory crate will depend on sha2 lightly.
+    inner: sha2_wrap::Hasher,
+}
+
+mod sha2_wrap {
+    use sha2::{Digest, Sha256};
+
+    pub struct Hasher {
+        h: Sha256,
+    }
+    impl Hasher {
+        pub fn new() -> Self {
+            Self { h: Sha256::new() }
+        }
+        pub fn update(&mut self, data: &[u8]) {
+            self.h.update(data);
+        }
+        pub fn finalize_hex(self) -> String {
+            format!("{:x}", self.h.finalize())
+        }
+    }
+}
+
+impl Sha256Hasher {
+    fn new() -> Self {
+        Self {
+            inner: sha2_wrap::Hasher::new(),
+        }
+    }
+    fn update(&mut self, data: &[u8]) {
+        self.inner.update(data);
+    }
+    fn finalize_hex(self) -> String {
+        self.inner.finalize_hex()
+    }
 }
 
 fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
@@ -84,6 +212,21 @@ pub fn try_embed(text: &str, data_dir: &Path) -> Option<Vec<f32>> {
     }
 }
 
+/// Smoke: ensure model, embed a probe string, return dim. Errors if onnx feature off.
+pub fn smoke_embed(data_dir: &Path) -> anyhow::Result<(usize, f32)> {
+    #[cfg(feature = "onnx")]
+    {
+        let v = embed_onnx("whycode memory onnx smoke test", data_dir)?;
+        let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        Ok((v.len(), norm))
+    }
+    #[cfg(not(feature = "onnx"))]
+    {
+        let _ = data_dir;
+        anyhow::bail!("build with --features onnx to run ONNX smoke")
+    }
+}
+
 #[cfg(feature = "onnx")]
 fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
     use tract_onnx::prelude::*;
@@ -113,7 +256,6 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
     let mask_t = Tensor::from_shape(&[1, len], &mask)?;
     let type_t = Tensor::from_shape(&[1, len], &type_ids)?;
 
-    // Try 3-input then 2-input signatures used by different MiniLM ONNX exports.
     let result = model
         .run(tvec!(ids_t.clone().into(), mask_t.clone().into(), type_t.into()))
         .or_else(|_| model.run(tvec!(ids_t.into(), mask_t.into())))?;
@@ -145,4 +287,34 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
         }
     }
     Ok(pooled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn sha256_known_vector() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("t.txt");
+        std::fs::write(&p, b"abc").unwrap();
+        // SHA256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+        let d = sha256_file(&p).unwrap();
+        assert_eq!(
+            d,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn sidecar_roundtrip() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("m.bin");
+        std::fs::write(&p, b"hello").unwrap();
+        let d = sha256_file(&p).unwrap();
+        let side = sha_sidecar(&p);
+        write_sidecar(&side, &d).unwrap();
+        verify_or_repair(&p, &side, None).unwrap();
+    }
 }

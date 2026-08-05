@@ -1,6 +1,6 @@
 # Plan — Semantic / auto memory
 
-**Status:** shipped (v1 + v2 complete) · **Was:** phase 6
+**Status:** shipped (v1 + v2 + polish) · **Was:** phase 6
 
 ## Decision
 
@@ -35,7 +35,10 @@ Model files download on first use to `{data_dir}/models/minilm/`.
 - SQLite `memories` + dual-write `MEMORY.md`
 - Auto-inject (index + top-k cosine) on user turns
 - `/remember`, `/memory`, `memory` tool, `whycode memory …`
-- **Auto-retain** (heuristic) after successful turns — `auto_retain = true`
+- **Auto-retain** after successful turns inside `Agent::run_turn`:
+  - heuristic always (when enabled)
+  - optional **LLM extract** via small/fast sibling model when heuristic is empty
+    (`retain_llm = true`, `retain_llm_always` optional)
 - Dedupe on write (cosine ≥ 0.92)
 
 ### Cross-machine sync
@@ -49,12 +52,17 @@ Model files download on first use to `{data_dir}/models/minilm/`.
 - Auto-inject code hits when `code_inject = true` and index exists
 
 ### ONNX MiniLM
-- Feature `onnx` on `whycode-memory` (+ optional forward from CLI)
-- `embed_backend = "onnx"` with download + tract inference; falls back to hash
+- Feature `onnx` on `whycode-memory` (+ `whycode-cli --features onnx`)
+- `embed_backend = "onnx"` with download + SHA-256 sidecar verify + tract inference
+- `whycode memory onnx-smoke` end-to-end probe
 
 ### Subagent banks
-- `project_key::agent_name` bank isolation
-- Subagent system prompt injects its own bank (`subagent_banks` default true)
+- `project_key::agent_name` bank isolation when `[memory] subagent_banks = true`
+- Threaded from config through `Agent` → `SubagentRunner` (env `WHYCODE_SUBAGENT_BANKS=0` override)
+
+### Session auto-index
+- On TUI/plain session start: if code_chunks empty for bank, index once
+  (`auto_index = true`)
 
 ## Config
 
@@ -63,6 +71,8 @@ Model files download on first use to `{data_dir}/models/minilm/`.
 enabled = true
 auto_inject = true
 auto_retain = true
+retain_llm = true
+retain_llm_always = false
 retain_every_n = 1
 retain_max_facts = 3
 max_index_lines = 200
@@ -77,9 +87,12 @@ code_inject = true
 code_top_k = 4
 code_min_score = 0.22
 subagent_banks = true
+auto_index = true
+auto_index_max_files = 1500
+auto_index_max_chunks = 4000
 ```
 
-Flags: `--no-memory`, `WHYCODE_NO_MEMORY=1`.
+Flags: `--no-memory`, `WHYCODE_NO_MEMORY=1`, `WHYCODE_SUBAGENT_BANKS=0`.
 
 ## CLI
 
@@ -89,14 +102,15 @@ whycode memory export [-o file.json]
 whycode memory import file.json
 whycode memory index
 whycode memory code-search "query"
+whycode memory onnx-smoke   # needs --features onnx
 ```
 
 ## Acceptance
 
 - [x] Offline hash embedding + recall
-- [x] Auto-retain durable preferences
+- [x] Auto-retain durable preferences (heuristic + optional LLM)
 - [x] Export/import + project-scoped MEMORY.md
-- [x] Code index + search
-- [x] Subagent bank isolation
-- [x] ONNX feature path (build-time optional; download on use)
+- [x] Code index + search + session auto-index
+- [x] Subagent bank isolation (config-wired)
+- [x] ONNX feature compiles; checksum sidecars; `onnx-smoke` CLI
 - [x] Tests green; dependency boundaries ok

@@ -204,6 +204,26 @@ impl MemoryService {
         }
         let mut candidates = retain::extract_heuristic(user_text, assistant_text);
         candidates.truncate(self.settings.retain_max_facts);
+        self.save_facts(candidates, source_session)
+    }
+
+    /// Whether the LLM retain pass should run for this turn.
+    pub fn should_run_llm_retain(&self, heuristic_saved: usize, turn_index: usize) -> bool {
+        if !self.settings.enabled || !self.settings.auto_retain || !self.settings.retain_llm {
+            return false;
+        }
+        let every = self.settings.retain_every_n.max(1);
+        if turn_index > 0 && !turn_index.is_multiple_of(every) {
+            return false;
+        }
+        self.settings.retain_llm_always || heuristic_saved == 0
+    }
+
+    fn save_facts(
+        &self,
+        candidates: Vec<String>,
+        source_session: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
         let mut saved = Vec::new();
         for fact in candidates {
             match self.remember(&fact, source_session) {
@@ -220,6 +240,24 @@ impl MemoryService {
         Ok(saved)
     }
 
+    /// Ensure a code index exists for this bank (no-op if already non-empty).
+    /// Returns `Some(n)` when a new index was built, `None` when skipped.
+    pub fn ensure_code_index(&self) -> anyhow::Result<Option<usize>> {
+        if !self.settings.enabled || !self.settings.auto_index {
+            return Ok(None);
+        }
+        let db = self.open_db()?;
+        let existing = db.list_code_chunks(&self.bank_key, 1)?;
+        if !existing.is_empty() {
+            return Ok(None);
+        }
+        let n = self.index_codebase(
+            self.settings.auto_index_max_files,
+            self.settings.auto_index_max_chunks,
+        )?;
+        Ok(Some(n))
+    }
+
     /// Retain from pre-parsed LLM fact lines.
     pub fn retain_llm_facts(
         &self,
@@ -229,16 +267,11 @@ impl MemoryService {
         if !self.settings.enabled || !self.settings.auto_retain {
             return Ok(Vec::new());
         }
-        let mut saved = Vec::new();
-        for fact in retain::parse_llm_facts(raw_llm)
+        let candidates: Vec<String> = retain::parse_llm_facts(raw_llm)
             .into_iter()
             .take(self.settings.retain_max_facts)
-        {
-            if self.remember(&fact, source_session).is_ok() {
-                saved.push(fact);
-            }
-        }
-        Ok(saved)
+            .collect();
+        self.save_facts(candidates, source_session)
     }
 
     pub fn build_inject_block(&self, query: Option<&str>) -> anyhow::Result<String> {
@@ -410,7 +443,7 @@ pub fn apply_memory_prompt(
     }
 }
 
-/// Best-effort post-turn retain for CLI/TUI.
+/// Best-effort post-turn retain for CLI/TUI (heuristic only).
 pub fn maybe_auto_retain(
     project_path: &Path,
     data_dir: &Path,
@@ -430,6 +463,30 @@ pub fn maybe_auto_retain(
         Err(e) => {
             tracing::debug!("auto_retain skipped: {e}");
             Vec::new()
+        }
+    }
+}
+
+/// Best-effort: build code index if empty. Returns chunks indexed, if any.
+pub fn maybe_auto_index(
+    project_path: &Path,
+    data_dir: &Path,
+    settings: &MemorySettings,
+) -> Option<usize> {
+    if !settings.enabled || !settings.auto_index {
+        return None;
+    }
+    match MemoryService::open(project_path, data_dir, settings.clone()) {
+        Ok(svc) => match svc.ensure_code_index() {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::debug!("auto_index skipped: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::debug!("auto_index open failed: {e}");
+            None
         }
     }
 }

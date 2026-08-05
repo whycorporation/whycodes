@@ -539,9 +539,16 @@ pub struct MemoryConfig {
     /// Auto-inject top-k semantic hits for the current user message.
     #[serde(default = "default_true")]
     pub auto_inject: bool,
-    /// Post-turn auto-retain (heuristic extraction). Default on.
+    /// Post-turn auto-retain (heuristic and/or LLM). Default on.
     #[serde(default = "default_true")]
     pub auto_retain: bool,
+    /// Also call a small LLM to extract durable facts when heuristic finds none
+    /// (or always when `retain_llm_always`). Default on.
+    #[serde(default = "default_true")]
+    pub retain_llm: bool,
+    /// Run LLM retain even if heuristic already found facts.
+    #[serde(default)]
+    pub retain_llm_always: bool,
     /// Run retain every N user turns (1 = every turn).
     #[serde(default = "default_retain_every_n")]
     pub retain_every_n: usize,
@@ -582,6 +589,15 @@ pub struct MemoryConfig {
     /// Give subagents their own memory bank (`project::agent_name`).
     #[serde(default = "default_true")]
     pub subagent_banks: bool,
+    /// On session start, ensure a code index exists (skip if already indexed).
+    #[serde(default = "default_true")]
+    pub auto_index: bool,
+    /// Max source files to walk when auto-indexing.
+    #[serde(default = "default_auto_index_files")]
+    pub auto_index_max_files: usize,
+    /// Max chunks when auto-indexing.
+    #[serde(default = "default_auto_index_chunks")]
+    pub auto_index_max_chunks: usize,
 }
 
 impl Default for MemoryConfig {
@@ -590,6 +606,8 @@ impl Default for MemoryConfig {
             enabled: true,
             auto_inject: true,
             auto_retain: true,
+            retain_llm: true,
+            retain_llm_always: false,
             retain_every_n: default_retain_every_n(),
             retain_max_facts: default_retain_max_facts(),
             max_index_lines: default_memory_index_lines(),
@@ -604,6 +622,9 @@ impl Default for MemoryConfig {
             code_top_k: default_code_top_k(),
             code_min_score: default_code_min_score(),
             subagent_banks: true,
+            auto_index: true,
+            auto_index_max_files: default_auto_index_files(),
+            auto_index_max_chunks: default_auto_index_chunks(),
         }
     }
 }
@@ -643,6 +664,12 @@ fn default_code_top_k() -> usize {
 }
 fn default_code_min_score() -> f32 {
     0.22
+}
+fn default_auto_index_files() -> usize {
+    1500
+}
+fn default_auto_index_chunks() -> usize {
+    4000
 }
 
 fn default_agent() -> String {
@@ -1185,6 +1212,12 @@ impl Config {
         if !other.memory.auto_retain {
             merged.memory.auto_retain = false;
         }
+        if !other.memory.retain_llm {
+            merged.memory.retain_llm = false;
+        }
+        if other.memory.retain_llm_always {
+            merged.memory.retain_llm_always = true;
+        }
         if other.memory.retain_every_n != default_retain_every_n() {
             merged.memory.retain_every_n = other.memory.retain_every_n;
         }
@@ -1226,6 +1259,15 @@ impl Config {
         }
         if !other.memory.subagent_banks {
             merged.memory.subagent_banks = false;
+        }
+        if !other.memory.auto_index {
+            merged.memory.auto_index = false;
+        }
+        if other.memory.auto_index_max_files != default_auto_index_files() {
+            merged.memory.auto_index_max_files = other.memory.auto_index_max_files;
+        }
+        if other.memory.auto_index_max_chunks != default_auto_index_chunks() {
+            merged.memory.auto_index_max_chunks = other.memory.auto_index_max_chunks;
         }
 
         merged

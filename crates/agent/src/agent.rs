@@ -77,6 +77,8 @@ pub struct Agent {
     use_prompt_cache: bool,
     /// Optional fast model for trivial chat (`provider/model` or bare id).
     model_fast: Option<String>,
+    /// Cross-session memory settings (from config).
+    memory: whycode_memory::MemorySettings,
 }
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
@@ -127,6 +129,7 @@ impl Agent {
             tool_profile: ToolProfile::Core,
             use_prompt_cache: true,
             model_fast: None,
+            memory: whycode_memory::MemorySettings::default(),
         }
     }
 
@@ -167,6 +170,7 @@ impl Agent {
         self.use_prompt_cache =
             !matches!(config.session.prompt_cache.trim().to_ascii_lowercase().as_str(), "none" | "off" | "false" | "0");
         self.model_fast = config.session.model_fast.clone();
+        self.memory = memory_settings_from_config(config);
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -175,9 +179,15 @@ impl Agent {
             compaction_threshold = self.compaction_threshold,
             tool_profile = self.tool_profile.as_str(),
             use_prompt_cache = self.use_prompt_cache,
+            memory_enabled = self.memory.enabled,
             "shell sandbox, network policy, and hooks"
         );
         self
+    }
+
+    /// Memory settings loaded from config (for CLI/TUI helpers).
+    pub fn memory_settings(&self) -> &whycode_memory::MemorySettings {
+        &self.memory
     }
 
     pub fn with_tool_profile(mut self, profile: ToolProfile) -> Self {
@@ -845,6 +855,31 @@ impl Agent {
             })),
         );
 
+        // Hindsight-style auto-retain (heuristic + optional LLM). Best-effort.
+        if self.memory.enabled && self.memory.auto_retain {
+            let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
+                .map(|d| d.data_local_dir().to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let saved = super::memory_retain::run_post_turn_retain(
+                session,
+                &final_text,
+                &self.memory,
+                provider,
+                provider_name,
+                model,
+                api_key,
+                &data_dir,
+            )
+            .await;
+            if !saved.is_empty() {
+                tracing::info!(count = saved.len(), "auto-retained memories");
+                emit(
+                    &events,
+                    TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
+                );
+            }
+        }
+
         Ok(final_text)
     }
 
@@ -1200,7 +1235,8 @@ impl Agent {
             session.project_path.clone(),
             self.sandbox.clone(),
             self.network.clone(),
-        );
+        )
+        .with_memory(self.memory.clone());
 
         match runner.run(task, provider_name, model, api_key).await {
             Ok(result) => ToolResult {
@@ -1258,7 +1294,8 @@ impl Agent {
             project_path,
             self.sandbox.clone(),
             self.network.clone(),
-        );
+        )
+        .with_memory(self.memory.clone());
 
         let result = runner.run(task, provider_name, model, api_key).await?;
 
@@ -1286,14 +1323,17 @@ impl Agent {
         let model = Arc::from(model.to_string());
         let api_key = Arc::from(api_key.to_string());
 
-        let runner = Arc::new(SubagentRunner::new(
-            Arc::clone(&self.provider_registry),
-            Arc::clone(&self.tool_executor),
-            self.info.clone(),
-            project_path,
-            self.sandbox.clone(),
-            self.network.clone(),
-        ));
+        let runner = Arc::new(
+            SubagentRunner::new(
+                Arc::clone(&self.provider_registry),
+                Arc::clone(&self.tool_executor),
+                self.info.clone(),
+                project_path,
+                self.sandbox.clone(),
+                self.network.clone(),
+            )
+            .with_memory(self.memory.clone()),
+        );
 
         let mut handles = Vec::with_capacity(goals.len());
 
@@ -1320,5 +1360,35 @@ impl Agent {
         }
 
         Ok(outputs)
+    }
+}
+
+/// Map config memory table → whycode-memory settings bag.
+pub fn memory_settings_from_config(config: &whycode_config::Config) -> whycode_memory::MemorySettings {
+    let m = &config.memory;
+    whycode_memory::MemorySettings {
+        enabled: m.enabled,
+        auto_inject: m.auto_inject,
+        auto_retain: m.auto_retain,
+        retain_llm: m.retain_llm,
+        retain_llm_always: m.retain_llm_always,
+        retain_every_n: m.retain_every_n,
+        retain_max_facts: m.retain_max_facts,
+        max_index_lines: m.max_index_lines,
+        max_index_bytes: m.max_index_bytes,
+        recall_top_k: m.recall_top_k,
+        recall_min_score: m.recall_min_score,
+        recall_token_budget: m.recall_token_budget,
+        embed_dim: m.embed_dim,
+        scope: whycode_memory::MemoryScope::parse(&m.scope),
+        embed_backend: whycode_memory::EmbedBackend::parse(&m.embed_backend),
+        agent_bank: None,
+        code_inject: m.code_inject,
+        code_top_k: m.code_top_k,
+        code_min_score: m.code_min_score,
+        auto_index: m.auto_index,
+        auto_index_max_files: m.auto_index_max_files,
+        auto_index_max_chunks: m.auto_index_max_chunks,
+        subagent_banks: m.subagent_banks,
     }
 }

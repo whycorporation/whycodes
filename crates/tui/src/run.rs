@@ -267,6 +267,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
+    // Code RAG: index once if empty (skips when chunks already exist).
+    maybe_session_auto_index(&opts.project_dir, &config, &mut app);
     let mut history = SessionHistory::new();
 
     // CLI `--continue` / `--resume`: hydrate before first paint when possible.
@@ -603,33 +605,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         {
                             last.content = text.clone();
                         }
-                        // Hindsight-style post-turn auto-retain (heuristic).
-                        {
-                            let user_text = session
-                                .messages
-                                .iter()
-                                .rev()
-                                .find(|m| m.role == whycode_core::types::Role::User)
-                                .and_then(|m| m.content.as_text().map(|s| s.to_string()))
-                                .unwrap_or_default();
-                            let data_dir =
-                                Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-                            let saved = whycode_memory::maybe_auto_retain(
-                                &project_dir,
-                                &data_dir,
-                                &memory_settings(&config),
-                                &user_text,
-                                Some(text.as_str()),
-                                Some(&session.id),
-                                session.user_message_count().max(1),
-                            );
-                            if !saved.is_empty() {
-                                app.toasts.push(
-                                    crate::toast::ToastKind::Info,
-                                    format!("Remembered {} fact(s)", saved.len()),
-                                );
-                            }
-                        }
+                        // Auto-retain runs inside Agent::run_turn (heuristic + LLM).
+                        // Surface agent Status events as toasts already via drain path.
                         app.finish_open_thinking();
                         app.current_agent_state = AgentState::Idle;
                         // Agent may have switched branches; keep footer current.
@@ -2254,25 +2231,21 @@ fn memory_settings_for(
     config: &Config,
     agent_bank: Option<String>,
 ) -> whycode_memory::MemorySettings {
-    let m = &config.memory;
-    whycode_memory::MemorySettings {
-        enabled: m.enabled,
-        auto_inject: m.auto_inject,
-        auto_retain: m.auto_retain,
-        retain_every_n: m.retain_every_n,
-        retain_max_facts: m.retain_max_facts,
-        max_index_lines: m.max_index_lines,
-        max_index_bytes: m.max_index_bytes,
-        recall_top_k: m.recall_top_k,
-        recall_min_score: m.recall_min_score,
-        recall_token_budget: m.recall_token_budget,
-        embed_dim: m.embed_dim,
-        scope: whycode_memory::MemoryScope::parse(&m.scope),
-        embed_backend: whycode_memory::EmbedBackend::parse(&m.embed_backend),
-        agent_bank,
-        code_inject: m.code_inject,
-        code_top_k: m.code_top_k,
-        code_min_score: m.code_min_score,
+    let mut s = whycode_agent::memory_settings_from_config(config);
+    s.agent_bank = agent_bank;
+    s
+}
+
+/// Best-effort code index when the TUI session starts (skips if already indexed).
+fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config, app: &mut TuiApp) {
+    let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if let Some(n) =
+        whycode_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+    {
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            format!("Indexed {n} code chunks"),
+        );
     }
 }
 

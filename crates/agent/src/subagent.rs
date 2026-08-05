@@ -6,6 +6,7 @@ use whycode_core::network::NetworkPolicy;
 use whycode_core::tool::ToolContext;
 use whycode_core::types::{AgentInfo, PermissionSet};
 use whycode_llm::provider::ProviderRegistry;
+use whycode_memory::MemorySettings;
 use whycode_session::session::Session;
 use whycode_tools::executor::ToolExecutor;
 
@@ -46,6 +47,7 @@ pub struct SubagentRunner {
     project_path: std::path::PathBuf,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
+    memory: MemorySettings,
 }
 
 impl SubagentRunner {
@@ -65,7 +67,14 @@ impl SubagentRunner {
             project_path,
             sandbox,
             network,
+            memory: MemorySettings::default(),
         }
+    }
+
+    /// Attach parent memory settings (subagent_banks, inject knobs).
+    pub fn with_memory(mut self, memory: MemorySettings) -> Self {
+        self.memory = memory;
+        self
     }
 
     /// Run a single subagent task synchronously (awaited).
@@ -106,6 +115,7 @@ impl SubagentRunner {
             &self.project_path,
             &self.info.name,
             &user_message,
+            &self.memory,
         );
 
         let mut session = Session::new(self.project_path.clone(), system_prompt);
@@ -185,12 +195,11 @@ impl SubagentRunner {
             turn_count += 1;
             if turn_count > max_turns {
                 return Err(whycode_core::Error::Agent(format!(
-                    "Exceeded maximum turns ({})",
+                    "Subagent exceeded maximum turns ({})",
                     max_turns
                 )));
             }
 
-            // Build request
             let request = session.build_request(
                 &tools,
                 None, // max_tokens
@@ -287,8 +296,9 @@ impl SubagentRunner {
                             | "question"
                             | "code_mode"
                             | "skill"
-                    ) && permission.action_for(&tc.name)
-                        == whycode_core::types::PermissionAction::Allow
+                            | "external_directory"
+                            | "memory"
+                    )
                 }) {
                 let futs: Vec<_> = tool_calls
                     .iter()
@@ -310,40 +320,40 @@ impl SubagentRunner {
     }
 }
 
-/// Inject subagent-scoped auto memory into the system prompt (bank = agent name).
-///
-/// Honors `WHYCODE_NO_MEMORY` and `WHYCODE_SUBAGENT_BANKS=0` (config is not
-/// threaded into SubagentRunner today; env mirrors `[memory] subagent_banks`).
+/// Inject memory into the subagent system prompt using parent config.
 fn inject_subagent_memory(
     system_prompt: &str,
     project_path: &std::path::Path,
     agent_name: &str,
     query: &str,
+    parent_memory: &MemorySettings,
 ) -> String {
+    if !parent_memory.enabled {
+        return system_prompt.to_string();
+    }
+    // Env override still wins for emergency off-switch.
     if std::env::var("WHYCODE_NO_MEMORY")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
     {
         return system_prompt.to_string();
     }
-    // Default on; set WHYCODE_SUBAGENT_BANKS=0 to share the main bank.
-    if std::env::var("WHYCODE_SUBAGENT_BANKS")
+
+    let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
+        .map(|d| d.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+    let mut settings = parent_memory.clone();
+    // Env can force main bank even if config has subagent_banks=true.
+    let banks_off = std::env::var("WHYCODE_SUBAGENT_BANKS")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
-        .unwrap_or(false)
-    {
-        // Still inject main-bank memory for the subagent.
-        let data_dir = memory_data_dir();
-        return whycode_memory::apply_memory_prompt(
-            system_prompt,
-            project_path,
-            &data_dir,
-            &whycode_memory::MemorySettings::default(),
-            Some(query),
-        );
+        .unwrap_or(false);
+    if parent_memory.subagent_banks && !banks_off {
+        settings.agent_bank = Some(agent_name.to_string());
+    } else {
+        settings.agent_bank = None;
     }
-    let data_dir = memory_data_dir();
-    let mut settings = whycode_memory::MemorySettings::default();
-    settings.agent_bank = Some(agent_name.to_string());
+
     whycode_memory::apply_memory_prompt(
         system_prompt,
         project_path,
@@ -351,10 +361,4 @@ fn inject_subagent_memory(
         &settings,
         Some(query),
     )
-}
-
-fn memory_data_dir() -> std::path::PathBuf {
-    directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .map(|d| d.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }

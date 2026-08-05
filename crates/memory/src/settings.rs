@@ -58,6 +58,10 @@ pub struct MemorySettings {
     pub auto_inject: bool,
     /// Post-turn auto-retain (Hindsight-style). Default on with heuristic extract.
     pub auto_retain: bool,
+    /// Call a small LLM for fact extraction when heuristic is empty (or always).
+    pub retain_llm: bool,
+    /// Run LLM retain even when heuristic already found facts.
+    pub retain_llm_always: bool,
     /// Only run retain every N completed user turns (1 = every turn).
     pub retain_every_n: usize,
     /// Max new facts retained per turn.
@@ -76,6 +80,12 @@ pub struct MemorySettings {
     pub code_inject: bool,
     pub code_top_k: usize,
     pub code_min_score: f32,
+    /// Ensure code index on session start if empty.
+    pub auto_index: bool,
+    pub auto_index_max_files: usize,
+    pub auto_index_max_chunks: usize,
+    /// Subagents get isolated banks when true.
+    pub subagent_banks: bool,
 }
 
 impl Default for MemorySettings {
@@ -84,6 +94,8 @@ impl Default for MemorySettings {
             enabled: true,
             auto_inject: true,
             auto_retain: true,
+            retain_llm: true,
+            retain_llm_always: false,
             retain_every_n: 1,
             retain_max_facts: 3,
             max_index_lines: 200,
@@ -98,6 +110,10 @@ impl Default for MemorySettings {
             code_inject: true,
             code_top_k: 4,
             code_min_score: 0.22,
+            auto_index: true,
+            auto_index_max_files: 1500,
+            auto_index_max_chunks: 4000,
+            subagent_banks: true,
         }
     }
 }
