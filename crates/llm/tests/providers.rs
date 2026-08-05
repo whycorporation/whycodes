@@ -38,9 +38,16 @@ fn test_anthropic_build_body() {
     assert_eq!(body["model"].as_str().unwrap(), "claude-sonnet-4-20250514");
     assert_eq!(body["max_tokens"].as_u64().unwrap(), 1024);
     assert!(body["stream"].as_bool().unwrap());
+    // Prompt-cacheable system block (array form with cache_control).
+    let system = body["system"].as_array().expect("system is content blocks");
+    assert_eq!(system[0]["type"].as_str().unwrap(), "text");
     assert_eq!(
-        body["system"].as_str().unwrap(),
+        system[0]["text"].as_str().unwrap(),
         "You are a helpful assistant."
+    );
+    assert_eq!(
+        system[0]["cache_control"]["type"].as_str().unwrap(),
+        "ephemeral"
     );
 
     let messages = body["messages"].as_array().unwrap();
@@ -88,9 +95,10 @@ fn test_anthropic_build_body_uses_top_level_system() {
     let request = make_basic_request();
     let body = provider.build_body(&request, "claude");
 
-    // Anthropic puts system at top-level, not in messages
+    // Anthropic puts system at top-level (content blocks), not in messages.
+    let system = body["system"].as_array().expect("cached system blocks");
     assert_eq!(
-        body["system"].as_str().unwrap(),
+        system[0]["text"].as_str().unwrap(),
         "You are a helpful assistant."
     );
     let messages = body["messages"].as_array().unwrap();
@@ -98,6 +106,31 @@ fn test_anthropic_build_body_uses_top_level_system() {
         // No system role in messages — Anthropic uses top-level system
         assert_ne!(m["role"].as_str().unwrap(), "system");
     }
+}
+
+#[test]
+fn test_anthropic_tools_get_cache_breakpoint_on_last() {
+    let provider = AnthropicProvider::new();
+    let mut request = make_basic_request();
+    request.tools = vec![
+        whycode_core::types::ToolDefinition {
+            name: "read".into(),
+            description: "read a file".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        },
+        whycode_core::types::ToolDefinition {
+            name: "grep".into(),
+            description: "search".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {}}),
+        },
+    ];
+    let body = provider.build_body(&request, "claude");
+    let tools = body["tools"].as_array().unwrap();
+    assert!(tools[0].get("cache_control").is_none());
+    assert_eq!(
+        tools[1]["cache_control"]["type"].as_str().unwrap(),
+        "ephemeral"
+    );
 }
 
 // ─── OpenAI body building ──────────────────────────────────────────────────

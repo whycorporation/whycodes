@@ -30,8 +30,16 @@ impl AnthropicProvider {
             "stream": true,
         });
 
+        // Prompt caching: system as a content block with cache_control so the
+        // static prefix (prompt + AGENTS.md + tools) is reused across turns.
+        // Claude Code / industry standard — big TTFT win on multi-step agents.
+        // See: platform.claude.com/docs — prompt caching, tool-use caching.
         if !request.system.is_empty() {
-            body["system"] = Value::String(request.system.clone());
+            body["system"] = serde_json::json!([{
+                "type": "text",
+                "text": request.system,
+                "cache_control": { "type": "ephemeral" }
+            }]);
         }
 
         if !request.tools.is_empty() {
@@ -107,7 +115,7 @@ impl AnthropicProvider {
     }
 
     fn convert_tools(&self, tools: &[ToolDefinition]) -> Vec<Value> {
-        tools
+        let mut out: Vec<Value> = tools
             .iter()
             .map(|t| {
                 serde_json::json!({
@@ -116,7 +124,18 @@ impl AnthropicProvider {
                     "input_schema": t.parameters
                 })
             })
-            .collect()
+            .collect();
+        // Cache breakpoint on the last tool → entire tools array is a stable
+        // prefix for subsequent turns (Anthropic tool-use + prompt caching docs).
+        if let Some(last) = out.last_mut()
+            && let Some(obj) = last.as_object_mut()
+        {
+            obj.insert(
+                "cache_control".into(),
+                serde_json::json!({ "type": "ephemeral" }),
+            );
+        }
+        out
     }
 }
 

@@ -22,6 +22,37 @@ use whycode_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pr
 /// Tool names that run an arbitrary shell command string.
 const SHELL_TOOLS: &[&str] = &["bash", "shell"];
 
+/// Tools that must never fan out in parallel (side effects, races, or UI ask).
+const SERIAL_TOOLS: &[&str] = &[
+    "bash",
+    "shell",
+    "write",
+    "edit",
+    "apply_patch",
+    "git_commit",
+    "todo_write",
+    "todo",
+    "task",
+    "plan",
+    "question",
+    "code_mode",
+    "skill",
+    "external_directory",
+];
+
+/// Whether this tool can safely run beside other tools in the same step.
+///
+/// Industry pattern (OpenCode issue #24764, Codex parallel function calls):
+/// fan out independent reads; keep mutators and permission-gated tools serial.
+fn is_parallel_safe_tool(name: &str, permission: &whycode_core::types::PermissionSet) -> bool {
+    if SERIAL_TOOLS.contains(&name) {
+        return false;
+    }
+    // Interactive ask cannot share the TUI's single pending_perm_reply slot.
+    use whycode_core::types::PermissionAction;
+    permission.action_for(name) == PermissionAction::Allow
+}
+
 /// Default system prompt (loaded from prompts/build.txt at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompts/build.txt");
 
@@ -36,6 +67,9 @@ pub struct Agent {
     network: NetworkPolicy,
     /// Config-driven pre/post tool hooks (empty by default).
     hooks: Vec<HookConfig>,
+    /// When session estimate exceeds this, compact before the next LLM call
+    /// (Claude Code / OpenCode style). `0` disables auto-compact.
+    compaction_threshold: usize,
 }
 
 impl Agent {
@@ -49,6 +83,8 @@ impl Agent {
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
+            // Match config default when `with_config` is not used.
+            compaction_threshold: 150_000,
         }
     }
 
@@ -84,11 +120,13 @@ impl Agent {
         self.sandbox = config.security.sandbox_settings();
         self.network = config.security.network_policy();
         self.hooks = config.hooks.clone();
+        self.compaction_threshold = config.session.compaction_threshold;
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
             network_deny = self.network.denylist.len(),
             hooks = self.hooks.len(),
+            compaction_threshold = self.compaction_threshold,
             "shell sandbox, network policy, and hooks"
         );
         self
@@ -406,6 +444,31 @@ impl Agent {
                 )));
             }
 
+            // Auto-compact before prefill when over budget — long sessions
+            // otherwise pay full TTFT on dead history every step.
+            if self.compaction_threshold > 0 {
+                let before = session.token_count();
+                if before > self.compaction_threshold {
+                    let n_before = session.messages.len();
+                    session.compact(self.compaction_threshold);
+                    let n_after = session.messages.len();
+                    if n_after < n_before {
+                        emit(
+                            &events,
+                            TurnEvent::Status(format!(
+                                "Compacted context ({n_before} → {n_after} msgs)…"
+                            )),
+                        );
+                        tracing::info!(
+                            before_tokens = before,
+                            messages_before = n_before,
+                            messages_after = n_after,
+                            "auto-compact before LLM step"
+                        );
+                    }
+                }
+            }
+
             emit(
                 &events,
                 TurnEvent::Status(format!("LLM request (step {turn_count})…")),
@@ -533,29 +596,21 @@ impl Agent {
                 break;
             }
 
-            let mut results = Vec::new();
-            for tc in &tool_calls {
-                if is_cancelled(&cancel) {
-                    emit(&events, TurnEvent::Cancelled);
-                    return Err(whycode_core::Error::Agent("Cancelled".into()));
-                }
-                emit(
+            // Parallel when safe (OpenCode / Codex / Claude Code pattern).
+            // Sequential for shell / mutating / permission-ask tools so risk
+            // gates and the TUI single-slot permission UI stay correct.
+            let results = self
+                .execute_tool_calls(
+                    &tool_calls,
+                    session,
+                    &tool_ctx,
+                    provider_name,
+                    model,
+                    api_key,
                     &events,
-                    TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
-                );
-                let result = self
-                    .execute_with_permission(tc, session, &tool_ctx, provider_name, model, api_key)
-                    .await;
-                emit(
-                    &events,
-                    TurnEvent::ToolEnd {
-                        id: tc.id.clone(),
-                        content: result.content.clone(),
-                        is_error: result.is_error,
-                    },
-                );
-                results.push(result);
-            }
+                    &cancel,
+                )
+                .await?;
 
             session.add_tool_results(results.clone());
 
@@ -577,6 +632,121 @@ impl Agent {
         }
 
         Ok(final_text)
+    }
+
+    /// Run a batch of tool calls, parallelizing independent read-only tools.
+    ///
+    /// Results are returned in the **same order** as `tool_calls` (required by
+    /// the messages API). Shell, mutators, and tools that need an interactive
+    /// permission ask stay sequential so risk/UI semantics stay single-threaded.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        session: &Session,
+        tool_ctx: &ToolContext,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        events: &Option<EventSink>,
+        cancel: &Option<CancelFlag>,
+    ) -> whycode_core::Result<Vec<ToolResult>> {
+        if tool_calls.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Single call — no fan-out overhead.
+        if tool_calls.len() == 1 {
+            let tc = &tool_calls[0];
+            if is_cancelled(cancel) {
+                emit(events, TurnEvent::Cancelled);
+                return Err(whycode_core::Error::Agent("Cancelled".into()));
+            }
+            emit(
+                events,
+                TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
+            );
+            let result = self
+                .execute_with_permission(tc, session, tool_ctx, provider_name, model, api_key)
+                .await;
+            emit(
+                events,
+                TurnEvent::ToolEnd {
+                    id: tc.id.clone(),
+                    content: result.content.clone(),
+                    is_error: result.is_error,
+                },
+            );
+            return Ok(vec![result]);
+        }
+
+        let all_parallel = tool_calls
+            .iter()
+            .all(|tc| is_parallel_safe_tool(&tc.name, &self.info.permission));
+
+        if all_parallel {
+            let names: Vec<&str> = tool_calls.iter().map(|t| t.name.as_str()).collect();
+            emit(
+                events,
+                TurnEvent::Status(format!(
+                    "Running {} tools in parallel: {}…",
+                    tool_calls.len(),
+                    names.join(", ")
+                )),
+            );
+            // ToolStart already emitted by the caller for every call.
+            let futs: Vec<_> = tool_calls
+                .iter()
+                .map(|tc| {
+                    self.execute_with_permission(
+                        tc,
+                        session,
+                        tool_ctx,
+                        provider_name,
+                        model,
+                        api_key,
+                    )
+                })
+                .collect();
+            let results = futures::future::join_all(futs).await;
+            for (tc, result) in tool_calls.iter().zip(results.iter()) {
+                emit(
+                    events,
+                    TurnEvent::ToolEnd {
+                        id: tc.id.clone(),
+                        content: result.content.clone(),
+                        is_error: result.is_error,
+                    },
+                );
+            }
+            return Ok(results);
+        }
+
+        // Mixed or unsafe batch — sequential (correct + simple).
+        let mut results = Vec::with_capacity(tool_calls.len());
+        for tc in tool_calls {
+            if is_cancelled(cancel) {
+                emit(events, TurnEvent::Cancelled);
+                return Err(whycode_core::Error::Agent("Cancelled".into()));
+            }
+            emit(
+                events,
+                TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
+            );
+            let result = self
+                .execute_with_permission(tc, session, tool_ctx, provider_name, model, api_key)
+                .await;
+            emit(
+                events,
+                TurnEvent::ToolEnd {
+                    id: tc.id.clone(),
+                    content: result.content.clone(),
+                    is_error: result.is_error,
+                },
+            );
+            results.push(result);
+        }
+        Ok(results)
     }
 
     /// Apply the shell risk gate, then allow/ask/deny, then execute (or spawn

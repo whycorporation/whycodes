@@ -92,6 +92,7 @@ impl CustomProvider {
         if !request.tools.is_empty() {
             body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
             body["tool_choice"] = serde_json::json!("auto");
+            body["parallel_tool_calls"] = serde_json::json!(true);
         }
 
         if let Some(temp) = request.temperature {

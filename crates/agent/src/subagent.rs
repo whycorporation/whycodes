@@ -262,12 +262,39 @@ impl SubagentRunner {
                 break;
             }
 
-            // Execute tool calls
-            let mut results = Vec::new();
-            for tc in &tool_calls {
-                let result = self.tool_executor.execute(tc, &tool_ctx, permission).await;
-                results.push(result);
-            }
+            // Parallelize independent reads; keep mutators/serial tools sequential.
+            let results = if tool_calls.len() > 1
+                && tool_calls.iter().all(|tc| {
+                    !matches!(
+                        tc.name.as_str(),
+                        "bash"
+                            | "shell"
+                            | "write"
+                            | "edit"
+                            | "apply_patch"
+                            | "git_commit"
+                            | "todo_write"
+                            | "todo"
+                            | "task"
+                            | "plan"
+                            | "question"
+                            | "code_mode"
+                            | "skill"
+                    ) && permission.action_for(&tc.name)
+                        == whycode_core::types::PermissionAction::Allow
+                }) {
+                let futs: Vec<_> = tool_calls
+                    .iter()
+                    .map(|tc| self.tool_executor.execute(tc, &tool_ctx, permission))
+                    .collect();
+                futures::future::join_all(futs).await
+            } else {
+                let mut results = Vec::with_capacity(tool_calls.len());
+                for tc in &tool_calls {
+                    results.push(self.tool_executor.execute(tc, &tool_ctx, permission).await);
+                }
+                results
+            };
 
             session.add_tool_results(results.clone());
         }

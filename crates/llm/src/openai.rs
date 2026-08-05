@@ -35,6 +35,9 @@ impl OpenAiProvider {
         if !request.tools.is_empty() {
             body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
             body["tool_choice"] = serde_json::json!("auto");
+            // Encourage the model to emit independent tool calls in one step
+            // so our agent can fan them out (Codex / OpenAI latency guide).
+            body["parallel_tool_calls"] = serde_json::json!(true);
         }
 
         if let Some(temp) = request.temperature {

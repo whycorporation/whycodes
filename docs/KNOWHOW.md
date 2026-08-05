@@ -187,6 +187,23 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-05 — Competitive latency pack (cache + parallel tools)
+
+**What:** Match Claude Code / OpenCode / Codex latency patterns:
+
+| Piece | Behavior |
+|-------|----------|
+| Anthropic `cache_control` | system block + last tool ephemeral |
+| Parallel tools | fan-out read-safe tools; shell/mutators serial |
+| OpenAI-compat | `parallel_tool_calls: true` |
+| Auto-compact | before each LLM step when over `compaction_threshold` |
+
+**Roadmap:** [plan-latency-competitors.md](plan-latency-competitors.md)
+
+**Prevention:** Do not reintroduce sequential-only tool loops or string-only Anthropic `system` without cache markers.
+
+---
+
 ### 2026-08-05 — Slow turns / inflated "Worked for Xs" (HTTP + title refine)
 
 **Symptom:** Simple chat ("selam") shows tens of seconds; first turn especially sluggish; multi-step tool loops feel cold every time.
