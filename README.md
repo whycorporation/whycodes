@@ -62,7 +62,9 @@ From source, which needs a Rust toolchain:
 ```bash
 git clone https://github.com/whycorporation/whycode.git
 cd whycode
-cargo build --release
+cargo build --release -p whycode-cli
+# Optional extras (Unicode mermaid + bat/two-face languages, ~+1.7 MB):
+# cargo build --release -p whycode-cli --features full
 ```
 
 The binary is written to `target/release/whycode`.

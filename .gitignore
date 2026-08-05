@@ -1,4 +1,6 @@
-.cargo
+# Local cargo state; keep shared rustflags (Boot/TTFF RELRO) in repo.
+.cargo/*
+!.cargo/config.toml
 target/
 **/*.rs.bk
 

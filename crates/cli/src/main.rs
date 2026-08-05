@@ -1,3 +1,4 @@
+#[cfg(feature = "self-update")]
 mod upgrade;
 
 use clap::{Parser, Subcommand};
@@ -135,6 +136,7 @@ pub enum Commands {
     },
 
     /// Start API server
+    #[cfg(feature = "server")]
     Serve {
         /// Port to listen on
         #[arg(default_value = "3030")]
@@ -187,6 +189,7 @@ pub enum Commands {
     Debug,
 
     /// Self-update
+    #[cfg(feature = "self-update")]
     #[command(name = "upgrade")]
     Upgrade,
 }
@@ -406,10 +409,12 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Acp
             | Commands::Pr { .. }
             | Commands::Github { .. }
-            | Commands::Serve { .. }
             | Commands::Web
-            | Commands::Mcp { .. }
-            | Commands::Upgrade => true,
+            | Commands::Mcp { .. } => true,
+            #[cfg(feature = "server")]
+            Commands::Serve { .. } => true,
+            #[cfg(feature = "self-update")]
+            Commands::Upgrade => true,
             // Local file / sqlite / print-only commands.
             Commands::Provider { .. }
             | Commands::Model { .. }
@@ -520,6 +525,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Acp => cmd_acp(cli).await,
         Commands::Pr { title, base } => cmd_pr(cli, title.as_deref(), base.as_deref()).await,
         Commands::Github { cmd: gh_cmd } => cmd_github(cli, gh_cmd).await,
+        #[cfg(feature = "server")]
         Commands::Serve { port } => cmd_serve(*port).await,
         Commands::Web => cmd_web().await,
         Commands::Mcp { cmd: mcp_cmd } => cmd_mcp(mcp_cmd).await,
@@ -530,6 +536,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Session { cmd: session_cmd } => cmd_session(session_cmd).await,
         Commands::Stats => cmd_stats().await,
         Commands::Debug => cmd_debug().await,
+        #[cfg(feature = "self-update")]
         Commands::Upgrade => cmd_upgrade().await,
     }
 }
@@ -1919,6 +1926,7 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
 }
 
 /// `serve` — Start API + local share server
+#[cfg(feature = "server")]
 async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     println!(
         "{} Starting Whycode API server on http://localhost:{}",
@@ -2781,6 +2789,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
 }
 
 /// `upgrade` — Self-update from the latest GitHub release
+#[cfg(feature = "self-update")]
 async fn cmd_upgrade() -> anyhow::Result<()> {
     let current = PKG_VERSION;
     println!("{} Whycode Upgrade", "⬆".bold());

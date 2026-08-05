@@ -30,4 +30,8 @@ base64.workspace = true
 tempfile.workspace = true
 
 [features]
+default = []
 screenshot = []
+# Forwarded from whycode-cli so a single feature set controls the whole binary.
+mermaid = ["whycode-format/mermaid"]
+extended-syntax = ["whycode-format/extended-syntax"]

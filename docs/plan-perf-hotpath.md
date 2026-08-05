@@ -11,8 +11,7 @@
 | **Hash (internal)** | Highlight + mermaid memo keys use **SipHash** (`DefaultHasher`) over full source **every frame** on the TUI path | Switch cache keys to **FxHash** (`rustc-hash`); use `FxHashMap` for hot registries (tools, providers) |
 | **Math / heuristics** | Token fallback uses `chars().count() / 4`; no BPE cache; tests swap args | `div_ceil(4)` heuristic; cache BPE in `OnceLock`; fix tests |
 | **Parse hot path** | `parse_inline` `find()` recounts needle chars every call | ASCII needle fast-path (byte/char length 1–2) |
-| **Out of scope** | Dropping syntect/two-face, optional tiktoken feature gate, full LTO (`lto = true`) | Later if size still hurts |
-| **Boot/TTFF (2026-08-05)** | `#[tokio::main]` built multi-thread RT before clap; every `--version` paid for it; binary ~16 MB | Early version path + parse-before-runtime + current-thread for light cmds + `panic=abort` → ~1.3 ms / 14 MB on Linux |
+| **Boot/TTFF (2026-08-05)** | Tokio-before-parse, full RELRO, 16 MB, mermaid+two-face+tiktoken always linked | Early version path, full LTO, partial RELRO, slim default features → **~1.0 ms / 12 MB** on Linux |
 
 ## Rationale
 
@@ -38,7 +37,7 @@
 
 ## Success
 
-- Release binary **~14 MB** stripped+thin LTO+`panic=abort` (was 23 MB unstripped / 18 MB strip-only / then 16 MB)
+- Release binary **~12 MB** stripped+full LTO+`panic=abort`+slim features (was 23 → 18 → 16 → 14 MB)
 - Highlight/mermaid unit tests green (cache key semantics preserved)
 - Workspace builds green; token_counter tests green
 - Closed memo returns `Arc` — warm `highlight` **~261 ns** / 100 lines (was ~84 µs deep-clone)

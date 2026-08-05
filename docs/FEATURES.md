@@ -231,7 +231,7 @@ Farklı makineler / tarihler; mertebe içindir. jcode README bench tablosu (Linu
 
 | Metrik | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
 |---|---|---|---|---|---|---|---|---|---|
-| Boot / TTFF | **~1.3 ms** `--version` (Linux; Win baseline was ~21 ms) | — | ~1036 ms | **~14 ms** | ~3437 ms | ~883 ms | — | ~591 ms | IDE (saniye mertebesi) |
+| Boot / TTFF | **~1.0 ms** `--version` (Linux; Win baseline was ~21 ms) | — | ~1036 ms | **~14 ms** | ~3437 ms | ~883 ms | — | ~591 ms | IDE (saniye mertebesi) |
 | 1 session PSS | **~4.1 MB** idle TUI | — | ~372 MB | **~28 MB** (embed off) | ~387 MB | ~140 MB | — | ~144 MB | IDE (yüzlerce MB+) |
 | 10 session PSS | **~16.8 MB** | — | ~3.2 GB | **~117 MB** | ~2.3 GB | ~335 MB | — | ~833 MB | — |
 | Kaynak | whycode benches | — | jcode bench | jcode README | jcode bench | jcode bench | public free-tier docs | jcode bench | ürün class |

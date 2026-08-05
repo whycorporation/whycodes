@@ -1,0 +1,6 @@
+# Boot/TTFF: full RELRO (BIND_NOW) resolves every dynamic relocation before
+# `main`, paging in large chunks of a 10+ MB binary for `whycode --version`.
+# Partial RELRO keeps the GOT hardened without BIND_NOW so the floor path only
+# faults pages it actually runs. Linux ELF only; other targets ignore this.
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "relro-level=partial"]

@@ -106,11 +106,11 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 **Symptom:** `whycode --version` (Boot floor in comparison tables) paid multi-ms for a multi-thread Tokio runtime that never ran work. Windows baseline ~21 ms was mostly binary page-in + that setup.
 
-**Root cause:** `#[tokio::main]` builds the runtime *before* the async body runs, so clap’s version exit still started worker threads. 16 MB binary also meant more pages faulted in.
+**Root cause:** `#[tokio::main]` builds the runtime *before* the async body runs, so clap’s version exit still started worker threads. Full RELRO (`BIND_NOW`) resolved every relocation at start. 16 MB binary + mermaid-text + two-face packs meant more pages faulted in.
 
-**Fix:** Sync `main`: early `--version`/`-V` prints and returns (no clap, no Tokio); `Cli::parse()` before any runtime so `--help` is free of the pool; light subcommands use `current_thread`; release `panic = "abort"` (~14 MB).
+**Fix:** Sync `main` (early `--version`/`-V`, parse before runtime, current-thread for light cmds); release `panic=abort` + **full LTO**; Linux `.cargo/config.toml` `relro-level=partial`; drop unused tiktoken tables; mermaid + extended-syntax **opt-in** (`--features full`) → ~1.0 ms / 12 MB on Linux.
 
-**Prevention:** Never restore `#[tokio::main]` on the CLI entry. Keep Boot/TTFF on the early path. Measure with `python scripts/bench_startup.py`.
+**Prevention:** Never restore `#[tokio::main]` or full RELRO on the CLI entry without re-measuring. Keep default features slim. Measure with `python scripts/bench_startup.py`.
 
 ---
 

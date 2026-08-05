@@ -481,13 +481,17 @@ mod tests {
     }
 
     #[test]
-    fn mermaid_fence_renders_as_diagram_not_source() {
+    fn mermaid_fence_is_labelled() {
         let result = render_markdown("```mermaid\ngraph LR; A[Build] --> B[Deploy]\n```");
         assert!(result.contains("Build"), "{result}");
         assert!(result.contains("Deploy"), "{result}");
         assert!(result.contains("mermaid"), "{result}");
-        // The mermaid header keyword should not appear as plain source.
+        #[cfg(feature = "mermaid")]
+        // Full renderer: box-drawing, not raw mermaid source.
         assert!(!result.contains("graph LR"), "{result}");
+        #[cfg(not(feature = "mermaid"))]
+        // Slim binary: source kept so the diagram is still readable.
+        assert!(result.contains("graph LR"), "{result}");
     }
 
     // ── Structured parsing ──────────────────────────────────────────────

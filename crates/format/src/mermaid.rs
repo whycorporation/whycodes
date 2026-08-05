@@ -1,11 +1,8 @@
-//! Mermaid fenced blocks → Unicode box-drawing for the terminal.
+//! Mermaid fenced blocks → terminal-friendly lines.
 //!
-//! Uses [`mermaid_text`] so diagrams render without a browser, image protocol,
-//! or external CLI. Output is plain multi-line text (box-drawing glyphs), which
-//! both the ANSI CLI path and the ratatui TUI can display as-is.
-//!
-//! Hot path: the TUI calls this from the render loop for every visible message,
-//! so closed diagrams are memoised by `(source, max_width)`.
+//! With the `mermaid` feature: Unicode box-drawing via [`mermaid_text`].
+//! Without it (default ship binary): return the source lines so Boot/TTFF does
+//! not pay ~0.8 MB of layout code for a rarely-hit fence type.
 
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -19,15 +16,15 @@ pub fn is_mermaid_language(language: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
-/// Render Mermaid source to Unicode box-drawing lines.
+/// Render Mermaid source to display lines.
 ///
-/// `max_width` is an optional column budget (terminal cells). When set, the
-/// renderer tries to compact the diagram to fit.
+/// `max_width` is an optional column budget (terminal cells). When set and the
+/// `mermaid` feature is on, the renderer tries to compact the diagram to fit.
 ///
 /// On parse/layout failure returns `Err` with a short human-readable reason so
 /// callers can fall back to the raw fence body.
 /// Returns shared lines so a TUI frame that re-renders a closed diagram only
-/// clones an [`Arc`], not every box-drawing string.
+/// clones an [`Arc`], not every string.
 pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Arc<Vec<String>>, String> {
     let key = cache_key(source, max_width);
     if let Some(hit) = cache().lock().ok().and_then(|c| c.get(&key).cloned()) {
@@ -59,7 +56,10 @@ fn cache_key(source: &str, max_width: Option<usize>) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     source.hash(&mut hasher);
     max_width.hash(&mut hasher);
+    #[cfg(feature = "mermaid")]
     "mermaid-text-v1".hash(&mut hasher);
+    #[cfg(not(feature = "mermaid"))]
+    "mermaid-source-v1".hash(&mut hasher);
     hasher.finish()
 }
 
@@ -69,17 +69,29 @@ fn render_uncached(source: &str, max_width: Option<usize>) -> Result<Vec<String>
         return Err("empty mermaid diagram".into());
     }
 
-    let text = mermaid_text::render_with_width(trimmed, max_width).map_err(|e| e.to_string())?;
+    #[cfg(feature = "mermaid")]
+    {
+        let text =
+            mermaid_text::render_with_width(trimmed, max_width).map_err(|e| e.to_string())?;
 
-    // Drop a single trailing empty line the renderer sometimes leaves.
-    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
-    while lines.last().is_some_and(|l| l.is_empty()) {
-        lines.pop();
+        // Drop a single trailing empty line the renderer sometimes leaves.
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+        if lines.is_empty() {
+            return Err("mermaid rendered empty".into());
+        }
+        Ok(lines)
     }
-    if lines.is_empty() {
-        return Err("mermaid rendered empty".into());
+
+    #[cfg(not(feature = "mermaid"))]
+    {
+        let _ = max_width;
+        // Ship binary: keep the source so the fence is still readable without
+        // linking mermaid-text + ascii_dag (~0.8 MB).
+        Ok(trimmed.lines().map(str::to_string).collect())
     }
-    Ok(lines)
 }
 
 #[cfg(test)]
@@ -101,8 +113,10 @@ mod tests {
         let joined = lines.join("\n");
         assert!(joined.contains("Build"), "{joined}");
         assert!(joined.contains("Deploy"), "{joined}");
-        // Box-drawing, not raw mermaid source.
+        #[cfg(feature = "mermaid")]
         assert!(!joined.contains("graph LR"), "{joined}");
+        #[cfg(not(feature = "mermaid"))]
+        assert!(joined.contains("graph LR"), "{joined}");
     }
 
     #[test]
@@ -120,10 +134,18 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "mermaid")]
     fn unsupported_or_garbage_falls_to_err() {
         // Completely blank after comments, or unknown type — either way Err.
         let result = render_mermaid("this is not mermaid at all", None);
         assert!(result.is_err(), "{result:?}");
+    }
+
+    #[test]
+    #[cfg(not(feature = "mermaid"))]
+    fn source_fallback_keeps_garbage_readable() {
+        let lines = render_mermaid("this is not mermaid at all", None).unwrap();
+        assert_eq!(lines.join("\n"), "this is not mermaid at all");
     }
 
     #[test]

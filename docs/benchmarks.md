@@ -68,21 +68,27 @@ Taken 2026-07-31 on Windows 11, AMD64, release profile, whycode 0.1.0
 
 ### Re-measure, 2026-08-05 (Linux x86_64, release)
 
-After: early `--version`/`-V` path (no Tokio, no clap), clap parse before any
-runtime so `--help` skips the thread pool, current-thread runtime for light
-subcommands, and `panic = "abort"` (smaller binary to page in).
+**Pass 1** (Tokio deferral + `panic=abort`): early `--version`/`-V`, parse
+before runtime, current-thread for light cmds → ~1.3 ms / 14 MB.
+
+**Pass 2** (size + linker): full LTO, partial RELRO (no `BIND_NOW`), drop
+tiktoken BPE tables, mermaid + two-face off by default (`--features full` to
+restore), optional `server` / `self-update` features.
 
 | Case | Startup median | Startup p95 | notes |
 |---|---|---|---|
-| `--version` | **1.3 ms** | 3.3 ms | was ~2.1 ms on this machine before the change |
-| `--help` | **1.7 ms** | 2.5 ms | was ~2.2 ms |
-| `config show` | **2.1 ms** | 3.1 ms | was ~2.8 ms; current-thread runtime |
-| binary size | **14 MB** | — | was 16 MB stripped (thin LTO + abort) |
+| `--version` | **1.0 ms** | 1.2 ms | was ~2.1 ms → 1.3 ms → **1.0 ms** |
+| `--help` | **1.5 ms** | 2.1 ms | |
+| `config show` | **2.1 ms** | 2.6 ms | current-thread runtime |
+| binary size | **12 MB** | — | was 16 MB → 14 MB → **12 MB** |
 
 `--version` is still the floor: process start + enough of the binary to print a
 string. Everything else sits above it. The Windows ~21 ms figure above was
 dominated by paging a larger binary; re-run `bench_startup.py` there after a
 release rebuild to refresh that row.
+
+Slim extras: `cargo build --release -p whycode-cli --features full` re-enables
+Unicode mermaid + bat/two-face languages.
 
 These are single-machine numbers on a developer laptop, not a controlled
 environment. They are useful as a baseline to compare future runs against, not

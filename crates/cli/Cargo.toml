@@ -9,6 +9,21 @@ repository.workspace = true
 name = "whycode"
 path = "src/main.rs"
 
+[features]
+# Default ship: agent + TUI + upgrade + serve. Mermaid diagrams and the
+# bat/two-face language pack stay opt-in (~1.7 MB) so Boot/TTFF stays low.
+default = ["self-update", "server"]
+# Everything including diagram render + extended syntax pack.
+full = ["self-update", "server", "mermaid", "extended-syntax"]
+# Unicode mermaid diagrams (mermaid-text + ascii_dag). Off by default — ~0.8 MB.
+mermaid = ["whycode-format/mermaid", "whycode-tui/mermaid"]
+# bat/two-face extended language pack (~0.9 MB). Off by default.
+extended-syntax = ["whycode-format/extended-syntax", "whycode-tui/extended-syntax"]
+# `whycode upgrade` — zip/tar extract + sha2 verify.
+self-update = ["dep:sha2", "dep:flate2", "dep:tar", "dep:zip"]
+# `whycode serve` — axum HTTP API.
+server = ["dep:whycode-server", "dep:axum"]
+
 [dependencies]
 whycode-core = { path = "../core" }
 whycode-config = { path = "../config" }
@@ -17,9 +32,10 @@ whycode-tools = { path = "../tools" }
 whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }
 whycode-storage = { path = "../storage" }
-whycode-server = { path = "../server" }
+whycode-server = { path = "../server", optional = true }
 whycode-protocol = { path = "../protocol" }
 whycode-tui = { path = "../tui" }
+whycode-format = { path = "../format" }
 clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 serde_json.workspace = true
@@ -31,11 +47,11 @@ anyhow.workspace = true
 colored.workspace = true
 dialoguer = "0.11"
 indicatif = "0.17"
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.7", features = ["macros"], optional = true }
 chrono.workspace = true
 directories.workspace = true
 reqwest.workspace = true
-sha2 = "0.10"
-flate2 = "1"
-tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+sha2 = { version = "0.10", optional = true }
+flate2 = { version = "1", optional = true }
+tar = { version = "0.4", optional = true }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }

@@ -1,8 +1,8 @@
-//! Syntax highlighting via syntect + two-face.
+//! Syntax highlighting via syntect (+ optional two-face).
 //!
 //! Stack mirrors Grok's markdown renderer:
-//! - **syntect** — TextMate grammars and themes
-//! - **two-face** — bat's extended syntax set (~250+ languages)
+//! - **syntect** — TextMate grammars and themes (defaults pack unless
+//!   `extended-syntax` enables two-face / bat's ~250+ languages)
 //! - **Tokyo Night** — embedded `.tmTheme` for terminal code blocks
 //! - **Open-stream cache** — resumable `ParseState` / `HighlightState` so a
 //!   growing fenced block is highlighted O(new lines) per frame, not O(N²)
@@ -27,13 +27,25 @@ const PLAIN_FG: (u8, u8, u8) = (0xcc, 0xcc, 0xcc);
 /// One highlighted run of code: 24-bit colour and the text it applies to.
 pub type CodeSpan = ((u8, u8, u8), String);
 
-/// Syntect's extended syntax set (two-face / bat), loaded once.
+/// Syntax definitions, loaded once.
 ///
 /// Uses the newline-aware set so multi-line strings and comments stay correct
 /// when highlighting with [`LinesWithEndings`].
+///
+/// - **default:** syntect's built-in pack (~360 KiB) — common languages only.
+/// - **`extended-syntax`:** two-face / bat pack (~900 KiB, 250+ languages).
 pub fn syntax_set() -> &'static SyntaxSet {
     static SET: OnceLock<SyntaxSet> = OnceLock::new();
-    SET.get_or_init(two_face::syntax::extra_newlines)
+    SET.get_or_init(|| {
+        #[cfg(feature = "extended-syntax")]
+        {
+            two_face::syntax::extra_newlines()
+        }
+        #[cfg(not(feature = "extended-syntax"))]
+        {
+            SyntaxSet::load_defaults_newlines()
+        }
+    })
 }
 
 /// Tokyo Night theme, embedded at compile time.
@@ -163,7 +175,10 @@ fn cache_key(code: &str, language: Option<&str>) -> u64 {
     code.hash(&mut hasher);
     language.hash(&mut hasher);
     // Bump if theme or grammar source changes.
+    #[cfg(feature = "extended-syntax")]
     "tokyo-night-two-face-v1".hash(&mut hasher);
+    #[cfg(not(feature = "extended-syntax"))]
+    "tokyo-night-syntect-defaults-v1".hash(&mut hasher);
     hasher.finish()
 }
 
@@ -546,10 +561,18 @@ mod tests {
     #[test]
     fn syntax_set_knows_common_languages() {
         let ps = syntax_set();
-        for token in ["rust", "python", "javascript", "typescript", "go", "toml"] {
+        // Present in both syntect defaults and the two-face pack.
+        for token in ["rust", "python", "javascript", "go", "json"] {
             assert!(
                 ps.find_syntax_by_token(token).is_some(),
                 "missing syntax for {token}"
+            );
+        }
+        #[cfg(feature = "extended-syntax")]
+        for token in ["typescript", "toml"] {
+            assert!(
+                ps.find_syntax_by_token(token).is_some(),
+                "extended pack missing syntax for {token}"
             );
         }
     }

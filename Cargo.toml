@@ -62,11 +62,11 @@ tempfile = "3"
 # Do not use for integrity (upgrade SHA-256 stays on sha2).
 rustc-hash = "2"
 
-# Release: smaller binary + better inlining on hot paths (format, risk, TUI).
-# thin LTO keeps CI/dev rebuilds reasonable vs full `lto = true`.
-# panic=abort drops unwinding tables — less to page in on Boot/TTFF (`--version`).
+# Release: smallest ship binary + hot-path inlining (format, risk, TUI).
+# full LTO (was thin) + panic=abort cuts page-in for Boot/TTFF (`--version`).
+# Link is slower; use `cargo build -p whycode-cli` for day-to-day, not full release.
 [profile.release]
-lto = "thin"
+lto = true
 codegen-units = 1
 strip = true
 panic = "abort"

@@ -5,18 +5,26 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+# Unicode box-drawing for ```mermaid fences (~0.8 MB .text with ascii_dag).
+# Off by default for Boot/TTFF binary size; enable via whycode-cli `mermaid`.
+mermaid = ["dep:mermaid-text"]
+# bat/two-face ~250+ languages (~0.9 MB pack). Off by default; syntect defaults
+# cover common languages. Enable via whycode-cli `extended-syntax`.
+extended-syntax = ["dep:two-face"]
+
 [dependencies]
 whycode-core = { path = "../core" }
 serde.workspace = true
 anyhow.workspace = true
 rustc-hash.workspace = true
-# TextMate highlighting; `default-fancy` matches two-face's syntect-fancy feature.
+# TextMate highlighting; `default-fancy` matches two-face when that feature is on.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-# Bat's extended grammar set (~250+ languages), same stack as Grok TUI.
-two-face = { version = "0.4", default-features = false, features = ["syntect-fancy"] }
+two-face = { version = "0.4", default-features = false, features = ["syntect-fancy"], optional = true }
 regex = "1"
 # Pure-Rust Mermaid → Unicode box-drawing for fenced ```mermaid blocks.
-mermaid-text = "0.57"
+mermaid-text = { version = "0.57", optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
