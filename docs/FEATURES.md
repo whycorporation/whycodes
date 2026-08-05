@@ -2,17 +2,17 @@
 
 Terminal coding agent’ların özellik matrisi: **whycode**, **Grok Build**, **OpenCode**, **jcode**, **Claude Code**.
 
-Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
+Son güncelleme: **2026-08-05**. Kaynaklar: whycode README + codebase, [opencode.ai](https://opencode.ai/), [jcode README](https://github.com/1jehuang/jcode), [docs.x.ai/build](https://docs.x.ai/build/overview), [code.claude.com](https://code.claude.com/docs/en/overview). Rakip sütunları her ürünün her minor sürümünü bire bir doğrulamaz; “var / kısmi / yok” seviyesinde konumlandırma içindir.
 
 ## Ürün özeti
 
 | | **whycode** | **Grok Build** | **OpenCode** | **jcode** | **Claude Code** |
 |---|---|---|---|---|
 | **Ne** | Rust terminal coding agent | SpaceXAI / xAI coding agent + TUI | Açık kaynak agent (TUI + desktop + IDE) | RAM-efficient Rust harness | Anthropic resmi coding agent |
-| **Dil** | Rust | Rust | Go / TS ekosistemi (TUI + desktop) | Rust | Native binary (eski: Node) |
+| **Dil** | Rust | Rust | TypeScript / Effect (TUI + desktop + server) | Rust | Native binary (eski: Node) |
 | **Lisans** | MIT | Apache-2.0 (açık kaynak) | Açık kaynak (MIT benzeri) | MIT | Proprietary (kapalı kaynak) |
 | **Varsayılan model** | Herhangi (API key) | Grok 4.5 + özel modeller | 75+ provider | Herhangi + OAuth | Claude (Opus/Sonnet) + 3. parti |
-| **Konum** | Hafif, okunabilir, Windows-first CI | Zengin TUI, skills/plugins/hooks, ACP | Geniş ekosistem, multi-surface | Performans + swarm + bellek | Ürün yüzeyi (web/desktop/IDE/CI) |
+| **Konum** | Hafif, shell-safe, latency stack, Windows CI | Zengin TUI, skills/plugins/hooks, ACP | Geniş ekosistem, multi-surface | Performans + swarm + bellek | Ürün yüzeyi (web/desktop/IDE/CI) |
 
 ### Sembol açıklaması
 
@@ -34,7 +34,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Tek binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Install script (curl/irm) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Self-update (`upgrade`) | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Homebrew / paket yöneticisi | ⚠️ | ⚠️ | ✅ | ✅ | ✅ |
+| Homebrew / paket yöneticisi | ⚠️ HEAD formula | ⚠️ | ✅ | ✅ | ✅ |
 | Linux | ✅ | ✅ | ✅ | ✅ | ✅ |
 | macOS | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Windows native | ✅★ | ⚠️ | ⚠️ (WSL önerilir) | ✅ | ✅ |
@@ -51,7 +51,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 |---|:---:|:---:|:---:|:---:|:---:|
 | Fullscreen TUI | ✅ | ✅★ | ✅★ | ✅★ | ✅ |
 | Plain / headless REPL | ✅ `--plain` | ✅ `-p` | ✅ | ✅ `run` | ✅ `-p` |
-| Mouse-interactive TUI | ❌ | ✅★ | ⚠️ | ⚠️ | ⚠️ |
+| Mouse-interactive TUI | ✅★ HitArea, stop, scrollbar, slash | ✅★ | ⚠️ | ⚠️ | ⚠️ |
 | Desktop app | ❌ | ❌ | ✅ | ❌ | ✅ |
 | IDE extension (VS Code vb.) | ❌ | ⚠️ ACP | ✅ | ❌ | ✅ VS Code + JetBrains |
 | Web UI | ⚠️ stub | ❌ | ⚠️ | ❌ | ✅ claude.ai/code |
@@ -95,7 +95,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Agent-to-agent messaging | ❌ | ⚠️ | ❌ | ✅★ | ⚠️ |
 | Coordinator + worker spawn | ⚠️ tek `task` | ✅ | ⚠️ | ✅★ | ✅ |
 | Plan file gate (sadece plan edit) | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅ |
-| Max turns / loop koruması | ✅ | ✅ | ⚠️ doom_loop | ⚠️ | ✅ |
+| Max turns / loop koruması | ✅★ max turns + doom-loop | ✅ | ✅ doom_loop | ⚠️ | ✅ |
 
 ---
 
@@ -115,6 +115,8 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | plan tool | ✅ | ✅ | ✅ | ⚠️ | ✅ |
 | LSP tool | ✅★ crate | ⚠️ | ✅ auto-load | ❌ ayrı crate yok | ⚠️ |
 | code_mode / external_directory | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ |
+| Core tool profile (küçük schema) | ✅★ default `core` | ⚠️ | ⚠️ | ⚠️ curated OAuth | ✅ defer |
+| Parallel tool execution | ✅★ safe fan-out | ✅ | ⚠️ | ⚠️ | ✅ |
 | Browser automation | ❌ | ⚠️ | ⚠️ | ✅★ Firefox bridge | ✅ Chrome |
 | Image gen (`/imagine`) | ❌ | ✅ | ❌ | ❌ | ⚠️ |
 | Video gen | ❌ | ✅ | ❌ | ❌ | ❌ |
@@ -128,6 +130,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 |---|:---:|:---:|:---:|:---:|:---:|
 | Tool permission: allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Permission globs (`mymcp_*`) | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+| Multi-ask permission queue | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Auto-approve / auto-deny env | ✅ | ✅ always-approve | ⚠️ | ⚠️ | ✅ |
 | Shell **risk sınıflandırması** | ✅★ | ⚠️ | ⚠️ | ✅ safety system | ⚠️ |
 | Catastrophic komut hard-block | ✅★ (`rm -rf ~` asla onaylanmaz) | ⚠️ | ❌ | ⚠️ | ⚠️ |
@@ -159,16 +162,17 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
 |---|:---:|:---:|:---:|:---:|:---:|
 | SQLite / kalıcı session | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Session list / rename / delete | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Resume session | ✅ plain | ✅ | ✅ | ✅ | ✅ |
+| Session list / rename / delete | ✅ TUI + plain | ✅ | ✅ | ✅ | ✅ |
+| Resume session | ✅ TUI `/sessions` `/resume` + CLI | ✅ | ✅ | ✅ | ✅ |
+| Auto-title (heuristic + LLM refine) | ✅ async small-model | ✅ | ✅ | ⚠️ | ✅ |
 | Cross-harness resume (Claude/Codex/…) | ❌ | ⚠️ import Claude | ⚠️ | ✅★ | n/a |
 | Undo / redo (git restore) | ✅ | ✅ rewind | ✅ | ⚠️ | ⚠️ |
-| Context compact / summarize | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Context compact / summarize | ✅ drop + tool prune | ✅ | ✅★ LLM compact | ✅ | ✅ |
 | Semantic memory (embedding) | ❌ roadmap | ✅ `/memory` `/dream` | ❌ | ✅★ | ✅ auto memory |
 | Session search (geçmiş RAG) | ❌ | ⚠️ | ❌ | ✅ | ⚠️ |
 | Share link | ✅ local only | ✅ | ✅ cloud | ⚠️ | ⚠️ |
 | Export transcript | ✅ | ✅ | ✅ | ⚠️ | ✅ |
-| Token / cost / usage stats | ✅ `stats` + session usage | ✅ `/usage` | ⚠️ | ⚠️ cache warn | ✅ `/cost` |
+| Token / cost / usage stats | ✅ `stats` + session usage + cache tokens | ✅ `/usage` | ⚠️ | ⚠️ cache warn | ✅ `/cost` |
 
 ---
 
@@ -184,19 +188,40 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 | Mermaid diagrams | ✅ Unicode (mermaid-text) | ⚠️ vendored | ❌ | ✅★ native rust | ❌ |
 | Theme sistemi | ✅ 29 + JSON | ✅ | ✅★ | ✅ | ⚠️ |
 | OpenCode theme JSON uyumu | ✅★ | ⚠️ | n/a | ❌ | ❌ |
-| Slash suggest popup | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Slash suggest popup | ✅ + mouse hover/click | ✅ | ✅ | ✅ | ✅ |
+| Turn strip + **Worked for Xs** | ✅★ Grok-style | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| Context meter (tokens ↔ % hover) | ✅★ sticky HitArea | ✅ | ⚠️ | ⚠️ | ⚠️ |
+| Mouse stop / scrollbar / path hover | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | Which-key / keybind hints | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | Vim mode scrollback | ❌ | ✅ | ⚠️ | ⚠️ | ❌ |
 | Side panel / info widgets | ⚠️ sidebar | ⚠️ | ⚠️ | ✅★ | ⚠️ |
 | Toast notifications | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
-| `@file` mention | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `@file` mention (capped inline) | ✅ 24k cap | ✅ | ✅ | ✅ | ✅ |
 | `!shell` prefix | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Image drag-drop prompt | ✅ path paste/drop | ⚠️ | ✅ | ⚠️ | ✅ |
 | 1000+ fps claim / flicker-free | ❌ | ⚠️ | ❌ | ✅★ | ✅ `/tui` flicker-free |
 
 ---
 
-## 10. Çoklu ajan, arka plan, otomasyon
+## 10. Latency / agent-loop hızı (whycode odağı)
+
+Bu satırlar **agent TTFT / multi-step wall-clock** için; process RSS ile karıştırılmamalı. Detay: [plan-latency-competitors.md](plan-latency-competitors.md).
+
+| Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Shared HTTP keep-alive | ✅★ | ✅ | ✅ | ✅ server | ✅ |
+| Anthropic prompt cache (system+tools+latest user) | ✅★ OpenCode-parity | ⚠️ | ✅★ auto | ⚠️ | ✅ |
+| Parallel safe tools + perm queue | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ |
+| Core tool profile (default) | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Trivial chat: no tools + fast model route | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Doom-loop refuse (3× same tool) | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ |
+| Per-step tool prune (old dumps → 2k) | ✅★ | ⚠️ | ✅ prune | ⚠️ | ⚠️ |
+| Async title (UI’yi bloklamaz) | ✅★ | ✅ | ✅ | ⚠️ | ✅ |
+| JSONL `ttft_ms` / `tool_batch_ms` / cache | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+
+---
+
+## 11. Çoklu ajan, arka plan, otomasyon
 
 | Özellik | whycode | Grok Build | OpenCode | jcode | Claude Code |
 |---|:---:|:---:|:---:|:---:|:---:|
@@ -209,7 +234,7 @@ Son güncelleme: **2026-08-04**. Kaynaklar: whycode README + codebase, [opencode
 
 ---
 
-## 11. Performans (yayınlanan / ölçülen)
+## 12. Performans (yayınlanan / ölçülen)
 
 Rakamlar **farklı makinelerde, farklı tarihlerde** alınmıştır; doğrudan “daha hızlı” iddiası için değil, mertebe göstermek için.
 
@@ -221,44 +246,47 @@ Rakamlar **farklı makinelerde, farklı tarihlerde** alınmıştır; doğrudan �
 | 10 session PSS | **~16.8 MB** (~1.4 MB/extra) | — | ~3.2 GB | **~117 MB** (embed off) | ~2.3 GB |
 | Kaynak | [benchmarks.md](benchmarks.md) | — | jcode bench tablosu | jcode README | jcode bench tablosu |
 
-whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; process-level startup ve hot-path criterion bench’ler mevcut.
+whycode: process-level startup + hot-path criterion bench’ler mevcut. Agent TTFT artık JSONL `turn.step` ile ölçülebilir (`ttft_ms`, `cache_read_tokens`).
 
 ---
 
-## 12. whycode’a özel güçlü yanlar
+## 13. whycode’a özel güçlü yanlar
 
 | Alan | Detay |
 |---|---|
-| **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic`. Catastrophic **asla onaylanmaz** (`bash=allow` ve `threshold=off` bile yetmez). |
-| **LSP crate** | Ayrı `whycode-lsp` crate; jcode workspace’inde karşılığı yok. |
-| **Windows CI** | Linux + macOS + Windows’ta full test; platforma özgü bug’lar CI’da yakalanıyor. |
-| **Küçük kod tabanı** | ~24k LOC Rust — okunabilir, fork edilebilir, agent’ların self-edit etmesi kolay. |
+| **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic`. Catastrophic **asla onaylanmaz**. |
+| **Latency stack** | Core tools, OpenCode-parity cache, parallel reads, doom-loop, fast-route trivial chat, async title. |
+| **Mouse TUI chrome** | Sticky HitArea: context %, stop, scrollbar, slash hover, path underline. |
+| **LSP crate** | Ayrı `whycode-lsp` crate. |
+| **Windows CI** | Linux + macOS + Windows full test. |
+| **Küçük kod tabanı** | ~50k LOC Rust crates — okunabilir, fork edilebilir. |
 | **OpenCode interop** | Theme JSON, AGENTS.md, `.opencode/commands`, permission modeli, agent isimleri. |
 | **In-process grep** | `ripgrep`/`grep` PATH’te olmasa da çalışır. |
 | **Yerel share** | `/share` → `http://127.0.0.1:3030/s/...` — veri makineden çıkmaz. |
 
 ---
 
-## 13. whycode’da olmayan / zayıf kalan (rakiplere göre)
+## 14. whycode’da olmayan / zayıf kalan (rakiplere göre)
 
 | Boşluk | Kimde var | Not |
 |---|---|---|
-| OAuth + subscription login | jcode, OpenCode, Claude, Grok | [plan-oauth](plan-oauth.md) — blocked (owner kararı) |
+| OAuth + subscription login | jcode, OpenCode, Claude, Grok | [plan-oauth](plan-oauth.md) — blocked |
 | Semantic / cross-session memory | jcode★, Grok, Claude | [plan-memory](plan-memory.md) — not started |
 | Swarm / multi-agent conflict | jcode★ | dropped ([archive](archive/phase-7-multi-agent.md)) |
 | Browser automation | jcode, Claude | Yok |
-| Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub; **ACP ürün çıktıktan sonra** (`docs/status.md`) |
-| Hooks + plugin marketplace | Grok, OpenCode, Claude | Config shell hooks ✅; marketplace / plugin load still iskelet |
+| Desktop / IDE / web surface | OpenCode, Claude | `web` + `acp` stub; **ACP ürün sonrası** |
+| Hooks + plugin marketplace | Grok, OpenCode, Claude | Config shell hooks ✅; marketplace iskelet |
 | OS sandbox (macOS/Windows backend) | Grok, Claude | Linux bwrap ✅; diğer platformlar fallback |
 | Cloud share / remote control | OpenCode, Claude | Sadece local share |
-| Side panel UI | jcode | Basit sidebar; Mermaid Unicode fenced blocks ✅ |
+| Side panel UI | jcode | Basit sidebar; Mermaid Unicode ✅ |
 | Image/video generation | Grok | Yok |
 | Self-dev hot reload | jcode | Yok |
-| Package manager taps (brew…) | hepsi | ⚠️ in-repo `Formula/whycode.rb` + update script; bottles/winget/AUR later |
+| LLM-summary compact (OpenCode agent) | OpenCode★ | Drop+prune var; LLM summary P2 |
+| Package manager taps (brew bottles…) | hepsi | ⚠️ HEAD formula; bottles later |
 
 ---
 
-## 14. Hızlı “kim ne için?”
+## 15. Hızlı “kim ne için?”
 
 | İhtiyaç | Önerilen yön |
 |---|---|
@@ -266,11 +294,11 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | Claude aboneliği + web/desktop/IDE/CI ekosistemi | **Claude Code** |
 | Model özgürlüğü + masaüstü + IDE + büyük community | **OpenCode** |
 | xAI Grok, zengin TUI, skills/plugins/hooks, ACP | **Grok Build** |
-| Hafif Rust, Windows CI, shell safety, okunabilir kaynak, OpenCode uyumu | **whycode** |
+| Hafif Rust, shell safety, mouse TUI, latency stack, Windows CI | **whycode** |
 
 ---
 
-## 15. whycode özellik envanteri (tek başına)
+## 16. whycode özellik envanteri (tek başına)
 
 ### CLI
 
@@ -279,20 +307,23 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | `run` / varsayılan TUI | ✅ |
 | `generate` (one-shot) | ✅ |
 | `--format text\|json\|stream-json` (CI / NDJSON) | ✅ |
-| `acp` | ⚠️ stub (ürün sonrası; Agent Client Protocol) |
+| `--continue` / `--resume` | ✅ |
+| `acp` | ⚠️ stub (ürün sonrası) |
 | `pr` / `github` | ✅ |
 | `serve` (API + local share) | ✅ |
 | `web` | ⚠️ stub |
 | `mcp` / `provider` / `model` / `agent` / `config` / `session` | ✅ |
 | `stats` / `debug` / `upgrade` | ✅ |
 
-### Slash commands
+### Slash commands (TUI)
 
-`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/models`, `/agent`, `/connect`, `/tools`, `/info` — TUI + plain. Plain: `/sessions`, `/thinking`, `/themes`. Custom: `.whycode/commands/*.md`.
+`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info` — custom: `.whycode/commands/*.md`. Plain ek: `/thinking`, `/themes` (REPL).
 
 ### Built-in tools
 
-`read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash`/`shell`, `git_*`, `github_*`, `webfetch`, `websearch`, `task`, `plan`, `todowrite`/`todoread`, `question`, `skill`, `lsp`, `code_mode`, `external_directory`, `truncate` + MCP `{server}_{tool}`.
+**Core profile (default, LLM’e giden):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash`/`shell`, `todo_*`, `task`.
+
+**Full profile:** + `git_*`, `github_*`, `webfetch`, `websearch`, `plan`, `question`, `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, MCP `{server}_{tool}`.
 
 ### Agents
 
@@ -304,14 +335,27 @@ whycode: TTFF (ilk TUI frame) henüz jcode ile aynı metodla yayınlanmadı; pro
 | `explore` | subagent, read-only search |
 | `scout` | subagent, docs/deps research |
 
-### Config katmanları
+### Config (latency-relevant)
 
-1. Built-in defaults  
-2. Global `config.toml`  
-3. Project `.whycode/config.toml`  
-4. `WHYCODE_*` env  
+```toml
+[session]
+tool_profile = "core"     # or "full"
+prompt_cache = "auto"     # or "none"
+model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional
+compaction_threshold = 150000
+auto_title = true
 
-### Güvenlik
+[permission]
+bash = "ask"
+edit = "allow"
+
+[security]
+bash_risk_threshold = "destructive"
+sandbox = "workspace"
+sandbox_network = true
+```
+
+### Güvenlik (kısa)
 
 ```toml
 [permission]
@@ -323,18 +367,16 @@ bash_risk_threshold = "destructive"  # caution | destructive | off
 sandbox = "workspace"                # off | workspace
 sandbox_network = true
 sandbox_fallback = "allow"           # allow | deny
-# network_allowlist = ["github.com", "crates.io"]
-# network_denylist = []
 ```
 
 ---
 
 ## Kaynaklar
 
-- whycode: [README.md](../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](benchmarks.md)
+- whycode: [README.md](../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](benchmarks.md), [plan-latency-competitors.md](plan-latency-competitors.md)
 - OpenCode: <https://opencode.ai/> · <https://opencode.ai/docs/>
 - jcode: <https://github.com/1jehuang/jcode> · <https://jcode.sh>
 - Grok Build: <https://docs.x.ai/build/overview> · <https://github.com/xai-org/grok-build>
 - Claude Code: <https://code.claude.com/docs/en/overview>
 
-Bu tablo statik bir snapshot’tır. whycode tarafında büyük bir özellik eklendiğinde veya rakip konumları değiştiğinde bu dosyayı aynı PR’da güncelle.
+Bu tablo living snapshot’tır. Büyük özellik veya rakip konum değişince aynı PR’da güncelle.

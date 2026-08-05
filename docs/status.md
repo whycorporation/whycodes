@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-04** (usage persistence + pre/post tool hooks; `v0.1.0` public install still gated on repo visibility)
+Last updated: **2026-08-05** (latency P0/P1 + FEATURES.md refresh; `v0.1.0` public install still gated on repo visibility)
 
 ## Legend
 
@@ -26,6 +26,8 @@ Last updated: **2026-08-04** (usage persistence + pre/post tool hooks; `v0.1.0` 
 | Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + usage persistence + `whycode stats`. Open: subagent tokens, provider reconcile, optional CI ceilings. |
 | Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
 | Semantic memory | [plan-memory.md](plan-memory.md) | not started | Needs model-distribution decision + RSS cost comfort. |
+| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
+| FEATURES accuracy | [plan-features-improvements.md](plan-features-improvements.md) | done | Matrix fixed; `/tools` `/info` surface latency knobs. |
 
 ## Shipped (archived)
 
@@ -51,7 +53,7 @@ Index of archives: [archive/README.md](archive/README.md).
 Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
 
 1. **First public release (almost done)** — `v0.1.0` cut + smoke OK with token. Remaining: **make repo public**, optional Homebrew binary formula, Windows install.ps1 smoke.
-2. **Product polish on the terminal path** — TUI, tools, providers. **Shipped this turn:** real `whycode stats` + session usage columns; config-driven pre/post tool hooks. Next polish: richer plugins, subagent token fold.
+2. **Terminal product polish** — latency stack + mouse TUI + FEATURES matrix accurate (2026-08-05). Next: plugins depth, subagent token fold.
 3. **Performance residual** — stats done; optional CI ceilings / subagent tokens remain.
 4. **OAuth** stays blocked until owner decisions.
 5. **Memory** stays not-started until deliberately scheduled.
@@ -74,6 +76,8 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-04 | Cut `v0.1.0` first release assets | Four targets + `SHA256SUMS`. Repo remains private until owner opens it for anonymous install. |
 | 2026-08-04 | Persist session token usage + real `stats` | Provider-reported totals in SQLite; no more message×500 estimate. |
 | 2026-08-04 | Config pre/post tool hooks | Shell hooks around tool calls; `block_on_failure` on pre only. Marketplace later. |
+| 2026-08-05 | Latency P0/P1 shipped | OpenCode-parity cache, core tools, routing, doom-loop, prune; see plan-latency-competitors. |
+| 2026-08-05 | FEATURES.md rewritten | Mouse/resume/latency rows fixed; no stale ❌ for shipped TUI. |
 
 ## Verification commands
 

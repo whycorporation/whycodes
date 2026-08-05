@@ -1869,22 +1869,36 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             }
         }
         "/tools" => {
-            let tools =
-                whycode_tools::ToolExecutor::new().get_definitions(&ctx.agent.info.permission);
-            ctx.app.status_message = format!("{} tools", tools.len());
+            // List what the model actually sees (core profile by default).
+            let profile = whycode_tools::ToolProfile::parse(&ctx.config.session.tool_profile);
+            let tools = whycode_tools::ToolExecutor::new()
+                .get_definitions_profile(&ctx.agent.info.permission, profile);
+            let full_n = whycode_tools::ToolExecutor::new()
+                .get_definitions(&ctx.agent.info.permission)
+                .len();
+            ctx.app.status_message =
+                format!("{} tools (profile: {})", tools.len(), profile.as_str());
+            let header = format!(
+                "Tool profile: **{}** — {} advertised to the model ({} registered in binary).\n\
+                 Config: `session.tool_profile = \"core\"|\"full\"`\n\n",
+                profile.as_str(),
+                tools.len(),
+                full_n
+            );
             ctx.app.add_message(
                 ChatRole::System,
-                tools
-                    .iter()
-                    .map(|t| format!("• {} — {}", t.name, t.description))
-                    .collect::<Vec<_>>()
-                    .join("\n"),
+                header
+                    + &tools
+                        .iter()
+                        .map(|t| format!("• {} — {}", t.name, t.description))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
             );
         }
         "/info" | "/details" => {
             ctx.app.add_message(
                 ChatRole::System,
-                session_details(ctx.session, &ctx.agent.info.name, ctx.app),
+                session_details(ctx.session, &ctx.agent.info.name, ctx.app, ctx.config),
             );
         }
         "/init" => {
@@ -2115,10 +2129,16 @@ pub fn resolve_and_load_session(
 /// heuristic is shown only when it did not, and labelled as an estimate — the
 /// two are not the same measurement and presenting them identically would
 /// suggest they are.
-fn session_details(session: &Session, agent: &str, app: &TuiApp) -> String {
+fn session_details(
+    session: &Session,
+    agent: &str,
+    app: &TuiApp,
+    config: &Config,
+) -> String {
     let usage = &session.usage;
+    let profile = whycode_tools::ToolProfile::parse(&config.session.tool_profile);
     let mut out = format!(
-        "Session\n  title:     {}\n  source:    {:?}\n  id:        {}\n  agent:     {agent}\n  messages:  {}\n  model:     {}/{}\n  context:   {} / {} ({}%)\n",
+        "Session\n  title:     {}\n  source:    {:?}\n  id:        {}\n  agent:     {agent}\n  messages:  {}\n  model:     {}/{}\n  context:   {} / {} ({}%)\n  tools:     profile={}\n  prompt_cache: {}\n",
         session.title,
         session.title_source,
         session.id,
@@ -2128,7 +2148,14 @@ fn session_details(session: &Session, agent: &str, app: &TuiApp) -> String {
         format_token_count(app.context_used),
         format_token_count(app.max_context_tokens),
         app.context_percent(),
+        profile.as_str(),
+        config.session.prompt_cache,
     );
+    if let Some(ref fast) = config.session.model_fast {
+        out.push_str(&format!("  model_fast: {fast}\n"));
+    } else {
+        out.push_str("  model_fast: (auto small sibling on trivial chat)\n");
+    }
 
     if usage.is_empty() {
         out.push_str(&format!(
