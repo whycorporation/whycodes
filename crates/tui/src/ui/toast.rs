@@ -2,10 +2,14 @@
 //!
 //! Over the chat rather than beside it: taking layout space for something that
 //! is usually absent would move the whole view every time one appeared.
+//!
+//! Visual language matches the rest of the TUI (Grok dialogs / system callouts):
+//! dim square border, base `bg` fill, kind colour only on the leading glyph —
+//! not a coloured floating card.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
@@ -15,7 +19,7 @@ use crate::toast::{Toast, ToastKind};
 /// Widest a toast may get, before the terminal's own width is considered.
 const MAX_WIDTH: u16 = 48;
 /// Gap from the right and top edges.
-const MARGIN: u16 = 2;
+const MARGIN: u16 = 1;
 
 fn color(kind: ToastKind, palette: &ThemePalette) -> ratatui::style::Color {
     match kind {
@@ -28,18 +32,23 @@ fn color(kind: ToastKind, palette: &ThemePalette) -> ratatui::style::Color {
 
 /// Render `toasts` stacked downward from the top-right of `area`.
 pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePalette) {
-    if toasts.is_empty() || area.width < 16 || area.height < 4 {
+    if toasts.is_empty() || area.width < 16 || area.height < 3 {
         return;
     }
 
     let max_w = area.width.saturating_sub(MARGIN * 2).max(1);
     let width = MAX_WIDTH.min(max_w).max(16).min(area.width);
-    let inner = width.saturating_sub(4) as usize;
+    // Inner text width: borders (2) + left pad " " + glyph + " " ≈ 5 cells.
+    let inner = width.saturating_sub(5) as usize;
     let mut top = area.y + MARGIN.min(area.height.saturating_sub(1));
+
+    // Dialog chrome: dim border on base bg (same as `dialogs/base.rs`).
+    let border_style = Style::default().fg(palette.dim).bg(palette.bg);
+    let fill = Style::default().bg(palette.bg).fg(palette.fg);
 
     for toast in toasts {
         let body = wrap(&toast.message, inner, 2);
-        let height = body.len() as u16 + 2;
+        let height = body.len() as u16 + 2; // +2 for top/bottom border
         if top + height > area.y + area.height {
             break;
         }
@@ -60,17 +69,23 @@ pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePa
             .into_iter()
             .enumerate()
             .map(|(i, text)| {
-                let mut spans = Vec::new();
+                // Soft left rail + glyph on first line (system_callout pattern).
                 if i == 0 {
-                    spans.push(Span::styled(
-                        format!("{} ", toast.kind.glyph()),
-                        Style::default().fg(accent).add_modifier(Modifier::BOLD),
-                    ));
+                    Line::from(vec![
+                        Span::styled("│ ".to_string(), Style::default().fg(accent).bg(palette.bg)),
+                        Span::styled(
+                            format!("{} ", toast.kind.glyph()),
+                            Style::default().fg(accent).bg(palette.bg),
+                        ),
+                        Span::styled(text, Style::default().fg(palette.fg).bg(palette.bg)),
+                    ])
                 } else {
-                    spans.push(Span::raw("  "));
+                    Line::from(vec![
+                        Span::styled("│ ".to_string(), Style::default().fg(accent).bg(palette.bg)),
+                        Span::styled("  ", Style::default().bg(palette.bg)),
+                        Span::styled(text, Style::default().fg(palette.dim).bg(palette.bg)),
+                    ])
                 }
-                spans.push(Span::styled(text, Style::default().fg(palette.fg)));
-                Line::from(spans)
             })
             .collect();
 
@@ -81,13 +96,13 @@ pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePa
             Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(accent))
-                    .style(Style::default().bg(palette.dialog_bg)),
+                    .border_style(border_style)
+                    .style(fill),
             ),
             rect,
         );
 
-        top += height;
+        top = top.saturating_add(height).saturating_add(1); // 1-row gap between stacked toasts
     }
 }
 

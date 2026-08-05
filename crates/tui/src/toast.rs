@@ -28,12 +28,13 @@ pub enum ToastKind {
 
 impl ToastKind {
     /// Leading glyph, so kind is readable without relying on colour alone.
+    /// Matches `system_callout` glyphs in `ui/chat.rs` for a single visual language.
     pub fn glyph(&self) -> &'static str {
         match self {
-            Self::Info => "·",
+            Self::Info => "i",
             Self::Success => "✓",
             Self::Warning => "!",
-            Self::Error => "✗",
+            Self::Error => "✕",
         }
     }
 
