@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod cache;
 pub mod capabilities;
 pub mod client_identity;
 pub mod custom;
@@ -19,6 +20,7 @@ pub mod token_counter;
 pub mod types;
 pub mod xai;
 
+pub use cache::{CacheConfig, CachePolicy, apply_anthropic_cache_policy};
 pub use capabilities::{ModelCapabilities, detect_capabilities, resolve_context_window};
 pub use client_identity::{HTTP_REFERER, USER_AGENT, X_TITLE};
 pub use model_catalog::{

@@ -30,16 +30,9 @@ impl AnthropicProvider {
             "stream": true,
         });
 
-        // Prompt caching: system as a content block with cache_control so the
-        // static prefix (prompt + AGENTS.md + tools) is reused across turns.
-        // Claude Code / industry standard — big TTFT win on multi-step agents.
-        // See: platform.claude.com/docs — prompt caching, tool-use caching.
+        // System as plain string first; cache policy promotes + marks.
         if !request.system.is_empty() {
-            body["system"] = serde_json::json!([{
-                "type": "text",
-                "text": request.system,
-                "cache_control": { "type": "ephemeral" }
-            }]);
+            body["system"] = Value::String(request.system.clone());
         }
 
         if !request.tools.is_empty() {
@@ -57,6 +50,12 @@ impl AnthropicProvider {
         if request.thinking.is_some() {
             body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 4000});
         }
+
+        // OpenCode-parity: last tool + system + latest user message.
+        super::cache::apply_anthropic_cache_policy(
+            &mut body,
+            &super::cache::CacheConfig::default(),
+        );
 
         body
     }
@@ -115,7 +114,8 @@ impl AnthropicProvider {
     }
 
     fn convert_tools(&self, tools: &[ToolDefinition]) -> Vec<Value> {
-        let mut out: Vec<Value> = tools
+        // cache_control is applied later by `apply_anthropic_cache_policy`.
+        tools
             .iter()
             .map(|t| {
                 serde_json::json!({
@@ -124,18 +124,7 @@ impl AnthropicProvider {
                     "input_schema": t.parameters
                 })
             })
-            .collect();
-        // Cache breakpoint on the last tool → entire tools array is a stable
-        // prefix for subsequent turns (Anthropic tool-use + prompt caching docs).
-        if let Some(last) = out.last_mut()
-            && let Some(obj) = last.as_object_mut()
-        {
-            obj.insert(
-                "cache_control".into(),
-                serde_json::json!({ "type": "ephemeral" }),
-            );
-        }
-        out
+            .collect()
     }
 }
 

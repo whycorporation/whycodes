@@ -83,10 +83,23 @@ impl ToolExecutor {
         &self,
         permissions: &PermissionSet,
     ) -> Vec<whycode_core::types::ToolDefinition> {
+        self.get_definitions_profile(permissions, crate::profile::ToolProfile::Full)
+    }
+
+    /// Like [`get_definitions`] but limited to a [`crate::profile::ToolProfile`].
+    ///
+    /// `Core` shrinks the tools JSON prefix (~12 tools) for faster TTFT while
+    /// still allowing execute of non-core tools if the model invents a name
+    /// (execute path is not profile-gated — only the schema sent to the LLM).
+    pub fn get_definitions_profile(
+        &self,
+        permissions: &PermissionSet,
+        profile: crate::profile::ToolProfile,
+    ) -> Vec<whycode_core::types::ToolDefinition> {
         let mut defs: Vec<_> = self
             .tools
             .values()
-            .filter(|t| t.is_allowed(permissions))
+            .filter(|t| t.is_allowed(permissions) && profile.includes(t.name()))
             .map(|t| t.definition())
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));

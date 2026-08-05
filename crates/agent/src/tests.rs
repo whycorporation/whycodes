@@ -325,3 +325,69 @@ fn test_subagent_task_debug_format() {
     assert!(debug_str.contains("Debug me"));
     assert!(debug_str.contains("max_turns: 3"));
 }
+
+// ─── Doom-loop / tool profile ──────────────────────────────────────────
+
+#[test]
+fn doom_loop_trips_on_third_identical_call() {
+    use std::collections::VecDeque;
+    use whycode_core::types::ToolCall;
+
+    let tc = ToolCall {
+        id: "1".into(),
+        name: "read".into(),
+        arguments: serde_json::json!({"path": "a.rs"}),
+    };
+    let mut recent = VecDeque::new();
+    assert!(!crate::agent::would_doom_loop(&recent, std::slice::from_ref(&tc)));
+    recent.push_back(format!("read|{}", serde_json::to_string(&tc.arguments).unwrap()));
+    assert!(!crate::agent::would_doom_loop(&recent, std::slice::from_ref(&tc)));
+    recent.push_back(format!("read|{}", serde_json::to_string(&tc.arguments).unwrap()));
+    // 2 recent + 1 new = 3 → trip
+    assert!(crate::agent::would_doom_loop(&recent, std::slice::from_ref(&tc)));
+}
+
+#[test]
+fn doom_loop_ignores_mixed_batch() {
+    use std::collections::VecDeque;
+    use whycode_core::types::ToolCall;
+
+    let calls = vec![
+        ToolCall {
+            id: "1".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+        },
+        ToolCall {
+            id: "2".into(),
+            name: "grep".into(),
+            arguments: serde_json::json!({"pattern": "x"}),
+        },
+    ];
+    let mut recent = VecDeque::new();
+    for _ in 0..5 {
+        recent.push_back("read|{}".into());
+    }
+    assert!(!crate::agent::would_doom_loop(&recent, &calls));
+}
+
+#[test]
+fn core_tool_profile_shrinks_definitions() {
+    use whycode_core::types::PermissionSet;
+    use whycode_tools::ToolExecutor;
+    use whycode_tools::ToolProfile;
+
+    let ex = ToolExecutor::new();
+    let perms = PermissionSet {
+        allow_file_writes: true,
+        allow_network: true,
+        allow_shell: true,
+        ..Default::default()
+    };
+    let core = ex.get_definitions_profile(&perms, ToolProfile::Core);
+    let full = ex.get_definitions_profile(&perms, ToolProfile::Full);
+    assert!(core.len() < full.len(), "core={} full={}", core.len(), full.len());
+    assert!(core.iter().any(|d| d.name == "read"));
+    assert!(!core.iter().any(|d| d.name == "webfetch"));
+    assert!(full.iter().any(|d| d.name == "webfetch"));
+}

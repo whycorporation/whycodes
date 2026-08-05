@@ -189,21 +189,20 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ### 2026-08-05 — Competitive latency pack (cache + parallel tools)
 
-**What:** Match Claude Code / OpenCode / Codex latency patterns:
+**What:** Match Claude Code / OpenCode / Codex / jcode latency patterns:
 
 | Piece | Behavior |
 |-------|----------|
-| Anthropic `cache_control` | system block + last tool ephemeral (**still missing** OpenCode’s *latest user message* breakpoint) |
+| Anthropic cache (OpenCode auto) | last tool + system + **latest user message** (`llm/cache.rs`) |
 | Parallel tools | fan-out read-safe tools; shell/mutators serial |
-| OpenAI-compat | `parallel_tool_calls: true` |
+| Doom-loop | 3× same tool+args → refuse (OpenCode `doom_loop`) |
+| Core tools | default `session.tool_profile = "core"` (~12 tools); `"full"` for all |
+| Metrics | JSONL `turn.step` / `turn.done` (`ttft_ms`, `step_ms`, `tool_batch_ms`, cache tokens) |
 | Auto-compact | before each LLM step when over `compaction_threshold` |
 
-**Roadmap (revised w/ OpenCode source + jcode analysis):** [plan-latency-competitors.md](plan-latency-competitors.md)
+**Roadmap:** [plan-latency-competitors.md](plan-latency-competitors.md)
 
-**OpenCode must-copy:** `packages/llm/src/cache-policy.ts` auto = tools + system + latest user.  
-**jcode note:** always-on daemon + swarm help *wide* work / warm process, not single-turn TTFT; avoid their compaction thrash bugs.
-
-**Prevention:** Do not reintroduce sequential-only tool loops or string-only Anthropic `system` without cache markers.
+**Prevention:** Do not drop latest-user cache breakpoint; do not reintroduce sequential-only tool loops or full tool dump as default.
 
 ---
 

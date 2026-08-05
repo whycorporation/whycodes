@@ -570,6 +570,13 @@ pub struct SessionConfig {
     /// Empty = pick a known small/fast sibling (haiku / mini / flash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title_model: Option<String>,
+    /// Tools advertised to the model: `core` (default, ~12 tools, faster TTFT)
+    /// or `full` (every built-in including github/web/lsp).
+    #[serde(default = "default_tool_profile")]
+    pub tool_profile: String,
+    /// Anthropic-style prompt cache policy: `auto` (default) or `none`.
+    #[serde(default = "default_prompt_cache")]
+    pub prompt_cache: String,
 }
 
 impl Default for SessionConfig {
@@ -580,8 +587,18 @@ impl Default for SessionConfig {
             store_path: None,
             auto_title: true,
             title_model: None,
+            tool_profile: default_tool_profile(),
+            prompt_cache: default_prompt_cache(),
         }
     }
+}
+
+fn default_tool_profile() -> String {
+    "core".into()
+}
+
+fn default_prompt_cache() -> String {
+    "auto".into()
 }
 
 fn default_max_tokens() -> usize {
@@ -947,6 +964,12 @@ impl Config {
         }
         if other.session.title_model.is_some() {
             merged.session.title_model = other.session.title_model.clone();
+        }
+        if other.session.tool_profile != default_tool_profile() {
+            merged.session.tool_profile = other.session.tool_profile.clone();
+        }
+        if other.session.prompt_cache != default_prompt_cache() {
+            merged.session.prompt_cache = other.session.prompt_cache.clone();
         }
 
         // TUI

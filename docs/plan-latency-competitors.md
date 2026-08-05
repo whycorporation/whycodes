@@ -171,34 +171,33 @@ From open issues (latency/correctness adjacency):
 | Shared HTTP client | `b2ffb3c` | OnceLock, nodelay, keepalive |
 | Async title + trivial skip + 8s | `b2ffb3c` | UI not blocked |
 | Sorted tool definitions | `b2ffb3c` | Stable cache prefix |
-| Anthropic system + last-tool cache | `9d1f62c` | **Missing latest-user** |
+| Anthropic system + last-tool cache | `9d1f62c` | partial |
 | Parallel safe tools | `9d1f62c` | Reads only; shell/mutators serial |
 | OpenAI-compat `parallel_tool_calls` | `9d1f62c` | Encourage multi-tool emit |
 | Auto-compact before LLM step | `9d1f62c` | Heuristic drop at `compaction_threshold` |
+| **OpenCode-parity cache** (system+tools+**latest user**) | P0.1 | `llm/cache.rs` `apply_anthropic_cache_policy` |
+| **Doom-loop** (3× same tool+args) | P0.2 | refuse + error tool result |
+| **Core tool profile** (default) | P0.3 | `session.tool_profile = "core"\|"full"` |
+| **JSONL metrics** | P0.4 | `turn.step` / `turn.done` (`ttft_ms`, `step_ms`, `tool_batch_ms`, cache tokens) |
+
+### Config knobs
+
+```toml
+[session]
+tool_profile = "core"   # or "full"
+prompt_cache = "auto"   # reserved; Anthropic uses auto today
+compaction_threshold = 150000
+```
 
 ---
 
-## Corrected backlog (ROI × effort × peer evidence)
+## Remaining backlog
 
-### P0 — next sprint (do these)
+### P0 — complete
 
-1. **OpenCode-parity cache policy**  
-   - Wire `CacheConfig` / `apply_cache_policy` into Anthropic (and Bedrock if added).  
-   - Markers: last tool + system + **latest user message content block**.  
-   - Cap at 4 breakpoints (Anthropic limit; OpenCode tracks this).  
-   - Expose config: `cache = "auto" | "none" | { … }`.
+_(all four P0 items implemented)_
 
-2. **Doom-loop detection** (OpenCode `doom_loop`)  
-   - If last N tool calls share name+args JSON → emit recovery user msg or permission ask; stop silent spin.
-
-3. **Core tool profile** (jcode OAuth curated + Claude defer spirit)  
-   - Default ~8–12 tools for build agent.  
-   - `skill` / `enable_tools` / agent mode expands surface.  
-   - Biggest always-on TTFT win after cache.
-
-4. **Metrics in JSONL**  
-   - `ttft_ms`, `step_ms`, `tool_batch_ms`, `cache_read_tokens`, `cache_creation_tokens`.  
-   - Success: multi-step Anthropic shows `cache_read > 0` after step 1.
+### P1 — next after this sprint
 
 ### P1 — architecture speed
 
@@ -253,8 +252,9 @@ From open issues (latency/correctness adjacency):
 | 2026-08-05 | Ship HTTP pool, async title, tool sort. |
 | 2026-08-05 | Ship Anthropic system+tool cache, parallel safe tools, first plan draft. |
 | 2026-08-05 | **Revise plan:** deep OpenCode (`cache-policy`, doom_loop, compaction) + jcode (daemon, swarm, memory, agentgrep, compaction bugs). Mark auto-compact **shipped**. Elevate **latest-user cache** + doom-loop + core tools to P0. Swarm stays non-P0. |
-| TBD | Core tool list final membership (product). |
+| 2026-08-05 | **Implement P0.1–P0.4:** OpenCode cache policy, doom-loop, core tools default, JSONL latency metrics. |
 | TBD | Whether LLM-summary compact is default-on or `/compact` only. |
+| TBD | Wire `session.prompt_cache = "none"` into Anthropic body (field reserved). |
 
 ---
 

@@ -8,8 +8,11 @@ use whycode_core::types::{
 };
 use whycode_llm::provider::ProviderRegistry;
 use whycode_tools::executor::ToolExecutor;
+use whycode_tools::profile::ToolProfile;
 
 use whycode_session::session::Session;
+use std::collections::VecDeque;
+use std::time::Instant;
 
 use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
@@ -70,6 +73,40 @@ pub struct Agent {
     /// When session estimate exceeds this, compact before the next LLM call
     /// (Claude Code / OpenCode style). `0` disables auto-compact.
     compaction_threshold: usize,
+    /// Tools schema sent to the model (`core` = smaller TTFT).
+    tool_profile: ToolProfile,
+}
+
+/// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
+const DOOM_LOOP_THRESHOLD: usize = 3;
+
+fn tool_call_signature(tc: &ToolCall) -> String {
+    let args = serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into());
+    format!("{}|{args}", tc.name)
+}
+
+/// True when executing `calls` would make the last N signatures all equal.
+pub(crate) fn would_doom_loop(recent: &VecDeque<String>, calls: &[ToolCall]) -> bool {
+    if calls.is_empty() {
+        return false;
+    }
+    // Only treat a pure repeat batch (or single call) as doom-loop.
+    let first = tool_call_signature(&calls[0]);
+    if !calls.iter().all(|c| tool_call_signature(c) == first) {
+        return false;
+    }
+    let mut n = calls.len();
+    for sig in recent.iter().rev() {
+        if sig == &first {
+            n += 1;
+            if n >= DOOM_LOOP_THRESHOLD {
+                return true;
+            }
+        } else {
+            break;
+        }
+    }
+    n >= DOOM_LOOP_THRESHOLD
 }
 
 impl Agent {
@@ -85,6 +122,7 @@ impl Agent {
             hooks: Vec::new(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
+            tool_profile: ToolProfile::Core,
         }
     }
 
@@ -121,14 +159,21 @@ impl Agent {
         self.network = config.security.network_policy();
         self.hooks = config.hooks.clone();
         self.compaction_threshold = config.session.compaction_threshold;
+        self.tool_profile = ToolProfile::parse(&config.session.tool_profile);
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
             network_deny = self.network.denylist.len(),
             hooks = self.hooks.len(),
             compaction_threshold = self.compaction_threshold,
+            tool_profile = self.tool_profile.as_str(),
             "shell sandbox, network policy, and hooks"
         );
+        self
+    }
+
+    pub fn with_tool_profile(mut self, profile: ToolProfile) -> Self {
+        self.tool_profile = profile;
         self
     }
 
@@ -413,7 +458,9 @@ impl Agent {
         events: Option<EventSink>,
         cancel: Option<CancelFlag>,
     ) -> whycode_core::Result<String> {
-        let tools = self.tool_executor.get_definitions(&self.info.permission);
+        let tools = self
+            .tool_executor
+            .get_definitions_profile(&self.info.permission, self.tool_profile);
 
         let tool_ctx = self.tool_context(session);
 
@@ -429,6 +476,11 @@ impl Agent {
 
         let mut turn_count = 0;
         let mut final_text = String::new();
+        // Latency: wall clock for the whole user turn (all LLM steps + tools).
+        let user_turn_t0 = Instant::now();
+        let mut ttft_ms: Option<u128> = None;
+        // Recent tool signatures for OpenCode-style doom-loop detection.
+        let mut recent_tool_sigs: VecDeque<String> = VecDeque::with_capacity(8);
 
         loop {
             if is_cancelled(&cancel) {
@@ -479,6 +531,7 @@ impl Agent {
             let mut accumulated_text = String::new();
             let mut turn_usage = whycode_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
+            let step_t0 = Instant::now();
 
             let mut event_stream = provider.stream(&request, api_key, model).await?;
 
@@ -497,6 +550,9 @@ impl Agent {
 
                 match event? {
                     StreamEvent::TextDelta { text } => {
+                        if ttft_ms.is_none() {
+                            ttft_ms = Some(user_turn_t0.elapsed().as_millis());
+                        }
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
                     }
@@ -512,10 +568,16 @@ impl Agent {
                         assembler.on_tool_use_delta(&id, &input_json_delta);
                     }
                     StreamEvent::Thinking { text } => {
+                        if ttft_ms.is_none() {
+                            ttft_ms = Some(user_turn_t0.elapsed().as_millis());
+                        }
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::debug!("Thinking: {}", text);
                     }
                     StreamEvent::ThinkingDelta { text } => {
+                        if ttft_ms.is_none() {
+                            ttft_ms = Some(user_turn_t0.elapsed().as_millis());
+                        }
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::debug!("Thinking: {}", text);
                     }
@@ -548,9 +610,13 @@ impl Agent {
 
             // Merge streamed argument fragments into parsed JSON objects.
             let tool_calls = assembler.finish();
+            let step_ms = step_t0.elapsed().as_millis();
 
             // Emit ToolStart with final parsed arguments (not the empty first chunk).
             for tc in &tool_calls {
+                if ttft_ms.is_none() {
+                    ttft_ms = Some(user_turn_t0.elapsed().as_millis());
+                }
                 emit(
                     &events,
                     TurnEvent::ToolStart {
@@ -593,24 +659,119 @@ impl Agent {
             }
 
             if tool_calls.is_empty() {
+                whycode_core::logging::emit_sid(
+                    "agent",
+                    "info",
+                    "turn.step",
+                    Some(session.id.as_str()),
+                    Some(serde_json::json!({
+                        "step": turn_count,
+                        "step_ms": step_ms,
+                        "ttft_ms": ttft_ms,
+                        "tool_batch_ms": null,
+                        "tool_count": 0,
+                        "tools_profile": self.tool_profile.as_str(),
+                        "input_tokens": turn_usage.input_tokens,
+                        "output_tokens": turn_usage.output_tokens,
+                        "cache_read_tokens": turn_usage.cache_read_input_tokens,
+                        "cache_creation_tokens": turn_usage.cache_creation_input_tokens,
+                        "done": true,
+                    })),
+                );
                 break;
             }
 
-            // Parallel when safe (OpenCode / Codex / Claude Code pattern).
-            // Sequential for shell / mutating / permission-ask tools so risk
-            // gates and the TUI single-slot permission UI stay correct.
-            let results = self
-                .execute_tool_calls(
-                    &tool_calls,
-                    session,
-                    &tool_ctx,
-                    provider_name,
-                    model,
-                    api_key,
+            // Doom-loop: refuse identical tool+args repeated DOOM_LOOP_THRESHOLD times
+            // (OpenCode processor.ts doom_loop permission pattern).
+            let results = if would_doom_loop(&recent_tool_sigs, &tool_calls) {
+                emit(
                     &events,
-                    &cancel,
-                )
-                .await?;
+                    TurnEvent::Status(
+                        "Doom loop: identical tool call repeated — refusing".into(),
+                    ),
+                );
+                tracing::warn!(
+                    tools = ?tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+                    "doom loop refused"
+                );
+                let mut refused = Vec::with_capacity(tool_calls.len());
+                for tc in &tool_calls {
+                    emit(
+                        &events,
+                        TurnEvent::ToolEnd {
+                            id: tc.id.clone(),
+                            content: format!(
+                                "Doom loop: tool `{}` with the same arguments was repeated \
+                                 {DOOM_LOOP_THRESHOLD}+ times. Stop retrying; change approach \
+                                 or ask the user.",
+                                tc.name
+                            ),
+                            is_error: true,
+                        },
+                    );
+                    refused.push(ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!(
+                            "Doom loop: tool `{}` with the same arguments was repeated \
+                             {DOOM_LOOP_THRESHOLD}+ times. Stop retrying; change approach \
+                             or ask the user.",
+                            tc.name
+                        ),
+                        is_error: true,
+                    });
+                    let sig = tool_call_signature(tc);
+                    recent_tool_sigs.push_back(sig);
+                    while recent_tool_sigs.len() > 16 {
+                        recent_tool_sigs.pop_front();
+                    }
+                }
+                refused
+            } else {
+                // Parallel when safe (OpenCode / Codex / Claude Code pattern).
+                // Sequential for shell / mutating / permission-ask tools so risk
+                // gates and the TUI single-slot permission UI stay correct.
+                let tool_t0 = Instant::now();
+                let results = self
+                    .execute_tool_calls(
+                        &tool_calls,
+                        session,
+                        &tool_ctx,
+                        provider_name,
+                        model,
+                        api_key,
+                        &events,
+                        &cancel,
+                    )
+                    .await?;
+                let tool_batch_ms = tool_t0.elapsed().as_millis();
+                for tc in &tool_calls {
+                    let sig = tool_call_signature(tc);
+                    recent_tool_sigs.push_back(sig);
+                    while recent_tool_sigs.len() > 16 {
+                        recent_tool_sigs.pop_front();
+                    }
+                }
+                whycode_core::logging::emit_sid(
+                    "agent",
+                    "info",
+                    "turn.step",
+                    Some(session.id.as_str()),
+                    Some(serde_json::json!({
+                        "step": turn_count,
+                        "step_ms": step_ms,
+                        "ttft_ms": ttft_ms,
+                        "tool_batch_ms": tool_batch_ms,
+                        "tool_count": tool_calls.len(),
+                        "tools_profile": self.tool_profile.as_str(),
+                        "input_tokens": turn_usage.input_tokens,
+                        "output_tokens": turn_usage.output_tokens,
+                        "cache_read_tokens": turn_usage.cache_read_input_tokens,
+                        "cache_creation_tokens": turn_usage.cache_creation_input_tokens,
+                        "done": false,
+                    })),
+                );
+                results
+            };
 
             session.add_tool_results(results.clone());
 
@@ -630,6 +791,19 @@ impl Agent {
                 session.add_user_message(&recovery_msg);
             }
         }
+
+        whycode_core::logging::emit_sid(
+            "agent",
+            "info",
+            "turn.done",
+            Some(session.id.as_str()),
+            Some(serde_json::json!({
+                "steps": turn_count,
+                "ttft_ms": ttft_ms,
+                "worked_ms": user_turn_t0.elapsed().as_millis(),
+                "tools_profile": self.tool_profile.as_str(),
+            })),
+        );
 
         Ok(final_text)
     }
