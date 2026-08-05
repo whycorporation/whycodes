@@ -471,6 +471,8 @@ fn test_toggle_selected_thinking() {
     app.append_thinking("line1\nline2");
     app.finish_open_thinking();
     app.selected_msg = Some(0);
+    // Seed a layout cache so expand must clear it (Grok expand reliability).
+    app.messages[0].layout_cache = Some((80, false, 3));
     assert!(matches!(
         &app.messages[0].blocks[0],
         ChatBlock::Thinking(t) if t.collapsed
@@ -480,6 +482,11 @@ fn test_toggle_selected_thinking() {
         &app.messages[0].blocks[0],
         ChatBlock::Thinking(t) if !t.collapsed && t.show_body()
     ));
+    assert!(
+        app.messages[0].layout_cache.is_none(),
+        "expand must invalidate message layout cache"
+    );
+    assert!(app.needs_redraw, "expand must request a redraw frame");
 }
 
 #[test]

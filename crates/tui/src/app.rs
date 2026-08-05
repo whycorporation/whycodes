@@ -1440,6 +1440,9 @@ impl TuiApp {
                     t.collapsed = target;
                 }
             }
+            // Height changes — clear cache and request a frame (same as tools).
+            msg.invalidate_layout();
+            self.mark_dirty();
         }
     }
 

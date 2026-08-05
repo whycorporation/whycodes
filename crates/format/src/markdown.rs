@@ -66,6 +66,8 @@ pub enum Block {
     Paragraph(Vec<Inline>),
     ListItem {
         indent: usize,
+        /// `None` = bullet; `Some(n)` = ordered list starting at n.
+        number: Option<u32>,
         spans: Vec<Inline>,
     },
     /// A fenced block. `closed` is false while the closing fence has not
@@ -121,9 +123,10 @@ pub fn parse_markdown(text: &str) -> Vec<Block> {
                 level,
                 spans: parse_inline(rest),
             });
-        } else if let Some(rest) = list_item(trimmed) {
+        } else if let Some((number, rest)) = list_item(trimmed) {
             blocks.push(Block::ListItem {
                 indent: line.len() - trimmed.len(),
+                number,
                 spans: parse_inline(rest),
             });
         } else if trimmed.is_empty() {
@@ -155,11 +158,21 @@ fn heading(trimmed: &str) -> Option<(u8, &str)> {
     }
 }
 
-fn list_item(trimmed: &str) -> Option<&str> {
+/// Bullet or ordered list marker. Returns `(number, rest)` where `number` is
+/// `None` for bullets and `Some(n)` for `n. ` markers.
+fn list_item(trimmed: &str) -> Option<(Option<u32>, &str)> {
     for marker in ["- ", "* ", "+ "] {
         if let Some(rest) = trimmed.strip_prefix(marker) {
-            return Some(rest);
+            return Some((None, rest));
         }
+    }
+    // Ordered: `1. `, `12. `, …
+    let digits = trimmed.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits > 0
+        && trimmed[digits..].starts_with(". ")
+        && let Ok(n) = trimmed[..digits].parse::<u32>()
+    {
+        return Some((Some(n), &trimmed[digits + 2..]));
     }
     None
 }
@@ -535,9 +548,30 @@ mod tests {
             blocks[0],
             Block::ListItem {
                 indent: 4,
+                number: None,
                 spans: vec![Inline::Text("nested".into())]
             }
         );
+    }
+
+    #[test]
+    fn parses_ordered_list_items() {
+        let blocks = parse_markdown("1. first\n2. second");
+        assert_eq!(
+            blocks[0],
+            Block::ListItem {
+                indent: 0,
+                number: Some(1),
+                spans: vec![Inline::Text("first".into())]
+            }
+        );
+        assert!(matches!(
+            blocks[1],
+            Block::ListItem {
+                number: Some(2),
+                ..
+            }
+        ));
     }
 
     #[test]

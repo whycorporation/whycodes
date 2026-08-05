@@ -6,6 +6,8 @@
 //! picks up the active theme for prose; fenced code uses Tokyo Night via
 //! `whycode_format::highlight`. Fenced `mermaid` / `mmd` blocks render as
 //! Unicode box-drawing diagrams via `whycode_format::mermaid`.
+//!
+//! Prose soft-wraps to `max_width` (Grok-style transcript; no hard overflow).
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -13,6 +15,7 @@ use whycode_format::markdown::{Block, Inline, highlight_code_spans, parse_markdo
 use whycode_format::mermaid::{is_mermaid_language, render_mermaid};
 
 use crate::theme::ThemePalette;
+use crate::widgets::wrap::wrap_spans;
 
 /// Render `text` as markdown.
 ///
@@ -20,14 +23,13 @@ use crate::theme::ThemePalette;
 /// SIDE_PAD. An extra indent here stacked with tools/epilogue and made the
 /// transcript look over-nested.
 ///
-/// `max_width` is the content column budget for Mermaid compaction (and future
-/// width-aware layout). Pass `None` when the terminal width is unknown.
+/// `max_width` is the content column budget for soft-wrap and Mermaid.
+/// Pass `None` when the terminal width is unknown (no wrap).
 pub fn render(text: &str, palette: &ThemePalette) -> Vec<Line<'static>> {
     render_with_width(text, palette, None)
 }
 
-/// Like [`render`], but passes `max_width` into Mermaid layout so diagrams try
-/// to fit the chat pane rather than overflow and wrap poorly.
+/// Like [`render`], but soft-wraps prose and passes `max_width` into Mermaid.
 pub fn render_with_width(
     text: &str,
     palette: &ThemePalette,
@@ -60,7 +62,7 @@ fn render_block(
                 .iter()
                 .map(|s| inline_span(s, palette, Some(style)))
                 .collect();
-            vec![Line::from(out)]
+            wrap_prose(out, max_width)
         }
 
         Block::Paragraph(spans) => {
@@ -68,16 +70,48 @@ fn render_block(
                 .iter()
                 .map(|s| inline_span(s, palette, None))
                 .collect();
-            vec![Line::from(out)]
+            wrap_prose(out, max_width)
         }
 
-        Block::ListItem { indent, spans } => {
-            let mut out = vec![
+        Block::ListItem {
+            indent,
+            number,
+            spans,
+        } => {
+            let marker = match number {
+                Some(n) => format!("{n}. "),
+                None => "• ".to_string(),
+            };
+            let marker_style = Style::default().fg(palette.accent);
+            let prefix = vec![
                 Span::raw(" ".repeat(*indent)),
-                Span::styled("• ".to_string(), Style::default().fg(palette.accent)),
+                Span::styled(marker.clone(), marker_style),
             ];
-            out.extend(spans.iter().map(|s| inline_span(s, palette, None)));
-            vec![Line::from(out)]
+            let body: Vec<Span> = spans
+                .iter()
+                .map(|s| inline_span(s, palette, None))
+                .collect();
+
+            // Soft-wrap body; hang indent under the marker on continuations.
+            let marker_cols = indent + marker.chars().count();
+            let body_width = max_width.map(|w| w.saturating_sub(marker_cols).max(8));
+            let body_lines = wrap_prose(body, body_width);
+            let mut out = Vec::new();
+            for (i, line) in body_lines.into_iter().enumerate() {
+                if i == 0 {
+                    let mut spans = prefix.clone();
+                    spans.extend(line.spans);
+                    out.push(Line::from(spans));
+                } else {
+                    let mut spans = vec![Span::raw(" ".repeat(marker_cols))];
+                    spans.extend(line.spans);
+                    out.push(Line::from(spans));
+                }
+            }
+            if out.is_empty() {
+                out.push(Line::from(prefix));
+            }
+            out
         }
 
         Block::Code {
@@ -88,9 +122,16 @@ fn render_block(
             if is_mermaid_language(language.as_deref()) {
                 render_mermaid_block(lines, *closed, palette, max_width)
             } else {
-                render_code(language.as_deref(), lines, *closed, palette)
+                render_code(language.as_deref(), lines, *closed, palette, max_width)
             }
         }
+    }
+}
+
+fn wrap_prose(spans: Vec<Span<'static>>, max_width: Option<usize>) -> Vec<Line<'static>> {
+    match max_width {
+        Some(w) if w > 0 => wrap_spans(spans, w as u16),
+        _ => vec![Line::from(spans)],
     }
 }
 
@@ -99,27 +140,42 @@ fn render_code(
     lines: &[String],
     closed: bool,
     palette: &ThemePalette,
+    max_width: Option<usize>,
 ) -> Vec<Line<'static>> {
     let gutter = Style::default().fg(palette.dim);
     let mut out = Vec::with_capacity(lines.len() + 2);
 
-    // A header naming the language, so an unhighlighted block is still
-    // identifiable as code.
+    // Quiet language label (Grok-like; no heavy box chrome noise).
     out.push(Line::from(vec![
         Span::styled("┌ ".to_string(), gutter),
         Span::styled(language.unwrap_or("code").to_string(), gutter),
     ]));
 
+    let body_w = max_width.map(|w| w.saturating_sub(2).max(8));
     let highlighted = highlight_code_spans(&lines.join("\n"), language);
     for spans in highlighted.iter() {
-        let mut line = vec![Span::styled("│ ".to_string(), gutter)];
-        for ((r, g, b), text) in spans {
-            line.push(Span::styled(
-                text.trim_end_matches('\n').to_string(),
-                Style::default().fg(Color::Rgb(*r, *g, *b)),
-            ));
+        let mut code_spans: Vec<Span<'static>> = spans
+            .iter()
+            .map(|((r, g, b), text)| {
+                Span::styled(
+                    text.trim_end_matches('\n').to_string(),
+                    Style::default().fg(Color::Rgb(*r, *g, *b)),
+                )
+            })
+            .collect();
+        if code_spans.is_empty() {
+            code_spans.push(Span::raw(""));
         }
-        out.push(Line::from(line));
+        // Hard-split only if a single code line still exceeds the pane.
+        let rows = match body_w {
+            Some(w) => wrap_spans(code_spans, w as u16),
+            None => vec![Line::from(code_spans)],
+        };
+        for row in rows {
+            let mut line = vec![Span::styled("│ ".to_string(), gutter)];
+            line.extend(row.spans);
+            out.push(Line::from(line));
+        }
     }
 
     // While streaming, the closing fence has not arrived. Leave the block open
@@ -147,7 +203,7 @@ fn render_mermaid_block(
     if !closed {
         // Streaming: show source so the user sees progress without paying for
         // a full layout on every partial parse.
-        return render_code(Some("mermaid"), lines, false, palette);
+        return render_code(Some("mermaid"), lines, false, palette, max_width);
     }
 
     match render_mermaid(&source, max_width) {
@@ -272,6 +328,29 @@ mod tests {
     }
 
     #[test]
+    fn ordered_list_items_get_numbers() {
+        let out = rendered("1. alpha\n2. beta");
+        assert!(out[0].contains("1. "), "{:?}", out);
+        assert!(out[0].contains("alpha"));
+        assert!(out[1].contains("2. "), "{:?}", out);
+    }
+
+    #[test]
+    fn long_paragraph_soft_wraps() {
+        let words = (0..20).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
+        let lines = render_with_width(&words, &palette(), Some(24));
+        assert!(
+            lines.len() >= 2,
+            "expected wrap into multiple rows, got {}: {:?}",
+            lines.len(),
+            lines.iter().map(text).collect::<Vec<_>>()
+        );
+        let joined: String = lines.iter().map(text).collect();
+        assert!(joined.contains("word0"));
+        assert!(joined.contains("word19"));
+    }
+
+    #[test]
     fn fenced_code_is_framed_and_labelled() {
         let out = rendered("```rust\nlet x = 1;\n```");
         assert!(out[0].contains("rust"), "{:?}", out);
@@ -305,9 +384,11 @@ mod tests {
         assert!(joined.contains("mermaid"), "{joined}");
         assert!(joined.contains("Build"), "{joined}");
         assert!(joined.contains("Deploy"), "{joined}");
-        // Source header keyword should not remain as plain fence body.
-        assert!(!joined.contains("graph LR"), "{joined}");
         assert!(out.last().unwrap().contains('└'), "{joined}");
+        // With the `mermaid` feature, source keywords become a diagram.
+        // Without it, the ship binary keeps source lines readable.
+        #[cfg(feature = "mermaid")]
+        assert!(!joined.contains("graph LR"), "{joined}");
     }
 
     #[test]
