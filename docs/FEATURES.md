@@ -6,7 +6,7 @@ Terminal coding agent’ların özellik matrisi.
 
 **Ürün yüzeyi:** Claude Code · Cursor
 
-Son güncelleme: **2026-08-05** (rakip hücreleri dokümantasyondan dolduruldu).  
+Son güncelleme: **2026-08-07** (bg/schedule, `/doctor`, process-sub risk; rakip hücreleri dokümantasyondan).  
 Kaynaklar dosya sonundadır. Hücreler “var / kısmi / yok” seviyesindedir; her minor sürüm bire bir doğrulanmaz.
 
 ### Sembol

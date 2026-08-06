@@ -1111,6 +1111,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Session details",
     },
     SlashCommand {
+        name: "/doctor",
+        hint: "Environment / config diagnostics",
+    },
+    SlashCommand {
         name: "/agent",
         hint: "[args] Switch the primary agent (e.g. /agent plan)",
     },

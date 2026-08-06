@@ -196,6 +196,25 @@ pub fn tokenize(input: &str) -> Tokenized {
                 has_current = true;
                 i = end + 1;
             }
+            // Process substitution: <(cmd) >(cmd)  — runs `cmd` and feeds a
+            // pipe path. Mark dynamic so risk cannot pretend targets are static.
+            // Also Zsh =(cmd) equals-form process substitution.
+            '<' | '>' | '='
+                if i + 1 < chars.len()
+                    && chars[i + 1] == '('
+                    && (c != '=' || is_process_sub_equals_context(&chars, i)) =>
+            {
+                let Some(end) = find_closing_paren(&chars, i + 2) else {
+                    malformed = true;
+                    break;
+                };
+                dynamic = true;
+                has_current = true;
+                // Keep a placeholder so the segment still has a word.
+                current.push(c);
+                current.push_str("()");
+                i = end + 1;
+            }
             c if c.is_whitespace() && c != '\n' => {
                 flush_word!();
                 i += 1;
@@ -292,7 +311,20 @@ fn find_closing_paren(chars: &[char], from: usize) -> Option<usize> {
 }
 
 fn contains_substitution(s: &str) -> bool {
-    s.contains("$(") || s.contains('`')
+    s.contains("$(")
+        || s.contains('`')
+        || s.contains("<(")
+        || s.contains(">(")
+        || s.contains("=(")
+}
+
+/// `=(cmd)` is Zsh process substitution only at word start (not `VAR=value`).
+fn is_process_sub_equals_context(chars: &[char], i: usize) -> bool {
+    if i == 0 {
+        return true;
+    }
+    let prev = chars[i - 1];
+    prev.is_whitespace() || matches!(prev, ';' | '|' | '&' | '(' | ')')
 }
 
 #[cfg(test)]
@@ -347,6 +379,17 @@ mod tests {
         assert!(t.segments[0].has_dynamic());
         let t = tokenize(r#"rm -rf "$(cat list)""#);
         assert!(t.segments[0].has_dynamic());
+    }
+
+    #[test]
+    fn marks_process_substitution_dynamic() {
+        // Bash process substitution feeds a pipe path from a nested command.
+        assert!(tokenize("diff <(sort a) <(sort b)").segments[0].has_dynamic());
+        assert!(tokenize("cmd >(tee log)").segments[0].has_dynamic());
+        // Zsh =(cmd) at word start.
+        assert!(tokenize("=(echo hi)").segments[0].has_dynamic());
+        // VAR=value assignment is not process substitution.
+        assert!(!tokenize("FOO=bar ls").segments[0].has_dynamic());
     }
 
     #[test]

@@ -303,8 +303,9 @@ impl Agent {
             .automation
             .max_background_jobs
             .clamp(1, crate::background::DEFAULT_MAX_BACKGROUND_JOBS.saturating_mul(2).max(8));
-        // Do not replace the registry here — TUI may re-call with_config on agent
-        // switch while jobs are still running.
+        // Resize ceiling only — keep the same registry so in-flight jobs survive
+        // agent switches / re-config.
+        self.background.set_max_jobs(self.max_background_jobs);
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -1284,16 +1285,25 @@ impl Agent {
             .await;
         }
 
-        // Shell commands are gated on what the command would destroy. The
-        // permission map below only sees the tool name, so on its own `allow`
-        // would run anything the model emits.
+        // Shell commands (and `schedule` with a delayed shell payload) are gated
+        // on what the command would destroy. The permission map below only sees
+        // the tool name, so on its own `allow` would run anything the model emits.
         let mut risk_confirmed = false;
-        if SHELL_TOOLS.contains(&tc.name.as_str()) {
-            let command = tc
-                .arguments
-                .get("command")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
+        let scheduled_shell = (tc.name == "schedule")
+            .then(|| {
+                tc.arguments
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .filter(|c| !c.trim().is_empty())
+            })
+            .flatten();
+        if SHELL_TOOLS.contains(&tc.name.as_str()) || scheduled_shell.is_some() {
+            let command = scheduled_shell.unwrap_or_else(|| {
+                tc.arguments
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+            });
             let assessment = assess(command, std::path::Path::new(&tool_ctx.working_dir));
 
             match decide(&assessment, self.risk_threshold) {

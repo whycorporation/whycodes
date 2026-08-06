@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-07** (FEATURES §11 bg/schedule/loop; swarm worktrees; `v0.1.0` public install still gated on repo visibility)
+Last updated: **2026-08-07** (bg/schedule + `/doctor` + process-sub risk; Claude Code inspiration audit; swarm; `v0.1.0` public install still gated)
 
 ## Legend
 
@@ -80,6 +80,10 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-05 | FEATURES.md rewritten | Mouse/resume/latency rows fixed; no stale ❌ for shipped TUI. |
 | 2026-08-07 | Swarm + conflict notify (lightweight) | `swarm` tool, shared `FileClaimRegistry`, write/edit/apply_patch gate, TUI toast. |
 | 2026-08-07 | Swarm git worktrees | Detached worktrees under `.whycode/swarm/`, three-way merge into main, force-remove on finish; config `swarm.worktrees`. |
+| 2026-08-07 | Background + schedule (Claude Code–inspired) | Process-local bg jobs (`bash background=true`, `bg`, `/bg`), delayed `schedule` + `/loop`, risk-gated; no persistent cron. |
+| 2026-08-07 | Process-sub + dynamic interpreter risk | `<(…)` `>(…)` `=(…)` and `python -c "$(…)"` → Destructive prompt. |
+| 2026-08-07 | `/doctor` | Env/key/sandbox/git/bg diagnostics (CC doctor idea). |
+| 2026-08-07 | Claude Code leak audit | Ideas-only notes in [claude-code-inspiration.md](claude-code-inspiration.md); no vendored TS. |
 | 2026-08-07 | FEATURES §11 automation | Background shell jobs (`background: true`, `bg`, toast, `/bg`), `schedule` + `/loop` queue; cloud still deferred. |
 
 ## Verification commands

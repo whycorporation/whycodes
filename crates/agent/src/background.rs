@@ -82,7 +82,7 @@ struct RegistryInner {
     jobs: Mutex<HashMap<String, Arc<Mutex<JobInner>>>>,
     /// Order of job ids for list (newest last).
     order: Mutex<Vec<String>>,
-    max_jobs: usize,
+    max_jobs: AtomicU64,
     listener: Mutex<Option<BackgroundListener>>,
 }
 
@@ -108,10 +108,21 @@ impl BackgroundRegistry {
                 next_id: AtomicU64::new(1),
                 jobs: Mutex::new(HashMap::new()),
                 order: Mutex::new(Vec::new()),
-                max_jobs: max_jobs.max(1),
+                max_jobs: AtomicU64::new(max_jobs.max(1) as u64),
                 listener: Mutex::new(None),
             }),
         }
+    }
+
+    /// Update concurrent-job ceiling (e.g. after config load).
+    pub fn set_max_jobs(&self, max_jobs: usize) {
+        self.inner
+            .max_jobs
+            .store(max_jobs.max(1) as u64, Ordering::Relaxed);
+    }
+
+    pub fn max_jobs(&self) -> usize {
+        self.inner.max_jobs.load(Ordering::Relaxed) as usize
     }
 
     pub fn set_listener(&self, listener: Option<BackgroundListener>) {
@@ -236,10 +247,10 @@ impl BackgroundRegistry {
         sandbox: SandboxSettings,
         label: Option<String>,
     ) -> Result<String, String> {
-        if self.running_count() >= self.inner.max_jobs {
+        let max = self.max_jobs();
+        if self.running_count() >= max {
             return Err(format!(
-                "too many background jobs (max {}); kill one with `bg` action=kill",
-                self.inner.max_jobs
+                "too many background jobs (max {max}); kill one with `bg` action=kill"
             ));
         }
 

@@ -2592,6 +2592,12 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 session_details(ctx.session, &ctx.agent.info.name, ctx.app, ctx.config),
             );
         }
+        "/doctor" => {
+            ctx.app.add_message(
+                ChatRole::System,
+                doctor_report(ctx.session, ctx.app, ctx.config, ctx.agent, ctx.project_dir),
+            );
+        }
         "/theme" | "/themes" => {
             use crate::theme::ThemeName;
             if rest.is_empty() {
@@ -2923,6 +2929,143 @@ pub fn resolve_and_load_session(
 /// heuristic is shown only when it did not, and labelled as an estimate — the
 /// two are not the same measurement and presenting them identically would
 /// suggest they are.
+/// Claude Code–style environment check: keys, sandbox, git, tools, jobs.
+fn doctor_report(
+    session: &Session,
+    app: &TuiApp,
+    config: &Config,
+    agent: &whycode_agent::Agent,
+    project_dir: &std::path::Path,
+) -> String {
+    use std::path::Path;
+
+    let mut lines = vec!["Doctor".to_string()];
+
+    // ── Provider / model ──────────────────────────────────────────────
+    let provider = app.provider_name.as_str();
+    let model = app.model_name.as_str();
+    lines.push(format!("  provider:     {provider}"));
+    lines.push(format!("  model:        {model}"));
+    lines.push(format!("  agent:        {}", agent.info.name));
+    lines.push(format!(
+        "  tool_profile: {}",
+        config.session.tool_profile
+    ));
+
+    // API key present? (never print the key)
+    let env_name = format!("{}_API_KEY", provider.to_uppercase());
+    let key_ok = config
+        .providers
+        .get(provider)
+        .and_then(|pc| pc.api_key.as_ref())
+        .map(|k| !k.trim().is_empty())
+        .unwrap_or(false)
+        || std::env::var(&env_name)
+            .map(|k| !k.trim().is_empty())
+            .unwrap_or(false);
+    lines.push(format!(
+        "  api_key:      {}",
+        if key_ok {
+            "set"
+        } else {
+            "MISSING — /connect or env"
+        }
+    ));
+
+    // ── Paths ─────────────────────────────────────────────────────────
+    lines.push(format!("  project:      {}", project_dir.display()));
+    lines.push(format!("  session_id:   {}", session.id));
+
+    let git = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(project_dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    lines.push(format!(
+        "  git_repo:     {}",
+        if git { "yes" } else { "no" }
+    ));
+
+    // ── Safety ────────────────────────────────────────────────────────
+    lines.push(format!(
+        "  bash_risk:    {}",
+        config.security.bash_risk_threshold
+    ));
+    lines.push(format!(
+        "  sandbox:      mode={} network={}",
+        config.security.sandbox, config.security.sandbox_network
+    ));
+    #[cfg(target_os = "linux")]
+    {
+        let bwrap = Path::new("/usr/bin/bwrap").is_file() || which_bwrap();
+        lines.push(format!(
+            "  bwrap:        {}",
+            if bwrap {
+                "available"
+            } else {
+                "not found (host fallback)"
+            }
+        ));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        lines.push("  bwrap:        n/a (non-Linux)".into());
+    }
+
+    // ── Automation ────────────────────────────────────────────────────
+    let bg = agent.background_registry();
+    let running = bg.running_count();
+    let total = bg.list().len();
+    lines.push(format!(
+        "  background:   {running} running / {total} known (max {})",
+        config.automation.max_background_jobs
+    ));
+    lines.push(format!(
+        "  swarm:        enabled={} worktrees={}",
+        config.swarm.enabled, config.swarm.worktrees
+    ));
+    lines.push(format!(
+        "  compaction:   threshold={}",
+        config.session.compaction_threshold
+    ));
+    lines.push(format!(
+        "  context:      {} / {} ({}%)",
+        format_token_count(app.context_used),
+        format_token_count(app.max_context_tokens),
+        app.context_percent()
+    ));
+
+    // ── Quick health summary ──────────────────────────────────────────
+    let mut issues = Vec::new();
+    if !key_ok {
+        issues.push("API key missing for active provider");
+    }
+    if !project_dir.is_dir() {
+        issues.push("project directory missing");
+    }
+    if issues.is_empty() {
+        lines.push("  status:       ok".into());
+    } else {
+        lines.push(format!("  status:       issues — {}", issues.join("; ")));
+    }
+
+    lines.join("\n")
+}
+
+#[cfg(target_os = "linux")]
+fn which_bwrap() -> bool {
+    std::process::Command::new("which")
+        .arg("bwrap")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn session_details(
     session: &Session,
     agent: &str,
