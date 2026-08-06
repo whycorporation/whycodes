@@ -69,10 +69,9 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     if text.is_empty() {
         return;
     }
-    // Insert remaining text at the cursor (same path as typed chars).
-    let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
-    app.input_buffer.insert_str(pos, &text);
-    app.input_cursor = pos + text.len();
+    // Large pastes collapse to `[pasted #N ~ L lines]` (OpenCode-style) so the
+    // prompt does not reflow/flicker; full body is restored on submit.
+    app.insert_paste_text(&text);
     app.slash_suggest.refresh(&app.input_buffer);
     app.esc_armed_at = None;
 }
@@ -412,9 +411,17 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
     match action {
         Action::InputBackspace if app.input_cursor > 0 => {
             let end = clamp_cursor(&app.input_buffer, app.input_cursor);
-            let start = prev_boundary(&app.input_buffer, end);
-            app.input_buffer.replace_range(start..end, "");
-            app.input_cursor = start;
+            // Collapsed paste tokens delete as a unit (like a single grapheme).
+            if let Some(span) = crate::paste::placeholder_ending_at(&app.input_buffer, end)
+                .or_else(|| crate::paste::placeholder_at(&app.input_buffer, end.saturating_sub(1)))
+            {
+                app.remove_paste_span(span.start, span.end, span.id);
+            } else {
+                let start = prev_boundary(&app.input_buffer, end);
+                app.input_buffer.replace_range(start..end, "");
+                app.input_cursor = start;
+                crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
+            }
             app.slash_suggest.refresh(&app.input_buffer);
         }
         // Empty buffer + staged images: Backspace peels off the last attachment.
@@ -432,22 +439,46 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
         }
         Action::InputDelete if app.input_cursor < app.input_buffer.len() => {
             let start = clamp_cursor(&app.input_buffer, app.input_cursor);
-            let end = next_boundary(&app.input_buffer, start);
-            app.input_buffer.replace_range(start..end, "");
-            app.input_cursor = start;
+            if let Some(span) = crate::paste::placeholder_starting_at(&app.input_buffer, start)
+                .or_else(|| crate::paste::placeholder_at(&app.input_buffer, start))
+            {
+                app.remove_paste_span(span.start, span.end, span.id);
+            } else {
+                let end = next_boundary(&app.input_buffer, start);
+                app.input_buffer.replace_range(start..end, "");
+                app.input_cursor = start;
+                crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
+            }
             app.slash_suggest.refresh(&app.input_buffer);
         }
         Action::InputClear => {
             app.input_buffer.clear();
             app.input_cursor = 0;
             app.pending_images.clear();
+            app.pending_pastes.clear();
             app.slash_suggest.dismiss();
         }
         Action::InputLeft => {
-            app.input_cursor = prev_boundary(&app.input_buffer, app.input_cursor);
+            let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+            if let Some(span) = crate::paste::placeholder_ending_at(&app.input_buffer, pos) {
+                app.input_cursor = span.start;
+            } else if let Some(span) =
+                crate::paste::placeholder_at(&app.input_buffer, pos.saturating_sub(1))
+            {
+                app.input_cursor = span.start;
+            } else {
+                app.input_cursor = prev_boundary(&app.input_buffer, app.input_cursor);
+            }
         }
         Action::InputRight if app.input_cursor < app.input_buffer.len() => {
-            app.input_cursor = next_boundary(&app.input_buffer, app.input_cursor);
+            let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+            if let Some(span) = crate::paste::placeholder_starting_at(&app.input_buffer, pos)
+                .or_else(|| crate::paste::placeholder_at(&app.input_buffer, pos))
+            {
+                app.input_cursor = span.end;
+            } else {
+                app.input_cursor = next_boundary(&app.input_buffer, app.input_cursor);
+            }
         }
         Action::InputHome => {
             app.input_cursor = 0;
@@ -463,11 +494,14 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
         }
         Action::InputHistoryPrev if !app.input_history.is_empty() && app.input_history_idx > 0 => {
             app.input_history_idx -= 1;
+            // History stores expanded text — no live paste blocks.
+            app.pending_pastes.clear();
             app.input_buffer = app.input_history[app.input_history_idx].clone();
             app.input_cursor = app.input_buffer.len();
         }
         Action::InputHistoryNext if app.input_history_idx < app.input_history.len() => {
             app.input_history_idx += 1;
+            app.pending_pastes.clear();
             if app.input_history_idx < app.input_history.len() {
                 app.input_buffer = app.input_history[app.input_history_idx].clone();
             } else {

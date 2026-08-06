@@ -723,6 +723,9 @@ pub struct TuiApp {
     pub pending_images: Vec<crate::images::PromptImage>,
     /// Images consumed with `pending_prompt` by the run loop (taken on submit).
     pub pending_submit_images: Vec<crate::images::PromptImage>,
+    /// Large pastes collapsed to `[pasted #N ~ L lines]` tokens in `input_buffer`.
+    /// Expanded on submit so the agent receives the full text.
+    pub pending_pastes: Vec<crate::paste::PastedBlock>,
 
     // ── scroll / selection ──
     /// Display rows scrolled up from the newest line (not message count).
@@ -1142,6 +1145,7 @@ impl TuiApp {
             esc_armed_at: None,
             pending_images: vec![],
             pending_submit_images: vec![],
+            pending_pastes: vec![],
             scroll_offset: 0,
             auto_scroll: true,
             selected_msg: None,
@@ -1579,15 +1583,70 @@ impl TuiApp {
     pub fn clear_prompt_draft(&mut self) {
         let text = self.input_buffer.trim();
         if !text.is_empty() {
-            self.input_history.push(text.to_string());
+            // History stores expanded text so re-selecting a past entry is usable.
+            let expanded = crate::paste::expand(text, &self.pending_pastes);
+            self.input_history.push(expanded);
             self.input_history_idx = self.input_history.len();
         }
         self.input_buffer.clear();
         self.input_lines.clear();
         self.input_cursor = 0;
         self.pending_images.clear();
+        self.pending_pastes.clear();
         self.slash_suggest.dismiss();
         self.esc_armed_at = None;
+    }
+
+    /// Insert text at the cursor. Large pastes become a collapsed `[pasted #N ~ L lines]`
+    /// token (OpenCode-style) so the prompt stays short and does not reflow/flicker.
+    pub fn insert_paste_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let pos = {
+            let idx = self.input_cursor.min(self.input_buffer.len());
+            if self.input_buffer.is_char_boundary(idx) {
+                idx
+            } else {
+                // Align to char boundary (same as input::clamp_cursor).
+                let mut i = idx;
+                while i > 0 && !self.input_buffer.is_char_boundary(i) {
+                    i -= 1;
+                }
+                i
+            }
+        };
+        if crate::paste::should_collapse(text) {
+            let id = crate::paste::next_id();
+            let lines = crate::paste::line_count(text);
+            let token = crate::paste::placeholder(id, lines);
+            self.pending_pastes.push(crate::paste::PastedBlock {
+                id,
+                content: text.to_string(),
+            });
+            self.input_buffer.insert_str(pos, &token);
+            self.input_cursor = pos + token.len();
+        } else {
+            self.input_buffer.insert_str(pos, text);
+            self.input_cursor = pos + text.len();
+        }
+        crate::paste::prune_unused(&mut self.pending_pastes, &self.input_buffer);
+    }
+
+    /// Expand collapsed paste tokens for the agent / history.
+    pub fn expand_input(&self) -> String {
+        crate::paste::expand(&self.input_buffer, &self.pending_pastes)
+    }
+
+    /// Remove a paste placeholder span and drop its stored body.
+    pub fn remove_paste_span(&mut self, start: usize, end: usize, id: u32) {
+        if start > end || end > self.input_buffer.len() {
+            return;
+        }
+        self.input_buffer.replace_range(start..end, "");
+        self.pending_pastes.retain(|b| b.id != id);
+        self.input_cursor = start;
+        crate::paste::prune_unused(&mut self.pending_pastes, &self.input_buffer);
     }
 
     /// Attach an image path to the prompt (deduped by path). Returns true if added.
@@ -2067,24 +2126,27 @@ impl TuiApp {
 
     /// Submit current input as user message and queue it for the agent.
     pub fn submit_input(&mut self) {
-        let text = self.input_buffer.trim().to_string();
+        let display_text = self.input_buffer.trim().to_string();
         let has_images = !self.pending_images.is_empty();
-        if text.is_empty() && !has_images {
+        if display_text.is_empty() && !has_images {
             return;
         }
         // Slash commands are handled by the run loop before submit (text-only).
-        if text.starts_with('/') && !has_images {
+        if display_text.starts_with('/') && !has_images {
             return;
         }
-        if !text.is_empty() {
-            self.input_history.push(text.clone());
+        // Agent gets fully expanded pastes; chat keeps the compact placeholder
+        // so huge dumps do not bloat the transcript.
+        let expanded = crate::paste::expand(&display_text, &self.pending_pastes);
+        if !expanded.is_empty() {
+            self.input_history.push(expanded.clone());
         }
         let labels: Vec<String> = self
             .pending_images
             .iter()
             .map(|i| i.label.clone())
             .collect();
-        let display = if text.is_empty() && has_images {
+        let display = if display_text.is_empty() && has_images {
             // Chat bubble still needs a line of content.
             if labels.len() == 1 {
                 format!("[Image: {}]", labels[0])
@@ -2092,14 +2154,15 @@ impl TuiApp {
                 format!("[Images: {}]", labels.join(", "))
             }
         } else {
-            text.clone()
+            display_text
         };
         self.add_user_message_with_images(display, labels);
         self.pending_submit_images = std::mem::take(&mut self.pending_images);
-        self.pending_prompt = Some(text);
+        self.pending_prompt = Some(expanded);
         self.input_buffer.clear();
         self.input_lines.clear();
         self.input_cursor = 0;
+        self.pending_pastes.clear();
         self.input_history_idx = self.input_history.len();
         self.auto_scroll = true;
         self.scroll_offset = 0;

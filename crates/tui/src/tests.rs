@@ -592,6 +592,83 @@ fn test_paste_image_path_attaches() {
 }
 
 #[test]
+fn test_long_paste_collapses_to_placeholder() {
+    use crossterm::event::Event;
+
+    let mut app = TuiApp::new(test_config());
+    let body = "line one\nline two\nline three\nline four";
+    assert!(crate::input::handle_event(
+        &mut app,
+        Event::Paste(body.to_string())
+    ));
+    assert_eq!(app.pending_pastes.len(), 1);
+    assert_eq!(app.pending_pastes[0].content, body);
+    assert!(
+        app.input_buffer.contains("[pasted #"),
+        "buffer should show collapsed token, got {:?}",
+        app.input_buffer
+    );
+    assert!(
+        app.input_buffer.contains("lines]"),
+        "token should mention lines: {:?}",
+        app.input_buffer
+    );
+    // Prompt stays a single visual row (no multi-line reflow / flicker).
+    assert_eq!(crate::ui::prompt::input_row_count(&app, 80), 1);
+}
+
+#[test]
+fn test_short_paste_stays_inline() {
+    use crossterm::event::Event;
+
+    let mut app = TuiApp::new(test_config());
+    assert!(crate::input::handle_event(
+        &mut app,
+        Event::Paste("hello world".into())
+    ));
+    assert!(app.pending_pastes.is_empty());
+    assert_eq!(app.input_buffer, "hello world");
+}
+
+#[test]
+fn test_submit_expands_collapsed_paste() {
+    let mut app = TuiApp::new(test_config());
+    let body = "a\nb\nc\nd";
+    app.insert_paste_text(body);
+    assert!(app.input_buffer.contains("[pasted #"));
+    app.submit_input();
+    assert_eq!(app.pending_prompt.as_deref(), Some(body));
+    // Chat bubble keeps the compact form.
+    assert!(
+        app.messages
+            .last()
+            .map(|m| m.content.contains("[pasted #"))
+            .unwrap_or(false)
+    );
+    assert!(app.pending_pastes.is_empty());
+    assert!(app.input_buffer.is_empty());
+}
+
+#[test]
+fn test_backspace_deletes_whole_paste_token() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = TuiApp::new(test_config());
+    app.insert_paste_text("one\ntwo\nthree\nfour");
+    assert!(!app.pending_pastes.is_empty());
+    let token_len = app.input_buffer.len();
+    app.input_cursor = token_len;
+    let backspace = Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+    assert!(crate::input::handle_event(&mut app, backspace));
+    assert!(
+        app.input_buffer.is_empty(),
+        "whole token should go, got {:?}",
+        app.input_buffer
+    );
+    assert!(app.pending_pastes.is_empty());
+}
+
+#[test]
 fn test_backspace_removes_last_image() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 

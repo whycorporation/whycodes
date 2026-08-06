@@ -146,6 +146,23 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let input_rows = rows.len().max(1).min(MAX_INPUT_ROWS as usize) as u16;
     let attach_rows = attach_row_count(app);
 
+    // Cursor row within the full wrap (before viewport clip). Used both for
+    // scrolling the visible window and placing the terminal caret.
+    let (cursor_row, cursor_col) = cursor_row_col(&rows, buf, cursor);
+
+    // When text wraps past MAX_INPUT_ROWS, keep the caret on-screen by
+    // scrolling the viewport (previously only the first N rows were shown,
+    // so pasting long text hid the cursor and felt like a flicker/jump).
+    let view_start = if rows.len() <= input_rows as usize {
+        0usize
+    } else {
+        let max_start = rows.len() - input_rows as usize;
+        cursor_row
+            .saturating_sub((input_rows as usize).saturating_sub(1))
+            .min(max_start)
+    };
+    let view_end = (view_start + input_rows as usize).min(rows.len());
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -182,7 +199,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         _ if busy && app.input_buffer.is_empty() && prompt_focused => "… ",
         _ => "❯ ",
     };
-    let placeholder: Option<&str> =
+    let empty_hint: Option<&str> =
         if !buf.is_empty() || prompt_focused || !app.pending_images.is_empty() {
             None
         } else {
@@ -205,7 +222,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         })
         .add_modifier(Modifier::BOLD);
 
-    match placeholder {
+    match empty_hint {
         Some(text) => {
             lines.push(Line::from(vec![
                 Span::styled(prefix.to_string(), prefix_style),
@@ -223,10 +240,19 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
                 .fg(palette.accent)
                 .add_modifier(Modifier::BOLD);
             let text_style = Style::default().fg(palette.input_fg);
+            // Collapsed paste tokens (`[pasted #1 ~ 42 lines]`) use dim reverse
+            // so they read as chips, not as typed prose.
+            let paste_style = Style::default()
+                .fg(palette.accent)
+                .add_modifier(Modifier::DIM | Modifier::BOLD);
+            let paste_ranges = crate::paste::style_ranges(buf);
 
-            for (i, row) in rows.iter().enumerate().take(input_rows as usize) {
+            for (vis_i, row) in rows[view_start..view_end].iter().enumerate() {
+                let abs_i = view_start + vis_i;
                 let mut spans = Vec::new();
-                if i == 0 {
+                // ❯ only on the first logical row of the whole buffer (not the
+                // first visible row after scroll).
+                if abs_i == 0 {
                     spans.push(Span::styled(prefix.to_string(), prefix_style));
                 } else {
                     // Continuation rows align under the text, not under ❯.
@@ -239,6 +265,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
                     cmd_end,
                     cmd_style,
                     text_style,
+                    paste_style,
+                    &paste_ranges,
                 ));
                 lines.push(Line::from(spans));
             }
@@ -259,29 +287,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
 
     // Cursor when the prompt owns focus.
     if prompt_focused {
-        let (row_idx, col) = if rows.is_empty() {
-            (0usize, 0usize)
-        } else {
-            let mut row_idx = rows.len().saturating_sub(1);
-            let mut col = 0usize;
-            for (i, row) in rows.iter().enumerate() {
-                if cursor >= row.byte_range.0 && cursor <= row.byte_range.1 {
-                    row_idx = i;
-                    col = buf[row.byte_range.0..cursor]
-                        .chars()
-                        .map(|c| c.width().unwrap_or(0).max(1))
-                        .sum();
-                    break;
-                }
-            }
-            (row_idx, col)
-        };
-        if row_idx < input_rows as usize {
+        let vis_row = cursor_row.saturating_sub(view_start);
+        if vis_row < input_rows as usize {
             let x = content_x
                 .saturating_add(PREFIX_WIDTH)
-                .saturating_add(col as u16)
+                .saturating_add(cursor_col as u16)
                 .min(text_rect.x + text_rect.width.saturating_sub(1));
-            frame.set_cursor_position(Position::new(x, text_area.y + row_idx as u16));
+            frame.set_cursor_position(Position::new(x, text_area.y + vis_row as u16));
         }
     }
 
@@ -518,8 +530,35 @@ fn slash_command_byte_end(buf: &str) -> Option<usize> {
     Some(buf.find(char::is_whitespace).unwrap_or(buf.len()))
 }
 
-/// Split one wrapped row into styled spans so the slash-command token can be
-/// bold/accent even when the wrap boundary cuts mid-token.
+/// Row index + display column of `cursor` within wrapped `rows`.
+fn cursor_row_col(
+    rows: &[crate::widgets::wrap::WrappedRow],
+    buf: &str,
+    cursor: usize,
+) -> (usize, usize) {
+    if rows.is_empty() {
+        return (0, 0);
+    }
+    let mut row_idx = rows.len().saturating_sub(1);
+    let mut col = 0usize;
+    for (i, row) in rows.iter().enumerate() {
+        if cursor >= row.byte_range.0 && cursor <= row.byte_range.1 {
+            row_idx = i;
+            let slice_end = cursor.min(row.byte_range.1);
+            if slice_end > row.byte_range.0 {
+                col = buf[row.byte_range.0..slice_end]
+                    .chars()
+                    .map(|c| c.width().unwrap_or(0).max(1))
+                    .sum();
+            }
+            break;
+        }
+    }
+    (row_idx, col)
+}
+
+/// Split one wrapped row into styled spans so slash-command tokens and
+/// collapsed paste chips stay highlighted even when a wrap cuts mid-token.
 fn styled_input_row(
     buf: &str,
     start: usize,
@@ -527,26 +566,51 @@ fn styled_input_row(
     cmd_end: Option<usize>,
     cmd_style: Style,
     text_style: Style,
+    paste_style: Style,
+    paste_ranges: &[(usize, usize)],
 ) -> Vec<Span<'static>> {
     if start >= end {
         return Vec::new();
     }
-    let Some(cmd_end) = cmd_end else {
-        return vec![Span::styled(buf[start..end].to_string(), text_style)];
-    };
-    if end <= cmd_end {
-        // Entire row is inside the command token.
-        return vec![Span::styled(buf[start..end].to_string(), cmd_style)];
+    // Collect cut points: row edges, command end, paste range edges.
+    let mut cuts = vec![start, end];
+    if let Some(c) = cmd_end
+        && c > start
+        && c < end
+    {
+        cuts.push(c);
     }
-    if start >= cmd_end {
-        // Entire row is after the command token.
-        return vec![Span::styled(buf[start..end].to_string(), text_style)];
+    for &(ps, pe) in paste_ranges {
+        if ps > start && ps < end {
+            cuts.push(ps);
+        }
+        if pe > start && pe < end {
+            cuts.push(pe);
+        }
     }
-    // Row straddles the command / args boundary.
-    vec![
-        Span::styled(buf[start..cmd_end].to_string(), cmd_style),
-        Span::styled(buf[cmd_end..end].to_string(), text_style),
-    ]
+    cuts.sort_unstable();
+    cuts.dedup();
+
+    let mut spans = Vec::new();
+    for w in cuts.windows(2) {
+        let a = w[0];
+        let b = w[1];
+        if a >= b {
+            continue;
+        }
+        let mid = a;
+        let in_paste = paste_ranges.iter().any(|&(ps, pe)| mid >= ps && mid < pe);
+        let in_cmd = cmd_end.is_some_and(|c| mid < c);
+        let style = if in_paste {
+            paste_style
+        } else if in_cmd {
+            cmd_style
+        } else {
+            text_style
+        };
+        spans.push(Span::styled(buf[a..b].to_string(), style));
+    }
+    spans
 }
 
 #[cfg(test)]
@@ -639,11 +703,42 @@ mod wrap_tests {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let text = Style::default().fg(Color::White);
+        let paste = Style::default().fg(Color::Yellow);
         let buf = "/help me";
-        let spans = styled_input_row(buf, 0, buf.len(), slash_command_byte_end(buf), cmd, text);
+        let spans = styled_input_row(
+            buf,
+            0,
+            buf.len(),
+            slash_command_byte_end(buf),
+            cmd,
+            text,
+            paste,
+            &[],
+        );
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[0].content.as_ref(), "/help");
         assert_eq!(spans[1].content.as_ref(), " me");
         assert!(spans[0].style.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn styled_input_row_highlights_paste_token() {
+        use ratatui::style::Color;
+        let cmd = Style::default();
+        let text = Style::default().fg(Color::White);
+        let paste = Style::default().fg(Color::Yellow);
+        let token = crate::paste::placeholder(1, 5);
+        let buf = format!("see {token} ok");
+        let ranges = crate::paste::style_ranges(&buf);
+        let spans = styled_input_row(&buf, 0, buf.len(), None, cmd, text, paste, &ranges);
+        assert!(
+            spans.iter().any(|s| s.content.as_ref() == token),
+            "paste token should be its own span: {spans:?}"
+        );
+        let token_span = spans
+            .iter()
+            .find(|s| s.content.as_ref() == token)
+            .unwrap();
+        assert_eq!(token_span.style.fg, Some(Color::Yellow));
     }
 }

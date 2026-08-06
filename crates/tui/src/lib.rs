@@ -9,6 +9,7 @@ pub mod hit;
 pub mod images;
 pub mod input;
 pub mod keymap;
+pub mod paste;
 pub mod opencode_tokens;
 pub mod run;
 pub mod theme;

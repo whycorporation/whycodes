@@ -1274,6 +1274,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     if text.starts_with('/') {
                         app.input_buffer.clear();
                         app.input_cursor = 0;
+                        app.pending_pastes.clear();
                         app.slash_suggest.dismiss();
                         handle_slash(
                             &text,
