@@ -35,8 +35,7 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
-        app.dialog_close_hit = chrome.close_hit;
-        app.dialog_modal_hit = Some(chrome.modal);
+        app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         return;
     }
     let pd = &app.provider_dialog;
@@ -154,8 +153,7 @@ fn render_provider_add(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalet
         65,
         app.mouse_pos,
     );
-    app.dialog_close_hit = chrome.close_hit;
-    app.dialog_modal_hit = Some(chrome.modal);
+    app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
     let area = chrome.content;
     let pd = &app.provider_dialog;
 
@@ -253,8 +251,7 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
-        app.dialog_close_hit = chrome.close_hit;
-        app.dialog_modal_hit = Some(chrome.modal);
+        app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         return;
     }
     let ms = &app.model_selection;

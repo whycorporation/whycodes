@@ -102,6 +102,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-06 — Help modal could not copy text (split mouse path)
+
+**Symptom:** Drag-select inside Help (`?`) did nothing; other popups could copy.
+
+**Root cause:** Help used `AppMode::Help` with a separate mouse handler that only scrolled. It never set `dialog_modal_hit` / `dialog_close_hit` and never ran the select→clipboard path.
+
+**Fix:** Every popup paints via `dialog_frame` + `apply_modal_chrome` / `apply_select_paint`. One `handle_modal_mouse` for dialog stack **and** Help: clip select, copy, `[✗]`, scrollbar.
+
+**Prevention:** New overlays must call `apply_modal_chrome` (or select paint) and open under `modal_is_open()` — do not invent a parallel mouse path.
+
+---
+
 ### 2026-08-06 — Permission popup: unreadable JSON + copy leaked background chat
 
 **Symptom:** Tool permission dialog showed compact JSON (`{"command":"…"}` truncated mid-string). Drag-selecting inside the popup also copied chat text behind it (middle lines of a linear selection span full terminal width).

@@ -1,6 +1,7 @@
 // ── ui/dialogs/help.rs: Help / keybinding cheatsheet ──────────────────
 // Grok-style: ModalWindow chrome + section headers + key/desc columns.
 // Scrolls when content exceeds the body; solid scrollbar on the right.
+// Same modal chrome hits as every other popup (selection clip + [✗]).
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
@@ -13,11 +14,12 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::dialog_frame;
+use super::base::{DialogChrome, dialog_frame};
 
 const KEY_COL: usize = 16;
 
-pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+/// Paint help and register the same modal hit boxes as list/confirm dialogs.
+pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let chrome = dialog_frame(
         frame,
         "Help",
@@ -29,6 +31,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
+        app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         return;
     }
 
@@ -96,6 +99,10 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
     let max_rows = area.height as usize;
     let max_scroll = total.saturating_sub(max_rows);
     let start = app.help_scroll.min(max_scroll);
+    // Keep stored scroll in range after resize.
+    if app.help_scroll > max_scroll {
+        app.help_scroll = max_scroll;
+    }
     let needs_scrollbar = total > max_rows;
     let list_width = if needs_scrollbar {
         area.width.saturating_sub(1)
@@ -115,7 +122,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
         .style(Style::default().bg(palette.bg));
     frame.render_widget(p, list_area);
 
-    if needs_scrollbar {
+    let scrollbar_hit = if needs_scrollbar {
         let colors = ScrollbarColors::from_palette(palette);
         let sb = Rect {
             x: area.x + area.width.saturating_sub(1),
@@ -132,5 +139,17 @@ pub fn render_help_overlay(frame: &mut Frame, app: &TuiApp, palette: &ThemePalet
             colors.track,
             colors.thumb,
         );
-    }
+        Some(sb)
+    } else {
+        None
+    };
+
+    // Same hit contract as SessionList / Theme / Permission.
+    app.apply_modal_chrome(chrome.close_hit, chrome.modal, scrollbar_hit);
+    app.dialog_list_hit = Some(list_area);
+    app.dialog_list_scroll_start = start;
+    app.dialog_list_visible = max_rows;
+    app.dialog_list_total = total;
 }
+
+

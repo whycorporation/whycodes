@@ -36,19 +36,16 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         crate::app::DialogKind::Help => render_help_overlay(frame, app, palette),
         crate::app::DialogKind::Confirm { title, message, .. } => {
             let chrome = render_confirm_dialog(frame, &title, &message, palette, mouse);
-            app.dialog_close_hit = chrome.close_hit;
-            app.dialog_modal_hit = Some(chrome.modal);
+            app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::Alert { title, message } => {
             let chrome = render_alert_dialog(frame, &title, &message, palette, mouse);
-            app.dialog_close_hit = chrome.close_hit;
-            app.dialog_modal_hit = Some(chrome.modal);
+            app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::Permission { tool_name, detail } => {
             let chrome =
                 render_permission_dialog(frame, &tool_name, &detail, palette, mouse);
-            app.dialog_close_hit = chrome.close_hit;
-            app.dialog_modal_hit = Some(chrome.modal);
+            app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::SessionList => {
             let items: Vec<SelectItem> = app
@@ -117,6 +114,9 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
 }
 
 /// Standalone help overlay (not stack-based, triggered by `?` key).
-pub fn render_help(frame: &mut Frame, app: &TuiApp, palette: &ThemePalette) {
+///
+/// Clears and repaints modal hits so selection/copy match other popups.
+pub fn render_help(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
+    app.clear_dialog_hits();
     render_help_overlay(frame, app, palette);
 }

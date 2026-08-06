@@ -54,6 +54,13 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp) {
     if let crate::app::AppMode::Help = app.mode {
         render_shell(frame, app, &palette);
         dialogs::render_help(frame, app, &palette);
+        // Toast above help so "Copied N chars" is visible after a modal select.
+        toast::render(
+            frame,
+            oc::inset_safe(frame.area()),
+            app.toasts.visible(),
+            &palette,
+        );
         paint_selection(frame, app);
         return;
     }

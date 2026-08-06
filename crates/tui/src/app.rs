@@ -1196,6 +1196,22 @@ impl TuiApp {
         self.dialog_list_total = 0;
     }
 
+    /// Apply chrome hit boxes shared by every modal (`dialog_frame` result).
+    ///
+    /// All popups — help, confirm, permission, pickers — must call this (or
+    /// [`apply_select_paint`]) so mouse selection is clipped to the modal and
+    /// `[✗]` / scrollbar work the same way.
+    pub fn apply_modal_chrome(
+        &mut self,
+        close_hit: Option<Rect>,
+        modal: Rect,
+        scrollbar_hit: Option<Rect>,
+    ) {
+        self.dialog_close_hit = close_hit;
+        self.dialog_modal_hit = Some(modal);
+        self.dialog_scrollbar_hit = scrollbar_hit;
+    }
+
     /// Apply hit boxes from a select-style list paint.
     pub fn apply_select_paint(
         &mut self,
@@ -1214,6 +1230,13 @@ impl TuiApp {
         self.dialog_list_scroll_start = scroll_start;
         self.dialog_list_visible = visible;
         self.dialog_list_total = total;
+    }
+
+    /// True while any modal owns the screen (dialog stack or Help overlay).
+    pub fn modal_is_open(&self) -> bool {
+        self.dialogs.is_open()
+            || self.mode == AppMode::Help
+            || self.key_context == KeymapContext::Dialog
     }
 
     /// Whether `(col, row)` lands on the painted modal close control.

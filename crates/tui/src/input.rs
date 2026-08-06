@@ -527,26 +527,10 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         app.mark_dirty();
     }
 
-    // Modal open: wheel scrolls the list, clicks hit [✗] / rows — do not
-    // scroll the chat underneath (that looked like a dead scrollbar).
-    if app.dialogs.is_open() || app.key_context == KeymapContext::Dialog {
-        return handle_dialog_mouse(app, mouse);
-    }
-
-    // Help overlay owns its own scroll offset.
-    if app.mode == AppMode::Help {
-        match mouse.kind {
-            MouseEventKind::ScrollDown => {
-                app.help_scroll = app.help_scroll.saturating_add(3);
-                app.mark_dirty();
-            }
-            MouseEventKind::ScrollUp => {
-                app.help_scroll = app.help_scroll.saturating_sub(3);
-                app.mark_dirty();
-            }
-            _ => {}
-        }
-        return true;
+    // Any modal (dialog stack or Help overlay): same mouse path — wheel,
+    // [✗], list clicks, scrollbar, and text select/copy clipped to the popup.
+    if app.modal_is_open() {
+        return handle_modal_mouse(app, mouse);
     }
 
     match mouse.kind {
@@ -777,22 +761,32 @@ fn apply_chat_scrollbar_offset(app: &mut TuiApp, row: u16, grab: Option<u16>) {
     app.mark_dirty();
 }
 
-/// Mouse while a modal is open: wheel moves the list, `[✗]` closes, click row selects,
-/// scrollbar drag scrolls. Text drag-select is **clipped to the modal** so the
-/// chat behind the popup cannot be copied.
-fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
-    let active = match app.dialogs.active().cloned() {
-        Some(d) => d,
-        None => return true,
-    };
+/// Mouse while any modal is open (dialog stack **or** Help overlay).
+///
+/// Shared contract for every popup:
+/// - wheel scrolls the modal body (list / help), not the chat behind
+/// - drag-select copies only cells inside `dialog_modal_hit`
+/// - `[✗]` dismisses
+/// - scrollbar drag when present
+fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
+    let active = app.dialogs.active().cloned();
+    let help_only = app.mode == AppMode::Help && active.is_none();
 
     match mouse.kind {
         MouseEventKind::ScrollDown => {
-            move_in_dialog(app, &active, 1);
+            if help_only || matches!(active, Some(DialogKind::Help)) {
+                app.help_scroll = app.help_scroll.saturating_add(3);
+            } else if let Some(ref d) = active {
+                move_in_dialog(app, d, 1);
+            }
             app.mark_dirty();
         }
         MouseEventKind::ScrollUp => {
-            move_in_dialog(app, &active, -1);
+            if help_only || matches!(active, Some(DialogKind::Help)) {
+                app.help_scroll = app.help_scroll.saturating_sub(3);
+            } else if let Some(ref d) = active {
+                move_in_dialog(app, d, -1);
+            }
             app.mark_dirty();
         }
         MouseEventKind::Down(MouseButton::Left) => {
@@ -802,7 +796,7 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             {
                 let grab = scrollbar_grab_at(app, mouse.row, track);
                 app.dialog_scrollbar_grab = Some(grab);
-                apply_scrollbar_offset(app, &active, mouse.row, Some(grab));
+                apply_modal_scrollbar(app, active.as_ref(), mouse.row, Some(grab));
                 app.mouse_sel = None;
                 app.mark_dirty();
                 return true;
@@ -833,7 +827,7 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         MouseEventKind::Drag(MouseButton::Left) => {
             if app.dialog_scrollbar_grab.is_some() {
                 let grab = app.dialog_scrollbar_grab;
-                apply_scrollbar_offset(app, &active, mouse.row, grab);
+                apply_modal_scrollbar(app, active.as_ref(), mouse.row, grab);
                 app.mark_dirty();
                 return true;
             }
@@ -862,40 +856,7 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
             // Drag selection → copy only cells inside the modal.
             if was_drag {
-                if let Some(sel) = app.mouse_sel.take() {
-                    let (fx, fy) = app.clamp_to_dialog_modal(col, row);
-                    let text = if let Some(modal) = app.dialog_modal_hit {
-                        crate::clipboard::text_from_cells_clipped(
-                            &app.screen_cells,
-                            sel.anchor_x,
-                            sel.anchor_y,
-                            fx,
-                            fy,
-                            crate::clipboard::ClipRect::from_ratatui(modal),
-                        )
-                    } else {
-                        crate::clipboard::text_from_cells(
-                            &app.screen_cells,
-                            sel.anchor_x,
-                            sel.anchor_y,
-                            fx,
-                            fy,
-                        )
-                    };
-                    if !text.is_empty() {
-                        if crate::clipboard::copy_text(&text) {
-                            app.toasts.push(
-                                crate::toast::ToastKind::Info,
-                                format!("Copied {} chars", text.chars().count()),
-                            );
-                        } else {
-                            app.toasts.push(
-                                crate::toast::ToastKind::Warning,
-                                "Copy failed — no clipboard",
-                            );
-                        }
-                    }
-                }
+                copy_modal_selection(app, col, row);
                 app.mark_dirty();
                 return true;
             }
@@ -904,34 +865,36 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
             // [✗] → cancel (same as Esc).
             if app.dialog_close_contains(col, row) {
-                dismiss_dialog(app);
+                dismiss_modal(app);
                 return true;
             }
 
             // Click a row → select (and for pickers, confirm immediately).
-            if let Some(idx) = app.dialog_list_index_at(col, row) {
+            if let Some(ref active) = active
+                && let Some(idx) = app.dialog_list_index_at(col, row)
+            {
                 match active {
                     DialogKind::SessionList => {
                         app.session_list.selected = idx;
-                        confirm_dialog(app, &active);
+                        confirm_dialog(app, active);
                     }
                     DialogKind::Model => {
                         app.model_selection.selected = idx;
-                        confirm_dialog(app, &active);
+                        confirm_dialog(app, active);
                     }
                     DialogKind::Theme => {
                         app.theme_selected = idx;
-                        confirm_dialog(app, &active);
+                        confirm_dialog(app, active);
                     }
                     DialogKind::Provider
                         if app.provider_dialog.mode == crate::app::ProviderDialogMode::Select =>
                     {
                         app.provider_dialog.selected = idx;
-                        confirm_dialog(app, &active);
+                        confirm_dialog(app, active);
                     }
                     _ => {
                         // List dialogs without click-to-confirm: just move highlight.
-                        move_in_dialog_to(app, &active, idx);
+                        move_in_dialog_to(app, active, idx);
                     }
                 }
                 app.mark_dirty();
@@ -946,6 +909,46 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         _ => {}
     }
     true
+}
+
+/// Copy a finished drag selection, clipped to the active modal rect.
+fn copy_modal_selection(app: &mut TuiApp, col: u16, row: u16) {
+    let Some(sel) = app.mouse_sel.take() else {
+        return;
+    };
+    let (fx, fy) = app.clamp_to_dialog_modal(col, row);
+    let text = if let Some(modal) = app.dialog_modal_hit {
+        crate::clipboard::text_from_cells_clipped(
+            &app.screen_cells,
+            sel.anchor_x,
+            sel.anchor_y,
+            fx,
+            fy,
+            crate::clipboard::ClipRect::from_ratatui(modal),
+        )
+    } else {
+        crate::clipboard::text_from_cells(
+            &app.screen_cells,
+            sel.anchor_x,
+            sel.anchor_y,
+            fx,
+            fy,
+        )
+    };
+    if text.is_empty() {
+        return;
+    }
+    if crate::clipboard::copy_text(&text) {
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            format!("Copied {} chars", text.chars().count()),
+        );
+    } else {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            "Copy failed — no clipboard",
+        );
+    }
 }
 
 /// Grab offset within the thumb for a press on the scrollbar track.
@@ -968,9 +971,14 @@ fn scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) -> u1
     }
 }
 
-/// Scroll the list so the viewport matches a pointer y on the scrollbar.
-fn apply_scrollbar_offset(app: &mut TuiApp, active: &DialogKind, row: u16, grab: Option<u16>) {
-    use crate::ui::scrollbar::{offset_from_pointer_y, selection_for_offset};
+/// Scroll help or a list so the viewport matches a pointer y on the scrollbar.
+fn apply_modal_scrollbar(
+    app: &mut TuiApp,
+    active: Option<&DialogKind>,
+    row: u16,
+    grab: Option<u16>,
+) {
+    use crate::ui::scrollbar::offset_from_pointer_y;
     let Some(track) = app.dialog_scrollbar_hit else {
         return;
     };
@@ -980,8 +988,34 @@ fn apply_scrollbar_offset(app: &mut TuiApp, active: &DialogKind, row: u16, grab:
         return;
     }
     let offset = offset_from_pointer_y(row, track, total, visible, grab);
-    let sel = selection_for_offset(offset, total, visible);
-    move_in_dialog_to(app, active, sel);
+    let help = app.mode == AppMode::Help
+        || matches!(active, Some(DialogKind::Help))
+        || (active.is_none() && app.mode == AppMode::Help);
+    if help {
+        let max_off = total.saturating_sub(visible);
+        app.help_scroll = offset.min(max_off);
+        app.dialog_list_scroll_start = app.help_scroll;
+        return;
+    }
+    if let Some(d) = active {
+        use crate::ui::scrollbar::selection_for_offset;
+        let sel = selection_for_offset(offset, total, visible);
+        move_in_dialog_to(app, d, sel);
+    }
+}
+
+/// Dismiss Help overlay or the top dialog — shared by Esc and `[✗]`.
+fn dismiss_modal(app: &mut TuiApp) {
+    if app.mode == AppMode::Help && !app.dialogs.is_open() {
+        app.mode = AppMode::Normal;
+        app.key_context = KeymapContext::Normal;
+        app.mouse_sel = None;
+        app.dialog_scrollbar_grab = None;
+        app.clear_dialog_hits();
+        app.mark_dirty();
+        return;
+    }
+    dismiss_dialog(app);
 }
 
 /// Pop the active dialog and leave dialog mode when the stack is empty.
