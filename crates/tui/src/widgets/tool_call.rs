@@ -48,15 +48,24 @@ pub fn render_tool_call(
             )));
         }
 
-        // Result (if available).
+        // Result (if available). Cap each line so minified JSON cannot flood.
         if let Some(res) = result {
             lines.push(Line::from(Span::styled(
                 "   ── result ──",
                 Style::default().fg(palette.dim),
             )));
+            const MAX_COLS: usize = 96;
             for line in res.lines().take(10) {
+                let shown = if line.chars().count() > MAX_COLS {
+                    format!(
+                        "{}…",
+                        line.chars().take(MAX_COLS.saturating_sub(1)).collect::<String>()
+                    )
+                } else {
+                    line.to_string()
+                };
                 lines.push(Line::from(Span::styled(
-                    format!("   │ {}", line),
+                    format!("   │ {shown}"),
                     Style::default().fg(color).add_modifier(Modifier::DIM),
                 )));
             }

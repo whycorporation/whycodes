@@ -102,6 +102,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-06 — Tool results: minified JSON flood (webfetch / package.json)
+
+**Symptom:** After a tool turn, the transcript looks like a wall of mid-JSON with `┃` rails (`"exports":…`, `_npmUser`, …) ending in `Worked for Xs` — easy to mistake for the assistant answer. One minified line wrapped across the entire preview budget.
+
+**Root cause:** `tool_result_plain` soft-wrapped every logical line. A single huge npm/`package.json` line ate all `TOOL_RESULT_PREVIEW` visual rows. No display-time JSON pretty-print.
+
+**Fix:** `prettify_tool_result` (whole body, webfetch `\n\n` envelope, or first parseable `{`/`[`); pure JSON → `Code("json")` highlight; plain path **hard-truncates** each logical line to one terminal row (`…`) instead of wrap-filling the budget.
+
+**Prevention:** Never soft-wrap untrusted tool blobs into the preview budget; pretty-print JSON for display; one row per logical line when collapsed.
+
+---
+
 ### 2026-08-06 — Intent: question vs change vs plan
 
 **Symptom:** In build mode the model often edits when the user only asked a question, or skips planning on large design asks.

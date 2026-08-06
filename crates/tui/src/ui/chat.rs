@@ -7,7 +7,7 @@ use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::opencode_tokens::{LOGO_WHY, LOGO_WHY_CODE, layout as oc};
 use crate::theme::ThemePalette;
 use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
-use crate::widgets::wrap::{wrap_plain, wrap_text};
+use crate::widgets::wrap::wrap_text;
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -1031,12 +1031,19 @@ fn tool_result(
         return Vec::new();
     }
 
+    // Pretty-print minified JSON (webfetch / package.json dumps) so the rail
+    // shows structure instead of one long wrapped garbage line.
+    let prepared = prettify_tool_result(content);
+    let content = prepared.as_str();
+
     let mode = match &hint {
         ToolOutHint::Diff => ToolOutHint::Diff,
         ToolOutHint::Code(lang) => ToolOutHint::Code(lang.clone()),
         ToolOutHint::Auto => {
             if looks_like_diff(content) {
                 ToolOutHint::Diff
+            } else if looks_like_json_body(content) {
+                ToolOutHint::Code(Some("json".to_string()))
             } else if let Some(path) = content
                 .lines()
                 .next()
@@ -1059,6 +1066,89 @@ fn tool_result(
     }
 }
 
+/// Soften tool bodies for display: pretty-print JSON payloads (whole body or
+/// trailing after webfetch-style headers). Leaves non-JSON text unchanged.
+fn prettify_tool_result(content: &str) -> String {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return content.to_string();
+    }
+
+    if let Some(pretty) = try_pretty_json(trimmed) {
+        return pretty;
+    }
+
+    // `URL: …\nStatus: …\nContent-Type: …\n\n{json}` (webfetch)
+    if let Some((head, body)) = content.split_once("\n\n") {
+        let body_trim = body.trim();
+        if let Some(pretty) = try_pretty_json(body_trim) {
+            return format!("{}\n\n{}", head.trim_end(), pretty);
+        }
+    }
+
+    // Prefix noise then a JSON value (shell / partial dumps).
+    if let Some(idx) = find_json_value_start(content) {
+        let head = content[..idx].trim_end();
+        if let Some(pretty) = try_pretty_json(content[idx..].trim()) {
+            if head.is_empty() {
+                return pretty;
+            }
+            return format!("{head}\n{pretty}");
+        }
+    }
+
+    content.to_string()
+}
+
+fn try_pretty_json(s: &str) -> Option<String> {
+    let s = s.trim();
+    if !(s.starts_with('{') || s.starts_with('[')) {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(s).ok()?;
+    let pretty = serde_json::to_string_pretty(&value).ok()?;
+    // Only rewrite when it actually helps (minified / very long lines).
+    let max_line = s.lines().map(|l| l.chars().count()).max().unwrap_or(0);
+    let multi = s.lines().count() > 1;
+    if multi && max_line <= 100 && pretty.lines().count() <= s.lines().count() + 2 {
+        return None;
+    }
+    Some(pretty)
+}
+
+fn find_json_value_start(s: &str) -> Option<usize> {
+    // Single attempt from the first brace — avoids O(n) re-parses on large dumps.
+    let i = s.find(['{', '['])?;
+    if serde_json::from_str::<serde_json::Value>(s[i..].trim()).is_ok() {
+        Some(i)
+    } else {
+        None
+    }
+}
+
+/// Pure JSON only (not webfetch headers + body) so syntax highlight stays clean.
+fn looks_like_json_body(s: &str) -> bool {
+    let t = s.trim();
+    if !(t.starts_with('{') || t.starts_with('[')) {
+        return false;
+    }
+    serde_json::from_str::<serde_json::Value>(t).is_ok()
+}
+
+/// One terminal row per logical line; long lines get a hard `…` (never wrap a
+/// minified dump across the whole preview budget).
+fn hard_truncate_line(line: &str, max_cols: usize) -> String {
+    let max_cols = max_cols.max(4);
+    let count = line.chars().count();
+    if count <= max_cols {
+        return line.to_string();
+    }
+    format!(
+        "{}…",
+        line.chars().take(max_cols.saturating_sub(1)).collect::<String>()
+    )
+}
+
 fn tool_result_plain(
     content: &str,
     is_error: bool,
@@ -1075,27 +1165,21 @@ fn tool_result_plain(
         TOOL_RESULT_PREVIEW
     };
     // Gutter: ASSISTANT_PAD + "┃ " = 4 cols.
-    let text_w = width.saturating_sub(4).max(8);
+    let text_w = width.saturating_sub(4).max(8) as usize;
     let all_lines: Vec<&str> = content.lines().collect();
     let total = all_lines.len();
     let mut lines = Vec::new();
-    let mut visual = 0usize;
+    let mut line_was_cut = false;
     for line in all_lines.iter().take(budget) {
-        for row in wrap_plain(line, text_w, style) {
-            if visual >= budget {
-                break;
-            }
-            let mut spans = vec![
-                meta_gutter(),
-                Span::styled("┃ ".to_string(), rail),
-            ];
-            spans.extend(row.spans);
-            lines.push(Line::from(spans));
-            visual += 1;
+        if line.chars().count() > text_w {
+            line_was_cut = true;
         }
-        if visual >= budget {
-            break;
-        }
+        let shown = hard_truncate_line(line, text_w);
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), rail),
+            Span::styled(shown, style),
+        ]));
     }
     if total > budget {
         lines.push(Line::from(vec![
@@ -1103,6 +1187,15 @@ fn tool_result_plain(
             Span::styled("┃ ".to_string(), rail),
             Span::styled(
                 format!("… {} more lines  ·  (l expand)", total - budget),
+                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+            ),
+        ]));
+    } else if line_was_cut {
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), rail),
+            Span::styled(
+                "… long lines truncated".to_string(),
                 Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
             ),
         ]));
@@ -1361,14 +1454,80 @@ fn empty_dash(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{SparseLines, message_row_layout_mut};
+    use super::{
+        SparseLines, hard_truncate_line, message_row_layout_mut, prettify_tool_result, tool_result,
+        ToolOutHint,
+    };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
+    use crate::theme::ThemeName;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
     use ratatui::widgets::Widget;
+
+    #[test]
+    fn prettify_minified_json_becomes_multiline() {
+        let mini = r#"{"exports":{"./config":"./config.js","./schema":"./schema.js"},"license":"MIT"}"#;
+        let out = prettify_tool_result(mini);
+        assert!(
+            out.lines().count() > 3,
+            "expected pretty multi-line JSON, got {out:?}"
+        );
+        assert!(out.contains("\"exports\""));
+        assert!(out.contains("\"license\""));
+    }
+
+    #[test]
+    fn prettify_webfetch_envelope_keeps_headers() {
+        let raw = "URL: https://registry.npmjs.org/nuxt/latest\nStatus: 200\nContent-Type: application/json\n\n\
+                   {\"name\":\"nuxt\",\"version\":\"3.0.0\",\"exports\":{\"./x\":\"./y.js\"}}";
+        let out = prettify_tool_result(raw);
+        assert!(out.contains("URL: https://registry.npmjs.org/nuxt/latest"));
+        assert!(out.contains("Status: 200"));
+        assert!(
+            out.lines().count() > 6,
+            "headers + pretty body should be multi-line, got:\n{out}"
+        );
+        assert!(out.contains("\"name\""));
+    }
+
+    #[test]
+    fn hard_truncate_line_caps_display_width() {
+        let s = hard_truncate_line(&"x".repeat(100), 20);
+        assert_eq!(s.chars().count(), 20);
+        assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn tool_result_minified_json_stays_within_preview_budget() {
+        // One giant minified line used to wrap into the entire preview and look
+        // like the assistant answer (┃ dump filling the transcript).
+        let mini = format!(
+            r#"{{"exports":{{"./entry":"{}","license":"MIT","_npmUser":{{"name":"GitHub"}}}}}}"#,
+            "z".repeat(800)
+        );
+        let palette = ThemeName::DefaultDark.palette();
+        let lines = tool_result(&mini, false, &palette, false, ToolOutHint::Auto, 80);
+        // Preview budget 12 + optional "more lines" footer.
+        assert!(
+            lines.len() <= 14,
+            "minified tool dump must not explode into {} rows",
+            lines.len()
+        );
+        assert!(!lines.is_empty());
+        // Rail still present on body rows.
+        let body = lines
+            .iter()
+            .filter(|l| {
+                l.spans
+                    .iter()
+                    .any(|s| s.content.as_ref().contains('┃'))
+            })
+            .count();
+        assert!(body >= 1);
+    }
 
     #[test]
     fn sparse_lines_clears_previous_glyphs_before_paint() {
