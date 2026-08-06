@@ -254,6 +254,17 @@ impl ThemePalette {
         Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
     }
 
+    /// Stronger wash for diff add/remove rows (Grok-style green/red bands).
+    ///
+    /// `callout_bg` is ~20% accent — too subtle for diffs on many terminals.
+    /// Diff rows use ~40% so `+`/`-` lines read clearly as green/red blocks.
+    pub fn diff_line_bg(&self, accent: Color) -> Color {
+        let (ar, ag, ab) = to_rgb(accent);
+        let (br, bgc, bb) = to_rgb(self.bg);
+        let mix = |a: u8, b: u8| ((a as u16 * 4 + b as u16 * 6) / 10) as u8;
+        Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
+    }
+
     /// Deterministic color for agent by cycle index.
     ///
     /// Uses hardcoded colors instead of palette semantic fields because
@@ -368,8 +379,9 @@ fn palette_default_dark() -> ThemePalette {
         dialog_bg: STEP3_ELEMENT,
         dialog_border: SECONDARY,
         scrollbar: STEP6,
-        diff_add: Color::Rgb(0x4f, 0xd6, 0xbe),
-        diff_remove: Color::Rgb(0xc5, 0x3b, 0x53),
+        // Classic green / red (Grok-style); not teal — full-line diffs must read as add/remove.
+        diff_add: Color::Rgb(0x9e, 0xce, 0x6a),
+        diff_remove: Color::Rgb(0xf7, 0x76, 0x8e),
         diff_hunk: SECONDARY,
     }
 }

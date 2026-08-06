@@ -19,8 +19,8 @@ pub fn render_unified_diff(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
-    let add_bg = palette.callout_bg(palette.diff_add);
-    let rem_bg = palette.callout_bg(palette.diff_remove);
+    let add_bg = palette.diff_line_bg(palette.diff_add);
+    let rem_bg = palette.diff_line_bg(palette.diff_remove);
 
     for dl in diff_lines {
         let (prefix, color, bg) = match dl.kind {

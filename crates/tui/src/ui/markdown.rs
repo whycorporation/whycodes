@@ -211,27 +211,30 @@ fn render_diff_code(
         Span::styled(language.unwrap_or("diff").to_string(), gutter),
     ]));
 
-    let add_bg = palette.callout_bg(palette.diff_add);
-    let rem_bg = palette.callout_bg(palette.diff_remove);
+    let add_bg = palette.diff_line_bg(palette.diff_add);
+    let rem_bg = palette.diff_line_bg(palette.diff_remove);
     let body_w = max_width.map(|w| w.saturating_sub(2).max(8));
 
     for raw in lines {
-        let (fg, bg) = if raw.starts_with("+++") || raw.starts_with("---") {
-            (palette.fg, None)
+        let (fg, bg, bold) = if raw.starts_with("+++") || raw.starts_with("---") {
+            (palette.fg, None, false)
         } else if raw.starts_with("@@") || raw.starts_with("diff --git") {
-            (palette.diff_hunk, None)
+            (palette.diff_hunk, None, false)
         } else if raw.starts_with('+') {
-            (palette.diff_add, Some(add_bg))
+            (palette.diff_add, Some(add_bg), true)
         } else if raw.starts_with('-') {
-            (palette.diff_remove, Some(rem_bg))
+            (palette.diff_remove, Some(rem_bg), true)
         } else {
-            (palette.dim, None)
+            (palette.dim, None, false)
         };
 
-        let style = match bg {
-            Some(b) => Style::default().fg(fg).bg(b),
-            None => Style::default().fg(fg),
-        };
+        let mut style = Style::default().fg(fg);
+        if let Some(b) = bg {
+            style = style.bg(b);
+        }
+        if bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
         let body = Span::styled(raw.clone(), style);
         let rows = match body_w {
             Some(w) => wrap_spans(vec![body], w as u16),

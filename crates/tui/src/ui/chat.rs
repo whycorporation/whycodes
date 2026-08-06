@@ -17,7 +17,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
-use whycode_format::diff::{looks_like_diff, preview_file_path};
+use whycode_format::diff::looks_like_diff;
 use whycode_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
@@ -982,10 +982,26 @@ fn tool_block(
         } else if looks_like_diff(r) {
             let (a, d) = diff_stat(r);
             if a > 0 || d > 0 {
-                header.push(Span::styled(
-                    format!("  +{a} −{d}"),
-                    Style::default().fg(palette.dim),
-                ));
+                header.push(Span::styled("  ".to_string(), detail));
+                if a > 0 {
+                    header.push(Span::styled(
+                        format!("+{a}"),
+                        Style::default()
+                            .fg(palette.diff_add)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                if a > 0 && d > 0 {
+                    header.push(Span::styled(" ".to_string(), detail));
+                }
+                if d > 0 {
+                    header.push(Span::styled(
+                        format!("−{d}"),
+                        Style::default()
+                            .fg(palette.diff_remove)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
             }
         }
         if !expanded {
@@ -1218,24 +1234,9 @@ fn tool_result_diff(
     let total = content.lines().count();
     // Gutter "  " + "┃ " = 4 cols; body budget for hard-truncate.
     let text_w = width.saturating_sub(4).max(8) as usize;
-    let add_bg = palette.callout_bg(palette.diff_add);
-    let rem_bg = palette.callout_bg(palette.diff_remove);
-
-    // Optional path → language so + / - bodies get Tokyo Night syntax on top
-    // of add/remove colours (Grok-style read of edit/write previews).
-    let lang = preview_file_path(content)
-        .and_then(detect_language)
-        .map(str::to_string)
-        .or_else(|| {
-            // Fall back to path in tool args is not available here; try
-            // git-style "+++ b/path" headers.
-            content.lines().find_map(|l| {
-                l.strip_prefix("+++ b/")
-                    .or_else(|| l.strip_prefix("+++ "))
-                    .and_then(detect_language)
-                    .map(str::to_string)
-            })
-        });
+    // Strong green/red band (Grok): full line fg + visible wash bg.
+    let add_bg = palette.diff_line_bg(palette.diff_add);
+    let rem_bg = palette.diff_line_bg(palette.diff_remove);
 
     let mut lines = Vec::new();
     for line in content.lines().take(budget) {
@@ -1266,30 +1267,14 @@ fn tool_result_diff(
             Span::styled("┃ ".to_string(), paint(rail_color, false)),
         ];
 
-        // Prefix marker bold; body may be syntax-coloured when language known.
+        // Grok-style: whole +/− line is green/red (marker + body). Do not
+        // overlay syntect colours — they washed out add/remove into plain code.
         let (marker, body) = split_diff_marker(line);
         if let Some(m) = marker {
             spans.push(Span::styled(m.to_string(), paint(body_color, true)));
             let body_budget = text_w.saturating_sub(1).max(1);
             let body_shown = hard_truncate_line(body, body_budget);
-            if matches!(kind, DiffPaint::Add | DiffPaint::Remove)
-                && let Some(ref language) = lang
-                && !body_shown.is_empty()
-            {
-                let hl = highlight_code_spans(&body_shown, Some(language.as_str()));
-                if let Some(row) = hl.first() {
-                    for ((r, g, b), text) in row.iter() {
-                        spans.push(Span::styled(
-                            text.trim_end_matches('\n').to_string(),
-                            paint(Color::Rgb(*r, *g, *b), false),
-                        ));
-                    }
-                } else {
-                    spans.push(Span::styled(body_shown, paint(body_color, false)));
-                }
-            } else {
-                spans.push(Span::styled(body_shown, paint(body_color, false)));
-            }
+            spans.push(Span::styled(body_shown, paint(body_color, false)));
         } else {
             let shown = hard_truncate_line(line, text_w);
             spans.push(Span::styled(shown, paint(body_color, false)));
@@ -1641,9 +1626,22 @@ mod tests {
             .expect("- marker");
         assert_eq!(add.style.fg, Some(palette.diff_add));
         assert_eq!(rem.style.fg, Some(palette.diff_remove));
-        // Soft wash background on add/remove rows.
+        // Visible wash background on add/remove rows.
         assert!(add.style.bg.is_some());
         assert!(rem.style.bg.is_some());
+        // Full line body stays green/red (not syntax-overwritten).
+        let add_body = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.as_ref() == "new")
+            .expect("+ body");
+        let rem_body = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.as_ref() == "old")
+            .expect("- body");
+        assert_eq!(add_body.style.fg, Some(palette.diff_add));
+        assert_eq!(rem_body.style.fg, Some(palette.diff_remove));
     }
 
     #[test]
