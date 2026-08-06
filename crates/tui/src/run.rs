@@ -1220,6 +1220,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 }
 
+                // Mouse single-select may finish the questionnaire from input.rs
+                if let Some(answers) = app.pending_question_answers.take() {
+                    if let Some(req) = pending_question_queue.pop_front() {
+                        let _ = req.reply.send(Ok(answers));
+                    }
+                    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+                        app.mode = AppMode::Normal;
+                        app.key_context = KeymapContext::Normal;
+                        resume_after_question(
+                            &mut app,
+                            &pending_question_queue,
+                            &pending_perm_queue,
+                        );
+                    }
+                }
+
                 // [✗] / Esc may dismiss Question via input.rs — complete oneshot
                 if app.question_dismissed {
                     app.question_dismissed = false;
@@ -1734,7 +1750,7 @@ async fn cycle_agent(
     }
 }
 
-/// Handle keys while a questionnaire modal is open. Returns true if consumed.
+/// Handle keys while a questionnaire panel is open. Returns true if consumed.
 fn handle_question_key(
     app: &mut TuiApp,
     code: KeyCode,
@@ -1794,6 +1810,36 @@ fn handle_question_key(
         }
         KeyCode::Down | KeyCode::Char('j') if !state.free_text_focus => {
             state.move_cursor(1);
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        // Multi-question navigate (Grok-style ←/→ between questions)
+        KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') if !state.free_text_focus => {
+            let _ = state.go_prev_question();
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') if !state.free_text_focus => {
+            let _ = state.go_next_question();
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        // Copy full questionnaire to clipboard
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('c') | KeyCode::Char('C')
+            if !state.free_text_focus =>
+        {
+            let text = state.clipboard_text();
+            if crate::clipboard::copy_text(&text) {
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    format!("Copied question ({} chars)", text.chars().count()),
+                );
+            } else {
+                app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    "Copy failed — no clipboard",
+                );
+            }
             app.dialogs.push(DialogKind::Question(state));
             return true;
         }

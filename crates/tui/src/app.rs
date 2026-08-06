@@ -197,15 +197,63 @@ impl QuestionDialogState {
             self.answers[self.index] = Some(answer);
         }
         if self.index + 1 >= self.questions.len() {
-            let done: Vec<QuestionAnswer> = self
-                .answers
-                .iter()
-                .filter_map(|a| a.clone())
-                .collect();
-            return Some(done);
+            // Prefer filled answers in order; require one per question.
+            if self.answers.iter().all(|a| a.is_some()) {
+                let done: Vec<QuestionAnswer> = self
+                    .answers
+                    .iter()
+                    .filter_map(|a| a.clone())
+                    .collect();
+                return Some(done);
+            }
+            // Hole (navigated past unanswered): jump to first unanswered.
+            if let Some(i) = self.answers.iter().position(|a| a.is_none()) {
+                self.index = i;
+                self.rehydrate_ui();
+                return None;
+            }
         }
         // Advance
         self.index += 1;
+        self.rehydrate_ui();
+        None
+    }
+
+    /// Jump to previous question (← / `[`). Keeps any already-saved answer.
+    pub fn go_prev_question(&mut self) -> bool {
+        if self.index == 0 {
+            return false;
+        }
+        self.index -= 1;
+        self.rehydrate_ui();
+        true
+    }
+
+    /// Jump to next question when it already has an answer (→ / `]`).
+    ///
+    /// Forward-only navigation does not skip unanswered questions — use Enter
+    /// to answer and advance.
+    pub fn go_next_question(&mut self) -> bool {
+        if self.index + 1 >= self.questions.len() {
+            return false;
+        }
+        // Allow forward if current is answered, or target already has an answer.
+        let can = self.answers.get(self.index).and_then(|a| a.as_ref()).is_some()
+            || self
+                .answers
+                .get(self.index + 1)
+                .and_then(|a| a.as_ref())
+                .is_some();
+        if !can {
+            return false;
+        }
+        self.index += 1;
+        self.rehydrate_ui();
+        true
+    }
+
+    /// Restore cursor / multi / free-text from a saved answer (if any).
+    fn rehydrate_ui(&mut self) {
         self.cursor = 0;
         self.multi_selected.clear();
         self.free_text.clear();
@@ -213,7 +261,90 @@ impl QuestionDialogState {
             .current()
             .map(|q| q.options.is_empty())
             .unwrap_or(true);
-        None
+
+        let Some(q) = self.current().cloned() else {
+            return;
+        };
+        let Some(ans) = self.answers.get(self.index).and_then(|a| a.clone()) else {
+            return;
+        };
+
+        if let Some(ref t) = ans.free_text {
+            self.free_text = t.clone();
+            if ans.selected.is_empty() || q.options.is_empty() {
+                self.cursor = q.options.len(); // Other
+                self.free_text_focus = false;
+            }
+        }
+
+        if q.multi_select {
+            for label in &ans.selected {
+                if let Some(i) = q.options.iter().position(|o| &o.label == label) {
+                    self.multi_selected.insert(i);
+                }
+            }
+            if !ans.selected.is_empty() {
+                self.cursor = self.multi_selected.iter().copied().min().unwrap_or(0);
+            }
+        } else if let Some(label) = ans.selected.first() {
+            if let Some(i) = q.options.iter().position(|o| &o.label == label) {
+                self.cursor = i;
+            }
+        }
+    }
+
+    /// Plain-text dump of the full questionnaire for clipboard copy.
+    pub fn clipboard_text(&self) -> String {
+        let mut out = String::new();
+        for (qi, q) in self.questions.iter().enumerate() {
+            if self.questions.len() > 1 {
+                out.push_str(&format!("Question {}/{}\n", qi + 1, self.questions.len()));
+            }
+            out.push_str(&q.prompt);
+            out.push('\n');
+            if q.options.is_empty() {
+                out.push_str("(free-text)\n");
+            } else {
+                for (i, opt) in q.options.iter().enumerate() {
+                    if opt.description.is_empty() {
+                        out.push_str(&format!("  {}. {}\n", i + 1, opt.label));
+                    } else {
+                        out.push_str(&format!(
+                            "  {}. {} — {}\n",
+                            i + 1,
+                            opt.label,
+                            opt.description
+                        ));
+                    }
+                }
+                out.push_str(&format!("  {}. Other…\n", q.options.len() + 1));
+            }
+            if let Some(Some(a)) = self.answers.get(qi) {
+                out.push_str(&format!("Answer: {}\n", a.summary()));
+            } else if qi == self.index {
+                out.push_str("(current)\n");
+            }
+            if qi + 1 < self.questions.len() {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// Set option cursor by absolute index (mouse / digit).
+    pub fn set_cursor(&mut self, idx: usize) {
+        let n = self.option_count();
+        if n == 0 {
+            return;
+        }
+        self.cursor = idx.min(n - 1);
+        if self.is_other_index(self.cursor)
+            || self.current().map(|q| q.options.is_empty()).unwrap_or(false)
+        {
+            // Stay on Other row; free-text focus opted-in by Space / o / Enter.
+        } else {
+            self.free_text_focus = false;
+        }
     }
 }
 
@@ -775,6 +906,8 @@ pub struct TuiApp {
     pub dialog_scrollbar_grab: Option<u16>,
     /// Questionnaire closed via `[✗]` / generic dismiss — run loop completes oneshot.
     pub question_dismissed: bool,
+    /// Questionnaire finished via mouse click (single-select) — run loop sends answers.
+    pub pending_question_answers: Option<Vec<QuestionAnswer>>,
 
     // ── slash suggestion popup ──
     pub slash_suggest: SlashSuggestState,
@@ -1170,6 +1303,7 @@ impl TuiApp {
             dialog_list_total: 0,
             dialog_scrollbar_grab: None,
             question_dismissed: false,
+            pending_question_answers: None,
             slash_suggest: SlashSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,

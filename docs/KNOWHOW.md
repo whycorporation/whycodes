@@ -102,6 +102,16 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-06 — Question panel: bottom dock, navigate, copy
+
+**Symptom:** Questionnaire felt like a center modal, not Grok’s bottom line-by-line picker. No way to revisit a previous question in a multi-q set or copy the prompt/options.
+
+**Fix:** Bottom-docked `dialog_frame_placed(Bottom)`; one selectable row per option (label + description) with mouse hit → index; `←/→`/`[/]`/`h`/`l` navigate questions (forward only when answered); `y`/`c` copies full questionnaire via clipboard; click single-select confirms (multi toggles). Run loop drains `pending_question_answers` like `question_dismissed`.
+
+**Prevention:** Keep option hit-testing 1 row = 1 option; multi-line previews must sit *outside* the list hit rect. Always complete the oneshot on cancel *and* on mouse-finish.
+
+---
+
 ### 2026-08-06 — Interactive `question` tool (Grok-style questionnaire)
 
 **Symptom:** Agent needed clarification; TUI had no way to answer with options. Old `question` wrote to stderr and blocked on stdin (broken under alt-screen).

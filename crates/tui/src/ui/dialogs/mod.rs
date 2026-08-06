@@ -50,8 +50,17 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
             app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::Question(state) => {
-            let chrome = render_question_dialog(frame, &state, palette, mouse);
-            app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
+            let paint = render_question_dialog(frame, &state, palette, mouse);
+            // One row per option so mouse click maps to option index.
+            app.apply_select_paint(
+                paint.chrome.close_hit,
+                paint.list_area,
+                None,
+                0,
+                paint.list_total,
+                paint.list_total,
+                Some(paint.chrome.modal),
+            );
         }
         crate::app::DialogKind::SessionList => {
             let items: Vec<SelectItem> = app

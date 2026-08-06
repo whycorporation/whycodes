@@ -58,6 +58,15 @@ pub fn close_button_rect(modal: Rect) -> Option<Rect> {
     })
 }
 
+/// Where a modal sits on the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogPlacement {
+    /// Classic centered popup.
+    Center,
+    /// Docked to the bottom edge (Grok ask_user_question style).
+    Bottom,
+}
+
 /// Paint a Grok-style centered modal and return the content rect.
 ///
 /// `shortcuts` are labels like `"Esc cancel"` / `"Enter select"` — the first
@@ -74,8 +83,34 @@ pub fn dialog_frame(
     percent_y: u16,
     mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
+    dialog_frame_placed(
+        frame,
+        title,
+        shortcuts,
+        palette,
+        percent_x,
+        percent_y,
+        mouse_pos,
+        DialogPlacement::Center,
+    )
+}
+
+/// Like [`dialog_frame`] but with explicit placement (center or bottom dock).
+pub fn dialog_frame_placed(
+    frame: &mut Frame,
+    title: &str,
+    shortcuts: &[&str],
+    palette: &ThemePalette,
+    percent_x: u16,
+    percent_y: u16,
+    mouse_pos: Option<(u16, u16)>,
+    placement: DialogPlacement,
+) -> DialogChrome {
     let area = frame.area();
-    let dialog_area = centered_rect(percent_x, percent_y, area);
+    let dialog_area = match placement {
+        DialogPlacement::Center => centered_rect(percent_x, percent_y, area),
+        DialogPlacement::Bottom => bottom_rect(percent_x, percent_y, area),
+    };
     if dialog_area.width < 12 || dialog_area.height < 5 {
         return DialogChrome {
             content: dialog_area,
@@ -170,6 +205,31 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup[1])[1]
+}
+
+/// Bottom-docked rectangle: full height fraction near the bottom edge,
+/// horizontally centered by `percent_x`.
+///
+/// Used by the questionnaire panel so options sit above the prompt like
+/// Grok's `ask_user_question` UI.
+pub fn bottom_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let h = ((r.height as u32 * percent_y as u32) / 100).max(8) as u16;
+    let h = h.min(r.height);
+    let y = r.y + r.height.saturating_sub(h);
+    let popup = Rect {
+        x: r.x,
+        y,
+        width: r.width,
+        height: h,
+    };
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup)[1]
 }
 
 // ── private chrome ─────────────────────────────────────────────────────

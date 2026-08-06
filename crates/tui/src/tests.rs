@@ -787,6 +787,76 @@ fn test_question_dialog_confirm_single() {
 }
 
 #[test]
+fn test_question_navigate_prev_next_and_copy() {
+    use crate::app::QuestionDialogState;
+    use whycode_tools::question::{QuestionOption, QuestionSpec};
+
+    let opt = |label: &str| QuestionOption {
+        label: label.into(),
+        description: format!("desc {label}"),
+        preview: None,
+    };
+    let mut st = QuestionDialogState::new(vec![
+        QuestionSpec {
+            prompt: "Backend?".into(),
+            options: vec![opt("SQLite"), opt("Postgres")],
+            multi_select: false,
+        },
+        QuestionSpec {
+            prompt: "Deploy?".into(),
+            options: vec![opt("Local"), opt("Cloud")],
+            multi_select: false,
+        },
+    ]);
+
+    // Cannot skip forward before answering.
+    assert!(!st.go_next_question());
+
+    st.cursor = 0; // SQLite
+    assert!(st.confirm_current().is_none()); // advances to q2
+    assert_eq!(st.index, 1);
+    assert_eq!(st.answers[0].as_ref().unwrap().selected, vec!["SQLite"]);
+
+    // Back to first question; rehydrates selection.
+    assert!(st.go_prev_question());
+    assert_eq!(st.index, 0);
+    assert_eq!(st.cursor, 0);
+
+    // Forward again after answer exists.
+    assert!(st.go_next_question());
+    assert_eq!(st.index, 1);
+
+    let clip = st.clipboard_text();
+    assert!(clip.contains("Backend?"), "{clip}");
+    assert!(clip.contains("SQLite"), "{clip}");
+    assert!(clip.contains("Deploy?"), "{clip}");
+    assert!(clip.contains("Answer: SQLite"), "{clip}");
+
+    st.cursor = 1; // Cloud
+    let done = st.confirm_current().expect("both answered");
+    assert_eq!(done.len(), 2);
+    assert_eq!(done[1].selected, vec!["Cloud".to_string()]);
+}
+
+#[test]
+fn test_bottom_rect_docks_to_bottom() {
+    use crate::ui::dialogs::bottom_rect;
+    use ratatui::layout::Rect;
+
+    let screen = Rect {
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 40,
+    };
+    let r = bottom_rect(80, 50, screen);
+    assert_eq!(r.height, 20);
+    assert_eq!(r.y, 20, "panel must sit on bottom half");
+    assert!(r.x >= 10);
+    assert_eq!(r.width, 80);
+}
+
+#[test]
 fn test_ask_permission() {
     let mut app = TuiApp::new(test_config());
     app.ask_permission("bash", "echo test");

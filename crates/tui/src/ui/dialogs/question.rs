@@ -1,72 +1,104 @@
-//! Interactive questionnaire modal (Grok-style ask_user_question).
+//! Interactive questionnaire panel (Grok-style ask_user_question).
 //!
-//! Layout:
+//! Docked to the **bottom** of the screen, options as one selectable row each:
 //! ```text
 //! ─ Question  (1/2) ─
 //!
 //! What approach should we take?
 //!
-//!   ▸ SQLite
-//!       Simple local store for v1
-//!     Postgres
-//!       Better multi-user later
-//!     Other…
-//!       Type your own answer
+//!   ▸ 1. SQLite — Simple local store for v1
+//!     2. Postgres — Better multi-user later
+//!     3. Other… — Type your own answer
 //!
 //!   > free text when Other or free-form
 //!
-//! ↑/↓  Space  Enter  Esc
+//! ↑/↓  ←/→ q  y copy  Enter  Esc
 //! ```
 
 use crate::app::QuestionDialogState;
 use crate::theme::ThemePalette;
 use ratatui::{
     Frame,
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::{DialogChrome, dialog_frame};
+use super::base::{DialogChrome, DialogPlacement, dialog_frame_placed};
+
+/// Paint result with optional option-list hit area (one row per option).
+pub struct QuestionPaint {
+    pub chrome: DialogChrome,
+    /// Content rect covering option rows only (for mouse click → index).
+    pub list_area: Option<Rect>,
+    pub list_total: usize,
+}
 
 pub fn render_question_dialog(
     frame: &mut Frame,
     state: &QuestionDialogState,
     palette: &ThemePalette,
     mouse_pos: Option<(u16, u16)>,
-) -> DialogChrome {
+) -> QuestionPaint {
     let total_q = state.questions.len().max(1);
     let cur = state.index + 1;
     let title = if total_q > 1 {
-        format!(" Question  ({cur}/{total_q})")
+        format!("Question  ({cur}/{total_q})")
     } else {
         "Question".to_string()
     };
 
     let shortcuts: &[&str] = if state.free_text_focus {
-        &["Type answer", "Enter submit", "Esc back", "[✗]"]
+        &["Type answer", "Enter submit", "Esc back", "y copy", "[✗]"]
+    } else if total_q > 1 {
+        if state.current().map(|q| q.multi_select).unwrap_or(false) {
+            &["↑/↓", "Space", "←/→ nav", "y copy", "Enter", "Esc"]
+        } else {
+            &["↑/↓", "←/→ nav", "y copy", "Enter", "o Other", "Esc"]
+        }
     } else if state.current().map(|q| q.multi_select).unwrap_or(false) {
-        &["↑/↓", "Space toggle", "Enter done", "Esc cancel"]
+        &["↑/↓", "Space toggle", "y copy", "Enter done", "Esc"]
     } else {
-        &["↑/↓", "Enter select", "o Other", "Esc cancel"]
+        &["↑/↓", "y copy", "Enter select", "o Other", "Esc"]
     };
 
-    let chrome = dialog_frame(
+    // Height scales with option count; dock bottom so it sits above the prompt.
+    let n_opts = state.option_count().max(1);
+    let prompt_lines = state
+        .current()
+        .map(|q| q.prompt.lines().count().max(1))
+        .unwrap_or(1);
+    // title chrome + prompt + blank + options + free-text + multi hint + pad
+    let content_rows = 2 + prompt_lines + 1 + n_opts + 3 + 2;
+    let area_h = frame.area().height.max(1);
+    let percent_y = ((content_rows as u16 * 100) / area_h).clamp(22, 55);
+
+    let chrome = dialog_frame_placed(
         frame,
         &title,
         shortcuts,
         palette,
-        72,
-        62,
+        88,
+        percent_y,
         mouse_pos,
+        DialogPlacement::Bottom,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
-        return chrome;
+        return QuestionPaint {
+            chrome,
+            list_area: None,
+            list_total: 0,
+        };
     }
 
     let Some(q) = state.current() else {
-        return chrome;
+        return QuestionPaint {
+            chrome,
+            list_area: None,
+            list_total: 0,
+        };
     };
 
     let mut lines: Vec<Line> = Vec::new();
@@ -82,6 +114,7 @@ pub fn render_question_dialog(
     }
     lines.push(Line::from(""));
 
+    let list_start_row = lines.len();
     let n_opts = state.option_count();
     for i in 0..n_opts {
         let current = i == state.cursor;
@@ -119,34 +152,36 @@ pub fn render_question_dialog(
             Style::default().fg(palette.fg)
         };
 
+        // One selectable row: "N. Label — description"
+        let num = i + 1;
+        let mut main = format!("{num}. {label}");
+        if !description.is_empty() {
+            main.push_str(" — ");
+            main.push_str(&description);
+        }
+
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {marker}"),
                 Style::default().fg(palette.accent),
             ),
-            Span::styled(label, label_style),
+            Span::styled(main, label_style),
         ]));
+    }
+    let list_end_row = lines.len();
 
-        if !description.is_empty() {
+    // Preview under the focused option (not part of hit list)
+    if !state.free_text_focus
+        && !state.is_other_index(state.cursor)
+        && let Some(opt) = q.options.get(state.cursor)
+        && let Some(ref prev) = opt.preview
+        && !prev.is_empty()
+    {
+        for pl in prev.lines().take(3) {
             lines.push(Line::from(Span::styled(
-                format!("      {description}"),
-                Style::default().fg(palette.dim),
+                format!("      {pl}"),
+                Style::default().fg(palette.dim).add_modifier(Modifier::ITALIC),
             )));
-        }
-
-        // Preview only when focused
-        if current
-            && !is_other
-            && let Some(opt) = q.options.get(i)
-            && let Some(ref prev) = opt.preview
-            && !prev.is_empty()
-        {
-            for pl in prev.lines().take(3) {
-                lines.push(Line::from(Span::styled(
-                    format!("      {pl}"),
-                    Style::default().fg(palette.dim).add_modifier(Modifier::ITALIC),
-                )));
-            }
         }
     }
 
@@ -184,6 +219,33 @@ pub fn render_question_dialog(
         )));
     }
 
+    if total_q > 1 && !state.free_text_focus {
+        lines.push(Line::from(Span::styled(
+            "  ←/→ or [/] navigate questions · y copy".to_string(),
+            Style::default().fg(palette.dim),
+        )));
+    }
+
+    // Map option list rows to screen Y for mouse hit-testing (1 row = 1 option).
+    let list_total = n_opts;
+    let list_area = if list_total > 0 && list_end_row > list_start_row {
+        let max_rows = area.height as usize;
+        // Only rows that fit in the painted area are clickable.
+        let visible = (list_end_row - list_start_row).min(max_rows.saturating_sub(list_start_row));
+        if visible > 0 && list_start_row < max_rows {
+            Some(Rect {
+                x: area.x,
+                y: area.y + list_start_row as u16,
+                width: area.width,
+                height: visible as u16,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let max_rows = area.height as usize;
     if lines.len() > max_rows {
         lines.truncate(max_rows.saturating_sub(1));
@@ -197,5 +259,10 @@ pub fn render_question_dialog(
         .wrap(Wrap { trim: false })
         .style(Style::default().bg(palette.bg));
     frame.render_widget(body, area);
-    chrome
+
+    QuestionPaint {
+        chrome,
+        list_area,
+        list_total,
+    }
 }

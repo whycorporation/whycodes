@@ -938,6 +938,28 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.provider_dialog.selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Question(_) => {
+                        // Bottom questionnaire: click option row.
+                        if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
+                            st.set_cursor(idx);
+                            if st.is_other_index(idx) {
+                                st.free_text_focus = true;
+                                app.dialogs.push(DialogKind::Question(st));
+                            } else if st.current().map(|q| q.multi_select).unwrap_or(false) {
+                                st.toggle_multi_at_cursor();
+                                app.dialogs.push(DialogKind::Question(st));
+                            } else if let Some(answers) = st.confirm_current() {
+                                // Finished — run loop sends Ok via pending_question_answers.
+                                app.pending_question_answers = Some(answers);
+                                app.mode = AppMode::Normal;
+                                app.key_context = KeymapContext::Normal;
+                                app.clear_dialog_hits();
+                            } else {
+                                // Advanced to next question in multi-q set.
+                                app.dialogs.push(DialogKind::Question(st));
+                            }
+                        }
+                    }
                     _ => {
                         // List dialogs without click-to-confirm: just move highlight.
                         move_in_dialog_to(app, active, idx);
@@ -1108,6 +1130,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
             let len = crate::theme::ThemeName::ALL.len();
             if len > 0 {
                 app.theme_selected = idx.min(len - 1);
+            }
+        }
+        DialogKind::Question(_) => {
+            if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
+                st.set_cursor(idx);
+                app.dialogs.push(DialogKind::Question(st));
             }
         }
         _ => {}
@@ -1369,6 +1397,14 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
                 crate::theme::ThemeName::ALL.len(),
                 delta,
             );
+        }
+        DialogKind::Question(_) => {
+            if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
+                if !st.free_text_focus {
+                    st.move_cursor(delta);
+                }
+                app.dialogs.push(DialogKind::Question(st));
+            }
         }
         _ => {}
     }
