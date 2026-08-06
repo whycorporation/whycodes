@@ -1,18 +1,44 @@
 /// Max body lines (each of remove/add) shown in a compact edit preview.
 const PREVIEW_BODY_LINES: usize = 40;
 
+/// Width of the right-aligned line-number gutter in edit/write previews.
+const LINE_NO_WIDTH: usize = 4;
+
+/// Format a right-aligned line number + marker + body (Grok-style).
+///
+/// ```text
+///   12|-old line
+///   12|+new line
+/// ```
+fn numbered_diff_line(line_no: usize, marker: char, body: &str) -> String {
+    format!("{line_no:>width$}|{marker}{body}\n", width = LINE_NO_WIDTH)
+}
+
 /// Plain unified-style preview of a string replacement (no ANSI).
 ///
-/// TUI paints `+`/`-`/`@@` with theme colours; this only shapes the text so
-/// both CLI and TUI can share the same shape.
+/// TUI paints line numbers + `+`/`-` with theme colours.
+///
+/// `start_line` is 1-based file line of the first removed (or added) line.
+/// When `None`, lines still get sequential numbers starting at 1.
 ///
 /// ```text
 /// Edited path/to/file.rs
 ///
-/// - old line
-/// + new line
+///   42|-old line
+///   42|+new line
 /// ```
 pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usize) -> String {
+    format_edit_preview_at(path, old, new, replace_count, None)
+}
+
+/// Like [`format_edit_preview`] with an optional 1-based start line in the file.
+pub fn format_edit_preview_at(
+    path: &str,
+    old: &str,
+    new: &str,
+    replace_count: usize,
+    start_line: Option<usize>,
+) -> String {
     let mut out = String::new();
     if replace_count > 1 {
         out.push_str(&format!(
@@ -24,20 +50,29 @@ pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usiz
 
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
+    let base = start_line.unwrap_or(1).max(1);
 
     // Single-line swap: one-liners read better without a full LCS dump.
     if old_lines.len() <= 1 && new_lines.len() <= 1 {
         if old.is_empty() && !new.is_empty() {
-            for line in new_lines.iter().take(PREVIEW_BODY_LINES) {
-                out.push_str(&format!("+{line}\n"));
+            for (i, line) in new_lines.iter().take(PREVIEW_BODY_LINES).enumerate() {
+                out.push_str(&numbered_diff_line(base + i, '+', line));
             }
         } else if new.is_empty() && !old.is_empty() {
-            for line in old_lines.iter().take(PREVIEW_BODY_LINES) {
-                out.push_str(&format!("-{line}\n"));
+            for (i, line) in old_lines.iter().take(PREVIEW_BODY_LINES).enumerate() {
+                out.push_str(&numbered_diff_line(base + i, '-', line));
             }
         } else {
-            out.push_str(&format!("-{}\n", old_lines.first().copied().unwrap_or("")));
-            out.push_str(&format!("+{}\n", new_lines.first().copied().unwrap_or("")));
+            out.push_str(&numbered_diff_line(
+                base,
+                '-',
+                old_lines.first().copied().unwrap_or(""),
+            ));
+            out.push_str(&numbered_diff_line(
+                base,
+                '+',
+                new_lines.first().copied().unwrap_or(""),
+            ));
         }
         return out;
     }
@@ -45,8 +80,8 @@ pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usiz
     // Multi-line: emit removals then additions (compact, Grok-like).
     let old_trunc = old_lines.len() > PREVIEW_BODY_LINES;
     let new_trunc = new_lines.len() > PREVIEW_BODY_LINES;
-    for line in old_lines.iter().take(PREVIEW_BODY_LINES) {
-        out.push_str(&format!("-{line}\n"));
+    for (i, line) in old_lines.iter().take(PREVIEW_BODY_LINES).enumerate() {
+        out.push_str(&numbered_diff_line(base + i, '-', line));
     }
     if old_trunc {
         out.push_str(&format!(
@@ -54,8 +89,9 @@ pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usiz
             old_lines.len() - PREVIEW_BODY_LINES
         ));
     }
-    for line in new_lines.iter().take(PREVIEW_BODY_LINES) {
-        out.push_str(&format!("+{line}\n"));
+    // Additions re-start at the same base line (replacement block).
+    for (i, line) in new_lines.iter().take(PREVIEW_BODY_LINES).enumerate() {
+        out.push_str(&numbered_diff_line(base + i, '+', line));
     }
     if new_trunc {
         out.push_str(&format!(
@@ -71,8 +107,8 @@ pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usiz
 /// ```text
 /// Wrote path/to/file.rs  ·  12 lines
 ///
-/// +first line
-/// +second line
+///    1|+first line
+///    2|+second line
 /// ```
 pub fn format_write_preview(path: &str, content: &str) -> String {
     let lines: Vec<&str> = content.lines().collect();
@@ -80,8 +116,8 @@ pub fn format_write_preview(path: &str, content: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("Wrote {path}  ·  {total} lines\n\n"));
     let trunc = total > PREVIEW_BODY_LINES;
-    for line in lines.iter().take(PREVIEW_BODY_LINES) {
-        out.push_str(&format!("+{line}\n"));
+    for (i, line) in lines.iter().take(PREVIEW_BODY_LINES).enumerate() {
+        out.push_str(&numbered_diff_line(i + 1, '+', line));
     }
     if trunc {
         out.push_str(&format!(
@@ -113,6 +149,87 @@ pub fn preview_file_path(text: &str) -> Option<&str> {
     }
 }
 
+/// Parsed pieces of a numbered or bare diff line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffLineParts<'a> {
+    /// Right-aligned line number digits (no spaces), if present.
+    pub line_no: Option<&'a str>,
+    /// Leading spaces before the line number (padding).
+    pub line_no_pad: &'a str,
+    /// `+` / `-` when this is an add/remove row.
+    pub marker: Option<char>,
+    /// Rest of the line after the marker (or full line if no marker).
+    pub body: &'a str,
+}
+
+/// Split `  12|-body` or bare `+body` / `-body` into paint-friendly parts.
+pub fn parse_diff_line(line: &str) -> DiffLineParts<'_> {
+    if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+        return DiffLineParts {
+            line_no: None,
+            line_no_pad: "",
+            marker: None,
+            body: line,
+        };
+    }
+
+    // Numbered: optional spaces, digits, optional `|`, then +/- marker.
+    // Accepts both `  12|-body` (preferred) and bare `  12-body`.
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() && bytes[i] == b' ' {
+        i += 1;
+    }
+    let pad_end = i;
+    let digit_start = i;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i > digit_start {
+        let mut j = i;
+        if j < bytes.len() && bytes[j] == b'|' {
+            j += 1;
+        }
+        if j < bytes.len()
+            && (bytes[j] == b'+' || bytes[j] == b'-')
+            && !(j + 2 < bytes.len()
+                && bytes[j] == b'+'
+                && bytes[j + 1] == b'+'
+                && bytes[j + 2] == b'+')
+            && !(j + 2 < bytes.len()
+                && bytes[j] == b'-'
+                && bytes[j + 1] == b'-'
+                && bytes[j + 2] == b'-')
+        {
+            let marker = bytes[j] as char;
+            let body = &line[j + 1..];
+            return DiffLineParts {
+                line_no: Some(&line[digit_start..i]),
+                line_no_pad: &line[..pad_end],
+                marker: Some(marker),
+                body,
+            };
+        }
+    }
+
+    // Bare +/-
+    let mut chars = line.chars();
+    match chars.next() {
+        Some(c @ ('+' | '-')) => DiffLineParts {
+            line_no: None,
+            line_no_pad: "",
+            marker: Some(c),
+            body: chars.as_str(),
+        },
+        _ => DiffLineParts {
+            line_no: None,
+            line_no_pad: "",
+            marker: None,
+            body: line,
+        },
+    }
+}
+
 /// True when `text` looks like a unified / edit preview diff the TUI should
 /// colour as add/remove rather than plain dim text.
 pub fn looks_like_diff(text: &str) -> bool {
@@ -131,12 +248,11 @@ pub fn looks_like_diff(text: &str) -> bool {
             edit_header = true;
             continue;
         }
-        // Edit preview: bare `+` / `-` prefixes (not list bullets like `- item`
-        // without a following token that looks like code — still allow both).
-        if line.starts_with('+') && !line.starts_with("+++") {
-            plus += 1;
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            minus += 1;
+        let parts = parse_diff_line(line);
+        match parts.marker {
+            Some('+') => plus += 1,
+            Some('-') => minus += 1,
+            _ => {}
         }
     }
     // Explicit tool previews may be one-sided (pure write / pure delete).
@@ -251,6 +367,15 @@ fn lcs<T: PartialEq>(a: &[T], b: &[T]) -> Vec<(usize, usize)> {
     result
 }
 
+/// 1-based line number of the first occurrence of `needle` in `haystack`.
+pub fn first_line_number(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(1);
+    }
+    let pos = haystack.find(needle)?;
+    Some(haystack[..pos].bytes().filter(|&b| b == b'\n').count() + 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -285,12 +410,24 @@ mod tests {
     }
 
     #[test]
+    fn edit_preview_includes_line_numbers() {
+        let p = format_edit_preview_at("src/a.rs", "old", "new", 1, Some(42));
+        assert!(p.contains("  42|-old"), "{p}");
+        assert!(p.contains("  42|+new"), "{p}");
+        let parts = parse_diff_line("  42|-old");
+        assert_eq!(parts.line_no, Some("42"));
+        assert_eq!(parts.marker, Some('-'));
+        assert_eq!(parts.body, "old");
+    }
+
+    #[test]
     fn write_preview_is_one_sided_diff() {
         let p = format_write_preview("src/a.rs", "fn main() {}\n");
         assert!(p.contains("Wrote src/a.rs"));
         assert!(p.contains("+fn main() {}"));
         assert!(looks_like_diff(&p));
         assert_eq!(preview_file_path(&p), Some("src/a.rs"));
+        assert!(p.contains("   1|+fn main() {}"), "{p}");
     }
 
     #[test]
@@ -298,5 +435,12 @@ mod tests {
         assert!(!looks_like_diff("- only removals\n- more"));
         assert!(!looks_like_diff("hello\nworld"));
         assert!(looks_like_diff("diff --git a/x b/x\n"));
+    }
+
+    #[test]
+    fn first_line_number_counts_newlines() {
+        let hay = "a\nb\nc\n";
+        assert_eq!(first_line_number(hay, "c"), Some(3));
+        assert_eq!(first_line_number(hay, "a"), Some(1));
     }
 }

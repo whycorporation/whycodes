@@ -4,7 +4,7 @@ use serde_json::json;
 use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
-use whycode_format::diff::format_edit_preview;
+use whycode_format::diff::{first_line_number, format_edit_preview_at};
 
 pub struct EditTool;
 
@@ -92,14 +92,16 @@ impl Tool for EditTool {
                         };
                     }
                     let modified = original.replace(old_string, new_string);
+                    let start = first_line_number(&original, old_string);
                     match std::fs::write(&full_path, &modified) {
                         Ok(_) => ToolResult {
                             tool_call_id: String::new(),
-                            content: format_edit_preview(
+                            content: format_edit_preview_at(
                                 &shown,
                                 old_string,
                                 new_string,
                                 count,
+                                start,
                             ),
                             is_error: false,
                         },
@@ -128,14 +130,16 @@ impl Tool for EditTool {
                         }
                     } else {
                         let modified = original.replacen(old_string, new_string, 1);
+                        let start = first_line_number(&original, old_string);
                         match std::fs::write(&full_path, &modified) {
                             Ok(_) => ToolResult {
                                 tool_call_id: String::new(),
-                                content: format_edit_preview(
+                                content: format_edit_preview_at(
                                     &shown,
                                     old_string,
                                     new_string,
                                     1,
+                                    start,
                                 ),
                                 is_error: false,
                             },

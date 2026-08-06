@@ -17,7 +17,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
-use whycode_format::diff::looks_like_diff;
+use whycode_format::diff::{looks_like_diff, parse_diff_line};
 use whycode_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
@@ -934,10 +934,10 @@ fn diff_stat(content: &str) -> (usize, usize) {
         if line.starts_with("+++") || line.starts_with("---") {
             continue;
         }
-        if line.starts_with('+') {
-            add += 1;
-        } else if line.starts_with('-') {
-            del += 1;
+        match parse_diff_line(line).marker {
+            Some('+') => add += 1,
+            Some('-') => del += 1,
+            _ => {}
         }
     }
     (add, del)
@@ -1267,13 +1267,28 @@ fn tool_result_diff(
             Span::styled("┃ ".to_string(), paint(rail_color, false)),
         ];
 
-        // Grok-style: whole +/− line is green/red (marker + body). Do not
-        // overlay syntect colours — they washed out add/remove into plain code.
-        let (marker, body) = split_diff_marker(line);
-        if let Some(m) = marker {
+        // Grok-style: line number + marker + body all green/red.
+        // Format: `  12|-body` or bare `+body`.
+        let parts = parse_diff_line(line);
+        if let Some(m) = parts.marker {
+            // Leading pad (spaces before digits) shares the wash bg.
+            if !parts.line_no_pad.is_empty() {
+                spans.push(Span::styled(
+                    parts.line_no_pad.to_string(),
+                    paint(body_color, false),
+                ));
+            }
+            if let Some(no) = parts.line_no {
+                spans.push(Span::styled(no.to_string(), paint(body_color, true)));
+                // Separator between number and +/- (present in edit/write previews).
+                spans.push(Span::styled("|".to_string(), paint(body_color, false)));
+            }
             spans.push(Span::styled(m.to_string(), paint(body_color, true)));
-            let body_budget = text_w.saturating_sub(1).max(1);
-            let body_shown = hard_truncate_line(body, body_budget);
+            let used = parts.line_no_pad.chars().count()
+                + parts.line_no.map(|s| s.chars().count() + 1).unwrap_or(0)
+                + 1;
+            let body_budget = text_w.saturating_sub(used).max(1);
+            let body_shown = hard_truncate_line(parts.body, body_budget);
             spans.push(Span::styled(body_shown, paint(body_color, false)));
         } else {
             let shown = hard_truncate_line(line, text_w);
@@ -1311,33 +1326,22 @@ fn diff_line_kind(line: &str, is_error: bool) -> DiffPaint {
         return DiffPaint::Error;
     }
     if line.starts_with("+++") || line.starts_with("---") {
-        DiffPaint::FileHeader
-    } else if line.starts_with("@@") || line.starts_with("diff --git") {
-        DiffPaint::Hunk
-    } else if line.starts_with('+') {
-        DiffPaint::Add
-    } else if line.starts_with('-') {
-        DiffPaint::Remove
-    } else if line.starts_with("Edited ")
+        return DiffPaint::FileHeader;
+    }
+    if line.starts_with("@@") || line.starts_with("diff --git") {
+        return DiffPaint::Hunk;
+    }
+    if line.starts_with("Edited ")
         || line.starts_with("Wrote ")
         || line.starts_with('…')
         || line.starts_with("(empty")
     {
-        DiffPaint::Meta
-    } else {
-        DiffPaint::Context
+        return DiffPaint::Meta;
     }
-}
-
-/// Split a unified / preview line into optional `+/-` marker and body.
-fn split_diff_marker(line: &str) -> (Option<char>, &str) {
-    if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
-        return (None, line);
-    }
-    let mut chars = line.chars();
-    match chars.next() {
-        Some(c @ ('+' | '-')) => (Some(c), chars.as_str()),
-        _ => (None, line),
+    match parse_diff_line(line).marker {
+        Some('+') => DiffPaint::Add,
+        Some('-') => DiffPaint::Remove,
+        _ => DiffPaint::Context,
     }
 }
 
@@ -1612,7 +1616,7 @@ mod tests {
     #[test]
     fn tool_result_diff_paints_add_remove_colours() {
         let palette = ThemeName::DefaultDark.palette();
-        let body = "Edited src/main.rs\n\n-old\n+new\n";
+        let body = "Edited src/main.rs\n\n  12|-old\n  12|+new\n";
         let lines = tool_result(body, false, &palette, false, ToolOutHint::Diff, 80);
         let add = lines
             .iter()
@@ -1642,6 +1646,17 @@ mod tests {
             .expect("- body");
         assert_eq!(add_body.style.fg, Some(palette.diff_add));
         assert_eq!(rem_body.style.fg, Some(palette.diff_remove));
+        // Left line numbers also green/red.
+        let line_nos: Vec<_> = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter(|s| s.content.as_ref() == "12")
+            .collect();
+        assert_eq!(line_nos.len(), 2, "expected two line-number spans");
+        assert!(line_nos.iter().any(|s| s.style.fg == Some(palette.diff_add)));
+        assert!(line_nos
+            .iter()
+            .any(|s| s.style.fg == Some(palette.diff_remove)));
     }
 
     #[test]

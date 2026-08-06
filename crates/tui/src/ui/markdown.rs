@@ -216,13 +216,14 @@ fn render_diff_code(
     let body_w = max_width.map(|w| w.saturating_sub(2).max(8));
 
     for raw in lines {
+        let parts = whycode_format::diff::parse_diff_line(raw);
         let (fg, bg, bold) = if raw.starts_with("+++") || raw.starts_with("---") {
             (palette.fg, None, false)
         } else if raw.starts_with("@@") || raw.starts_with("diff --git") {
             (palette.diff_hunk, None, false)
-        } else if raw.starts_with('+') {
+        } else if parts.marker == Some('+') {
             (palette.diff_add, Some(add_bg), true)
-        } else if raw.starts_with('-') {
+        } else if parts.marker == Some('-') {
             (palette.diff_remove, Some(rem_bg), true)
         } else {
             (palette.dim, None, false)
@@ -235,6 +236,7 @@ fn render_diff_code(
         if bold {
             style = style.add_modifier(Modifier::BOLD);
         }
+        // Paint whole line (incl. left line numbers) in green/red.
         let body = Span::styled(raw.clone(), style);
         let rows = match body_w {
             Some(w) => wrap_spans(vec![body], w as u16),
