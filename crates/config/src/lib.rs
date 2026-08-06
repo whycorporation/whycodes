@@ -106,10 +106,12 @@ pub struct Config {
     pub swarm: SwarmConfig,
 }
 
-/// Concurrent multi-agent work on one checkout (`swarm` tool).
+/// Concurrent multi-agent work (`swarm` tool).
 ///
-/// Workers share a file-claim registry: the second agent to write a path is
-/// blocked and the TUI shows a conflict toast.
+/// When `worktrees` is on (default) and the project is a git repo, each worker
+/// runs in a detached git worktree under `.whycode/swarm/`. Changes merge back
+/// into the main checkout with three-way conflict detection. File claims still
+/// gate same-checkout mode and pre-declared path ownership.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SwarmConfig {
     /// Advertise and run the `swarm` tool. Default on.
@@ -118,6 +120,10 @@ pub struct SwarmConfig {
     /// Max concurrent workers (hard-capped at 8 in the agent). Default 4.
     #[serde(default = "default_swarm_max_agents")]
     pub max_agents: usize,
+    /// Isolate writers in git worktrees (default on). Falls back to same-checkout
+    /// + file claims when the project is not a git repo.
+    #[serde(default = "default_true")]
+    pub worktrees: bool,
 }
 
 fn default_swarm_max_agents() -> usize {
@@ -129,6 +135,7 @@ impl Default for SwarmConfig {
         Self {
             enabled: true,
             max_agents: default_swarm_max_agents(),
+            worktrees: true,
         }
     }
 }
@@ -1133,6 +1140,13 @@ impl Config {
         {
             self.swarm.max_agents = n.clamp(1, 8);
         }
+        if let Ok(val) = std::env::var("WHYCODE_SWARM_WORKTREES") {
+            match val.to_ascii_lowercase().as_str() {
+                "0" | "false" | "no" | "off" => self.swarm.worktrees = false,
+                "1" | "true" | "yes" | "on" => self.swarm.worktrees = true,
+                _ => {}
+            }
+        }
     }
 
     // ── Merging ─────────────────────────────────────────────────────────
@@ -1413,6 +1427,9 @@ impl Config {
         }
         if other.swarm.max_agents != default_swarm_max_agents() {
             merged.swarm.max_agents = other.swarm.max_agents;
+        }
+        if !other.swarm.worktrees {
+            merged.swarm.worktrees = false;
         }
 
         merged

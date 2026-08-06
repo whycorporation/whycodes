@@ -2,17 +2,18 @@
 
 **Status:** partial (2026-08-07) · was dropped 2026-07-31 · **Depends on:** 1, 6 · **Blocks:** nothing
 
-**2026-08-07 update:** A lightweight swarm shipped without worktrees:
+**2026-08-07 update:** Lightweight swarm + worktree isolation shipped:
 
 - `swarm` tool (parallel subagents, max 8, config `[swarm]`)
-- In-process `FileClaimRegistry` on `write` / `edit` / `apply_patch`
-- `TurnEvent::FileConflict` → TUI warning toast (conflict notify)
+- Git worktrees under `.whycode/swarm/<run>/worker-N` (`swarm.worktrees = true`)
+- Three-way merge back into main; conflicts toast as `FileConflict`
+- In-process `FileClaimRegistry` for same-checkout mode / pre-claims
 - Long worker reports get a synthetic `TLDR:` when over 2k chars
 
-Still out: git worktrees, full concurrent-agent TUI panel, automatic
-decomposition. The original drop rationale below still applies for *full*
-coordination machinery on small repos; the lightweight path is for wide
-disjoint work when the primary agent chooses to fan out.
+Still out: full concurrent-agent TUI panel, automatic decomposition. The
+original drop rationale below still applies for over-engineering on tiny
+repos; the lightweight path is for wide disjoint work when the primary
+agent chooses to fan out.
 
 ---
 

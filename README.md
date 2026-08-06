@@ -240,7 +240,7 @@ removes the exported files.
 
 Primary agents run the main conversation and are switched with `Ctrl+T` or
 `/agent`. Subagents are spawned by the `task` tool for scoped work (or `swarm`
-for parallel workers with file-claim conflict notify) and report
+for parallel workers in git worktrees with merge + conflict notify) and report
 back to the primary agent.
 
 | Agent | Mode | Role |

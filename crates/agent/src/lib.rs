@@ -8,6 +8,7 @@ pub mod question;
 pub mod routing;
 pub mod subagent;
 pub mod swarm;
+pub mod swarm_worktree;
 #[cfg(test)]
 mod tests;
 pub mod title;

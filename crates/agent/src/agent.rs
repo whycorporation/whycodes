@@ -179,6 +179,8 @@ pub struct Agent {
     /// Parallel multi-agent swarm (config-driven).
     swarm_enabled: bool,
     swarm_max_agents: usize,
+    /// Isolate workers in git worktrees when the project is a repo.
+    swarm_worktrees: bool,
 }
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
@@ -234,6 +236,7 @@ impl Agent {
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
             swarm_enabled: true,
             swarm_max_agents: 4,
+            swarm_worktrees: true,
         }
     }
 
@@ -284,6 +287,7 @@ impl Agent {
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config.swarm.max_agents.clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS);
+        self.swarm_worktrees = config.swarm.worktrees;
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -296,6 +300,7 @@ impl Agent {
             intent_guidance = ?self.intent_guidance,
             swarm_enabled = self.swarm_enabled,
             swarm_max_agents = self.swarm_max_agents,
+            swarm_worktrees = self.swarm_worktrees,
             "shell sandbox, network policy, and hooks"
         );
         self
@@ -1395,7 +1400,7 @@ impl Agent {
         result
     }
 
-    /// Execute the `swarm` tool: parallel subagents + file-claim conflict notify.
+    /// Execute the `swarm` tool: parallel subagents + file-claim / worktree isolation.
     async fn execute_swarm_tool(
         &self,
         call: &ToolCall,
@@ -1440,6 +1445,18 @@ impl Agent {
             .min(specs.len())
             .max(1);
 
+        // Worktrees when configured and project is a git repo; else same-checkout + claims.
+        let repo_root = crate::swarm_worktree::git_toplevel(&session.project_path)
+            .unwrap_or_else(|| session.project_path.clone());
+        let use_worktrees = self.swarm_worktrees
+            && crate::swarm_worktree::is_git_repo(&session.project_path);
+        let run_id = format!(
+            "{}-{}",
+            &session.id.chars().take(8).collect::<String>(),
+            chrono::Utc::now().format("%H%M%S")
+        );
+        let swarm_run_dir = crate::swarm_worktree::run_dir(&repo_root, &run_id);
+
         let claims = FileClaimRegistry::new();
         if let Some(tx) = events {
             let tx = tx.clone();
@@ -1454,16 +1471,25 @@ impl Agent {
 
         let wall_t0 = Instant::now();
         let total = specs.len();
+        let mode_label = if use_worktrees {
+            "worktrees"
+        } else if self.swarm_worktrees {
+            "same-checkout (not a git repo)"
+        } else {
+            "same-checkout (worktrees off)"
+        };
         emit(
             &events.cloned(),
             TurnEvent::SwarmStatus {
                 active: 0,
                 total,
-                message: format!("Starting swarm: {total} workers (max {max_concurrent} concurrent)…"),
+                message: format!(
+                    "Starting swarm: {total} workers, {mode_label}, max {max_concurrent} concurrent…"
+                ),
             },
         );
 
-        // Pre-claim optional paths so conflicts surface before work starts.
+        // Pre-claim optional paths (logical ownership for merge / same-checkout).
         for (i, spec) in specs.iter().enumerate() {
             let worker_id = format!("worker-{i}");
             let label = format!("{worker_id}/{}", spec.subagent_type);
@@ -1471,6 +1497,7 @@ impl Agent {
                 let full = if std::path::Path::new(rel).is_absolute() {
                     std::path::PathBuf::from(rel)
                 } else {
+                    // Claim against main checkout paths so ownership is shared across worktrees.
                     session.project_path.join(rel)
                 };
                 match claims.try_claim(&worker_id, &label, &full) {
@@ -1511,6 +1538,8 @@ impl Agent {
         let memory = self.memory.clone();
         let parent_permission = self.info.permission.clone();
         let agents_md_path = session.project_path.clone();
+        let repo_root_arc = repo_root.clone();
+        let swarm_run_dir = swarm_run_dir.clone();
 
         let mut handles = Vec::with_capacity(specs.len());
 
@@ -1531,6 +1560,8 @@ impl Agent {
             let project_path = project_path.clone();
             let agents_md_path = agents_md_path.clone();
             let events_tx = events.cloned();
+            let repo_root = repo_root_arc.clone();
+            let swarm_run_dir = swarm_run_dir.clone();
 
             handles.push(tokio::spawn(async move {
                 let _guard = match permit.acquire().await {
@@ -1553,6 +1584,31 @@ impl Agent {
                         message: format!("Swarm {label}: running…"),
                     });
                 }
+
+                // Optional isolated checkout.
+                let mut worktree = None;
+                let worker_cwd = if use_worktrees {
+                    let dest = swarm_run_dir.join(&worker_id);
+                    match crate::swarm_worktree::create_worktree(&repo_root, &dest, &worker_id) {
+                        Ok(wt) => {
+                            let path = wt.path.clone();
+                            worktree = Some(wt);
+                            path
+                        }
+                        Err(e) => {
+                            return (
+                                worker_id,
+                                spec.subagent_type,
+                                spec.goal,
+                                false,
+                                0.0,
+                                format!("Failed to create git worktree: {e}"),
+                            );
+                        }
+                    }
+                } else {
+                    project_path.clone()
+                };
 
                 let (permission, system_prompt) = match spec.subagent_type.as_str() {
                     "explore" | "scout" => (
@@ -1604,19 +1660,14 @@ impl Agent {
                     }
                 };
 
-                let mut info = AgentInfo {
-                    name: spec.subagent_type.clone(),
-                    description: format!("Swarm worker {worker_id}"),
-                    mode: AgentMode::Subagent,
-                    permission,
-                    model: None,
-                    system_prompt: Some(Agent::with_agents_md(&system_prompt, &agents_md_path)),
-                    temperature: None,
-                    top_p: None,
+                let isolation_note = if worktree.is_some() {
+                    "\n\nYou are running in an isolated git worktree. Edit freely; \
+                     changes merge back into the main checkout when you finish. \
+                     Prefer staying within your assigned paths."
+                        .to_string()
+                } else {
+                    String::new()
                 };
-                // Keep name as type for memory banks; label is separate for claims.
-                let _ = &mut info;
-
                 let claim_note = if spec.paths.is_empty() {
                     String::new()
                 } else {
@@ -1626,10 +1677,25 @@ impl Agent {
                         spec.paths.join(", ")
                     )
                 };
-                let context = match spec.context {
-                    Some(c) => Some(format!("{c}{claim_note}")),
-                    None if claim_note.is_empty() => None,
-                    None => Some(claim_note.trim().to_string()),
+                let context = {
+                    let extra = format!("{isolation_note}{claim_note}");
+                    match spec.context {
+                        Some(c) if extra.is_empty() => Some(c),
+                        Some(c) => Some(format!("{c}{extra}")),
+                        None if extra.is_empty() => None,
+                        None => Some(extra.trim().to_string()),
+                    }
+                };
+
+                let info = AgentInfo {
+                    name: spec.subagent_type.clone(),
+                    description: format!("Swarm worker {worker_id}"),
+                    mode: AgentMode::Subagent,
+                    permission,
+                    model: None,
+                    system_prompt: Some(Agent::with_agents_md(&system_prompt, &agents_md_path)),
+                    temperature: None,
+                    top_p: None,
                 };
 
                 let task = SubagentTask {
@@ -1639,50 +1705,80 @@ impl Agent {
                     max_turns: spec.max_turns,
                 };
 
-                let runner = SubagentRunner::new(
+                // File claims apply in same-checkout mode; with worktrees,
+                // physical isolation holds during the run and merge does 3-way.
+                let mut runner = SubagentRunner::new(
                     registry,
                     executor,
                     info,
-                    project_path,
+                    worker_cwd,
                     sandbox,
                     network,
                 )
-                .with_memory(memory)
-                .with_file_claims(claims.clone(), worker_id.clone(), label.clone());
+                .with_memory(memory);
+                if !use_worktrees {
+                    runner = runner.with_file_claims(
+                        claims.clone(),
+                        worker_id.clone(),
+                        label.clone(),
+                    );
+                }
 
                 let t0 = Instant::now();
                 let result = runner.run(task, &pn, &m, &ak).await;
                 let secs = t0.elapsed().as_secs_f64();
                 claims.release_agent(&worker_id);
 
-                match result {
-                    Ok(r) => (
-                        worker_id,
-                        spec.subagent_type,
-                        spec.goal,
-                        r.success,
-                        secs,
-                        r.output,
-                    ),
-                    Err(e) => (
-                        worker_id,
-                        spec.subagent_type,
-                        spec.goal,
-                        false,
-                        secs,
-                        format!("Swarm worker error: {e}"),
-                    ),
+                let (mut success, mut body) = match result {
+                    Ok(r) => (r.success, r.output),
+                    Err(e) => (false, format!("Swarm worker error: {e}")),
+                };
+
+                if let Some(wt) = worktree {
+                    let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
+                    for c in &merge.conflicts {
+                        if let Some(ref tx) = events_tx {
+                            let _ = tx.send(TurnEvent::FileConflict {
+                                path: c.path.clone(),
+                                claimant: label.clone(),
+                                owner: "main".into(),
+                            });
+                        }
+                    }
+                    if !merge.conflicts.is_empty() {
+                        success = false;
+                    }
+                    let merge_txt = crate::swarm_worktree::format_merge_report(&merge);
+                    if !merge_txt.is_empty() {
+                        body = format!("{body}\n\n{merge_txt}");
+                    }
+                    if let Err(e) = crate::swarm_worktree::remove_worktree(&wt) {
+                        body = format!("{body}\n\n_Worktree cleanup warning: {e}_");
+                    }
                 }
+
+                (
+                    worker_id,
+                    spec.subagent_type,
+                    spec.goal,
+                    success,
+                    secs,
+                    body,
+                )
             }));
         }
 
         let mut sections = Vec::with_capacity(handles.len());
         let mut ok = 0usize;
+        let mut merge_conflicts = 0usize;
         for handle in handles {
             match handle.await {
                 Ok((id, kind, goal, success, secs, body)) => {
                     if success {
                         ok += 1;
+                    }
+                    if body.contains("**Merge conflicts:**") {
+                        merge_conflicts += 1;
                     }
                     sections.push(crate::swarm::format_worker_report(
                         &id, &kind, success, secs, &goal, &body,
@@ -1695,25 +1791,29 @@ impl Agent {
         }
 
         claims.clear();
+        // Best-effort prune empty swarm run dir.
+        let _ = std::fs::remove_dir_all(&swarm_run_dir);
+
         let wall = wall_t0.elapsed().as_secs_f64();
         emit(
             &events.cloned(),
             TurnEvent::SwarmStatus {
                 active: 0,
                 total,
-                message: format!("Swarm done: {ok}/{total} ok in {wall:.1}s"),
+                message: format!(
+                    "Swarm done: {ok}/{total} ok in {wall:.1}s ({mode_label}{})",
+                    if merge_conflicts > 0 {
+                        format!(", {merge_conflicts} merge conflict(s)")
+                    } else {
+                        String::new()
+                    }
+                ),
             },
         );
 
         let mut report = crate::swarm::format_swarm_header(total, ok, wall);
-        report.push('\n');
+        report.push_str(&format!("\n_isolation: {mode_label}_\n\n"));
         report.push_str(&sections.join("\n"));
-
-        let claim_snap = claims.snapshot();
-        if !claim_snap.is_empty() {
-            // cleared above; left for completeness if release missed anything
-        }
-        let _ = claim_snap;
 
         ToolResult {
             tool_call_id: call.id.clone(),

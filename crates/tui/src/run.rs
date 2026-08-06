@@ -2799,8 +2799,8 @@ fn session_details(
         out.push_str("  model_fast: (auto small sibling on trivial chat)\n");
     }
     out.push_str(&format!(
-        "  swarm:     enabled={} max_agents={}\n",
-        config.swarm.enabled, config.swarm.max_agents
+        "  swarm:     enabled={} max_agents={} worktrees={}\n",
+        config.swarm.enabled, config.swarm.max_agents, config.swarm.worktrees
     ));
 
     if usage.is_empty() {

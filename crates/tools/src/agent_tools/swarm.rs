@@ -29,10 +29,11 @@ impl Tool for SwarmTool {
 
     fn description(&self) -> &str {
         "Run several subagents in parallel on independent units of work. \
-         Each worker claims files it writes; a second worker that touches the \
-         same path is blocked and the user is notified (conflict notify). \
-         Prefer for wide audits or mechanical migrations across disjoint paths. \
-         For a single investigation use `task` instead."
+         In a git repo each worker gets an isolated worktree under `.whycode/swarm/`; \
+         changes three-way-merge back into the main checkout (conflicts toast). \
+         Without git (or with worktrees off), workers share the checkout and file \
+         claims block double-writes. Prefer for wide audits or mechanical migrations \
+         across disjoint paths. For a single investigation use `task` instead."
     }
 
     fn parameters(&self) -> serde_json::Value {

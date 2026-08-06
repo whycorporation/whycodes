@@ -110,7 +110,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Built-in explore / scout | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ minimal | ⚠️ |
 | Özel agent tanımları | ✅ config | ✅ | ✅ | ✅ | ✅ | ⚠️ AGENTS.md | ⚠️ GEMINI.md | ✅ extensions | ✅ rules/agents |
 | Parallel multi-session | ❌ | ⚠️ | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅★ cloud fan-out |
-| Swarm + conflict notify | ✅ `swarm` + file claims | ❌ | ❌ | ✅★ | ⚠️ teams | ❌ | ❌ | ❌ | ⚠️ |
+| Swarm + conflict notify | ✅ worktrees + claims | ❌ | ❌ | ✅★ | ⚠️ teams | ❌ | ❌ | ❌ | ⚠️ |
 | Max turns / loop guard | ✅★ doom-loop | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
 ---
@@ -262,7 +262,7 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 |---|---|---|
 | OAuth / subscription login | jcode, OC, CC, Grok, Codex, Gemini, Pi `/login`, Cursor | [plan-oauth](plan-oauth.md) |
 | Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [plan-memory](plan-memory.md) |
-| Swarm | jcode★ / whycode `swarm` | file claims + toast (no worktrees) |
+| Swarm | jcode★ / whycode `swarm` | git worktrees + 3-way merge + claims toast |
 | Browser automation | jcode, Claude, Cursor★ | Yok |
 | Desktop / IDE | OpenCode, Claude, Codex app/IDE, **Cursor★** | `web` + `acp` stub |
 | Plugin marketplace | Grok, OpenCode, Cursor, Gemini ext, Pi packages | Config hooks ✅ |
