@@ -90,6 +90,16 @@ fn truncate_permission_detail(s: &str) -> String {
     format!("{kept}…")
 }
 
+/// Worktree names: short, no path separators / traversal.
+fn is_safe_worktree_name(name: &str) -> bool {
+    let name = name.trim();
+    if name.is_empty() || name.len() > 64 {
+        return false;
+    }
+    name.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 #[cfg(test)]
 mod permission_detail_tests {
     use super::{format_permission_detail, format_shell_risk_detail};
@@ -132,6 +142,8 @@ const SERIAL_TOOLS: &[&str] = &[
     "swarm",
     "bg",
     "schedule",
+    "tool_search",
+    "worktree",
     "plan",
     "question",
     "code_mode",
@@ -189,7 +201,14 @@ pub struct Agent {
     event_sink: Option<EventSink>,
     /// Max concurrent background jobs.
     max_background_jobs: usize,
+    /// Deferred tools activated via `tool_search` for this agent session.
+    activated_tools: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Optional tool cwd override (`worktree enter`).
+    cwd_override: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
 }
+
+/// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
+const MAX_CONSECUTIVE_COMPACT_FAILURES: u32 = 3;
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
 const DOOM_LOOP_THRESHOLD: usize = 3;
@@ -248,6 +267,8 @@ impl Agent {
             background: crate::background::BackgroundRegistry::default(),
             event_sink: None,
             max_background_jobs: crate::background::DEFAULT_MAX_BACKGROUND_JOBS,
+            activated_tools: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            cwd_override: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -373,8 +394,15 @@ impl Agent {
         if !self.info.permission.allow_network {
             sandbox.network = false;
         }
+        let working_dir = self
+            .cwd_override
+            .lock()
+            .ok()
+            .and_then(|g| g.clone())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| session.project_path.to_string_lossy().to_string());
         ToolContext {
-            working_dir: session.project_path.to_string_lossy().to_string(),
+            working_dir,
             session_id: Some(session.id.clone()),
             sandbox,
             network: self.network.clone(),
@@ -382,6 +410,23 @@ impl Agent {
             agent_id: None,
             agent_label: None,
         }
+    }
+
+    /// Snapshot of tools activated via `tool_search`.
+    pub fn activated_tools_snapshot(&self) -> Vec<String> {
+        self.activated_tools
+            .lock()
+            .map(|g| {
+                let mut v: Vec<_> = g.iter().cloned().collect();
+                v.sort();
+                v
+            })
+            .unwrap_or_default()
+    }
+
+    /// Active tool cwd (worktree enter), if any.
+    pub fn cwd_override_path(&self) -> Option<std::path::PathBuf> {
+        self.cwd_override.lock().ok().and_then(|g| g.clone())
     }
 
     /// Connect MCP servers from config and register their tools on a fresh executor.
@@ -672,20 +717,6 @@ impl Agent {
                     )
             });
 
-        let tools = if tools_free_chat {
-            tracing::debug!("trivial chat — omitting tools from request for TTFT");
-            Vec::new()
-        } else {
-            let mut defs = self
-                .tool_executor
-                .get_definitions_profile(&self.info.permission, self.tool_profile);
-            // Hide swarm when disabled so the model does not invent fan-out.
-            if !self.swarm_enabled {
-                defs.retain(|d| d.name != "swarm");
-            }
-            defs
-        };
-
         // Classify once per user turn (zero LLM cost): badge, posture, tool auth.
         let turn_intent = crate::intent::classify_user_intent(&last_user);
         {
@@ -715,8 +746,6 @@ impl Agent {
             );
         }
 
-        let tool_ctx = self.tool_context(session);
-
         let provider = self
             .provider_registry
             .get(provider_name)
@@ -734,8 +763,27 @@ impl Agent {
         let mut ttft_ms: Option<u128> = None;
         // Recent tool signatures for OpenCode-style doom-loop detection.
         let mut recent_tool_sigs: VecDeque<String> = VecDeque::with_capacity(8);
+        // Autocompact circuit breaker: stop retrying after N ineffective passes.
+        let mut compact_failures: u32 = 0;
+        let mut compact_paused = false;
 
         loop {
+            // Rebuild each step so tool_search activations and worktree cwd apply.
+            let tools = if tools_free_chat {
+                Vec::new()
+            } else {
+                let extra = self.activated_tools_snapshot();
+                let mut defs = self.tool_executor.get_definitions_profile_extra(
+                    &self.info.permission,
+                    self.tool_profile,
+                    &extra,
+                );
+                if !self.swarm_enabled {
+                    defs.retain(|d| d.name != "swarm");
+                }
+                defs
+            };
+            let tool_ctx = self.tool_context(session);
             if is_cancelled(&cancel) {
                 emit(&events, TurnEvent::Cancelled);
                 return Err(whycode_core::Error::Agent("Cancelled".into()));
@@ -750,28 +798,53 @@ impl Agent {
             }
 
             // Always shrink oversized / old tool dumps before prefill (cheap).
-            // Full compact only when over the configured token threshold.
+            // Full compact only when over the configured token threshold — and
+            // only while the circuit breaker has not tripped.
             let _ = session.truncate_large_tool_results();
             let _ = session.prune_old_tool_results();
-            if self.compaction_threshold > 0 {
+            if self.compaction_threshold > 0 && !compact_paused {
                 let before = session.token_count();
                 if before > self.compaction_threshold {
-                    let n_before = session.messages.len();
-                    session.compact(self.compaction_threshold);
-                    let n_after = session.messages.len();
-                    if n_after < n_before {
+                    let outcome = session.compact(self.compaction_threshold);
+                    if outcome.reduced() {
                         emit(
                             &events,
                             TurnEvent::Status(format!(
-                                "Compacted context ({n_before} → {n_after} msgs)…"
+                                "Compacted context ({} → {} msgs, ~{} → ~{} tok)…",
+                                outcome.messages_before,
+                                outcome.messages_after,
+                                outcome.tokens_before,
+                                outcome.tokens_after
                             )),
                         );
                         tracing::info!(
-                            before_tokens = before,
-                            messages_before = n_before,
-                            messages_after = n_after,
+                            before_tokens = outcome.tokens_before,
+                            after_tokens = outcome.tokens_after,
+                            messages_before = outcome.messages_before,
+                            messages_after = outcome.messages_after,
                             "auto-compact before LLM step"
                         );
+                    }
+                    if outcome.still_over(self.compaction_threshold) {
+                        compact_failures = compact_failures.saturating_add(1);
+                        if compact_failures >= MAX_CONSECUTIVE_COMPACT_FAILURES {
+                            compact_paused = true;
+                            emit(
+                                &events,
+                                TurnEvent::Status(format!(
+                                    "Auto-compact paused after {MAX_CONSECUTIVE_COMPACT_FAILURES} \
+                                     passes (~{} tok still over threshold)",
+                                    outcome.tokens_after
+                                )),
+                            );
+                            tracing::warn!(
+                                failures = compact_failures,
+                                tokens = outcome.tokens_after,
+                                "autocompact circuit breaker tripped"
+                            );
+                        }
+                    } else {
+                        compact_failures = 0;
                     }
                 }
             }
@@ -1288,6 +1361,7 @@ impl Agent {
         // Shell commands (and `schedule` with a delayed shell payload) are gated
         // on what the command would destroy. The permission map below only sees
         // the tool name, so on its own `allow` would run anything the model emits.
+        // Shell-scoped rules (`bash(git *)`) can skip or force prompts for Safe cmds.
         let mut risk_confirmed = false;
         let scheduled_shell = (tc.name == "schedule")
             .then(|| {
@@ -1331,6 +1405,45 @@ impl Agent {
                         };
                     }
                     risk_confirmed = true;
+                }
+            }
+
+            // Shell-scoped permission rules (Claude Code `Bash(git *)` spirit).
+            if let Some(shell_act) = self.info.permission.action_for_shell(command) {
+                match shell_act {
+                    PermissionAction::Deny => {
+                        return ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!(
+                                "Permission denied for shell command by rule matching `{command}`."
+                            ),
+                            is_error: true,
+                        };
+                    }
+                    PermissionAction::Allow => {
+                        // Safe path only: skip further tool-level Ask when risk allowed.
+                        // Destructive Confirm already handled above.
+                        if matches!(decide(&assessment, self.risk_threshold), Decision::Allow) {
+                            risk_confirmed = true;
+                        }
+                    }
+                    PermissionAction::Ask if !risk_confirmed => {
+                        let detail = format!(
+                            "Shell rule requires confirmation\n\nCommand:\n{command}"
+                        );
+                        if !self.permission_prompter.ask(&tc.name, &detail).await {
+                            return ToolResult {
+                                tool_call_id: tc.id.clone(),
+                                content: format!(
+                                    "User denied permission for tool '{}'.",
+                                    tc.name
+                                ),
+                                is_error: true,
+                            };
+                        }
+                        risk_confirmed = true;
+                    }
+                    PermissionAction::Ask => {}
                 }
             }
         }
@@ -1439,6 +1552,10 @@ impl Agent {
             self.execute_bg_tool(tc)
         } else if tc.name == "schedule" {
             self.execute_schedule_tool(tc, tool_ctx, events).await
+        } else if tc.name == "tool_search" {
+            self.execute_tool_search(tc)
+        } else if tc.name == "worktree" {
+            self.execute_worktree_tool(tc, session)
         } else if (tc.name == "bash" || tc.name == "shell")
             && tc
                 .arguments
@@ -1638,6 +1755,331 @@ impl Agent {
             other => ToolResult {
                 tool_call_id: call.id.clone(),
                 content: format!("unknown bg action `{other}` (list|read|kill)"),
+                is_error: true,
+            },
+        }
+    }
+
+    fn execute_tool_search(&self, call: &ToolCall) -> ToolResult {
+        let action = call
+            .arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("search");
+        let query = call
+            .arguments
+            .get("query")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let max = call
+            .arguments
+            .get("max_results")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(8)
+            .clamp(1, 40) as usize;
+
+        let catalog = self.tool_executor.deferred_catalog(&self.info.permission);
+        let activated = self.activated_tools_snapshot();
+
+        match action {
+            "list" => {
+                let mut lines = vec![format!(
+                    "Activated ({}): {}",
+                    activated.len(),
+                    if activated.is_empty() {
+                        "(none)".into()
+                    } else {
+                        activated.join(", ")
+                    }
+                )];
+                lines.push(format!("Deferred catalogue ({}):", catalog.len()));
+                for (name, desc) in catalog.iter().take(40) {
+                    let active = if activated.iter().any(|a| a == name) {
+                        " [on]"
+                    } else {
+                        ""
+                    };
+                    let short: String = desc.chars().take(72).collect();
+                    lines.push(format!("- {name}{active} — {short}"));
+                }
+                if catalog.len() > 40 {
+                    lines.push(format!("…and {} more", catalog.len() - 40));
+                }
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: lines.join("\n"),
+                    is_error: false,
+                }
+            }
+            "select" => {
+                if query.is_empty() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "tool_search select requires `query` (tool name or comma list)"
+                            .into(),
+                        is_error: true,
+                    };
+                }
+                let names: Vec<String> = query
+                    .split(|c: char| c == ',' || c.is_whitespace())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                let mut added = Vec::new();
+                let mut missing = Vec::new();
+                let mut guard = self.activated_tools.lock().unwrap_or_else(|e| e.into_inner());
+                for name in names {
+                    if self.tool_executor.get(&name).is_some() {
+                        if !ToolProfile::Core.includes(&name) {
+                            guard.insert(name.clone());
+                        }
+                        added.push(name);
+                    } else {
+                        missing.push(name);
+                    }
+                }
+                drop(guard);
+                let mut content = format!(
+                    "Activated for this session: {}\nThey appear on the next LLM step.",
+                    if added.is_empty() {
+                        "(none)".into()
+                    } else {
+                        added.join(", ")
+                    }
+                );
+                if !missing.is_empty() {
+                    content.push_str(&format!("\nUnknown: {}", missing.join(", ")));
+                }
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content,
+                    is_error: !missing.is_empty() && added.is_empty(),
+                }
+            }
+            _ => {
+                if query.is_empty() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "tool_search search requires `query` keywords".into(),
+                        is_error: true,
+                    };
+                }
+                let q = query.to_ascii_lowercase();
+                let terms: Vec<&str> = q.split_whitespace().collect();
+                let mut scored: Vec<(i32, &str, &str)> = catalog
+                    .iter()
+                    .filter_map(|(name, desc)| {
+                        let hay = format!("{name} {desc}").to_ascii_lowercase();
+                        let mut score = 0i32;
+                        for t in &terms {
+                            if name.to_ascii_lowercase() == *t {
+                                score += 10;
+                            } else if name.to_ascii_lowercase().contains(t) {
+                                score += 5;
+                            } else if hay.contains(t) {
+                                score += 2;
+                            }
+                        }
+                        if score > 0 {
+                            Some((score, name.as_str(), desc.as_str()))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+                scored.truncate(max);
+                if scored.is_empty() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: format!(
+                            "No deferred tools match `{query}`. Try action=list for the catalogue."
+                        ),
+                        is_error: false,
+                    };
+                }
+                let mut lines = vec![format!(
+                    "Matches for `{query}` (select with action=select query=<name>):"
+                )];
+                for (_, name, desc) in scored {
+                    let short: String = desc.chars().take(80).collect();
+                    lines.push(format!("- {name} — {short}"));
+                }
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: lines.join("\n"),
+                    is_error: false,
+                }
+            }
+        }
+    }
+
+    fn execute_worktree_tool(&self, call: &ToolCall, session: &Session) -> ToolResult {
+        let action = call
+            .arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let name = call
+            .arguments
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim();
+
+        let root = crate::swarm_worktree::git_toplevel(&session.project_path)
+            .unwrap_or_else(|| session.project_path.clone());
+        let base = root.join(".whycode").join("worktrees");
+
+        match action {
+            "list" => {
+                let mut lines = vec![format!("Worktrees under {}", base.display())];
+                if let Some(cwd) = self.cwd_override_path() {
+                    lines.push(format!("Active cwd override: {}", cwd.display()));
+                }
+                match std::fs::read_dir(&base) {
+                    Ok(rd) => {
+                        let mut names: Vec<_> = rd
+                            .flatten()
+                            .filter(|e| e.path().is_dir())
+                            .map(|e| e.file_name().to_string_lossy().to_string())
+                            .collect();
+                        names.sort();
+                        if names.is_empty() {
+                            lines.push("(none)".into());
+                        } else {
+                            for n in names {
+                                lines.push(format!("- {n}"));
+                            }
+                        }
+                    }
+                    Err(_) => lines.push("(directory missing — create one first)".into()),
+                }
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: lines.join("\n"),
+                    is_error: false,
+                }
+            }
+            "create" => {
+                if name.is_empty() || !is_safe_worktree_name(name) {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "worktree create needs a safe `name` (alnum, -, _)".into(),
+                        is_error: true,
+                    };
+                }
+                if !crate::swarm_worktree::is_git_repo(&root) {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "not a git repository".into(),
+                        is_error: true,
+                    };
+                }
+                let dest = base.join(name);
+                match crate::swarm_worktree::create_worktree(&root, &dest, name) {
+                    Ok(wt) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: format!(
+                            "Created worktree `{name}` at {}\nbase HEAD {}\nUse action=enter name={name} to switch tool cwd.",
+                            wt.path.display(),
+                            wt.base_head
+                        ),
+                        is_error: false,
+                    },
+                    Err(e) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: e,
+                        is_error: true,
+                    },
+                }
+            }
+            "remove" => {
+                if name.is_empty() || !is_safe_worktree_name(name) {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "worktree remove needs a safe `name`".into(),
+                        is_error: true,
+                    };
+                }
+                let dest = base.join(name);
+                if let Ok(mut g) = self.cwd_override.lock()
+                    && g.as_ref().is_some_and(|p| p.starts_with(&dest))
+                {
+                    *g = None;
+                }
+                let wt = crate::swarm_worktree::SwarmWorktree {
+                    path: dest,
+                    repo_root: root,
+                    base_head: String::new(),
+                    worker_id: name.to_string(),
+                };
+                match crate::swarm_worktree::remove_worktree(&wt) {
+                    Ok(()) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: format!("Removed worktree `{name}`"),
+                        is_error: false,
+                    },
+                    Err(e) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: e,
+                        is_error: true,
+                    },
+                }
+            }
+            "enter" => {
+                if name.is_empty() || !is_safe_worktree_name(name) {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "worktree enter needs a safe `name`".into(),
+                        is_error: true,
+                    };
+                }
+                let dest = base.join(name);
+                if !dest.is_dir() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: format!(
+                            "worktree `{name}` not found — create it first ({})",
+                            dest.display()
+                        ),
+                        is_error: true,
+                    };
+                }
+                if let Ok(mut g) = self.cwd_override.lock() {
+                    *g = Some(dest.clone());
+                }
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: format!(
+                        "Tool cwd → {}\nUse action=exit to restore project root.",
+                        dest.display()
+                    ),
+                    is_error: false,
+                }
+            }
+            "exit" => {
+                let prev = self.cwd_override.lock().ok().and_then(|mut g| g.take());
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: match prev {
+                        Some(p) => format!(
+                            "Restored tool cwd to project root (was {})",
+                            p.display()
+                        ),
+                        None => "No worktree cwd override was active.".into(),
+                    },
+                    is_error: false,
+                }
+            }
+            other => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!(
+                    "unknown worktree action `{other}` (create|list|remove|enter|exit)"
+                ),
                 is_error: true,
             },
         }

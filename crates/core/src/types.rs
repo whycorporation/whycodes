@@ -463,6 +463,119 @@ impl PermissionSet {
     pub fn is_tool_allowed(&self, tool_name: &str) -> bool {
         self.action_for(tool_name) != PermissionAction::Deny
     }
+
+    /// Shell-scoped rules: `bash(git *)`, `shell(npm test)`, `Bash(cargo:*)`.
+    ///
+    /// Returns the most specific matching rule (longest pattern wins). Broad
+    /// Allow patterns for interpreters (`python *`, `node:*`, …) are coerced to
+    /// Ask so they cannot silently unlock arbitrary code execution.
+    pub fn action_for_shell(&self, command: &str) -> Option<PermissionAction> {
+        let cmd = command.trim();
+        if cmd.is_empty() {
+            return None;
+        }
+        let mut best: Option<(usize, PermissionAction)> = None;
+        for (pattern, action) in &self.rules {
+            let Some((tool, arg_pat)) = parse_shell_rule(pattern) else {
+                continue;
+            };
+            if tool != "bash" && tool != "shell" {
+                continue;
+            }
+            if !shell_arg_matches(&arg_pat, cmd) {
+                continue;
+            }
+            let mut act = *action;
+            if act == PermissionAction::Allow && is_dangerous_shell_allow_pattern(&arg_pat) {
+                act = PermissionAction::Ask;
+            }
+            let score = arg_pat.len();
+            if best.map(|(s, _)| score >= s).unwrap_or(true) {
+                best = Some((score, act));
+            }
+        }
+        best.map(|(_, a)| a)
+    }
+}
+
+/// Parse `bash(git *)` / `shell(npm test)` → (`bash`, `git *`).
+fn parse_shell_rule(pattern: &str) -> Option<(String, String)> {
+    let pattern = pattern.trim();
+    let open = pattern.find('(')?;
+    let close = pattern.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let tool = pattern[..open].trim().to_ascii_lowercase();
+    if tool != "bash" && tool != "shell" {
+        return None;
+    }
+    let inner = pattern[open + 1..close].trim().to_string();
+    if inner.is_empty() {
+        return None;
+    }
+    Some((tool, inner))
+}
+
+/// Glob-ish match for shell rule payloads. `:` is treated as a separator like
+/// Claude Code's `Bash(git:*)` form.
+fn shell_arg_matches(pat: &str, command: &str) -> bool {
+    let pat = pat.trim().replace(':', " ");
+    let cmd = command.trim();
+    if pat == "*" {
+        return true;
+    }
+    if let Some(prefix) = pat.strip_suffix('*') {
+        let prefix = prefix.trim_end();
+        if prefix.is_empty() {
+            return true;
+        }
+        return cmd == prefix
+            || cmd.starts_with(&format!("{prefix} "))
+            || cmd.starts_with(prefix);
+    }
+    cmd == pat || cmd.starts_with(&format!("{pat} "))
+}
+
+/// Interpreters / shells that turn a broad allow into arbitrary code.
+const DANGEROUS_SHELL_ALLOW_BASES: &[&str] = &[
+    "python", "python3", "python2", "node", "deno", "tsx", "ruby", "perl", "php", "lua", "bash",
+    "sh", "zsh", "fish", "eval", "exec", "env", "xargs", "sudo", "npx", "bunx", "ssh",
+];
+
+fn is_dangerous_shell_allow_pattern(arg_pat: &str) -> bool {
+    let p = arg_pat
+        .trim()
+        .to_ascii_lowercase()
+        .replace(':', " ");
+    let p = p.trim();
+    // Bare `*` allow on bash is full shell — never silent-allow.
+    if p == "*" {
+        return true;
+    }
+    for base in DANGEROUS_SHELL_ALLOW_BASES {
+        if p == *base {
+            return true;
+        }
+        if p == format!("{base} *") || p == format!("{base}*") {
+            return true;
+        }
+        // `python -c *` etc.
+        if p.starts_with(base)
+            && p.contains('*')
+            && (p.as_bytes().get(base.len()) == Some(&b' ')
+                || p.as_bytes().get(base.len()) == Some(&b'*'))
+        {
+            return true;
+        }
+    }
+    // Package runners that execute arbitrary scripts.
+    for run in ["npm run", "yarn run", "pnpm run", "bun run"] {
+        if p == run || p == format!("{run} *") || p.starts_with(&format!("{run} *")) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Session metadata
@@ -671,6 +784,67 @@ mod tests {
         assert_eq!(
             pc_custom.resolve_url("gpt-4"),
             "https://custom.example.com/api/chat/completions"
+        );
+    }
+
+    // ── shell-scoped permission rules ─────────────────────────────────
+
+    fn perms_with(rules: &[(&str, PermissionAction)]) -> PermissionSet {
+        let mut p = PermissionSet {
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            ..Default::default()
+        };
+        for (k, a) in rules {
+            p.rules.insert((*k).to_string(), *a);
+        }
+        p
+    }
+
+    #[test]
+    fn shell_rule_git_star_allows_git_commands() {
+        let p = perms_with(&[("bash(git *)", PermissionAction::Allow)]);
+        assert_eq!(
+            p.action_for_shell("git status"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(
+            p.action_for_shell("git commit -m x"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(p.action_for_shell("rm -rf /"), None);
+    }
+
+    #[test]
+    fn shell_rule_colon_form_matches() {
+        let p = perms_with(&[("Bash(cargo:*)", PermissionAction::Allow)]);
+        assert_eq!(
+            p.action_for_shell("cargo test"),
+            Some(PermissionAction::Allow)
+        );
+    }
+
+    #[test]
+    fn dangerous_interpreter_allow_coerces_to_ask() {
+        let p = perms_with(&[("bash(python *)", PermissionAction::Allow)]);
+        assert_eq!(
+            p.action_for_shell("python script.py"),
+            Some(PermissionAction::Ask)
+        );
+        let p = perms_with(&[("bash(node:*)", PermissionAction::Allow)]);
+        assert_eq!(
+            p.action_for_shell("node app.js"),
+            Some(PermissionAction::Ask)
+        );
+    }
+
+    #[test]
+    fn shell_rule_deny_blocks_matching() {
+        let p = perms_with(&[("bash(curl *)", PermissionAction::Deny)]);
+        assert_eq!(
+            p.action_for_shell("curl https://evil"),
+            Some(PermissionAction::Deny)
         );
     }
 }

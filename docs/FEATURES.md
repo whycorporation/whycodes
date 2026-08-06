@@ -6,7 +6,7 @@ Terminal coding agent’ların özellik matrisi.
 
 **Ürün yüzeyi:** Claude Code · Cursor
 
-Son güncelleme: **2026-08-07** (bg/schedule, `/doctor`, process-sub risk; rakip hücreleri dokümantasyondan).  
+Son güncelleme: **2026-08-07** (tool_search, shell globs, compact breaker, /diff /cost, worktree; bg/schedule).  
 Kaynaklar dosya sonundadır. Hücreler “var / kısmi / yok” seviyesindedir; her minor sürüm bire bir doğrulanmaz.
 
 ### Sembol
@@ -129,6 +129,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | todo / plan / question | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ todos+ask_user+plan | ⚠️ | ⚠️ |
 | LSP | ✅★ crate | ⚠️ | ✅ | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ | ✅ IDE |
 | Core / minimal tool set | ✅★ profile | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅★ az araç | ⚠️ |
+| Deferred tool load / ToolSearch | ✅ `tool_search` | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Parallel tools | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | Browser automation | ❌ | ⚠️ | ⚠️ | ✅★ | ✅ | ⚠️ | ⚠️ | ❌ | ✅★ cloud VM |
 | Image / multimodal | ⚠️ path attach | ✅ gen | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ PDF/image | ⚠️ | ✅ |
@@ -141,7 +142,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ approval policy | ✅ confirm mutators | ❌ built-in yok | ✅ |
-| Permission globs / policy | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ sandbox_mode | ✅ policy engine | ⚠️ container | ⚠️ |
+| Permission globs / policy | ✅ tool + `bash(git *)` | ✅ | ✅ | ⚠️ | ✅ | ✅ sandbox_mode | ✅ policy engine | ⚠️ container | ⚠️ |
 | Multi-ask queue | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 | Auto-approve / full-auto | ✅ env | ✅ | ⚠️ | ⚠️ | ✅ | ✅ full access mode | ⚠️ trusted folders | ⚠️ | ✅ |
 | Shell risk sınıflandırması | ✅★ 4-tier | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ sandbox tiers | ⚠️ | ❌ | ⚠️ |
@@ -175,10 +176,10 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Resume / list | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ checkpointing | ✅ tree/branch | ✅ |
 | Cross-harness resume | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | ❌ |
 | Undo / redo | ✅ git | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ branch | ✅ IDE |
-| Context compact | ✅ drop+prune | ✅ | ✅★ | ✅ | ✅ | ⚠️ | ✅ token caching | ✅ compaction | ✅ |
+| Context compact | ✅ prune+breaker | ✅ | ✅★ | ✅ | ✅ | ⚠️ | ✅ token caching | ✅ compaction | ✅ |
 | Semantic / auto memory | ✅ | ✅ | ❌ | ✅★ | ✅ | ✅ memories md | ⚠️ | ❌ | ⚠️ |
 | Share / export | ✅ local | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅ HF share tooling | ⚠️ |
-| Usage / cost stats | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ telemetry | ⚠️ | ✅ `/usage` |
+| Usage / cost stats | ✅ `/cost` | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ telemetry | ⚠️ | ✅ `/usage` |
 
 ---
 
@@ -207,6 +208,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Core / minimal tools | ✅★ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅★ | ⚠️ |
 | Doom-loop guard | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Tool result prune | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Autocompact circuit breaker | ✅★ 3× | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | TTFT metrik (JSONL) | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
 Detay: [plan-latency-competitors.md](plan-latency-competitors.md).

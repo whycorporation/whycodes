@@ -9,3 +9,5 @@ pub mod swarm;
 pub mod task;
 pub mod todo_read;
 pub mod todo_write;
+pub mod tool_search;
+pub mod worktree;

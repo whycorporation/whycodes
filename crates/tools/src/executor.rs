@@ -5,8 +5,8 @@ use super::tool::{Tool, ToolContext};
 use crate::{
     apply_patch, bg, code_mode, edit, external_directory, git_blame, git_commit, git_diff, git_log,
     git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, plan, question,
-    read, schedule, shell, skill_tool, swarm, task, todo_read, todo_write, truncate_tool, webfetch,
-    websearch, write,
+    read, schedule, shell, skill_tool, swarm, task, todo_read, todo_write, tool_search,
+    truncate_tool, webfetch, websearch, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -40,6 +40,8 @@ impl ToolExecutor {
         executor.register(Box::new(swarm::SwarmTool::new()));
         executor.register(Box::new(bg::BgTool::new()));
         executor.register(Box::new(schedule::ScheduleTool::new()));
+        executor.register(Box::new(tool_search::ToolSearchTool::new()));
+        executor.register(Box::new(worktree::WorktreeTool::new()));
         executor.register(Box::new(git_diff::GitDiffTool::new()));
         executor.register(Box::new(git_log::GitLogTool::new()));
         executor.register(Box::new(git_status::GitStatusTool::new()));
@@ -101,14 +103,53 @@ impl ToolExecutor {
         permissions: &PermissionSet,
         profile: crate::profile::ToolProfile,
     ) -> Vec<whycode_core::types::ToolDefinition> {
+        self.get_definitions_profile_extra(permissions, profile, &[])
+    }
+
+    /// Core/full profile plus extra activated deferred tool names (tool_search).
+    pub fn get_definitions_profile_extra(
+        &self,
+        permissions: &PermissionSet,
+        profile: crate::profile::ToolProfile,
+        extra: &[String],
+    ) -> Vec<whycode_core::types::ToolDefinition> {
         let mut defs: Vec<_> = self
             .tools
             .values()
-            .filter(|t| t.is_allowed(permissions) && profile.includes(t.name()))
+            .filter(|t| {
+                t.is_allowed(permissions)
+                    && (profile.includes(t.name()) || extra.iter().any(|n| n == t.name()))
+            })
             .map(|t| t.definition())
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));
         defs
+    }
+
+    /// Deferred catalogue: tools not in the core profile (for tool_search).
+    pub fn deferred_catalog(
+        &self,
+        permissions: &PermissionSet,
+    ) -> Vec<(String, String)> {
+        let mut out: Vec<_> = self
+            .tools
+            .values()
+            .filter(|t| {
+                t.is_allowed(permissions)
+                    && !crate::profile::ToolProfile::Core.includes(t.name())
+            })
+            .map(|t| (t.name().to_string(), t.description().to_string()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out.dedup_by(|a, b| a.0 == b.0);
+        out
+    }
+
+    /// All registered tool names (sorted).
+    pub fn tool_names(&self) -> Vec<String> {
+        let mut names: Vec<_> = self.tools.keys().cloned().collect();
+        names.sort();
+        names
     }
 
     /// Execute a single tool call

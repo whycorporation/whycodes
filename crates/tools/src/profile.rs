@@ -68,6 +68,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "todo", // alias of todowrite
     "todoread",
     "todowrite",
+    "tool_search", // deferred tool discovery (Claude Code ToolSearch spirit)
     "write",
 ];
 
@@ -98,5 +99,12 @@ mod tests {
     #[test]
     fn core_includes_question() {
         assert!(ToolProfile::Core.includes("question"));
+    }
+
+    #[test]
+    fn core_includes_tool_search_for_deferred_activation() {
+        assert!(ToolProfile::Core.includes("tool_search"));
+        assert!(!ToolProfile::Core.includes("worktree"));
+        assert!(!ToolProfile::Core.includes("webfetch"));
     }
 }

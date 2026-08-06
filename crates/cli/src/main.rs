@@ -1222,12 +1222,80 @@ async fn cmd_run(
                 }
                 "/compact" | "/summarize" => {
                     let before = session.messages.len();
-                    session.compact(config.session.compaction_threshold);
+                    let outcome = session.compact(config.session.compaction_threshold);
                     println!(
-                        "{} Compacted session ({} → {} messages).",
+                        "{} Compacted session ({} → {} messages, ~{} → ~{} tok).",
                         "✓".green(),
-                        before,
-                        session.messages.len()
+                        outcome.messages_before,
+                        outcome.messages_after,
+                        outcome.tokens_before,
+                        outcome.tokens_after
+                    );
+                    let _ = before;
+                    continue;
+                }
+                "/diff" => {
+                    let status = std::process::Command::new("git")
+                        .args(["status", "--short", "--branch"])
+                        .current_dir(&project_dir)
+                        .output();
+                    match status {
+                        Ok(o) if o.status.success() => {
+                            println!("{}", "Diff".bold());
+                            print!("{}", String::from_utf8_lossy(&o.stdout));
+                            if let Ok(d) = std::process::Command::new("git")
+                                .args(["diff", "--stat", "HEAD"])
+                                .current_dir(&project_dir)
+                                .output()
+                            {
+                                let s = String::from_utf8_lossy(&d.stdout);
+                                if !s.trim().is_empty() {
+                                    println!("{}", s);
+                                }
+                            }
+                        }
+                        Ok(o) => eprintln!(
+                            "{} git status: {}",
+                            "✗".red(),
+                            String::from_utf8_lossy(&o.stderr).trim()
+                        ),
+                        Err(e) => eprintln!("{} git unavailable: {}", "✗".red(), e),
+                    }
+                    continue;
+                }
+                "/cost" | "/usage" => {
+                    let u = &session.usage;
+                    println!("{}", "Cost / usage".bold());
+                    if u.is_empty() {
+                        println!(
+                            "  session: ~{} tokens (estimated)",
+                            session.token_count()
+                        );
+                    } else {
+                        println!(
+                            "  session: {} in / {} out · total {}",
+                            u.input_tokens, u.output_tokens, u.total()
+                        );
+                    }
+                    continue;
+                }
+                "/doctor" => {
+                    println!("{}", "Doctor".bold());
+                    println!("  provider: {provider}");
+                    println!("  model:    {model}");
+                    println!("  project:  {}", project_dir.display());
+                    let key_ok = !api_key.is_empty();
+                    println!(
+                        "  api_key:  {}",
+                        if key_ok { "set" } else { "MISSING" }
+                    );
+                    println!(
+                        "  sandbox:  {} network={}",
+                        config.security.sandbox, config.security.sandbox_network
+                    );
+                    println!(
+                        "  tools:    profile={}",
+                        config.session.tool_profile
                     );
                     continue;
                 }
@@ -1549,6 +1617,9 @@ fn print_slash_help() {
     println!("  /redo                  — Redo previously undone turn");
     println!("  /share, /export        — Export session JSON");
     println!("  /compact, /summarize   — Compact long context");
+    println!("  /diff                  — Git status + diff --stat");
+    println!("  /cost, /usage          — Session token usage");
+    println!("  /doctor                — Environment diagnostics");
     println!("  /remember <text>       — Save a durable project memory");
     println!("  /memory                — Show memory path and entry count");
     println!("  /sessions              — List saved sessions");

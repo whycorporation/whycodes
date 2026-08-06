@@ -1115,6 +1115,18 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Environment / config diagnostics",
     },
     SlashCommand {
+        name: "/diff",
+        hint: "Git status + diff --stat for the project",
+    },
+    SlashCommand {
+        name: "/cost",
+        hint: "Session + last-turn token usage",
+    },
+    SlashCommand {
+        name: "/usage",
+        hint: "Alias for /cost",
+    },
+    SlashCommand {
         name: "/agent",
         hint: "[args] Switch the primary agent (e.g. /agent plan)",
     },

@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-07** (bg/schedule + `/doctor` + process-sub risk; Claude Code inspiration audit; swarm; `v0.1.0` public install still gated)
+Last updated: **2026-08-07** (CC phases P1–P3: compact breaker, tool_search, shell globs, /diff /cost, worktree; `v0.1.0` public install still gated)
 
 ## Legend
 
@@ -85,6 +85,7 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-07 | `/doctor` | Env/key/sandbox/git/bg diagnostics (CC doctor idea). |
 | 2026-08-07 | Claude Code leak audit | Ideas-only notes in [claude-code-inspiration.md](claude-code-inspiration.md); no vendored TS. |
 | 2026-08-07 | FEATURES §11 automation | Background shell jobs (`background: true`, `bg`, toast, `/bg`), `schedule` + `/loop` queue; cloud still deferred. |
+| 2026-08-07 | CC inspiration phases P1–P3 | Autocompact breaker; `tool_search` deferred tools; `bash(git *)` rules + dangerous Allow→Ask; `/diff` `/cost`; `worktree` enter/exit. |
 
 ## Verification commands
 

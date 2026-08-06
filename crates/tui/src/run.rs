@@ -2598,6 +2598,16 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 doctor_report(ctx.session, ctx.app, ctx.config, ctx.agent, ctx.project_dir),
             );
         }
+        "/diff" => {
+            ctx.app
+                .add_message(ChatRole::System, project_diff_report(ctx.project_dir));
+        }
+        "/cost" | "/usage" => {
+            ctx.app.add_message(
+                ChatRole::System,
+                cost_report(ctx.session, ctx.app),
+            );
+        }
         "/theme" | "/themes" => {
             use crate::theme::ThemeName;
             if rest.is_empty() {
@@ -2929,6 +2939,117 @@ pub fn resolve_and_load_session(
 /// heuristic is shown only when it did not, and labelled as an estimate — the
 /// two are not the same measurement and presenting them identically would
 /// suggest they are.
+/// Git status + short diff for the project (Claude Code `/diff` spirit).
+fn project_diff_report(project_dir: &std::path::Path) -> String {
+    let mut out = String::from("Diff\n");
+    let status = std::process::Command::new("git")
+        .args(["status", "--short", "--branch"])
+        .current_dir(project_dir)
+        .output();
+    match status {
+        Ok(o) if o.status.success() => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            if s.trim().is_empty() {
+                out.push_str("  (clean working tree)\n");
+            } else {
+                out.push_str("  status:\n");
+                for line in s.lines().take(80) {
+                    out.push_str(&format!("    {line}\n"));
+                }
+            }
+        }
+        Ok(o) => {
+            let err = String::from_utf8_lossy(&o.stderr);
+            out.push_str(&format!(
+                "  git status failed: {}\n",
+                err.trim().lines().next().unwrap_or("unknown")
+            ));
+            return out;
+        }
+        Err(e) => {
+            out.push_str(&format!("  git unavailable: {e}\n"));
+            return out;
+        }
+    }
+
+    let diff = std::process::Command::new("git")
+        .args(["diff", "--stat", "HEAD"])
+        .current_dir(project_dir)
+        .output();
+    if let Ok(o) = diff
+        && o.status.success()
+    {
+        let s = String::from_utf8_lossy(&o.stdout);
+        if !s.trim().is_empty() {
+            out.push_str("  unstaged/staged vs HEAD:\n");
+            for line in s.lines().take(60) {
+                out.push_str(&format!("    {line}\n"));
+            }
+        }
+    }
+
+    let staged = std::process::Command::new("git")
+        .args(["diff", "--stat", "--cached"])
+        .current_dir(project_dir)
+        .output();
+    if let Ok(o) = staged
+        && o.status.success()
+    {
+        let s = String::from_utf8_lossy(&o.stdout);
+        if !s.trim().is_empty() {
+            out.push_str("  staged only:\n");
+            for line in s.lines().take(40) {
+                out.push_str(&format!("    {line}\n"));
+            }
+        }
+    }
+
+    out
+}
+
+/// Session + last-turn token usage (Claude Code `/cost` spirit).
+fn cost_report(session: &Session, app: &TuiApp) -> String {
+    let mut lines = vec!["Cost / usage".to_string()];
+    let u = &session.usage;
+    if u.is_empty() {
+        lines.push(format!(
+            "  session:   ~{} tokens (estimated; provider has not reported usage yet)",
+            session.token_count()
+        ));
+    } else {
+        lines.push(format!(
+            "  session:   {} in / {} out · total {}",
+            format_token_count(u.input_tokens),
+            format_token_count(u.output_tokens),
+            format_token_count(u.total())
+        ));
+        if let Some(c) = u.cache_creation_input_tokens.filter(|n| *n > 0) {
+            lines.push(format!("  cache write: {}", format_token_count(c)));
+        }
+        if let Some(r) = u.cache_read_input_tokens.filter(|n| *n > 0) {
+            lines.push(format!("  cache read:  {}", format_token_count(r)));
+        }
+    }
+    if let Some(ref turn) = app.turn_usage {
+        lines.push(format!(
+            "  last turn: {} in / {} out · total {}",
+            format_token_count(turn.input_tokens),
+            format_token_count(turn.output_tokens),
+            format_token_count(turn.total())
+        ));
+    } else {
+        lines.push("  last turn: (none yet)".into());
+    }
+    lines.push(format!(
+        "  context:   {} / {} ({}%)",
+        format_token_count(app.context_used),
+        format_token_count(app.max_context_tokens),
+        app.context_percent()
+    ));
+    lines.push("  note:      providers bill differently; figures are token counts, not USD.".into());
+    lines.join("\n")
+}
+
 /// Claude Code–style environment check: keys, sandbox, git, tools, jobs.
 fn doctor_report(
     session: &Session,

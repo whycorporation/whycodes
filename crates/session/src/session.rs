@@ -24,6 +24,32 @@ const MIN_KEEP_MESSAGES: usize = 4;
 /// Reserved heuristic tokens for the summary line prepended by compact.
 const SUMMARY_TOKEN_SLACK: usize = 64;
 
+/// Outcome of [`Session::compact`] for autocompact circuit breakers.
+#[derive(Debug, Clone, Copy)]
+pub struct CompactOutcome {
+    pub tokens_before: usize,
+    pub tokens_after: usize,
+    pub messages_before: usize,
+    pub messages_after: usize,
+}
+
+impl CompactOutcome {
+    /// True when compact dropped tokens or messages.
+    pub fn reduced(self) -> bool {
+        self.tokens_after < self.tokens_before || self.messages_after < self.messages_before
+    }
+
+    /// Still above the autocompact threshold after the pass.
+    pub fn still_over(self, threshold: usize) -> bool {
+        threshold > 0 && self.tokens_after > threshold
+    }
+
+    /// Failed to relieve pressure: still over threshold and no reduction.
+    pub fn failed(self, threshold: usize) -> bool {
+        self.still_over(threshold) && !self.reduced()
+    }
+}
+
 /// ~4 Unicode scalars per token (matches `whycode_llm` fallback family).
 fn estimate_tokens(text: &str) -> usize {
     let n = text.chars().count();
@@ -524,7 +550,10 @@ impl Session {
         n
     }
 
-    pub fn compact(&mut self, max_tokens: usize) {
+    pub fn compact(&mut self, max_tokens: usize) -> CompactOutcome {
+        let tokens_before = self.token_count();
+        let messages_before = self.messages.len();
+
         self.truncate_large_tool_results();
         self.prune_old_tool_results();
 
@@ -533,7 +562,12 @@ impl Session {
 
         if self.token_count() <= target {
             self.touch();
-            return;
+            return CompactOutcome {
+                tokens_before,
+                tokens_after: self.token_count(),
+                messages_before,
+                messages_after: self.messages.len(),
+            };
         }
 
         let min_keep = MIN_KEEP_MESSAGES.min(self.messages.len());
@@ -555,7 +589,12 @@ impl Session {
             // Tail alone still over budget (or nothing to drop). Leave as-is;
             // tool caps already ran.
             self.touch();
-            return;
+            return CompactOutcome {
+                tokens_before,
+                tokens_after: self.token_count(),
+                messages_before,
+                messages_after: self.messages.len(),
+            };
         }
 
         let trimmed = &self.messages[..start];
@@ -570,6 +609,12 @@ impl Session {
         new_messages.extend(self.messages[start..].iter().cloned());
         self.messages = new_messages;
         self.touch();
+        CompactOutcome {
+            tokens_before,
+            tokens_after: self.token_count(),
+            messages_before,
+            messages_after: self.messages.len(),
+        }
     }
 
     /// Persist this session and all messages to the SQLite database.
