@@ -137,12 +137,17 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         _ => (&app.input_buffer, app.input_cursor),
     };
 
+    // Wrap to the inner text columns (after pad + ❯). Never wider than the
+    // paragraph rect so hard-wrapped paste lines cannot paint into/over the
+    // right border or past the box.
     let text_w = area.width.saturating_sub(CHROME_H).max(1);
     let rows = if buf.is_empty() {
         Vec::new()
     } else {
         wrap_text(buf, text_w)
     };
+    // Defensive: clamp each painted row to text_w display columns.
+    let rows = clamp_rows_to_width(buf, rows, text_w);
     let input_rows = rows.len().max(1).min(MAX_INPUT_ROWS as usize) as u16;
     let attach_rows = attach_row_count(app);
 
@@ -283,6 +288,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         width: area.width.saturating_sub(PAD_LEFT + PAD_RIGHT).max(1),
         height: text_area.height,
     };
+    // No Paragraph wrap — rows are pre-wrapped to `text_w` and clamped. Letting
+    // ratatui re-wrap would add vertical lines that spill past the box height.
     frame.render_widget(Paragraph::new(Text::from(lines)), text_rect);
 
     // Cursor when the prompt owns focus.
@@ -530,6 +537,37 @@ fn slash_command_byte_end(buf: &str) -> Option<usize> {
     Some(buf.find(char::is_whitespace).unwrap_or(buf.len()))
 }
 
+/// Ensure no wrapped row paints wider than `text_w` (hard safety for paste).
+fn clamp_rows_to_width(
+    buf: &str,
+    rows: Vec<crate::widgets::wrap::WrappedRow>,
+    text_w: u16,
+) -> Vec<crate::widgets::wrap::WrappedRow> {
+    let max_w = text_w.max(1) as usize;
+    rows.into_iter()
+        .map(|row| {
+            let (start, end) = row.byte_range;
+            if start >= end || end > buf.len() {
+                return row;
+            }
+            let mut w = 0usize;
+            let mut cut = end;
+            for (off, ch) in buf[start..end].char_indices() {
+                let cw = ch.width().unwrap_or(0).max(1);
+                if w + cw > max_w {
+                    cut = start + off;
+                    break;
+                }
+                w += cw;
+            }
+            crate::widgets::wrap::WrappedRow {
+                byte_range: (start, cut),
+                width: w as u16,
+            }
+        })
+        .collect()
+}
+
 /// Row index + display column of `cursor` within wrapped `rows`.
 fn cursor_row_col(
     rows: &[crate::widgets::wrap::WrappedRow],
@@ -740,5 +778,104 @@ mod wrap_tests {
             .find(|s| s.content.as_ref() == token)
             .unwrap();
         assert_eq!(token_span.style.fg, Some(Color::Yellow));
+    }
+}
+
+#[cfg(test)]
+mod overflow_render_tests {
+    use super::*;
+    use crate::app::TuiApp;
+    use crate::config::TuiAppConfig;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    #[test]
+    fn long_paste_stays_inside_box_edges() {
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        // Under collapse threshold but long enough to hard-wrap many rows.
+        let body = "x".repeat(crate::paste::COLLAPSE_MIN_CHARS - 1);
+        app.insert_paste_text(&body);
+        assert!(
+            app.pending_pastes.is_empty(),
+            "expected inline paste under threshold"
+        );
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(
+                    f,
+                    Rect {
+                        x: 0,
+                        y: 10,
+                        width: area.width,
+                        height: 20,
+                    },
+                    &app,
+                    &app.config.palette(),
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let mut top_y = None;
+        let mut left_x = None;
+        let mut right_x = None;
+        for y in 0..30u16 {
+            for x in 0..80u16 {
+                let cell = &buf[(x, y)];
+                if cell.symbol() == "╭" {
+                    top_y = Some(y);
+                    left_x = Some(x);
+                }
+                if cell.symbol() == "╮" {
+                    right_x = Some(x);
+                }
+            }
+        }
+        let top_y = top_y.expect("top-left corner ╭");
+        let left_x = left_x.unwrap();
+        let right_x = right_x.expect("top-right ╮");
+
+        for y in top_y..top_y.saturating_add(12) {
+            for x in right_x.saturating_add(1)..80 {
+                assert_ne!(buf[(x, y)].symbol(), "x", "leak right ({x},{y})");
+            }
+            for x in 0..left_x {
+                assert_ne!(buf[(x, y)].symbol(), "x", "leak left ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn collapsed_long_paste_is_single_row() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.insert_paste_text(&"y".repeat(500));
+        assert_eq!(app.pending_pastes.len(), 1);
+        assert_eq!(input_row_count(&app, 80), 1);
+    }
+
+    #[test]
+    fn hard_wrap_rows_never_exceed_text_width() {
+        let area_w = 50u16;
+        let text_w = area_w.saturating_sub(CHROME_H).max(1);
+        let buf = "Z".repeat(300);
+        for row in wrap_text(&buf, text_w) {
+            let slice = &buf[row.byte_range.0..row.byte_range.1];
+            let w: usize = slice
+                .chars()
+                .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0).max(1))
+                .sum();
+            assert!(
+                w <= text_w as usize,
+                "row width {w} > text_w {text_w}: {slice:?}"
+            );
+            // full line with prefix must fit in area - PAD_LEFT - PAD_RIGHT
+            let full = PREFIX_WIDTH as usize + w;
+            let rect_w = (area_w - PAD_LEFT - PAD_RIGHT) as usize;
+            assert!(full <= rect_w, "prefix+text {full} > rect {rect_w}");
+        }
     }
 }

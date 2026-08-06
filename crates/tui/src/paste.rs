@@ -4,15 +4,18 @@
 //! token like `[pasted #1 ~ 42 lines]`. On submit the tokens expand back
 //! to the full text so the agent still receives everything.
 //!
-//! Thresholds follow Claude Code defaults (more than 2 lines **or** more
-//! than 800 characters) so small multi-line snippets stay editable inline.
+//! Thresholds: multi-line (2+) **or** longer than a short sentence so the
+//! prompt box never reflows into a tall wall of wrapped text on paste.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-/// Collapse when the paste has more than this many lines.
-pub const COLLAPSE_MIN_LINES: usize = 3;
+/// Collapse when the paste has at least this many logical lines.
+pub const COLLAPSE_MIN_LINES: usize = 2;
 /// Collapse when the paste has at least this many characters (even 1 line).
-pub const COLLAPSE_MIN_CHARS: usize = 800;
+///
+/// Kept well below a full prompt wrap so a long paragraph becomes a chip
+/// instead of overflowing the boxed input.
+pub const COLLAPSE_MIN_CHARS: usize = 160;
 
 static NEXT_PASTE_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -204,11 +207,14 @@ mod tests {
     #[test]
     fn short_single_line_stays_inline() {
         assert!(!should_collapse("hello world"));
-        assert!(!should_collapse("a\nb")); // 2 lines
+        assert!(!should_collapse("short"));
+        // Single line under the char threshold stays editable.
+        assert!(!should_collapse(&"x".repeat(COLLAPSE_MIN_CHARS - 1)));
     }
 
     #[test]
-    fn three_lines_collapse() {
+    fn two_or_more_lines_collapse() {
+        assert!(should_collapse("a\nb"));
         assert!(should_collapse("a\nb\nc"));
     }
 

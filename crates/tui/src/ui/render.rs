@@ -194,11 +194,16 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
         height: area.height.saturating_sub(oc::BOTTOM_PAD),
     };
     let turn_h = turn_status_height(app);
-    let prompt_h = prompt::prompt_height(app, content.width).min(content.height / 2);
+    // Prefer the height the prompt actually needs. Leave a few rows for the
+    // logo; do not force height/2 (that clipped the box on long pastes).
+    let needed = prompt::prompt_height(app, content.width);
+    let prompt_h = needed
+        .min(content.height.saturating_sub(5))
+        .clamp(1, content.height.max(1));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),
+            Constraint::Min(3),
             Constraint::Length(turn_h),
             Constraint::Length(prompt_h),
         ])
@@ -238,7 +243,10 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     };
 
     let turn_h = turn_status_height(app);
-    let prompt_h = prompt::prompt_height(app, inset.width).min(inset.height / 2);
+    let needed = prompt::prompt_height(app, inset.width);
+    let prompt_h = needed
+        .min(inset.height.saturating_sub(3))
+        .clamp(1, inset.height.max(1));
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

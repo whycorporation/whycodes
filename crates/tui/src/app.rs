@@ -1765,6 +1765,7 @@ impl TuiApp {
             self.input_cursor = pos + text.len();
         }
         crate::paste::prune_unused(&mut self.pending_pastes, &self.input_buffer);
+        self.mark_dirty();
     }
 
     /// Expand collapsed paste tokens for the agent / history.

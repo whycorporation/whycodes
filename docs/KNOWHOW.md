@@ -102,6 +102,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-06 — Long paste overflowed the prompt box
+
+**Symptom:** Pasting a long paragraph into the home/session prompt made text look like it spilled past the input box (tall reflow, clipped chrome).
+
+**Root cause:** (1) Collapse thresholds were high (3 lines / 800 chars) so mid-size pastes stayed inline and wrapped to 8 rows. (2) `prompt_height.min(height/2)` allocated less than the box needed, crushing borders. (3) `wrap_text` soft-break math could leave residual width wrong after a space break.
+
+**Fix:** Collapse at ≥2 lines or ≥160 chars; allocate prompt height with `needed.min(area - logo reserve)` instead of half-screen; harden `wrap_text` (recompute width after soft break, wide-glyph alone-row); clamp painted rows to `text_w`.
+
+**Prevention:** Any change to paste/prompt height must keep collapse thresholds in sync with `MAX_INPUT_ROWS` and never cap prompt height below chrome+1 without a residual min for the box.
+
+---
+
 ### 2026-08-06 — Question panel: bottom dock, navigate, copy
 
 **Symptom:** Questionnaire felt like a center modal, not Grok’s bottom line-by-line picker. No way to revisit a previous question in a multi-q set or copy the prompt/options.

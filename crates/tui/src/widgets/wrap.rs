@@ -103,6 +103,12 @@ fn slice_spans(spans: &[Span<'static>], start: usize, end: usize) -> Vec<Span<'s
     out
 }
 
+fn display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| c.width().unwrap_or(0).max(1))
+        .sum()
+}
+
 pub fn wrap_text(buf: &str, width: u16) -> Vec<WrappedRow> {
     let width = width.max(1) as usize;
     let mut rows = Vec::new();
@@ -111,39 +117,69 @@ pub fn wrap_text(buf: &str, width: u16) -> Vec<WrappedRow> {
         let base = logical.as_ptr() as usize - buf.as_ptr() as usize;
         let mut start = 0usize;
         let mut col = 0usize;
+        // Last whitespace in the *current* row: (byte offset in `logical`, display col before it).
         let mut last_ws: Option<(usize, usize)> = None;
 
         for (off, ch) in logical.char_indices() {
             let w = ch.width().unwrap_or(0).max(1);
-            if col + w > width && col > 0 {
+
+            // Break until `ch` fits on the current row (or alone when w > width).
+            while col + w > width {
+                if col == 0 {
+                    // Single glyph wider than the row (CJK on 1-col): emit it alone.
+                    let ch_end = off + ch.len_utf8();
+                    rows.push(WrappedRow {
+                        byte_range: (base + off, base + ch_end),
+                        width: w.min(width) as u16,
+                    });
+                    start = ch_end;
+                    col = 0;
+                    last_ws = None;
+                    // `ch` consumed as its own row — skip the normal append below.
+                    break;
+                }
                 match last_ws {
-                    Some((ws_off, ws_col)) => {
+                    Some((ws_off, _ws_col)) if ws_off >= start => {
+                        let row_w = display_width(&logical[start..ws_off]);
                         rows.push(WrappedRow {
                             byte_range: (base + start, base + ws_off),
-                            width: ws_col as u16,
+                            width: row_w as u16,
                         });
-                        start = ws_off + logical[ws_off..].chars().next().unwrap().len_utf8();
-                        col = col.saturating_sub(ws_col + 1);
+                        let ws_len = logical[ws_off..]
+                            .chars()
+                            .next()
+                            .map(|c| c.len_utf8())
+                            .unwrap_or(1);
+                        start = ws_off + ws_len;
+                        col = display_width(&logical[start..off]);
                         last_ws = None;
                     }
-                    None => {
+                    _ => {
                         rows.push(WrappedRow {
                             byte_range: (base + start, base + off),
                             width: col as u16,
                         });
                         start = off;
                         col = 0;
+                        last_ws = None;
                     }
                 }
             }
+
+            // Wide glyph already emitted as its own row.
+            if start > off {
+                continue;
+            }
+
             if ch.is_whitespace() {
                 last_ws = Some((off, col));
             }
             col += w;
         }
+
         rows.push(WrappedRow {
             byte_range: (base + start, base + logical.len()),
-            width: col as u16,
+            width: display_width(&logical[start..]) as u16,
         });
     }
     // A trailing '\n' ends the buffer with a blank row the cursor can sit on.
@@ -184,5 +220,55 @@ mod tests {
     fn wrap_plain_breaks_long_words() {
         let lines = wrap_plain("abcdefghij", 4, Style::default());
         assert!(lines.len() >= 2);
+    }
+}
+
+#[cfg(test)]
+mod overflow_props {
+    use super::*;
+    use unicode_width::UnicodeWidthChar;
+
+    fn row_display_width(buf: &str, row: &WrappedRow) -> usize {
+        buf[row.byte_range.0..row.byte_range.1]
+            .chars()
+            .map(|c| c.width().unwrap_or(0).max(1))
+            .sum()
+    }
+
+    #[test]
+    fn no_row_exceeds_width_for_randomish_inputs() {
+        let samples = [
+            "a".repeat(500),
+            "word ".repeat(200),
+            "şğüiöç ".repeat(100),
+            "漢字かな ".repeat(80),
+            format!("{}\n{}", "x".repeat(200), "y".repeat(200)),
+            "a  b   c    d".repeat(50),
+            "\t".repeat(20) + &"z".repeat(100),
+            "endwithspace ".repeat(30),
+            "  leadspace".to_string() + &"m".repeat(100),
+        ];
+        for width in [1u16, 2, 3, 5, 8, 10, 20, 40, 80] {
+            for s in &samples {
+                let rows = wrap_text(s, width);
+                for (i, r) in rows.iter().enumerate() {
+                    let w = row_display_width(s, r);
+                    let slice = &s[r.byte_range.0..r.byte_range.1];
+                    // A single glyph may be wider than the row (CJK on 1-col);
+                    // every other row must fit.
+                    let single_wide = slice.chars().count() == 1
+                        && slice
+                            .chars()
+                            .next()
+                            .map(|c| c.width().unwrap_or(0).max(1))
+                            .unwrap_or(0)
+                            > width as usize;
+                    assert!(
+                        w <= width as usize || single_wide,
+                        "width={width} row={i} display={w} slice={slice:?}"
+                    );
+                }
+            }
+        }
     }
 }
