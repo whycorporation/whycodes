@@ -1,6 +1,7 @@
 # Plan — Distribution and self-update
 
-**Status:** implemented, release not yet cut · **Was:** phase 2 · **Blocks:** OAuth plan (registration after install path exists)
+**Status:** implemented (assets cut) · **Priority:** **last** (owner: do not block on public repo / install smoke)  
+**Residual:** repo visibility=public, Homebrew binary formula, Windows install.ps1 smoke — when owner is ready.
 
 ## Problem
 

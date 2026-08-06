@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-07** (A1–A7 **shipped**; prior CC P1–P3; `v0.1.0` public install still gated)
+Last updated: **2026-08-07** (public release deprioritized to last; next: perf residual + plugins)
 
 ## Legend
 
@@ -21,9 +21,9 @@ Last updated: **2026-08-07** (A1–A7 **shipped**; prior CC P1–P3; `v0.1.0` pu
 
 | Plan | Doc | Status | Notes |
 |---|---|---|---|
-| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented | `v0.1.0` assets live. **Public install** needs repo visibility=public (or `GITHUB_TOKEN`). Homebrew formula still HEAD-only until `update_homebrew_formula.sh`. |
+| Performance residual | [plan-performance.md](plan-performance.md) | mostly done | **Next.** Subagent tokens, provider reconcile, optional CI ceilings. |
+| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets live. Public repo / Homebrew binary / install smoke = **owner last step**, not current focus. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | blocked | Owner: client registration + provider terms before any code. |
-| Performance residual | [plan-performance.md](plan-performance.md) | mostly done | Harness + usage persistence + `whycode stats`. Open: subagent tokens, provider reconcile, optional CI ceilings. |
 | Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
 | Semantic memory | [plan-memory.md](plan-memory.md) | **shipped v1+v2** | Retain, sync, code RAG, subagent banks, optional ONNX. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
@@ -51,13 +51,14 @@ Index of archives: [archive/README.md](archive/README.md).
 
 ## Current focus
 
-Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
+Priority (owner: **public install / repo visibility last**):
 
-1. **First public release (almost done)** — `v0.1.0` cut + smoke OK with token. Remaining: **make repo public**, optional Homebrew binary formula, Windows install.ps1 smoke.
-2. **Terminal product polish** — A1–A7 shipped ([plan-cc-a1-a7.md](plan-cc-a1-a7.md)). Next: public release, plugins depth, subagent tokens.
-3. **Performance residual** — stats done; optional CI ceilings / subagent tokens remain.
-4. **OAuth** stays blocked until owner decisions.
-5. **Memory v1+v2** shipped (retain, project scope, code RAG, subagent banks, optional ONNX).
+1. **Performance residual** — subagent token fold, provider reconcile, optional CI ceilings ([plan-performance.md](plan-performance.md)).
+2. **Plugins depth** — hooks exist; loader/marketplace still thin.
+3. **Latency P2 (optional)** — residual rows in [plan-latency-competitors.md](plan-latency-competitors.md).
+4. **OAuth** — blocked until owner terms decisions.
+5. **ACP / web** — deferred post product launch.
+6. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`.
 
 ## Decision log
 
@@ -90,6 +91,7 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-07 | Claude Code full research report | [report-claude-code-research.md](report-claude-code-research.md) — architecture, inventory, gaps, legal. |
 | 2026-08-07 | A1–A7 → roadmap | [plan-cc-a1-a7.md](plan-cc-a1-a7.md); order A1,A4,A2,A3,A5,A6,A7. |
 | 2026-08-07 | A1–A7 shipped | PromptCommands, /context, LLM compact, path globs, mcp serve, image read, idle suggestions. |
+| 2026-08-07 | Public release last | Owner: keep coding/perf/plugins ahead of repo-public + install packaging. |
 
 ## Verification commands
 
