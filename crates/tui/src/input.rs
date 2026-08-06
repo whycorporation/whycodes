@@ -790,7 +790,17 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             app.mark_dirty();
         }
         MouseEventKind::Down(MouseButton::Left) => {
-            // Scrollbar first: start a thumb drag or jump on track click.
+            // [✗] first — dismiss immediately. Do not arm text selection: a
+            // 1-cell pointer jitter was marking the click as a drag and the
+            // Up handler returned before ever checking the close control.
+            if app.dialog_close_contains(mouse.column, mouse.row) {
+                app.mouse_sel = None;
+                app.dialog_scrollbar_grab = None;
+                dismiss_modal(app);
+                return true;
+            }
+
+            // Scrollbar: start a thumb drag or jump on track click.
             if app.dialog_scrollbar_contains(mouse.column, mouse.row)
                 && let Some(track) = app.dialog_scrollbar_hit
             {
@@ -852,6 +862,14 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
             let col = mouse.column;
             let row = mouse.row;
+
+            // [✗] wins over drag-copy (release on close still dismisses).
+            if app.dialog_close_contains(col, row) {
+                app.mouse_sel = None;
+                dismiss_modal(app);
+                return true;
+            }
+
             let was_drag = app.mouse_sel.as_ref().map(|s| s.dragging).unwrap_or(false);
 
             // Drag selection → copy only cells inside the modal.
@@ -862,12 +880,6 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             }
 
             app.mouse_sel = None;
-
-            // [✗] → cancel (same as Esc).
-            if app.dialog_close_contains(col, row) {
-                dismiss_modal(app);
-                return true;
-            }
 
             // Click a row → select (and for pickers, confirm immediately).
             if let Some(ref active) = active

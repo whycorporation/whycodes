@@ -14,7 +14,7 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::{DialogChrome, dialog_frame};
+use super::base::dialog_frame;
 
 const KEY_COL: usize = 16;
 

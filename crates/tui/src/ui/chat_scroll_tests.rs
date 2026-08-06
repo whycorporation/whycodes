@@ -520,6 +520,71 @@ fn help_mode_wheel_scrolls_help_not_chat() {
     assert_eq!(app.scroll_offset, chat_off);
 }
 
+#[test]
+fn modal_close_button_click_dismisses_help() {
+    use crossterm::event::MouseButton;
+    let mut app = TuiApp::new(cfg());
+    app.mode = AppMode::Help;
+    app.key_context = KeymapContext::Help;
+    // Simulate last paint: close control on the top border.
+    app.apply_modal_chrome(
+        Some(Rect {
+            x: 50,
+            y: 4,
+            width: 7,
+            height: 1,
+        }),
+        Rect {
+            x: 10,
+            y: 4,
+            width: 50,
+            height: 20,
+        },
+        None,
+    );
+    assert!(app.dialog_close_contains(52, 4));
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 52, 4)
+    ));
+    assert_eq!(app.mode, AppMode::Normal, " [✗] Down must dismiss Help");
+    assert!(!app.modal_is_open());
+}
+
+#[test]
+fn modal_close_button_click_dismisses_dialog() {
+    use crossterm::event::MouseButton;
+    let mut app = TuiApp::new(cfg());
+    app.mode = AppMode::Dialog;
+    app.key_context = KeymapContext::Dialog;
+    app.dialogs.push(DialogKind::Confirm {
+        title: "Quit".into(),
+        message: "Sure?".into(),
+        on_confirm: crate::app::ConfirmAction::Quit,
+    });
+    app.apply_modal_chrome(
+        Some(Rect {
+            x: 40,
+            y: 6,
+            width: 7,
+            height: 1,
+        }),
+        Rect {
+            x: 5,
+            y: 6,
+            width: 45,
+            height: 12,
+        },
+        None,
+    );
+    assert!(input::handle_event(
+        &mut app,
+        mouse(MouseEventKind::Down(MouseButton::Left), 42, 6)
+    ));
+    assert!(!app.dialogs.is_open());
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
 // ── Keyboard page (from either focus) ──────────────────────────────────
 
 #[test]

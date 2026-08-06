@@ -32,20 +32,28 @@ pub struct DialogChrome {
     pub close_hit: Option<Rect>,
 }
 
-/// Geometry of the top-right close control (` [✗] `, 5 cells).
+/// Painted glyph width of the close control (` [✗] `).
+pub const CLOSE_GLYPH_W: u16 = 5;
+
+/// Geometry of the top-right close control.
+///
+/// Hit target runs from the glyph through the right border edge so a click on
+/// the corner (not only the exact `✗` cell) still dismisses. Paint uses the
+/// leading [`CLOSE_GLYPH_W`] cells only.
 ///
 /// Shared by paint and mouse hit-testing so the glyph and the click target
 /// never drift apart.
 pub fn close_button_rect(modal: Rect) -> Option<Rect> {
-    const W: u16 = 5; // ` [✗] `
-    if modal.width < W + 2 {
+    if modal.width < CLOSE_GLYPH_W + 2 {
         return None;
     }
-    let x0 = modal.x + modal.width.saturating_sub(W + 2);
+    // Glyph starts 2 cells inset from the right; hit extends to the border.
+    let x0 = modal.x + modal.width.saturating_sub(CLOSE_GLYPH_W + 2);
+    let width = (modal.x + modal.width).saturating_sub(x0);
     Some(Rect {
         x: x0,
         y: modal.y,
-        width: W,
+        width,
         height: 1,
     })
 }
@@ -170,9 +178,9 @@ fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette, ho
     let Some(hit) = close_button_rect(modal) else {
         return;
     };
-    // Five cells: ` [✗] ` (must match `close_button_rect` width).
+    // Painted glyph only; hit rect may extend past this to the border edge.
     let cells = [" ", "[", "✗", "]", " "];
-    debug_assert_eq!(cells.len() as u16, hit.width);
+    debug_assert_eq!(cells.len() as u16, CLOSE_GLYPH_W);
     let buf = frame.buffer_mut();
     // Idle: dim chrome. Hover: error red so the control reads as "close".
     let fg = if hovered { palette.error } else { palette.dim };
@@ -185,7 +193,11 @@ fn paint_close_button(frame: &mut Frame, modal: Rect, palette: &ThemePalette, ho
             Modifier::empty()
         });
     for (i, sym) in cells.iter().enumerate() {
-        if let Some(cell) = buf.cell_mut((hit.x + i as u16, hit.y)) {
+        let x = hit.x + i as u16;
+        if x >= hit.x.saturating_add(hit.width) {
+            break;
+        }
+        if let Some(cell) = buf.cell_mut((x, hit.y)) {
             cell.set_symbol(sym);
             cell.set_style(style);
         }
@@ -270,9 +282,10 @@ mod tests {
         };
         let hit = close_button_rect(modal).expect("wide enough");
         assert_eq!(hit.y, modal.y);
-        assert_eq!(hit.width, 5);
         assert_eq!(hit.height, 1);
-        // Inset 2 from the right edge of the modal.
-        assert_eq!(hit.x + hit.width + 2, modal.x + modal.width);
+        // Glyph starts 2 inset; hit extends to the right border edge.
+        assert_eq!(hit.x, modal.x + modal.width - CLOSE_GLYPH_W - 2);
+        assert_eq!(hit.x + hit.width, modal.x + modal.width);
+        assert!(hit.width >= CLOSE_GLYPH_W);
     }
 }
