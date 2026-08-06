@@ -256,12 +256,13 @@ impl ThemePalette {
 
     /// Stronger wash for diff add/remove rows (Grok-style green/red bands).
     ///
-    /// `callout_bg` is ~20% accent — too subtle for diffs on many terminals.
-    /// Diff rows use ~40% so `+`/`-` lines read clearly as green/red blocks.
+    /// `callout_bg` is ~20% accent — invisible as a row band on dark themes.
+    /// Diff rows use ~55% accent so the full-width fill reads as a real
+    /// green/red strip (same family as Grok Build / IDE diff gutters).
     pub fn diff_line_bg(&self, accent: Color) -> Color {
         let (ar, ag, ab) = to_rgb(accent);
         let (br, bgc, bb) = to_rgb(self.bg);
-        let mix = |a: u8, b: u8| ((a as u16 * 4 + b as u16 * 6) / 10) as u8;
+        let mix = |a: u8, b: u8| ((a as u16 * 55 + b as u16 * 45) / 100) as u8;
         Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
     }
 

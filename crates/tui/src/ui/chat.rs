@@ -329,20 +329,19 @@ impl Widget for SparseLines {
                 let w = text.width().min(remaining as usize) as u16;
                 x = x.saturating_add(w);
             }
-            // Full-width elevated band (Grok user prompt / Light block bg).
+            // Full-width elevated band (Grok user prompt + diff add/remove rows).
+            // Walk the entire row — not just trailing cells after content — so
+            // meta gutters / empty left pad share the green/red wash.
             if let Some(bg) = band_bg {
-                while x < end {
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        if cell.symbol() == " " || cell.symbol().is_empty() {
+                for cx in area.x..end {
+                    if let Some(cell) = buf.cell_mut((cx, y)) {
+                        if cell.symbol().is_empty() {
                             cell.set_symbol(" ");
-                            cell.set_style(Style::default().bg(bg));
-                        } else {
-                            let mut st = cell.style();
-                            st.bg = Some(bg);
-                            cell.set_style(st);
                         }
+                        let mut st = cell.style();
+                        st.bg = Some(bg);
+                        cell.set_style(st);
                     }
-                    x = x.saturating_add(1);
                 }
             }
         }
@@ -1262,8 +1261,19 @@ fn tool_result_diff(
             s
         };
 
+        // Left meta pad must carry the wash so SparseLines full-row fill
+        // starts from a painted cell (Grok full-width green/red band).
+        let gutter = if line_bg.is_some() {
+            Span::styled(
+                " ".repeat(oc::ASSISTANT_PAD as usize),
+                paint(body_color, false),
+            )
+        } else {
+            meta_gutter()
+        };
+
         let mut spans = vec![
-            meta_gutter(),
+            gutter,
             Span::styled("┃ ".to_string(), paint(rail_color, false)),
         ];
 
@@ -1293,6 +1303,12 @@ fn tool_result_diff(
         } else {
             let shown = hard_truncate_line(line, text_w);
             spans.push(Span::styled(shown, paint(body_color, false)));
+        }
+
+        // Trailing space carries bg so SparseLines always sees a band even
+        // on empty +/− bodies and can stretch the wash full-width.
+        if line_bg.is_some() {
+            spans.push(Span::styled(" ".to_string(), paint(body_color, false)));
         }
 
         lines.push(Line::from(spans));
@@ -1657,6 +1673,36 @@ mod tests {
         assert!(line_nos
             .iter()
             .any(|s| s.style.fg == Some(palette.diff_remove)));
+    }
+
+    #[test]
+    fn sparse_lines_full_width_diff_band() {
+        // Grok paints the whole row green/red — not only the text width.
+        let area = Rect::new(0, 0, 20, 1);
+        let mut buf = Buffer::empty(area);
+        let add_bg = Color::Rgb(20, 80, 40);
+        SparseLines {
+            lines: vec![Line::from(vec![
+                Span::styled(
+                    "+new".to_string(),
+                    Style::default().fg(Color::Green).bg(add_bg),
+                ),
+                Span::styled(" ".to_string(), Style::default().bg(add_bg)),
+            ])],
+            bg: Color::Black,
+        }
+        .render(area, &mut buf);
+
+        // Far-right cell (beyond text) must share the band bg.
+        let cell = buf.cell((19, 0)).expect("right edge");
+        assert_eq!(
+            cell.style().bg,
+            Some(add_bg),
+            "diff wash must fill full row width"
+        );
+        // Left cell too.
+        let left = buf.cell((0, 0)).expect("left edge");
+        assert_eq!(left.style().bg, Some(add_bg));
     }
 
     #[test]
