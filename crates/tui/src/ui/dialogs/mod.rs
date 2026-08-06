@@ -7,6 +7,7 @@ mod base;
 mod confirm;
 mod help;
 mod provider;
+mod question;
 mod select;
 
 pub use alert::*;
@@ -14,6 +15,7 @@ pub use base::*;
 pub use confirm::*;
 pub use help::*;
 pub use provider::*;
+pub use question::*;
 pub use select::*;
 
 use crate::app::TuiApp;
@@ -45,6 +47,10 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         crate::app::DialogKind::Permission { tool_name, detail } => {
             let chrome =
                 render_permission_dialog(frame, &tool_name, &detail, palette, mouse);
+            app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
+        }
+        crate::app::DialogKind::Question(state) => {
+            let chrome = render_question_dialog(frame, &state, palette, mouse);
             app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         }
         crate::app::DialogKind::SessionList => {

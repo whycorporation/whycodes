@@ -4,6 +4,7 @@ pub mod intent;
 pub mod mcp_load;
 pub mod memory_retain;
 pub mod permission;
+pub mod question;
 pub mod routing;
 pub mod subagent;
 #[cfg(test)]
@@ -21,6 +22,10 @@ pub use intent::{
 pub use permission::{
     AutoApprovePrompter, AutoDenyPrompter, ChannelPermissionPrompter, PermissionPrompter,
     PermissionRequest, StdinPrompter, default_prompter,
+};
+pub use question::{
+    AutoAnswerPrompter, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
+    StdinQuestionPrompter, default_question_prompter, run_question_tool,
 };
 pub use routing::resolve_turn_model;
 pub use title::{

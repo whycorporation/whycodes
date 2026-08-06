@@ -300,7 +300,7 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
         .unwrap_or_default();
     let color = match &app.current_agent_state {
         AgentState::Thinking => palette.thinking,
-        AgentState::WaitingForPermission => palette.warning,
+        AgentState::WaitingForPermission | AgentState::WaitingForQuestion => palette.warning,
         AgentState::Generating => palette.accent,
         AgentState::Error(_) => palette.error,
         AgentState::Idle => palette.success,
@@ -311,6 +311,7 @@ fn render_turn_status(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: 
         }
         AgentState::Thinking => "thinking".into(),
         AgentState::WaitingForPermission => "waiting for permission".into(),
+        AgentState::WaitingForQuestion => "waiting for answer".into(),
         AgentState::Generating if !turn_elapsed.is_empty() => {
             format!("generating {turn_elapsed}")
         }

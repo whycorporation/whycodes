@@ -58,6 +58,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "grep",
     "list",
     "memory",
+    "question", // clarify with structured options (Grok-style)
     "read",
     "shell", // legacy alias of bash
     "task",
@@ -89,5 +90,10 @@ mod tests {
         // Wrong snake_case names must not be the filter keys
         assert!(!ToolProfile::Core.includes("todo_write"));
         assert!(!ToolProfile::Core.includes("todo_read"));
+    }
+
+    #[test]
+    fn core_includes_question() {
+        assert!(ToolProfile::Core.includes("question"));
     }
 }

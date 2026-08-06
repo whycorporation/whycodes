@@ -22,7 +22,10 @@ use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use whycode_agent::agent::Agent;
 use whycode_agent::permission::ChannelPermissionPrompter;
-use whycode_agent::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
+use whycode_agent::{
+    CancelFlag, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
+    TurnEvent, new_cancel_flag, request_cancel,
+};
 use whycode_config::Config;
 use whycode_core::types::AgentMode;
 use whycode_session::SessionHistory;
@@ -49,6 +52,17 @@ pub struct SlashContext<'a> {
     pub model: &'a mut String,
     pub api_key: &'a mut String,
     pub perm_prompter: Arc<ChannelPermissionPrompter>,
+    pub question_prompter: Arc<ChannelQuestionPrompter>,
+}
+
+fn bind_agent_prompters(
+    agent: Agent,
+    perm: &Arc<ChannelPermissionPrompter>,
+    question: &Arc<ChannelQuestionPrompter>,
+) -> Agent {
+    agent
+        .with_permission_prompter(Arc::clone(perm) as Arc<dyn whycode_agent::PermissionPrompter>)
+        .with_question_prompter(Arc::clone(question) as Arc<dyn QuestionPrompter>)
 }
 
 /// Options for launching the interactive TUI.
@@ -260,10 +274,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let (perm_prompter, mut perm_rx) = ChannelPermissionPrompter::new();
     let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
 
+    // Questionnaire channel (Grok-style `question` tool)
+    let q_timeout = if config.tools.question.timeout_enabled {
+        Some(Duration::from_secs(config.tools.question.timeout_secs.max(1)))
+    } else {
+        None
+    };
+    let (question_prompter, mut question_rx) = ChannelQuestionPrompter::new(q_timeout);
+    let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
+
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+        )
+        .with_question_prompter(
+            Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>
         )
         .with_mcp(&config)
         .await;
@@ -445,6 +471,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut spinner_frame: usize = 0;
     // Permission queue: multiple tool asks can complete without serializing
     // the whole parallel tool batch on a single oneshot slot.
+    let mut pending_question_queue: std::collections::VecDeque<QuestionRequest> =
+        std::collections::VecDeque::new();
     let mut pending_perm_queue: std::collections::VecDeque<whycode_agent::PermissionRequest> =
         std::collections::VecDeque::new();
     // Title may arrive before TurnOutcome restores the real session; hold it.
@@ -529,7 +557,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Spinner while generating (generic status only)
-            if agent_busy && !matches!(app.current_agent_state, AgentState::WaitingForPermission) {
+            if agent_busy
+                && !matches!(
+                    app.current_agent_state,
+                    AgentState::WaitingForPermission | AgentState::WaitingForQuestion
+                )
+            {
                 const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
                 spinner_frame = (spinner_frame + 1) % FRAMES.len();
                 app.spinner_frame = spinner_frame;
@@ -553,10 +586,25 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             while let Ok(req) = perm_rx.try_recv() {
                 pending_perm_queue.push_back(req);
             }
-            if !matches!(app.current_agent_state, AgentState::WaitingForPermission)
-                && let Some(front) = pending_perm_queue.front()
+            if !matches!(
+                app.current_agent_state,
+                AgentState::WaitingForPermission | AgentState::WaitingForQuestion
+            ) && let Some(front) = pending_perm_queue.front()
             {
                 app.ask_permission(front.tool_name.clone(), front.detail.clone());
+                app.mark_dirty();
+            }
+
+            // ── Question requests (queued; one questionnaire at a time) ─
+            while let Ok(req) = question_rx.try_recv() {
+                pending_question_queue.push_back(req);
+            }
+            if !matches!(
+                app.current_agent_state,
+                AgentState::WaitingForPermission | AgentState::WaitingForQuestion
+            ) && let Some(front) = pending_question_queue.front()
+            {
+                app.ask_question(front.questions.clone());
                 app.mark_dirty();
             }
 
@@ -1155,6 +1203,38 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 }
 
+                // Questionnaire dialog (Grok-style `question` tool)
+                if matches!(app.dialogs.active(), Some(DialogKind::Question(_)))
+                    && let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
+                {
+                    let handled = handle_question_key(
+                        &mut app,
+                        key.code,
+                        &mut pending_question_queue,
+                        &mut pending_perm_queue,
+                    );
+                    if handled {
+                        app.mark_dirty();
+                        continue;
+                    }
+                }
+
+                // [✗] / Esc may dismiss Question via input.rs — complete oneshot
+                if app.question_dismissed {
+                    app.question_dismissed = false;
+                    if let Some(req) = pending_question_queue.pop_front() {
+                        let _ = req.reply.send(Err(QuestionError::Cancelled));
+                    }
+                    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+                        resume_after_question(
+                            &mut app,
+                            &pending_question_queue,
+                            &pending_perm_queue,
+                        );
+                    }
+                }
+
                 // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
                 if let Event::Key(key) = &ev
                     && key.kind == KeyEventKind::Press
@@ -1172,6 +1252,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         &config,
                         &project_dir,
                         Arc::clone(&perm_prompter),
+                        Arc::clone(&question_prompter),
                     )
                     .await;
                     continue;
@@ -1207,6 +1288,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 model: &mut model,
                                 api_key: &mut api_key,
                                 perm_prompter: Arc::clone(&perm_prompter),
+                                question_prompter: Arc::clone(&question_prompter),
                             },
                         )
                         .await;
@@ -1302,9 +1384,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
     .await;
 
-    // Deny any hanging permissions so agent tasks can finish
+    // Deny any hanging permissions / questionnaires so agent tasks can finish
     while let Some(req) = pending_perm_queue.pop_front() {
         let _ = req.reply.send(false);
+    }
+    while let Some(req) = pending_question_queue.pop_front() {
+        let _ = req.reply.send(Err(QuestionError::Cancelled));
     }
 
     if let Err(ref e) = result {
@@ -1611,6 +1696,7 @@ async fn cycle_agent(
     config: &Config,
     project_dir: &std::path::Path,
     perm_prompter: Arc<ChannelPermissionPrompter>,
+    question_prompter: Arc<ChannelQuestionPrompter>,
 ) {
     if app.primary_agents.is_empty() {
         return;
@@ -1641,8 +1727,157 @@ async fn cycle_agent(
             .with_config(config)
             .with_permission_prompter(
                 Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
-            );
+            )
+            .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
         session.set_system_prompt(&prompt);
+    }
+}
+
+/// Handle keys while a questionnaire modal is open. Returns true if consumed.
+fn handle_question_key(
+    app: &mut TuiApp,
+    code: KeyCode,
+    pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+    pending_perm_queue: &std::collections::VecDeque<whycode_agent::PermissionRequest>,
+) -> bool {
+    let Some(DialogKind::Question(mut state)) = app.dialogs.pop() else {
+        return false;
+    };
+
+    let finish_cancel = |app: &mut TuiApp,
+                         pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+                         pending_perm_queue: &std::collections::VecDeque<
+        whycode_agent::PermissionRequest,
+    >| {
+        if let Some(req) = pending_question_queue.pop_front() {
+            let _ = req.reply.send(Err(QuestionError::Cancelled));
+        }
+        app.mode = AppMode::Normal;
+        app.key_context = KeymapContext::Normal;
+        resume_after_question(app, pending_question_queue, pending_perm_queue);
+    };
+
+    let finish_ok = |app: &mut TuiApp,
+                     answers: Vec<whycode_tools::question::QuestionAnswer>,
+                     pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+                     pending_perm_queue: &std::collections::VecDeque<
+        whycode_agent::PermissionRequest,
+    >| {
+        if let Some(req) = pending_question_queue.pop_front() {
+            let _ = req.reply.send(Ok(answers));
+        }
+        app.mode = AppMode::Normal;
+        app.key_context = KeymapContext::Normal;
+        resume_after_question(app, pending_question_queue, pending_perm_queue);
+    };
+
+    match code {
+        KeyCode::Esc => {
+            if state.free_text_focus && !state.free_text.is_empty() {
+                state.free_text_focus = false;
+                app.dialogs.push(DialogKind::Question(state));
+                return true;
+            }
+            if state.free_text_focus {
+                state.free_text_focus = false;
+                app.dialogs.push(DialogKind::Question(state));
+                return true;
+            }
+            finish_cancel(app, pending_question_queue, pending_perm_queue);
+            return true;
+        }
+        KeyCode::Up | KeyCode::Char('k') if !state.free_text_focus => {
+            state.move_cursor(-1);
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Down | KeyCode::Char('j') if !state.free_text_focus => {
+            state.move_cursor(1);
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Char(' ') if !state.free_text_focus => {
+            if state.current().map(|q| q.multi_select).unwrap_or(false) {
+                state.toggle_multi_at_cursor();
+            } else if state.is_other_index(state.cursor) {
+                state.free_text_focus = true;
+            }
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Char('o') | KeyCode::Char('O') if !state.free_text_focus => {
+            // Jump to Other…
+            let other = state.option_count().saturating_sub(1);
+            state.cursor = other;
+            state.free_text_focus = true;
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Enter => {
+            if let Some(answers) = state.confirm_current() {
+                finish_ok(app, answers, pending_question_queue, pending_perm_queue);
+            } else {
+                // Still on this question (e.g. empty Other → focus free text)
+                app.dialogs.push(DialogKind::Question(state));
+            }
+            return true;
+        }
+        KeyCode::Backspace if state.free_text_focus => {
+            state.free_text.pop();
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Char(c) if state.free_text_focus && !c.is_control() => {
+            state.free_text.push(c);
+            app.dialogs.push(DialogKind::Question(state));
+            return true;
+        }
+        KeyCode::Char(c) if !state.free_text_focus && !c.is_control() => {
+            // Digit shortcut 1..n for single-select
+            if let Some(d) = c.to_digit(10) {
+                let idx = (d as usize).saturating_sub(1);
+                if idx < state.option_count() {
+                    state.cursor = idx;
+                    if state.is_other_index(idx) {
+                        state.free_text_focus = true;
+                        app.dialogs.push(DialogKind::Question(state));
+                    } else if state.current().map(|q| q.multi_select).unwrap_or(false) {
+                        state.multi_selected.insert(idx);
+                        app.dialogs.push(DialogKind::Question(state));
+                    } else if let Some(answers) = state.confirm_current() {
+                        finish_ok(app, answers, pending_question_queue, pending_perm_queue);
+                    } else {
+                        app.dialogs.push(DialogKind::Question(state));
+                    }
+                    return true;
+                }
+            }
+            app.dialogs.push(DialogKind::Question(state));
+            return false;
+        }
+        _ => {
+            app.dialogs.push(DialogKind::Question(state));
+            false
+        }
+    }
+}
+
+fn resume_after_question(
+    app: &mut TuiApp,
+    pending_question_queue: &std::collections::VecDeque<QuestionRequest>,
+    pending_perm_queue: &std::collections::VecDeque<whycode_agent::PermissionRequest>,
+) {
+    if let Some(next) = pending_question_queue.front() {
+        app.ask_question(next.questions.clone());
+        app.status_message = format!(
+            "Answered — {} more question set(s)…",
+            pending_question_queue.len()
+        );
+    } else if let Some(next) = pending_perm_queue.front() {
+        app.ask_permission(next.tool_name.clone(), next.detail.clone());
+    } else {
+        app.current_agent_state = AgentState::Generating;
+        app.status_message = "Answered — continuing…".into();
     }
 }
 
@@ -1989,10 +2224,11 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     ctx.config,
                     None,
                 );
-                *ctx.agent = Agent::new(info)
-                    .with_config(ctx.config)
-                    .with_permission_prompter(Arc::clone(&ctx.perm_prompter)
-                        as Arc<dyn whycode_agent::PermissionPrompter>);
+                *ctx.agent = bind_agent_prompters(
+                    Agent::new(info).with_config(ctx.config),
+                    &ctx.perm_prompter,
+                    &ctx.question_prompter,
+                );
                 ctx.session.set_system_prompt(&prompt);
                 if let Some(idx) = ctx.app.primary_agents.iter().position(|n| n == rest) {
                     ctx.app.agent_cycle_idx = idx;

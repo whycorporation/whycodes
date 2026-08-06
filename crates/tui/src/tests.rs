@@ -655,6 +655,61 @@ fn test_confirm() {
 }
 
 #[test]
+fn test_ask_question_opens_dialog() {
+    use crate::app::{AgentState, DialogKind};
+    use whycode_tools::question::{QuestionOption, QuestionSpec};
+
+    let mut app = TuiApp::new(test_config());
+    app.ask_question(vec![QuestionSpec {
+        prompt: "Pick?".into(),
+        options: vec![
+            QuestionOption {
+                label: "A".into(),
+                description: "first".into(),
+                preview: None,
+            },
+            QuestionOption {
+                label: "B".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+    }]);
+    assert_eq!(app.current_agent_state, AgentState::WaitingForQuestion);
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Question(_))
+    ));
+}
+
+#[test]
+fn test_question_dialog_confirm_single() {
+    use crate::app::QuestionDialogState;
+    use whycode_tools::question::{QuestionOption, QuestionSpec};
+
+    let mut st = QuestionDialogState::new(vec![QuestionSpec {
+        prompt: "Go?".into(),
+        options: vec![
+            QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            },
+            QuestionOption {
+                label: "No".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+    }]);
+    st.cursor = 0;
+    let done = st.confirm_current().expect("should finish one question");
+    assert_eq!(done[0].selected, vec!["Yes".to_string()]);
+}
+
+#[test]
 fn test_ask_permission() {
     let mut app = TuiApp::new(test_config());
     app.ask_permission("bash", "echo test");

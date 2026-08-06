@@ -6,8 +6,10 @@
 use crate::keymap::KeymapContext;
 use crate::theme::ThemeName;
 use ratatui::layout::Rect;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
+use whycode_tools::question::{QuestionAnswer, QuestionSpec};
 
 // ── Application Modes ──────────────────────────────────────────────────
 /// Top-level application mode.  Mutually exclusive — only one active.
@@ -47,10 +49,172 @@ pub enum DialogKind {
         tool_name: String,
         detail: String,
     },
+    /// Grok-style interactive questionnaire (`question` tool).
+    Question(QuestionDialogState),
     SessionList,
     Status,
     Theme,
     Workspace,
+}
+
+/// Live state for an open questionnaire modal.
+#[derive(Debug, Clone)]
+pub struct QuestionDialogState {
+    pub questions: Vec<QuestionSpec>,
+    /// Answers filled so far (length = questions.len(), None until answered).
+    pub answers: Vec<Option<QuestionAnswer>>,
+    /// Index of the question currently shown.
+    pub index: usize,
+    /// Cursor among options + trailing Other.
+    pub cursor: usize,
+    /// Multi-select toggles for predefined options (not Other).
+    pub multi_selected: HashSet<usize>,
+    pub free_text: String,
+    pub free_text_focus: bool,
+    /// Set when the user dismisses without answering (TUI run loop completes).
+    pub cancelled: bool,
+}
+
+impl QuestionDialogState {
+    pub fn new(questions: Vec<QuestionSpec>) -> Self {
+        let n = questions.len();
+        let free_focus = questions
+            .first()
+            .map(|q| q.options.is_empty())
+            .unwrap_or(true);
+        Self {
+            questions,
+            answers: vec![None; n],
+            index: 0,
+            cursor: 0,
+            multi_selected: HashSet::new(),
+            free_text: String::new(),
+            free_text_focus: free_focus,
+            cancelled: false,
+        }
+    }
+
+    pub fn current(&self) -> Option<&QuestionSpec> {
+        self.questions.get(self.index)
+    }
+
+    /// Number of rows: real options + Other (always).
+    pub fn option_count(&self) -> usize {
+        self.current().map(|q| q.options.len() + 1).unwrap_or(1)
+    }
+
+    pub fn is_other_index(&self, i: usize) -> bool {
+        self.current()
+            .map(|q| i >= q.options.len())
+            .unwrap_or(true)
+    }
+
+    pub fn move_cursor(&mut self, delta: isize) {
+        let n = self.option_count() as isize;
+        if n <= 0 {
+            return;
+        }
+        let mut c = self.cursor as isize + delta;
+        while c < 0 {
+            c += n;
+        }
+        self.cursor = (c % n) as usize;
+        // Auto-focus free text when landing on Other or empty options.
+        if self.is_other_index(self.cursor)
+            || self.current().map(|q| q.options.is_empty()).unwrap_or(false)
+        {
+            // Keep free_text_focus if already typing; otherwise select Other row.
+        } else {
+            self.free_text_focus = false;
+        }
+    }
+
+    pub fn toggle_multi_at_cursor(&mut self) {
+        if self.free_text_focus {
+            return;
+        }
+        if self.is_other_index(self.cursor) {
+            self.free_text_focus = true;
+            return;
+        }
+        if self.multi_selected.contains(&self.cursor) {
+            self.multi_selected.remove(&self.cursor);
+        } else {
+            self.multi_selected.insert(self.cursor);
+        }
+    }
+
+    /// Confirm current question. Returns `Some(all_answers)` when questionnaire done.
+    pub fn confirm_current(&mut self) -> Option<Vec<QuestionAnswer>> {
+        let q = self.current()?.clone();
+        let answer = if q.multi_select {
+            let mut selected = Vec::new();
+            for &i in &self.multi_selected {
+                if i < q.options.len() {
+                    selected.push(q.options[i].label.clone());
+                }
+            }
+            let free = {
+                let t = self.free_text.trim();
+                if !t.is_empty() && (self.is_other_index(self.cursor) || self.free_text_focus) {
+                    Some(t.to_string())
+                } else if !t.is_empty() && selected.is_empty() {
+                    Some(t.to_string())
+                } else if self.is_other_index(self.cursor) && t.is_empty() {
+                    // Other with no text — require text
+                    return None;
+                } else {
+                    None
+                }
+            };
+            if selected.is_empty() && free.is_none() {
+                return None;
+            }
+            QuestionAnswer {
+                selected,
+                free_text: free,
+            }
+        } else if q.options.is_empty() || self.is_other_index(self.cursor) || self.free_text_focus {
+            let t = self.free_text.trim();
+            if t.is_empty() {
+                // Enter on Other with empty text → focus free-text field
+                self.free_text_focus = true;
+                return None;
+            }
+            QuestionAnswer {
+                selected: vec![],
+                free_text: Some(t.to_string()),
+            }
+        } else {
+            let label = q.options.get(self.cursor)?.label.clone();
+            QuestionAnswer {
+                selected: vec![label],
+                free_text: None,
+            }
+        };
+
+        if self.index < self.answers.len() {
+            self.answers[self.index] = Some(answer);
+        }
+        if self.index + 1 >= self.questions.len() {
+            let done: Vec<QuestionAnswer> = self
+                .answers
+                .iter()
+                .filter_map(|a| a.clone())
+                .collect();
+            return Some(done);
+        }
+        // Advance
+        self.index += 1;
+        self.cursor = 0;
+        self.multi_selected.clear();
+        self.free_text.clear();
+        self.free_text_focus = self
+            .current()
+            .map(|q| q.options.is_empty())
+            .unwrap_or(true);
+        None
+    }
 }
 
 /// What to do when a confirmation dialog is accepted.
@@ -505,6 +669,8 @@ pub enum AgentState {
     Generating,
     Thinking,
     WaitingForPermission,
+    /// Blocked on interactive `question` questionnaire.
+    WaitingForQuestion,
     Error(String),
 }
 
@@ -604,6 +770,8 @@ pub struct TuiApp {
     pub dialog_list_total: usize,
     /// Active thumb drag: row within the thumb where the grab started (`None` = not dragging).
     pub dialog_scrollbar_grab: Option<u16>,
+    /// Questionnaire closed via `[✗]` / generic dismiss — run loop completes oneshot.
+    pub question_dismissed: bool,
 
     // ── slash suggestion popup ──
     pub slash_suggest: SlashSuggestState,
@@ -997,6 +1165,7 @@ impl TuiApp {
             dialog_list_visible: 0,
             dialog_list_total: 0,
             dialog_scrollbar_grab: None,
+            question_dismissed: false,
             slash_suggest: SlashSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
@@ -1184,7 +1353,10 @@ impl TuiApp {
     pub fn is_busy(&self) -> bool {
         matches!(
             self.current_agent_state,
-            AgentState::Generating | AgentState::Thinking | AgentState::WaitingForPermission
+            AgentState::Generating
+                | AgentState::Thinking
+                | AgentState::WaitingForPermission
+                | AgentState::WaitingForQuestion
         )
     }
 
@@ -1674,6 +1846,16 @@ impl TuiApp {
             tool_name: tool_name.into(),
             detail: detail.into(),
         });
+    }
+
+    /// Open an interactive questionnaire (agent `question` tool).
+    pub fn ask_question(&mut self, questions: Vec<QuestionSpec>) {
+        self.mode = AppMode::Dialog;
+        self.key_context = KeymapContext::Dialog;
+        self.current_agent_state = AgentState::WaitingForQuestion;
+        self.dialogs
+            .push(DialogKind::Question(QuestionDialogState::new(questions)));
+        self.status_message = "Waiting for your answer…".into();
     }
 
     /// Push a simple alert dialog.

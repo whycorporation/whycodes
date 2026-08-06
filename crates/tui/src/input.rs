@@ -1032,6 +1032,10 @@ fn dismiss_modal(app: &mut TuiApp) {
 
 /// Pop the active dialog and leave dialog mode when the stack is empty.
 fn dismiss_dialog(app: &mut TuiApp) {
+    // Questionnaire oneshot must complete — signal the run loop.
+    if matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+        app.question_dismissed = true;
+    }
     app.dialogs.pop();
     app.mouse_sel = None;
     app.dialog_scrollbar_grab = None;

@@ -718,6 +718,34 @@ fn default_agent() -> String {
     "build".to_string()
 }
 
+/// Settings for the interactive `question` tool (Grok-style questionnaire).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionToolConfig {
+    /// When true, unanswered questionnaires fail after [`Self::timeout_secs`].
+    #[serde(default = "default_question_timeout_enabled")]
+    pub timeout_enabled: bool,
+    /// Seconds to wait for answers when timeout is enabled (default 1800 = 30 min).
+    #[serde(default = "default_question_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl Default for QuestionToolConfig {
+    fn default() -> Self {
+        Self {
+            timeout_enabled: default_question_timeout_enabled(),
+            timeout_secs: default_question_timeout_secs(),
+        }
+    }
+}
+
+fn default_question_timeout_enabled() -> bool {
+    true
+}
+
+fn default_question_timeout_secs() -> u64 {
+    1800
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolsConfig {
     #[serde(default = "default_true")]
@@ -736,6 +764,9 @@ pub struct ToolsConfig {
     pub enable_webfetch: bool,
     #[serde(default = "default_true")]
     pub enable_websearch: bool,
+    /// Interactive questionnaire (`question` tool).
+    #[serde(default)]
+    pub question: QuestionToolConfig,
     pub disabled_tools: Vec<String>,
     pub custom_tools: HashMap<String, CustomToolConfig>,
 }
@@ -1757,6 +1788,14 @@ impl ToolsConfig {
         }
         if other.enable_websearch != defaults.enable_websearch {
             merged.enable_websearch = other.enable_websearch;
+        }
+
+        let qdef = QuestionToolConfig::default();
+        if other.question.timeout_enabled != qdef.timeout_enabled {
+            merged.question.timeout_enabled = other.question.timeout_enabled;
+        }
+        if other.question.timeout_secs != qdef.timeout_secs {
+            merged.question.timeout_secs = other.question.timeout_secs;
         }
 
         if !other.disabled_tools.is_empty() {

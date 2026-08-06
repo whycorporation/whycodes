@@ -102,6 +102,16 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-06 — Interactive `question` tool (Grok-style questionnaire)
+
+**Symptom:** Agent needed clarification; TUI had no way to answer with options. Old `question` wrote to stderr and blocked on stdin (broken under alt-screen).
+
+**Fix:** Channel prompter (like permissions): `ChannelQuestionPrompter` → TUI modal with ↑/↓, Enter, Space multi-select, Other free-text, digit shortcuts. Schema supports Grok-style `questions[]` + `options[{label,description}]` + `multi_select`, plus legacy `question`/`choices`. Config: `[tools.question] timeout_enabled` / `timeout_secs` (default 30m). Core tool profile includes `question`.
+
+**Prevention:** Never read stdin from tools under TUI raw mode; use oneshot/channel and always complete the reply on Esc/`[✗]`/exit.
+
+---
+
 ### 2026-08-06 — Tool results: minified JSON flood (webfetch / package.json)
 
 **Symptom:** After a tool turn, the transcript looks like a wall of mid-JSON with `┃` rails (`"exports":…`, `_npmUser`, …) ending in `Worked for Xs` — easy to mistake for the assistant answer. One minified line wrapped across the entire preview budget.

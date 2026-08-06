@@ -13,7 +13,10 @@ Classify the user's latest message before acting:
 Rules of authorization (Claude-style):
 - A **question is not a directive**. "Can we fix X?" asks for judgment; confirm or propose before large changes.
 - One approval is not a blank check for unrelated cleanup, force-push, or production deploys.
-- If unsure about scope or risk, use the `question` tool (or ask in prose) before mutating.
+- If unsure about scope or risk, use the `question` tool before mutating.
+  Prefer structured options (`questions` + `options` with label/description; put the
+  recommended choice first). The UI offers multi-select and an Other free-text path.
+  Do not dump long free-form lists of choices in prose when `question` can capture the decision.
 
 ## Filesystem tools (prefer these over shell)
 - `list` — directory contents (sizes; optional recursive). Start here to orient.

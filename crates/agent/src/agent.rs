@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
+use super::question::{QuestionPrompter, default_question_prompter, run_question_tool};
 use super::subagent::{SubagentRunner, SubagentTask};
 use super::tool_stream::ToolCallAssembler;
 use whycode_command_risk::{Decision, RiskThreshold, assess, decide};
@@ -155,6 +156,7 @@ pub struct Agent {
     provider_registry: Arc<ProviderRegistry>,
     tool_executor: Arc<ToolExecutor>,
     permission_prompter: Arc<dyn PermissionPrompter>,
+    question_prompter: Arc<dyn QuestionPrompter>,
     risk_threshold: RiskThreshold,
     sandbox: SandboxSettings,
     network: NetworkPolicy,
@@ -214,6 +216,7 @@ impl Agent {
             provider_registry: Arc::new(ProviderRegistry::default()),
             tool_executor: Arc::new(ToolExecutor::new()),
             permission_prompter: default_prompter(),
+            question_prompter: default_question_prompter(),
             risk_threshold: RiskThreshold::default(),
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
@@ -240,6 +243,11 @@ impl Agent {
 
     pub fn with_permission_prompter(mut self, prompter: Arc<dyn PermissionPrompter>) -> Self {
         self.permission_prompter = prompter;
+        self
+    }
+
+    pub fn with_question_prompter(mut self, prompter: Arc<dyn QuestionPrompter>) -> Self {
+        self.question_prompter = prompter;
         self
     }
 
@@ -1190,6 +1198,18 @@ impl Agent {
         api_key: &str,
         turn_intent: Option<&crate::intent::IntentAssessment>,
     ) -> ToolResult {
+        // Questionnaire: UI-backed channel (TUI) or stdin/auto — never race in
+        // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
+        // the user *is* the interaction.
+        if tc.name == "question" {
+            return run_question_tool(
+                self.question_prompter.as_ref(),
+                &tc.arguments,
+                &tc.id,
+            )
+            .await;
+        }
+
         // Shell commands are gated on what the command would destroy. The
         // permission map below only sees the tool name, so on its own `allow`
         // would run anything the model emits.

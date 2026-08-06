@@ -64,7 +64,7 @@ fn status_glyph(app: &TuiApp, palette: &ThemePalette) -> Span<'static> {
             SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()].to_string(),
             Style::default().fg(palette.accent),
         ),
-        AgentState::WaitingForPermission => Span::styled(
+        AgentState::WaitingForPermission | AgentState::WaitingForQuestion => Span::styled(
             STATUS_SQUARE_OPEN.to_string(),
             Style::default().fg(palette.warning),
         ),

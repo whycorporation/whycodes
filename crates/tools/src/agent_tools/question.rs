@@ -1,12 +1,212 @@
+//! Interactive questionnaire tool (`question`).
+//!
+//! Schema is Grok-style: one or more questions, each with labelled options,
+//! optional multi-select, and an implicit **Other** free-text path.
+//!
+//! Execution is UI-backed when the agent installs a [`QuestionPrompter`]-style
+//! channel (TUI). This module owns parsing + result formatting + a stdin
+//! fallback for plain CLI / tests.
+
 use async_trait::async_trait;
 use serde_json::json;
-use std::io::{self, Read, Write};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::io::{self, Write};
 
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
+
+// ── Public types (shared by agent prompter + TUI) ──────────────────────
+
+/// One selectable option.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
+    pub preview: Option<String>,
+}
+
+/// One question in a questionnaire.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionSpec {
+    pub prompt: String,
+    pub options: Vec<QuestionOption>,
+    pub multi_select: bool,
+}
+
+/// User response for one question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionAnswer {
+    /// Labels of chosen predefined options (empty if only free-text).
+    pub selected: Vec<String>,
+    /// Free-text when Other was used (or sole free-form answer).
+    pub free_text: Option<String>,
+}
+
+impl QuestionAnswer {
+    pub fn summary(&self) -> String {
+        let mut parts = self.selected.clone();
+        if let Some(ref t) = self.free_text {
+            let t = t.trim();
+            if !t.is_empty() {
+                parts.push(format!("Other: {t}"));
+            }
+        }
+        if parts.is_empty() {
+            "(no selection)".into()
+        } else {
+            parts.join("; ")
+        }
+    }
+}
+
+/// Parse tool arguments into question specs.
+///
+/// Accepts:
+/// - Grok-style: `{ "questions": [ { "question", "options": [{label,description}], "multi_select" } ] }`
+/// - Legacy: `{ "question": "...", "choices": ["a","b"] }`
+pub fn parse_questions(args: &serde_json::Value) -> Result<Vec<QuestionSpec>, String> {
+    if let Some(arr) = args.get("questions").and_then(|v| v.as_array()) {
+        if arr.is_empty() {
+            return Err("questions array must not be empty".into());
+        }
+        let mut out = Vec::with_capacity(arr.len());
+        for (i, item) in arr.iter().enumerate() {
+            out.push(parse_one_question(item).map_err(|e| format!("questions[{i}]: {e}"))?);
+        }
+        return Ok(out);
+    }
+
+    let prompt = args
+        .get("question")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "provide `questions` or a non-empty `question` string".to_string())?;
+
+    let options = parse_choices_or_options(args)?;
+    let multi_select = args
+        .get("multi_select")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    Ok(vec![QuestionSpec {
+        prompt: prompt.to_string(),
+        options,
+        multi_select,
+    }])
+}
+
+fn parse_one_question(item: &serde_json::Value) -> Result<QuestionSpec, String> {
+    let prompt = item
+        .get("question")
+        .or_else(|| item.get("prompt"))
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "missing question text".to_string())?;
+
+    let options = parse_choices_or_options(item)?;
+    let multi_select = item
+        .get("multi_select")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    Ok(QuestionSpec {
+        prompt: prompt.to_string(),
+        options,
+        multi_select,
+    })
+}
+
+fn parse_choices_or_options(item: &serde_json::Value) -> Result<Vec<QuestionOption>, String> {
+    if let Some(opts) = item.get("options").and_then(|v| v.as_array()) {
+        let mut out = Vec::new();
+        for (i, o) in opts.iter().enumerate() {
+            if let Some(s) = o.as_str() {
+                let s = s.trim();
+                if s.is_empty() {
+                    continue;
+                }
+                out.push(QuestionOption {
+                    label: s.to_string(),
+                    description: String::new(),
+                    preview: None,
+                });
+                continue;
+            }
+            let label = o
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("options[{i}]: missing label"))?
+                .to_string();
+            let description = o
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let preview = o
+                .get("preview")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            out.push(QuestionOption {
+                label,
+                description,
+                preview,
+            });
+        }
+        if out.is_empty() {
+            return Err("options must contain at least one entry".into());
+        }
+        return Ok(out);
+    }
+
+    if let Some(choices) = item.get("choices").and_then(|v| v.as_array()) {
+        let mut out = Vec::new();
+        for c in choices {
+            if let Some(s) = c.as_str() {
+                let s = s.trim();
+                if !s.is_empty() {
+                    out.push(QuestionOption {
+                        label: s.to_string(),
+                        description: String::new(),
+                        preview: None,
+                    });
+                }
+            }
+        }
+        if out.is_empty() {
+            return Err("choices must contain at least one non-empty string".into());
+        }
+        return Ok(out);
+    }
+
+    // Free-form only (no options) — UI will offer Other / free text.
+    Ok(Vec::new())
+}
+
+/// Format answers for the model (tool result body).
+pub fn format_question_result(questions: &[QuestionSpec], answers: &[QuestionAnswer]) -> String {
+    let mut out = String::new();
+    for (i, (q, a)) in questions.iter().zip(answers.iter()).enumerate() {
+        if questions.len() > 1 {
+            out.push_str(&format!("### Question {}\n", i + 1));
+        }
+        out.push_str(&format!("Question: {}\n", q.prompt));
+        out.push_str(&format!("Answer: {}\n", a.summary()));
+        if i + 1 < questions.len() {
+            out.push('\n');
+        }
+    }
+    if out.is_empty() {
+        "No answers.".into()
+    } else {
+        out
+    }
+}
+
+// ── Tool ───────────────────────────────────────────────────────────────
 
 pub struct QuestionTool;
 
@@ -29,125 +229,277 @@ impl Tool for QuestionTool {
     }
 
     fn description(&self) -> &str {
-        "Ask the user a question when clarification is needed"
+        "Ask the user one or more clarifying questions with optional multiple-choice \
+         options. Prefer this over guessing when requirements, approach, or risk are \
+         ambiguous. Each question may set multi_select. The UI always offers an Other \
+         free-text path. Use short labels and helpful descriptions; put the recommended \
+         option first."
     }
 
     fn parameters(&self) -> serde_json::Value {
         json!({
             "type": "object",
             "properties": {
+                "questions": {
+                    "type": "array",
+                    "description": "One or more questions (preferred). Max 4 recommended.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question text"
+                            },
+                            "options": {
+                                "type": "array",
+                                "description": "Choices (label + description). Other is added automatically.",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": {
+                                            "type": "string",
+                                            "description": "Short option label (a few words)"
+                                        },
+                                        "description": {
+                                            "type": "string",
+                                            "description": "What choosing this option means"
+                                        },
+                                        "preview": {
+                                            "type": "string",
+                                            "description": "Optional extra detail shown when focused"
+                                        }
+                                    },
+                                    "required": ["label"]
+                                }
+                            },
+                            "choices": {
+                                "type": "array",
+                                "description": "Legacy: plain string options (same as options[].label)",
+                                "items": { "type": "string" }
+                            },
+                            "multi_select": {
+                                "type": "boolean",
+                                "description": "Allow selecting more than one option (default false)"
+                            }
+                        },
+                        "required": ["question"]
+                    }
+                },
                 "question": {
                     "type": "string",
-                    "description": "The question to ask the user"
+                    "description": "Legacy single-question form"
                 },
                 "choices": {
                     "type": "array",
-                    "description": "Optional list of predefined choices for the user",
-                    "items": {
-                        "type": "string"
-                    }
+                    "description": "Legacy string choices for the single-question form",
+                    "items": { "type": "string" }
+                },
+                "multi_select": {
+                    "type": "boolean",
+                    "description": "Legacy multi_select for the single-question form"
                 }
-            },
-            "required": ["question"]
+            }
         })
     }
 
     async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let question = args["question"].as_str().unwrap_or("(no question)");
-        let choices: Option<Vec<String>> =
-            args.get("choices").and_then(|v| v.as_array()).map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            });
-
-        // Print the question to stderr
-        let mut prompt = format!("\n❓ {}\n", question);
-        if let Some(ref choices) = choices {
-            prompt.push_str("\nChoices:\n");
-            for (i, choice) in choices.iter().enumerate() {
-                prompt.push_str(&format!("  {}. {}\n", i + 1, choice));
-            }
-            prompt.push_str("\nEnter the number of your choice (or type your answer): ");
-        } else {
-            prompt.push_str("\nEnter your answer: ");
-        }
-
-        eprint!("{}", prompt);
-        let _ = io::stderr().flush();
-
-        // Read stdin with a timeout
-        let done = Arc::new(AtomicBool::new(false));
-        let done_clone = Arc::clone(&done);
-
-        // Spawn a thread to listen for input
-        let handle = std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            match io::stdin().read(&mut buf) {
-                Ok(n) if n > 0 => {
-                    let s = String::from_utf8_lossy(&buf[..n]).trim().to_string();
-                    done_clone.store(true, Ordering::SeqCst);
-                    Some(s)
-                }
-                _ => {
-                    done_clone.store(true, Ordering::SeqCst);
-                    None
-                }
-            }
-        });
-
-        // Wait up to 60 seconds for a response
-        let start = std::time::Instant::now();
-        let timeout = Duration::from_secs(60);
-
-        loop {
-            if done.load(Ordering::SeqCst) {
-                break;
-            }
-            if start.elapsed() >= timeout {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-
-        // If we timed out, the thread may still be blocked on stdin read.
-        // We can't cleanly kill it in safe Rust; just report the timeout.
-        let answer = if done.load(Ordering::SeqCst) {
-            match handle.join() {
-                Ok(Some(s)) => s,
-                _ => String::new(),
-            }
-        } else {
-            eprintln!("\n⏰ Timed out waiting for user input.");
-            String::new()
-        };
-
-        let result_content = if answer.is_empty() {
-            "No answer received (timeout or empty input).".to_string()
-        } else {
-            // If choices were provided, try to resolve numeric choice
-            if let Some(ref choices) = choices
-                && let Ok(num) = answer.parse::<usize>()
-                && num >= 1
-                && num <= choices.len()
-            {
-                let chosen = &choices[num - 1];
+        // Fallback path when the agent did not intercept (plain CLI / tests).
+        let questions = match parse_questions(&args) {
+            Ok(q) => q,
+            Err(e) => {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!(
-                        "Question: {}\nAnswer (choice #{}): {}",
-                        question, num, chosen
-                    ),
-                    is_error: false,
+                    content: format!("Invalid question arguments: {e}"),
+                    is_error: true,
                 };
             }
-            format!("Question: {}\nAnswer: {}", question, answer)
         };
 
-        ToolResult {
-            tool_call_id: String::new(),
-            content: result_content,
-            is_error: answer.is_empty(),
+        match stdin_questionnaire(&questions) {
+            Ok(answers) => ToolResult {
+                tool_call_id: String::new(),
+                content: format_question_result(&questions, &answers),
+                is_error: false,
+            },
+            Err(e) => ToolResult {
+                tool_call_id: String::new(),
+                content: e,
+                is_error: true,
+            },
         }
+    }
+}
+
+fn stdin_questionnaire(questions: &[QuestionSpec]) -> Result<Vec<QuestionAnswer>, String> {
+    let mut answers = Vec::with_capacity(questions.len());
+    for (qi, q) in questions.iter().enumerate() {
+        eprintln!();
+        if questions.len() > 1 {
+            eprintln!("── Question {}/{} ──", qi + 1, questions.len());
+        }
+        eprintln!("❓ {}", q.prompt);
+        if q.options.is_empty() {
+            eprint!("   Your answer: ");
+            let _ = io::stderr().flush();
+            let line = read_line_stdin()?;
+            if line.is_empty() {
+                return Err("No answer received (empty input).".into());
+            }
+            answers.push(QuestionAnswer {
+                selected: vec![],
+                free_text: Some(line),
+            });
+            continue;
+        }
+
+        for (i, opt) in q.options.iter().enumerate() {
+            if opt.description.is_empty() {
+                eprintln!("  {}. {}", i + 1, opt.label);
+            } else {
+                eprintln!("  {}. {} — {}", i + 1, opt.label, opt.description);
+            }
+        }
+        let other_n = q.options.len() + 1;
+        eprintln!("  {other_n}. Other (type your own)");
+        if q.multi_select {
+            eprint!("   Enter numbers separated by comma, or text: ");
+        } else {
+            eprint!("   Enter number or type your answer: ");
+        }
+        let _ = io::stderr().flush();
+        let line = read_line_stdin()?;
+        if line.is_empty() {
+            return Err("No answer received (empty input).".into());
+        }
+        answers.push(resolve_stdin_answer(q, &line, other_n));
+    }
+    Ok(answers)
+}
+
+fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> QuestionAnswer {
+    if q.multi_select {
+        let mut selected = Vec::new();
+        let mut free = None;
+        for part in line.split([',', ' ']) {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Ok(n) = part.parse::<usize>() {
+                if n >= 1 && n <= q.options.len() {
+                    selected.push(q.options[n - 1].label.clone());
+                } else if n == other_n {
+                    free = Some(String::new());
+                }
+            } else {
+                free = Some(part.to_string());
+            }
+        }
+        if free.as_ref().is_some_and(|s| s.is_empty()) {
+            eprint!("   Other text: ");
+            let _ = io::stderr().flush();
+            free = read_line_stdin().ok().filter(|s| !s.is_empty());
+        }
+        if selected.is_empty() && free.is_none() {
+            free = Some(line.to_string());
+        }
+        return QuestionAnswer {
+            selected,
+            free_text: free,
+        };
+    }
+
+    if let Ok(n) = line.parse::<usize>() {
+        if n >= 1 && n <= q.options.len() {
+            return QuestionAnswer {
+                selected: vec![q.options[n - 1].label.clone()],
+                free_text: None,
+            };
+        }
+        if n == other_n {
+            eprint!("   Other text: ");
+            let _ = io::stderr().flush();
+            let t = read_line_stdin().unwrap_or_default();
+            return QuestionAnswer {
+                selected: vec![],
+                free_text: if t.is_empty() { None } else { Some(t) },
+            };
+        }
+    }
+    // Typed answer: match label case-insensitively or treat as free text
+    for opt in &q.options {
+        if opt.label.eq_ignore_ascii_case(line) {
+            return QuestionAnswer {
+                selected: vec![opt.label.clone()],
+                free_text: None,
+            };
+        }
+    }
+    QuestionAnswer {
+        selected: vec![],
+        free_text: Some(line.to_string()),
+    }
+}
+
+fn read_line_stdin() -> Result<String, String> {
+    let mut line = String::new();
+    io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| format!("Failed to read input: {e}"))?;
+    Ok(line.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_legacy_choices() {
+        let q = parse_questions(&json!({
+            "question": "Pick one",
+            "choices": ["A", "B"]
+        }))
+        .unwrap();
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].prompt, "Pick one");
+        assert_eq!(q[0].options.len(), 2);
+        assert_eq!(q[0].options[0].label, "A");
+    }
+
+    #[test]
+    fn parse_grok_style_questions() {
+        let q = parse_questions(&json!({
+            "questions": [{
+                "question": "Backend?",
+                "multi_select": false,
+                "options": [
+                    {"label": "SQLite", "description": "Simple local"},
+                    {"label": "Postgres", "description": "Multi-user"}
+                ]
+            }]
+        }))
+        .unwrap();
+        assert_eq!(q[0].options[1].description, "Multi-user");
+    }
+
+    #[test]
+    fn format_result_lists_answers() {
+        let specs = vec![QuestionSpec {
+            prompt: "Go?".into(),
+            options: vec![QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+        }];
+        let answers = vec![QuestionAnswer {
+            selected: vec!["Yes".into()],
+            free_text: None,
+        }];
+        let s = format_question_result(&specs, &answers);
+        assert!(s.contains("Go?"));
+        assert!(s.contains("Yes"));
     }
 }

@@ -2034,7 +2034,9 @@ async fn cmd_generate(
         .with_mcp(&config)
         .await;
     if format.is_structured() {
-        agent = agent.with_permission_prompter(Arc::new(AutoApprovePrompter));
+        agent = agent
+            .with_permission_prompter(Arc::new(AutoApprovePrompter))
+            .with_question_prompter(Arc::new(whycode_agent::AutoAnswerPrompter));
     }
 
     let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
