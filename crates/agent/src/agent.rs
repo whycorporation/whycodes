@@ -171,6 +171,8 @@ pub struct Agent {
     model_fast: Option<String>,
     /// Cross-session memory settings (from config).
     memory: whycode_memory::MemorySettings,
+    /// Heuristic intent posture for build turns (`auto` / `off` / `always`).
+    intent_guidance: crate::intent::IntentGuidanceMode,
 }
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
@@ -222,6 +224,7 @@ impl Agent {
             use_prompt_cache: true,
             model_fast: None,
             memory: whycode_memory::MemorySettings::default(),
+            intent_guidance: crate::intent::IntentGuidanceMode::default(),
         }
     }
 
@@ -263,6 +266,8 @@ impl Agent {
             !matches!(config.session.prompt_cache.trim().to_ascii_lowercase().as_str(), "none" | "off" | "false" | "0");
         self.model_fast = config.session.model_fast.clone();
         self.memory = memory_settings_from_config(config);
+        self.intent_guidance =
+            crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -272,6 +277,7 @@ impl Agent {
             tool_profile = self.tool_profile.as_str(),
             use_prompt_cache = self.use_prompt_cache,
             memory_enabled = self.memory.enabled,
+            intent_guidance = ?self.intent_guidance,
             "shell sandbox, network policy, and hooks"
         );
         self
@@ -325,7 +331,7 @@ impl Agent {
             .info
             .system_prompt
             .clone()
-            .unwrap_or_else(|| DEFAULT_SYSTEM_PROMPT.to_string());
+            .unwrap_or_else(|| Self::system_prompt_for(&self.info.name));
         Self::with_runtime_context(&base)
     }
 
@@ -341,6 +347,7 @@ impl Agent {
         match agent_name {
             "build" => include_str!("../prompts/build.txt").to_string(),
             "plan" => include_str!("../prompts/plan.txt").to_string(),
+            "ask" => include_str!("../prompts/ask.txt").to_string(),
             "explore" => include_str!("../prompts/explore.txt").to_string(),
             "general" => include_str!("../prompts/general.txt").to_string(),
             "scout" => include_str!("../prompts/explore.txt").to_string(),
@@ -669,6 +676,29 @@ impl Agent {
             let mut request =
                 session.build_request(&tools, None, self.info.temperature, Some(true));
             request.use_prompt_cache = self.use_prompt_cache;
+
+            // First LLM step of the user turn: ephemeral intent posture (not
+            // stored in session; keeps system prompt cache-stable).
+            if turn_count == 1 {
+                if let Some(assessment) = crate::intent::apply_intent_to_request(
+                    &mut request,
+                    &last_user,
+                    &self.info.name,
+                    self.intent_guidance,
+                ) {
+                    tracing::debug!(
+                        intent = assessment.intent.as_str(),
+                        confidence = assessment.confidence,
+                        agent = %self.info.name,
+                        "intent posture injected into request"
+                    );
+                    if let Some(hint) =
+                        crate::intent::status_hint(&assessment, &self.info.name)
+                    {
+                        emit(&events, TurnEvent::Status(hint));
+                    }
+                }
+            }
 
             let mut accumulated_text = String::new();
             let mut turn_usage = whycode_core::types::Usage::default();

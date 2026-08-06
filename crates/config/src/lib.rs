@@ -373,10 +373,10 @@ impl Default for Config {
             top_p: None,
         };
 
-        // Plan: primary (Tab-switchable), file edits denied — matches OpenCode
+        // Plan: primary (Ctrl+T), file edits denied — OpenCode Plan / Cursor Plan
         let plan_agent = AgentInfo {
             name: "plan".to_string(),
-            description: "Read-only planning agent — analyzes code and proposes changes but does not modify files. Bash requires care.".to_string(),
+            description: "Read-only planning agent — analyzes code and proposes changes but does not modify files.".to_string(),
             mode: AgentMode::Primary,
             permission: PermissionSet {
                 allowed_tools: Some(vec![
@@ -396,6 +396,8 @@ impl Default for Config {
                     "apply_patch".to_string(),
                     "todowrite".to_string(),
                     "todo".to_string(),
+                    "git_commit".to_string(),
+                    "task".to_string(),
                 ]),
                 allow_file_writes: false,
                 allow_network: true,
@@ -404,7 +406,46 @@ impl Default for Config {
                 rules: Default::default(),
             },
             model: None,
-            system_prompt: Some("You are Whycode in planning mode. You are READ-ONLY. Analyze code and propose changes but do NOT edit files or run shell commands. Output a structured plan.".to_string()),
+            system_prompt: None, // prompts/plan.txt
+            temperature: None,
+            top_p: None,
+        };
+
+        // Ask: primary read-only Q&A — Cursor Ask mode (no implementation)
+        let ask_agent = AgentInfo {
+            name: "ask".to_string(),
+            description: "Read-only Q&A agent — explains code and answers questions without modifying files.".to_string(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet {
+                allowed_tools: Some(vec![
+                    "read".to_string(),
+                    "grep".to_string(),
+                    "glob".to_string(),
+                    "list".to_string(),
+                    "webfetch".to_string(),
+                    "websearch".to_string(),
+                    "lsp".to_string(),
+                ]),
+                denied_tools: Some(vec![
+                    "write".to_string(),
+                    "edit".to_string(),
+                    "bash".to_string(),
+                    "shell".to_string(),
+                    "apply_patch".to_string(),
+                    "todowrite".to_string(),
+                    "todo".to_string(),
+                    "git_commit".to_string(),
+                    "task".to_string(),
+                    "plan".to_string(),
+                ]),
+                allow_file_writes: false,
+                allow_network: true,
+                allow_shell: false,
+                allowed_paths: None,
+                rules: Default::default(),
+            },
+            model: None,
+            system_prompt: None, // prompts/ask.txt
             temperature: None,
             top_p: None,
         };
@@ -509,6 +550,7 @@ impl Default for Config {
             agents: vec![
                 build_agent,
                 plan_agent,
+                ask_agent,
                 explore_agent,
                 general_agent,
                 scout_agent,
@@ -728,6 +770,14 @@ pub struct SessionConfig {
     /// Empty = auto-pick small sibling of the session model (haiku/mini/flash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_fast: Option<String>,
+    /// Heuristic intent posture for build turns: `auto` (default), `off`, or `always`.
+    ///
+    /// When enabled, high-confidence question/plan signals inject an ephemeral
+    /// `<whycode_intent>` block into the LLM request (not session history) so
+    /// the model answers or plans instead of over-eager edits. Hard modes
+    /// (`ask` / `plan`) still enforce tool denylists regardless of this flag.
+    #[serde(default = "default_intent_guidance")]
+    pub intent_guidance: String,
 }
 
 impl Default for SessionConfig {
@@ -741,6 +791,7 @@ impl Default for SessionConfig {
             tool_profile: default_tool_profile(),
             prompt_cache: default_prompt_cache(),
             model_fast: None,
+            intent_guidance: default_intent_guidance(),
         }
     }
 }
@@ -750,6 +801,10 @@ fn default_tool_profile() -> String {
 }
 
 fn default_prompt_cache() -> String {
+    "auto".into()
+}
+
+fn default_intent_guidance() -> String {
     "auto".into()
 }
 
@@ -1142,6 +1197,9 @@ impl Config {
         }
         if other.session.model_fast.is_some() {
             merged.session.model_fast = other.session.model_fast.clone();
+        }
+        if other.session.intent_guidance != default_intent_guidance() {
+            merged.session.intent_guidance = other.session.intent_guidance.clone();
         }
 
         // TUI
@@ -1752,19 +1810,27 @@ mod tests {
     #[test]
     fn test_default_config() {
         let cfg = Config::default();
-        assert_eq!(cfg.agents.len(), 5, "default config should have 5 agents");
+        assert_eq!(cfg.agents.len(), 6, "default config should have 6 agents");
         assert_eq!(cfg.default_agent, "build");
         assert!(cfg.default_model.is_none());
         assert!(cfg.providers.is_empty());
         assert!(cfg.models.is_empty());
+        assert_eq!(cfg.session.intent_guidance, "auto");
 
-        // Verify agent names (OpenCode: build/plan primary, general/explore/scout subagents)
+        // Primary: build / plan / ask; subagents: general / explore / scout
         let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
         assert!(names.contains(&"build"));
         assert!(names.contains(&"plan"));
+        assert!(names.contains(&"ask"));
         assert!(names.contains(&"explore"));
         assert!(names.contains(&"general"));
         assert!(names.contains(&"scout"));
+
+        let ask = cfg.get_agent("ask").expect("ask agent");
+        assert!(!ask.permission.allow_file_writes);
+        assert!(!ask.permission.allow_shell);
+        let plan = cfg.get_agent("plan").expect("plan agent");
+        assert!(!plan.permission.allow_file_writes);
     }
 
     // ── test_config_load_save ───────────────────────────────────────────
@@ -1811,7 +1877,7 @@ mod tests {
         let loaded: Config = toml::from_str(&content).expect("deserialize");
         let _ = std::fs::remove_file(&path);
 
-        assert_eq!(loaded.agents.len(), 5);
+        assert_eq!(loaded.agents.len(), 6);
         assert_eq!(loaded.providers.len(), 1);
         assert_eq!(loaded.providers["openai"].name, "openai");
     }

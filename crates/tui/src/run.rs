@@ -203,7 +203,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         .map(|a| a.name.clone())
         .collect();
     if app.primary_agents.is_empty() {
-        app.primary_agents = vec!["build".into(), "plan".into()];
+        app.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
     }
     if let Some(idx) = app
         .primary_agents

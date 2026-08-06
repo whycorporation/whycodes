@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod events;
+pub mod intent;
 pub mod mcp_load;
 pub mod memory_retain;
 pub mod permission;
@@ -12,6 +13,9 @@ pub mod tool_stream;
 
 pub use agent::{Agent, memory_settings_from_config};
 pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
+pub use intent::{
+    IntentAssessment, IntentGuidanceMode, UserIntent, classify_user_intent,
+};
 pub use permission::{
     AutoApprovePrompter, AutoDenyPrompter, ChannelPermissionPrompter, PermissionPrompter,
     PermissionRequest, StdinPrompter, default_prompter,

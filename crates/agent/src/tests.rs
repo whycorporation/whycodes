@@ -212,6 +212,21 @@ fn test_agent_system_prompt_for_build() {
 fn test_agent_system_prompt_for_plan() {
     let prompt = Agent::system_prompt_for("plan");
     assert!(!prompt.is_empty());
+    assert!(
+        prompt.to_ascii_lowercase().contains("plan"),
+        "plan prompt should mention planning"
+    );
+}
+
+#[test]
+fn test_agent_system_prompt_for_ask() {
+    let prompt = Agent::system_prompt_for("ask");
+    assert!(!prompt.is_empty());
+    assert!(
+        prompt.to_ascii_lowercase().contains("ask")
+            || prompt.to_ascii_lowercase().contains("read-only"),
+        "ask prompt should describe ask/read-only mode"
+    );
 }
 
 #[test]

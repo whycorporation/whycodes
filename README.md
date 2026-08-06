@@ -244,11 +244,17 @@ back to the primary agent.
 
 | Agent | Mode | Role |
 |---|---|---|
-| `build` | primary | Full-access coding (default) |
-| `plan` | primary | Read-only planning |
+| `build` | primary | Full-access coding (default); soft intent posture for Q&A vs edit |
+| `plan` | primary | Read-only planning (structured plan, no edits) |
+| `ask` | primary | Read-only Q&A / explain (Cursor Ask-style) |
 | `general` | subagent | Multi-step tasks |
 | `explore` | subagent | Fast read-only codebase search |
 | `scout` | subagent | External documentation and dependency research |
+
+Cycle primary agents with `Ctrl+T` or `/agent`. In **build**, high-confidence
+questions get an ephemeral intent hint (not stored in history) so the model
+answers instead of over-eager edits. Set `session.intent_guidance = "off"` to
+disable.
 
 ## Tools
 

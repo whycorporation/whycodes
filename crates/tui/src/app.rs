@@ -1008,7 +1008,7 @@ impl TuiApp {
             pending_model: None,
             pending_session_id: None,
             pending_catalog_refresh: false,
-            primary_agents: vec!["build".into(), "plan".into()],
+            primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),
             model_name: String::new(),

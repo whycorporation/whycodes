@@ -331,11 +331,14 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 
 | Agent | Mod |
 |---|---|
-| `build` | primary, full access (varsayılan) |
-| `plan` | primary, read-only (`Ctrl+T` ile cycle) |
+| `build` | primary, full access (varsayılan); soft intent posture |
+| `plan` | primary, read-only planning (`Ctrl+T`) |
+| `ask` | primary, read-only Q&A / explain (`Ctrl+T`) |
 | `general` | subagent (`task`) |
 | `explore` | subagent, read-only search |
 | `scout` | subagent, docs/deps research |
+
+**Intent katmanı:** hard mode (ask/plan tool denylist) + build prompt protocol + sıfır-LLM heuristic (`session.intent_guidance = auto|off|always`).
 
 ### Config (latency + güvenlik)
 
@@ -344,6 +347,7 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 tool_profile = "core"     # or "full"
 prompt_cache = "auto"     # or "none"
 model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional trivial-chat route
+intent_guidance = "auto"  # auto | off | always — build-mode question/plan posture
 compaction_threshold = 150000
 auto_title = true
 # title_model = "anthropic/claude-haiku-4-5-20251001"
