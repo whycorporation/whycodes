@@ -3843,6 +3843,7 @@ dependencies = [
  "whycode-core",
  "whycode-format",
  "whycode-llm",
+ "whycode-mcp",
  "whycode-memory",
  "whycode-protocol",
  "whycode-server",
@@ -3968,6 +3969,7 @@ dependencies = [
  "tower",
  "tracing",
  "whycode-core",
+ "whycode-tools",
 ]
 
 [[package]]

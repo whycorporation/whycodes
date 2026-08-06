@@ -100,6 +100,21 @@ fn is_safe_worktree_name(name: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// Path argument for file mutators / readers (permission path globs).
+fn file_tool_path(tc: &ToolCall) -> Option<String> {
+    let key = match tc.name.as_str() {
+        "read" | "write" | "edit" | "glob" | "list" => "path",
+        "apply_patch" => "path", // may also use multi-file; path optional
+        "grep" => "path",
+        _ => return None,
+    };
+    tc.arguments
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().replace('\\', "/"))
+        .filter(|s| !s.is_empty())
+}
+
 #[cfg(test)]
 mod permission_detail_tests {
     use super::{format_permission_detail, format_shell_risk_detail};
@@ -180,6 +195,8 @@ pub struct Agent {
     /// When session estimate exceeds this, compact before the next LLM call
     /// (Claude Code / OpenCode style). `0` disables auto-compact.
     compaction_threshold: usize,
+    /// `"auto"` = optional small-model summary after local prune; `"off"` = local only.
+    compaction_llm: bool,
     /// Tools schema sent to the model (`core` = smaller TTFT).
     tool_profile: ToolProfile,
     /// When false, Anthropic bodies skip cache_control markers.
@@ -256,6 +273,7 @@ impl Agent {
             hooks: Vec::new(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
+            compaction_llm: true,
             tool_profile: ToolProfile::Core,
             use_prompt_cache: true,
             model_fast: None,
@@ -310,6 +328,10 @@ impl Agent {
         self.network = config.security.network_policy();
         self.hooks = config.hooks.clone();
         self.compaction_threshold = config.session.compaction_threshold;
+        self.compaction_llm = !matches!(
+            config.session.compaction_llm.trim().to_ascii_lowercase().as_str(),
+            "off" | "false" | "0" | "none" | "local"
+        );
         self.tool_profile = ToolProfile::parse(&config.session.tool_profile);
         self.use_prompt_cache =
             !matches!(config.session.prompt_cache.trim().to_ascii_lowercase().as_str(), "none" | "off" | "false" | "0");
@@ -409,6 +431,79 @@ impl Agent {
             file_claims: None,
             agent_id: None,
             agent_label: None,
+        }
+    }
+
+    /// Summarize older transcript with a small model (A2 LLM compact).
+    async fn llm_compact_summary(
+        &self,
+        session: &Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+    ) -> Option<String> {
+        let transcript = session.transcript_for_compact_summary(12_000);
+        if transcript.trim().is_empty() {
+            return None;
+        }
+        let (p_name, m_id) =
+            crate::title::resolve_title_model(provider_name, model, self.model_fast.as_deref());
+        let provider = self.provider_registry.get(&p_name)?;
+        use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+        let request = LlmRequest {
+            system: "You compress coding-agent chat history. Write a dense bullet summary of \
+                     goals, decisions, file paths, and open tasks. No preamble. ≤400 words."
+                .into(),
+            messages: vec![Message {
+                role: Role::User,
+                content: MessageContent::Text(format!(
+                    "Summarize this earlier conversation for context continuity:\n\n{transcript}"
+                )),
+                tool_call_id: None,
+                name: None,
+            }],
+            tools: vec![],
+            max_tokens: Some(800),
+            temperature: Some(0.2),
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        };
+        let transport = whycode_llm::LlmTransport {
+            complete_timeout: Some(std::time::Duration::from_secs(20)),
+            retry: whycode_llm::RetryPolicy {
+                max_retries: 1,
+                initial_backoff: std::time::Duration::from_millis(200),
+                max_backoff: std::time::Duration::from_secs(2),
+                max_elapsed: std::time::Duration::from_secs(20),
+                full_jitter: true,
+            },
+        };
+        match transport.complete(provider, &request, api_key, &m_id).await {
+            Ok(resp) => {
+                let text = resp
+                    .content
+                    .iter()
+                    .filter_map(|b| match b {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ")
+                    .trim()
+                    .to_string();
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "LLM compact summary failed");
+                None
+            }
         }
     }
 
@@ -805,7 +900,34 @@ impl Agent {
             if self.compaction_threshold > 0 && !compact_paused {
                 let before = session.token_count();
                 if before > self.compaction_threshold {
-                    let outcome = session.compact(self.compaction_threshold);
+                    let mut outcome = session.compact(self.compaction_threshold);
+                    // A2: if still over and LLM compact enabled, summarize with fast model.
+                    if outcome.still_over(self.compaction_threshold)
+                        && self.compaction_llm
+                        && !api_key.is_empty()
+                    {
+                        if let Some(summary) = self
+                            .llm_compact_summary(
+                                session,
+                                provider_name,
+                                model,
+                                api_key,
+                            )
+                            .await
+                        {
+                            session.prepend_compact_summary(&summary);
+                            outcome = whycode_session::CompactOutcome {
+                                tokens_before: outcome.tokens_before,
+                                tokens_after: session.token_count(),
+                                messages_before: outcome.messages_before,
+                                messages_after: session.messages.len(),
+                            };
+                            emit(
+                                &events,
+                                TurnEvent::Status("Compacted context (LLM summary)…".into()),
+                            );
+                        }
+                    }
                     if outcome.reduced() {
                         emit(
                             &events,
@@ -1491,6 +1613,45 @@ impl Agent {
                         }
                         risk_confirmed = true;
                     }
+                }
+            }
+        }
+
+        // Path-scoped rules: `edit(src/**)`, `write(docs/**)`, …
+        if let Some(path) = file_tool_path(tc) {
+            if let Some(path_act) = self.info.permission.action_for_path(&tc.name, &path) {
+                match path_act {
+                    PermissionAction::Deny => {
+                        return ToolResult {
+                            tool_call_id: tc.id.clone(),
+                            content: format!(
+                                "Permission denied for `{}` on path `{path}` by path rule.",
+                                tc.name
+                            ),
+                            is_error: true,
+                        };
+                    }
+                    PermissionAction::Allow => {
+                        risk_confirmed = true;
+                    }
+                    PermissionAction::Ask if !risk_confirmed => {
+                        let detail = format!(
+                            "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
+                            tc.name
+                        );
+                        if !self.permission_prompter.ask(&tc.name, &detail).await {
+                            return ToolResult {
+                                tool_call_id: tc.id.clone(),
+                                content: format!(
+                                    "User denied permission for tool '{}'.",
+                                    tc.name
+                                ),
+                                is_error: true,
+                            };
+                        }
+                        risk_confirmed = true;
+                    }
+                    PermissionAction::Ask => {}
                 }
             }
         }

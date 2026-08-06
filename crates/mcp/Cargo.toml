@@ -15,6 +15,7 @@ tracing.workspace = true
 reqwest.workspace = true
 futures.workspace = true
 whycode-core = { path = "../core" }
+whycode-tools = { path = "../tools" }
 
 [dev-dependencies]
 axum = { version = "0.7", features = ["macros"] }

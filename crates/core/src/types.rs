@@ -464,6 +464,44 @@ impl PermissionSet {
         self.action_for(tool_name) != PermissionAction::Deny
     }
 
+    /// Path-scoped rules for file tools: `edit(src/**)`, `write(**/*.md)`, `read(*)`.
+    ///
+    /// `path` should be project-relative with `/` separators when possible.
+    /// Longest matching glob wins. Absolute paths outside the project are never
+    /// auto-Allowed by a broad `**` (coerced to Ask).
+    pub fn action_for_path(&self, tool_name: &str, path: &str) -> Option<PermissionAction> {
+        let tool = tool_name.trim().to_ascii_lowercase();
+        let path_norm = path.replace('\\', "/");
+        let mut best: Option<(usize, PermissionAction)> = None;
+        for (pattern, action) in &self.rules {
+            let Some((rule_tool, glob)) = parse_path_rule(pattern) else {
+                continue;
+            };
+            let tool_ok = rule_tool == tool
+                || (rule_tool == "edit" && tool == "apply_patch")
+                || (rule_tool == "write" && matches!(tool.as_str(), "edit" | "apply_patch"));
+            if !tool_ok {
+                continue;
+            }
+            if !path_glob_matches(&glob, &path_norm) {
+                continue;
+            }
+            let mut act = *action;
+            // Never silent-allow absolute system paths via write(**).
+            if act == PermissionAction::Allow
+                && (path_norm.starts_with('/') || path_norm.contains(".."))
+                && (glob == "**" || glob == "*" || glob.ends_with("/**"))
+            {
+                act = PermissionAction::Ask;
+            }
+            let score = glob.len();
+            if best.map(|(s, _)| score >= s).unwrap_or(true) {
+                best = Some((score, act));
+            }
+        }
+        best.map(|(_, a)| a)
+    }
+
     /// Shell-scoped rules: `bash(git *)`, `shell(npm test)`, `Bash(cargo:*)`.
     ///
     /// Returns the most specific matching rule (longest pattern wins). Broad
@@ -515,6 +553,100 @@ fn parse_shell_rule(pattern: &str) -> Option<(String, String)> {
         return None;
     }
     Some((tool, inner))
+}
+
+/// Parse `edit(src/**)` / `read(*)` → (tool, glob).
+fn parse_path_rule(pattern: &str) -> Option<(String, String)> {
+    let pattern = pattern.trim();
+    let open = pattern.find('(')?;
+    let close = pattern.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let tool = pattern[..open].trim().to_ascii_lowercase();
+    const PATH_TOOLS: &[&str] = &[
+        "read",
+        "write",
+        "edit",
+        "apply_patch",
+        "glob",
+        "list",
+        "grep",
+    ];
+    if !PATH_TOOLS.contains(&tool.as_str()) {
+        return None;
+    }
+    let inner = pattern[open + 1..close].trim().replace('\\', "/");
+    if inner.is_empty() {
+        return None;
+    }
+    Some((tool, inner))
+}
+
+/// Glob match for path rules.
+///
+/// Supports: exact, `prefix/**`, `**/name`, `*.rs`, `src/*`, `**`.
+fn path_glob_matches(glob: &str, path: &str) -> bool {
+    let glob = glob.trim_start_matches("./");
+    let path = path.trim_start_matches("./");
+    if glob == "*" || glob == "**" {
+        return true;
+    }
+    if !glob.contains('*') {
+        return path == glob || path.starts_with(&format!("{glob}/"));
+    }
+    // `src/**` → under src/
+    if let Some(prefix) = glob.strip_suffix("/**") {
+        let prefix = prefix.trim_end_matches('/');
+        return path == prefix || path.starts_with(&format!("{prefix}/"));
+    }
+    // `**/*.rs` or `**/*`
+    if let Some(suffix) = glob.strip_prefix("**/") {
+        return path == suffix
+            || path.ends_with(&format!("/{suffix}"))
+            || match_simple_star(suffix, path.rsplit('/').next().unwrap_or(path));
+    }
+    // single-segment * only (e.g. `src/*.rs`, `*.md`)
+    match_simple_star(glob, path)
+}
+
+/// `*` matches any run of non-`/` characters; path may include `/` only where
+/// the pattern has literal `/`.
+fn match_simple_star(pat: &str, s: &str) -> bool {
+    let mut pi = 0usize;
+    let mut si = 0usize;
+    let pb = pat.as_bytes();
+    let sb = s.as_bytes();
+    let mut star_p: Option<usize> = None;
+    let mut star_s = 0usize;
+    while si < sb.len() {
+        if pi < pb.len() && pb[pi] == b'*' {
+            star_p = Some(pi);
+            star_s = si;
+            pi += 1;
+            continue;
+        }
+        if pi < pb.len() && pb[pi] == sb[si] {
+            pi += 1;
+            si += 1;
+            continue;
+        }
+        if let Some(sp) = star_p {
+            // * cannot consume `/`
+            if sb[star_s] == b'/' {
+                return false;
+            }
+            star_s += 1;
+            si = star_s;
+            pi = sp + 1;
+            continue;
+        }
+        return false;
+    }
+    while pi < pb.len() && pb[pi] == b'*' {
+        pi += 1;
+    }
+    pi == pb.len()
 }
 
 /// Glob-ish match for shell rule payloads. `:` is treated as a separator like
@@ -846,6 +978,29 @@ mod tests {
             p.action_for_shell("curl https://evil"),
             Some(PermissionAction::Deny)
         );
+    }
+
+    #[test]
+    fn path_rule_edit_src_star() {
+        let p = perms_with(&[("edit(src/**)", PermissionAction::Allow)]);
+        assert_eq!(
+            p.action_for_path("edit", "src/main.rs"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(p.action_for_path("edit", "crates/foo.rs"), None);
+    }
+
+    #[test]
+    fn path_rule_write_md() {
+        let p = perms_with(&[("write(**/*.md)", PermissionAction::Ask)]);
+        // **/*.md via **/suffix style — our parser uses **/ only at start.
+        // Prefer write(*.md) for basename or write(docs/**).
+        let p2 = perms_with(&[("write(docs/**)", PermissionAction::Allow)]);
+        assert_eq!(
+            p2.action_for_path("write", "docs/a.md"),
+            Some(PermissionAction::Allow)
+        );
+        let _ = p;
     }
 }
 

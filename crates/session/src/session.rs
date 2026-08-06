@@ -73,6 +73,26 @@ fn message_tokens(msg: &Message) -> usize {
     }
 }
 
+/// Parse `WHYCODE_IMAGE_B64:image/png\n<base64>` payloads from the read tool.
+fn split_whycode_image_payload(content: &str) -> Option<(String, String, String)> {
+    const MARK: &str = "WHYCODE_IMAGE_B64:";
+    let idx = content.find(MARK)?;
+    let after = &content[idx + MARK.len()..];
+    let (media, rest) = after.split_once('\n')?;
+    let media = media.trim();
+    let b64 = rest.trim();
+    if media.is_empty() || b64.is_empty() {
+        return None;
+    }
+    let preface = content[..idx].trim().to_string();
+    let preface = if preface.is_empty() {
+        format!("[image {media}]")
+    } else {
+        preface
+    };
+    Some((media.to_string(), b64.to_string(), preface))
+}
+
 /// Cap a tool result string; no-op when already under the limit.
 fn cap_tool_text(text: String) -> String {
     cap_tool_text_to(text, TOOL_RESULT_MAX_CHARS)
@@ -326,9 +346,27 @@ impl Session {
     /// Add tool results (oversized bodies are capped for context economy).
     pub fn add_tool_results(&mut self, results: Vec<whycode_core::types::ToolResult>) {
         for result in results {
+            let content = if let Some((media, b64, preface)) =
+                split_whycode_image_payload(&result.content)
+            {
+                // Vision path: short text + image block (A6).
+                MessageContent::Blocks(vec![
+                    ContentBlock::Text {
+                        text: cap_tool_text(preface),
+                    },
+                    ContentBlock::Image {
+                        source: whycode_core::types::ImageSource::Base64 {
+                            media_type: media,
+                            data: b64,
+                        },
+                    },
+                ])
+            } else {
+                MessageContent::Text(cap_tool_text(result.content))
+            };
             self.messages.push(Message {
                 role: Role::Tool,
-                content: MessageContent::Text(cap_tool_text(result.content)),
+                content,
                 tool_call_id: Some(result.tool_call_id),
                 name: None,
             });
@@ -548,6 +586,74 @@ impl Session {
             self.touch();
         }
         n
+    }
+
+    /// Insert or replace the leading compact summary user message (LLM path).
+    pub fn prepend_compact_summary(&mut self, summary: &str) {
+        let text = summary.trim();
+        if text.is_empty() {
+            return;
+        }
+        let body = if text.starts_with('[') {
+            text.to_string()
+        } else {
+            format!("[Compacted earlier conversation]\n{text}")
+        };
+        if let Some(first) = self.messages.first_mut()
+            && first.role == Role::User
+        {
+            if let MessageContent::Text(t) = &first.content
+                && t.starts_with("[Compacted")
+            {
+                first.content = MessageContent::Text(body);
+                self.touch();
+                return;
+            }
+        }
+        self.messages.insert(
+            0,
+            Message {
+                role: Role::User,
+                content: MessageContent::Text(body),
+                tool_call_id: None,
+                name: None,
+            },
+        );
+        self.touch();
+    }
+
+    /// Concatenate older messages for LLM summarization (capped).
+    pub fn transcript_for_compact_summary(&self, max_chars: usize) -> String {
+        let mut out = String::new();
+        let keep_tail = MIN_KEEP_MESSAGES.min(self.messages.len());
+        let end = self.messages.len().saturating_sub(keep_tail);
+        for m in &self.messages[..end] {
+            let role = match m.role {
+                Role::User => "User",
+                Role::Assistant => "Assistant",
+                Role::Tool => "Tool",
+                Role::System => "System",
+            };
+            let text = match &m.content {
+                MessageContent::Text(t) => t.clone(),
+                MessageContent::Blocks(b) => b
+                    .iter()
+                    .filter_map(|bl| match bl {
+                        ContentBlock::Text { text } => Some(text.as_str()),
+                        ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
+                        ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" "),
+            };
+            let line = format!("{role}: {}\n", text.chars().take(400).collect::<String>());
+            if out.len() + line.len() > max_chars {
+                break;
+            }
+            out.push_str(&line);
+        }
+        out
     }
 
     pub fn compact(&mut self, max_tokens: usize) -> CompactOutcome {

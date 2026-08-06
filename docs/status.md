@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-07** (A1–A7 roadmap from Claude Code research; prior CC P1–P3 shipped; `v0.1.0` public install still gated)
+Last updated: **2026-08-07** (A1–A7 **shipped**; prior CC P1–P3; `v0.1.0` public install still gated)
 
 ## Legend
 
@@ -28,7 +28,7 @@ Last updated: **2026-08-07** (A1–A7 roadmap from Claude Code research; prior C
 | Semantic memory | [plan-memory.md](plan-memory.md) | **shipped v1+v2** | Retain, sync, code RAG, subagent banks, optional ONNX. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
 | FEATURES accuracy | [plan-features-improvements.md](plan-features-improvements.md) | done | Matrix fixed; `/tools` `/info` surface latency knobs. |
-| **CC research A1–A7** | [plan-cc-a1-a7.md](plan-cc-a1-a7.md) | **not started** | Ordered: A1 PromptCommands → A4 `/context` → A2 LLM compact → A3 path globs → A5 MCP serve → A6 multimodal read → A7 suggestions. Full report: [report-claude-code-research.md](report-claude-code-research.md). |
+| **CC research A1–A7** | [plan-cc-a1-a7.md](plan-cc-a1-a7.md) | **shipped** | A1–A7 implemented 2026-08-07. Report: [report-claude-code-research.md](report-claude-code-research.md). |
 
 ## Shipped (archived)
 
@@ -54,7 +54,7 @@ Index of archives: [archive/README.md](archive/README.md).
 Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
 
 1. **First public release (almost done)** — `v0.1.0` cut + smoke OK with token. Remaining: **make repo public**, optional Homebrew binary formula, Windows install.ps1 smoke.
-2. **Terminal product polish** — next: **[A1–A7](plan-cc-a1-a7.md)** starting with A1 (`/review` `/commit`) + A4 (`/context`); then A2/A3.
+2. **Terminal product polish** — A1–A7 shipped ([plan-cc-a1-a7.md](plan-cc-a1-a7.md)). Next: public release, plugins depth, subagent tokens.
 3. **Performance residual** — stats done; optional CI ceilings / subagent tokens remain.
 4. **OAuth** stays blocked until owner decisions.
 5. **Memory v1+v2** shipped (retain, project scope, code RAG, subagent banks, optional ONNX).
@@ -87,6 +87,9 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-07 | Claude Code leak audit | Ideas-only notes in [claude-code-inspiration.md](claude-code-inspiration.md); no vendored TS. |
 | 2026-08-07 | FEATURES §11 automation | Background shell jobs (`background: true`, `bg`, toast, `/bg`), `schedule` + `/loop` queue; cloud still deferred. |
 | 2026-08-07 | CC inspiration phases P1–P3 | Autocompact breaker; `tool_search` deferred tools; `bash(git *)` rules + dangerous Allow→Ask; `/diff` `/cost`; `worktree` enter/exit. |
+| 2026-08-07 | Claude Code full research report | [report-claude-code-research.md](report-claude-code-research.md) — architecture, inventory, gaps, legal. |
+| 2026-08-07 | A1–A7 → roadmap | [plan-cc-a1-a7.md](plan-cc-a1-a7.md); order A1,A4,A2,A3,A5,A6,A7. |
+| 2026-08-07 | A1–A7 shipped | PromptCommands, /context, LLM compact, path globs, mcp serve, image read, idle suggestions. |
 
 ## Verification commands
 

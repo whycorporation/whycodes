@@ -465,6 +465,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // Queue a fetch after the first turn finishes, or on model switch when idle.
     let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
     let mut catalog_fetch_pending = false;
+    // A7 idle prompt suggestions (default off).
+    let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
 
     // Background jobs / schedule enqueue use the same long-lived event channel.
     agent.wire_event_sink(event_tx.clone());
@@ -681,6 +683,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         );
                         // Persist after every completed turn (success path).
                         persist_session_best_effort(&session, "ok");
+                        // A7: optional idle follow-up suggestion (default off).
+                        maybe_spawn_prompt_suggestion(
+                            &config,
+                            &session,
+                            &provider,
+                            &model,
+                            &api_key,
+                            &mut app,
+                            suggest_tx.clone(),
+                        );
                     }
                     TurnOutcome::Err {
                         error,
@@ -862,6 +874,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     &api_key,
                     catalog_tx.clone(),
                 );
+            }
+
+            // A7 suggestion results
+            while let Ok(suggestion) = suggest_rx.try_recv() {
+                if !suggestion.trim().is_empty() && !agent_busy {
+                    app.pending_suggestion = Some(suggestion.clone());
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        truncate_toast(&format!("suggest · Tab · {suggestion}"), 64),
+                    );
+                    app.mark_dirty();
+                }
             }
 
             // ── Apply async single-model context_length from gateway ──
@@ -2602,6 +2626,12 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             ctx.app
                 .add_message(ChatRole::System, project_diff_report(ctx.project_dir));
         }
+        "/context" => {
+            ctx.app.add_message(
+                ChatRole::System,
+                context_report(ctx.session, ctx.app, ctx.config, ctx.agent),
+            );
+        }
         "/cost" | "/usage" => {
             ctx.app.add_message(
                 ChatRole::System,
@@ -2653,6 +2683,111 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
     }
+}
+
+/// Spawn a tiny follow-up suggestion when `tui.prompt_suggestions = "idle"`.
+fn maybe_spawn_prompt_suggestion(
+    config: &Config,
+    session: &Session,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    app: &mut TuiApp,
+    suggest_tx: mpsc::UnboundedSender<String>,
+) {
+    let mode = config.tui.prompt_suggestions.trim().to_ascii_lowercase();
+    if mode != "idle" && mode != "on" && mode != "true" && mode != "1" {
+        return;
+    }
+    if api_key.is_empty() {
+        return;
+    }
+    app.pending_suggestion = None;
+    let last_user = session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == whycode_core::types::Role::User)
+        .and_then(|m| m.content.as_text().map(|s| s.to_string()))
+        .unwrap_or_default();
+    if last_user.trim().is_empty() {
+        return;
+    }
+    let last_asst = session
+        .messages
+        .iter()
+        .rev()
+        .find(|m| m.role == whycode_core::types::Role::Assistant)
+        .and_then(|m| m.content.as_text().map(|s| s.to_string()))
+        .unwrap_or_default();
+    let provider = provider.to_string();
+    let model = model.to_string();
+    let api_key = api_key.to_string();
+    let model_fast = config.session.model_fast.clone();
+    let mut reg = whycode_llm::provider::ProviderRegistry::default();
+    reg.register_from_config(config);
+    tokio::spawn(async move {
+        let (p, m) =
+            whycode_agent::resolve_title_model(&provider, &model, model_fast.as_deref());
+        let Some(prov) = reg.get(&p) else {
+            return;
+        };
+        use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+        let body = format!(
+            "User last said:\n{}\n\nAssistant replied (excerpt):\n{}\n\n\
+             Suggest ONE short next user message (≤12 words) to continue the coding task. \
+             Reply with only that message, no quotes.",
+            last_user.chars().take(500).collect::<String>(),
+            last_asst.chars().take(400).collect::<String>()
+        );
+        let request = LlmRequest {
+            system: "You propose a single follow-up user prompt for a coding agent.".into(),
+            messages: vec![Message {
+                role: Role::User,
+                content: MessageContent::Text(body),
+                tool_call_id: None,
+                name: None,
+            }],
+            tools: vec![],
+            max_tokens: Some(40),
+            temperature: Some(0.4),
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        };
+        let transport = whycode_llm::LlmTransport {
+            complete_timeout: Some(std::time::Duration::from_secs(8)),
+            retry: whycode_llm::RetryPolicy {
+                max_retries: 0,
+                initial_backoff: std::time::Duration::from_millis(100),
+                max_backoff: std::time::Duration::from_secs(1),
+                max_elapsed: std::time::Duration::from_secs(8),
+                full_jitter: true,
+            },
+        };
+        if let Ok(resp) = transport.complete(prov, &request, &api_key, &m).await {
+            let text = resp
+                .content
+                .iter()
+                .filter_map(|b| match b {
+                    whycode_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string();
+            if !text.is_empty() {
+                let _ = suggest_tx.send(text);
+            }
+        }
+    });
 }
 
 fn truncate_toast(s: &str, max: usize) -> String {
@@ -2939,6 +3074,97 @@ pub fn resolve_and_load_session(
 /// heuristic is shown only when it did not, and labelled as an estimate — the
 /// two are not the same measurement and presenting them identically would
 /// suggest they are.
+/// Context window breakdown (`/context` — Claude Code spirit).
+fn context_report(
+    session: &Session,
+    app: &TuiApp,
+    config: &Config,
+    agent: &whycode_agent::Agent,
+) -> String {
+    use whycode_core::types::{MessageContent, Role};
+
+    let mut lines = vec!["Context".to_string()];
+    lines.push(format!(
+        "  budget:    {} / {} ({}%)",
+        format_token_count(app.context_used),
+        format_token_count(app.max_context_tokens),
+        app.context_percent()
+    ));
+    lines.push(format!(
+        "  estimate:  ~{} tok (char heuristic)",
+        session.token_count()
+    ));
+    lines.push(format!(
+        "  compact:   threshold={} llm={}",
+        config.session.compaction_threshold, config.session.compaction_llm
+    ));
+
+    let mut by_role = std::collections::BTreeMap::<&str, usize>::new();
+    let mut tool_sizes: Vec<(usize, String)> = Vec::new();
+    for (i, m) in session.messages.iter().enumerate() {
+        let role = match m.role {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        };
+        *by_role.entry(role).or_default() += 1;
+        if m.role == Role::Tool {
+            let chars = match &m.content {
+                MessageContent::Text(t) => t.chars().count(),
+                MessageContent::Blocks(b) => b
+                    .iter()
+                    .map(|bl| match bl {
+                        whycode_core::types::ContentBlock::Text { text }
+                        | whycode_core::types::ContentBlock::ToolResult { content: text, .. } => {
+                            text.chars().count()
+                        }
+                        _ => 0,
+                    })
+                    .sum(),
+            };
+            let label = m
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("tool#{i}"));
+            tool_sizes.push((chars, label));
+        }
+    }
+    lines.push(format!("  messages:  {}", session.messages.len()));
+    for (role, n) in by_role {
+        lines.push(format!("    {role}: {n}"));
+    }
+    tool_sizes.sort_by(|a, b| b.0.cmp(&a.0));
+    if !tool_sizes.is_empty() {
+        lines.push("  largest tool results:".into());
+        for (chars, label) in tool_sizes.into_iter().take(8) {
+            lines.push(format!("    {label}: {chars} chars"));
+        }
+    }
+
+    let profile = whycode_tools::ToolProfile::parse(&config.session.tool_profile);
+    let activated = agent.activated_tools_snapshot();
+    lines.push(format!(
+        "  tools:     profile={} activated={}",
+        profile.as_str(),
+        if activated.is_empty() {
+            "(none)".into()
+        } else {
+            activated.join(",")
+        }
+    ));
+    lines.push(format!(
+        "  memory:    enabled={}",
+        config.memory.enabled
+    ));
+    if let Some(cwd) = agent.cwd_override_path() {
+        lines.push(format!("  cwd:       override {}", cwd.display()));
+    } else {
+        lines.push(format!("  cwd:       {}", session.project_path.display()));
+    }
+    lines.join("\n")
+}
+
 /// Git status + short diff for the project (Claude Code `/diff` spirit).
 fn project_diff_report(project_dir: &std::path::Path) -> String {
     let mut out = String::from("Diff\n");

@@ -98,6 +98,34 @@ impl Tool for ReadTool {
             ));
         }
 
+        // Multimodal: small images become a structured payload the session layer
+        // turns into ContentBlock::Image for vision models (A6).
+        if let Some(media) = image_media_type(&full_path) {
+            let size = file_len(&full_path).unwrap_or(0);
+            const MAX_IMAGE: u64 = 2 * 1024 * 1024;
+            if size == 0 || size > MAX_IMAGE {
+                return err(format!(
+                    "'{}' is an image ({media}, {}) — max {} for vision read. \
+                     Attach with @path in the TUI for larger files.",
+                    shown,
+                    super::paths::human_size(size),
+                    super::paths::human_size(MAX_IMAGE)
+                ));
+            }
+            match fs::read(&full_path) {
+                Ok(bytes) => {
+                    use base64::Engine as _;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    return ok(format!(
+                        "Image file `{shown}` ({media}, {}).\n\
+                         WHYCODE_IMAGE_B64:{media}\n{b64}",
+                        super::paths::human_size(size)
+                    ));
+                }
+                Err(e) => return err(format!("Failed to read image `{shown}`: {e}")),
+            }
+        }
+
         // Binary sniff without loading the whole file.
         if let Ok(mut f) = fs::File::open(&full_path) {
             let mut head = [0u8; BINARY_SNIFF_LEN];
@@ -262,10 +290,30 @@ fn truncate_line(line: &str, max_chars: usize) -> String {
     format!("{t}…[line truncated]")
 }
 
+fn ok(msg: impl Into<String>) -> ToolResult {
+    ToolResult {
+        tool_call_id: String::new(),
+        content: msg.into(),
+        is_error: false,
+    }
+}
+
 fn err(msg: impl Into<String>) -> ToolResult {
     ToolResult {
         tool_call_id: String::new(),
         content: msg.into(),
         is_error: true,
+    }
+}
+
+fn image_media_type(path: &Path) -> Option<&'static str> {
+    let ext = path.extension()?.to_str()?.to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "bmp" => Some("image/bmp"),
+        _ => None,
     }
 }

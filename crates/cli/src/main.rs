@@ -255,6 +255,15 @@ pub enum McpCmd {
     },
     /// Remove an MCP server
     Remove { name: String },
+    /// Run whycode as an MCP **server** on stdio (export core tools)
+    Serve {
+        /// Tool profile: `core` (default) or `full`
+        #[arg(long, default_value = "core")]
+        tools: String,
+        /// Working directory for tools (default: cwd)
+        #[arg(long)]
+        cwd: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1279,6 +1288,17 @@ async fn cmd_run(
                     }
                     continue;
                 }
+                "/context" => {
+                    println!("{}", "Context".bold());
+                    println!("  messages: {}", session.messages.len());
+                    println!("  estimate: ~{} tok", session.token_count());
+                    println!(
+                        "  compact:  threshold={} llm={}",
+                        config.session.compaction_threshold, config.session.compaction_llm
+                    );
+                    println!("  tools:    profile={}", config.session.tool_profile);
+                    continue;
+                }
                 "/doctor" => {
                     println!("{}", "Doctor".bold());
                     println!("  provider: {provider}");
@@ -1618,6 +1638,10 @@ fn print_slash_help() {
     println!("  /share, /export        — Export session JSON");
     println!("  /compact, /summarize   — Compact long context");
     println!("  /diff                  — Git status + diff --stat");
+    println!("  /context               — Context window breakdown");
+    println!("  /review                — AI review of git changes");
+    println!("  /security-review       — Security-focused review");
+    println!("  /commit                — Draft a git commit");
     println!("  /cost, /usage          — Session token usage");
     println!("  /doctor                — Environment diagnostics");
     println!("  /remember <text>       — Save a durable project memory");
@@ -2518,6 +2542,33 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
     match cmd {
+        McpCmd::Serve { tools, cwd } => {
+            use std::sync::Arc;
+            use whycode_core::types::PermissionSet;
+            use whycode_tools::executor::ToolExecutor;
+            use whycode_tools::profile::ToolProfile;
+
+            let profile = ToolProfile::parse(tools);
+            let working_dir = cwd
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".into()));
+            let permissions = PermissionSet {
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                ..Default::default()
+            };
+            // Restrictive defaults: shell still risk-gated only when used via agent.
+            // MCP serve runs tools directly — document risk; prefer core profile.
+            let executor = Arc::new(ToolExecutor::new());
+            eprintln!(
+                "whycode mcp serve — profile={} cwd={} (stdio JSON-RPC)",
+                profile.as_str(),
+                working_dir
+            );
+            whycode_mcp::run_stdio_server(executor, permissions, profile, working_dir).await?;
+            return Ok(());
+        }
         McpCmd::List => {
             if config.mcp_servers.is_empty() {
                 println!("{} No MCP servers configured.", "🔌".bold());

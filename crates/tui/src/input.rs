@@ -128,6 +128,17 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             true
         }
         // Slash-suggest: Tab completes; Up/Down navigate the list.
+        Some(Action::ToggleFocus)
+            if app.pending_suggestion.is_some() && app.input_buffer.trim().is_empty() =>
+        {
+            if let Some(s) = app.pending_suggestion.take() {
+                app.input_buffer = s;
+                app.input_cursor = app.input_buffer.len();
+                app.status_message = "suggestion accepted".into();
+                app.mark_dirty();
+            }
+            true
+        }
         Some(Action::ToggleFocus) if app.slash_suggest.active => {
             if let Some(cmd) = app.slash_suggest.current()
                 && cmd.name != app.input_buffer

@@ -875,6 +875,10 @@ pub struct SessionConfig {
     /// (`ask` / `plan`) still enforce tool denylists regardless of this flag.
     #[serde(default = "default_intent_guidance")]
     pub intent_guidance: String,
+    /// When over `compaction_threshold`, after local prune: `"auto"` (default)
+    /// may call a small model to summarize dropped history; `"off"` is local only.
+    #[serde(default = "default_compaction_llm")]
+    pub compaction_llm: String,
 }
 
 impl Default for SessionConfig {
@@ -889,8 +893,13 @@ impl Default for SessionConfig {
             prompt_cache: default_prompt_cache(),
             model_fast: None,
             intent_guidance: default_intent_guidance(),
+            compaction_llm: default_compaction_llm(),
         }
     }
+}
+
+fn default_compaction_llm() -> String {
+    "auto".into()
 }
 
 fn default_tool_profile() -> String {
@@ -913,10 +922,27 @@ fn default_compaction_threshold() -> usize {
     150_000
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TuiConfig {
     pub theme: Option<String>,
     pub key_bindings: Option<HashMap<String, String>>,
+    /// Idle follow-up suggestions: `"off"` (default) or `"idle"`.
+    #[serde(default = "default_prompt_suggestions")]
+    pub prompt_suggestions: String,
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            theme: None,
+            key_bindings: None,
+            prompt_suggestions: default_prompt_suggestions(),
+        }
+    }
+}
+
+fn default_prompt_suggestions() -> String {
+    "off".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1313,6 +1339,9 @@ impl Config {
         if other.session.prompt_cache != default_prompt_cache() {
             merged.session.prompt_cache = other.session.prompt_cache.clone();
         }
+        if other.session.compaction_llm != default_compaction_llm() {
+            merged.session.compaction_llm = other.session.compaction_llm.clone();
+        }
         if other.session.model_fast.is_some() {
             merged.session.model_fast = other.session.model_fast.clone();
         }
@@ -1496,7 +1525,87 @@ impl Config {
             &mut self.commands,
             &project_dir.join(".opencode").join("commands"),
         );
+        // Built-ins last only for missing keys — user/project markdown wins.
+        self.ensure_builtin_prompt_commands();
     }
+
+    /// Claude Code–style PromptCommands: fixed prompts that kick a turn.
+    /// Does not overwrite user-defined `commands.*` or `commands/*.md`.
+    pub fn ensure_builtin_prompt_commands(&mut self) {
+        for (name, cmd) in builtin_prompt_commands() {
+            self.commands.entry(name.to_string()).or_insert(cmd);
+        }
+    }
+}
+
+/// Built-in workflow slash prompts (A1). Keys without leading `/`.
+fn builtin_prompt_commands() -> Vec<(&'static str, CustomCommandConfig)> {
+    vec![
+        (
+            "review",
+            CustomCommandConfig {
+                description: Some("AI code review of git changes".into()),
+                agent: Some("plan".into()),
+                model: None,
+                subtask: None,
+                template: r#"Review the current working tree changes for this project.
+
+1. Run git_status and git_diff (unstaged and staged) to see what changed.
+2. Read only the files that matter for the diff.
+3. Produce a structured review:
+   - Summary (2–4 sentences)
+   - Strengths
+   - Issues (severity: high / medium / low) with file:line when possible
+   - Suggested follow-ups
+4. Do NOT write or edit files unless the user explicitly asked to apply fixes.
+5. Prefer read-only tools (git_*, read, grep, glob, list).
+
+Extra context from the user: $ARGUMENTS"#
+                    .into(),
+            },
+        ),
+        (
+            "security-review",
+            CustomCommandConfig {
+                description: Some("Security-focused review of changes".into()),
+                agent: Some("plan".into()),
+                model: None,
+                subtask: None,
+                template: r#"Perform a security-focused review of the current git changes.
+
+1. Inspect git_status / git_diff and relevant files.
+2. Look for: secrets/credentials, injection (SQL/command/path), authz gaps,
+   unsafe shell, SSRF, insecure deserialization, dependency risks, XSS.
+3. Output:
+   - Executive summary
+   - Findings table: severity | location | issue | remediation
+   - What looks safe
+4. Do not modify files unless asked. Prefer read-only tools.
+
+Focus / notes: $ARGUMENTS"#
+                    .into(),
+            },
+        ),
+        (
+            "commit",
+            CustomCommandConfig {
+                description: Some("Draft a git commit message from the diff".into()),
+                agent: None,
+                model: None,
+                subtask: None,
+                template: r#"Prepare a git commit for the current changes.
+
+1. Run git_status and git_diff (include staged if any).
+2. Draft a concise commit message (subject ≤72 chars; body if needed).
+3. If the user asked to commit (or says "commit now" / "yes"), stage relevant
+   files and use git_commit. Otherwise show the proposed message and ask.
+4. Never force-push, never amend published history, never commit secrets (.env, keys).
+
+User notes: $ARGUMENTS"#
+                    .into(),
+            },
+        ),
+    ]
 }
 
 fn load_commands_from_dir(into: &mut HashMap<String, CustomCommandConfig>, dir: &Path) {

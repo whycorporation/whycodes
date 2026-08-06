@@ -935,6 +935,8 @@ pub struct TuiApp {
     pub pending_prompt: Option<String>,
     /// Queued prompts from `/loop` or `schedule` (drained when idle).
     pub pending_auto_prompts: std::collections::VecDeque<String>,
+    /// Idle follow-up suggestion (`tui.prompt_suggestions = "idle"`). Tab accepts when input empty.
+    pub pending_suggestion: Option<String>,
     /// Running background shell jobs (status bar chip).
     pub bg_running_count: usize,
     /// Model switch from the picker dialog: `(provider, model)`.
@@ -1057,6 +1059,22 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/init",
         hint: "Create or refresh AGENTS.md",
+    },
+    SlashCommand {
+        name: "/review",
+        hint: "AI review of git changes (read-only)",
+    },
+    SlashCommand {
+        name: "/security-review",
+        hint: "Security-focused change review",
+    },
+    SlashCommand {
+        name: "/commit",
+        hint: "Draft (and optionally create) a git commit",
+    },
+    SlashCommand {
+        name: "/context",
+        hint: "Context window breakdown",
     },
     SlashCommand {
         name: "/undo",
@@ -1345,6 +1363,7 @@ impl TuiApp {
             config,
             pending_prompt: None,
             pending_auto_prompts: std::collections::VecDeque::new(),
+            pending_suggestion: None,
             bg_running_count: 0,
             pending_model: None,
             pending_session_id: None,

@@ -132,7 +132,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Deferred tool load / ToolSearch | ✅ `tool_search` | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Parallel tools | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | Browser automation | ❌ | ⚠️ | ⚠️ | ✅★ | ✅ | ⚠️ | ⚠️ | ❌ | ✅★ cloud VM |
-| Image / multimodal | ⚠️ path attach | ✅ gen | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ PDF/image | ⚠️ | ✅ |
+| Image / multimodal | ✅ read+@attach | ✅ gen | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ PDF/image | ⚠️ | ✅ |
 | Video gen | ❌ | ✅ | ❌ | ❌ | ❌ | ❌ | ⚠️ MCP (Veo) | ❌ | ❌ |
 
 ---
@@ -142,7 +142,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ approval policy | ✅ confirm mutators | ❌ built-in yok | ✅ |
-| Permission globs / policy | ✅ tool + `bash(git *)` | ✅ | ✅ | ⚠️ | ✅ | ✅ sandbox_mode | ✅ policy engine | ⚠️ container | ⚠️ |
+| Permission globs / policy | ✅ tool + bash + path | ✅ | ✅ | ⚠️ | ✅ | ✅ sandbox_mode | ✅ policy engine | ⚠️ container | ⚠️ |
 | Multi-ask queue | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 | Auto-approve / full-auto | ✅ env | ✅ | ⚠️ | ⚠️ | ✅ | ✅ full access mode | ⚠️ trusted folders | ⚠️ | ✅ |
 | Shell risk sınıflandırması | ✅★ 4-tier | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ sandbox tiers | ⚠️ | ❌ | ⚠️ |
@@ -159,7 +159,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | MCP client | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ packages/ext | ✅ |
 | MCP HTTP/SSE | ✅ | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| MCP as server (export) | ❌ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ `codex mcp-server` | ❌ | ⚠️ | ⚠️ |
+| MCP as server (export) | ✅ `mcp serve` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ `codex mcp-server` | ❌ | ⚠️ | ⚠️ |
 | Skills (SKILL.md) | ✅ | ✅★ | ✅ | ✅ | ✅★ | ✅ `.codex/skills` | ✅ `.gemini/skills` | ✅ | ✅ |
 | Plugins / extensions | ⚠️ iskelet | ✅★ | ✅★ | Self-dev★ | ⚠️ | ⚠️ | ✅ extensions | ✅★ TS extensions | ✅ |
 | Custom slash / commands | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ custom cmds | ✅ prompt templates | ✅ |

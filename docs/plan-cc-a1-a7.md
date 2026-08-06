@@ -1,6 +1,6 @@
 # Plan — Claude Code research follow-ups (A1–A7)
 
-**Status:** not started · **Priority:** terminal product polish (after public release / parallel)  
+**Status:** **shipped** (2026-08-07) · **Priority:** terminal product polish  
 **Source:** [report-claude-code-research.md](report-claude-code-research.md) §10A  
 **Related:** [claude-code-inspiration.md](claude-code-inspiration.md), [FEATURES.md](FEATURES.md), [status.md](status.md)  
 **Policy:** Ideas only — re-implement in Rust; do **not** vendor leaked Claude Code TypeScript.
@@ -259,13 +259,13 @@ No new LLM call. Pure local introspection.
 
 | ID | Status | Notes |
 |----|--------|-------|
-| A1 | not started | |
-| A2 | not started | |
-| A3 | not started | |
-| A4 | not started | |
-| A5 | not started | |
-| A6 | not started | |
-| A7 | not started | |
+| A1 | **done** | `/review`, `/security-review`, `/commit` built-in PromptCommands |
+| A2 | **done** | `session.compaction_llm` + small-model summary after local compact |
+| A3 | **done** | `edit(src/**)` path rules + agent gate |
+| A4 | **done** | `/context` TUI + plain |
+| A5 | **done** | `whycode mcp serve [--tools core\|full]` stdio MCP server |
+| A6 | **done** | `read` images → WHYCODE_IMAGE_B64 → session Image block |
+| A7 | **done** | `tui.prompt_suggestions = "idle"`; Tab accepts; default off |
 
 Update this table + [status.md](status.md) when a row ships. Prefer **one PR per ID** (or A1+A4 together as “slash UX”).
 
