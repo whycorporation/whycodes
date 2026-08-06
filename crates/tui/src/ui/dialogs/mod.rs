@@ -37,16 +37,18 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         crate::app::DialogKind::Confirm { title, message, .. } => {
             let chrome = render_confirm_dialog(frame, &title, &message, palette, mouse);
             app.dialog_close_hit = chrome.close_hit;
+            app.dialog_modal_hit = Some(chrome.modal);
         }
         crate::app::DialogKind::Alert { title, message } => {
             let chrome = render_alert_dialog(frame, &title, &message, palette, mouse);
             app.dialog_close_hit = chrome.close_hit;
+            app.dialog_modal_hit = Some(chrome.modal);
         }
         crate::app::DialogKind::Permission { tool_name, detail } => {
-            let title = format!("Permission: {tool_name}");
-            let message = format!("{detail}\n\n[y/a] Allow   [n/d/Esc] Deny");
-            let chrome = render_confirm_dialog(frame, &title, &message, palette, mouse);
+            let chrome =
+                render_permission_dialog(frame, &tool_name, &detail, palette, mouse);
             app.dialog_close_hit = chrome.close_hit;
+            app.dialog_modal_hit = Some(chrome.modal);
         }
         crate::app::DialogKind::SessionList => {
             let items: Vec<SelectItem> = app
@@ -78,6 +80,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.scroll_start,
                 info.visible,
                 info.total,
+                info.modal,
             );
         }
         crate::app::DialogKind::Theme => {
@@ -106,6 +109,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.scroll_start,
                 info.visible,
                 info.total,
+                info.modal,
             );
         }
         _ => {}

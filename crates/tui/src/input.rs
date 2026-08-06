@@ -778,7 +778,8 @@ fn apply_chat_scrollbar_offset(app: &mut TuiApp, row: u16, grab: Option<u16>) {
 }
 
 /// Mouse while a modal is open: wheel moves the list, `[✗]` closes, click row selects,
-/// scrollbar drag scrolls.
+/// scrollbar drag scrolls. Text drag-select is **clipped to the modal** so the
+/// chat behind the popup cannot be copied.
 fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
     let active = match app.dialogs.active().cloned() {
         Some(d) => d,
@@ -807,15 +808,27 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 return true;
             }
 
+            // Outside the modal: no selection (background is not copyable).
+            if app.dialog_modal_hit.is_some() && !app.dialog_modal_contains(mouse.column, mouse.row)
+            {
+                app.dialog_scrollbar_grab = None;
+                app.mouse_sel = None;
+                app.mark_dirty();
+                return true;
+            }
+
             // Track click origin; confirm on Up only if it was a click not a drag.
+            // Clamp into the modal so a press on the border stays inside.
+            let (ax, ay) = app.clamp_to_dialog_modal(mouse.column, mouse.row);
             app.dialog_scrollbar_grab = None;
             app.mouse_sel = Some(MouseSelection {
-                anchor_x: mouse.column,
-                anchor_y: mouse.row,
-                focus_x: mouse.column,
-                focus_y: mouse.row,
+                anchor_x: ax,
+                anchor_y: ay,
+                focus_x: ax,
+                focus_y: ay,
                 dragging: false,
             });
+            app.mark_dirty();
         }
         MouseEventKind::Drag(MouseButton::Left) => {
             if app.dialog_scrollbar_grab.is_some() {
@@ -824,12 +837,15 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 app.mark_dirty();
                 return true;
             }
+            // Clamp focus into the modal before mutably borrowing selection.
+            let (fx, fy) = app.clamp_to_dialog_modal(mouse.column, mouse.row);
             if let Some(sel) = &mut app.mouse_sel {
-                sel.focus_x = mouse.column;
-                sel.focus_y = mouse.row;
+                sel.focus_x = fx;
+                sel.focus_y = fy;
                 if sel.anchor_x != sel.focus_x || sel.anchor_y != sel.focus_y {
                     sel.dragging = true;
                 }
+                app.mark_dirty();
             }
         }
         MouseEventKind::Up(MouseButton::Left) => {
@@ -842,15 +858,49 @@ fn handle_dialog_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
 
             let col = mouse.column;
             let row = mouse.row;
-            let was_click = app
-                .mouse_sel
-                .as_ref()
-                .map(|s| !s.dragging && s.anchor_x == col && s.anchor_y == row)
-                .unwrap_or(true);
-            app.mouse_sel = None;
-            if !was_click {
+            let was_drag = app.mouse_sel.as_ref().map(|s| s.dragging).unwrap_or(false);
+
+            // Drag selection → copy only cells inside the modal.
+            if was_drag {
+                if let Some(sel) = app.mouse_sel.take() {
+                    let (fx, fy) = app.clamp_to_dialog_modal(col, row);
+                    let text = if let Some(modal) = app.dialog_modal_hit {
+                        crate::clipboard::text_from_cells_clipped(
+                            &app.screen_cells,
+                            sel.anchor_x,
+                            sel.anchor_y,
+                            fx,
+                            fy,
+                            crate::clipboard::ClipRect::from_ratatui(modal),
+                        )
+                    } else {
+                        crate::clipboard::text_from_cells(
+                            &app.screen_cells,
+                            sel.anchor_x,
+                            sel.anchor_y,
+                            fx,
+                            fy,
+                        )
+                    };
+                    if !text.is_empty() {
+                        if crate::clipboard::copy_text(&text) {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Info,
+                                format!("Copied {} chars", text.chars().count()),
+                            );
+                        } else {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Warning,
+                                "Copy failed — no clipboard",
+                            );
+                        }
+                    }
+                }
+                app.mark_dirty();
                 return true;
             }
+
+            app.mouse_sel = None;
 
             // [✗] → cancel (same as Esc).
             if app.dialog_close_contains(col, row) {

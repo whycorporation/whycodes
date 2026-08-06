@@ -589,6 +589,9 @@ pub struct TuiApp {
     pub session_list: SessionListState,
     /// Last-paint hit box for the modal `[✗]` control (click = cancel).
     pub dialog_close_hit: Option<Rect>,
+    /// Full modal rect (border inclusive). Text selection/copy is clipped to this
+    /// so background chat behind the popup cannot be selected.
+    pub dialog_modal_hit: Option<Rect>,
     /// Last-paint list body for the active select-style dialog.
     pub dialog_list_hit: Option<Rect>,
     /// Last-paint scrollbar track (when the list overflows).
@@ -983,6 +986,7 @@ impl TuiApp {
             model_selection: ModelSelectionState::default(),
             session_list: SessionListState::default(),
             dialog_close_hit: None,
+            dialog_modal_hit: None,
             dialog_list_hit: None,
             dialog_scrollbar_hit: None,
             dialog_list_scroll_start: 0,
@@ -1184,6 +1188,7 @@ impl TuiApp {
     /// must survive repaint.
     pub fn clear_dialog_hits(&mut self) {
         self.dialog_close_hit = None;
+        self.dialog_modal_hit = None;
         self.dialog_list_hit = None;
         self.dialog_scrollbar_hit = None;
         self.dialog_list_scroll_start = 0;
@@ -1200,8 +1205,10 @@ impl TuiApp {
         scroll_start: usize,
         visible: usize,
         total: usize,
+        modal: Option<Rect>,
     ) {
         self.dialog_close_hit = close_hit;
+        self.dialog_modal_hit = modal;
         self.dialog_list_hit = list_area;
         self.dialog_scrollbar_hit = scrollbar_hit;
         self.dialog_list_scroll_start = scroll_start;
@@ -1214,6 +1221,28 @@ impl TuiApp {
         self.dialog_close_hit
             .map(|h| col >= h.x && col < h.x.saturating_add(h.width) && row == h.y)
             .unwrap_or(false)
+    }
+
+    /// Whether `(col, row)` is inside the active modal (border inclusive).
+    pub fn dialog_modal_contains(&self, col: u16, row: u16) -> bool {
+        self.dialog_modal_hit
+            .map(|h| {
+                col >= h.x
+                    && col < h.x.saturating_add(h.width)
+                    && row >= h.y
+                    && row < h.y.saturating_add(h.height)
+            })
+            .unwrap_or(false)
+    }
+
+    /// Clamp a screen cell into the modal rect (or return as-is if no modal).
+    pub fn clamp_to_dialog_modal(&self, col: u16, row: u16) -> (u16, u16) {
+        let Some(h) = self.dialog_modal_hit else {
+            return (col, row);
+        };
+        let x1 = h.x.saturating_add(h.width.saturating_sub(1));
+        let y1 = h.y.saturating_add(h.height.saturating_sub(1));
+        (col.clamp(h.x, x1), row.clamp(h.y, y1))
     }
 
     /// Whether the pointer is over the close control (for hover repaint).

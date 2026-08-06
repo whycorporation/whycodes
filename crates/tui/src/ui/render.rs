@@ -74,10 +74,16 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp) {
 ///
 /// Only content cells are painted — trailing pad on short lines is left alone
 /// so the highlight matches what `clipboard::text_from_cells` will copy.
+/// When a modal is open, ranges are clipped to `dialog_modal_hit` so the
+/// background chat is never highlighted.
 fn paint_selection(frame: &mut Frame, app: &TuiApp) {
     let Some(sel) = app.mouse_sel else {
         return;
     };
+
+    let clip = app
+        .dialog_modal_hit
+        .map(crate::clipboard::ClipRect::from_ratatui);
 
     // Prefer the previous frame's cell snapshot (same grid copy uses). On the
     // first drag frame it may still be empty — fall back to linear geometry.
@@ -95,20 +101,37 @@ fn paint_selection(frame: &mut Frame, app: &TuiApp) {
         };
         let mut r = Vec::new();
         for y in top_y..=bot_y {
+            if let Some(c) = clip
+                && !c.contains_y(y)
+            {
+                continue;
+            }
             if let Some((xs, xe)) =
                 crate::clipboard::linear_cols(y, top_y, bot_y, top_x, bot_x, row_max)
             {
+                let (xs, xe) = match clip.and_then(|c| c.col_range()) {
+                    Some((cx0, cx1)) => {
+                        let xs = xs.max(cx0);
+                        let xe = xe.min(cx1);
+                        if xs > xe {
+                            continue;
+                        }
+                        (xs, xe)
+                    }
+                    None => (xs, xe),
+                };
                 r.push((y, xs, xe));
             }
         }
         r
     } else {
-        crate::clipboard::paint_ranges(
+        crate::clipboard::paint_ranges_clipped(
             &app.screen_cells,
             sel.anchor_x,
             sel.anchor_y,
             sel.focus_x,
             sel.focus_y,
+            clip,
         )
     };
 

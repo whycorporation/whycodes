@@ -102,6 +102,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-06 — Permission popup: unreadable JSON + copy leaked background chat
+
+**Symptom:** Tool permission dialog showed compact JSON (`{"command":"…"}` truncated mid-string). Drag-selecting inside the popup also copied chat text behind it (middle lines of a linear selection span full terminal width).
+
+**Root cause:** (1) `PermissionAction::Ask` used `arguments.to_string()` + 200-char byte truncate. (2) Dialog mouse path tracked selection but did not clip extract/paint to the modal rect; `linear_cols` middle rows use columns `0..width-1`.
+
+**Fix:** Pretty `format_permission_detail` / shell risk sections; dedicated `render_permission_dialog` layout; `dialog_modal_hit` + `text_from_cells_clipped` / `paint_ranges_clipped`; dialog drag copy only within modal.
+
+**Prevention:** Any modal that owns focus must set `dialog_modal_hit` and pass it into selection extract/paint. Never dump compact JSON into a permission body.
+
+---
+
 ### 2026-08-05 — Boot/TTFF: do not put Tokio before `--version`
 
 **Symptom:** `whycode --version` (Boot floor in comparison tables) paid multi-ms for a multi-thread Tokio runtime that never ran work. Windows baseline ~21 ms was mostly binary page-in + that setup.

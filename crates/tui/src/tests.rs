@@ -760,6 +760,12 @@ fn dialog_close_hit_and_list_index_from_paint_meta() {
         3, // scroll_start
         10,
         25, // total
+        Some(Rect {
+            x: 8,
+            y: 4,
+            width: 50,
+            height: 16,
+        }),
     );
     assert!(app.dialog_scrollbar_contains(50, 12));
     assert!(!app.dialog_scrollbar_contains(49, 12));

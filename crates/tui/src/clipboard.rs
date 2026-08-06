@@ -141,16 +141,71 @@ pub fn content_span(row: &[String], xs: usize, xe: usize) -> Option<(usize, usiz
     Some((start, end))
 }
 
+/// Optional axis-aligned clip rect (inclusive origin, exclusive end via width/height).
+///
+/// Used while a modal is open so linear multi-line selection does not pull in
+/// chat cells to the left/right of the popup (middle lines would otherwise
+/// span the full terminal width).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClipRect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+impl ClipRect {
+    pub fn from_ratatui(r: ratatui::layout::Rect) -> Self {
+        Self {
+            x: r.x,
+            y: r.y,
+            width: r.width,
+            height: r.height,
+        }
+    }
+
+    pub fn contains_y(self, y: u16) -> bool {
+        y >= self.y && y < self.y.saturating_add(self.height)
+    }
+
+    /// Inclusive column range of this clip on any row.
+    pub fn col_range(self) -> Option<(u16, u16)> {
+        if self.width == 0 {
+            return None;
+        }
+        Some((self.x, self.x.saturating_add(self.width.saturating_sub(1))))
+    }
+}
+
 /// Build clipboard text from a **linear** selection over a cell grid.
 ///
 /// This is the Grok-like path: multi-line drags do not pull in the empty
 /// rectangle corners to the right of short lines, trailing pad is stripped,
 /// shared left indent (layout chrome) is dedented, and pad-only rows drop out.
 pub fn text_from_cells(cells: &[Vec<String>], x0: u16, y0: u16, x1: u16, y1: u16) -> String {
-    text_from_cells_linear(cells, x0, y0, x1, y1)
+    text_from_cells_linear(cells, x0, y0, x1, y1, None)
 }
 
-pub fn text_from_cells_linear(cells: &[Vec<String>], x0: u16, y0: u16, x1: u16, y1: u16) -> String {
+/// Like [`text_from_cells`] but only cells inside `clip` are extracted.
+pub fn text_from_cells_clipped(
+    cells: &[Vec<String>],
+    x0: u16,
+    y0: u16,
+    x1: u16,
+    y1: u16,
+    clip: ClipRect,
+) -> String {
+    text_from_cells_linear(cells, x0, y0, x1, y1, Some(clip))
+}
+
+pub fn text_from_cells_linear(
+    cells: &[Vec<String>],
+    x0: u16,
+    y0: u16,
+    x1: u16,
+    y1: u16,
+    clip: Option<ClipRect>,
+) -> String {
     if cells.is_empty() {
         return String::new();
     }
@@ -160,6 +215,11 @@ pub fn text_from_cells_linear(cells: &[Vec<String>], x0: u16, y0: u16, x1: u16, 
 
     let mut lines: Vec<String> = Vec::new();
     for y in top_y..=bot_y {
+        if let Some(c) = clip
+            && !c.contains_y(y)
+        {
+            continue;
+        }
         let Some(row) = cells.get(y as usize) else {
             continue;
         };
@@ -169,6 +229,17 @@ pub fn text_from_cells_linear(cells: &[Vec<String>], x0: u16, y0: u16, x1: u16, 
         let row_max = (row.len().saturating_sub(1)) as u16;
         let Some((xs, xe)) = linear_cols(y, top_y, bot_y, top_x, bot_x, row_max) else {
             continue;
+        };
+        let (xs, xe) = match clip.and_then(|c| c.col_range()) {
+            Some((cx0, cx1)) => {
+                let xs = xs.max(cx0);
+                let xe = xe.min(cx1);
+                if xs > xe {
+                    continue;
+                }
+                (xs, xe)
+            }
+            None => (xs, xe),
         };
         let xs = xs as usize;
         let xe = xe as usize;
@@ -331,6 +402,18 @@ pub fn paint_ranges(
     x1: u16,
     y1: u16,
 ) -> Vec<(u16, u16, u16)> {
+    paint_ranges_clipped(cells, x0, y0, x1, y1, None)
+}
+
+/// Like [`paint_ranges`] but intersects each row with `clip` (modal bounds).
+pub fn paint_ranges_clipped(
+    cells: &[Vec<String>],
+    x0: u16,
+    y0: u16,
+    x1: u16,
+    y1: u16,
+    clip: Option<ClipRect>,
+) -> Vec<(u16, u16, u16)> {
     // (y, x_start, x_end) inclusive
     let mut out = Vec::new();
     if cells.is_empty() {
@@ -338,6 +421,11 @@ pub fn paint_ranges(
     }
     let (top_y, bot_y, top_x, bot_x) = reading_order(x0, y0, x1, y1);
     for y in top_y..=bot_y {
+        if let Some(c) = clip
+            && !c.contains_y(y)
+        {
+            continue;
+        }
         let Some(row) = cells.get(y as usize) else {
             continue;
         };
@@ -347,6 +435,17 @@ pub fn paint_ranges(
         let row_max = (row.len().saturating_sub(1)) as u16;
         let Some((xs, xe)) = linear_cols(y, top_y, bot_y, top_x, bot_x, row_max) else {
             continue;
+        };
+        let (xs, xe) = match clip.and_then(|c| c.col_range()) {
+            Some((cx0, cx1)) => {
+                let xs = xs.max(cx0);
+                let xe = xe.min(cx1);
+                if xs > xe {
+                    continue;
+                }
+                (xs, xe)
+            }
+            None => (xs, xe),
         };
         let Some((start, end)) = content_span(row, xs as usize, xe as usize) else {
             continue;
@@ -528,5 +627,35 @@ mod tests {
         let lines = vec!["   ┃ hello".into(), "   │ note".into(), "   ┃ more".into()];
         let out = clean_copied_lines(lines);
         assert_eq!(out, vec!["┃ hello", "│ note", "┃ more"]);
+    }
+
+    #[test]
+    fn clip_excludes_cells_outside_modal() {
+        // Full-width screen: modal occupies cols 10..30, rows 2..5.
+        // Chat "LEAK" sits left of the modal on the same rows.
+        let cells = grid_padded(
+            &[
+                "..........",
+                "..........",
+                "LEAK  modal body here........",
+                "LEAK  second line............",
+                "..........",
+            ],
+            40,
+        );
+        let clip = ClipRect {
+            x: 6,
+            y: 2,
+            width: 20,
+            height: 2,
+        };
+        // Drag spans the full width of two content rows (would include LEAK).
+        let t = text_from_cells_clipped(&cells, 0, 2, 39, 3, clip);
+        assert!(
+            !t.contains("LEAK"),
+            "background left of modal must not copy: {t:?}"
+        );
+        assert!(t.contains("modal body"), "{t:?}");
+        assert!(t.contains("second line"), "{t:?}");
     }
 }

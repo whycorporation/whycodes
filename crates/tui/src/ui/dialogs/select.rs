@@ -45,6 +45,8 @@ impl SelectItem {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SelectPaintInfo {
     pub close_hit: Option<Rect>,
+    /// Full modal rect (border inclusive) — selection/copy is clipped here.
+    pub modal: Option<Rect>,
     /// Rows of the list (not including the scrollbar gutter).
     pub list_area: Option<Rect>,
     /// Scrollbar track (when the list overflows); drag / click to scroll.
@@ -84,6 +86,7 @@ pub fn render_select(
     if area.width == 0 || area.height == 0 {
         return SelectPaintInfo {
             close_hit: chrome.close_hit,
+            modal: Some(chrome.modal),
             ..Default::default()
         };
     }
@@ -171,6 +174,7 @@ pub fn render_select(
 
     SelectPaintInfo {
         close_hit: chrome.close_hit,
+        modal: Some(chrome.modal),
         list_area: Some(list_area),
         scrollbar_hit,
         scroll_start: start,

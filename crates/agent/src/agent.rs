@@ -25,6 +25,98 @@ use whycode_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pr
 /// Tool names that run an arbitrary shell command string.
 const SHELL_TOOLS: &[&str] = &["bash", "shell"];
 
+/// Soft cap for permission prompt detail (TUI wraps; avoid megabyte dumps).
+const PERMISSION_DETAIL_MAX: usize = 4_000;
+
+/// Human-readable tool arguments for the permission dialog (not compact JSON).
+fn format_permission_detail(args: &serde_json::Value) -> String {
+    let text = match args {
+        serde_json::Value::Object(map) if map.is_empty() => "(no arguments)".to_string(),
+        serde_json::Value::Object(map) => {
+            // Single `command` field → show the shell string alone (most common).
+            if map.len() == 1
+                && let Some(cmd) = map.get("command").and_then(|v| v.as_str())
+            {
+                return truncate_permission_detail(cmd);
+            }
+            let mut lines = Vec::with_capacity(map.len());
+            for (key, value) in map {
+                match value {
+                    serde_json::Value::String(s) => {
+                        if s.contains('\n') || s.chars().count() > 72 {
+                            lines.push(format!("{key}:"));
+                            for line in s.lines() {
+                                lines.push(format!("  {line}"));
+                            }
+                        } else {
+                            lines.push(format!("{key}: {s}"));
+                        }
+                    }
+                    serde_json::Value::Null => lines.push(format!("{key}: null")),
+                    serde_json::Value::Bool(b) => lines.push(format!("{key}: {b}")),
+                    serde_json::Value::Number(n) => lines.push(format!("{key}: {n}")),
+                    other => {
+                        let pretty =
+                            serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string());
+                        if pretty.contains('\n') {
+                            lines.push(format!("{key}:"));
+                            for line in pretty.lines() {
+                                lines.push(format!("  {line}"));
+                            }
+                        } else {
+                            lines.push(format!("{key}: {pretty}"));
+                        }
+                    }
+                }
+            }
+            lines.join("\n")
+        }
+        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+    };
+    truncate_permission_detail(&text)
+}
+
+fn format_shell_risk_detail(command: &str, reason: &str) -> String {
+    let body = format!("Command:\n{command}\n\nRisk: {reason}");
+    truncate_permission_detail(&body)
+}
+
+fn truncate_permission_detail(s: &str) -> String {
+    if s.chars().count() <= PERMISSION_DETAIL_MAX {
+        return s.to_string();
+    }
+    let kept: String = s.chars().take(PERMISSION_DETAIL_MAX).collect();
+    format!("{kept}…")
+}
+
+#[cfg(test)]
+mod permission_detail_tests {
+    use super::{format_permission_detail, format_shell_risk_detail};
+    use serde_json::json;
+
+    #[test]
+    fn single_command_is_plain_string() {
+        let d = format_permission_detail(&json!({"command": "ls -la"}));
+        assert_eq!(d, "ls -la");
+    }
+
+    #[test]
+    fn object_keys_are_labeled_not_compact_json() {
+        let d = format_permission_detail(&json!({"path": "src/main.rs", "offset": 10}));
+        assert!(d.contains("path: src/main.rs"), "{d}");
+        assert!(d.contains("offset: 10"), "{d}");
+        assert!(!d.starts_with('{'), "must not be compact JSON: {d}");
+    }
+
+    #[test]
+    fn shell_risk_has_command_and_risk_sections() {
+        let d = format_shell_risk_detail("rm -rf /tmp/x", "destructive delete");
+        assert!(d.contains("Command:"), "{d}");
+        assert!(d.contains("rm -rf /tmp/x"), "{d}");
+        assert!(d.contains("Risk: destructive delete"), "{d}");
+    }
+}
+
 /// Tools that must never fan out in parallel (side effects, races, or UI ask).
 const SERIAL_TOOLS: &[&str] = &[
     "bash",
@@ -1046,7 +1138,8 @@ impl Agent {
                     };
                 }
                 Decision::Confirm { reason } => {
-                    let detail = format!("{command}\n\nRisk: {reason}");
+                    // Structured for the TUI permission dialog (see format_permission_detail).
+                    let detail = format_shell_risk_detail(command, &reason);
                     if !self.permission_prompter.ask(&tc.name, &detail).await {
                         return ToolResult {
                             tool_call_id: tc.id.clone(),
@@ -1073,12 +1166,7 @@ impl Agent {
             // Already confirmed with the command in hand; do not ask twice.
             PermissionAction::Ask if risk_confirmed => {}
             PermissionAction::Ask => {
-                let detail = tc.arguments.to_string();
-                let detail = if detail.len() > 200 {
-                    format!("{}…", &detail[..200])
-                } else {
-                    detail
-                };
+                let detail = format_permission_detail(&tc.arguments);
                 let allowed = self.permission_prompter.ask(&tc.name, &detail).await;
                 if !allowed {
                     return ToolResult {
