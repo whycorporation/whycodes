@@ -3,15 +3,15 @@
 //! Over the chat rather than beside it: taking layout space for something that
 //! is usually absent would move the whole view every time one appeared.
 //!
-//! Visual language matches the rest of the TUI (Grok dialogs / system callouts):
-//! dim square border, base `bg` fill, kind colour only on the leading glyph —
-//! not a coloured floating card.
+//! Visual language matches the prompt chrome: dim rounded border (`╭─╮│╰─╯`),
+//! base `bg` fill, kind colour only on the leading glyph — not a coloured
+//! floating card.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 
 use crate::theme::ThemePalette;
 use crate::toast::{Toast, ToastKind};
@@ -42,7 +42,7 @@ pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePa
     let inner = width.saturating_sub(5) as usize;
     let mut top = area.y + MARGIN.min(area.height.saturating_sub(1));
 
-    // Dialog chrome: dim border on base bg (same as `dialogs/base.rs`).
+    // Prompt-like chrome: dim rounded border on base bg.
     let border_style = Style::default().fg(palette.dim).bg(palette.bg);
     let fill = Style::default().bg(palette.bg).fg(palette.fg);
 
@@ -96,6 +96,7 @@ pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePa
             Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(border_style)
                     .style(fill),
             ),
