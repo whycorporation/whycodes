@@ -270,23 +270,287 @@ pub fn apply_intent_to_request(
     None
 }
 
-/// Short UI/status line (TUI toast / status bar).
-pub fn status_hint(assessment: &IntentAssessment, agent_name: &str) -> Option<String> {
+/// Short chrome badge when confidence is high enough to show.
+pub fn badge_label(assessment: &IntentAssessment) -> Option<&'static str> {
+    if matches!(assessment.intent, UserIntent::Trivial | UserIntent::Ambiguous) {
+        return None;
+    }
+    if !assessment.is_high() {
+        return None;
+    }
+    Some(match assessment.intent {
+        UserIntent::Question => "Q",
+        UserIntent::Change => "chg",
+        UserIntent::Plan => "plan",
+        UserIntent::Trivial | UserIntent::Ambiguous => unreachable!(),
+    })
+}
+
+/// Toast severity for TUI (`info` / `warning`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntentNoticeKind {
+    Info,
+    Warning,
+}
+
+/// User-visible notice for mode / intent mismatch or posture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntentNotice {
+    pub kind: IntentNoticeKind,
+    pub message: String,
+}
+
+/// Build a toast-worthy notice (prefer Warning when mode and intent disagree).
+pub fn intent_notice(assessment: &IntentAssessment, agent_name: &str) -> Option<IntentNotice> {
     if !assessment.is_high() {
         return None;
     }
     match (assessment.intent, agent_name) {
-        (UserIntent::Question, "build") => Some(
-            "Intent: question — answering without edits (Ctrl+T → ask for read-only mode)".into(),
-        ),
-        (UserIntent::Plan, "build") => {
-            Some("Intent: plan — outlining before edits (Ctrl+T → plan mode)".into())
-        }
-        (UserIntent::Change, "ask") | (UserIntent::Change, "plan") => Some(format!(
-            "Intent: change — switch to build (Ctrl+T) to apply edits (current: {agent_name})"
-        )),
+        (UserIntent::Change, "ask") | (UserIntent::Change, "plan") => Some(IntentNotice {
+            kind: IntentNoticeKind::Warning,
+            message: format!(
+                "Implementation request while in {agent_name} (read-only). \
+                 Ctrl+T → build to apply edits."
+            ),
+        }),
+        (UserIntent::Question, "build") => Some(IntentNotice {
+            kind: IntentNoticeKind::Info,
+            message: "Intent: question — no edits (Ctrl+T → ask for hard read-only)".into(),
+        }),
+        (UserIntent::Plan, "build") => Some(IntentNotice {
+            kind: IntentNoticeKind::Info,
+            message: "Intent: plan — outline first (Ctrl+T → plan mode)".into(),
+        }),
+        (UserIntent::Plan, "ask") => Some(IntentNotice {
+            kind: IntentNoticeKind::Info,
+            message: "Design-shaped ask — Ctrl+T → plan for a full plan".into(),
+        }),
         _ => None,
     }
+}
+
+/// Short UI/status line (legacy string form).
+pub fn status_hint(assessment: &IntentAssessment, agent_name: &str) -> Option<String> {
+    intent_notice(assessment, agent_name).map(|n| n.message)
+}
+
+// ── Tool authorization (Claude-style: user message vs agent action) ─────
+
+/// Decision for a tool call given turn intent (not shell blast-radius risk).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolAuthDecision {
+    Allow,
+    /// Ask the user; show `reason` in the permission dialog.
+    Confirm { reason: String },
+    /// Hard block; model must try another path.
+    Refuse { reason: String },
+}
+
+/// Tools that mutate the workspace or shared state.
+const MUTATING_TOOLS: &[&str] = &[
+    "write",
+    "edit",
+    "apply_patch",
+    "git_commit",
+    "bash",
+    "shell",
+    "code_mode",
+    "external_directory",
+];
+
+/// Whether this tool can change durable state (files, git, shell side effects).
+pub fn is_mutating_tool(name: &str) -> bool {
+    MUTATING_TOOLS.contains(&name)
+}
+
+/// Classify shell as observational (ls/rg/git status/…) vs side-effecting.
+///
+/// Conservative: any pipe that clearly mutates, redirect, or unknown head → not read-only.
+pub fn is_read_only_shell(command: &str) -> bool {
+    let cmd = command.trim();
+    if cmd.is_empty() {
+        return true;
+    }
+    // Redirection / background / destructive chain markers.
+    if cmd.contains('>')
+        || cmd.contains(">>")
+        || cmd.contains("<<")
+        || cmd.contains('|') && (cmd.contains("xargs") || cmd.contains("tee "))
+        || cmd.contains("sudo ")
+        || cmd.contains("rm ")
+        || cmd.contains("mv ")
+        || cmd.contains("cp ")
+        || cmd.contains("chmod ")
+        || cmd.contains("chown ")
+        || cmd.contains("kill ")
+        || cmd.contains("dd ")
+        || cmd.contains("mkfs")
+        || cmd.contains("git push")
+        || cmd.contains("git commit")
+        || cmd.contains("git reset")
+        || cmd.contains("git checkout")
+        || cmd.contains("git clean")
+        || cmd.contains("npm install")
+        || cmd.contains("cargo install")
+        || cmd.contains("pip install")
+    {
+        return false;
+    }
+
+    // Split on shell list operators; every segment must look observational.
+    for segment in cmd.split(&['&', ';', '\n'][..]) {
+        let seg = segment.trim().trim_start_matches("&&").trim_start_matches("||").trim();
+        if seg.is_empty() {
+            continue;
+        }
+        if !segment_looks_read_only(seg) {
+            return false;
+        }
+    }
+    true
+}
+
+fn segment_looks_read_only(seg: &str) -> bool {
+    let lower = seg.to_ascii_lowercase();
+    // Strip env assignments: `FOO=1 ls`
+    let token = lower
+        .split_whitespace()
+        .find(|t| !t.contains('=') || t.starts_with('-'))
+        .unwrap_or("");
+    let head = token.rsplit('/').next().unwrap_or(token);
+    READ_ONLY_SHELL_HEADS.iter().any(|h| head == *h)
+}
+
+const READ_ONLY_SHELL_HEADS: &[&str] = &[
+    "ls", "ll", "dir", "pwd", "echo", "printf", "cat", "head", "tail", "less", "more",
+    "wc", "file", "stat", "which", "type", "command", "true", "false", "test", "[",
+    "rg", "grep", "fgrep", "egrep", "find", "fd", "locate", "tree",
+    "git", // further filtered above for push/commit/reset
+    "diff", "cmp", "md5sum", "sha256sum",
+    "cargo", // cargo check/test/build are builds — not pure read; see below
+    "rustc", "python", "python3", "node", "ruby", "perl",
+    "jq", "yq", "awk", "sed", // sed without -i is usually filter; allow if no -i
+    "env", "printenv", "uname", "whoami", "id", "date", "cal",
+    "df", "du", "free", "ps", "top", "htop",
+    "curl", "wget", "http", // network fetch; still non-mutating for local FS
+];
+
+/// Shell heads that are usually read-only only with specific subcommands.
+fn shell_head_readonly_ok(command: &str) -> bool {
+    let lower = command.to_ascii_lowercase();
+    if lower.split_whitespace().any(|t| t == "sed") && lower.contains("-i") {
+        return false;
+    }
+    // cargo build/run/install mutate target/; allow check/test/clippy/doc as "dev" —
+    // still side effects in target/. Treat cargo as mutating unless metadata-ish.
+    if let Some(rest) = lower.strip_prefix("cargo ") {
+        let sub = rest.split_whitespace().next().unwrap_or("");
+        return matches!(
+            sub,
+            "metadata" | "tree" | "search" | "info" | "version" | "--version" | "-V" | "help"
+        );
+    }
+    if lower.starts_with("git ") {
+        let mut parts = lower.split_whitespace();
+        let _ = parts.next();
+        let sub = parts.next().unwrap_or("");
+        return match sub {
+            "status" | "log" | "diff" | "show" | "branch" | "tag" | "remote" | "rev-parse"
+            | "describe" | "ls-files" | "blame" => true,
+            "stash" => {
+                let third = parts.next().unwrap_or("list");
+                matches!(third, "list" | "show")
+            }
+            "config" => {
+                lower.contains("--get") || lower.contains("-l") || lower.contains("--list")
+            }
+            _ => false,
+        };
+    }
+    true
+}
+
+/// Authorize a tool against the turn's user intent (Claude auto-mode spirit).
+///
+/// - **ask/plan agents**: mutating tools should already be denied by permission;
+///   this is a second line of defence.
+/// - **build + Question/Plan (high)**: escalate mutators to Confirm so the model
+///   cannot silently implement a question.
+/// - **Change / Ambiguous / Off mode**: allow (shell risk gate still applies).
+pub fn authorize_tool(
+    assessment: &IntentAssessment,
+    agent_name: &str,
+    tool_name: &str,
+    command: Option<&str>,
+    guidance: IntentGuidanceMode,
+) -> ToolAuthDecision {
+    if matches!(guidance, IntentGuidanceMode::Off) {
+        return ToolAuthDecision::Allow;
+    }
+    if !is_mutating_tool(tool_name) {
+        return ToolAuthDecision::Allow;
+    }
+
+    // Read-only shell never needs intent confirm.
+    if matches!(tool_name, "bash" | "shell") {
+        if let Some(cmd) = command {
+            if is_read_only_shell(cmd) && shell_head_readonly_ok(cmd) {
+                return ToolAuthDecision::Allow;
+            }
+        }
+    }
+
+    let restricted_agent = matches!(agent_name, "ask" | "plan" | "explore" | "scout");
+    if restricted_agent {
+        return ToolAuthDecision::Refuse {
+            reason: format!(
+                "Agent `{agent_name}` is read-only; tool `{tool_name}` is not allowed. \
+                 Switch to build (Ctrl+T) to mutate the workspace."
+            ),
+        };
+    }
+
+    // Only escalate when we are confident the user did not authorize mutation.
+    let escalate = match assessment.intent {
+        UserIntent::Question if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) => {
+            Some("question")
+        }
+        UserIntent::Plan if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) => {
+            Some("plan")
+        }
+        UserIntent::Ambiguous
+            if matches!(guidance, IntentGuidanceMode::Always) && assessment.confidence >= 0.4 =>
+        {
+            Some("ambiguous")
+        }
+        _ => None,
+    };
+
+    let Some(kind) = escalate else {
+        return ToolAuthDecision::Allow;
+    };
+
+    let reason = match kind {
+        "question" => format!(
+            "User message looks like a **question**, not an edit request \
+             (intent={kind}, confidence={:.0}%).\n\
+             Tool `{tool_name}` would change the workspace.\n\
+             Approve only if you want this mutation now.",
+            assessment.confidence * 100.0
+        ),
+        "plan" => format!(
+            "User message looks like a **planning** request \
+             (intent={kind}, confidence={:.0}%).\n\
+             Tool `{tool_name}` would start implementation.\n\
+             Approve only if you want to implement now without a separate build step.",
+            assessment.confidence * 100.0
+        ),
+        _ => format!(
+            "User intent is unclear; tool `{tool_name}` would mutate the workspace. Confirm?"
+        ),
+    };
+
+    ToolAuthDecision::Confirm { reason }
 }
 
 // ── markers ──────────────────────────────────────────────────────────────
@@ -627,5 +891,106 @@ mod tests {
             IntentGuidanceMode::parse("always"),
             IntentGuidanceMode::Always
         );
+    }
+
+    #[test]
+    fn badge_for_high_question() {
+        let a = classify_user_intent("How does session compaction work?");
+        assert_eq!(badge_label(&a), Some("Q"));
+    }
+
+    #[test]
+    fn mismatch_toast_is_warning() {
+        let a = classify_user_intent("Fix the auth bug in session.rs");
+        let n = intent_notice(&a, "ask").expect("notice");
+        assert_eq!(n.kind, IntentNoticeKind::Warning);
+        assert!(n.message.contains("build"));
+    }
+
+    #[test]
+    fn read_only_shell_ls() {
+        assert!(is_read_only_shell("ls -la"));
+        assert!(is_read_only_shell("git status"));
+        assert!(is_read_only_shell("rg foo src"));
+        assert!(!is_read_only_shell("rm -rf target"));
+        assert!(!is_read_only_shell("git push origin main"));
+    }
+
+    #[test]
+    fn authorize_blocks_edit_on_question_in_build() {
+        let a = classify_user_intent("How does auth work?");
+        let d = authorize_tool(
+            &a,
+            "build",
+            "edit",
+            None,
+            IntentGuidanceMode::Auto,
+        );
+        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
+    }
+
+    #[test]
+    fn authorize_allows_ls_on_question() {
+        let a = classify_user_intent("How does auth work?");
+        let d = authorize_tool(
+            &a,
+            "build",
+            "bash",
+            Some("ls -la src"),
+            IntentGuidanceMode::Auto,
+        );
+        assert_eq!(d, ToolAuthDecision::Allow);
+    }
+
+    #[test]
+    fn authorize_confirms_rm_on_question() {
+        let a = classify_user_intent("How does auth work?");
+        let d = authorize_tool(
+            &a,
+            "build",
+            "bash",
+            Some("rm -rf /tmp/x"),
+            IntentGuidanceMode::Auto,
+        );
+        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
+    }
+
+    #[test]
+    fn authorize_refuses_write_on_ask_agent() {
+        let a = classify_user_intent("Fix the bug");
+        let d = authorize_tool(
+            &a,
+            "ask",
+            "write",
+            None,
+            IntentGuidanceMode::Auto,
+        );
+        assert!(matches!(d, ToolAuthDecision::Refuse { .. }), "{d:?}");
+    }
+
+    #[test]
+    fn authorize_allows_change_intent_edits() {
+        let a = classify_user_intent("Fix the auth bug in session.rs");
+        let d = authorize_tool(
+            &a,
+            "build",
+            "edit",
+            None,
+            IntentGuidanceMode::Auto,
+        );
+        assert_eq!(d, ToolAuthDecision::Allow);
+    }
+
+    #[test]
+    fn authorize_off_skips() {
+        let a = classify_user_intent("How does auth work?");
+        let d = authorize_tool(
+            &a,
+            "build",
+            "edit",
+            None,
+            IntentGuidanceMode::Off,
+        );
+        assert_eq!(d, ToolAuthDecision::Allow);
     }
 }

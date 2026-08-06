@@ -110,7 +110,9 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 **Fix:** Three layers: (1) primary agents `build` / `plan` / `ask` with tool denylists; (2) prompt protocol in `prompts/{build,plan,ask}.txt`; (3) zero-LLM heuristic (`crates/agent/src/intent.rs`) injects ephemeral `<whycode_intent>` on the **request** only (not session history) so system prompt cache stays stable. Config: `session.intent_guidance = auto|off|always`.
 
-**Prevention:** Do not add a per-turn LLM intent classifier by default (latency + cache cost). Prefer mode gates + soft posture. Keep posture off the stored transcript.
+**UX + auth (same day):** `TurnEvent::Intent` → TUI badge (`[Q]` / `chg` / `plan` in header + prompt chrome); mode-mismatch **Warning** toast (8s TTL); Claude-style `authorize_tool` escalates mutators (edit/write/shell) to Confirm when turn intent is high-confidence question/plan. Read-only shell (`ls`, `git status`, …) still allowed. `intent_guidance=off` disables posture + auth escalate.
+
+**Prevention:** Do not add a per-turn LLM intent classifier by default (latency + cache cost). Prefer mode gates + soft posture. Keep posture off the stored transcript. Never skip intent auth for shell just because risk said Allow.
 
 ---
 

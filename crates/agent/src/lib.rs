@@ -14,7 +14,9 @@ pub mod tool_stream;
 pub use agent::{Agent, memory_settings_from_config};
 pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
 pub use intent::{
-    IntentAssessment, IntentGuidanceMode, UserIntent, classify_user_intent,
+    IntentAssessment, IntentGuidanceMode, IntentNotice, IntentNoticeKind, ToolAuthDecision,
+    UserIntent, authorize_tool, badge_label, classify_user_intent, intent_notice,
+    is_read_only_shell,
 };
 pub use permission::{
     AutoApprovePrompter, AutoDenyPrompter, ChannelPermissionPrompter, PermissionPrompter,

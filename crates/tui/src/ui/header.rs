@@ -30,9 +30,25 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             .fg(agent_color)
             .add_modifier(Modifier::BOLD),
     );
-    let rest = Span::styled(
+    let mut spans = vec![brand_why, brand_code, agent];
+    if let Some(ref badge) = app.intent_badge {
+        let badge_color = match app.intent_kind.as_deref() {
+            Some("question") => palette.info,
+            Some("plan") => palette.accent,
+            Some("change") => palette.success,
+            _ => palette.dim,
+        };
+        spans.push(Span::styled(
+            format!("[{badge}]"),
+            Style::default()
+                .fg(badge_color)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw(" "));
+    }
+    spans.push(Span::styled(
         format!(
-            " {}/{} ",
+            "{}/{} ",
             if app.provider_name.is_empty() {
                 "—"
             } else {
@@ -45,13 +61,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             }
         ),
         Style::default().fg(palette.dim),
-    );
+    ));
 
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(vec![
-            brand_why, brand_code, agent, rest,
-        ])))
-        .style(Style::default().bg(palette.status_bar_bg)),
+        Paragraph::new(Text::from(Line::from(spans)))
+            .style(Style::default().bg(palette.status_bar_bg)),
         area,
     );
 }

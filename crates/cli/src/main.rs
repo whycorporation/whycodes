@@ -2216,6 +2216,23 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
             cache_read_input_tokens: u.cache_read_input_tokens,
         }),
         TurnEvent::Status(message) => Some(CiEvent::Status { message }),
+        TurnEvent::Intent {
+            kind,
+            confidence,
+            badge,
+            notice_kind,
+            notice,
+        } => {
+            // Surface as status so CI consumers see intent without a schema break.
+            let mut message = format!("intent:{kind} conf={confidence:.2}");
+            if !badge.is_empty() {
+                message.push_str(&format!(" badge={badge}"));
+            }
+            if !notice.is_empty() {
+                message.push_str(&format!(" [{notice_kind}] {notice}"));
+            }
+            Some(CiEvent::Status { message })
+        }
         TurnEvent::Cancelled => Some(CiEvent::Cancelled),
     }
 }

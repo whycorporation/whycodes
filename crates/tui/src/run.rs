@@ -1555,6 +1555,34 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             }
             app.mark_dirty();
         }
+        TurnEvent::Intent {
+            kind,
+            confidence: _,
+            badge,
+            notice_kind,
+            notice,
+        } => {
+            app.intent_kind = Some(kind);
+            app.intent_badge = if badge.is_empty() {
+                None
+            } else {
+                Some(badge)
+            };
+            if !notice.is_empty() {
+                let toast_kind = match notice_kind.as_str() {
+                    "warning" => crate::toast::ToastKind::Warning,
+                    _ => crate::toast::ToastKind::Info,
+                };
+                // Warnings: full message (mode mismatch). Info: compact.
+                let msg = if matches!(toast_kind, crate::toast::ToastKind::Warning) {
+                    truncate_toast(&notice, 96)
+                } else {
+                    truncate_toast(&notice, 56)
+                };
+                app.toasts.push(toast_kind, msg);
+            }
+            app.mark_dirty();
+        }
         TurnEvent::Usage(usage) => {
             app.turn_usage = Some(usage.clone());
             // Per-step input size ≈ context window fill (Grok-style meter).
@@ -1591,7 +1619,13 @@ async fn cycle_agent(
     let name = app.primary_agents[app.agent_cycle_idx].clone();
     // Always update agent_name so colors/header reflect the switch
     app.agent_name = name.clone();
+    app.intent_badge = None;
+    app.intent_kind = None;
     app.status_message = format!("Agent → {name}");
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        format!("Agent → {name}  (Ctrl+T)"),
+    );
     if let Some(info) = config.get_agent(&name).cloned() {
         let base = info
             .system_prompt

@@ -30,6 +30,19 @@ pub enum TurnEvent {
     Usage(whycode_core::types::Usage),
     /// Human-readable status line
     Status(String),
+    /// Heuristic user-intent for this turn (badge + optional toast in TUI).
+    Intent {
+        /// `question` | `change` | `plan` | `ambiguous` | `trivial`
+        kind: String,
+        /// 0.0–1.0
+        confidence: f32,
+        /// Short chrome label when showable (`Q`, `chg`, `plan`), else empty.
+        badge: String,
+        /// Toast severity: `info`, `warning`, or empty (no toast).
+        notice_kind: String,
+        /// Toast / status body; empty when no notice.
+        notice: String,
+    },
     /// Turn was cancelled by the user
     Cancelled,
 }

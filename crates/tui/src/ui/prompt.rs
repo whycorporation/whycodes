@@ -425,7 +425,12 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, caption_style: 
         app.model_name.as_str()
     };
     // Keep agent identity in the chrome (Grok only shows model; we keep agent).
-    let label = format!(" {} · {provider}/{model} ", app.agent_name);
+    // Optional intent badge: `build · Q · anthropic/…`
+    let label = if let Some(ref badge) = app.intent_badge {
+        format!(" {} · {badge} · {provider}/{model} ", app.agent_name)
+    } else {
+        format!(" {} · {provider}/{model} ", app.agent_name)
+    };
     // Corners + 1-cell inset each side stay pure border.
     let max_w = row.width.saturating_sub(4) as usize;
     let trunc = if UnicodeWidthStr::width(label.as_str()) > max_w {

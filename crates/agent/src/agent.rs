@@ -607,6 +607,35 @@ impl Agent {
                 .get_definitions_profile(&self.info.permission, self.tool_profile)
         };
 
+        // Classify once per user turn (zero LLM cost): badge, posture, tool auth.
+        let turn_intent = crate::intent::classify_user_intent(&last_user);
+        {
+            let badge = crate::intent::badge_label(&turn_intent)
+                .unwrap_or("")
+                .to_string();
+            let (notice_kind, notice) =
+                match crate::intent::intent_notice(&turn_intent, &self.info.name) {
+                    Some(n) => {
+                        let k = match n.kind {
+                            crate::intent::IntentNoticeKind::Info => "info",
+                            crate::intent::IntentNoticeKind::Warning => "warning",
+                        };
+                        (k.to_string(), n.message)
+                    }
+                    None => (String::new(), String::new()),
+                };
+            emit(
+                &events,
+                TurnEvent::Intent {
+                    kind: turn_intent.intent.as_str().to_string(),
+                    confidence: turn_intent.confidence,
+                    badge,
+                    notice_kind,
+                    notice,
+                },
+            );
+        }
+
         let tool_ctx = self.tool_context(session);
 
         let provider = self
@@ -677,25 +706,35 @@ impl Agent {
                 session.build_request(&tools, None, self.info.temperature, Some(true));
             request.use_prompt_cache = self.use_prompt_cache;
 
-            // First LLM step of the user turn: ephemeral intent posture (not
-            // stored in session; keeps system prompt cache-stable).
+            // First LLM step: ephemeral intent posture (not stored in session;
+            // keeps system prompt cache-stable). Notice is already on Intent event.
             if turn_count == 1 {
-                if let Some(assessment) = crate::intent::apply_intent_to_request(
-                    &mut request,
-                    &last_user,
-                    &self.info.name,
-                    self.intent_guidance,
-                ) {
-                    tracing::debug!(
-                        intent = assessment.intent.as_str(),
-                        confidence = assessment.confidence,
-                        agent = %self.info.name,
-                        "intent posture injected into request"
-                    );
-                    if let Some(hint) =
-                        crate::intent::status_hint(&assessment, &self.info.name)
+                if crate::intent::should_inject(self.intent_guidance, &turn_intent) {
+                    if let Some(suffix) =
+                        crate::intent::posture_suffix(&turn_intent, &self.info.name)
                     {
-                        emit(&events, TurnEvent::Status(hint));
+                        // Append to last user message in the request only.
+                        use whycode_core::types::{MessageContent, Role};
+                        for msg in request.messages.iter_mut().rev() {
+                            if msg.role != Role::User {
+                                continue;
+                            }
+                            match &mut msg.content {
+                                MessageContent::Text(t) => t.push_str(&suffix),
+                                MessageContent::Blocks(blocks) => {
+                                    blocks.push(ContentBlock::Text {
+                                        text: suffix.clone(),
+                                    });
+                                }
+                            }
+                            tracing::debug!(
+                                intent = turn_intent.intent.as_str(),
+                                confidence = turn_intent.confidence,
+                                agent = %self.info.name,
+                                "intent posture injected into request"
+                            );
+                            break;
+                        }
                     }
                 }
             }
@@ -917,6 +956,7 @@ impl Agent {
                         api_key,
                         &events,
                         &cancel,
+                        Some(&turn_intent),
                     )
                     .await?;
                 let tool_batch_ms = tool_t0.elapsed().as_millis();
@@ -1016,6 +1056,7 @@ impl Agent {
         api_key: &str,
         events: &Option<EventSink>,
         cancel: &Option<CancelFlag>,
+        turn_intent: Option<&crate::intent::IntentAssessment>,
     ) -> whycode_core::Result<Vec<ToolResult>> {
         if tool_calls.is_empty() {
             return Ok(Vec::new());
@@ -1033,7 +1074,15 @@ impl Agent {
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
             let result = self
-                .execute_with_permission(tc, session, tool_ctx, provider_name, model, api_key)
+                .execute_with_permission(
+                    tc,
+                    session,
+                    tool_ctx,
+                    provider_name,
+                    model,
+                    api_key,
+                    turn_intent,
+                )
                 .await;
             emit(
                 events,
@@ -1071,6 +1120,7 @@ impl Agent {
                         provider_name,
                         model,
                         api_key,
+                        turn_intent,
                     )
                 })
                 .collect();
@@ -1100,7 +1150,15 @@ impl Agent {
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
             let result = self
-                .execute_with_permission(tc, session, tool_ctx, provider_name, model, api_key)
+                .execute_with_permission(
+                    tc,
+                    session,
+                    tool_ctx,
+                    provider_name,
+                    model,
+                    api_key,
+                    turn_intent,
+                )
                 .await;
             emit(
                 events,
@@ -1130,6 +1188,7 @@ impl Agent {
         provider_name: &str,
         model: &str,
         api_key: &str,
+        turn_intent: Option<&crate::intent::IntentAssessment>,
     ) -> ToolResult {
         // Shell commands are gated on what the command would destroy. The
         // permission map below only sees the tool name, so on its own `allow`
@@ -1168,6 +1227,53 @@ impl Agent {
                         };
                     }
                     risk_confirmed = true;
+                }
+            }
+        }
+
+        // Intent authorization (Claude-style): question/plan turns must not
+        // silently mutate. Runs after blast-radius risk, before permission map.
+        if let Some(intent) = turn_intent {
+            let command = tc
+                .arguments
+                .get("command")
+                .and_then(|v| v.as_str());
+            match crate::intent::authorize_tool(
+                intent,
+                &self.info.name,
+                &tc.name,
+                command,
+                self.intent_guidance,
+            ) {
+                crate::intent::ToolAuthDecision::Allow => {}
+                crate::intent::ToolAuthDecision::Refuse { reason } => {
+                    tracing::info!(
+                        tool = %tc.name,
+                        intent = intent.intent.as_str(),
+                        "intent auth refused tool"
+                    );
+                    return ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!("Refused (intent): {reason}"),
+                        is_error: true,
+                    };
+                }
+                crate::intent::ToolAuthDecision::Confirm { reason } => {
+                    if !risk_confirmed {
+                        let detail = format_permission_detail(&tc.arguments);
+                        let body = format!("{detail}\n\nIntent check:\n{reason}");
+                        if !self.permission_prompter.ask(&tc.name, &body).await {
+                            return ToolResult {
+                                tool_call_id: tc.id.clone(),
+                                content: format!(
+                                    "User denied permission for tool '{}' (intent gate).",
+                                    tc.name
+                                ),
+                                is_error: true,
+                            };
+                        }
+                        risk_confirmed = true;
+                    }
                 }
             }
         }

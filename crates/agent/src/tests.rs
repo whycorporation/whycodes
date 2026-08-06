@@ -59,7 +59,15 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
         network: whycode_core::NetworkPolicy::unrestricted(),
     };
     agent
-        .execute_with_permission(&bash_call(command), &session, &ctx, "anthropic", "m", "k")
+        .execute_with_permission(
+            &bash_call(command),
+            &session,
+            &ctx,
+            "anthropic",
+            "m",
+            "k",
+            None,
+        )
         .await
 }
 
@@ -153,7 +161,7 @@ async fn deny_still_wins_for_non_shell_tools() {
         arguments: serde_json::json!({ "path": "x" }),
     };
     let result = agent
-        .execute_with_permission(&call, &session, &ctx, "anthropic", "m", "k")
+        .execute_with_permission(&call, &session, &ctx, "anthropic", "m", "k", None)
         .await;
     assert!(result.is_error);
     assert!(

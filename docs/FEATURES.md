@@ -338,7 +338,7 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 | `explore` | subagent, read-only search |
 | `scout` | subagent, docs/deps research |
 
-**Intent katmanı:** hard mode (ask/plan tool denylist) + build prompt protocol + sıfır-LLM heuristic (`session.intent_guidance = auto|off|always`).
+**Intent katmanı:** hard mode (ask/plan tool denylist) + build prompt protocol + sıfır-LLM heuristic (`session.intent_guidance = auto|off|always`). TUI: `[Q]`/`chg`/`plan` badge + Warning toast (mode mismatch). Tool auth: question/plan turunda mutator → Confirm; read-only shell serbest.
 
 ### Config (latency + güvenlik)
 

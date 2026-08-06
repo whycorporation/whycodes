@@ -644,6 +644,10 @@ pub struct TuiApp {
     pub provider_name: String,
     pub model_name: String,
     pub agent_name: String,
+    /// Last turn intent badge for chrome (`Q` / `chg` / `plan`), if any.
+    pub intent_badge: Option<String>,
+    /// Full intent kind for tooltips/status (`question`, `change`, …).
+    pub intent_kind: Option<String>,
     /// Current session display title (auto or manual).
     pub session_title: String,
     /// Short project name (basename) for the top status strip.
@@ -1013,6 +1017,8 @@ impl TuiApp {
             provider_name: String::new(),
             model_name: String::new(),
             agent_name: String::from("build"),
+            intent_badge: None,
+            intent_kind: None,
             session_title: String::new(),
             project_label: String::from("."),
             project_dir: PathBuf::from("."),

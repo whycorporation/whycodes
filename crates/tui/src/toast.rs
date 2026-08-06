@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 /// that a burst of them does not stack into a wall.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(4);
 
+/// Mode / intent mismatches need a longer glance (user may switch agent).
+pub const WARNING_TTL: Duration = Duration::from_secs(8);
+
 /// Errors stay up longer — they are the ones worth not missing.
 pub const ERROR_TTL: Duration = Duration::from_secs(8);
 
@@ -41,6 +44,7 @@ impl ToastKind {
     fn ttl(&self) -> Duration {
         match self {
             Self::Error => ERROR_TTL,
+            Self::Warning => WARNING_TTL,
             _ => DEFAULT_TTL,
         }
     }
@@ -131,6 +135,16 @@ mod tests {
         assert!(info.is_expired(now + DEFAULT_TTL));
         assert!(!error.is_expired(now + DEFAULT_TTL));
         assert!(error.is_expired(now + ERROR_TTL));
+    }
+
+    #[test]
+    fn warnings_outlast_info() {
+        let now = Instant::now();
+        let info = Toast::at(now, ToastKind::Info, "x");
+        let warn = Toast::at(now, ToastKind::Warning, "x");
+        assert!(info.is_expired(now + DEFAULT_TTL));
+        assert!(!warn.is_expired(now + DEFAULT_TTL));
+        assert!(warn.is_expired(now + WARNING_TTL));
     }
 
     #[test]
