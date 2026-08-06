@@ -7,6 +7,7 @@ pub mod permission;
 pub mod question;
 pub mod routing;
 pub mod subagent;
+pub mod swarm;
 #[cfg(test)]
 mod tests;
 pub mod title;

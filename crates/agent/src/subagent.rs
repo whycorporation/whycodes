@@ -48,6 +48,10 @@ pub struct SubagentRunner {
     sandbox: SandboxSettings,
     network: NetworkPolicy,
     memory: MemorySettings,
+    /// Shared file-claim registry when running inside a swarm.
+    file_claims: Option<whycode_core::FileClaimRegistry>,
+    agent_id: Option<String>,
+    agent_label: Option<String>,
 }
 
 impl SubagentRunner {
@@ -68,12 +72,28 @@ impl SubagentRunner {
             sandbox,
             network,
             memory: MemorySettings::default(),
+            file_claims: None,
+            agent_id: None,
+            agent_label: None,
         }
     }
 
     /// Attach parent memory settings (subagent_banks, inject knobs).
     pub fn with_memory(mut self, memory: MemorySettings) -> Self {
         self.memory = memory;
+        self
+    }
+
+    /// Bind this runner to a swarm file-claim registry and worker identity.
+    pub fn with_file_claims(
+        mut self,
+        claims: whycode_core::FileClaimRegistry,
+        agent_id: impl Into<String>,
+        agent_label: impl Into<String>,
+    ) -> Self {
+        self.agent_id = Some(agent_id.into());
+        self.agent_label = Some(agent_label.into());
+        self.file_claims = Some(claims);
         self
     }
 
@@ -179,6 +199,9 @@ impl SubagentRunner {
             session_id: Some(session.id.clone()),
             sandbox,
             network: self.network.clone(),
+            file_claims: self.file_claims.clone(),
+            agent_id: self.agent_id.clone(),
+            agent_label: self.agent_label.clone(),
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
@@ -294,6 +317,7 @@ impl SubagentRunner {
                             | "todo_write"
                             | "todo"
                             | "task"
+                            | "swarm"
                             | "plan"
                             | "question"
                             | "code_mode"

@@ -68,6 +68,14 @@ impl Tool for ApplyPatchTool {
                 .to_string()
         };
 
+        if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: msg,
+                is_error: true,
+            };
+        }
+
         // Write patch content to a temporary file
         let temp_dir = match std::env::temp_dir().to_str() {
             Some(d) => d.to_string(),

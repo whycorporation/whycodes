@@ -1703,6 +1703,35 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             app.current_agent_state = AgentState::Idle;
             app.mark_dirty();
         }
+        TurnEvent::FileConflict {
+            path,
+            claimant,
+            owner,
+        } => {
+            // Conflict notify: short warning toast so concurrent writers are visible.
+            let short_path = path.rsplit('/').next().unwrap_or(&path);
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                truncate_toast(
+                    &format!("File conflict: {short_path} ({claimant} vs {owner})"),
+                    72,
+                ),
+            );
+            app.status_message = format!("conflict: {short_path}");
+            app.mark_dirty();
+        }
+        TurnEvent::SwarmStatus {
+            active: _,
+            total,
+            message,
+        } => {
+            app.status_message = if message.is_empty() {
+                format!("swarm {total}…")
+            } else {
+                message
+            };
+            app.mark_dirty();
+        }
     }
 }
 
@@ -2769,6 +2798,10 @@ fn session_details(
     } else {
         out.push_str("  model_fast: (auto small sibling on trivial chat)\n");
     }
+    out.push_str(&format!(
+        "  swarm:     enabled={} max_agents={}\n",
+        config.swarm.enabled, config.swarm.max_agents
+    ));
 
     if usage.is_empty() {
         out.push_str(&format!(

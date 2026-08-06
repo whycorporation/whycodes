@@ -100,6 +100,37 @@ pub struct Config {
     /// Cross-session semantic / auto memory.
     #[serde(default)]
     pub memory: MemoryConfig,
+
+    /// Parallel multi-agent swarm + file conflict notify.
+    #[serde(default)]
+    pub swarm: SwarmConfig,
+}
+
+/// Concurrent multi-agent work on one checkout (`swarm` tool).
+///
+/// Workers share a file-claim registry: the second agent to write a path is
+/// blocked and the TUI shows a conflict toast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwarmConfig {
+    /// Advertise and run the `swarm` tool. Default on.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Max concurrent workers (hard-capped at 8 in the agent). Default 4.
+    #[serde(default = "default_swarm_max_agents")]
+    pub max_agents: usize,
+}
+
+fn default_swarm_max_agents() -> usize {
+    4
+}
+
+impl Default for SwarmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_agents: default_swarm_max_agents(),
+        }
+    }
 }
 
 /// When a hook runs relative to a tool call.
@@ -398,6 +429,7 @@ impl Default for Config {
                     "todo".to_string(),
                     "git_commit".to_string(),
                     "task".to_string(),
+                    "swarm".to_string(),
                 ]),
                 allow_file_writes: false,
                 allow_network: true,
@@ -436,6 +468,7 @@ impl Default for Config {
                     "todo".to_string(),
                     "git_commit".to_string(),
                     "task".to_string(),
+                    "swarm".to_string(),
                     "plan".to_string(),
                 ]),
                 allow_file_writes: false,
@@ -568,6 +601,7 @@ impl Default for Config {
             security: SecurityConfig::default(),
             hooks: Vec::new(),
             memory: MemoryConfig::default(),
+            swarm: SwarmConfig::default(),
         }
     }
 }
@@ -1085,6 +1119,20 @@ impl Config {
                 _ => {}
             }
         }
+
+        // WHYCODE_SWARM=0/1 toggles parallel multi-agent.
+        if let Ok(val) = std::env::var("WHYCODE_SWARM") {
+            match val.to_ascii_lowercase().as_str() {
+                "0" | "false" | "no" | "off" => self.swarm.enabled = false,
+                "1" | "true" | "yes" | "on" => self.swarm.enabled = true,
+                _ => {}
+            }
+        }
+        if let Ok(val) = std::env::var("WHYCODE_SWARM_MAX_AGENTS")
+            && let Ok(n) = val.parse::<usize>()
+        {
+            self.swarm.max_agents = n.clamp(1, 8);
+        }
     }
 
     // ── Merging ─────────────────────────────────────────────────────────
@@ -1357,6 +1405,14 @@ impl Config {
         }
         if other.memory.auto_index_max_chunks != default_auto_index_chunks() {
             merged.memory.auto_index_max_chunks = other.memory.auto_index_max_chunks;
+        }
+
+        // Swarm: higher layer can disable; max_agents overrides when non-default.
+        if !other.swarm.enabled {
+            merged.swarm.enabled = false;
+        }
+        if other.swarm.max_agents != default_swarm_max_agents() {
+            merged.swarm.max_agents = other.swarm.max_agents;
         }
 
         merged

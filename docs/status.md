@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-05** (latency P0/P1 + FEATURES.md refresh; `v0.1.0` public install still gated on repo visibility)
+Last updated: **2026-08-07** (swarm + conflict notify; latency P0/P1 + FEATURES; `v0.1.0` public install still gated on repo visibility)
 
 ## Legend
 
@@ -35,7 +35,7 @@ Last updated: **2026-08-05** (latency P0/P1 + FEATURES.md refresh; `v0.1.0` publ
 |---|---|---|
 | 1 Shell command risk | [archive/phase-1-command-risk.md](archive/phase-1-command-risk.md) | done |
 | 4 CI quality budgets | [archive/phase-4-ci-budgets.md](archive/phase-4-ci-budgets.md) | done |
-| 7 Multi-agent coordination | [archive/phase-7-multi-agent.md](archive/phase-7-multi-agent.md) | dropped |
+| 7 Multi-agent coordination | [archive/phase-7-multi-agent.md](archive/phase-7-multi-agent.md) | **partial (2026-08-07)** — `swarm` tool + file claims + TUI conflict toast; no worktrees |
 | 8 TUI rendering | [archive/phase-8-tui.md](archive/phase-8-tui.md) | done |
 | 9 Shell OS sandbox | [archive/phase-9-sandbox.md](archive/phase-9-sandbox.md) | done |
 
@@ -78,6 +78,7 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-04 | Config pre/post tool hooks | Shell hooks around tool calls; `block_on_failure` on pre only. Marketplace later. |
 | 2026-08-05 | Latency P0/P1 shipped | OpenCode-parity cache, core tools, routing, doom-loop, prune; see plan-latency-competitors. |
 | 2026-08-05 | FEATURES.md rewritten | Mouse/resume/latency rows fixed; no stale ❌ for shipped TUI. |
+| 2026-08-07 | Swarm + conflict notify (lightweight) | `swarm` tool, shared `FileClaimRegistry`, write/edit/apply_patch gate, TUI toast. Worktrees still out of scope. |
 
 ## Verification commands
 

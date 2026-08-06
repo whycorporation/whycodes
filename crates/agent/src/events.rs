@@ -45,6 +45,18 @@ pub enum TurnEvent {
     },
     /// Turn was cancelled by the user
     Cancelled,
+    /// Two swarm workers tried to write the same file (conflict notify).
+    FileConflict {
+        path: String,
+        claimant: String,
+        owner: String,
+    },
+    /// Swarm fan-out progress (status line / toast).
+    SwarmStatus {
+        active: usize,
+        total: usize,
+        message: String,
+    },
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).

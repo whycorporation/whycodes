@@ -70,6 +70,14 @@ impl Tool for EditTool {
                 .to_string()
         };
 
+        if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: msg,
+                is_error: true,
+            };
+        }
+
         let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
 
         match std::fs::read_to_string(&full_path) {

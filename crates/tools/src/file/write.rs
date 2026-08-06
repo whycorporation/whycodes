@@ -60,6 +60,14 @@ impl Tool for WriteTool {
                 .to_string()
         };
 
+        if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: msg,
+                is_error: true,
+            };
+        }
+
         // Create parent directories if needed
         if let Some(parent) = std::path::Path::new(&full_path).parent()
             && let Err(e) = std::fs::create_dir_all(parent)

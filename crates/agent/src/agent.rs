@@ -129,6 +129,7 @@ const SERIAL_TOOLS: &[&str] = &[
     "todo_write",
     "todo",
     "task",
+    "swarm",
     "plan",
     "question",
     "code_mode",
@@ -175,6 +176,9 @@ pub struct Agent {
     memory: whycode_memory::MemorySettings,
     /// Heuristic intent posture for build turns (`auto` / `off` / `always`).
     intent_guidance: crate::intent::IntentGuidanceMode,
+    /// Parallel multi-agent swarm (config-driven).
+    swarm_enabled: bool,
+    swarm_max_agents: usize,
 }
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
@@ -228,6 +232,8 @@ impl Agent {
             model_fast: None,
             memory: whycode_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
+            swarm_enabled: true,
+            swarm_max_agents: 4,
         }
     }
 
@@ -276,6 +282,8 @@ impl Agent {
         self.memory = memory_settings_from_config(config);
         self.intent_guidance =
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
+        self.swarm_enabled = config.swarm.enabled;
+        self.swarm_max_agents = config.swarm.max_agents.clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS);
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -286,6 +294,8 @@ impl Agent {
             use_prompt_cache = self.use_prompt_cache,
             memory_enabled = self.memory.enabled,
             intent_guidance = ?self.intent_guidance,
+            swarm_enabled = self.swarm_enabled,
+            swarm_max_agents = self.swarm_max_agents,
             "shell sandbox, network policy, and hooks"
         );
         self
@@ -316,6 +326,9 @@ impl Agent {
             session_id: Some(session.id.clone()),
             sandbox,
             network: self.network.clone(),
+            file_claims: None,
+            agent_id: None,
+            agent_label: None,
         }
     }
 
@@ -611,8 +624,14 @@ impl Agent {
             tracing::debug!("trivial chat — omitting tools from request for TTFT");
             Vec::new()
         } else {
-            self.tool_executor
-                .get_definitions_profile(&self.info.permission, self.tool_profile)
+            let mut defs = self
+                .tool_executor
+                .get_definitions_profile(&self.info.permission, self.tool_profile);
+            // Hide swarm when disabled so the model does not invent fan-out.
+            if !self.swarm_enabled {
+                defs.retain(|d| d.name != "swarm");
+            }
+            defs
         };
 
         // Classify once per user turn (zero LLM cost): badge, posture, tool auth.
@@ -1090,6 +1109,7 @@ impl Agent {
                     model,
                     api_key,
                     turn_intent,
+                    events.as_ref(),
                 )
                 .await;
             emit(
@@ -1129,6 +1149,7 @@ impl Agent {
                         model,
                         api_key,
                         turn_intent,
+                        events.as_ref(),
                     )
                 })
                 .collect();
@@ -1166,6 +1187,7 @@ impl Agent {
                     model,
                     api_key,
                     turn_intent,
+                    events.as_ref(),
                 )
                 .await;
             emit(
@@ -1197,6 +1219,7 @@ impl Agent {
         model: &str,
         api_key: &str,
         turn_intent: Option<&crate::intent::IntentAssessment>,
+        events: Option<&EventSink>,
     ) -> ToolResult {
         // Questionnaire: UI-backed channel (TUI) or stdin/auto — never race in
         // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
@@ -1348,6 +1371,9 @@ impl Agent {
         let result = if tc.name == "task" {
             self.execute_task_tool(tc, session, provider_name, model, api_key)
                 .await
+        } else if tc.name == "swarm" {
+            self.execute_swarm_tool(tc, session, provider_name, model, api_key, events)
+                .await
         } else {
             self.tool_executor
                 .execute(tc, tool_ctx, &self.info.permission)
@@ -1367,6 +1393,333 @@ impl Agent {
         run_post_hooks(&self.hooks, &post_ctx).await;
 
         result
+    }
+
+    /// Execute the `swarm` tool: parallel subagents + file-claim conflict notify.
+    async fn execute_swarm_tool(
+        &self,
+        call: &ToolCall,
+        session: &Session,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        events: Option<&EventSink>,
+    ) -> whycode_core::types::ToolResult {
+        use std::time::Instant;
+        use whycode_core::types::{AgentInfo, AgentMode, PermissionSet, ToolResult};
+        use whycode_core::{ClaimResult, FileClaimRegistry};
+        use tokio::sync::Semaphore;
+
+        if !self.swarm_enabled {
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: "swarm is disabled (`[swarm] enabled = false` in config).".into(),
+                is_error: true,
+            };
+        }
+
+        let specs = match crate::swarm::parse_swarm_tasks(&call.arguments) {
+            Ok(s) => s,
+            Err(e) => {
+                return ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: e,
+                    is_error: true,
+                };
+            }
+        };
+
+        let max_from_args = call
+            .arguments
+            .get("max_concurrent")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize);
+        let max_concurrent = max_from_args
+            .unwrap_or(self.swarm_max_agents)
+            .clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS)
+            .min(specs.len())
+            .max(1);
+
+        let claims = FileClaimRegistry::new();
+        if let Some(tx) = events {
+            let tx = tx.clone();
+            claims.set_listener(Some(std::sync::Arc::new(move |ev| {
+                let _ = tx.send(TurnEvent::FileConflict {
+                    path: ev.path,
+                    claimant: ev.claimant_label,
+                    owner: ev.owner_label,
+                });
+            })));
+        }
+
+        let wall_t0 = Instant::now();
+        let total = specs.len();
+        emit(
+            &events.cloned(),
+            TurnEvent::SwarmStatus {
+                active: 0,
+                total,
+                message: format!("Starting swarm: {total} workers (max {max_concurrent} concurrent)…"),
+            },
+        );
+
+        // Pre-claim optional paths so conflicts surface before work starts.
+        for (i, spec) in specs.iter().enumerate() {
+            let worker_id = format!("worker-{i}");
+            let label = format!("{worker_id}/{}", spec.subagent_type);
+            for rel in &spec.paths {
+                let full = if std::path::Path::new(rel).is_absolute() {
+                    std::path::PathBuf::from(rel)
+                } else {
+                    session.project_path.join(rel)
+                };
+                match claims.try_claim(&worker_id, &label, &full) {
+                    ClaimResult::Acquired | ClaimResult::Held => {}
+                    ClaimResult::Conflict {
+                        owner_label,
+                        owner_id: _,
+                    } => {
+                        if let Some(tx) = events {
+                            let _ = tx.send(TurnEvent::FileConflict {
+                                path: full.display().to_string(),
+                                claimant: label.clone(),
+                                owner: owner_label.clone(),
+                            });
+                        }
+                        return ToolResult {
+                            tool_call_id: call.id.clone(),
+                            content: format!(
+                                "Pre-claim conflict: `{rel}` for {label} is already claimed by `{owner_label}`. \
+                                 Give each worker disjoint `paths`."
+                            ),
+                            is_error: true,
+                        };
+                    }
+                }
+            }
+        }
+
+        let sem = std::sync::Arc::new(Semaphore::new(max_concurrent));
+        let provider_name: std::sync::Arc<str> = provider_name.into();
+        let model: std::sync::Arc<str> = model.into();
+        let api_key: std::sync::Arc<str> = api_key.into();
+        let project_path = session.project_path.clone();
+        let registry = Arc::clone(&self.provider_registry);
+        let executor = Arc::clone(&self.tool_executor);
+        let sandbox = self.sandbox.clone();
+        let network = self.network.clone();
+        let memory = self.memory.clone();
+        let parent_permission = self.info.permission.clone();
+        let agents_md_path = session.project_path.clone();
+
+        let mut handles = Vec::with_capacity(specs.len());
+
+        for (i, spec) in specs.into_iter().enumerate() {
+            let worker_id = format!("worker-{i}");
+            let label = format!("{worker_id}/{}", spec.subagent_type);
+            let permit = Arc::clone(&sem);
+            let pn = Arc::clone(&provider_name);
+            let m = Arc::clone(&model);
+            let ak = Arc::clone(&api_key);
+            let claims = claims.clone();
+            let registry = Arc::clone(&registry);
+            let executor = Arc::clone(&executor);
+            let sandbox = sandbox.clone();
+            let network = network.clone();
+            let memory = memory.clone();
+            let parent_permission = parent_permission.clone();
+            let project_path = project_path.clone();
+            let agents_md_path = agents_md_path.clone();
+            let events_tx = events.cloned();
+
+            handles.push(tokio::spawn(async move {
+                let _guard = match permit.acquire().await {
+                    Ok(g) => g,
+                    Err(_) => {
+                        return (
+                            worker_id,
+                            spec.subagent_type,
+                            spec.goal,
+                            false,
+                            0.0,
+                            "Semaphore closed".to_string(),
+                        );
+                    }
+                };
+                if let Some(ref tx) = events_tx {
+                    let _ = tx.send(TurnEvent::SwarmStatus {
+                        active: 0,
+                        total,
+                        message: format!("Swarm {label}: running…"),
+                    });
+                }
+
+                let (permission, system_prompt) = match spec.subagent_type.as_str() {
+                    "explore" | "scout" => (
+                        PermissionSet {
+                            allowed_tools: Some(vec![
+                                "read".into(),
+                                "grep".into(),
+                                "glob".into(),
+                                "list".into(),
+                                "webfetch".into(),
+                                "websearch".into(),
+                                "lsp".into(),
+                            ]),
+                            denied_tools: Some(vec![
+                                "write".into(),
+                                "edit".into(),
+                                "shell".into(),
+                                "bash".into(),
+                                "apply_patch".into(),
+                                "todowrite".into(),
+                                "todo".into(),
+                                "task".into(),
+                                "swarm".into(),
+                            ]),
+                            allow_file_writes: false,
+                            allow_network: true,
+                            allow_shell: false,
+                            allowed_paths: None,
+                            rules: Default::default(),
+                        },
+                        Agent::system_prompt_for(&spec.subagent_type),
+                    ),
+                    _ => {
+                        let mut perm = parent_permission;
+                        let mut denied = perm.denied_tools.unwrap_or_default();
+                        for t in [
+                            "todowrite",
+                            "todo",
+                            "todoread",
+                            "task",
+                            "swarm",
+                        ] {
+                            if !denied.iter().any(|x| x == t) {
+                                denied.push(t.to_string());
+                            }
+                        }
+                        perm.denied_tools = Some(denied);
+                        (perm, Agent::system_prompt_for("general"))
+                    }
+                };
+
+                let mut info = AgentInfo {
+                    name: spec.subagent_type.clone(),
+                    description: format!("Swarm worker {worker_id}"),
+                    mode: AgentMode::Subagent,
+                    permission,
+                    model: None,
+                    system_prompt: Some(Agent::with_agents_md(&system_prompt, &agents_md_path)),
+                    temperature: None,
+                    top_p: None,
+                };
+                // Keep name as type for memory banks; label is separate for claims.
+                let _ = &mut info;
+
+                let claim_note = if spec.paths.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\n\nYou own these paths exclusively for this swarm run: {}.\
+                         \nDo not edit other workers' files.",
+                        spec.paths.join(", ")
+                    )
+                };
+                let context = match spec.context {
+                    Some(c) => Some(format!("{c}{claim_note}")),
+                    None if claim_note.is_empty() => None,
+                    None => Some(claim_note.trim().to_string()),
+                };
+
+                let task = SubagentTask {
+                    goal: spec.goal.clone(),
+                    context,
+                    tools: None,
+                    max_turns: spec.max_turns,
+                };
+
+                let runner = SubagentRunner::new(
+                    registry,
+                    executor,
+                    info,
+                    project_path,
+                    sandbox,
+                    network,
+                )
+                .with_memory(memory)
+                .with_file_claims(claims.clone(), worker_id.clone(), label.clone());
+
+                let t0 = Instant::now();
+                let result = runner.run(task, &pn, &m, &ak).await;
+                let secs = t0.elapsed().as_secs_f64();
+                claims.release_agent(&worker_id);
+
+                match result {
+                    Ok(r) => (
+                        worker_id,
+                        spec.subagent_type,
+                        spec.goal,
+                        r.success,
+                        secs,
+                        r.output,
+                    ),
+                    Err(e) => (
+                        worker_id,
+                        spec.subagent_type,
+                        spec.goal,
+                        false,
+                        secs,
+                        format!("Swarm worker error: {e}"),
+                    ),
+                }
+            }));
+        }
+
+        let mut sections = Vec::with_capacity(handles.len());
+        let mut ok = 0usize;
+        for handle in handles {
+            match handle.await {
+                Ok((id, kind, goal, success, secs, body)) => {
+                    if success {
+                        ok += 1;
+                    }
+                    sections.push(crate::swarm::format_worker_report(
+                        &id, &kind, success, secs, &goal, &body,
+                    ));
+                }
+                Err(e) => {
+                    sections.push(format!("### worker join error\n\n{e}\n"));
+                }
+            }
+        }
+
+        claims.clear();
+        let wall = wall_t0.elapsed().as_secs_f64();
+        emit(
+            &events.cloned(),
+            TurnEvent::SwarmStatus {
+                active: 0,
+                total,
+                message: format!("Swarm done: {ok}/{total} ok in {wall:.1}s"),
+            },
+        );
+
+        let mut report = crate::swarm::format_swarm_header(total, ok, wall);
+        report.push('\n');
+        report.push_str(&sections.join("\n"));
+
+        let claim_snap = claims.snapshot();
+        if !claim_snap.is_empty() {
+            // cleared above; left for completeness if release missed anything
+        }
+        let _ = claim_snap;
+
+        ToolResult {
+            tool_call_id: call.id.clone(),
+            content: report,
+            is_error: ok == 0,
+        }
     }
 
     /// Execute the `task` tool by spawning a real subagent (OpenCode Task tool parity).
@@ -1431,6 +1784,7 @@ impl Agent {
                         "apply_patch".into(),
                         "todowrite".into(),
                         "todo".into(),
+                        "swarm".into(),
                     ]),
                     allow_file_writes: false,
                     allow_network: true,
@@ -1441,10 +1795,10 @@ impl Agent {
                 Self::system_prompt_for(subagent_type),
             ),
             _ => {
-                // general: full tools except todo (OpenCode default)
+                // general: full tools except todo / nested swarm (OpenCode default + safety)
                 let mut perm = self.info.permission.clone();
                 let mut denied = perm.denied_tools.unwrap_or_default();
-                for t in ["todowrite", "todo", "todoread"] {
+                for t in ["todowrite", "todo", "todoread", "swarm"] {
                     if !denied.iter().any(|x| x == t) {
                         denied.push(t.to_string());
                     }

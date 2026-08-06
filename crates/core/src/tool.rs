@@ -1,5 +1,7 @@
 use async_trait::async_trait;
+use std::path::Path;
 
+use crate::file_claims::{ClaimResult, FileClaimRegistry};
 use crate::network::NetworkPolicy;
 use crate::sandbox::SandboxSettings;
 use crate::types::{PermissionSet, ToolDefinition, ToolResult};
@@ -13,6 +15,12 @@ pub struct ToolContext {
     pub sandbox: SandboxSettings,
     /// Domain allow/deny for HTTP tools (`webfetch`, `websearch`, GitHub API).
     pub network: NetworkPolicy,
+    /// When set (swarm workers), file mutators claim paths before writing.
+    pub file_claims: Option<FileClaimRegistry>,
+    /// Stable agent id for file claims (e.g. `worker-0`). Required with `file_claims`.
+    pub agent_id: Option<String>,
+    /// Display label for conflict messages (defaults to `agent_id`).
+    pub agent_label: Option<String>,
 }
 
 impl ToolContext {
@@ -22,6 +30,9 @@ impl ToolContext {
             session_id: None,
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
+            file_claims: None,
+            agent_id: None,
+            agent_label: None,
         }
     }
 
@@ -31,6 +42,36 @@ impl ToolContext {
             session_id: None,
             sandbox: SandboxSettings::off(),
             network: NetworkPolicy::unrestricted(),
+            file_claims: None,
+            agent_id: None,
+            agent_label: None,
+        }
+    }
+
+    /// Gate a file write/edit against the shared claim registry.
+    ///
+    /// No-op when claims are not active (normal single-agent turns).
+    /// On conflict returns an error string suitable for `ToolResult.content`.
+    pub fn check_file_write(&self, path: &Path) -> Result<(), String> {
+        let Some(reg) = self.file_claims.as_ref() else {
+            return Ok(());
+        };
+        let Some(id) = self.agent_id.as_deref() else {
+            return Ok(());
+        };
+        let label = self.agent_label.as_deref().unwrap_or(id);
+        match reg.try_claim(id, label, path) {
+            ClaimResult::Acquired | ClaimResult::Held => Ok(()),
+            ClaimResult::Conflict {
+                owner_label,
+                owner_id: _,
+            } => {
+                let shown = path.display();
+                Err(format!(
+                    "File conflict: `{shown}` is claimed by swarm agent `{owner_label}`. \
+                     Choose a different file, or wait for that agent to finish."
+                ))
+            }
         }
     }
 }

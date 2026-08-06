@@ -61,6 +61,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "question", // clarify with structured options (Grok-style)
     "read",
     "shell", // legacy alias of bash
+    "swarm", // parallel multi-agent + file conflict notify
     "task",
     "todo", // alias of todowrite
     "todoread",

@@ -1,10 +1,24 @@
 # Phase 7 — Multi-agent coordination
 
-**Status:** dropped (2026-07-31) · **Depends on:** 1, 6 · **Blocks:** nothing
+**Status:** partial (2026-08-07) · was dropped 2026-07-31 · **Depends on:** 1, 6 · **Blocks:** nothing
 
-Dropped after answering the prerequisite question below. The answer is recorded
-rather than the phase deleted, so the reasoning is available if the situation
-changes.
+**2026-08-07 update:** A lightweight swarm shipped without worktrees:
+
+- `swarm` tool (parallel subagents, max 8, config `[swarm]`)
+- In-process `FileClaimRegistry` on `write` / `edit` / `apply_patch`
+- `TurnEvent::FileConflict` → TUI warning toast (conflict notify)
+- Long worker reports get a synthetic `TLDR:` when over 2k chars
+
+Still out: git worktrees, full concurrent-agent TUI panel, automatic
+decomposition. The original drop rationale below still applies for *full*
+coordination machinery on small repos; the lightweight path is for wide
+disjoint work when the primary agent chooses to fan out.
+
+---
+
+Originally dropped after answering the prerequisite question below. The answer
+is recorded rather than the phase deleted, so the reasoning is available if the
+situation changes.
 
 ## Answer to the prerequisite question
 

@@ -22,6 +22,9 @@ fn repo_ctx() -> ToolContext {
         session_id: None,
         sandbox: whycode_core::SandboxSettings::off(),
         network: whycode_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
     }
 }
 

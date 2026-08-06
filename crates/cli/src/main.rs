@@ -2236,6 +2236,25 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
             Some(CiEvent::Status { message })
         }
         TurnEvent::Cancelled => Some(CiEvent::Cancelled),
+        // Surface swarm coordination as status lines (no CI schema break).
+        TurnEvent::FileConflict {
+            path,
+            claimant,
+            owner,
+        } => Some(CiEvent::Status {
+            message: format!("file_conflict path={path} claimant={claimant} owner={owner}"),
+        }),
+        TurnEvent::SwarmStatus {
+            active,
+            total,
+            message,
+        } => Some(CiEvent::Status {
+            message: if message.is_empty() {
+                format!("swarm active={active} total={total}")
+            } else {
+                message
+            },
+        }),
     }
 }
 

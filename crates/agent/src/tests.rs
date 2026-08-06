@@ -57,6 +57,9 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
         session_id: None,
         sandbox: whycode_core::SandboxSettings::off(),
         network: whycode_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
     };
     agent
         .execute_with_permission(
@@ -66,6 +69,7 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
             "anthropic",
             "m",
             "k",
+            None,
             None,
         )
         .await
@@ -154,6 +158,9 @@ async fn deny_still_wins_for_non_shell_tools() {
         session_id: None,
         sandbox: whycode_core::SandboxSettings::off(),
         network: whycode_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
     };
     let call = whycode_core::types::ToolCall {
         id: "tc-2".to_string(),
@@ -161,7 +168,7 @@ async fn deny_still_wins_for_non_shell_tools() {
         arguments: serde_json::json!({ "path": "x" }),
     };
     let result = agent
-        .execute_with_permission(&call, &session, &ctx, "anthropic", "m", "k", None)
+        .execute_with_permission(&call, &session, &ctx, "anthropic", "m", "k", None, None)
         .await;
     assert!(result.is_error);
     assert!(

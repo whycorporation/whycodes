@@ -5,7 +5,7 @@ use super::tool::{Tool, ToolContext};
 use crate::{
     apply_patch, code_mode, edit, external_directory, git_blame, git_commit, git_diff, git_log,
     git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, plan, question,
-    read, shell, skill_tool, task, todo_read, todo_write, truncate_tool, webfetch, websearch,
+    read, shell, skill_tool, swarm, task, todo_read, todo_write, truncate_tool, webfetch, websearch,
     write,
 };
 
@@ -37,6 +37,7 @@ impl ToolExecutor {
         executor.register(Box::new(github_issue::GithubIssueTool::new()));
         executor.register(Box::new(github_pr::GitHubPrTool::new()));
         executor.register(Box::new(task::TaskTool::new()));
+        executor.register(Box::new(swarm::SwarmTool::new()));
         executor.register(Box::new(git_diff::GitDiffTool::new()));
         executor.register(Box::new(git_log::GitLogTool::new()));
         executor.register(Box::new(git_status::GitStatusTool::new()));

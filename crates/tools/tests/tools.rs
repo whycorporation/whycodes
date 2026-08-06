@@ -18,6 +18,9 @@ fn temp_ctx(dir: &TempDir) -> ToolContext {
         session_id: None,
         sandbox: whycode_core::SandboxSettings::off(),
         network: whycode_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
     }
 }
 
@@ -142,6 +145,56 @@ async fn test_write_tool() {
     // Verify file was actually written
     let written = std::fs::read_to_string(dir.path().join("output.txt")).unwrap();
     assert_eq!(written, "hello tool world\n");
+}
+
+#[tokio::test]
+async fn test_write_tool_file_claim_conflict() {
+    use whycode_core::FileClaimRegistry;
+
+    let dir = TempDir::new().unwrap();
+    let claims = FileClaimRegistry::new();
+    let path = dir.path().join("owned.txt");
+    claims
+        .try_claim("w0", "worker-0", &path)
+        .expect_acquired_or_held();
+
+    let mut ctx = temp_ctx(&dir);
+    ctx.file_claims = Some(claims);
+    ctx.agent_id = Some("w1".into());
+    ctx.agent_label = Some("worker-1".into());
+
+    let executor = ToolExecutor::new();
+    let tool = executor.get("write").expect("write tool not found");
+    let result = tool
+        .execute(
+            serde_json::json!({"path": "owned.txt", "content": "nope\n"}),
+            &ctx,
+        )
+        .await;
+
+    assert!(result.is_error, "should conflict: {}", result.content);
+    assert!(
+        result.content.contains("File conflict"),
+        "{}",
+        result.content
+    );
+    assert!(
+        !path.exists() || std::fs::read_to_string(&path).unwrap_or_default().is_empty(),
+        "conflicting write must not overwrite"
+    );
+}
+
+/// Small helper so claim-result match stays readable in tests.
+trait ExpectClaim {
+    fn expect_acquired_or_held(self);
+}
+impl ExpectClaim for whycode_core::ClaimResult {
+    fn expect_acquired_or_held(self) {
+        match self {
+            whycode_core::ClaimResult::Acquired | whycode_core::ClaimResult::Held => {}
+            other => panic!("expected acquire/hold, got {other:?}"),
+        }
+    }
 }
 
 #[tokio::test]
