@@ -991,7 +991,7 @@ async fn cmd_run(
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
-                // Retain runs inside Agent::run_turn (heuristic + optional LLM).
+                // Retain is spawned inside Agent::run_turn (async; best-effort).
                 if let Ok(db) = open_db() {
                     let _ = session.save_to_db(&db);
                 }
@@ -1466,7 +1466,7 @@ async fn cmd_run(
                 if !response.is_empty() {
                     println!("\n{}", response);
                 }
-                // Retain runs inside Agent::run_turn (heuristic + optional LLM).
+                // Retain is spawned inside Agent::run_turn (async; best-effort).
                 println!();
                 // Persist session best-effort (success)
                 if let Ok(db) = open_db() {

@@ -1,13 +1,54 @@
 //! Post-turn memory retain: heuristic + optional small-LLM extract.
+//!
+//! Heuristic retain is cheap (sync). LLM extract can take many seconds and must
+//! **not** block turn completion — otherwise the TUI stays on `generating`
+//! after the assistant text is already fully streamed (same class of bug as
+//! awaiting title refine).
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
-use whycode_llm::provider::LlmProvider;
+use whycode_llm::provider::{LlmProvider, ProviderRegistry};
 use whycode_memory::{MemoryService, MemorySettings, llm_retain_prompt};
 use whycode_session::session::Session;
 
+use crate::events::{EventSink, TurnEvent, emit};
 use crate::title::resolve_title_model;
 
+/// Snapshot of session fields needed after the turn returns (no `&Session`).
+#[derive(Debug, Clone)]
+pub struct RetainSnapshot {
+    pub project_path: PathBuf,
+    pub session_id: String,
+    pub turn_index: usize,
+    pub user_text: String,
+    pub assistant_text: String,
+}
+
+impl RetainSnapshot {
+    pub fn from_session(session: &Session, assistant_text: &str) -> Self {
+        let user_text = session
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == Role::User)
+            .and_then(|m| m.content.as_text().map(|s| s.to_string()))
+            .unwrap_or_default();
+        Self {
+            project_path: session.project_path.clone(),
+            session_id: session.id.clone(),
+            turn_index: session.user_message_count().max(1),
+            user_text,
+            assistant_text: assistant_text.to_string(),
+        }
+    }
+}
+
 /// Run heuristic (+ optional LLM) retain after a successful turn.
+///
+/// Prefer [`spawn_post_turn_retain`] from interactive UIs so the agent turn
+/// can return immediately. This full await is for headless / tests.
 ///
 /// Returns saved fact strings (for UI toast/status). Failures are logged only.
 pub async fn run_post_turn_retain(
@@ -18,61 +59,153 @@ pub async fn run_post_turn_retain(
     provider_name: &str,
     model: &str,
     api_key: &str,
-    data_dir: &std::path::Path,
+    data_dir: &Path,
 ) -> Vec<String> {
     if !settings.enabled || !settings.auto_retain {
         return Vec::new();
     }
 
-    let Ok(svc) = MemoryService::open(&session.project_path, data_dir, settings.clone()) else {
-        return Vec::new();
-    };
+    let snap = RetainSnapshot::from_session(session, assistant_text);
+    let mut saved = run_heuristic_retain(&snap, settings, data_dir);
 
-    let turn_index = session.user_message_count().max(1);
-    let user_text = session
-        .messages
-        .iter()
-        .rev()
-        .find(|m| m.role == Role::User)
-        .and_then(|m| m.content.as_text().map(|s| s.to_string()))
-        .unwrap_or_default();
-
-    let mut saved = svc
-        .auto_retain(
-            &user_text,
-            Some(assistant_text),
-            Some(&session.id),
-            turn_index,
-        )
-        .unwrap_or_default();
-
-    if svc.should_run_llm_retain(saved.len(), turn_index) {
-        match llm_extract_facts(
+    if should_llm_retain(settings, saved.len(), snap.turn_index) {
+        if let Ok(more) = run_llm_retain_facts(
+            &snap,
+            settings,
             provider,
             provider_name,
             model,
             api_key,
-            &user_text,
-            assistant_text,
+            data_dir,
         )
         .await
         {
-            Ok(raw) => {
-                if let Ok(more) = svc.retain_llm_facts(&raw, Some(&session.id)) {
-                    for f in more {
-                        if !saved.iter().any(|s| s.eq_ignore_ascii_case(&f)) {
-                            saved.push(f);
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::debug!("llm retain skipped: {e}");
-            }
+            merge_facts(&mut saved, more);
         }
     }
 
     saved
+}
+
+/// Fire-and-forget post-turn retain (heuristic sync-in-task + optional LLM).
+///
+/// Never blocks the agent turn. Emits `TurnEvent::Status` when facts are saved
+/// so the TUI can show a quiet status/toast after `Idle`.
+pub fn spawn_post_turn_retain(
+    session: &Session,
+    assistant_text: &str,
+    settings: &MemorySettings,
+    registry: Arc<ProviderRegistry>,
+    provider_name: &str,
+    model: &str,
+    api_key: &str,
+    events: Option<EventSink>,
+) {
+    if !settings.enabled || !settings.auto_retain {
+        return;
+    }
+
+    let snap = RetainSnapshot::from_session(session, assistant_text);
+    let settings = settings.clone();
+    let provider_name = provider_name.to_string();
+    let model = model.to_string();
+    let api_key = api_key.to_string();
+    let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
+        .map(|d| d.data_local_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    tokio::spawn(async move {
+        let mut saved = run_heuristic_retain(&snap, &settings, &data_dir);
+
+        if should_llm_retain(&settings, saved.len(), snap.turn_index) {
+            if let Some(provider) = registry.get(&provider_name) {
+                match run_llm_retain_facts(
+                    &snap,
+                    &settings,
+                    provider,
+                    &provider_name,
+                    &model,
+                    &api_key,
+                    &data_dir,
+                )
+                .await
+                {
+                    Ok(more) => merge_facts(&mut saved, more),
+                    Err(e) => tracing::debug!("llm retain skipped: {e}"),
+                }
+            }
+        }
+
+        if !saved.is_empty() {
+            tracing::info!(count = saved.len(), "auto-retained memories");
+            emit(
+                &events,
+                TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
+            );
+        }
+    });
+}
+
+fn should_llm_retain(settings: &MemorySettings, heuristic_saved: usize, turn_index: usize) -> bool {
+    if !settings.enabled || !settings.auto_retain || !settings.retain_llm {
+        return false;
+    }
+    let every = settings.retain_every_n.max(1);
+    if turn_index > 0 && !turn_index.is_multiple_of(every) {
+        return false;
+    }
+    settings.retain_llm_always || heuristic_saved == 0
+}
+
+fn run_heuristic_retain(
+    snap: &RetainSnapshot,
+    settings: &MemorySettings,
+    data_dir: &Path,
+) -> Vec<String> {
+    let Ok(svc) = MemoryService::open(&snap.project_path, data_dir, settings.clone()) else {
+        return Vec::new();
+    };
+    svc.auto_retain(
+        &snap.user_text,
+        Some(&snap.assistant_text),
+        Some(&snap.session_id),
+        snap.turn_index,
+    )
+    .unwrap_or_default()
+}
+
+async fn run_llm_retain_facts(
+    snap: &RetainSnapshot,
+    settings: &MemorySettings,
+    provider: &dyn LlmProvider,
+    provider_name: &str,
+    model: &str,
+    api_key: &str,
+    data_dir: &Path,
+) -> whycode_core::Result<Vec<String>> {
+    let raw = llm_extract_facts(
+        provider,
+        provider_name,
+        model,
+        api_key,
+        &snap.user_text,
+        &snap.assistant_text,
+    )
+    .await?;
+    let Ok(svc) = MemoryService::open(&snap.project_path, data_dir, settings.clone()) else {
+        return Ok(Vec::new());
+    };
+    Ok(svc
+        .retain_llm_facts(&raw, Some(&snap.session_id))
+        .unwrap_or_default())
+}
+
+fn merge_facts(saved: &mut Vec<String>, more: Vec<String>) {
+    for f in more {
+        if !saved.iter().any(|s| s.eq_ignore_ascii_case(&f)) {
+            saved.push(f);
+        }
+    }
 }
 
 async fn llm_extract_facts(

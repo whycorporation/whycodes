@@ -1545,7 +1545,14 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             app.add_tool_result(&id, content, is_error);
         }
         TurnEvent::Status(s) => {
-            app.status_message = s;
+            // Post-turn niceties (e.g. async memory retain) may arrive after
+            // Idle — surface as a quiet toast so we don't clobber "Worked for…".
+            if !app.is_busy() && s.starts_with("Remembered ") {
+                app.toasts
+                    .push(crate::toast::ToastKind::Info, truncate_toast(&s, 48));
+            } else {
+                app.status_message = s;
+            }
             app.mark_dirty();
         }
         TurnEvent::Usage(usage) => {

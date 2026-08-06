@@ -952,30 +952,20 @@ impl Agent {
             })),
         );
 
-        // Hindsight-style auto-retain (heuristic + optional LLM). Best-effort.
-        if self.memory.enabled && self.memory.auto_retain {
-            let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-                .map(|d| d.data_local_dir().to_path_buf())
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
-            let saved = super::memory_retain::run_post_turn_retain(
-                session,
-                &final_text,
-                &self.memory,
-                provider,
-                provider_name,
-                model,
-                api_key,
-                &data_dir,
-            )
-            .await;
-            if !saved.is_empty() {
-                tracing::info!(count = saved.len(), "auto-retained memories");
-                emit(
-                    &events,
-                    TurnEvent::Status(format!("Remembered {} durable fact(s)", saved.len())),
-                );
-            }
-        }
+        // Hindsight-style auto-retain (heuristic + optional LLM). Best-effort
+        // and **async** — never await here. LLM extract can take 5–12s and used
+        // to keep the TUI on `generating` after the answer was already on screen
+        // (same pitfall as title refine; see docs/KNOWHOW.md).
+        super::memory_retain::spawn_post_turn_retain(
+            session,
+            &final_text,
+            &self.memory,
+            Arc::clone(&self.provider_registry),
+            provider_name,
+            model,
+            api_key,
+            events,
+        );
 
         Ok(final_text)
     }

@@ -245,6 +245,18 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-06 — Answer on screen but "generating" keeps spinning (memory retain)
+
+**Symptom:** Final assistant text is fully streamed; status strip still shows `generating Xs` for ~5–12s more. Logs: `turn.done` then silence until `auto-retained memories`.
+
+**Root cause:** `Agent::run_turn_with_events` **awaited** post-turn `run_post_turn_retain` (heuristic + optional LLM extract up to 12s) **before** returning `Ok`. TUI only clears `agent_busy` / `AgentState::Generating` when `done_rx` fires.
+
+**Fix:** `spawn_post_turn_retain` — fire-and-forget after `turn.done` (same pattern as title refine). Status "Remembered N…" may arrive after Idle → quiet toast, do not clobber "Worked for…".
+
+**Prevention:** Never block `agent_busy` on niceties (title, memory retain, telemetry, catalog).
+
+---
+
 ### 2026-08-05 — Slow turns / inflated "Worked for Xs" (HTTP + title refine)
 
 **Symptom:** Simple chat ("selam") shows tens of seconds; first turn especially sluggish; multi-step tool loops feel cold every time.
