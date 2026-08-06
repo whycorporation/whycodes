@@ -19,15 +19,21 @@ pub fn render_unified_diff(
 ) {
     let mut lines: Vec<Line> = Vec::new();
 
+    let add_bg = palette.callout_bg(palette.diff_add);
+    let rem_bg = palette.callout_bg(palette.diff_remove);
+
     for dl in diff_lines {
-        let (prefix, color) = match dl.kind {
-            DiffLineKind::Add => ("+", palette.diff_add),
-            DiffLineKind::Remove => ("-", palette.diff_remove),
-            DiffLineKind::Context => (" ", palette.fg),
-            DiffLineKind::Header => ("@", palette.diff_hunk),
+        let (prefix, color, bg) = match dl.kind {
+            DiffLineKind::Add => ("+", palette.diff_add, Some(add_bg)),
+            DiffLineKind::Remove => ("-", palette.diff_remove, Some(rem_bg)),
+            DiffLineKind::Context => (" ", palette.fg, None),
+            DiffLineKind::Header => ("@", palette.diff_hunk, None),
         };
 
-        let style = Style::default().fg(color);
+        let style = match bg {
+            Some(b) => Style::default().fg(color).bg(b),
+            None => Style::default().fg(color),
+        };
 
         lines.push(Line::from(vec![
             Span::styled(prefix, style.add_modifier(Modifier::BOLD)),

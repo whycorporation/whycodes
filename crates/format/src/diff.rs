@@ -66,11 +66,59 @@ pub fn format_edit_preview(path: &str, old: &str, new: &str, replace_count: usiz
     out
 }
 
+/// Compact write preview (all additions). TUI colours `+` lines green.
+///
+/// ```text
+/// Wrote path/to/file.rs  ·  12 lines
+///
+/// +first line
+/// +second line
+/// ```
+pub fn format_write_preview(path: &str, content: &str) -> String {
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+    let mut out = String::new();
+    out.push_str(&format!("Wrote {path}  ·  {total} lines\n\n"));
+    let trunc = total > PREVIEW_BODY_LINES;
+    for line in lines.iter().take(PREVIEW_BODY_LINES) {
+        out.push_str(&format!("+{line}\n"));
+    }
+    if trunc {
+        out.push_str(&format!(
+            "… {} more lines\n",
+            total - PREVIEW_BODY_LINES
+        ));
+    }
+    // Empty file: still show the header so the tool result is not blank.
+    if total == 0 {
+        out.push_str("(empty file)\n");
+    }
+    out
+}
+
+/// Path from an edit/write preview header, if present.
+///
+/// `"Edited src/a.rs"` / `"Wrote src/a.rs  ·  3 lines"` → `Some("src/a.rs")`.
+pub fn preview_file_path(text: &str) -> Option<&str> {
+    let first = text.lines().next()?.trim();
+    let rest = first
+        .strip_prefix("Edited ")
+        .or_else(|| first.strip_prefix("Wrote "))?;
+    // Drop trailing " ·  N replacements/lines".
+    let path = rest.split("  ·  ").next().unwrap_or(rest).trim();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
 /// True when `text` looks like a unified / edit preview diff the TUI should
 /// colour as add/remove rather than plain dim text.
 pub fn looks_like_diff(text: &str) -> bool {
     let mut plus = 0usize;
     let mut minus = 0usize;
+    let mut edit_header = false;
     for line in text.lines().take(60) {
         if line.starts_with("diff --git")
             || line.starts_with("@@ ")
@@ -79,6 +127,10 @@ pub fn looks_like_diff(text: &str) -> bool {
         {
             return true;
         }
+        if line.starts_with("Edited ") || line.starts_with("Wrote ") {
+            edit_header = true;
+            continue;
+        }
         // Edit preview: bare `+` / `-` prefixes (not list bullets like `- item`
         // without a following token that looks like code — still allow both).
         if line.starts_with('+') && !line.starts_with("+++") {
@@ -86,6 +138,10 @@ pub fn looks_like_diff(text: &str) -> bool {
         } else if line.starts_with('-') && !line.starts_with("---") {
             minus += 1;
         }
+    }
+    // Explicit tool previews may be one-sided (pure write / pure delete).
+    if edit_header && (plus > 0 || minus > 0) {
+        return true;
     }
     // Need both sides so a plain markdown list doesn't light up green/red.
     plus > 0 && minus > 0
@@ -225,6 +281,16 @@ mod tests {
         assert!(p.contains("-old"));
         assert!(p.contains("+new"));
         assert!(looks_like_diff(&p));
+        assert_eq!(preview_file_path(&p), Some("src/a.rs"));
+    }
+
+    #[test]
+    fn write_preview_is_one_sided_diff() {
+        let p = format_write_preview("src/a.rs", "fn main() {}\n");
+        assert!(p.contains("Wrote src/a.rs"));
+        assert!(p.contains("+fn main() {}"));
+        assert!(looks_like_diff(&p));
+        assert_eq!(preview_file_path(&p), Some("src/a.rs"));
     }
 
     #[test]

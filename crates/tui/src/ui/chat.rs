@@ -17,7 +17,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 use unicode_width::UnicodeWidthStr;
-use whycode_format::diff::looks_like_diff;
+use whycode_format::diff::{looks_like_diff, preview_file_path};
 use whycode_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
@@ -911,7 +911,7 @@ enum ToolOutHint {
 fn tool_out_hint(name: &str, input: &serde_json::Value, result: &str) -> ToolOutHint {
     match name {
         "git_diff" | "apply_patch" => ToolOutHint::Diff,
-        "edit" if looks_like_diff(result) => ToolOutHint::Diff,
+        "edit" | "write" if looks_like_diff(result) => ToolOutHint::Diff,
         "read" => {
             let path = input
                 .get("path")
@@ -1216,37 +1216,86 @@ fn tool_result_diff(
         TOOL_RESULT_DIFF_PREVIEW
     };
     let total = content.lines().count();
+    // Gutter "  " + "┃ " = 4 cols; body budget for hard-truncate.
     let text_w = width.saturating_sub(4).max(8) as usize;
+    let add_bg = palette.callout_bg(palette.diff_add);
+    let rem_bg = palette.callout_bg(palette.diff_remove);
+
+    // Optional path → language so + / - bodies get Tokyo Night syntax on top
+    // of add/remove colours (Grok-style read of edit/write previews).
+    let lang = preview_file_path(content)
+        .and_then(detect_language)
+        .map(str::to_string)
+        .or_else(|| {
+            // Fall back to path in tool args is not available here; try
+            // git-style "+++ b/path" headers.
+            content.lines().find_map(|l| {
+                l.strip_prefix("+++ b/")
+                    .or_else(|| l.strip_prefix("+++ "))
+                    .and_then(detect_language)
+                    .map(str::to_string)
+            })
+        });
+
     let mut lines = Vec::new();
     for line in content.lines().take(budget) {
-        let (rail_color, body_color) = if is_error {
-            (palette.error, palette.error)
-        } else if line.starts_with("+++") || line.starts_with("---") {
-            (palette.dim, palette.fg)
-        } else if line.starts_with("@@") || line.starts_with("diff --git") {
-            (palette.diff_hunk, palette.diff_hunk)
-        } else if line.starts_with('+') {
-            (palette.diff_add, palette.diff_add)
-        } else if line.starts_with('-') {
-            (palette.diff_remove, palette.diff_remove)
-        } else if line.starts_with("Edited ") || line.starts_with('…') {
-            (palette.dim, palette.fg)
-        } else {
-            (palette.dim, palette.dim)
+        let kind = diff_line_kind(line, is_error);
+        let (rail_color, body_color, line_bg) = match kind {
+            DiffPaint::Error => (palette.error, palette.error, None),
+            DiffPaint::FileHeader => (palette.dim, palette.fg, None),
+            DiffPaint::Hunk => (palette.diff_hunk, palette.diff_hunk, None),
+            DiffPaint::Add => (palette.diff_add, palette.diff_add, Some(add_bg)),
+            DiffPaint::Remove => (palette.diff_remove, palette.diff_remove, Some(rem_bg)),
+            DiffPaint::Meta => (palette.dim, palette.fg, None),
+            DiffPaint::Context => (palette.dim, palette.dim, None),
         };
-        let shown = if line.chars().count() > text_w {
-            format!(
-                "{}…",
-                line.chars().take(text_w.saturating_sub(1)).collect::<String>()
-            )
-        } else {
-            line.to_string()
+
+        let paint = |fg: Color, bold: bool| {
+            let mut s = Style::default().fg(fg);
+            if let Some(bg) = line_bg {
+                s = s.bg(bg);
+            }
+            if bold {
+                s = s.add_modifier(Modifier::BOLD);
+            }
+            s
         };
-        lines.push(Line::from(vec![
+
+        let mut spans = vec![
             meta_gutter(),
-            Span::styled("┃ ".to_string(), Style::default().fg(rail_color)),
-            Span::styled(shown, Style::default().fg(body_color)),
-        ]));
+            Span::styled("┃ ".to_string(), paint(rail_color, false)),
+        ];
+
+        // Prefix marker bold; body may be syntax-coloured when language known.
+        let (marker, body) = split_diff_marker(line);
+        if let Some(m) = marker {
+            spans.push(Span::styled(m.to_string(), paint(body_color, true)));
+            let body_budget = text_w.saturating_sub(1).max(1);
+            let body_shown = hard_truncate_line(body, body_budget);
+            if matches!(kind, DiffPaint::Add | DiffPaint::Remove)
+                && let Some(ref language) = lang
+                && !body_shown.is_empty()
+            {
+                let hl = highlight_code_spans(&body_shown, Some(language.as_str()));
+                if let Some(row) = hl.first() {
+                    for ((r, g, b), text) in row.iter() {
+                        spans.push(Span::styled(
+                            text.trim_end_matches('\n').to_string(),
+                            paint(Color::Rgb(*r, *g, *b), false),
+                        ));
+                    }
+                } else {
+                    spans.push(Span::styled(body_shown, paint(body_color, false)));
+                }
+            } else {
+                spans.push(Span::styled(body_shown, paint(body_color, false)));
+            }
+        } else {
+            let shown = hard_truncate_line(line, text_w);
+            spans.push(Span::styled(shown, paint(body_color, false)));
+        }
+
+        lines.push(Line::from(spans));
     }
     if total > budget {
         lines.push(Line::from(vec![
@@ -1259,6 +1308,52 @@ fn tool_result_diff(
         ]));
     }
     lines
+}
+
+#[derive(Clone, Copy)]
+enum DiffPaint {
+    Error,
+    FileHeader,
+    Hunk,
+    Add,
+    Remove,
+    Meta,
+    Context,
+}
+
+fn diff_line_kind(line: &str, is_error: bool) -> DiffPaint {
+    if is_error {
+        return DiffPaint::Error;
+    }
+    if line.starts_with("+++") || line.starts_with("---") {
+        DiffPaint::FileHeader
+    } else if line.starts_with("@@") || line.starts_with("diff --git") {
+        DiffPaint::Hunk
+    } else if line.starts_with('+') {
+        DiffPaint::Add
+    } else if line.starts_with('-') {
+        DiffPaint::Remove
+    } else if line.starts_with("Edited ")
+        || line.starts_with("Wrote ")
+        || line.starts_with('…')
+        || line.starts_with("(empty")
+    {
+        DiffPaint::Meta
+    } else {
+        DiffPaint::Context
+    }
+}
+
+/// Split a unified / preview line into optional `+/-` marker and body.
+fn split_diff_marker(line: &str) -> (Option<char>, &str) {
+    if line.starts_with("+++") || line.starts_with("---") || line.starts_with("@@") {
+        return (None, line);
+    }
+    let mut chars = line.chars();
+    match chars.next() {
+        Some(c @ ('+' | '-')) => (Some(c), chars.as_str()),
+        _ => (None, line),
+    }
 }
 
 /// Syntax-highlight tool output (read previews). Line-numbered `read` rows
@@ -1527,6 +1622,28 @@ mod tests {
             })
             .count();
         assert!(body >= 1);
+    }
+
+    #[test]
+    fn tool_result_diff_paints_add_remove_colours() {
+        let palette = ThemeName::DefaultDark.palette();
+        let body = "Edited src/main.rs\n\n-old\n+new\n";
+        let lines = tool_result(body, false, &palette, false, ToolOutHint::Diff, 80);
+        let add = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.as_ref() == "+")
+            .expect("+ marker");
+        let rem = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.as_ref() == "-")
+            .expect("- marker");
+        assert_eq!(add.style.fg, Some(palette.diff_add));
+        assert_eq!(rem.style.fg, Some(palette.diff_remove));
+        // Soft wash background on add/remove rows.
+        assert!(add.style.bg.is_some());
+        assert!(rem.style.bg.is_some());
     }
 
     #[test]

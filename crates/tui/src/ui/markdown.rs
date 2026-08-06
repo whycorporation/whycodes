@@ -121,11 +121,20 @@ fn render_block(
         } => {
             if is_mermaid_language(language.as_deref()) {
                 render_mermaid_block(lines, *closed, palette, max_width)
+            } else if is_diff_language(language.as_deref()) {
+                render_diff_code(language.as_deref(), lines, *closed, palette, max_width)
             } else {
                 render_code(language.as_deref(), lines, *closed, palette, max_width)
             }
         }
     }
+}
+
+fn is_diff_language(language: Option<&str>) -> bool {
+    matches!(
+        language.map(|s| s.to_ascii_lowercase()).as_deref(),
+        Some("diff" | "patch" | "udiff")
+    )
 }
 
 fn wrap_prose(spans: Vec<Span<'static>>, max_width: Option<usize>) -> Vec<Line<'static>> {
@@ -180,6 +189,61 @@ fn render_code(
 
     // While streaming, the closing fence has not arrived. Leave the block open
     // rather than drawing a bottom edge that will move on the next frame.
+    if closed {
+        out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
+    }
+    out
+}
+
+/// Fenced `diff` / `patch` blocks: theme add/remove/hunk colours + soft wash
+/// (syntect's generic theme misses the semantic red/green of a real diff UI).
+fn render_diff_code(
+    language: Option<&str>,
+    lines: &[String],
+    closed: bool,
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+) -> Vec<Line<'static>> {
+    let gutter = Style::default().fg(palette.dim);
+    let mut out = Vec::with_capacity(lines.len() + 2);
+    out.push(Line::from(vec![
+        Span::styled("┌ ".to_string(), gutter),
+        Span::styled(language.unwrap_or("diff").to_string(), gutter),
+    ]));
+
+    let add_bg = palette.callout_bg(palette.diff_add);
+    let rem_bg = palette.callout_bg(palette.diff_remove);
+    let body_w = max_width.map(|w| w.saturating_sub(2).max(8));
+
+    for raw in lines {
+        let (fg, bg) = if raw.starts_with("+++") || raw.starts_with("---") {
+            (palette.fg, None)
+        } else if raw.starts_with("@@") || raw.starts_with("diff --git") {
+            (palette.diff_hunk, None)
+        } else if raw.starts_with('+') {
+            (palette.diff_add, Some(add_bg))
+        } else if raw.starts_with('-') {
+            (palette.diff_remove, Some(rem_bg))
+        } else {
+            (palette.dim, None)
+        };
+
+        let style = match bg {
+            Some(b) => Style::default().fg(fg).bg(b),
+            None => Style::default().fg(fg),
+        };
+        let body = Span::styled(raw.clone(), style);
+        let rows = match body_w {
+            Some(w) => wrap_spans(vec![body], w as u16),
+            None => vec![Line::from(body)],
+        };
+        for row in rows {
+            let mut line = vec![Span::styled("│ ".to_string(), gutter)];
+            line.extend(row.spans);
+            out.push(Line::from(line));
+        }
+    }
+
     if closed {
         out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
     }
@@ -356,6 +420,30 @@ mod tests {
         assert!(out[0].contains("rust"), "{:?}", out);
         assert!(out.iter().any(|l| l.contains("let x = 1;")), "{:?}", out);
         assert!(out.last().unwrap().contains('└'), "{:?}", out);
+    }
+
+    #[test]
+    fn fenced_diff_uses_theme_add_remove_colours() {
+        let lines = render("```diff\n-old\n+new\n```", &palette());
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(joined.contains("-old"), "{joined}");
+        assert!(joined.contains("+new"), "{joined}");
+
+        let add = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.contains("+new"))
+            .expect("add line span");
+        let rem = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.contains("-old"))
+            .expect("remove line span");
+        assert_eq!(add.style.fg, Some(palette().diff_add));
+        assert_eq!(rem.style.fg, Some(palette().diff_remove));
     }
 
     #[test]
