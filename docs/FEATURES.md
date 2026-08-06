@@ -217,11 +217,11 @@ Detay: [plan-latency-competitors.md](plan-latency-competitors.md).
 
 | Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Background tasks UI | ❌ | ✅ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ shell bg | ❌ | ✅★ |
-| Scheduled / loop | ❌ | ✅ | ❌ | ⚠️ ambient | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ |
+| Background tasks UI | ✅ `bg` + toast | ✅ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ shell bg | ❌ | ✅★ |
+| Scheduled / loop | ✅ `schedule` + `/loop` | ✅ | ❌ | ⚠️ ambient | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 | Cloud / remote session | ❌ | ❌ | ❌ | ⚠️ iOS plan | ✅★ | ✅★ Codex Web | ⚠️ | ❌ | ✅★ cloud agents |
 | CI / headless agent | ✅ format | ⚠️ | ⚠️ | ⚠️ | ✅★ | ✅ | ✅ GH Action | ✅ json/RPC | ✅ Cursor CLI |
-| Same-dir multi-agent | ❌ | ❌ | ⚠️ | ✅★ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ parallel cloud |
+| Same-dir multi-agent | ✅ `swarm`+worktrees | ❌ | ⚠️ | ✅★ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ parallel cloud |
 
 ---
 
@@ -323,7 +323,7 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 
 ### Built-in tools
 
-**Core profile (default, LLM şemasına giden):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash` (alias `shell`), `todowrite` (alias `todo`), `todoread`, `task`.
+**Core profile (default, LLM şemasına giden):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash` (alias `shell`, `background: true`), `bg`, `schedule`, `swarm`, `todowrite` (alias `todo`), `todoread`, `task`.
 
 **Full profile:** + `git_status`/`git_diff`/`git_log`/`git_blame`/`git_commit`, `github_issue`/`github_pr`, `webfetch`, `websearch`, `plan`, `question`, `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, MCP `{server}_{tool}`.
 

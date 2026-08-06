@@ -130,6 +130,8 @@ const SERIAL_TOOLS: &[&str] = &[
     "todo",
     "task",
     "swarm",
+    "bg",
+    "schedule",
     "plan",
     "question",
     "code_mode",
@@ -181,6 +183,12 @@ pub struct Agent {
     swarm_max_agents: usize,
     /// Isolate workers in git worktrees when the project is a repo.
     swarm_worktrees: bool,
+    /// Background shell jobs (`bash` background=true, `bg`, `schedule`).
+    background: crate::background::BackgroundRegistry,
+    /// Optional long-lived event sink (TUI) for bg completion + enqueue.
+    event_sink: Option<EventSink>,
+    /// Max concurrent background jobs.
+    max_background_jobs: usize,
 }
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
@@ -237,6 +245,9 @@ impl Agent {
             swarm_enabled: true,
             swarm_max_agents: 4,
             swarm_worktrees: true,
+            background: crate::background::BackgroundRegistry::default(),
+            event_sink: None,
+            max_background_jobs: crate::background::DEFAULT_MAX_BACKGROUND_JOBS,
         }
     }
 
@@ -288,6 +299,12 @@ impl Agent {
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config.swarm.max_agents.clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS);
         self.swarm_worktrees = config.swarm.worktrees;
+        self.max_background_jobs = config
+            .automation
+            .max_background_jobs
+            .clamp(1, crate::background::DEFAULT_MAX_BACKGROUND_JOBS.saturating_mul(2).max(8));
+        // Do not replace the registry here — TUI may re-call with_config on agent
+        // switch while jobs are still running.
         tracing::debug!(
             sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
@@ -301,8 +318,37 @@ impl Agent {
             swarm_enabled = self.swarm_enabled,
             swarm_max_agents = self.swarm_max_agents,
             swarm_worktrees = self.swarm_worktrees,
+            max_background_jobs = self.max_background_jobs,
             "shell sandbox, network policy, and hooks"
         );
+        self
+    }
+
+    /// Attach a long-lived event sink (TUI) for background job notifications
+    /// and scheduled prompt enqueue. Safe to call once after channel setup.
+    pub fn wire_event_sink(&mut self, sink: EventSink) {
+        self.event_sink = Some(sink.clone());
+        let tx = sink;
+        self.background
+            .set_listener(Some(std::sync::Arc::new(move |ev| {
+                let _ = tx.send(TurnEvent::Background {
+                    id: ev.id,
+                    status: ev.status.as_str().to_string(),
+                    summary: ev.summary,
+                });
+            })));
+    }
+
+    pub fn background_registry(&self) -> &crate::background::BackgroundRegistry {
+        &self.background
+    }
+
+    /// Share background jobs across agent identity switches (Ctrl+T).
+    pub fn with_background_registry(
+        mut self,
+        reg: crate::background::BackgroundRegistry,
+    ) -> Self {
+        self.background = reg;
         self
     }
 
@@ -1379,6 +1425,18 @@ impl Agent {
         } else if tc.name == "swarm" {
             self.execute_swarm_tool(tc, session, provider_name, model, api_key, events)
                 .await
+        } else if tc.name == "bg" {
+            self.execute_bg_tool(tc)
+        } else if tc.name == "schedule" {
+            self.execute_schedule_tool(tc, tool_ctx, events).await
+        } else if (tc.name == "bash" || tc.name == "shell")
+            && tc
+                .arguments
+                .get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            self.execute_background_shell(tc, tool_ctx, events)
         } else {
             self.tool_executor
                 .execute(tc, tool_ctx, &self.info.permission)
@@ -1398,6 +1456,270 @@ impl Agent {
         run_post_hooks(&self.hooks, &post_ctx).await;
 
         result
+    }
+
+    /// `bash`/`shell` with `background: true` — return job id immediately.
+    fn execute_background_shell(
+        &self,
+        call: &ToolCall,
+        tool_ctx: &ToolContext,
+        events: Option<&EventSink>,
+    ) -> ToolResult {
+        let command = call
+            .arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if command.trim().is_empty() {
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: "background shell requires a non-empty `command`".into(),
+                is_error: true,
+            };
+        }
+        let label = call
+            .arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        // Prefer long-lived sink; fall back to turn events for listener (optional).
+        if self.event_sink.is_none()
+            && let Some(tx) = events
+        {
+            let tx = tx.clone();
+            self.background
+                .set_listener(Some(std::sync::Arc::new(move |ev| {
+                    let _ = tx.send(TurnEvent::Background {
+                        id: ev.id,
+                        status: ev.status.as_str().to_string(),
+                        summary: ev.summary,
+                    });
+                })));
+        }
+        match self.background.start_shell(
+            &command,
+            std::path::PathBuf::from(&tool_ctx.working_dir),
+            tool_ctx.sandbox.clone(),
+            label,
+        ) {
+            Ok(id) => {
+                emit(
+                    &events.cloned().or_else(|| self.event_sink.clone()),
+                    TurnEvent::Background {
+                        id: id.clone(),
+                        status: "running".into(),
+                        summary: truncate_permission_detail(&command),
+                    },
+                );
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: format!(
+                        "Background job `{id}` started.\n\
+                         Command: {command}\n\
+                         Use tool `bg` with action=list|read|kill (id={id})."
+                    ),
+                    is_error: false,
+                }
+            }
+            Err(e) => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: e,
+                is_error: true,
+            },
+        }
+    }
+
+    fn execute_bg_tool(&self, call: &ToolCall) -> ToolResult {
+        let action = call
+            .arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list");
+        match action {
+            "list" => {
+                let jobs = self.background.list();
+                if jobs.is_empty() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "No background jobs.".into(),
+                        is_error: false,
+                    };
+                }
+                let mut lines = vec![format!(
+                    "Background jobs ({} running):",
+                    self.background.running_count()
+                )];
+                for j in jobs {
+                    lines.push(format!(
+                        "- {} [{}] {:.1}s · {}{}",
+                        j.id,
+                        j.status.as_str(),
+                        j.elapsed.as_secs_f64(),
+                        j.label,
+                        j.exit_code
+                            .map(|c| format!(" exit={c}"))
+                            .unwrap_or_default()
+                    ));
+                }
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: lines.join("\n"),
+                    is_error: false,
+                }
+            }
+            "read" => {
+                let id = call
+                    .arguments
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if id.is_empty() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "bg read requires `id`".into(),
+                        is_error: true,
+                    };
+                }
+                let max = call
+                    .arguments
+                    .get("max_chars")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(8_000) as usize;
+                match self.background.read(id, max) {
+                    Ok(s) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: s,
+                        is_error: false,
+                    },
+                    Err(e) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: e,
+                        is_error: true,
+                    },
+                }
+            }
+            "kill" => {
+                let id = call
+                    .arguments
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if id.is_empty() {
+                    return ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: "bg kill requires `id`".into(),
+                        is_error: true,
+                    };
+                }
+                match self.background.kill(id) {
+                    Ok(s) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: s,
+                        is_error: false,
+                    },
+                    Err(e) => ToolResult {
+                        tool_call_id: call.id.clone(),
+                        content: e,
+                        is_error: true,
+                    },
+                }
+            }
+            other => ToolResult {
+                tool_call_id: call.id.clone(),
+                content: format!("unknown bg action `{other}` (list|read|kill)"),
+                is_error: true,
+            },
+        }
+    }
+
+    /// Delay then either start a background shell or enqueue a user prompt.
+    async fn execute_schedule_tool(
+        &self,
+        call: &ToolCall,
+        tool_ctx: &ToolContext,
+        events: Option<&EventSink>,
+    ) -> ToolResult {
+        let after_secs = call
+            .arguments
+            .get("after_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            .min(86_400);
+        let command = call
+            .arguments
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let goal = call
+            .arguments
+            .get("goal")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if command.is_none() && goal.is_none() {
+            return ToolResult {
+                tool_call_id: call.id.clone(),
+                content: "schedule requires `command` and/or `goal`".into(),
+                is_error: true,
+            };
+        }
+
+        let background = self.background.clone();
+        let sandbox = tool_ctx.sandbox.clone();
+        let cwd = std::path::PathBuf::from(&tool_ctx.working_dir);
+        let sink = events.cloned().or_else(|| self.event_sink.clone());
+        let label = call
+            .arguments
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        tokio::spawn(async move {
+            if after_secs > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(after_secs)).await;
+            }
+            if let Some(cmd) = command {
+                match background.start_shell(&cmd, cwd, sandbox, label) {
+                    Ok(id) => {
+                        if let Some(ref tx) = sink {
+                            let _ = tx.send(TurnEvent::Background {
+                                id: id.clone(),
+                                status: "running".into(),
+                                summary: format!("scheduled: {cmd}"),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(ref tx) = sink {
+                            let _ = tx.send(TurnEvent::Background {
+                                id: "schedule".into(),
+                                status: "failed".into(),
+                                summary: e,
+                            });
+                        }
+                    }
+                }
+            }
+            if let Some(g) = goal
+                && let Some(ref tx) = sink
+            {
+                let _ = tx.send(TurnEvent::EnqueuePrompt { text: g });
+            }
+        });
+
+        let mut parts = vec![format!("Scheduled in {after_secs}s")];
+        if let Some(ref c) = call.arguments.get("command").and_then(|v| v.as_str()) {
+            parts.push(format!("shell: {c}"));
+        }
+        if let Some(ref g) = call.arguments.get("goal").and_then(|v| v.as_str()) {
+            parts.push(format!("prompt queue: {g}"));
+        }
+        ToolResult {
+            tool_call_id: call.id.clone(),
+            content: parts.join("\n"),
+            is_error: false,
+        }
     }
 
     /// Execute the `swarm` tool: parallel subagents + file-claim / worktree isolation.

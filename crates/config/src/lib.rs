@@ -104,6 +104,30 @@ pub struct Config {
     /// Parallel multi-agent swarm + file conflict notify.
     #[serde(default)]
     pub swarm: SwarmConfig,
+
+    /// Background jobs and lightweight scheduling (FEATURES §11).
+    #[serde(default)]
+    pub automation: AutomationConfig,
+}
+
+/// Process-local background shell jobs and schedule/loop knobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationConfig {
+    /// Max concurrent background shell jobs. Default 8.
+    #[serde(default = "default_max_background_jobs")]
+    pub max_background_jobs: usize,
+}
+
+fn default_max_background_jobs() -> usize {
+    8
+}
+
+impl Default for AutomationConfig {
+    fn default() -> Self {
+        Self {
+            max_background_jobs: default_max_background_jobs(),
+        }
+    }
 }
 
 /// Concurrent multi-agent work (`swarm` tool).
@@ -609,6 +633,7 @@ impl Default for Config {
             hooks: Vec::new(),
             memory: MemoryConfig::default(),
             swarm: SwarmConfig::default(),
+            automation: AutomationConfig::default(),
         }
     }
 }
@@ -1430,6 +1455,10 @@ impl Config {
         }
         if !other.swarm.worktrees {
             merged.swarm.worktrees = false;
+        }
+
+        if other.automation.max_background_jobs != default_max_background_jobs() {
+            merged.automation.max_background_jobs = other.automation.max_background_jobs;
         }
 
         merged

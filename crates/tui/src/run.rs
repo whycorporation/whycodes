@@ -466,6 +466,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let (catalog_tx, mut catalog_rx) = mpsc::unbounded_channel::<(String, String, u32)>();
     let mut catalog_fetch_pending = false;
 
+    // Background jobs / schedule enqueue use the same long-lived event channel.
+    agent.wire_event_sink(event_tx.clone());
+
     let mut agent_busy = false;
     let mut cancel_flag: Option<CancelFlag> = None;
     let mut spinner_frame: usize = 0;
@@ -896,6 +899,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
             }
 
+            // Drain scheduled /loop prompts when idle (no pending manual submit).
+            if !agent_busy && app.pending_prompt.is_none() {
+                if let Some(next) = app.pending_auto_prompts.pop_front() {
+                    app.pending_prompt = Some(next);
+                }
+            }
+
             // ── Start turn if needed ──────────────────────────────────
             if !agent_busy && let Some(prompt) = app.pending_prompt.take() {
                 let submit_images = std::mem::take(&mut app.pending_submit_images);
@@ -1269,6 +1279,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         &project_dir,
                         Arc::clone(&perm_prompter),
                         Arc::clone(&question_prompter),
+                        &event_tx,
                     )
                     .await;
                     continue;
@@ -1408,6 +1419,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     while let Some(req) = pending_question_queue.pop_front() {
         let _ = req.reply.send(Err(QuestionError::Cancelled));
     }
+    // Best-effort: stop background shells so we don't leave orphans.
+    agent.background_registry().kill_all();
 
     if let Err(ref e) = result {
         whycode_core::logging::emit(
@@ -1732,6 +1745,60 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             };
             app.mark_dirty();
         }
+        TurnEvent::Background {
+            id,
+            status,
+            summary,
+        } => {
+            match status.as_str() {
+                "running" => {
+                    app.bg_running_count = app.bg_running_count.saturating_add(1);
+                    app.status_message = format!("bg {id} started");
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        truncate_toast(&format!("bg {id}: {summary}"), 56),
+                    );
+                }
+                "done" => {
+                    app.bg_running_count = app.bg_running_count.saturating_sub(1);
+                    app.toasts.push(
+                        crate::toast::ToastKind::Success,
+                        truncate_toast(&format!("bg {id} done · {summary}"), 56),
+                    );
+                }
+                "failed" => {
+                    app.bg_running_count = app.bg_running_count.saturating_sub(1);
+                    app.toasts.push(
+                        crate::toast::ToastKind::Warning,
+                        truncate_toast(&format!("bg {id} failed · {summary}"), 64),
+                    );
+                }
+                "killed" => {
+                    app.bg_running_count = app.bg_running_count.saturating_sub(1);
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        truncate_toast(&format!("bg {id} killed"), 40),
+                    );
+                }
+                _ => {
+                    app.status_message = format!("bg {id} {status}");
+                }
+            }
+            app.mark_dirty();
+        }
+        TurnEvent::EnqueuePrompt { text } => {
+            if !text.trim().is_empty() {
+                app.pending_auto_prompts.push_back(text);
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    truncate_toast(
+                        &format!("queued · {} left", app.pending_auto_prompts.len()),
+                        40,
+                    ),
+                );
+                app.mark_dirty();
+            }
+        }
     }
 }
 
@@ -1743,6 +1810,7 @@ async fn cycle_agent(
     project_dir: &std::path::Path,
     perm_prompter: Arc<ChannelPermissionPrompter>,
     question_prompter: Arc<ChannelQuestionPrompter>,
+    event_tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>,
 ) {
     if app.primary_agents.is_empty() {
         return;
@@ -1769,12 +1837,15 @@ async fn cycle_agent(
             config,
             None,
         );
+        let bg = agent.background_registry().clone();
         *agent = Agent::new(info)
             .with_config(config)
+            .with_background_registry(bg)
             .with_permission_prompter(
                 Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
             )
             .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+        agent.wire_event_sink(event_tx.clone());
         session.set_system_prompt(&prompt);
     }
 }
@@ -2134,6 +2205,87 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             // Provider usage is stale after trim — fall back to the char heuristic.
             ctx.app.context_used = ctx.session.token_count() as u64;
             ctx.app.status_message = format!("Compacted {before} → {}", ctx.session.messages.len());
+        }
+        "/bg" => {
+            let rest = rest.trim();
+            if rest.is_empty() || rest == "list" {
+                let jobs = ctx.agent.background_registry().list();
+                if jobs.is_empty() {
+                    ctx.app
+                        .toasts
+                        .push(crate::toast::ToastKind::Info, "No background jobs");
+                } else {
+                    let mut lines = vec![format!(
+                        "Background jobs ({} running)",
+                        ctx.agent.background_registry().running_count()
+                    )];
+                    for j in jobs {
+                        lines.push(format!(
+                            "{} [{}] {:.0}s  {}",
+                            j.id,
+                            j.status.as_str(),
+                            j.elapsed.as_secs_f64(),
+                            j.label
+                        ));
+                    }
+                    lines.push("Hint: /bg kill bg-N".into());
+                    ctx.app.add_message(ChatRole::System, lines.join("\n"));
+                }
+            } else if let Some(id) = rest.strip_prefix("kill ").map(str::trim) {
+                match ctx.agent.background_registry().kill(id) {
+                    Ok(msg) => ctx
+                        .app
+                        .toasts
+                        .push(crate::toast::ToastKind::Info, msg),
+                    Err(e) => ctx
+                        .app
+                        .toasts
+                        .push(crate::toast::ToastKind::Warning, e),
+                }
+            } else {
+                ctx.app.status_message = "Usage: /bg | /bg kill <id>".into();
+            }
+        }
+        "/loop" => {
+            let rest = rest.trim();
+            if rest == "stop" || rest == "clear" {
+                let n = ctx.app.pending_auto_prompts.len();
+                ctx.app.pending_auto_prompts.clear();
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    format!("Cleared {n} queued loop prompt(s)"),
+                );
+            } else {
+                // /loop N prompt…  or  /loop prompt… (N=3)
+                let mut parts = rest.splitn(2, char::is_whitespace);
+                let first = parts.next().unwrap_or("").trim();
+                let rest_prompt = parts.next().unwrap_or("").trim();
+                let (n, prompt) = if let Ok(count) = first.parse::<usize>() {
+                    (count, rest_prompt.to_string())
+                } else if !rest.is_empty() {
+                    (3usize, rest.to_string())
+                } else {
+                    ctx.app.status_message =
+                        "Usage: /loop N prompt…  |  /loop stop".into();
+                    return;
+                };
+                if prompt.is_empty() {
+                    ctx.app.status_message =
+                        "Usage: /loop N prompt…  |  /loop stop".into();
+                    return;
+                }
+                let n = n.clamp(1, 20);
+                // First runs now; remaining N-1 queued.
+                ctx.app.add_message(ChatRole::User, &prompt);
+                ctx.app.pending_prompt = Some(prompt.clone());
+                for _ in 1..n {
+                    ctx.app.pending_auto_prompts.push_back(prompt.clone());
+                }
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    format!("Loop ×{n} queued"),
+                );
+            }
         }
         "/remember" => {
             let text = rest.trim();

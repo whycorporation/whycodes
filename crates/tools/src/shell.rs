@@ -36,7 +36,8 @@ impl Tool for ShellTool {
         "Execute a shell command in the project environment and return stdout/stderr. \
          When security.sandbox=workspace (default), the process is confined: project \
          directory is writable, the rest of the filesystem is read-only; network may \
-         be disabled via security.sandbox_network=false."
+         be disabled via security.sandbox_network=false. \
+         Set background=true to return immediately with a job id (use `bg` to read/kill)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -49,11 +50,15 @@ impl Tool for ShellTool {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Timeout in seconds (default: 120)"
+                    "description": "Timeout in seconds (default: 120; ignored when background=true)"
                 },
                 "description": {
                     "type": "string",
                     "description": "Short description of why this command is run (optional)"
+                },
+                "background": {
+                    "type": "boolean",
+                    "description": "If true, start the command in the background and return a job id immediately"
                 }
             },
             "required": ["command"]

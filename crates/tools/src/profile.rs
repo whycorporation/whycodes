@@ -53,6 +53,7 @@ impl ToolProfile {
 const CORE_TOOL_NAMES: &[&str] = &[
     "apply_patch",
     "bash",
+    "bg",       // background job list/read/kill
     "edit",
     "glob",
     "grep",
@@ -60,8 +61,9 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "memory",
     "question", // clarify with structured options (Grok-style)
     "read",
-    "shell", // legacy alias of bash
-    "swarm", // parallel multi-agent + file conflict notify
+    "schedule", // delayed shell / prompt enqueue
+    "shell",    // legacy alias of bash
+    "swarm",    // parallel multi-agent + file conflict notify
     "task",
     "todo", // alias of todowrite
     "todoread",

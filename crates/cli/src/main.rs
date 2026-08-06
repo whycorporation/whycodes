@@ -2255,6 +2255,16 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
                 message
             },
         }),
+        TurnEvent::Background {
+            id,
+            status,
+            summary,
+        } => Some(CiEvent::Status {
+            message: format!("bg {id} {status}: {summary}"),
+        }),
+        TurnEvent::EnqueuePrompt { text } => Some(CiEvent::Status {
+            message: format!("enqueue_prompt: {text}"),
+        }),
     }
 }
 

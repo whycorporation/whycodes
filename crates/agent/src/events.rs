@@ -57,6 +57,17 @@ pub enum TurnEvent {
         total: usize,
         message: String,
     },
+    /// Background shell job status (started / done / failed / killed).
+    Background {
+        id: String,
+        /// `running` | `done` | `failed` | `killed`
+        status: String,
+        summary: String,
+    },
+    /// Queue a user prompt for the next free TUI turn (`schedule` / `/loop`).
+    EnqueuePrompt {
+        text: String,
+    },
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).

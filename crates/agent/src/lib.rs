@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod background;
 pub mod events;
 pub mod intent;
 pub mod mcp_load;
@@ -15,6 +16,7 @@ pub mod title;
 pub mod tool_stream;
 
 pub use agent::{Agent, memory_settings_from_config};
+pub use background::{BackgroundRegistry, JobSnapshot, JobStatus};
 pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
 pub use intent::{
     IntentAssessment, IntentGuidanceMode, IntentNotice, IntentNoticeKind, ToolAuthDecision,

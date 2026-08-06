@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-07** (swarm + conflict notify; latency P0/P1 + FEATURES; `v0.1.0` public install still gated on repo visibility)
+Last updated: **2026-08-07** (FEATURES §11 bg/schedule/loop; swarm worktrees; `v0.1.0` public install still gated on repo visibility)
 
 ## Legend
 
@@ -53,7 +53,7 @@ Index of archives: [archive/README.md](archive/README.md).
 Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps):
 
 1. **First public release (almost done)** — `v0.1.0` cut + smoke OK with token. Remaining: **make repo public**, optional Homebrew binary formula, Windows install.ps1 smoke.
-2. **Terminal product polish** — latency stack + mouse TUI + FEATURES matrix accurate (2026-08-05). Next: plugins depth, subagent token fold.
+2. **Terminal product polish** — latency + mouse TUI + §11 bg/schedule + swarm. Next: plugins depth, subagent token fold, public release.
 3. **Performance residual** — stats done; optional CI ceilings / subagent tokens remain.
 4. **OAuth** stays blocked until owner decisions.
 5. **Memory v1+v2** shipped (retain, project scope, code RAG, subagent banks, optional ONNX).
@@ -80,6 +80,7 @@ Priority for shipping the product (aligned with [FEATURES.md](FEATURES.md) gaps)
 | 2026-08-05 | FEATURES.md rewritten | Mouse/resume/latency rows fixed; no stale ❌ for shipped TUI. |
 | 2026-08-07 | Swarm + conflict notify (lightweight) | `swarm` tool, shared `FileClaimRegistry`, write/edit/apply_patch gate, TUI toast. |
 | 2026-08-07 | Swarm git worktrees | Detached worktrees under `.whycode/swarm/`, three-way merge into main, force-remove on finish; config `swarm.worktrees`. |
+| 2026-08-07 | FEATURES §11 automation | Background shell jobs (`background: true`, `bg`, toast, `/bg`), `schedule` + `/loop` queue; cloud still deferred. |
 
 ## Verification commands
 

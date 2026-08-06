@@ -312,8 +312,17 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
         left_area,
     );
 
-    // Right: composable StatusBar (context meter; more chips can push here).
+    // Right: composable StatusBar (bg jobs + context meter).
     let mut bar = StatusBar::new(Style::default().fg(palette.dim).bg(palette.bg));
+    if app.bg_running_count > 0 {
+        bar.push(
+            "bg",
+            Line::from(Span::styled(
+                format!("bg:{}", app.bg_running_count),
+                Style::default().fg(palette.warning).bg(palette.bg),
+            )),
+        );
+    }
     bar.push("context", ctx_line);
     let areas = bar.render(frame, area);
     if let Some(r) = areas.get("context").copied() {

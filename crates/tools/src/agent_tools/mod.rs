@@ -1,7 +1,9 @@
+pub mod bg;
 pub mod code_mode;
 pub mod memory_tool;
 pub mod plan;
 pub mod question;
+pub mod schedule;
 pub mod skill_tool;
 pub mod swarm;
 pub mod task;

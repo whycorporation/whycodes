@@ -933,6 +933,10 @@ pub struct TuiApp {
     /// Prompt waiting to be sent to the agent (set by submit / slash commands).
     /// Images for this turn live in `pending_submit_images` until the run loop takes them.
     pub pending_prompt: Option<String>,
+    /// Queued prompts from `/loop` or `schedule` (drained when idle).
+    pub pending_auto_prompts: std::collections::VecDeque<String>,
+    /// Running background shell jobs (status bar chip).
+    pub bg_running_count: usize,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
@@ -1126,6 +1130,14 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         name: "/unshare",
         hint: "Delete local share files",
     },
+    SlashCommand {
+        name: "/bg",
+        hint: "[list|kill id] Background shell jobs",
+    },
+    SlashCommand {
+        name: "/loop",
+        hint: "N prompt… | stop — queue N sequential turns",
+    },
 ];
 
 /// Autocomplete state for slash commands while typing.
@@ -1316,6 +1328,8 @@ impl TuiApp {
                 .unwrap_or(0),
             config,
             pending_prompt: None,
+            pending_auto_prompts: std::collections::VecDeque::new(),
+            bg_running_count: 0,
             pending_model: None,
             pending_session_id: None,
             pending_catalog_refresh: false,
