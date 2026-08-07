@@ -803,9 +803,15 @@ fn format_scaled(v: f64, suffix: char) -> String {
     }
 }
 
-/// Tokens currently in context (prompt side) from a provider usage report.
+/// Tokens currently filling the context window (prompt side) from a provider report.
 ///
-/// Cache read/write are billed separately but still occupy the context window.
+/// Uses **Anthropic-style additive** cache fields (`cache_creation` /
+/// `cache_read` are not already inside `input_tokens`). OpenAI-compatible
+/// providers must not map subset `cached_tokens` into those fields — only
+/// `input_tokens` (= `prompt_tokens`) counts as fill for them.
+///
+/// Output/completion tokens are excluded: they are not part of the next
+/// prefill until the assistant turn is stored in the session.
 pub fn context_tokens_from_usage(usage: &whycode_core::types::Usage) -> u64 {
     usage.input_tokens
         + usage.cache_creation_input_tokens.unwrap_or(0)
@@ -1541,8 +1547,20 @@ impl TuiApp {
     }
 
     /// Update context fill from a provider usage event (per LLM step).
+    ///
+    /// Prefer this over [`Self::sync_context_estimate`] when the provider
+    /// reported prompt-side tokens for the request that was just sent.
     pub fn set_context_from_usage(&mut self, usage: &whycode_core::types::Usage) {
         self.context_used = context_tokens_from_usage(usage);
+    }
+
+    /// Estimate context fill from the live transcript (chars/4 heuristic).
+    ///
+    /// Use when provider usage is missing or stale (resume, compact, undo,
+    /// silent stream). Never use cumulative `session.usage` here — that is
+    /// billed tokens across all turns, not current window fill.
+    pub fn sync_context_estimate(&mut self, session: &whycode_session::session::Session) {
+        self.context_used = session.token_count() as u64;
     }
 
     /// Percent of context window used (0–100+, whole numbers).
@@ -2230,13 +2248,10 @@ impl TuiApp {
         self.scroll_offset = 0;
         self.auto_scroll = true;
         self.selected_msg = None;
-        if session.usage.is_empty() {
-            self.context_used = session.token_count() as u64;
-            self.turn_usage = None;
-        } else {
-            self.set_context_from_usage(&session.usage);
-            self.turn_usage = Some(session.usage.clone());
-        }
+        // Context fill = current transcript size, not cumulative billed usage.
+        // Session totals remain available via /cost (session.usage).
+        self.sync_context_estimate(session);
+        self.turn_usage = None;
         self.mark_dirty();
     }
 

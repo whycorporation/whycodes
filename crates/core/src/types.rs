@@ -170,8 +170,10 @@ impl Usage {
 
     /// Everything the model was billed for.
     ///
-    /// Cache reads and writes are input tokens the provider reports separately;
-    /// they are not already counted in `input_tokens`.
+    /// Cache reads and writes are **Anthropic-style additive** input tokens
+    /// (not already counted in `input_tokens`). OpenAI-compatible
+    /// `prompt_tokens_details.cached_tokens` is a subset of `prompt_tokens` and
+    /// must **not** be stored in `cache_read_input_tokens`.
     pub fn total(&self) -> u64 {
         self.input_tokens
             + self.output_tokens
@@ -215,6 +217,12 @@ pub struct LlmResponse {
     pub model: String,
 }
 
+/// Token accounting for one response or an accumulated session total.
+///
+/// Cache fields follow **Anthropic** semantics: they are billed and counted
+/// separately from `input_tokens` (additive). OpenAI-compatible gateways report
+/// cached tokens as a *subset* of `prompt_tokens` — providers must not write
+/// that subset into `cache_read_input_tokens` or totals/context meters double-count.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Usage {
     pub input_tokens: u64,

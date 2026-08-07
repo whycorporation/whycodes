@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::pin::Pin;
 use whycode_core::types::{
-    ContentBlock, LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat, Usage,
+    ContentBlock, LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat,
 };
 
 use super::provider::LlmProvider;
@@ -211,12 +211,7 @@ impl LlmProvider for CustomProvider {
         Ok(LlmResponse {
             content,
             stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: Usage {
-                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                cache_read_input_tokens: usage["prompt_tokens_details"]["cached_tokens"].as_u64(),
-                cache_creation_input_tokens: None,
-            },
+            usage: super::openai_compat::usage_from_chat_completion(usage),
             model: model.to_string(),
         })
     }
@@ -228,7 +223,8 @@ impl LlmProvider for CustomProvider {
         model: &str,
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
-        let body = self.build_body(request, model);
+        let mut body = self.build_body(request, model);
+        super::openai_compat::attach_stream_usage_option(&mut body);
         let resp = self
             .build_request(&body)
             .send()
@@ -263,6 +259,11 @@ impl LlmProvider for CustomProvider {
                             if let Ok(evt) = serde_json::from_str::<Value>(data) {
                                 let delta = &evt["choices"][0]["delta"];
                                 for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                    yield Ok(ev);
+                                }
+                                if let Some(ev) =
+                                    super::openai_compat::stream_usage_from_chunk(&evt)
+                                {
                                     yield Ok(ev);
                                 }
                             }

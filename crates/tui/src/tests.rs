@@ -1114,6 +1114,64 @@ fn load_messages_from_session_restores_user_and_assistant() {
     assert_eq!(app.session_title, session.title);
 }
 
+#[test]
+fn load_messages_uses_transcript_estimate_not_session_usage() {
+    use whycode_core::types::Usage;
+    use whycode_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.add_user_message("hello world, this is a short prompt");
+    // Cumulative billed usage across many turns — must NOT drive the context meter.
+    session.add_usage(&Usage {
+        input_tokens: 500_000,
+        output_tokens: 80_000,
+        cache_creation_input_tokens: Some(10_000),
+        cache_read_input_tokens: Some(200_000),
+    });
+
+    let mut app = TuiApp::new(test_config());
+    app.load_messages_from_session(&session);
+
+    let estimate = session.token_count() as u64;
+    assert_eq!(
+        app.context_used, estimate,
+        "resume must use transcript size, not session.usage totals"
+    );
+    assert!(
+        app.context_used < 10_000,
+        "estimate should be tiny for a short session, got {}",
+        app.context_used
+    );
+    assert!(
+        app.turn_usage.is_none(),
+        "last-turn usage is unknown after resume"
+    );
+}
+
+#[test]
+fn context_tokens_from_usage_is_prompt_side_only() {
+    use crate::app::context_tokens_from_usage;
+    use whycode_core::types::Usage;
+
+    // Anthropic-style: cache fields additive with input.
+    let anthropic = Usage {
+        input_tokens: 100,
+        output_tokens: 50,
+        cache_creation_input_tokens: Some(20),
+        cache_read_input_tokens: Some(400),
+    };
+    assert_eq!(context_tokens_from_usage(&anthropic), 520);
+
+    // OpenAI-style after our mapping: only prompt_tokens (no cache fields).
+    let openai = Usage {
+        input_tokens: 1500,
+        output_tokens: 12,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    };
+    assert_eq!(context_tokens_from_usage(&openai), 1500);
+}
+
 // ── Slash Suggest Tests ─────────────────────────────────────────────
 
 #[test]

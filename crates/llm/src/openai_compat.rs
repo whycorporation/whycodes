@@ -285,6 +285,60 @@ pub fn stream_events_for_tool_calls(tool_calls: &[Value]) -> Vec<whycode_core::t
         .collect()
 }
 
+/// Ask OpenAI-compatible gateways for a final usage chunk on streaming calls.
+///
+/// Without `stream_options.include_usage`, many providers never report token
+/// counts on the stream — the TUI context meter then stays at 0 or an old
+/// estimate. Safe to attach whenever `"stream": true` is set; non-stream
+/// complete() paths should strip or overwrite `stream` to false (they already
+/// ignore unknown stream_options when stream is false, or never send it).
+pub fn attach_stream_usage_option(body: &mut Value) {
+    body["stream_options"] = serde_json::json!({ "include_usage": true });
+}
+
+/// Map a non-stream `usage` object from chat.completions into our [`Usage`].
+///
+/// OpenAI-style `prompt_tokens_details.cached_tokens` is a **subset** of
+/// `prompt_tokens`, not an additive Anthropic-style cache field. Mapping it
+/// into `cache_read_input_tokens` would double-count in `Usage::total()` and
+/// the context meter. We leave cache fields unset here; Anthropic fills them
+/// via its own provider path.
+pub fn usage_from_chat_completion(usage: &Value) -> whycode_core::types::Usage {
+    whycode_core::types::Usage {
+        input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+        output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    }
+}
+
+/// Parse `StreamEvent::Usage` from any chat.completion.chunk that carries usage.
+///
+/// OpenAI's `include_usage` final chunk often has empty `choices` and no
+/// `finish_reason` — only a `usage` object. Older parsers that required
+/// `finish_reason` dropped that chunk and the meter never updated.
+pub fn stream_usage_from_chunk(event: &Value) -> Option<whycode_core::types::StreamEvent> {
+    let usage = event.get("usage")?;
+    if !usage.is_object() {
+        return None;
+    }
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let output_tokens = usage
+        .get("completion_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if input_tokens == 0 && output_tokens == 0 {
+        return None;
+    }
+    Some(whycode_core::types::StreamEvent::Usage {
+        input_tokens,
+        output_tokens,
+    })
+}
+
 /// Convert one OpenAI-compatible streaming `choices[0].delta` into events.
 ///
 /// Handles the fields used by Grok / DeepSeek / OpenRouter reasoning models:
@@ -897,5 +951,53 @@ mod tests {
         assert_eq!(parsed, json!({}));
         assert_eq!(parse_tool_arguments(&json!("")), json!({}));
         assert_eq!(parse_tool_arguments(&Value::Null), json!({}));
+    }
+
+    #[test]
+    fn usage_from_chat_completion_ignores_openai_cached_subset() {
+        // cached_tokens is inside prompt_tokens — must not become additive cache_read.
+        let usage = usage_from_chat_completion(&json!({
+            "prompt_tokens": 1200,
+            "completion_tokens": 40,
+            "prompt_tokens_details": { "cached_tokens": 900 },
+        }));
+        assert_eq!(usage.input_tokens, 1200);
+        assert_eq!(usage.output_tokens, 40);
+        assert_eq!(usage.cache_read_input_tokens, None);
+        assert_eq!(usage.cache_creation_input_tokens, None);
+        assert_eq!(usage.total(), 1240);
+    }
+
+    #[test]
+    fn stream_usage_from_final_include_usage_chunk() {
+        // OpenAI final chunk: empty choices, usage only (no finish_reason).
+        let event = json!({
+            "choices": [],
+            "usage": { "prompt_tokens": 1500, "completion_tokens": 12 }
+        });
+        match stream_usage_from_chunk(&event) {
+            Some(whycode_core::types::StreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+            }) => {
+                assert_eq!(input_tokens, 1500);
+                assert_eq!(output_tokens, 12);
+            }
+            other => panic!("expected Usage event, got {other:?}"),
+        }
+        assert!(stream_usage_from_chunk(&json!({ "choices": [] })).is_none());
+        assert!(
+            stream_usage_from_chunk(&json!({
+                "usage": { "prompt_tokens": 0, "completion_tokens": 0 }
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn attach_stream_usage_option_sets_include_usage() {
+        let mut body = json!({ "model": "x", "stream": true });
+        attach_stream_usage_option(&mut body);
+        assert_eq!(body["stream_options"]["include_usage"], true);
     }
 }

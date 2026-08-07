@@ -5,7 +5,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
+use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent};
 
 use super::provider::LlmProvider;
 use async_trait::async_trait;
@@ -125,12 +125,7 @@ impl LlmProvider for GroqProvider {
         Ok(LlmResponse {
             content,
             stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: Usage {
-                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                cache_read_input_tokens: None,
-                cache_creation_input_tokens: None,
-            },
+            usage: super::openai_compat::usage_from_chat_completion(usage),
             model: model.to_string(),
         })
     }
@@ -142,7 +137,8 @@ impl LlmProvider for GroqProvider {
         model: &str,
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
-        let body = self.build_body(request, model);
+        let mut body = self.build_body(request, model);
+        super::openai_compat::attach_stream_usage_option(&mut body);
 
         let resp = super::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
@@ -189,14 +185,11 @@ impl LlmProvider for GroqProvider {
                                     yield Ok(ev);
                                 }
 
-                                if let Some(finish) = choice["finish_reason"].as_str()
-                                    && !finish.is_empty()
-                                        && let Some(usage) = event.get("usage") {
-                                            yield Ok(StreamEvent::Usage {
-                                                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                                                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                                            });
-                                        }
+                                if let Some(ev) =
+                                    super::openai_compat::stream_usage_from_chunk(&event)
+                                {
+                                    yield Ok(ev);
+                                }
                             }
                         }
                     }
