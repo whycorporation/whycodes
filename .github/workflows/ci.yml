@@ -12,10 +12,13 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Linux jobs run on the repo's self-hosted runner (no GitHub-hosted minutes).
+# Windows/macOS matrix is off by default so exhausted GH minutes don't block CI.
+# Re-enable via repository variable CI_MULTI_OS=true when minutes are available.
 jobs:
   check:
     name: Check & Lint
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -29,7 +32,7 @@ jobs:
 
   budgets:
     name: Budgets
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -52,28 +55,46 @@ jobs:
           sh -n scripts/install.sh
           sh -n scripts/uninstall.sh
       - name: Installer syntax (PowerShell)
-        shell: pwsh
+        # Self-hosted Linux often has no pwsh; skip rather than fail CI.
         run: |
-          $failed = $false
-          foreach ($file in @('scripts/install.ps1', 'scripts/uninstall.ps1')) {
+          set -euo pipefail
+          if ! command -v pwsh >/dev/null 2>&1; then
+            echo "pwsh not installed; skipping installer.ps1 syntax check"
+            exit 0
+          fi
+          pwsh -NoProfile -Command '
+            $failed = $false
+            foreach ($file in @("scripts/install.ps1", "scripts/uninstall.ps1")) {
               $errors = $null
               [System.Management.Automation.Language.Parser]::ParseFile(
-                  (Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
+                (Resolve-Path $file), [ref]$null, [ref]$errors) | Out-Null
               if ($errors) {
-                  Write-Host "$file : $($errors[0].Message)"
-                  $failed = $true
+                Write-Host "$file : $($errors[0].Message)"
+                $failed = $true
               }
-          }
-          if ($failed) { exit 1 }
-          Write-Host "installer syntax: ok"
+            }
+            if ($failed) { exit 1 }
+            Write-Host "installer syntax: ok"
+          '
 
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Test (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - name: linux
+            runner: self-hosted
+          # GitHub-hosted multi-OS (uses billed minutes). Off unless CI_MULTI_OS=true.
+          - name: windows
+            runner: windows-latest
+          - name: macos
+            runner: macos-latest
+    # Always run Linux (self-hosted). Win/mac only when multi-OS is enabled.
+    if: >-
+      matrix.name == 'linux' ||
+      vars.CI_MULTI_OS == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -82,11 +103,20 @@ jobs:
         run: cargo test --workspace
 
   build:
-    name: Build (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - name: linux
+            runner: self-hosted
+          - name: windows
+            runner: windows-latest
+          - name: macos
+            runner: macos-latest
+    if: >-
+      matrix.name == 'linux' ||
+      vars.CI_MULTI_OS == 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -96,5 +126,5 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v7
         with:
-          name: whycode-${{ matrix.os }}
+          name: whycode-${{ matrix.name }}
           path: target/release/whycode*

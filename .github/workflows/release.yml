@@ -18,19 +18,21 @@ env:
 jobs:
   build:
     name: ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Linux on self-hosted (no GitHub-hosted minutes).
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            runner: self-hosted
+          # Apple/Windows still need GitHub-hosted (or extra self-hosted runners).
           - target: aarch64-apple-darwin
-            os: macos-latest
+            runner: macos-latest
           - target: x86_64-apple-darwin
-            os: macos-latest
+            runner: macos-latest
           - target: x86_64-pc-windows-msvc
-            os: windows-latest
+            runner: windows-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -77,7 +79,7 @@ jobs:
   publish:
     name: Publish
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v7
@@ -101,6 +103,10 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
+          if ! command -v gh >/dev/null 2>&1; then
+            echo "gh CLI is required on the self-hosted runner for release publish" >&2
+            exit 1
+          fi
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
