@@ -1,5 +1,4 @@
 // ── ui/header.rs: thin top bar (session chrome) ────────────────────────
-// OpenCode session route doesn't use a heavy title box; keep a 1-line bar.
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;

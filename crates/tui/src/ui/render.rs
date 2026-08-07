@@ -1,22 +1,13 @@
-// ── ui/render.rs: OpenCode home + session shells ───────────────────────
+// ── ui/render.rs: home + session shells ────────────────────────────────
 //
-// home.tsx:
-//   header (status · shortcuts)
-//   [grow] logo [gap] prompt(maxW)
-//   footer ( branch · cwd, click-to-copy)
-//
-// session/index.tsx:
-//   header (status · shortcuts)
-//   row [ main(pad 2) | sidebar? ]
-//   main: scroll messages | prompt
-//   footer ( branch · cwd)
-//
-// Grok Build additions: turn-status strip above the prompt while busy,
+// Home: header · centered logo + prompt · footer (branch · cwd).
+// Session: header · [ main | sidebar? ] · footer; main has side pad,
+// messages scroll, prompt at bottom. Turn-status strip while busy;
 // viewport metrics for row-based scrollback selection.
 
 use crate::app::{AgentState, TuiApp};
-use crate::opencode_tokens::layout as oc;
 use crate::theme::ThemePalette;
+use crate::tokens::layout;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
@@ -57,7 +48,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp) {
         // Toast above help so "Copied N chars" is visible after a modal select.
         toast::render(
             frame,
-            oc::inset_safe(frame.area()),
+            layout::inset_safe(frame.area()),
             app.toasts.visible(),
             &palette,
         );
@@ -70,7 +61,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp) {
     // the user's attention already, and covering its corner would obscure it.
     toast::render(
         frame,
-        oc::inset_safe(frame.area()),
+        layout::inset_safe(frame.area()),
         app.toasts.visible(),
         &palette,
     );
@@ -162,7 +153,7 @@ fn paint_selection(frame: &mut Frame, app: &TuiApp) {
 }
 
 fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
-    let area = oc::inset_safe(frame.area());
+    let area = layout::inset_safe(frame.area());
 
     // Top: status · shortcuts. Bottom: git branch + cwd (click-to-copy).
     let outer = Layout::default()
@@ -185,13 +176,13 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     }
 }
 
-/// home.tsx vertical stack — logo area grows, prompt fixed, no header chrome
+/// Home vertical stack: logo area grows, prompt fixed, no header chrome
 fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     let content = Rect {
         x: area.x,
         y: area.y,
         width: area.width,
-        height: area.height.saturating_sub(oc::BOTTOM_PAD),
+        height: area.height.saturating_sub(layout::BOTTOM_PAD),
     };
     let turn_h = turn_status_height(app);
     // Prefer the height the prompt actually needs. Leave a few rows for the
@@ -223,12 +214,12 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
 /// session: optional sidebar + padded main column
 fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     let main = if app.sidebar.visible && area.width >= 36 {
-        let w = oc::SIDEBAR_WIDTH.min(area.width / 3).max(24);
+        let w = layout::SIDEBAR_WIDTH.min(area.width / 3).max(24);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(20), Constraint::Length(w)])
             .split(area);
-        // OpenCode: main left, sidebar right
+        // Main left, sidebar right
         sidebar::render(frame, chunks[1], app, palette);
         chunks[0]
     } else {
@@ -236,10 +227,10 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     };
 
     let inset = Rect {
-        x: main.x.saturating_add(oc::SIDE_PAD),
+        x: main.x.saturating_add(layout::SIDE_PAD),
         y: main.y,
-        width: main.width.saturating_sub(oc::SIDE_PAD * 2),
-        height: main.height.saturating_sub(oc::BOTTOM_PAD),
+        width: main.width.saturating_sub(layout::SIDE_PAD * 2),
+        height: main.height.saturating_sub(layout::BOTTOM_PAD),
     };
 
     let turn_h = turn_status_height(app);

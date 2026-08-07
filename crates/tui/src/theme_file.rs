@@ -1,10 +1,9 @@
 //! Themes loaded from JSON.
 //!
-//! The built-in themes in [`crate::theme`] are compiled in, so a fresh install
-//! has themes with no files present. This module is the override layer: it
-//! reads theme files from the config directory using
-//! [opencode's schema](https://opencode.ai/theme.json), which means opencode's
-//! theme files work here unmodified.
+//! Built-in palettes in [`crate::theme`] ship compiled-in. This module is the
+//! override layer: theme files under the config directory use the community
+//! [theme JSON schema](https://opencode.ai/theme.json) so existing files load
+//! unmodified.
 //!
 //! The schema has two levels. `defs` names colours, and `theme` assigns those
 //! names to roles, once for a dark terminal and once for a light one:
@@ -279,7 +278,7 @@ mod tests {
     }"##;
 
     #[test]
-    fn parses_the_opencode_schema() {
+    fn parses_the_theme_schema() {
         let file = ThemeFile::parse(SAMPLE).unwrap();
         assert_eq!(file.defs.len(), 5);
         assert!(file.theme.contains_key("background"));

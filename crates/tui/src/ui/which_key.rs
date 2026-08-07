@@ -1,4 +1,4 @@
-// ── which_key.rs: Keyboard shortcut popup (like OpenCode's which-key.tsx) ─
+// ── which_key.rs: Keyboard shortcut popup ──────────────────────────────
 // Activated by pressing '?' or Ctrl+H. Shows context-appropriate shortcuts.
 // When the binding list overflows, a solid scrollbar is painted on the right.
 

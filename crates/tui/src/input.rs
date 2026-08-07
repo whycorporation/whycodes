@@ -69,7 +69,7 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     if text.is_empty() {
         return;
     }
-    // Large pastes collapse to `[pasted #N ~ L lines]` (OpenCode-style) so the
+    // Large pastes collapse to `[pasted #N ~ L lines]` so the
     // prompt does not reflow/flicker; full body is restored on submit.
     app.insert_paste_text(&text);
     app.slash_suggest.refresh(&app.input_buffer);

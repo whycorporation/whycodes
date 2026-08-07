@@ -1,4 +1,4 @@
-//! TUI event loop — streaming agent + permission dialogs (OpenCode-style).
+//! TUI event loop — streaming agent + permission dialogs.
 
 use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
@@ -188,7 +188,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
     let mut app = TuiApp::new(tui_cfg);
 
-    // OpenCode-style chrome
+    // Session chrome labels
     app.provider_name = opts.provider.clone();
     app.model_name = opts.model.clone();
     app.agent_name = opts.agent_name.clone();
@@ -496,7 +496,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // Title may arrive before TurnOutcome restores the real session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
 
-    // Keep home empty so OpenCode-style logo shows (no system spam).
+    // Keep home empty so the brand logo shows (no system spam).
     // Key missing is communicated via footer "Get started /connect".
     if missing_key {
         app.status_message = "no API key · /connect".to_string();

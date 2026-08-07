@@ -1,4 +1,4 @@
-// ── startup.rs: Startup loading screen (like OpenCode's startup-loading.tsx) ─
+// ── startup.rs: Startup loading screen ─────────────────────────────────
 // Shows version, provider info, project path with a loading spinner.
 
 use ratatui::{

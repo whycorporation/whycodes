@@ -1,39 +1,11 @@
-//! Design tokens reverse-engineered from OpenCode TUI
-//! (`anomalyco/opencode` packages/tui).
-//!
-//! Key layout rules (session/index.tsx + home.tsx + footer.tsx + border.ts):
-//!
-//! Session:
-//!   row [ main | sidebar? ]
-//!   main: paddingLeft=2, paddingRight=2, paddingBottom=1
-//!     scrollbox (messages, sticky bottom)
-//!     prompt (flexShrink=0)
-//!
-//! User message:
-//!   border left only (┃), borderColor = agent color
-//!   bg = backgroundPanel (#141414)
-//!   paddingTop=1, paddingBottom=1, paddingLeft=2
-//!   marginTop=1 between messages
-//!
-//! Assistant:
-//!   free-flow body at content col 0 (no extra indent — shell SIDE_PAD is enough)
-//!   tools / epilogue share a single 2-col meta gutter (not stacked deeper)
-//!   epilogue: Grok-style "Worked for 12s" (muted; was OpenCode "▣ agent")
-//!
-//! Home:
-//!   vertical center logo (4 rows) + gap + prompt (maxWidth 75 / 70%)
-//!   footer optional
-//!
-//! Borders:
-//!   EmptyBorder: no box on messages scroll
-//!   SplitBorder: vertical "┃" only
+//! TUI design tokens: default dark palette, layout metrics, home logo.
 
 use ratatui::style::Color;
 
+/// Default dark palette (step greys + semantic accents).
 pub mod dark {
     use super::Color;
 
-    // theme/assets/opencode.json
     pub const STEP1_BG: Color = Color::Rgb(0x0a, 0x0a, 0x0a);
     pub const STEP2_PANEL: Color = Color::Rgb(0x14, 0x14, 0x14);
     pub const STEP3_ELEMENT: Color = Color::Rgb(0x1e, 0x1e, 0x1e);
@@ -53,58 +25,42 @@ pub mod dark {
     pub const TEXT_MUTED: Color = Color::Rgb(0x80, 0x80, 0x80);
 }
 
-/// OpenCode logo mark (logo.ts) — "OPEN" + "CODE" block font.
-/// For whycode home we render this as brand homage with "whycode" subtitle,
-/// or use LOGO_WHY / LOGO_CODE split.
-pub const LOGO_OPEN: &[&str] = &[
-    "                   ",
-    "█▀▀█ █▀▀█ █▀▀█ █▀▀▄",
-    "█  █ █  █ █▀▀▀ █  █",
-    "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀▀▀▀",
-];
-
-pub const LOGO_CODE: &[&str] = &[
-    "             ▄     ",
-    "█▀▀▀ █▀▀█ █▀▀█ █▀▀█",
-    "█    █  █ █  █ █▀▀ ",
-    "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
-];
-
-/// whycode brand as two blocks: WHY + CODE (same visual language)
-pub const LOGO_WHY: &[&str] = &[
+/// Home screen block logo: "WHY" + "CODE".
+pub const HOME_LOGO_WHY: &[&str] = &[
     "                   ",
     "█   █ █   █ █   █  ",
     "█ █ █ █▀▀▀█ █▄▄▄█  ",
     "▀█▀█▀ █   █   █    ",
 ];
 
-pub const LOGO_WHY_CODE: &[&str] = &[
+pub const HOME_LOGO_CODE: &[&str] = &[
     "             ▄     ",
     "█▀▀▀ █▀▀█ █▀▀█ █▀▀█",
     "█    █  █ █  █ █▀▀ ",
     "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
 ];
 
+/// Spacing and chrome metrics shared by home / session shells.
 pub mod layout {
     use ratatui::layout::Rect;
 
-    /// home.tsx: maxWidth={75} or 70% of terminal
+    /// Prompt max width: absolute cap, or fraction of terminal width.
     pub const PROMPT_MAX_WIDTH: u16 = 75;
     pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
-    /// session main paddingLeft/Right = 2
+    /// Session main column horizontal padding.
     pub const SIDE_PAD: u16 = 2;
-    /// Gap under the prompt (bottom breathing room inside body)
+    /// Gap under the prompt (bottom breathing room inside body).
     pub const BOTTOM_PAD: u16 = 1;
-    /// Terminal edge breathing room (all four sides)
+    /// Terminal edge insets (all four sides).
     pub const SAFE_TOP: u16 = 1;
     pub const SAFE_BOTTOM: u16 = 1;
     pub const SAFE_LEFT: u16 = 1;
     pub const SAFE_RIGHT: u16 = 1;
-    /// legacy OpenCode user rail gap (user prompts now use Grok `❯ ` prefix)
+    /// Extra gap after a user message block.
     pub const USER_PAD: u16 = 1;
-    /// shared left gutter for tools / epilogue / meta under an assistant turn
+    /// Shared left gutter for tools / epilogue / meta under an assistant turn.
     pub const ASSISTANT_PAD: u16 = 2;
-    /// sidebar width ≈ 42 cols
+    /// Sidebar preferred width (clamped by terminal size at render time).
     pub const SIDEBAR_WIDTH: u16 = 42;
 
     /// Shrink `area` by the safe-area insets on every edge.

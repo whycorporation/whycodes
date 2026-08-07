@@ -28,8 +28,7 @@ pub enum AppMode {
 }
 
 // ── Dialog Manager ─────────────────────────────────────────────────────
-/// Centralized dialog stack — OpenCode pattern with DialogProvider.
-/// Only one dialog is "active" at a time but we track them via an enum.
+/// Centralized dialog stack. Only one dialog is active at a time.
 #[derive(Debug, Clone)]
 pub enum DialogKind {
     Provider,
@@ -44,7 +43,7 @@ pub enum DialogKind {
         message: String,
         on_confirm: ConfirmAction,
     },
-    /// OpenCode-style tool permission prompt (y/n)
+    /// Tool permission prompt (y/n)
     Permission {
         tool_name: String,
         detail: String,
@@ -1048,7 +1047,7 @@ pub struct TuiApp {
     pub primary_agents: Vec<String>,
     pub agent_cycle_idx: usize,
 
-    // ── session chrome (OpenCode status header/footer) ──
+    // ── session chrome (status header / footer) ──
     pub provider_name: String,
     pub model_name: String,
     pub agent_name: String,
@@ -1891,7 +1890,7 @@ impl TuiApp {
     }
 
     /// Insert text at the cursor. Large pastes become a collapsed `[pasted #N ~ L lines]`
-    /// token (OpenCode-style) so the prompt stays short and does not reflow/flicker.
+    /// token so the prompt stays short and does not reflow/flicker.
     pub fn insert_paste_text(&mut self, text: &str) {
         if text.is_empty() {
             return;

@@ -1,4 +1,4 @@
-//! Collapsed paste blocks for the prompt (OpenCode / Claude Code style).
+//! Collapsed paste blocks for the prompt.
 //!
 //! Large pastes are stored separately and shown in the input as a short
 //! token like `[pasted #1 ~ 42 lines]`. On submit the tokens expand back
@@ -49,7 +49,7 @@ pub fn should_collapse(text: &str) -> bool {
 
 /// Build the visible placeholder inserted into `input_buffer`.
 ///
-/// Format matches OpenCode: `[pasted #N ~ L lines]` (singular `line` when L=1).
+/// Placeholder format: `[pasted #N ~ L lines]` (singular `line` when L=1).
 pub fn placeholder(id: u32, line_count: usize) -> String {
     let n = line_count.max(1);
     let unit = if n == 1 { "line" } else { "lines" };

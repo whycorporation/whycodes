@@ -1,7 +1,6 @@
-// ── ui/prompt.rs: Grok-style boxed prompt ─────────────────────────────
-// Chrome from Grok Build (`prompt_widget`): rounded box ╭─╮│╰─╯, ❯
-// prefix, model/agent caption on the bottom border. No panel fill —
-// sits on the canvas background (Grok does the same).
+// ── ui/prompt.rs: boxed prompt ─────────────────────────────────────────
+// Rounded box ╭─╮│╰─╯, ❯ prefix, agent/model on the bottom border.
+// No panel fill — sits on the canvas background.
 //
 // Layout:
 //   (blank gap above the box)
@@ -13,7 +12,7 @@
 // The input block grows upward as text wraps, capped at MAX_INPUT_ROWS.
 
 use crate::app::{AgentState, AppMode, TuiApp};
-use crate::opencode_tokens::layout as oc_layout;
+use crate::tokens::layout;
 use crate::theme::ThemePalette;
 use crate::widgets::wrap::wrap_text;
 use ratatui::{
@@ -101,7 +100,7 @@ fn content_width(app: &TuiApp, area_width: u16) -> u16 {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    // Center prompt on home (empty messages) with max width like home.tsx
+    // Center prompt on home (empty messages) with max width cap
     let area = if app.messages.is_empty() {
         center_prompt_area(area)
     } else {
@@ -514,8 +513,8 @@ fn pick_hint() -> &'static str {
 }
 
 fn center_prompt_area(area: Rect) -> Rect {
-    let max_w = oc_layout::PROMPT_MAX_WIDTH
-        .min((area.width as f32 * oc_layout::PROMPT_WIDTH_RATIO) as u16)
+    let max_w = layout::PROMPT_MAX_WIDTH
+        .min((area.width as f32 * layout::PROMPT_WIDTH_RATIO) as u16)
         .max(40)
         .min(area.width.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(max_w)) / 2;

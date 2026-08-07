@@ -1,11 +1,10 @@
 // ── ui/chat.rs: session message list ───────────────────────────────────
-// User prompt: Grok-style elevated band + ❯ prefix (not OpenCode ┃ panel)
-// Assistant: free parts + Grok turn footer ("Worked for 12s")
-// Home: centered dual-block logo
+// User: elevated band + ❯ prefix. Assistant: free-flow body + turn footer.
+// Home: centered dual-block logo.
 
 use crate::app::{ChatBlock, ChatRole, TuiApp};
-use crate::opencode_tokens::{LOGO_WHY, LOGO_WHY_CODE, layout as oc};
 use crate::theme::ThemePalette;
+use crate::tokens::{HOME_LOGO_CODE, HOME_LOGO_WHY, layout};
 use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
 use ratatui::{
@@ -107,7 +106,7 @@ pub fn visible_range(total: usize, height: usize, scroll_offset: usize) -> (usiz
 
 fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
     let mut lines: Vec<Line> = Vec::new();
-    // Vertical centering like home.tsx flexGrow spacers
+    // Vertical centering via top spacers
     let content_h = 4 + 1 + 2 + 2; // logo + gap + meta + hints
     let top = area.height.saturating_sub(content_h) / 2;
     for _ in 0..top {
@@ -115,7 +114,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     }
 
     // Center logo horizontally
-    let logo_w = LOGO_WHY[1].chars().count() + 1 + LOGO_WHY_CODE[1].chars().count();
+    let logo_w = HOME_LOGO_WHY[1].chars().count() + 1 + HOME_LOGO_CODE[1].chars().count();
     let left_pad = area
         .width
         .saturating_sub(logo_w as u16 + 2)
@@ -125,10 +124,10 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     for i in 0..4 {
         lines.push(Line::from(vec![
             Span::raw(pad.clone()),
-            Span::styled(LOGO_WHY[i].to_string(), Style::default().fg(palette.dim)),
+            Span::styled(HOME_LOGO_WHY[i].to_string(), Style::default().fg(palette.dim)),
             Span::raw(" "),
             Span::styled(
-                LOGO_WHY_CODE[i].to_string(),
+                HOME_LOGO_CODE[i].to_string(),
                 Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -356,7 +355,7 @@ fn render_message(
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    // marginTop=1 between messages (OpenCode)
+    // Blank line between messages
     if index > 0 {
         lines.push(Line::from(""));
     }
@@ -453,9 +452,7 @@ fn render_message(
                     ));
                 }
             }
-            // Grok-style turn footer (session event marker), not OpenCode's
-            // "▣ agent · 12s" badge — past tense, muted, no agent name clutter.
-            //
+            // Turn footer: past tense, muted duration ("Worked for 12s").
             // Provider/model live under the prompt meta row once.
             let is_last = index + 1 == app.messages.len();
             let still_streaming = app.is_busy() && is_last;
@@ -625,7 +622,7 @@ fn accent_line(content: Vec<Span<'static>>, show_rail: bool, rail_style: Style) 
 
 /// Shared left gutter for tools / epilogue (one level under free-flow body).
 fn meta_gutter() -> Span<'static> {
-    Span::raw(" ".repeat(oc::ASSISTANT_PAD as usize))
+    Span::raw(" ".repeat(layout::ASSISTANT_PAD as usize))
 }
 
 /// Grok session event: `Worked for 12s` (+ optional token usage on last turn).
@@ -1413,7 +1410,7 @@ fn tool_result_diff(
         // starts from a painted cell (Grok full-width green/red band).
         let gutter = if line_bg.is_some() {
             Span::styled(
-                " ".repeat(oc::ASSISTANT_PAD as usize),
+                " ".repeat(layout::ASSISTANT_PAD as usize),
                 paint(body_color, false),
             )
         } else {

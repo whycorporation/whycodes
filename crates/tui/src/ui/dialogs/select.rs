@@ -1,13 +1,8 @@
-//! A list dialog with a moving selection.
+//! Shared list picker dialog (model, session, workspace, …).
 //!
-//! opencode builds every picker — model, session, workspace, account — from one
-//! `dialog-select` component rather than writing each from scratch. The same
-//! applies here: a picker is a title, a list of rows, a cursor and a footer, and
-//! a second copy of that is a second place for the highlight style to drift.
-//!
-//! Chrome matches Grok `ModalWindow` (via [`dialog_frame`]).
-//! When the list overflows the content area, a solid scrollbar is painted on
-//! the right edge.
+//! One component for title + rows + cursor + footer keeps highlight style
+//! consistent. Chrome is drawn via [`dialog_frame`]; overflow gets a solid
+//! scrollbar on the right edge.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;

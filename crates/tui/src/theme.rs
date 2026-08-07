@@ -1,6 +1,5 @@
 // ── theme.rs: Color theme definitions ──────────────────────────────────
-// Port of OpenCode's 29 themes — each theme provides a palette of
-// semantic color roles used throughout the TUI.
+// Built-in palettes of semantic color roles used throughout the TUI.
 
 use ratatui::style::Color;
 use std::fmt;
@@ -352,9 +351,9 @@ fn indexed_rgb(i: u8) -> (u8, u8, u8) {
 
 // ── Palette factories ──────────────────────────────────────────────────
 #[allow(clippy::too_many_lines)]
-/// Default = exact OpenCode theme dark tokens (`theme/assets/opencode.json`).
+/// Default dark palette from [`crate::tokens::dark`].
 fn palette_default_dark() -> ThemePalette {
-    use crate::opencode_tokens::dark::*;
+    use crate::tokens::dark::*;
     ThemePalette {
         bg: STEP1_BG,
         fg: TEXT,
