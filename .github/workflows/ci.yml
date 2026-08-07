@@ -12,9 +12,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# Linux jobs run on the repo's self-hosted runner (no GitHub-hosted minutes).
-# Windows/macOS matrix is off by default so exhausted GH minutes don't block CI.
-# Re-enable via repository variable CI_MULTI_OS=true when minutes are available.
+# Linux on self-hosted (no GitHub-hosted minutes).
+# Job-level `if` cannot use `matrix` — multi-OS is a separate optional job set.
+# When minutes are available, set repo variable CI_MULTI_OS=true to also run
+# test-multi / build-multi on windows-latest and macos-latest.
 jobs:
   check:
     name: Check & Lint
@@ -78,23 +79,8 @@ jobs:
           '
 
   test:
-    name: Test (${{ matrix.name }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux
-            runner: self-hosted
-          # GitHub-hosted multi-OS (uses billed minutes). Off unless CI_MULTI_OS=true.
-          - name: windows
-            runner: windows-latest
-          - name: macos
-            runner: macos-latest
-    # Always run Linux (self-hosted). Win/mac only when multi-OS is enabled.
-    if: >-
-      matrix.name == 'linux' ||
-      vars.CI_MULTI_OS == 'true'
+    name: Test (linux)
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -103,20 +89,8 @@ jobs:
         run: cargo test --workspace
 
   build:
-    name: Build (${{ matrix.name }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      matrix:
-        include:
-          - name: linux
-            runner: self-hosted
-          - name: windows
-            runner: windows-latest
-          - name: macos
-            runner: macos-latest
-    if: >-
-      matrix.name == 'linux' ||
-      vars.CI_MULTI_OS == 'true'
+    name: Build (linux)
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -126,5 +100,40 @@ jobs:
       - name: Upload binary
         uses: actions/upload-artifact@v7
         with:
-          name: whycode-${{ matrix.name }}
+          name: whycode-linux
+          path: target/release/whycode*
+
+  # Optional GitHub-hosted multi-OS (uses billed minutes).
+  test-multi:
+    name: Test (${{ matrix.os }})
+    if: vars.CI_MULTI_OS == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --workspace
+
+  build-multi:
+    name: Build (${{ matrix.os }})
+    if: vars.CI_MULTI_OS == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build release
+        run: cargo build --release --workspace
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: whycode-${{ matrix.os }}
           path: target/release/whycode*
