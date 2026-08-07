@@ -1084,18 +1084,27 @@ impl Agent {
                         assembler.on_tool_use_delta(&id, &input_json_delta);
                     }
                     StreamEvent::Thinking { text } => {
+                        if text.is_empty() {
+                            continue;
+                        }
                         if ttft_ms.is_none() {
                             ttft_ms = Some(user_turn_t0.elapsed().as_millis());
                         }
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
-                        tracing::debug!("Thinking: {}", text);
+                        tracing::trace!(
+                            n = text.len(),
+                            "thinking delta"
+                        );
                     }
                     StreamEvent::ThinkingDelta { text } => {
+                        if text.is_empty() {
+                            continue;
+                        }
                         if ttft_ms.is_none() {
                             ttft_ms = Some(user_turn_t0.elapsed().as_millis());
                         }
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
-                        tracing::debug!("Thinking: {}", text);
+                        tracing::trace!(n = text.len(), "thinking delta");
                     }
                     StreamEvent::MessageStop => break,
                     StreamEvent::Usage {

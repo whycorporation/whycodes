@@ -600,6 +600,16 @@ fn thinking_lines(
             ));
         }
     }
+    if t.is_truncated_expanded() {
+        lines.push(accent_line(
+            vec![Span::styled(
+                "… expanded view truncated for speed  ·  (e collapse)".to_string(),
+                body_style,
+            )],
+            true,
+            rail_style,
+        ));
+    }
     lines
 }
 

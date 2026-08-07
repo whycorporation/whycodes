@@ -297,7 +297,8 @@ pub fn stream_events_for_tool_calls(tool_calls: &[Value]) -> Vec<whycode_core::t
 pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycode_core::types::StreamEvent> {
     use whycode_core::types::StreamEvent;
 
-    let mut out = Vec::new();
+    // Hot path: one SSE line per token. Cap small to avoid realloc.
+    let mut out = Vec::with_capacity(3);
 
     // Reasoning / extended thinking (order: most common first).
     if let Some(text) = reasoning_text_from_delta(delta) {
@@ -313,6 +314,7 @@ pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycode_core::types::S
     }
 
     if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+        out.reserve(tool_calls.len());
         out.extend(stream_events_for_tool_calls(tool_calls));
     }
 
@@ -325,15 +327,21 @@ pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycode_core::types::S
 /// - DeepSeek / many OpenAI-compat: `reasoning_content`
 /// - Some Grok / OpenRouter: `reasoning` (string) or `reasoning.content`
 /// - A few: `thinking`
+///
+/// Empty / whitespace-only values are ignored so we never emit a no-op
+/// `ThinkingDelta` that would dirty the TUI for nothing.
 pub fn reasoning_text_from_delta(delta: &Value) -> Option<String> {
     for key in ["reasoning_content", "reasoning", "thinking"] {
         match delta.get(key) {
-            Some(Value::String(s)) if !s.is_empty() => return Some(s.clone()),
+            Some(Value::String(s)) if !s.is_empty() && !s.chars().all(char::is_whitespace) => {
+                return Some(s.clone());
+            }
             Some(Value::Object(map)) => {
                 // Nested: `{ "content": "…" }` or `{ "text": "…" }`
                 for nested in ["content", "text"] {
                     if let Some(s) = map.get(nested).and_then(|v| v.as_str())
                         && !s.is_empty()
+                        && !s.chars().all(char::is_whitespace)
                     {
                         return Some(s.to_string());
                     }
@@ -753,6 +761,26 @@ mod tests {
             [StreamEvent::ThinkingDelta { text }] => assert_eq!(text, "nested thought"),
             other => panic!("expected single ThinkingDelta, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn whitespace_only_reasoning_is_skipped() {
+        let delta = serde_json::json!({
+            "reasoning_content": "  \n\t  ",
+            "content": "hi"
+        });
+        let events = stream_events_for_chat_delta(&delta);
+        assert_eq!(events.len(), 1);
+        assert!(matches!(
+            &events[0],
+            whycode_core::types::StreamEvent::TextDelta { text } if text == "hi"
+        ));
+    }
+
+    #[test]
+    fn empty_delta_emits_nothing() {
+        let delta = serde_json::json!({"role": "assistant"});
+        assert!(stream_events_for_chat_delta(&delta).is_empty());
     }
 
     // ── Rakip regresyonları: OpenAI-uyum şema sanitize (whycode-watch) ─────

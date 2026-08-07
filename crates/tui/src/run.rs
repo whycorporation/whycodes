@@ -1674,7 +1674,14 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         }
         TurnEvent::ToolStart { id, name, input } => {
             app.finish_open_thinking();
-            app.status_message = format!("tool: {name}");
+            // Grok-style labels in the busy strip (`bash` → `run`).
+            let shown = match name.as_str() {
+                "bash" | "shell" | "run_terminal_command" => "run",
+                "read_file" => "read",
+                "search_code" | "rg" => "grep",
+                other => other,
+            };
+            app.status_message = format!("tool: {shown}");
             app.add_tool_call(id, name, input);
         }
         TurnEvent::ToolEnd {

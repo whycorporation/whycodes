@@ -516,6 +516,14 @@ impl ChatMessage {
 /// Matches Grok Build default `truncated_lines: 3`.
 pub const THINKING_LIVE_TAIL_LINES: usize = 3;
 
+/// Max lines painted when the user expands a finished thinking block.
+/// Unbounded expand of a long reasoning dump freezes soft-wrap paint.
+pub const THINKING_EXPANDED_MAX_LINES: usize = 200;
+
+/// Hard cap on stored thinking text (bytes). Prevents runaway memory if a
+/// provider streams multi‑MB reasoning or resends full snapshots every chunk.
+pub const THINKING_MAX_CHARS: usize = 96 * 1024;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatRole {
     User,
@@ -567,12 +575,14 @@ pub struct ThinkingBlock {
 
 impl ThinkingBlock {
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
+        let mut b = Self {
+            text: String::new(),
             started_at: Instant::now(),
             finished_at: None,
             collapsed: true,
-        }
+        };
+        b.push_delta(text.into().as_str());
+        b
     }
 
     pub fn is_running(&self) -> bool {
@@ -617,6 +627,51 @@ impl ThinkingBlock {
         }
     }
 
+    /// Merge a stream fragment into this block.
+    ///
+    /// Handles both true deltas and full-snapshot providers (each chunk is the
+    /// complete reasoning so far). Dedupes exact re-sends. Caps at
+    /// [`THINKING_MAX_CHARS`].
+    pub fn push_delta(&mut self, delta: &str) {
+        if delta.is_empty() {
+            return;
+        }
+        // Full-snapshot style: chunk starts with everything we already have.
+        if !self.text.is_empty() && delta.starts_with(self.text.as_str()) {
+            let rest = &delta[self.text.len()..];
+            if !rest.is_empty() {
+                Self::push_capped(&mut self.text, rest);
+            }
+            return;
+        }
+        // Exact re-delivery of the last fragment (gateway retries).
+        if self.text.ends_with(delta) {
+            return;
+        }
+        Self::push_capped(&mut self.text, delta);
+    }
+
+    fn push_capped(buf: &mut String, s: &str) {
+        if buf.len() >= THINKING_MAX_CHARS {
+            return;
+        }
+        let room = THINKING_MAX_CHARS - buf.len();
+        if s.len() <= room {
+            buf.push_str(s);
+            return;
+        }
+        let mut end = room;
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end > 0 {
+            buf.push_str(&s[..end]);
+        }
+        if !buf.ends_with('…') {
+            buf.push('…');
+        }
+    }
+
     /// Whether the body should be painted (live tail or full expand).
     pub fn show_body(&self) -> bool {
         if self.is_running() {
@@ -628,6 +683,10 @@ impl ThinkingBlock {
     }
 
     /// Lines of body text to render given current fold/run state.
+    ///
+    /// - Live + collapsed → last [`THINKING_LIVE_TAIL_LINES`]
+    /// - Expanded → up to [`THINKING_EXPANDED_MAX_LINES`] (from the start;
+    ///   footer in the renderer signals truncation)
     pub fn body_lines(&self) -> Vec<&str> {
         if !self.show_body() {
             return Vec::new();
@@ -638,13 +697,40 @@ impl ThinkingBlock {
             if lines.len() > n {
                 return lines[lines.len() - n..].to_vec();
             }
+            return lines;
+        }
+        // Expanded (running or finished).
+        if lines.len() > THINKING_EXPANDED_MAX_LINES {
+            return lines[..THINKING_EXPANDED_MAX_LINES].to_vec();
         }
         lines
     }
 
+    /// True when live tail dropped earlier lines.
     pub fn is_truncated_live(&self) -> bool {
-        self.is_running() && self.collapsed && self.text.lines().count() > THINKING_LIVE_TAIL_LINES
+        self.is_running()
+            && self.collapsed
+            && line_count_gt(&self.text, THINKING_LIVE_TAIL_LINES)
     }
+
+    /// True when expanded paint hit [`THINKING_EXPANDED_MAX_LINES`].
+    pub fn is_truncated_expanded(&self) -> bool {
+        self.show_body()
+            && !(self.is_running() && self.collapsed)
+            && line_count_gt(&self.text, THINKING_EXPANDED_MAX_LINES)
+    }
+}
+
+/// `true` when `text` has more than `n` lines without allocating a full vec.
+fn line_count_gt(text: &str, n: usize) -> bool {
+    let mut lines = 0usize;
+    for _ in text.lines() {
+        lines += 1;
+        if lines > n {
+            return true;
+        }
+    }
+    false
 }
 
 /// Format elapsed wall time for display (`1.4s`, `12s`, `1m12s`).
@@ -2208,14 +2294,21 @@ impl TuiApp {
     }
 
     /// Append a thinking block to the last assistant message.
+    ///
+    /// Empty / whitespace-only fragments are ignored (no empty "Thinking…"
+    /// flash). Open blocks use [`ThinkingBlock::push_delta`] so full-snapshot
+    /// providers do not quadratic-duplicate reasoning.
     pub fn append_thinking(&mut self, text: &str) {
+        if text.is_empty() || text.chars().all(|c| c.is_whitespace()) {
+            return;
+        }
         if let Some(last) = self.messages.last_mut()
             && last.role == ChatRole::Assistant
         {
             // Append to the last *open* thinking block; start a new one after tools/text.
             match last.blocks.last_mut() {
                 Some(ChatBlock::Thinking(t)) if t.is_running() => {
-                    t.text.push_str(text);
+                    t.push_delta(text);
                 }
                 _ => {
                     last.blocks

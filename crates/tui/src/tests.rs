@@ -502,6 +502,70 @@ fn test_thinking_live_tail_truncates() {
 }
 
 #[test]
+fn test_thinking_push_delta_true_deltas() {
+    use crate::app::ThinkingBlock;
+    let mut t = ThinkingBlock::new("Hello");
+    t.push_delta(" world");
+    t.push_delta("!");
+    assert_eq!(t.text, "Hello world!");
+}
+
+#[test]
+fn test_thinking_push_delta_full_snapshot_no_dup() {
+    // Some gateways resend the full reasoning so far each chunk.
+    use crate::app::ThinkingBlock;
+    let mut t = ThinkingBlock::new("ab");
+    t.push_delta("abc");
+    t.push_delta("abcd");
+    t.push_delta("abcd"); // exact re-send
+    assert_eq!(t.text, "abcd");
+}
+
+#[test]
+fn test_thinking_ignores_empty_and_whitespace() {
+    let mut app = TuiApp::new(test_config());
+    app.append_thinking("   \n\t  ");
+    assert!(app.messages.is_empty(), "whitespace must not open a block");
+    app.append_thinking("real");
+    app.append_thinking("");
+    app.append_thinking("\n");
+    match &app.messages[0].blocks[0] {
+        ChatBlock::Thinking(t) => assert_eq!(t.text, "real"),
+        _ => panic!("expected Thinking"),
+    }
+}
+
+#[test]
+fn test_thinking_cap_does_not_grow_unbounded() {
+    use crate::app::{THINKING_MAX_CHARS, ThinkingBlock};
+    let mut t = ThinkingBlock::new("");
+    let chunk = "x".repeat(8 * 1024);
+    for _ in 0..32 {
+        t.push_delta(&chunk);
+    }
+    assert!(
+        t.text.len() <= THINKING_MAX_CHARS + 4,
+        "len={} cap={}",
+        t.text.len(),
+        THINKING_MAX_CHARS
+    );
+}
+
+#[test]
+fn test_thinking_expanded_line_cap() {
+    use crate::app::{THINKING_EXPANDED_MAX_LINES, ThinkingBlock};
+    let mut body = String::new();
+    for i in 0..(THINKING_EXPANDED_MAX_LINES + 50) {
+        body.push_str(&format!("L{i}\n"));
+    }
+    let mut t = ThinkingBlock::new(body);
+    t.finish();
+    t.collapsed = false;
+    assert!(t.is_truncated_expanded());
+    assert_eq!(t.body_lines().len(), THINKING_EXPANDED_MAX_LINES);
+}
+
+#[test]
 fn test_add_tool_call() {
     let mut app = TuiApp::new(test_config());
     app.add_tool_call(
