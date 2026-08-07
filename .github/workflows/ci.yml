@@ -41,6 +41,8 @@ jobs:
         run: python scripts/check_swallowed_error_budget.py
       - name: Dependency boundaries
         run: python scripts/check_dependency_boundaries.py
+      - name: Bench ceilings (optional JSON)
+        run: python scripts/check_bench_ceilings.py
 
       # The installers are the first thing a new user runs and are not covered
       # by cargo. A syntax error in them is invisible until someone pipes one

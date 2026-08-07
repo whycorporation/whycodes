@@ -222,6 +222,8 @@ pub struct Agent {
     activated_tools: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     /// Optional tool cwd override (`worktree enter`).
     cwd_override: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
+    /// Subagent token usage waiting to be folded into the parent session.
+    subagent_usage_pending: Arc<std::sync::Mutex<whycode_core::types::Usage>>,
 }
 
 /// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
@@ -287,6 +289,9 @@ impl Agent {
             max_background_jobs: crate::background::DEFAULT_MAX_BACKGROUND_JOBS,
             activated_tools: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             cwd_override: Arc::new(std::sync::Mutex::new(None)),
+            subagent_usage_pending: Arc::new(std::sync::Mutex::new(
+                whycode_core::types::Usage::default(),
+            )),
         }
     }
 
@@ -524,16 +529,38 @@ impl Agent {
         self.cwd_override.lock().ok().and_then(|g| g.clone())
     }
 
-    /// Connect MCP servers from config and register their tools on a fresh executor.
+    /// Register shell plugins + MCP tools on a fresh executor.
+    ///
+    /// Always reloads built-ins; adds `plugin_*` from global/project
+    /// `plugins.toml`, then MCP server tools when configured.
     pub async fn with_mcp(mut self, config: &whycode_config::Config) -> Self {
-        if config.mcp_servers.is_empty() {
-            return self;
-        }
+        let project = config.general.project_path.as_deref();
         let mut full = ToolExecutor::new();
-        let n = super::mcp_load::register_mcp_tools(&mut full, config).await;
-        if n > 0 {
+        let n_plug = full.register_config_plugins(project);
+        let n_mcp = if config.mcp_servers.is_empty() {
+            0
+        } else {
+            super::mcp_load::register_mcp_tools(&mut full, config).await
+        };
+        if n_plug > 0 || n_mcp > 0 {
             self.tool_executor = Arc::new(full);
-            tracing::info!(count = n, "MCP tools registered");
+            if n_plug > 0 {
+                tracing::info!(count = n_plug, "shell plugins registered");
+            }
+            if n_mcp > 0 {
+                tracing::info!(count = n_mcp, "MCP tools registered");
+            }
+        }
+        self
+    }
+
+    /// Load shell plugins only (when not calling [`Self::with_mcp`]).
+    pub fn with_plugins(mut self, project_dir: Option<&std::path::Path>) -> Self {
+        let mut exec = ToolExecutor::new();
+        let n = exec.register_config_plugins(project_dir);
+        if n > 0 {
+            self.tool_executor = Arc::new(exec);
+            tracing::info!(count = n, "shell plugins registered");
         }
         self
     }
@@ -1276,6 +1303,20 @@ impl Agent {
                 .collect();
 
             session.add_tool_results(results);
+
+            // Fold subagent tokens into this turn + parent session (plan-performance).
+            if let Ok(mut pending) = self.subagent_usage_pending.lock()
+                && !pending.is_empty()
+            {
+                let fold = std::mem::take(&mut *pending);
+                turn_usage.add(&fold);
+                session.add_usage(&fold);
+                tracing::debug!(
+                    input = fold.input_tokens,
+                    output = fold.output_tokens,
+                    "folded subagent usage into parent session"
+                );
+            }
 
             if !failed_tools.is_empty() {
                 let recovery_msg = failed_tools.join("\n");
@@ -2509,6 +2550,11 @@ impl Agent {
                             false,
                             0.0,
                             "Semaphore closed".to_string(),
+                            whycode_core::types::Usage::default(),
+                            None,
+                            project_path,
+                            events_tx,
+                            label,
                         );
                     }
                 };
@@ -2538,6 +2584,11 @@ impl Agent {
                                 false,
                                 0.0,
                                 format!("Failed to create git worktree: {e}"),
+                                whycode_core::types::Usage::default(),
+                                None,
+                                project_path,
+                                events_tx,
+                                label,
                             );
                         }
                     }
@@ -2664,11 +2715,54 @@ impl Agent {
                 let secs = t0.elapsed().as_secs_f64();
                 claims.release_agent(&worker_id);
 
-                let (mut success, mut body) = match result {
-                    Ok(r) => (r.success, r.output),
-                    Err(e) => (false, format!("Swarm worker error: {e}")),
+                let (success, body, worker_usage) = match result {
+                    Ok(r) => (r.success, r.output, r.usage),
+                    Err(e) => (
+                        false,
+                        format!("Swarm worker error: {e}"),
+                        whycode_core::types::Usage::default(),
+                    ),
                 };
 
+                (
+                    worker_id,
+                    spec.subagent_type,
+                    spec.goal,
+                    success,
+                    secs,
+                    body,
+                    worker_usage,
+                    worktree,
+                    project_path,
+                    events_tx,
+                    label,
+                )
+            }));
+        }
+
+        let mut sections = Vec::with_capacity(handles.len());
+        let mut ok = 0usize;
+        let mut merge_conflicts = 0usize;
+        for handle in handles {
+            match handle.await {
+                Ok((
+                    worker_id,
+                    kind,
+                    goal,
+                    mut success,
+                    secs,
+                    mut body,
+                    worker_usage,
+                    worktree,
+                    project_path,
+                    events_tx,
+                    label,
+                )) => {
+                if !worker_usage.is_empty()
+                    && let Ok(mut pending) = self.subagent_usage_pending.lock()
+                {
+                    pending.add(&worker_usage);
+                }
                 if let Some(wt) = worktree {
                     let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
                     for c in &merge.conflicts {
@@ -2692,32 +2786,15 @@ impl Agent {
                     }
                 }
 
-                (
-                    worker_id,
-                    spec.subagent_type,
-                    spec.goal,
-                    success,
-                    secs,
-                    body,
-                )
-            }));
-        }
-
-        let mut sections = Vec::with_capacity(handles.len());
-        let mut ok = 0usize;
-        let mut merge_conflicts = 0usize;
-        for handle in handles {
-            match handle.await {
-                Ok((id, kind, goal, success, secs, body)) => {
-                    if success {
-                        ok += 1;
-                    }
-                    if body.contains("**Merge conflicts:**") {
-                        merge_conflicts += 1;
-                    }
-                    sections.push(crate::swarm::format_worker_report(
-                        &id, &kind, success, secs, &goal, &body,
-                    ));
+                if success {
+                    ok += 1;
+                }
+                if body.contains("**Merge conflicts:**") {
+                    merge_conflicts += 1;
+                }
+                sections.push(crate::swarm::format_worker_report(
+                    &worker_id, &kind, success, secs, &goal, &body,
+                ));
                 }
                 Err(e) => {
                     sections.push(format!("### worker join error\n\n{e}\n"));
@@ -2867,23 +2944,38 @@ impl Agent {
         .with_memory(self.memory.clone());
 
         match runner.run(task, provider_name, model, api_key).await {
-            Ok(result) => ToolResult {
-                tool_call_id: call.id.clone(),
-                content: if result.success {
-                    format!(
-                        "Subagent ({}) completed in {:.1}s:\n\n{}",
-                        subagent_type,
-                        result.duration.as_secs_f64(),
-                        result.output
-                    )
+            Ok(result) => {
+                if !result.usage.is_empty()
+                    && let Ok(mut pending) = self.subagent_usage_pending.lock()
+                {
+                    pending.add(&result.usage);
+                }
+                let usage_note = if result.usage.is_empty() {
+                    String::new()
                 } else {
                     format!(
-                        "Subagent ({}) finished with errors:\n\n{}",
-                        subagent_type, result.output
+                        "\n\n[subagent usage: {} in / {} out]",
+                        result.usage.input_tokens, result.usage.output_tokens
                     )
-                },
-                is_error: !result.success,
-            },
+                };
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: if result.success {
+                        format!(
+                            "Subagent ({}) completed in {:.1}s:\n\n{}{usage_note}",
+                            subagent_type,
+                            result.duration.as_secs_f64(),
+                            result.output
+                        )
+                    } else {
+                        format!(
+                            "Subagent ({}) finished with errors:\n\n{}{usage_note}",
+                            subagent_type, result.output
+                        )
+                    },
+                    is_error: !result.success,
+                }
+            }
             Err(e) => ToolResult {
                 tool_call_id: call.id.clone(),
                 content: format!("Failed to run subagent: {}", e),

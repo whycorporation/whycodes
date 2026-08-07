@@ -161,7 +161,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | MCP HTTP/SSE | ✅ | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | MCP as server (export) | ✅ `mcp serve` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ `codex mcp-server` | ❌ | ⚠️ | ⚠️ |
 | Skills (SKILL.md) | ✅ | ✅★ | ✅ | ✅ | ✅★ | ✅ `.codex/skills` | ✅ `.gemini/skills` | ✅ | ✅ |
-| Plugins / extensions | ⚠️ iskelet | ✅★ | ✅★ | Self-dev★ | ⚠️ | ⚠️ | ✅ extensions | ✅★ TS extensions | ✅ |
+| Plugins / extensions | ✅ plugins.toml | ✅★ | ✅★ | Self-dev★ | ⚠️ | ⚠️ | ✅ extensions | ✅★ TS extensions | ✅ |
 | Custom slash / commands | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ custom cmds | ✅ prompt templates | ✅ |
 | AGENTS.md / CLAUDE.md / GEMINI.md | ✅ AGENTS | ✅ | ✅ AGENTS | ✅ | ✅ CLAUDE | ✅ AGENTS | ✅ GEMINI.md | ✅ AGENTS | ✅ rules / AGENT.md |
 | Self-dev / self-extend | ❌ | ❌ | ❌ | ✅★ | ❌ | ❌ | ❌ | ✅★ self-extensible | ❌ |

@@ -43,6 +43,34 @@ impl PluginManager {
     pub fn find(&self, name: &str) -> Option<&PluginManifest> {
         self.plugins.iter().find(|p| p.name == name)
     }
+
+    /// Discover `plugin.json` / `manifest.json` under a directory (one level).
+    pub fn discover_dir(&mut self, dir: &std::path::Path) -> usize {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut n = 0;
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            for name in ["plugin.json", "manifest.json"] {
+                let mf = path.join(name);
+                if !mf.is_file() {
+                    continue;
+                }
+                if let Ok(text) = std::fs::read_to_string(&mf)
+                    && let Ok(manifest) = serde_json::from_str::<PluginManifest>(&text)
+                {
+                    self.register(manifest);
+                    n += 1;
+                    break;
+                }
+            }
+        }
+        n
+    }
 }
 
 impl Default for PluginManager {

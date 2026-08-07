@@ -11,6 +11,7 @@ pub mod git;
 pub mod github;
 pub mod lsp_tool;
 pub mod mcp_tool;
+pub mod plugin_tool;
 pub mod profile;
 pub mod shell;
 pub mod tool;
@@ -31,5 +32,6 @@ pub use web::{mcp_websearch, webfetch, websearch};
 
 pub use executor::ToolExecutor;
 pub use mcp_tool::{McpCaller, McpToolBridge};
+pub use plugin_tool::PluginShellTool;
 pub use profile::ToolProfile;
 pub use tool::Tool;

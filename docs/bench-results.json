@@ -1,0 +1,8 @@
+{
+  "note": "Optional CI artifact. Populate via: cargo build --release -p whycode-cli && python scripts/bench_startup.py --json docs/bench-results.json",
+  "platform": "linux",
+  "profile": "release",
+  "version_ms_p95": 5.0,
+  "version_rss_mb": 15.0,
+  "recorded": "placeholder-for-ci-schema"
+}

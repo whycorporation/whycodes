@@ -283,6 +283,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let (question_prompter, mut question_rx) = ChannelQuestionPrompter::new(q_timeout);
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
+    config.general.project_path = Some(opts.project_dir.clone());
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_permission_prompter(

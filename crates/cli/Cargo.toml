@@ -31,6 +31,7 @@ whycode-core = { path = "../core" }
 whycode-config = { path = "../config" }
 whycode-llm = { path = "../llm" }
 whycode-tools = { path = "../tools" }
+whycode-skill = { path = "../skill" }
 whycode-mcp = { path = "../mcp" }
 whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }

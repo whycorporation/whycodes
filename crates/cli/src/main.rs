@@ -174,6 +174,12 @@ pub enum Commands {
         name: Option<String>,
     },
 
+    /// List shell plugins from plugins.toml (global + project)
+    Plugins {
+        #[command(subcommand)]
+        cmd: Option<PluginsCmd>,
+    },
+
     /// Configuration management
     Config {
         #[command(subcommand)]
@@ -307,6 +313,12 @@ pub enum ModelCmd {
         /// Model ID
         model: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginsCmd {
+    /// List configured plugins
+    List,
 }
 
 #[derive(Subcommand, Debug)]
@@ -488,6 +500,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             Commands::Provider { .. }
             | Commands::Model { .. }
             | Commands::Agent { .. }
+            | Commands::Plugins { .. }
             | Commands::Config { .. }
             | Commands::Session { .. }
             | Commands::Memory { .. }
@@ -604,6 +617,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Provider { cmd: provider_cmd } => cmd_provider(provider_cmd).await,
         Commands::Model { cmd: model_cmd } => cmd_model(model_cmd).await,
         Commands::Agent { name } => cmd_agent(name.as_deref()).await,
+        Commands::Plugins { cmd } => cmd_plugins(cli, cmd.as_ref()).await,
         Commands::Config { cmd: config_cmd } => cmd_config(config_cmd).await,
         Commands::Session { cmd: session_cmd } => cmd_session(session_cmd).await,
         Commands::Memory { cmd: memory_cmd } => cmd_memory(cli, memory_cmd).await,
@@ -888,6 +902,7 @@ async fn cmd_run(
     let session_started = std::time::Instant::now();
 
     let mut agent_name = agent_name;
+    config.general.project_path = Some(project_dir.clone());
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_mcp(&config)
@@ -2873,6 +2888,36 @@ async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
 }
 
 /// `agent` — Agent configuration
+async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::Result<()> {
+    let _ = cmd; // only List for now
+    let project = resolve_dir(cli);
+    let reg = whycode_skill::PluginRegistry::load_layered(&project).unwrap_or_default();
+    if reg.plugins.is_empty() {
+        println!("{} No shell plugins configured.", "🔌".bold());
+        println!();
+        println!("Create ~/.config/com.whycorporation.whycode/plugins.toml or");
+        println!("  .whycode/plugins.toml:");
+        println!();
+        println!("  [[plugins]]");
+        println!("  name = \"hello\"");
+        println!("  command = \"echo hello from plugin\"");
+        println!("  description = \"Demo plugin\"");
+        println!();
+        println!("Tools appear as plugin_<name> (tool_profile=full or tool_search).");
+        return Ok(());
+    }
+    println!("{} Shell plugins ({}):", "🔌".bold(), reg.plugins.len());
+    for p in &reg.plugins {
+        println!(
+            "  {} → {} — {}",
+            format!("plugin_{}", p.name).cyan(),
+            p.command.dimmed(),
+            p.description
+        );
+    }
+    Ok(())
+}
+
 async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
     let config = Config::load()?;
 

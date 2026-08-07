@@ -115,6 +115,24 @@ impl PluginRegistry {
         Self::parse_toml(&content)
     }
 
+    /// Merge project-level `.whycode/plugins.toml` (later entries override by name).
+    pub fn load_layered(project_dir: &std::path::Path) -> anyhow::Result<Self> {
+        let mut reg = Self::load_from_config().unwrap_or_default();
+        let path = project_dir.join(".whycode").join("plugins.toml");
+        if path.exists() {
+            let content = std::fs::read_to_string(&path)?;
+            let project = Self::parse_toml(&content)?;
+            for p in project.plugins {
+                if let Some(existing) = reg.plugins.iter_mut().find(|x| x.name == p.name) {
+                    *existing = p;
+                } else {
+                    reg.plugins.push(p);
+                }
+            }
+        }
+        Ok(reg)
+    }
+
     /// Parse plugins from a TOML string.
     pub fn parse_toml(content: &str) -> anyhow::Result<Self> {
         #[derive(Deserialize)]

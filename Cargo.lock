@@ -3848,6 +3848,7 @@ dependencies = [
  "whycode-protocol",
  "whycode-server",
  "whycode-session",
+ "whycode-skill",
  "whycode-storage",
  "whycode-tools",
  "whycode-tui",

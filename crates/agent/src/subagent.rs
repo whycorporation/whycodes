@@ -36,6 +36,8 @@ pub struct SubagentResult {
     pub success: bool,
     /// Wall-clock duration of the subagent run
     pub duration: std::time::Duration,
+    /// Provider-reported token usage across all subagent LLM steps (fold into parent).
+    pub usage: whycode_core::types::Usage,
 }
 
 /// Runner that executes a subagent task by creating a fresh session and
@@ -156,23 +158,26 @@ impl SubagentRunner {
         let duration = start.elapsed();
 
         match output {
-            Ok(text) => Ok(SubagentResult {
+            Ok((text, usage)) => Ok(SubagentResult {
                 goal: task.goal,
                 output: text,
                 success: true,
                 duration,
+                usage,
             }),
             Err(e) => Ok(SubagentResult {
                 goal: task.goal,
                 output: format!("Subagent error: {}", e),
                 success: false,
                 duration,
+                usage: whycode_core::types::Usage::default(),
             }),
         }
     }
 
     /// Internal turn loop — mirrors `Agent::run_turn` but accepts an overridden
     /// PermissionSet so that subagents can have a restricted tool set.
+    /// Returns (final text, aggregated provider usage).
     async fn run_turn_inner(
         &self,
         session: &mut Session,
@@ -181,7 +186,7 @@ impl SubagentRunner {
         api_key: &str,
         max_turns: usize,
         permission: &PermissionSet,
-    ) -> whycode_core::Result<String> {
+    ) -> whycode_core::Result<(String, whycode_core::types::Usage)> {
         use futures::StreamExt;
         use whycode_core::types::{ContentBlock, StreamEvent};
 
@@ -213,6 +218,7 @@ impl SubagentRunner {
 
         let mut turn_count = 0;
         let mut final_text = String::new();
+        let mut total_usage = whycode_core::types::Usage::default();
 
         loop {
             turn_count += 1;
@@ -259,11 +265,22 @@ impl SubagentRunner {
                         tracing::debug!("Subagent thinking: {}", text);
                     }
                     StreamEvent::MessageStop => break,
-                    // A subagent's tokens are billed to the same session, but
-                    // it does not own one — the parent's accounting is what the
-                    // user sees, and routing these there needs a channel this
-                    // does not have. Recorded as a known gap in docs/plan-performance.md.
-                    StreamEvent::Usage { .. } | StreamEvent::CacheUsage { .. } => {}
+                    // Fold into total_usage; parent session adds via SubagentResult.
+                    StreamEvent::Usage {
+                        input_tokens,
+                        output_tokens,
+                    } => {
+                        total_usage.input_tokens += input_tokens;
+                        total_usage.output_tokens += output_tokens;
+                    }
+                    StreamEvent::CacheUsage {
+                        creation_input_tokens,
+                        read_input_tokens,
+                    } => {
+                        *total_usage.cache_creation_input_tokens.get_or_insert(0) +=
+                            creation_input_tokens;
+                        *total_usage.cache_read_input_tokens.get_or_insert(0) += read_input_tokens;
+                    }
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
                     StreamEvent::Error { message } => {
@@ -342,7 +359,7 @@ impl SubagentRunner {
             session.add_tool_results(results);
         }
 
-        Ok(final_text)
+        Ok((final_text, total_usage))
     }
 }
 

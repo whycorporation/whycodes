@@ -128,11 +128,15 @@ the provider's own numbers in both the TUI and the plain REPL.
   500×message heuristic).
 - Message rows are replaced on each save (fixes duplicate-message inflate).
 
-Still open:
+## Update, 2026-08-07 — residual closed (partial)
 
-- **Subagent tokens.** A subagent's tokens are billed to the same account but it
-  does not own the session, and routing them to the parent needs a channel
-  `SubagentRunner` does not have. `subagent.rs` says so at the discard site.
-- **Reconciliation against a provider's own reported usage.** Needs a real
-  session against a real key. Arithmetic is unit-tested.
-- **CI ceilings / `bench-results.json`** (unchanged residual).
+- **Subagent tokens.** `SubagentResult.usage` accumulates provider Usage/CacheUsage;
+  parent folds via `subagent_usage_pending` into session + turn after tool batches
+  (task + swarm workers). Tool report includes `[subagent usage: …]`.
+- **CI ceilings / `bench-results.json`.** `docs/bench-results.json` schema +
+  `scripts/check_bench_ceilings.py` (generous Ubuntu ceilings); CI budgets job
+  runs the checker (skips cleanly if file absent).
+- **Reconciliation against a live provider** still needs a real API session
+  (manual); arithmetic remains unit-tested.
+
+**Status:** residual code items shipped; live provider reconcile remains manual.

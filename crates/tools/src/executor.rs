@@ -152,6 +152,39 @@ impl ToolExecutor {
         names
     }
 
+    /// Load shell plugins from global + optional project `plugins.toml`.
+    pub fn register_config_plugins(&mut self, project_dir: Option<&std::path::Path>) -> usize {
+        let mut configs = Vec::new();
+        match whycode_skill::PluginRegistry::load_from_config() {
+            Ok(r) => configs.extend(r.plugins),
+            Err(e) => tracing::debug!(error = %e, "global plugins.toml load skipped"),
+        }
+        if let Some(dir) = project_dir {
+            let path = dir.join(".whycode").join("plugins.toml");
+            if path.exists()
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(reg) = whycode_skill::PluginRegistry::parse_toml(&content)
+            {
+                configs.extend(reg.plugins);
+            }
+        }
+        let mut n = 0;
+        let mut seen = std::collections::HashSet::new();
+        for cfg in configs {
+            if cfg.name.trim().is_empty() || cfg.command.trim().is_empty() {
+                continue;
+            }
+            if !seen.insert(cfg.name.clone()) {
+                continue; // project overrides global when same name (last wins if we reverse)
+            }
+            self.register(Box::new(crate::plugin_tool::PluginShellTool::from_config(
+                cfg,
+            )));
+            n += 1;
+        }
+        n
+    }
+
     /// Execute a single tool call
     pub async fn execute(
         &self,
