@@ -218,17 +218,8 @@ impl LlmProvider for OpenRouterProvider {
                                 let choice = &event["choices"][0];
                                 let delta = &choice["delta"];
 
-                                if let Some(text) = delta["content"].as_str()
-                                    && !text.is_empty() {
-                                        yield Ok(StreamEvent::TextDelta {
-                                            text: text.to_string(),
-                                        });
-                                    }
-
-                                if let Some(tool_calls) = delta["tool_calls"].as_array() {
-                                    for ev in super::openai_compat::stream_events_for_tool_calls(tool_calls) {
-                                        yield Ok(ev);
-                                    }
+                                for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                    yield Ok(ev);
                                 }
 
                                 if let Some(finish) = choice["finish_reason"].as_str()

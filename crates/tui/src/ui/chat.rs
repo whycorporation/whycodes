@@ -537,9 +537,19 @@ fn thinking_lines(
     let rail_cols: u16 = if show_rail { 2 } else { 0 };
     let content_w = width.saturating_sub(rail_cols);
 
-    // Header: split "Thought" / " for Xs" like Grok.
+    // Header: Grok always labels reasoning as "Thinking" while live, and
+    // "Thought for Xs" when finished. Live timer matches the busy strip
+    // (`thinking 1.4s`) so the user sees that thinking is actually happening.
     let mut header_spans: Vec<Span<'static>> = if t.is_running() {
-        vec![Span::styled("Thinking…".to_string(), label_style)]
+        let elapsed = t.format_elapsed();
+        if elapsed.is_empty() || elapsed == "0.0s" {
+            vec![Span::styled("Thinking…".to_string(), label_style)]
+        } else {
+            vec![
+                Span::styled("Thinking".to_string(), label_style),
+                Span::styled(format!(" · {elapsed}"), detail_style),
+            ]
+        }
     } else {
         vec![
             Span::styled("Thought".to_string(), label_style),
@@ -954,7 +964,28 @@ fn diff_stat(content: &str) -> (usize, usize) {
     (add, del)
 }
 
+/// Grok-style display name for tools (`bash`/`shell` → `run`).
+fn tool_display_name(name: &str) -> &str {
+    match name {
+        "bash" | "shell" | "run_terminal_command" => "run",
+        "read_file" => "read",
+        "search_code" | "rg" => "grep",
+        other => other,
+    }
+}
+
 /// Quiet Grok-style tool chrome: muted name · summary, heavy ┃ body when open.
+///
+/// Matches Grok pager tool cards interleaved with thinking:
+/// ```text
+/// Thinking…
+/// ┃ …
+///   read · path/to/file.rs
+///   ┃     1|code
+///   run · cargo test
+///   ┃ ok
+/// Thought for 2.1s
+/// ```
 fn tool_block(
     name: &str,
     input: &serde_json::Value,
@@ -965,6 +996,7 @@ fn tool_block(
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    let display = tool_display_name(name);
     let name_style = if is_error {
         Style::default().fg(palette.error)
     } else {
@@ -980,7 +1012,7 @@ fn tool_block(
 
     let mut header = vec![
         meta_gutter(),
-        Span::styled(name.to_string(), name_style),
+        Span::styled(display.to_string(), name_style),
     ];
     if !summary.is_empty() {
         header.push(Span::styled(" · ".to_string(), detail));
@@ -1030,6 +1062,43 @@ fn tool_block(
                     detail,
                 ));
             }
+        } else if matches!(name, "bash" | "shell" | "run_terminal_command") {
+            // run: short exit/line chip when finished (quiet, Grok-like).
+            let n = r.lines().filter(|l| !l.trim().is_empty()).count();
+            if n > 0 {
+                header.push(Span::styled(
+                    format!("  {n}"),
+                    Style::default().fg(palette.dim),
+                ));
+                header.push(Span::styled(
+                    if n == 1 {
+                        " line".to_string()
+                    } else {
+                        " lines".to_string()
+                    },
+                    detail,
+                ));
+            }
+        } else if matches!(name, "read" | "read_file") {
+            // read: line count chip when we have numbered body.
+            let n = r
+                .lines()
+                .filter(|l| split_read_line(l).is_some())
+                .count();
+            if n > 0 {
+                header.push(Span::styled(
+                    format!("  {n}"),
+                    Style::default().fg(palette.dim),
+                ));
+                header.push(Span::styled(
+                    if n == 1 {
+                        " line".to_string()
+                    } else {
+                        " lines".to_string()
+                    },
+                    detail,
+                ));
+            }
         }
         if !expanded {
             let n = r.lines().count();
@@ -1043,7 +1112,7 @@ fn tool_block(
             }
         }
     } else {
-        // Still running — quiet live marker.
+        // Still running — quiet live marker (Grok in-flight tool).
         header.push(Span::styled("  …".to_string(), detail));
     }
 
@@ -1986,7 +2055,7 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string(),
-        "bash" | "shell" => input
+        "bash" | "shell" | "run_terminal_command" => input
             .get("command")
             .and_then(|v| v.as_str())
             .unwrap_or("")
@@ -2074,7 +2143,7 @@ fn empty_dash(s: &str) -> &str {
 mod tests {
     use super::{
         SparseLines, hard_truncate_line, message_row_layout_mut, parse_grep_hit, prettify_tool_result,
-        split_read_line, tool_block, tool_result, tool_summary, ToolOutHint,
+        split_read_line, tool_block, tool_display_name, tool_result, tool_summary, ToolOutHint,
     };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
@@ -2341,6 +2410,36 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         assert!(header.contains("foo"), "got {header}");
         assert!(header.contains("2"), "got {header}");
         assert!(header.contains("match"), "got {header}");
+    }
+
+    #[test]
+    fn tool_display_name_maps_bash_to_run() {
+        assert_eq!(tool_display_name("bash"), "run");
+        assert_eq!(tool_display_name("shell"), "run");
+        assert_eq!(tool_display_name("read"), "read");
+        assert_eq!(tool_display_name("grep"), "grep");
+    }
+
+    #[test]
+    fn tool_block_run_shows_display_name_and_command() {
+        let palette = ThemeName::DefaultDark.palette();
+        let lines = tool_block(
+            "bash",
+            &json!({"command": "cargo test -p whycode-tui"}),
+            Some("ok\n"),
+            false,
+            &palette,
+            false,
+            100,
+        );
+        let header: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(header.contains("run"), "got {header}");
+        assert!(!header.contains("bash"), "got {header}");
+        assert!(header.contains("cargo test"), "got {header}");
     }
 
     #[test]

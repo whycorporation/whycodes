@@ -285,6 +285,66 @@ pub fn stream_events_for_tool_calls(tool_calls: &[Value]) -> Vec<whycode_core::t
         .collect()
 }
 
+/// Convert one OpenAI-compatible streaming `choices[0].delta` into events.
+///
+/// Handles the fields used by Grok / DeepSeek / OpenRouter reasoning models:
+/// - `reasoning_content` / `reasoning` / `thinking` → [`StreamEvent::ThinkingDelta`]
+/// - `content` → [`StreamEvent::TextDelta`]
+/// - `tool_calls` → tool start/delta events
+///
+/// Without this, reasoning streams are dropped and the TUI never paints
+/// "Thinking…" even though the model is thinking (Grok parity).
+pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycode_core::types::StreamEvent> {
+    use whycode_core::types::StreamEvent;
+
+    let mut out = Vec::new();
+
+    // Reasoning / extended thinking (order: most common first).
+    if let Some(text) = reasoning_text_from_delta(delta) {
+        out.push(StreamEvent::ThinkingDelta { text });
+    }
+
+    if let Some(text) = delta.get("content").and_then(|v| v.as_str())
+        && !text.is_empty()
+    {
+        out.push(StreamEvent::TextDelta {
+            text: text.to_string(),
+        });
+    }
+
+    if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
+        out.extend(stream_events_for_tool_calls(tool_calls));
+    }
+
+    out
+}
+
+/// Pull reasoning text from a chat-completions delta or message object.
+///
+/// Providers disagree on the field name:
+/// - DeepSeek / many OpenAI-compat: `reasoning_content`
+/// - Some Grok / OpenRouter: `reasoning` (string) or `reasoning.content`
+/// - A few: `thinking`
+pub fn reasoning_text_from_delta(delta: &Value) -> Option<String> {
+    for key in ["reasoning_content", "reasoning", "thinking"] {
+        match delta.get(key) {
+            Some(Value::String(s)) if !s.is_empty() => return Some(s.clone()),
+            Some(Value::Object(map)) => {
+                // Nested: `{ "content": "…" }` or `{ "text": "…" }`
+                for nested in ["content", "text"] {
+                    if let Some(s) = map.get(nested).and_then(|v| v.as_str())
+                        && !s.is_empty()
+                    {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// JSON Schema keywords that strict OpenAI-compatible endpoints reject
 /// (regression: jcode#687 `uniqueItems`, jcode#754 `propertyNames`). One bad
 /// tool fails the *whole* request there, so these are stripped recursively.
@@ -623,6 +683,75 @@ mod tests {
                 assert!(input_json_delta.contains("nuxt"));
             }
             other => panic!("expected ToolUseDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_delta_emits_thinking_from_reasoning_content() {
+        use whycode_core::types::StreamEvent;
+
+        // DeepSeek / Grok-compat reasoning stream — must not be dropped.
+        let delta = serde_json::json!({
+            "role": "assistant",
+            "reasoning_content": "Let me check the file first.",
+            "content": null
+        });
+        let events = stream_events_for_chat_delta(&delta);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            StreamEvent::ThinkingDelta { text } => {
+                assert!(text.contains("check the file"), "{text}");
+            }
+            other => panic!("expected ThinkingDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_delta_thinking_then_text_then_tools() {
+        use whycode_core::types::StreamEvent;
+
+        let delta = serde_json::json!({
+            "reasoning": "plan",
+            "content": "ok",
+            "tool_calls": [{
+                "index": 0,
+                "id": "c1",
+                "type": "function",
+                "function": { "name": "read", "arguments": "" }
+            }]
+        });
+        let events = stream_events_for_chat_delta(&delta);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ThinkingDelta { text } if text == "plan")),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta { text } if text == "ok")),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolUse { name, .. } if name == "read")),
+            "{events:?}"
+        );
+    }
+
+    #[test]
+    fn nested_reasoning_object_is_parsed() {
+        use whycode_core::types::StreamEvent;
+
+        let delta = serde_json::json!({
+            "reasoning": { "content": "nested thought" }
+        });
+        let events = stream_events_for_chat_delta(&delta);
+        match events.as_slice() {
+            [StreamEvent::ThinkingDelta { text }] => assert_eq!(text, "nested thought"),
+            other => panic!("expected single ThinkingDelta, got {other:?}"),
         }
     }
 

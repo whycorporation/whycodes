@@ -260,12 +260,8 @@ impl LlmProvider for CustomProvider {
                             if data == "[DONE]" { yield Ok(StreamEvent::MessageStop); return; }
                             if let Ok(evt) = serde_json::from_str::<Value>(data) {
                                 let delta = &evt["choices"][0]["delta"];
-                                if let Some(t) = delta["content"].as_str()
-                                    && !t.is_empty() { yield Ok(StreamEvent::TextDelta { text: t.to_string() }); }
-                                if let Some(tcs) = delta["tool_calls"].as_array() {
-                                    for ev in super::openai_compat::stream_events_for_tool_calls(tcs) {
-                                        yield Ok(ev);
-                                    }
+                                for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                    yield Ok(ev);
                                 }
                             }
                         }
