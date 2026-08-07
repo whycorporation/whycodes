@@ -102,6 +102,18 @@ Users often run **`./target/release/whycode`** — rebuild **release** when veri
 
 ## Log
 
+### 2026-08-07 — Stop stuck on "Cancelling…"
+
+**Symptom:** Esc / `[stop]` showed `Cancelling…` and never returned to idle; second presses did nothing useful.
+
+**Root cause:** Cancel was a cooperative `AtomicBool` checked only *after* the next LLM SSE event or *between* tools. Idle stream waits and long tools ignored the flag. The TUI never aborted the turn `JoinHandle`, so a hung HTTP body pinned `agent_busy` forever (agent/session still moved into the task).
+
+**Fix:** `wait_until_cancelled` + `tokio::select!` on stream open, stream body, and tool batches. TUI: `begin_cancel` denies pending permission/question waiters; force-stop after 1.2s or on second Esc/[stop]/ abort join handle, restore session backup, rebuild agent if needed, clear busy.
+
+**Prevention:** Never rely on cancel-only-between-events. Any long `.await` in the agent turn must race `wait_until_cancelled`. TUI must keep a join handle + session backup for hard abort.
+
+---
+
 ### 2026-08-06 — Long paste overflowed the prompt box
 
 **Symptom:** Pasting a long paragraph into the home/session prompt made text look like it spilled past the input box (tall reflow, clipped chrome).

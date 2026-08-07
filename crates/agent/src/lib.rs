@@ -17,7 +17,9 @@ pub mod tool_stream;
 
 pub use agent::{Agent, memory_settings_from_config};
 pub use background::{BackgroundRegistry, JobSnapshot, JobStatus};
-pub use events::{CancelFlag, TurnEvent, new_cancel_flag, request_cancel};
+pub use events::{
+    CancelFlag, TurnEvent, is_cancelled, new_cancel_flag, request_cancel, wait_until_cancelled,
+};
 pub use intent::{
     IntentAssessment, IntentGuidanceMode, IntentNotice, IntentNoticeKind, ToolAuthDecision,
     UserIntent, authorize_tool, badge_label, classify_user_intent, intent_notice,

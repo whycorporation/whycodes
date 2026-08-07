@@ -14,7 +14,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 use whycode_session::session::Session;
 
-use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
+use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
 use super::question::{QuestionPrompter, default_question_prompter, run_question_tool};
 use super::subagent::{SubagentRunner, SubagentTask};
@@ -1038,22 +1038,41 @@ impl Agent {
 
             // Professional transport: classify + full-jitter backoff + Retry-After.
             // Only the HTTP open is retried — mid-stream drops stay single-shot.
-            let mut event_stream = whycode_llm::default_transport()
-                .stream(provider, &request, api_key, model)
-                .await?;
-
-            while let Some(event) = event_stream.next().await {
-                if is_cancelled(&cancel) {
-                    // Persist partial assistant text before aborting
-                    if !accumulated_text.is_empty() {
-                        session.add_assistant_message(vec![ContentBlock::Text {
-                            text: accumulated_text.clone(),
-                        }]);
-                        final_text.push_str(&accumulated_text);
-                    }
+            // Race the open against cancel so a hung gateway cannot ignore Esc.
+            // Bind transport so `stream()`'s future is not tied to a temporary.
+            let transport = whycode_llm::default_transport();
+            let mut event_stream = tokio::select! {
+                biased;
+                _ = wait_until_cancelled(&cancel) => {
                     emit(&events, TurnEvent::Cancelled);
                     return Err(whycode_core::Error::Agent("Cancelled".into()));
                 }
+                opened = transport.stream(provider, &request, api_key, model) => {
+                    opened?
+                }
+            };
+
+            // Stream body: check cancel between tokens *and* while idle waiting
+            // for the next SSE line (select! with wait_until_cancelled).
+            loop {
+                let event = tokio::select! {
+                    biased;
+                    _ = wait_until_cancelled(&cancel) => {
+                        if !accumulated_text.is_empty() {
+                            session.add_assistant_message(vec![ContentBlock::Text {
+                                text: accumulated_text.clone(),
+                            }]);
+                            final_text.push_str(&accumulated_text);
+                        }
+                        emit(&events, TurnEvent::Cancelled);
+                        return Err(whycode_core::Error::Agent("Cancelled".into()));
+                    }
+                    next = event_stream.next() => next,
+                };
+
+                let Some(event) = event else {
+                    break;
+                };
 
                 match event? {
                     StreamEvent::TextDelta { text } => {
@@ -1383,8 +1402,13 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = self
-                .execute_with_permission(
+            let result = tokio::select! {
+                biased;
+                _ = wait_until_cancelled(cancel) => {
+                    emit(events, TurnEvent::Cancelled);
+                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                }
+                r = self.execute_with_permission(
                     tc,
                     session,
                     tool_ctx,
@@ -1393,8 +1417,8 @@ impl Agent {
                     api_key,
                     turn_intent,
                     events.as_ref(),
-                )
-                .await;
+                ) => r,
+            };
             emit(
                 events,
                 TurnEvent::ToolEnd {
@@ -1436,7 +1460,14 @@ impl Agent {
                     )
                 })
                 .collect();
-            let results = futures::future::join_all(futs).await;
+            let results = tokio::select! {
+                biased;
+                _ = wait_until_cancelled(cancel) => {
+                    emit(events, TurnEvent::Cancelled);
+                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                }
+                r = futures::future::join_all(futs) => r,
+            };
             for (tc, result) in tool_calls.iter().zip(results.iter()) {
                 emit(
                     events,
@@ -1461,8 +1492,13 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = self
-                .execute_with_permission(
+            let result = tokio::select! {
+                biased;
+                _ = wait_until_cancelled(cancel) => {
+                    emit(events, TurnEvent::Cancelled);
+                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                }
+                r = self.execute_with_permission(
                     tc,
                     session,
                     tool_ctx,
@@ -1471,8 +1507,8 @@ impl Agent {
                     api_key,
                     turn_intent,
                     events.as_ref(),
-                )
-                .await;
+                ) => r,
+            };
             emit(
                 events,
                 TurnEvent::ToolEnd {

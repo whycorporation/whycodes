@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -71,7 +72,7 @@ pub enum TurnEvent {
 /// Optional sink for turn events (TUI, logging, etc.).
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<TurnEvent>;
 
-/// Shared cancel flag — set `true` to abort the current agent turn (Esc).
+/// Shared cancel flag — set `true` to abort the current agent turn (Esc / [stop]).
 pub type CancelFlag = Arc<AtomicBool>;
 
 pub fn new_cancel_flag() -> CancelFlag {
@@ -80,16 +81,65 @@ pub fn new_cancel_flag() -> CancelFlag {
 
 pub fn is_cancelled(flag: &Option<CancelFlag>) -> bool {
     flag.as_ref()
-        .map(|f| f.load(Ordering::Relaxed))
+        .map(|f| f.load(Ordering::Acquire))
         .unwrap_or(false)
 }
 
 pub fn request_cancel(flag: &CancelFlag) {
-    flag.store(true, Ordering::Relaxed);
+    flag.store(true, Ordering::Release);
+}
+
+/// Await until the cancel flag is set. Never resolves when `flag` is `None`
+/// (no cancel channel) — used with `tokio::select!` so a missing flag does
+/// not spuriously cancel.
+///
+/// Poll interval is short enough that Esc / [stop] feels instant even when the
+/// LLM stream is idle between tokens (the previous code only checked cancel
+/// *after* the next SSE event arrived, which is why "Cancelling…" could hang).
+pub async fn wait_until_cancelled(flag: &Option<CancelFlag>) {
+    let Some(f) = flag else {
+        std::future::pending::<()>().await;
+        return;
+    };
+    loop {
+        if f.load(Ordering::Acquire) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(40)).await;
+    }
 }
 
 pub fn emit(sink: &Option<EventSink>, event: TurnEvent) {
     if let Some(tx) = sink {
         let _ = tx.send(event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[tokio::test]
+    async fn wait_until_cancelled_resolves_when_flag_set() {
+        let flag = new_cancel_flag();
+        let opt = Some(Arc::clone(&flag));
+        let t0 = Instant::now();
+        let waiter = tokio::spawn(async move {
+            wait_until_cancelled(&opt).await;
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        request_cancel(&flag);
+        waiter.await.expect("join");
+        assert!(t0.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn request_cancel_is_visible_to_is_cancelled() {
+        let flag = new_cancel_flag();
+        let opt = Some(Arc::clone(&flag));
+        assert!(!is_cancelled(&opt));
+        request_cancel(&flag);
+        assert!(is_cancelled(&opt));
     }
 }

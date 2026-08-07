@@ -40,6 +40,10 @@ use crate::input;
 use crate::keymap::KeymapContext;
 use crate::ui::render;
 
+/// After Esc / [stop], wait this long for cooperative cancel, then abort the
+/// turn task hard. Must be short enough that "Cancelling…" never feels stuck.
+const CANCEL_FORCE_AFTER: Duration = Duration::from_millis(1200);
+
 /// Context struct for slash command handling, reducing parameter count.
 pub struct SlashContext<'a> {
     pub app: &'a mut TuiApp,
@@ -474,6 +478,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let mut agent_busy = false;
     let mut cancel_flag: Option<CancelFlag> = None;
+    // When the user first hit Esc / [stop]. After CANCEL_FORCE_AFTER we
+    // abort the join handle so "Cancelling…" can never stick forever.
+    let mut cancel_requested_at: Option<Instant> = None;
+    // Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
+    let mut turn_join: Option<tokio::task::JoinHandle<()>> = None;
+    // Session clone taken just before the turn task starts (after user msg).
+    // Restored if we have to abort the task (which would otherwise drop agent/session).
+    let mut session_backup: Option<Session> = None;
     let mut spinner_frame: usize = 0;
     // Permission queue: multiple tool asks can complete without serializing
     // the whole parallel tool batch on a single oneshot slot.
@@ -628,10 +640,46 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
             }
 
+            // ── Force-stop if cancel is ignored too long ──────────────
+            // Cooperative cancel covers stream/tools via select!. This is the
+            // hard backstop for spawn_blocking shells / wedged HTTP that never
+            // yield: abort the join handle and restore agent/session.
+            if agent_busy {
+                if let Some(since) = cancel_requested_at {
+                    let force = since.elapsed() >= CANCEL_FORCE_AFTER || app.pending_cancel; // second [stop] while cancelling
+                    if force {
+                        app.pending_cancel = false;
+                        force_stop_turn(
+                            &mut app,
+                            &mut agent,
+                            &mut session,
+                            &mut agent_busy,
+                            &mut cancel_flag,
+                            &mut cancel_requested_at,
+                            &mut turn_join,
+                            &mut session_backup,
+                            &mut pending_question_queue,
+                            &mut pending_perm_queue,
+                            &mut done_rx,
+                            &config,
+                            &project_dir,
+                            &provider,
+                            &model,
+                            event_tx.clone(),
+                            Arc::clone(&perm_prompter),
+                            Arc::clone(&question_prompter),
+                        );
+                    }
+                }
+            }
+
             // ── Turn finished ─────────────────────────────────────────
             if let Ok(outcome) = done_rx.try_recv() {
                 agent_busy = false;
                 cancel_flag = None;
+                cancel_requested_at = None;
+                turn_join = None;
+                session_backup = None;
                 // One deferred catalog pass if we still lack a live window.
                 // Avoid re-fetching after every turn (would race fast follow-ups).
                 if app.api_context_window.is_none() {
@@ -672,6 +720,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         // Surface agent Status events as toasts already via drain path.
                         app.finish_open_thinking();
                         app.current_agent_state = AgentState::Idle;
+                        // Silent providers leave turn_usage empty — estimate fill
+                        // from the transcript so the footer is not stuck at 0.
+                        if app.turn_usage.is_none() {
+                            app.sync_context_estimate(&session);
+                        }
                         // Agent may have switched branches; keep footer current.
                         app.refresh_git_branch();
                         app.status_message = format_turn_done_status(
@@ -711,6 +764,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         }
                         app.session_title = session.title.clone();
                         app.finish_open_thinking();
+                        // Transcript may have partial assistant text; refresh estimate
+                        // when no provider usage landed this turn.
+                        if app.turn_usage.is_none() {
+                            app.sync_context_estimate(&session);
+                        }
                         if cancelled {
                             app.current_agent_state = AgentState::Idle;
                             app.status_message = format_turn_done_status(
@@ -905,11 +963,38 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Mouse `[stop]` on the turn strip (or other UI) → cancel.
+            // Second click while already cancelling → immediate force-stop.
             if agent_busy && app.pending_cancel {
                 app.pending_cancel = false;
-                if let Some(ref flag) = cancel_flag {
-                    request_cancel(flag);
-                    app.status_message = "Cancelling…".into();
+                if cancel_requested_at.is_some() {
+                    force_stop_turn(
+                        &mut app,
+                        &mut agent,
+                        &mut session,
+                        &mut agent_busy,
+                        &mut cancel_flag,
+                        &mut cancel_requested_at,
+                        &mut turn_join,
+                        &mut session_backup,
+                        &mut pending_question_queue,
+                        &mut pending_perm_queue,
+                        &mut done_rx,
+                        &config,
+                        &project_dir,
+                        &provider,
+                        &model,
+                        event_tx.clone(),
+                        Arc::clone(&perm_prompter),
+                        Arc::clone(&question_prompter),
+                    );
+                } else {
+                    begin_cancel(
+                        &mut app,
+                        &cancel_flag,
+                        &mut cancel_requested_at,
+                        &mut pending_question_queue,
+                        &mut pending_perm_queue,
+                    );
                 }
             }
 
@@ -964,6 +1049,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 agent_busy = true;
                 let flag = new_cancel_flag();
                 cancel_flag = Some(Arc::clone(&flag));
+                cancel_requested_at = None;
                 app.mark_turn_started();
                 app.current_agent_state = AgentState::Generating;
                 app.status_message.clear();
@@ -1071,12 +1157,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         top_p: None,
                     }),
                 );
+                // Snapshot for force-abort recovery (task owns the live session).
+                session_backup = Some(session.clone());
                 let sess = std::mem::replace(
                     &mut session,
                     Session::new(project_dir.clone(), String::new()),
                 );
 
-                tokio::spawn(async move {
+                turn_join = Some(tokio::spawn(async move {
                     let agent = ag;
                     let mut session = sess;
                     // Time only the agent loop. Title refine runs async *after*
@@ -1127,7 +1215,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             });
                         }
                     }
-                });
+                }));
             }
 
             // ── Input ─────────────────────────────────────────────────
@@ -1346,11 +1434,38 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 {
                     match key.code {
                         KeyCode::Esc => {
-                            if let Some(ref flag) = cancel_flag {
-                                request_cancel(flag);
-                                app.status_message = "Cancelling…".into();
-                                app.esc_armed_at = None;
+                            // First Esc: cooperative cancel. Second: force-stop now.
+                            if cancel_requested_at.is_some() {
+                                force_stop_turn(
+                                    &mut app,
+                                    &mut agent,
+                                    &mut session,
+                                    &mut agent_busy,
+                                    &mut cancel_flag,
+                                    &mut cancel_requested_at,
+                                    &mut turn_join,
+                                    &mut session_backup,
+                                    &mut pending_question_queue,
+                                    &mut pending_perm_queue,
+                                    &mut done_rx,
+                                    &config,
+                                    &project_dir,
+                                    &provider,
+                                    &model,
+                                    event_tx.clone(),
+                                    Arc::clone(&perm_prompter),
+                                    Arc::clone(&question_prompter),
+                                );
+                            } else {
+                                begin_cancel(
+                                    &mut app,
+                                    &cancel_flag,
+                                    &mut cancel_requested_at,
+                                    &mut pending_question_queue,
+                                    &mut pending_perm_queue,
+                                );
                             }
+                            app.esc_armed_at = None;
                             continue;
                         }
                         KeyCode::Char('q')
@@ -1358,8 +1473,28 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 .modifiers
                                 .contains(crossterm::event::KeyModifiers::CONTROL) =>
                         {
-                            if let Some(ref flag) = cancel_flag {
-                                request_cancel(flag);
+                            // Quit: always force-stop so we never hang on exit.
+                            if agent_busy {
+                                force_stop_turn(
+                                    &mut app,
+                                    &mut agent,
+                                    &mut session,
+                                    &mut agent_busy,
+                                    &mut cancel_flag,
+                                    &mut cancel_requested_at,
+                                    &mut turn_join,
+                                    &mut session_backup,
+                                    &mut pending_question_queue,
+                                    &mut pending_perm_queue,
+                                    &mut done_rx,
+                                    &config,
+                                    &project_dir,
+                                    &provider,
+                                    &model,
+                                    event_tx.clone(),
+                                    Arc::clone(&perm_prompter),
+                                    Arc::clone(&question_prompter),
+                                );
                             }
                             app.running = false;
                             continue;
@@ -1370,12 +1505,38 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 .contains(crossterm::event::KeyModifiers::CONTROL) =>
                         {
                             // Grok: Ctrl+C clears draft first; second cancels.
-                            // We cancel the turn and leave the draft intact unless empty.
+                            // Empty draft + already cancelling → force-stop.
                             if app.input_buffer.is_empty() {
-                                if let Some(ref flag) = cancel_flag {
-                                    request_cancel(flag);
+                                if cancel_requested_at.is_some() {
+                                    force_stop_turn(
+                                        &mut app,
+                                        &mut agent,
+                                        &mut session,
+                                        &mut agent_busy,
+                                        &mut cancel_flag,
+                                        &mut cancel_requested_at,
+                                        &mut turn_join,
+                                        &mut session_backup,
+                                        &mut pending_question_queue,
+                                        &mut pending_perm_queue,
+                                        &mut done_rx,
+                                        &config,
+                                        &project_dir,
+                                        &provider,
+                                        &model,
+                                        event_tx.clone(),
+                                        Arc::clone(&perm_prompter),
+                                        Arc::clone(&question_prompter),
+                                    );
+                                } else {
+                                    begin_cancel(
+                                        &mut app,
+                                        &cancel_flag,
+                                        &mut cancel_requested_at,
+                                        &mut pending_question_queue,
+                                        &mut pending_perm_queue,
+                                    );
                                 }
-                                app.status_message = "Cancelling…".into();
                             } else {
                                 app.clear_prompt_draft();
                                 app.toasts.push(
@@ -1508,6 +1669,202 @@ fn print_session_summary(summary: &str) {
     let mut err = io::stderr();
     let _ = writeln!(err, "{summary}");
     let _ = err.flush();
+}
+
+/// Arm cooperative cancel: set the flag, unblock permission/question waits,
+/// and start the force-stop timer.
+fn begin_cancel(
+    app: &mut TuiApp,
+    cancel_flag: &Option<CancelFlag>,
+    cancel_requested_at: &mut Option<Instant>,
+    pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+    pending_perm_queue: &mut std::collections::VecDeque<whycode_agent::PermissionRequest>,
+) {
+    if let Some(flag) = cancel_flag.as_ref() {
+        request_cancel(flag);
+    }
+    // Unblock any interactive wait so the agent can observe cancel promptly.
+    while let Some(req) = pending_question_queue.pop_front() {
+        let _ = req.reply.send(Err(QuestionError::Cancelled));
+    }
+    while let Some(req) = pending_perm_queue.pop_front() {
+        // Deny — tool layer treats false as "user refused".
+        let _ = req.reply.send(false);
+    }
+    if cancel_requested_at.is_none() {
+        *cancel_requested_at = Some(Instant::now());
+    }
+    app.status_message = "Cancelling…".into();
+    app.current_agent_state = AgentState::Generating;
+    app.finish_open_thinking();
+    app.mark_dirty();
+}
+
+/// Hard-stop: abort the turn task, restore agent/session, free the UI.
+///
+/// Called after [`CANCEL_FORCE_AFTER`] or on a second Esc/[stop] while already
+/// cancelling. Guarantees `agent_busy` becomes false.
+#[allow(clippy::too_many_arguments)]
+fn force_stop_turn(
+    app: &mut TuiApp,
+    agent: &mut Agent,
+    session: &mut Session,
+    agent_busy: &mut bool,
+    cancel_flag: &mut Option<CancelFlag>,
+    cancel_requested_at: &mut Option<Instant>,
+    turn_join: &mut Option<tokio::task::JoinHandle<()>>,
+    session_backup: &mut Option<Session>,
+    pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+    pending_perm_queue: &mut std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    done_rx: &mut mpsc::UnboundedReceiver<TurnOutcome>,
+    config: &Config,
+    project_dir: &std::path::Path,
+    provider: &str,
+    model: &str,
+    event_tx: mpsc::UnboundedSender<TurnEvent>,
+    perm_prompter: Arc<ChannelPermissionPrompter>,
+    question_prompter: Arc<ChannelQuestionPrompter>,
+) {
+    // Always re-signal cancel in case the task is still cooperative.
+    if let Some(flag) = cancel_flag.as_ref() {
+        request_cancel(flag);
+    }
+    while let Some(req) = pending_question_queue.pop_front() {
+        let _ = req.reply.send(Err(QuestionError::Cancelled));
+    }
+    while let Some(req) = pending_perm_queue.pop_front() {
+        let _ = req.reply.send(false);
+    }
+
+    if let Some(h) = turn_join.take() {
+        h.abort();
+    }
+
+    // If the task finished in the race window, prefer its restored agent/session.
+    let mut got_outcome = false;
+    while let Ok(outcome) = done_rx.try_recv() {
+        got_outcome = true;
+        match outcome {
+            TurnOutcome::Ok {
+                agent: a,
+                session: s,
+                ..
+            }
+            | TurnOutcome::Err {
+                agent: a,
+                session: s,
+                ..
+            } => {
+                *agent = a;
+                *session = s;
+            }
+        }
+    }
+
+    if !got_outcome {
+        // Task dropped without returning — rebuild agent; restore session snapshot.
+        if let Some(backup) = session_backup.take() {
+            *session = backup;
+        }
+        let preferred = if app.agent_name.is_empty() {
+            agent.info.name.clone()
+        } else {
+            app.agent_name.clone()
+        };
+        rebuild_agent_after_force_stop(
+            agent,
+            session,
+            config,
+            project_dir,
+            &preferred,
+            event_tx,
+            perm_prompter,
+            question_prompter,
+        );
+    } else {
+        session_backup.take();
+    }
+
+    *agent_busy = false;
+    *cancel_flag = None;
+    *cancel_requested_at = None;
+
+    app.finish_open_thinking();
+    app.current_agent_state = AgentState::Idle;
+    app.status_message = format_turn_done_status(
+        app,
+        agent.info.name.as_str(),
+        provider,
+        model,
+        app.turn_elapsed_ms(),
+        true,
+    );
+    // Avoid duplicate system lines if cooperative cancel already announced.
+    let already = app
+        .messages
+        .last()
+        .map(|m| m.role == ChatRole::System && m.content.contains("cancelled"))
+        .unwrap_or(false);
+    if !already {
+        app.add_message(ChatRole::System, "⏹ Stopped.");
+    }
+    persist_session_best_effort(session, "force_cancelled");
+    app.mark_dirty();
+}
+
+fn rebuild_agent_after_force_stop(
+    agent: &mut Agent,
+    session: &mut Session,
+    config: &Config,
+    project_dir: &std::path::Path,
+    preferred_name: &str,
+    event_tx: mpsc::UnboundedSender<TurnEvent>,
+    perm_prompter: Arc<ChannelPermissionPrompter>,
+    question_prompter: Arc<ChannelQuestionPrompter>,
+) {
+    let name = if preferred_name.is_empty() || preferred_name == "_pending" {
+        if config.default_agent.is_empty() {
+            "build".into()
+        } else {
+            config.default_agent.clone()
+        }
+    } else {
+        preferred_name.to_string()
+    };
+    let info = config
+        .get_agent(&name)
+        .cloned()
+        .unwrap_or_else(|| whycode_core::types::AgentInfo {
+            name: name.clone(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        });
+    let base = info
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| Agent::system_prompt_for(&info.name));
+    let prompt = with_project_memory(
+        &Agent::with_agents_md(&base, project_dir),
+        project_dir,
+        config,
+        None,
+    );
+    let bg = agent.background_registry().clone();
+    *agent = Agent::new(info)
+        .with_config(config)
+        .with_background_registry(bg)
+        .with_permission_prompter(perm_prompter as Arc<dyn whycode_agent::PermissionPrompter>)
+        .with_question_prompter(question_prompter as Arc<dyn QuestionPrompter>);
+    agent.wire_event_sink(event_tx);
+    // Keep existing system prompt on session if any; else set rebuilt one.
+    if session.system_prompt.is_empty() {
+        session.set_system_prompt(&prompt);
+    }
 }
 
 /// Best-effort session flush (success, error, or cancel) + structured log.
@@ -2177,7 +2534,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
             ctx.app.session_title = ctx.session.title.clone();
             ctx.app.messages.clear();
-            ctx.app.context_used = ctx.session.token_count() as u64;
+            ctx.app.sync_context_estimate(ctx.session);
             ctx.app.turn_usage = None;
             ctx.app
                 .toasts
@@ -2202,9 +2559,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         "/undo" => {
             if let Some(msgs) = ctx.history.undo(&ctx.session.messages, ctx.project_dir) {
                 ctx.session.set_messages(msgs);
-                ctx.app.messages.clear();
+                ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Undid last turn".into();
             } else if ctx.session.undo_last_turn() > 0 {
+                ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Undid last turn".into();
             } else {
                 ctx.app.status_message = "Nothing to undo".into();
@@ -2213,6 +2571,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         "/redo" => {
             if let Some(msgs) = ctx.history.redo(&ctx.session.messages, ctx.project_dir) {
                 ctx.session.set_messages(msgs);
+                ctx.app.load_messages_from_session(ctx.session);
                 ctx.app.status_message = "Redid turn".into();
             } else {
                 ctx.app.status_message = "Nothing to redo".into();
@@ -2222,7 +2581,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             let before = ctx.session.messages.len();
             ctx.session.compact(ctx.config.session.compaction_threshold);
             // Provider usage is stale after trim — fall back to the char heuristic.
-            ctx.app.context_used = ctx.session.token_count() as u64;
+            ctx.app.sync_context_estimate(ctx.session);
+            ctx.app.turn_usage = None;
             ctx.app.status_message = format!("Compacted {before} → {}", ctx.session.messages.len());
         }
         "/bg" => {
