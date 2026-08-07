@@ -90,7 +90,12 @@ fn slice_spans(spans: &[Span<'static>], start: usize, end: usize) -> Vec<Span<'s
         let from = start.saturating_sub(pos);
         let to = (end - pos).min(len);
         if from < to {
-            let text = span.content.as_ref().get(from..to).unwrap_or("").to_string();
+            let text = span
+                .content
+                .as_ref()
+                .get(from..to)
+                .unwrap_or("")
+                .to_string();
             if !text.is_empty() {
                 out.push(Span::styled(text, span.style));
             }
@@ -104,9 +109,7 @@ fn slice_spans(spans: &[Span<'static>], start: usize, end: usize) -> Vec<Span<'s
 }
 
 fn display_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| c.width().unwrap_or(0).max(1))
-        .sum()
+    s.chars().map(|c| c.width().unwrap_or(0).max(1)).sum()
 }
 
 pub fn wrap_text(buf: &str, width: u16) -> Vec<WrappedRow> {
@@ -199,9 +202,7 @@ mod tests {
 
     #[test]
     fn wrap_spans_preserves_style_across_rows() {
-        let bold = Style::default()
-            .fg(Color::Red)
-            .add_modifier(Modifier::BOLD);
+        let bold = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
         let spans = vec![
             Span::styled("hello ".to_string(), bold),
             Span::styled("world and friends".to_string(), Style::default()),

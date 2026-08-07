@@ -10,9 +10,9 @@ use whycode_llm::provider::ProviderRegistry;
 use whycode_tools::executor::ToolExecutor;
 use whycode_tools::profile::ToolProfile;
 
-use whycode_session::session::Session;
 use std::collections::VecDeque;
 use std::time::Instant;
+use whycode_session::session::Session;
 
 use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
@@ -57,8 +57,8 @@ fn format_permission_detail(args: &serde_json::Value) -> String {
                     serde_json::Value::Bool(b) => lines.push(format!("{key}: {b}")),
                     serde_json::Value::Number(n) => lines.push(format!("{key}: {n}")),
                     other => {
-                        let pretty =
-                            serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string());
+                        let pretty = serde_json::to_string_pretty(other)
+                            .unwrap_or_else(|_| other.to_string());
                         if pretty.contains('\n') {
                             lines.push(format!("{key}:"));
                             for line in pretty.lines() {
@@ -334,23 +334,40 @@ impl Agent {
         self.hooks = config.hooks.clone();
         self.compaction_threshold = config.session.compaction_threshold;
         self.compaction_llm = !matches!(
-            config.session.compaction_llm.trim().to_ascii_lowercase().as_str(),
+            config
+                .session
+                .compaction_llm
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
             "off" | "false" | "0" | "none" | "local"
         );
         self.tool_profile = ToolProfile::parse(&config.session.tool_profile);
-        self.use_prompt_cache =
-            !matches!(config.session.prompt_cache.trim().to_ascii_lowercase().as_str(), "none" | "off" | "false" | "0");
+        self.use_prompt_cache = !matches!(
+            config
+                .session
+                .prompt_cache
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "none" | "off" | "false" | "0"
+        );
         self.model_fast = config.session.model_fast.clone();
         self.memory = memory_settings_from_config(config);
         self.intent_guidance =
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
         self.swarm_enabled = config.swarm.enabled;
-        self.swarm_max_agents = config.swarm.max_agents.clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS);
+        self.swarm_max_agents = config
+            .swarm
+            .max_agents
+            .clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS);
         self.swarm_worktrees = config.swarm.worktrees;
-        self.max_background_jobs = config
-            .automation
-            .max_background_jobs
-            .clamp(1, crate::background::DEFAULT_MAX_BACKGROUND_JOBS.saturating_mul(2).max(8));
+        self.max_background_jobs = config.automation.max_background_jobs.clamp(
+            1,
+            crate::background::DEFAULT_MAX_BACKGROUND_JOBS
+                .saturating_mul(2)
+                .max(8),
+        );
         // Resize ceiling only — keep the same registry so in-flight jobs survive
         // agent switches / re-config.
         self.background.set_max_jobs(self.max_background_jobs);
@@ -393,10 +410,7 @@ impl Agent {
     }
 
     /// Share background jobs across agent identity switches (Ctrl+T).
-    pub fn with_background_registry(
-        mut self,
-        reg: crate::background::BackgroundRegistry,
-    ) -> Self {
+    pub fn with_background_registry(mut self, reg: crate::background::BackgroundRegistry) -> Self {
         self.background = reg;
         self
     }
@@ -499,11 +513,7 @@ impl Agent {
                     .join(" ")
                     .trim()
                     .to_string();
-                if text.is_empty() {
-                    None
-                } else {
-                    Some(text)
-                }
+                if text.is_empty() { None } else { Some(text) }
             }
             Err(e) => {
                 tracing::warn!(error = %e, "LLM compact summary failed");
@@ -696,13 +706,9 @@ impl Agent {
         api_key: &str,
         title_model_override: Option<&str>,
     ) {
-        let Some((use_provider_name, use_model, key, user, assistant)) = self.title_refine_target(
-            session,
-            provider_name,
-            model,
-            api_key,
-            title_model_override,
-        ) else {
+        let Some((use_provider_name, use_model, key, user, assistant)) =
+            self.title_refine_target(session, provider_name, model, api_key, title_model_override)
+        else {
             return;
         };
 
@@ -710,14 +716,8 @@ impl Agent {
             return;
         };
 
-        match crate::title::generate_title(
-            provider,
-            &key,
-            &use_model,
-            &user,
-            assistant.as_deref(),
-        )
-        .await
+        match crate::title::generate_title(provider, &key, &use_model, &user, assistant.as_deref())
+            .await
         {
             Ok(title) => crate::title::apply_refine_result(session, &title, &use_model),
             Err(e) => {
@@ -744,13 +744,9 @@ impl Agent {
         title_model_override: Option<&str>,
         title_tx: tokio::sync::mpsc::UnboundedSender<(String, String)>,
     ) -> bool {
-        let Some((use_provider_name, use_model, key, user, assistant)) = self.title_refine_target(
-            session,
-            provider_name,
-            model,
-            api_key,
-            title_model_override,
-        ) else {
+        let Some((use_provider_name, use_model, key, user, assistant)) =
+            self.title_refine_target(session, provider_name, model, api_key, title_model_override)
+        else {
             return false;
         };
 
@@ -934,12 +930,7 @@ impl Agent {
                         && !api_key.is_empty()
                     {
                         if let Some(summary) = self
-                            .llm_compact_summary(
-                                session,
-                                provider_name,
-                                model,
-                                api_key,
-                            )
+                            .llm_compact_summary(session, provider_name, model, api_key)
                             .await
                         {
                             session.prepend_compact_summary(&summary);
@@ -1091,10 +1082,7 @@ impl Agent {
                             ttft_ms = Some(user_turn_t0.elapsed().as_millis());
                         }
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
-                        tracing::trace!(
-                            n = text.len(),
-                            "thinking delta"
-                        );
+                        tracing::trace!(n = text.len(), "thinking delta");
                     }
                     StreamEvent::ThinkingDelta { text } => {
                         if text.is_empty() {
@@ -1211,9 +1199,7 @@ impl Agent {
             let results = if would_doom_loop(&recent_tool_sigs, &tool_calls) {
                 emit(
                     &events,
-                    TurnEvent::Status(
-                        "Doom loop: identical tool call repeated — refusing".into(),
-                    ),
+                    TurnEvent::Status("Doom loop: identical tool call repeated — refusing".into()),
                 );
                 tracing::warn!(
                     tools = ?tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
@@ -1522,12 +1508,7 @@ impl Agent {
         // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
         // the user *is* the interaction.
         if tc.name == "question" {
-            return run_question_tool(
-                self.question_prompter.as_ref(),
-                &tc.arguments,
-                &tc.id,
-            )
-            .await;
+            return run_question_tool(self.question_prompter.as_ref(), &tc.arguments, &tc.id).await;
         }
 
         // Shell commands (and `schedule` with a delayed shell payload) are gated
@@ -1600,16 +1581,12 @@ impl Agent {
                         }
                     }
                     PermissionAction::Ask if !risk_confirmed => {
-                        let detail = format!(
-                            "Shell rule requires confirmation\n\nCommand:\n{command}"
-                        );
+                        let detail =
+                            format!("Shell rule requires confirmation\n\nCommand:\n{command}");
                         if !self.permission_prompter.ask(&tc.name, &detail).await {
                             return ToolResult {
                                 tool_call_id: tc.id.clone(),
-                                content: format!(
-                                    "User denied permission for tool '{}'.",
-                                    tc.name
-                                ),
+                                content: format!("User denied permission for tool '{}'.", tc.name),
                                 is_error: true,
                             };
                         }
@@ -1623,10 +1600,7 @@ impl Agent {
         // Intent authorization (Claude-style): question/plan turns must not
         // silently mutate. Runs after blast-radius risk, before permission map.
         if let Some(intent) = turn_intent {
-            let command = tc
-                .arguments
-                .get("command")
-                .and_then(|v| v.as_str());
+            let command = tc.arguments.get("command").and_then(|v| v.as_str());
             match crate::intent::authorize_tool(
                 intent,
                 &self.info.name,
@@ -1692,10 +1666,7 @@ impl Agent {
                         if !self.permission_prompter.ask(&tc.name, &detail).await {
                             return ToolResult {
                                 tool_call_id: tc.id.clone(),
-                                content: format!(
-                                    "User denied permission for tool '{}'.",
-                                    tc.name
-                                ),
+                                content: format!("User denied permission for tool '{}'.", tc.name),
                                 is_error: true,
                             };
                         }
@@ -2041,7 +2012,10 @@ impl Agent {
                     .collect();
                 let mut added = Vec::new();
                 let mut missing = Vec::new();
-                let mut guard = self.activated_tools.lock().unwrap_or_else(|e| e.into_inner());
+                let mut guard = self
+                    .activated_tools
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 for name in names {
                     if self.tool_executor.get(&name).is_some() {
                         if !ToolProfile::Core.includes(&name) {
@@ -2277,10 +2251,9 @@ impl Agent {
                 ToolResult {
                     tool_call_id: call.id.clone(),
                     content: match prev {
-                        Some(p) => format!(
-                            "Restored tool cwd to project root (was {})",
-                            p.display()
-                        ),
+                        Some(p) => {
+                            format!("Restored tool cwd to project root (was {})", p.display())
+                        }
                         None => "No worktree cwd override was active.".into(),
                     },
                     is_error: false,
@@ -2396,9 +2369,9 @@ impl Agent {
         events: Option<&EventSink>,
     ) -> whycode_core::types::ToolResult {
         use std::time::Instant;
+        use tokio::sync::Semaphore;
         use whycode_core::types::{AgentInfo, AgentMode, PermissionSet, ToolResult};
         use whycode_core::{ClaimResult, FileClaimRegistry};
-        use tokio::sync::Semaphore;
 
         if !self.swarm_enabled {
             return ToolResult {
@@ -2433,8 +2406,8 @@ impl Agent {
         // Worktrees when configured and project is a git repo; else same-checkout + claims.
         let repo_root = crate::swarm_worktree::git_toplevel(&session.project_path)
             .unwrap_or_else(|| session.project_path.clone());
-        let use_worktrees = self.swarm_worktrees
-            && crate::swarm_worktree::is_git_repo(&session.project_path);
+        let use_worktrees =
+            self.swarm_worktrees && crate::swarm_worktree::is_git_repo(&session.project_path);
         let run_id = format!(
             "{}-{}",
             &session.id.chars().take(8).collect::<String>(),
@@ -2639,13 +2612,7 @@ impl Agent {
                     _ => {
                         let mut perm = parent_permission;
                         let mut denied = perm.denied_tools.unwrap_or_default();
-                        for t in [
-                            "todowrite",
-                            "todo",
-                            "todoread",
-                            "task",
-                            "swarm",
-                        ] {
+                        for t in ["todowrite", "todo", "todoread", "task", "swarm"] {
                             if !denied.iter().any(|x| x == t) {
                                 denied.push(t.to_string());
                             }
@@ -2702,21 +2669,12 @@ impl Agent {
 
                 // File claims apply in same-checkout mode; with worktrees,
                 // physical isolation holds during the run and merge does 3-way.
-                let mut runner = SubagentRunner::new(
-                    registry,
-                    executor,
-                    info,
-                    worker_cwd,
-                    sandbox,
-                    network,
-                )
-                .with_memory(memory);
+                let mut runner =
+                    SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
+                        .with_memory(memory);
                 if !use_worktrees {
-                    runner = runner.with_file_claims(
-                        claims.clone(),
-                        worker_id.clone(),
-                        label.clone(),
-                    );
+                    runner =
+                        runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
                 }
 
                 let t0 = Instant::now();
@@ -2767,43 +2725,43 @@ impl Agent {
                     events_tx,
                     label,
                 )) => {
-                if !worker_usage.is_empty()
-                    && let Ok(mut pending) = self.subagent_usage_pending.lock()
-                {
-                    pending.add(&worker_usage);
-                }
-                if let Some(wt) = worktree {
-                    let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
-                    for c in &merge.conflicts {
-                        if let Some(ref tx) = events_tx {
-                            let _ = tx.send(TurnEvent::FileConflict {
-                                path: c.path.clone(),
-                                claimant: label.clone(),
-                                owner: "main".into(),
-                            });
+                    if !worker_usage.is_empty()
+                        && let Ok(mut pending) = self.subagent_usage_pending.lock()
+                    {
+                        pending.add(&worker_usage);
+                    }
+                    if let Some(wt) = worktree {
+                        let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
+                        for c in &merge.conflicts {
+                            if let Some(ref tx) = events_tx {
+                                let _ = tx.send(TurnEvent::FileConflict {
+                                    path: c.path.clone(),
+                                    claimant: label.clone(),
+                                    owner: "main".into(),
+                                });
+                            }
+                        }
+                        if !merge.conflicts.is_empty() {
+                            success = false;
+                        }
+                        let merge_txt = crate::swarm_worktree::format_merge_report(&merge);
+                        if !merge_txt.is_empty() {
+                            body = format!("{body}\n\n{merge_txt}");
+                        }
+                        if let Err(e) = crate::swarm_worktree::remove_worktree(&wt) {
+                            body = format!("{body}\n\n_Worktree cleanup warning: {e}_");
                         }
                     }
-                    if !merge.conflicts.is_empty() {
-                        success = false;
-                    }
-                    let merge_txt = crate::swarm_worktree::format_merge_report(&merge);
-                    if !merge_txt.is_empty() {
-                        body = format!("{body}\n\n{merge_txt}");
-                    }
-                    if let Err(e) = crate::swarm_worktree::remove_worktree(&wt) {
-                        body = format!("{body}\n\n_Worktree cleanup warning: {e}_");
-                    }
-                }
 
-                if success {
-                    ok += 1;
-                }
-                if body.contains("**Merge conflicts:**") {
-                    merge_conflicts += 1;
-                }
-                sections.push(crate::swarm::format_worker_report(
-                    &worker_id, &kind, success, secs, &goal, &body,
-                ));
+                    if success {
+                        ok += 1;
+                    }
+                    if body.contains("**Merge conflicts:**") {
+                        merge_conflicts += 1;
+                    }
+                    sections.push(crate::swarm::format_worker_report(
+                        &worker_id, &kind, success, secs, &goal, &body,
+                    ));
                 }
                 Err(e) => {
                     sections.push(format!("### worker join error\n\n{e}\n"));
@@ -3093,7 +3051,9 @@ impl Agent {
 }
 
 /// Map config memory table → whycode-memory settings bag.
-pub fn memory_settings_from_config(config: &whycode_config::Config) -> whycode_memory::MemorySettings {
+pub fn memory_settings_from_config(
+    config: &whycode_config::Config,
+) -> whycode_memory::MemorySettings {
     let m = &config.memory;
     whycode_memory::MemorySettings {
         enabled: m.enabled,

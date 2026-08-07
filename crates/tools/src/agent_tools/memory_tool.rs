@@ -128,11 +128,7 @@ impl Tool for MemoryTool {
                 Ok(rows) => {
                     let mut out = format!("{} memories:\n", rows.len());
                     for r in rows {
-                        out.push_str(&format!(
-                            "- [{}] {}\n",
-                            &r.id[..8.min(r.id.len())],
-                            r.text
-                        ));
+                        out.push_str(&format!("- [{}] {}\n", &r.id[..8.min(r.id.len())], r.text));
                     }
                     Ok(out)
                 }

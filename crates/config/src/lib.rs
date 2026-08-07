@@ -477,7 +477,9 @@ impl Default for Config {
         // Ask: primary read-only Q&A — Cursor Ask mode (no implementation)
         let ask_agent = AgentInfo {
             name: "ask".to_string(),
-            description: "Read-only Q&A agent — explains code and answers questions without modifying files.".to_string(),
+            description:
+                "Read-only Q&A agent — explains code and answers questions without modifying files."
+                    .to_string(),
             mode: AgentMode::Primary,
             permission: PermissionSet {
                 allowed_tools: Some(vec![

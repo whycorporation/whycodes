@@ -93,8 +93,8 @@ fn full_jitter(max: Duration) -> Duration {
         return Duration::ZERO;
     }
     // Cheap non-crypto PRNG from time + address — fine for backoff jitter.
-    let seed = Instant::now().elapsed().as_nanos() as u64
-        ^ (max_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let seed =
+        Instant::now().elapsed().as_nanos() as u64 ^ (max_ms.wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let r = seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) >> 16;
     Duration::from_millis(r % (max_ms + 1))
 }

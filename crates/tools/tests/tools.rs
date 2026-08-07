@@ -179,7 +179,10 @@ async fn test_write_tool_file_claim_conflict() {
         result.content
     );
     assert!(
-        !path.exists() || std::fs::read_to_string(&path).unwrap_or_default().is_empty(),
+        !path.exists()
+            || std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .is_empty(),
         "conflicting write must not overwrite"
     );
 }

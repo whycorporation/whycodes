@@ -261,10 +261,7 @@ impl BackgroundRegistry {
         };
         let prepared = prepare(&request).map_err(|e| e.to_string())?;
 
-        let id = format!(
-            "bg-{}",
-            self.inner.next_id.fetch_add(1, Ordering::SeqCst)
-        );
+        let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let label = label
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| truncate_label(command, 72));

@@ -70,12 +70,7 @@ impl Default for FileClaimRegistryInner {
 
 impl std::fmt::Debug for FileClaimRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let n = self
-            .inner
-            .claims
-            .lock()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let n = self.inner.claims.lock().map(|m| m.len()).unwrap_or(0);
         f.debug_struct("FileClaimRegistry")
             .field("claims", &n)
             .finish()
@@ -198,11 +193,7 @@ impl FileClaimRegistry {
     }
 
     pub fn len(&self) -> usize {
-        self.inner
-            .claims
-            .lock()
-            .map(|m| m.len())
-            .unwrap_or(0)
+        self.inner.claims.lock().map(|m| m.len()).unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -219,10 +210,7 @@ mod tests {
     fn first_claim_acquires_second_same_agent_holds() {
         let reg = FileClaimRegistry::new();
         let p = Path::new("/tmp/whycode_claim_test_a.rs");
-        assert_eq!(
-            reg.try_claim("w0", "worker-0", p),
-            ClaimResult::Acquired
-        );
+        assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Acquired);
         assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Held);
     }
 
@@ -235,10 +223,7 @@ mod tests {
             hits2.fetch_add(1, Ordering::SeqCst);
         })));
         let p = Path::new("/tmp/whycode_claim_test_b.rs");
-        assert_eq!(
-            reg.try_claim("w0", "worker-0", p),
-            ClaimResult::Acquired
-        );
+        assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Acquired);
         match reg.try_claim("w1", "worker-1", p) {
             ClaimResult::Conflict {
                 owner_id,
@@ -258,9 +243,6 @@ mod tests {
         let p = Path::new("/tmp/whycode_claim_test_c.rs");
         reg.try_claim("w0", "worker-0", p);
         reg.release_agent("w0");
-        assert_eq!(
-            reg.try_claim("w1", "worker-1", p),
-            ClaimResult::Acquired
-        );
+        assert_eq!(reg.try_claim("w1", "worker-1", p), ClaimResult::Acquired);
     }
 }

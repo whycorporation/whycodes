@@ -107,9 +107,7 @@ pub fn render_question_dialog(
     for para in q.prompt.split('\n') {
         lines.push(Line::from(Span::styled(
             para.to_string(),
-            Style::default()
-                .fg(palette.fg)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         )));
     }
     lines.push(Line::from(""));
@@ -133,11 +131,7 @@ pub fn render_question_dialog(
         };
 
         let marker = if q.multi_select && !is_other {
-            if checked {
-                "[×] "
-            } else {
-                "[ ] "
-            }
+            if checked { "[×] " } else { "[ ] " }
         } else if current {
             "▸ "
         } else {
@@ -161,10 +155,7 @@ pub fn render_question_dialog(
         }
 
         lines.push(Line::from(vec![
-            Span::styled(
-                format!("  {marker}"),
-                Style::default().fg(palette.accent),
-            ),
+            Span::styled(format!("  {marker}"), Style::default().fg(palette.accent)),
             Span::styled(main, label_style),
         ]));
     }
@@ -180,15 +171,16 @@ pub fn render_question_dialog(
         for pl in prev.lines().take(3) {
             lines.push(Line::from(Span::styled(
                 format!("      {pl}"),
-                Style::default().fg(palette.dim).add_modifier(Modifier::ITALIC),
+                Style::default()
+                    .fg(palette.dim)
+                    .add_modifier(Modifier::ITALIC),
             )));
         }
     }
 
     // Free-text field
-    let show_input = state.free_text_focus
-        || state.is_other_index(state.cursor)
-        || q.options.is_empty();
+    let show_input =
+        state.free_text_focus || state.is_other_index(state.cursor) || q.options.is_empty();
     if show_input {
         lines.push(Line::from(""));
         let caret = if state.free_text_focus { "▌" } else { " " };

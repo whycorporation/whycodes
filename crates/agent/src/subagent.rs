@@ -389,7 +389,12 @@ fn inject_subagent_memory(
     let mut settings = parent_memory.clone();
     // Env can force main bank even if config has subagent_banks=true.
     let banks_off = std::env::var("WHYCODE_SUBAGENT_BANKS")
-        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no" | "off"))
+        .map(|v| {
+            matches!(
+                v.to_ascii_lowercase().as_str(),
+                "0" | "false" | "no" | "off"
+            )
+        })
         .unwrap_or(false);
     if parent_memory.subagent_banks && !banks_off {
         settings.agent_bank = Some(agent_name.to_string());

@@ -151,5 +151,3 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     app.dialog_list_visible = max_rows;
     app.dialog_list_total = total;
 }
-
-

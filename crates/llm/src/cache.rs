@@ -212,7 +212,11 @@ mod tests {
         assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
         assert!(body["tools"][0].get("cache_control").is_none());
         assert_eq!(body["tools"][1]["cache_control"]["type"], "ephemeral");
-        assert!(body["messages"][0]["content"][0].get("cache_control").is_none());
+        assert!(
+            body["messages"][0]["content"][0]
+                .get("cache_control")
+                .is_none()
+        );
         assert_eq!(
             body["messages"][2]["content"][0]["cache_control"]["type"],
             "ephemeral"

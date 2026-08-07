@@ -132,9 +132,7 @@ pub fn render_permission_dialog(
                     Span::styled(prefix.to_string(), style_prefix),
                     Span::styled(
                         line.to_string(),
-                        Style::default()
-                            .fg(palette.fg)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
                     ),
                 ]));
             } else {
@@ -221,10 +219,8 @@ fn parse_permission_detail(detail: &str) -> ParsedPermission {
     }
 
     // Bare shell-ish single line without labeled keys → treat as command.
-    let is_command = !main.contains('\n')
-        && !main.contains(": ")
-        && !main.starts_with('{')
-        && !main.is_empty();
+    let is_command =
+        !main.contains('\n') && !main.contains(": ") && !main.starts_with('{') && !main.is_empty();
 
     ParsedPermission {
         body: main.to_string(),

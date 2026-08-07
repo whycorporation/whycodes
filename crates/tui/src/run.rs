@@ -276,7 +276,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     // Questionnaire channel (Grok-style `question` tool)
     let q_timeout = if config.tools.question.timeout_enabled {
-        Some(Duration::from_secs(config.tools.question.timeout_secs.max(1)))
+        Some(Duration::from_secs(
+            config.tools.question.timeout_secs.max(1),
+        ))
     } else {
         None
     };
@@ -289,9 +291,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
         )
-        .with_question_prompter(
-            Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>
-        )
+        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
         .with_mcp(&config)
         .await;
 
@@ -735,10 +735,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 .unwrap_or_default();
                             app.status_message = format!("{dur}error — see chat");
                             app.add_message(ChatRole::System, format!("Error: {display}"));
-                            app.toasts.push(
-                                crate::toast::ToastKind::Error,
-                                truncate_toast(&display, 48),
-                            );
+                            app.toasts
+                                .push(crate::toast::ToastKind::Error, truncate_toast(&display, 48));
                             whycode_core::logging::emit_sid(
                                 "tui",
                                 "error",
@@ -862,19 +860,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
-            if catalog_fetch_pending
-                && !agent_busy
-                && app.pending_prompt.is_none()
-                && !missing_key
+            if catalog_fetch_pending && !agent_busy && app.pending_prompt.is_none() && !missing_key
             {
                 catalog_fetch_pending = false;
-                spawn_model_context_fetch(
-                    &config,
-                    &provider,
-                    &model,
-                    &api_key,
-                    catalog_tx.clone(),
-                );
+                spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
             }
 
             // A7 suggestion results
@@ -1710,11 +1699,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             notice,
         } => {
             app.intent_kind = Some(kind);
-            app.intent_badge = if badge.is_empty() {
-                None
-            } else {
-                Some(badge)
-            };
+            app.intent_badge = if badge.is_empty() { None } else { Some(badge) };
             if !notice.is_empty() {
                 let toast_kind = match notice_kind.as_str() {
                     "warning" => crate::toast::ToastKind::Warning,
@@ -1894,7 +1879,9 @@ fn handle_question_key(
     };
 
     let finish_cancel = |app: &mut TuiApp,
-                         pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
+                         pending_question_queue: &mut std::collections::VecDeque<
+        QuestionRequest,
+    >,
                          pending_perm_queue: &std::collections::VecDeque<
         whycode_agent::PermissionRequest,
     >| {
@@ -2265,14 +2252,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 }
             } else if let Some(id) = rest.strip_prefix("kill ").map(str::trim) {
                 match ctx.agent.background_registry().kill(id) {
-                    Ok(msg) => ctx
-                        .app
-                        .toasts
-                        .push(crate::toast::ToastKind::Info, msg),
-                    Err(e) => ctx
-                        .app
-                        .toasts
-                        .push(crate::toast::ToastKind::Warning, e),
+                    Ok(msg) => ctx.app.toasts.push(crate::toast::ToastKind::Info, msg),
+                    Err(e) => ctx.app.toasts.push(crate::toast::ToastKind::Warning, e),
                 }
             } else {
                 ctx.app.status_message = "Usage: /bg | /bg kill <id>".into();
@@ -2297,13 +2278,11 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 } else if !rest.is_empty() {
                     (3usize, rest.to_string())
                 } else {
-                    ctx.app.status_message =
-                        "Usage: /loop N prompt…  |  /loop stop".into();
+                    ctx.app.status_message = "Usage: /loop N prompt…  |  /loop stop".into();
                     return;
                 };
                 if prompt.is_empty() {
-                    ctx.app.status_message =
-                        "Usage: /loop N prompt…  |  /loop stop".into();
+                    ctx.app.status_message = "Usage: /loop N prompt…  |  /loop stop".into();
                     return;
                 }
                 let n = n.clamp(1, 20);
@@ -2313,10 +2292,9 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 for _ in 1..n {
                     ctx.app.pending_auto_prompts.push_back(prompt.clone());
                 }
-                ctx.app.toasts.push(
-                    crate::toast::ToastKind::Info,
-                    format!("Loop ×{n} queued"),
-                );
+                ctx.app
+                    .toasts
+                    .push(crate::toast::ToastKind::Info, format!("Loop ×{n} queued"));
             }
         }
         "/remember" => {
@@ -2347,37 +2325,31 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 }
             }
         }
-        "/memory" => {
-            match memory_service(ctx.project_dir, ctx.config) {
-                Ok(svc) => {
-                    let n = svc.list(1000).map(|r| r.len()).unwrap_or(0);
-                    let path = svc.memory_md_path();
-                    let mut msg = format!(
-                        "Memory enabled={} · {} entries · {}\nproject_key={}",
-                        ctx.config.memory.enabled,
-                        n,
-                        path.display(),
-                        svc.project_key
-                    );
-                    if let Ok(rows) = svc.list(8) {
-                        for r in rows {
-                            msg.push_str(&format!(
-                                "\n· {}  {}",
-                                &r.id[..8.min(r.id.len())],
-                                r.text
-                            ));
-                        }
+        "/memory" => match memory_service(ctx.project_dir, ctx.config) {
+            Ok(svc) => {
+                let n = svc.list(1000).map(|r| r.len()).unwrap_or(0);
+                let path = svc.memory_md_path();
+                let mut msg = format!(
+                    "Memory enabled={} · {} entries · {}\nproject_key={}",
+                    ctx.config.memory.enabled,
+                    n,
+                    path.display(),
+                    svc.project_key
+                );
+                if let Ok(rows) = svc.list(8) {
+                    for r in rows {
+                        msg.push_str(&format!("\n· {}  {}", &r.id[..8.min(r.id.len())], r.text));
                     }
-                    ctx.app.add_message(ChatRole::System, msg);
-                    ctx.app.status_message = format!("Memory · {n} entries");
                 }
-                Err(e) => {
-                    ctx.app
-                        .toasts
-                        .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
-                }
+                ctx.app.add_message(ChatRole::System, msg);
+                ctx.app.status_message = format!("Memory · {n} entries");
             }
-        }
+            Err(e) => {
+                ctx.app
+                    .toasts
+                    .push(crate::toast::ToastKind::Error, format!("Memory: {e}"));
+            }
+        },
         "/share" | "/export" => match ctx.session.export_share() {
             Ok(p) => {
                 let md = p.replace(".json", ".md");
@@ -2641,10 +2613,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
         }
         "/cost" | "/usage" => {
-            ctx.app.add_message(
-                ChatRole::System,
-                cost_report(ctx.session, ctx.app),
-            );
+            ctx.app
+                .add_message(ChatRole::System, cost_report(ctx.session, ctx.app));
         }
         "/theme" | "/themes" => {
             use crate::theme::ThemeName;
@@ -2659,10 +2629,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.theme = t;
                 ctx.app.config.theme = t;
                 ctx.app.config.theme_override = None;
-                ctx.app.theme_selected = ThemeName::ALL
-                    .iter()
-                    .position(|x| *x == t)
-                    .unwrap_or(0);
+                ctx.app.theme_selected = ThemeName::ALL.iter().position(|x| *x == t).unwrap_or(0);
                 ctx.app.status_message = format!("Theme → {}", t.name());
                 ctx.app.toasts.push(
                     crate::toast::ToastKind::Success,
@@ -2735,8 +2702,7 @@ fn maybe_spawn_prompt_suggestion(
     let mut reg = whycode_llm::provider::ProviderRegistry::default();
     reg.register_from_config(config);
     tokio::spawn(async move {
-        let (p, m) =
-            whycode_agent::resolve_title_model(&provider, &model, model_fast.as_deref());
+        let (p, m) = whycode_agent::resolve_title_model(&provider, &model, model_fast.as_deref());
         let Some(prov) = reg.get(&p) else {
             return;
         };
@@ -3131,10 +3097,7 @@ fn context_report(
                     })
                     .sum(),
             };
-            let label = m
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("tool#{i}"));
+            let label = m.name.clone().unwrap_or_else(|| format!("tool#{i}"));
             tool_sizes.push((chars, label));
         }
     }
@@ -3161,10 +3124,7 @@ fn context_report(
             activated.join(",")
         }
     ));
-    lines.push(format!(
-        "  memory:    enabled={}",
-        config.memory.enabled
-    ));
+    lines.push(format!("  memory:    enabled={}", config.memory.enabled));
     if let Some(cwd) = agent.cwd_override_path() {
         lines.push(format!("  cwd:       override {}", cwd.display()));
     } else {
@@ -3280,7 +3240,8 @@ fn cost_report(session: &Session, app: &TuiApp) -> String {
         format_token_count(app.max_context_tokens),
         app.context_percent()
     ));
-    lines.push("  note:      providers bill differently; figures are token counts, not USD.".into());
+    lines
+        .push("  note:      providers bill differently; figures are token counts, not USD.".into());
     lines.join("\n")
 }
 
@@ -3302,10 +3263,7 @@ fn doctor_report(
     lines.push(format!("  provider:     {provider}"));
     lines.push(format!("  model:        {model}"));
     lines.push(format!("  agent:        {}", agent.info.name));
-    lines.push(format!(
-        "  tool_profile: {}",
-        config.session.tool_profile
-    ));
+    lines.push(format!("  tool_profile: {}", config.session.tool_profile));
 
     // API key present? (never print the key)
     let env_name = format!("{}_API_KEY", provider.to_uppercase());
@@ -3421,12 +3379,7 @@ fn which_bwrap() -> bool {
         .unwrap_or(false)
 }
 
-fn session_details(
-    session: &Session,
-    agent: &str,
-    app: &TuiApp,
-    config: &Config,
-) -> String {
+fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config) -> String {
     let usage = &session.usage;
     let profile = whycode_tools::ToolProfile::parse(&config.session.tool_profile);
     let mut out = format!(

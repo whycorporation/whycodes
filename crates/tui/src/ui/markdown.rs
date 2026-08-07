@@ -11,9 +11,7 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use whycode_format::markdown::{
-    Block, Inline, TableAlign, highlight_code_spans, parse_markdown,
-};
+use whycode_format::markdown::{Block, Inline, TableAlign, highlight_code_spans, parse_markdown};
 use whycode_format::mermaid::{is_mermaid_language, render_mermaid};
 use whycode_format::table::{column_widths, pad_cell};
 
@@ -182,12 +180,7 @@ fn render_table(
             .map(|i| row.get(i).cloned().unwrap_or_default())
             .collect();
         out.push(table_row_line(
-            &cells,
-            &widths,
-            aligns,
-            col_count,
-            cell_style,
-            border,
+            &cells, &widths, aligns, col_count, cell_style, border,
         ));
     }
     out.push(table_border_line(&widths, BorderKind::Bot, border));
@@ -518,7 +511,10 @@ mod tests {
 
     #[test]
     fn long_paragraph_soft_wraps() {
-        let words = (0..20).map(|i| format!("word{i}")).collect::<Vec<_>>().join(" ");
+        let words = (0..20)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         let lines = render_with_width(&words, &palette(), Some(24));
         assert!(
             lines.len() >= 2,

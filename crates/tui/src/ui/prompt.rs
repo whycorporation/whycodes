@@ -773,10 +773,7 @@ mod wrap_tests {
             spans.iter().any(|s| s.content.as_ref() == token),
             "paste token should be its own span: {spans:?}"
         );
-        let token_span = spans
-            .iter()
-            .find(|s| s.content.as_ref() == token)
-            .unwrap();
+        let token_span = spans.iter().find(|s| s.content.as_ref() == token).unwrap();
         assert_eq!(token_span.style.fg, Some(Color::Yellow));
     }
 }
@@ -786,8 +783,8 @@ mod overflow_render_tests {
     use super::*;
     use crate::app::TuiApp;
     use crate::config::TuiAppConfig;
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     #[test]
     fn long_paste_stays_inside_box_edges() {
@@ -866,7 +863,11 @@ mod overflow_render_tests {
             let slice = &buf[row.byte_range.0..row.byte_range.1];
             let w: usize = slice
                 .chars()
-                .map(|c| unicode_width::UnicodeWidthChar::width(c).unwrap_or(0).max(1))
+                .map(|c| {
+                    unicode_width::UnicodeWidthChar::width(c)
+                        .unwrap_or(0)
+                        .max(1)
+                })
                 .sum();
             assert!(
                 w <= text_w as usize,

@@ -281,7 +281,10 @@ impl MemoryService {
 
         let mut parts: Vec<String> = Vec::new();
         let mut char_budget = self.settings.recall_char_budget()
-            + self.settings.max_index_bytes.min(self.settings.recall_char_budget() * 2);
+            + self
+                .settings
+                .max_index_bytes
+                .min(self.settings.recall_char_budget() * 2);
 
         let index = markdown::load_capped(
             &self.memory_md_path(),
@@ -290,11 +293,7 @@ impl MemoryService {
         );
         if !index.is_empty() {
             let scope = self.settings.scope.as_str();
-            let bank = self
-                .settings
-                .agent_bank
-                .as_deref()
-                .unwrap_or("main");
+            let bank = self.settings.agent_bank.as_deref().unwrap_or("main");
             let block = format!(
                 "# Auto Memory\n\n\
                  Notes saved for this project (scope={scope}, bank={bank}). Prefer repo truth if stale.\n\n\
@@ -343,18 +342,22 @@ impl MemoryService {
 
                 // Code RAG
                 if self.settings.code_inject {
-                    if let Ok(code_hits) = self.search_code(
-                        q,
-                        self.settings.code_top_k,
-                        self.settings.code_min_score,
-                    ) {
+                    if let Ok(code_hits) =
+                        self.search_code(q, self.settings.code_top_k, self.settings.code_min_score)
+                    {
                         if !code_hits.is_empty() {
                             let mut lines = Vec::new();
                             let mut used = 0usize;
                             let header = "# Code context (indexed; verify in repo)\n";
                             used += header.len();
                             for hit in &code_hits {
-                                let snippet = hit.entry.text.lines().take(8).collect::<Vec<_>>().join("\n");
+                                let snippet = hit
+                                    .entry
+                                    .text
+                                    .lines()
+                                    .take(8)
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
                                 let line = format!(
                                     "### {} ({}-{}) [{:.2}]\n```\n{}\n```\n",
                                     hit.entry.path,
@@ -527,7 +530,12 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
         let saved = svc
-            .auto_retain("Always prefer fish shell for scripts in this repo.", None, None, 1)
+            .auto_retain(
+                "Always prefer fish shell for scripts in this repo.",
+                None,
+                None,
+                1,
+            )
             .unwrap();
         assert!(!saved.is_empty());
         assert!(!svc.list(10).unwrap().is_empty());
@@ -545,8 +553,11 @@ mod tests {
         explore.agent_bank = Some("explore".into());
         let s_main = MemoryService::open(&project, &data, main).unwrap();
         let s_ex = MemoryService::open(&project, &data, explore).unwrap();
-        s_main.remember("main bank fact unique alpha", None).unwrap();
-        s_ex.remember("explore bank fact unique beta", None).unwrap();
+        s_main
+            .remember("main bank fact unique alpha", None)
+            .unwrap();
+        s_ex.remember("explore bank fact unique beta", None)
+            .unwrap();
         assert_eq!(s_main.list(10).unwrap().len(), 1);
         assert_eq!(s_ex.list(10).unwrap().len(), 1);
         assert!(s_main.list(10).unwrap()[0].text.contains("alpha"));

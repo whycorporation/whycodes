@@ -3,8 +3,8 @@
 //! Handles HTTP 429 responses by parsing `Retry-After` headers and provides
 //! a token bucket rate limiter to proactively avoid hitting limits.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Parse a Retry-After header value (can be seconds as an integer or an HTTP date).

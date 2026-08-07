@@ -6,7 +6,7 @@
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use whycode_core::types::{PermissionSet, ToolCall};
 use whycode_tools::executor::ToolExecutor;
 use whycode_tools::profile::ToolProfile;

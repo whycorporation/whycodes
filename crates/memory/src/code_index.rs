@@ -204,7 +204,9 @@ mod tests {
         let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
         let n = svc.index_codebase(100, 500).unwrap();
         assert!(n >= 1);
-        let hits = svc.search_code("semantic recall remember", 3, 0.05).unwrap();
+        let hits = svc
+            .search_code("semantic recall remember", 3, 0.05)
+            .unwrap();
         assert!(!hits.is_empty());
         assert!(hits[0].entry.path.contains("lib.rs"));
     }

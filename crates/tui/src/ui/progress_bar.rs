@@ -52,13 +52,15 @@ pub fn blend_rgb(a: (u8, u8, u8), b: (u8, u8, u8), t: f32) -> (u8, u8, u8) {
 /// Map context fill percent (0–100+) to an RGB urgency color.
 ///
 /// Breakpoints (Grok-inspired): dim → accent → warning → error.
-pub fn context_urgency_rgb(pct: f64, dim: (u8, u8, u8), accent: (u8, u8, u8), warning: (u8, u8, u8), error: (u8, u8, u8)) -> (u8, u8, u8) {
-    let bps: [(f64, (u8, u8, u8)); 4] = [
-        (0.0, dim),
-        (50.0, accent),
-        (75.0, warning),
-        (95.0, error),
-    ];
+pub fn context_urgency_rgb(
+    pct: f64,
+    dim: (u8, u8, u8),
+    accent: (u8, u8, u8),
+    warning: (u8, u8, u8),
+    error: (u8, u8, u8),
+) -> (u8, u8, u8) {
+    let bps: [(f64, (u8, u8, u8)); 4] =
+        [(0.0, dim), (50.0, accent), (75.0, warning), (95.0, error)];
     if pct <= bps[0].0 {
         return bps[0].1;
     }

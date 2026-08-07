@@ -277,10 +277,7 @@ fn test_complete_turn_timing_ms_uses_reported_work_not_wall() {
     let stamped = app.complete_turn_timing_ms(2_500);
     assert_eq!(stamped, 2_500);
     assert!(app.turn_started_at.is_none());
-    assert_eq!(
-        app.messages.last().and_then(|m| m.duration_ms),
-        Some(2_500)
-    );
+    assert_eq!(app.messages.last().and_then(|m| m.duration_ms), Some(2_500));
     assert_eq!(crate::app::format_elapsed_ms(2_500), "2.5s");
 }
 
@@ -304,11 +301,11 @@ fn test_format_usage_short() {
 #[test]
 fn test_format_context_usage_and_percent() {
     use crate::app::{
-        context_tokens_from_usage, format_context_hover, format_context_percent,
-        format_context_usage, fmt_pct5,
+        context_tokens_from_usage, fmt_pct5, format_context_hover, format_context_percent,
+        format_context_usage,
     };
-    use whycode_core::types::Usage;
     use unicode_width::UnicodeWidthStr;
+    use whycode_core::types::Usage;
 
     assert_eq!(format_context_usage(1_200, 200_000), "1.2k / 200k");
     assert_eq!(format_context_usage(12_400, 128_000), "12.4k / 128k");

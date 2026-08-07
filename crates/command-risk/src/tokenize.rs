@@ -311,11 +311,7 @@ fn find_closing_paren(chars: &[char], from: usize) -> Option<usize> {
 }
 
 fn contains_substitution(s: &str) -> bool {
-    s.contains("$(")
-        || s.contains('`')
-        || s.contains("<(")
-        || s.contains(">(")
-        || s.contains("=(")
+    s.contains("$(") || s.contains('`') || s.contains("<(") || s.contains(">(") || s.contains("=(")
 }
 
 /// `=(cmd)` is Zsh process substitution only at word start (not `VAR=value`).

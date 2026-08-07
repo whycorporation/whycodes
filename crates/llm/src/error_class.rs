@@ -66,10 +66,7 @@ impl ClassifiedError {
         match self.kind {
             ErrorKind::RateLimited => {
                 if let Some(d) = self.retry_after {
-                    format!(
-                        "Rate limited — retry in {}s",
-                        d.as_secs().max(1)
-                    )
+                    format!("Rate limited — retry in {}s", d.as_secs().max(1))
                 } else {
                     "Rate limited by the provider".into()
                 }

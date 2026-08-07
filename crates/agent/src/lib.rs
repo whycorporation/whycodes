@@ -32,6 +32,4 @@ pub use question::{
     StdinQuestionPrompter, default_question_prompter, run_question_tool,
 };
 pub use routing::resolve_turn_model;
-pub use title::{
-    generate_title, is_trivial_title_seed, resolve_title_model, should_refine_title,
-};
+pub use title::{generate_title, is_trivial_title_seed, resolve_title_model, should_refine_title};

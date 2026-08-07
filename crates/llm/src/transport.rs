@@ -10,9 +10,9 @@ use futures::Stream;
 use tracing::debug;
 use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
-use crate::error_class::{classify, ClassifiedError};
+use crate::error_class::{ClassifiedError, classify};
 use crate::provider::LlmProvider;
-use crate::retry::{execute_with_policy, RetryPolicy};
+use crate::retry::{RetryPolicy, execute_with_policy};
 
 /// Bundle of transport defaults used across the product.
 #[derive(Debug, Clone)]
@@ -45,9 +45,8 @@ impl LlmTransport {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<
-        Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>,
-    > {
+    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    {
         debug!(
             provider = provider.name(),
             model,

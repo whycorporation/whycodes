@@ -67,10 +67,7 @@ pub fn parse_swarm_tasks(args: &serde_json::Value) -> Result<Vec<SwarmWorkerSpec
                     .collect()
             })
             .unwrap_or_default();
-        let max_turns = t
-            .get("max_turns")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(15) as usize;
+        let max_turns = t.get("max_turns").and_then(|v| v.as_u64()).unwrap_or(15) as usize;
         out.push(SwarmWorkerSpec {
             goal,
             context,
@@ -104,7 +101,10 @@ pub fn ensure_tldr(body: &str) -> String {
         .find(|l| !l.is_empty())
         .unwrap_or("completed");
     let summary: String = first.chars().take(160).collect();
-    let rest = truncate_chars(trimmed, MAX_SWARM_COMPLETION_REPORT_CHARS.saturating_sub(200));
+    let rest = truncate_chars(
+        trimmed,
+        MAX_SWARM_COMPLETION_REPORT_CHARS.saturating_sub(200),
+    );
     format!("TLDR: {summary}\n\n{rest}")
 }
 

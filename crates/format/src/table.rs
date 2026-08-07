@@ -83,7 +83,7 @@ pub fn column_widths(
 
     if let Some(max_total) = max_total {
         // Chrome: left │ + each col (space + cell + space + │) = 1 + cols*3 + sum(widths)
-        // Actually: `│ cell │ cell │` = 1 + sum(2 + w) for each col... 
+        // Actually: `│ cell │ cell │` = 1 + sum(2 + w) for each col...
         // format: `| padded |` with 1 space pad each side → per col: 1 + w + 1 + 1(pipe) but first pipe shared.
         // Total = 1 + sum_i (w_i + 3)  wait: "| a | b |" = 1 + (1+w+1+1)*n ... simpler:
         // border parts: each col contributes w+2 dashes between +; row: `| ` + cell + ` |` * n

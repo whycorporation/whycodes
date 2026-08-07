@@ -346,24 +346,23 @@ impl Session {
     /// Add tool results (oversized bodies are capped for context economy).
     pub fn add_tool_results(&mut self, results: Vec<whycode_core::types::ToolResult>) {
         for result in results {
-            let content = if let Some((media, b64, preface)) =
-                split_whycode_image_payload(&result.content)
-            {
-                // Vision path: short text + image block (A6).
-                MessageContent::Blocks(vec![
-                    ContentBlock::Text {
-                        text: cap_tool_text(preface),
-                    },
-                    ContentBlock::Image {
-                        source: whycode_core::types::ImageSource::Base64 {
-                            media_type: media,
-                            data: b64,
+            let content =
+                if let Some((media, b64, preface)) = split_whycode_image_payload(&result.content) {
+                    // Vision path: short text + image block (A6).
+                    MessageContent::Blocks(vec![
+                        ContentBlock::Text {
+                            text: cap_tool_text(preface),
                         },
-                    },
-                ])
-            } else {
-                MessageContent::Text(cap_tool_text(result.content))
-            };
+                        ContentBlock::Image {
+                            source: whycode_core::types::ImageSource::Base64 {
+                                media_type: media,
+                                data: b64,
+                            },
+                        },
+                    ])
+                } else {
+                    MessageContent::Text(cap_tool_text(result.content))
+                };
             self.messages.push(Message {
                 role: Role::Tool,
                 content,
@@ -421,22 +420,10 @@ impl Session {
         // Labels padded to 8 so values line up (matches Cline's "Session Summary").
         let mut out = String::from("\nSession Summary\n");
         out.push_str(&format!("  {:8}  {}\n", "ID", self.id));
-        out.push_str(&format!(
-            "  {:8}  {}s\n",
-            "Duration",
-            duration.as_secs()
-        ));
+        out.push_str(&format!("  {:8}  {}s\n", "Duration", duration.as_secs()));
         out.push_str(&format!("  {:8}  {}\n", "Model", model_label));
-        out.push_str(&format!(
-            "  {:8}  {}\n",
-            "CWD",
-            self.project_path.display()
-        ));
-        out.push_str(&format!(
-            "  {:8}  {}\n",
-            "Messages",
-            self.messages.len()
-        ));
+        out.push_str(&format!("  {:8}  {}\n", "CWD", self.project_path.display()));
+        out.push_str(&format!("  {:8}  {}\n", "Messages", self.messages.len()));
         out.push_str(&format!(
             "  {:8}  {} --resume {}\n",
             "Continue", binary, self.id
@@ -572,8 +559,7 @@ impl Session {
                         | ContentBlock::ToolResult { content: text, .. } = block
                         {
                             let before = text.len();
-                            *text =
-                                cap_tool_text_to(std::mem::take(text), TOOL_RESULT_PRUNE_CHARS);
+                            *text = cap_tool_text_to(std::mem::take(text), TOOL_RESULT_PRUNE_CHARS);
                             if text.len() != before {
                                 n += 1;
                             }

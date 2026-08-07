@@ -116,9 +116,8 @@ pub fn classify_user_intent(text: &str) -> IntentAssessment {
     }
 
     // Imperative / short directive without `?` → change bias.
-    let imperative = !has_qmark
-        && t.chars().count() < 200
-        && starts_with_any(&lower, CHANGE_STARTERS);
+    let imperative =
+        !has_qmark && t.chars().count() < 200 && starts_with_any(&lower, CHANGE_STARTERS);
     if imperative {
         reasons.push("change_starter");
     }
@@ -129,7 +128,9 @@ pub fn classify_user_intent(text: &str) -> IntentAssessment {
         reasons.push("scope_sprawl");
     }
 
-    let mut q = q_score as f32 + if has_qmark { 1.2 } else { 0.0 } + if starts_question { 1.0 } else { 0.0 };
+    let mut q = q_score as f32
+        + if has_qmark { 1.2 } else { 0.0 }
+        + if starts_question { 1.0 } else { 0.0 };
     let c = c_score as f32 + if imperative { 1.4 } else { 0.0 };
     let p = p_score as f32 + if sprawl && p_score > 0 { 0.8 } else { 0.0 };
 
@@ -152,7 +153,10 @@ pub fn classify_user_intent(text: &str) -> IntentAssessment {
     } else if c >= q && c >= p && c >= 1.0 {
         (UserIntent::Change, c)
     } else if has_qmark && c < 1.0 {
-        (UserIntent::Question, 1.0 + if starts_question { 0.5 } else { 0.0 })
+        (
+            UserIntent::Question,
+            1.0 + if starts_question { 0.5 } else { 0.0 },
+        )
     } else if imperative {
         (UserIntent::Change, 1.2)
     } else {
@@ -216,9 +220,7 @@ pub fn posture_suffix(assessment: &IntentAssessment, agent_name: &str) -> Option
 pub fn should_inject(mode: IntentGuidanceMode, assessment: &IntentAssessment) -> bool {
     match mode {
         IntentGuidanceMode::Off => false,
-        IntentGuidanceMode::Always => {
-            !matches!(assessment.intent, UserIntent::Trivial)
-        }
+        IntentGuidanceMode::Always => !matches!(assessment.intent, UserIntent::Trivial),
         IntentGuidanceMode::Auto => {
             match assessment.intent {
                 UserIntent::Trivial => false,
@@ -272,7 +274,10 @@ pub fn apply_intent_to_request(
 
 /// Short chrome badge when confidence is high enough to show.
 pub fn badge_label(assessment: &IntentAssessment) -> Option<&'static str> {
-    if matches!(assessment.intent, UserIntent::Trivial | UserIntent::Ambiguous) {
+    if matches!(
+        assessment.intent,
+        UserIntent::Trivial | UserIntent::Ambiguous
+    ) {
         return None;
     }
     if !assessment.is_high() {
@@ -341,9 +346,13 @@ pub fn status_hint(assessment: &IntentAssessment, agent_name: &str) -> Option<St
 pub enum ToolAuthDecision {
     Allow,
     /// Ask the user; show `reason` in the permission dialog.
-    Confirm { reason: String },
+    Confirm {
+        reason: String,
+    },
     /// Hard block; model must try another path.
-    Refuse { reason: String },
+    Refuse {
+        reason: String,
+    },
 }
 
 /// Tools that mutate the workspace or shared state.
@@ -399,7 +408,11 @@ pub fn is_read_only_shell(command: &str) -> bool {
 
     // Split on shell list operators; every segment must look observational.
     for segment in cmd.split(&['&', ';', '\n'][..]) {
-        let seg = segment.trim().trim_start_matches("&&").trim_start_matches("||").trim();
+        let seg = segment
+            .trim()
+            .trim_start_matches("&&")
+            .trim_start_matches("||")
+            .trim();
         if seg.is_empty() {
             continue;
         }
@@ -422,17 +435,67 @@ fn segment_looks_read_only(seg: &str) -> bool {
 }
 
 const READ_ONLY_SHELL_HEADS: &[&str] = &[
-    "ls", "ll", "dir", "pwd", "echo", "printf", "cat", "head", "tail", "less", "more",
-    "wc", "file", "stat", "which", "type", "command", "true", "false", "test", "[",
-    "rg", "grep", "fgrep", "egrep", "find", "fd", "locate", "tree",
+    "ls",
+    "ll",
+    "dir",
+    "pwd",
+    "echo",
+    "printf",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",
+    "file",
+    "stat",
+    "which",
+    "type",
+    "command",
+    "true",
+    "false",
+    "test",
+    "[",
+    "rg",
+    "grep",
+    "fgrep",
+    "egrep",
+    "find",
+    "fd",
+    "locate",
+    "tree",
     "git", // further filtered above for push/commit/reset
-    "diff", "cmp", "md5sum", "sha256sum",
+    "diff",
+    "cmp",
+    "md5sum",
+    "sha256sum",
     "cargo", // cargo check/test/build are builds — not pure read; see below
-    "rustc", "python", "python3", "node", "ruby", "perl",
-    "jq", "yq", "awk", "sed", // sed without -i is usually filter; allow if no -i
-    "env", "printenv", "uname", "whoami", "id", "date", "cal",
-    "df", "du", "free", "ps", "top", "htop",
-    "curl", "wget", "http", // network fetch; still non-mutating for local FS
+    "rustc",
+    "python",
+    "python3",
+    "node",
+    "ruby",
+    "perl",
+    "jq",
+    "yq",
+    "awk",
+    "sed", // sed without -i is usually filter; allow if no -i
+    "env",
+    "printenv",
+    "uname",
+    "whoami",
+    "id",
+    "date",
+    "cal",
+    "df",
+    "du",
+    "free",
+    "ps",
+    "top",
+    "htop",
+    "curl",
+    "wget",
+    "http", // network fetch; still non-mutating for local FS
 ];
 
 /// Shell heads that are usually read-only only with specific subcommands.
@@ -461,9 +524,7 @@ fn shell_head_readonly_ok(command: &str) -> bool {
                 let third = parts.next().unwrap_or("list");
                 matches!(third, "list" | "show")
             }
-            "config" => {
-                lower.contains("--get") || lower.contains("-l") || lower.contains("--list")
-            }
+            "config" => lower.contains("--get") || lower.contains("-l") || lower.contains("--list"),
             _ => false,
         };
     }
@@ -512,10 +573,14 @@ pub fn authorize_tool(
 
     // Only escalate when we are confident the user did not authorize mutation.
     let escalate = match assessment.intent {
-        UserIntent::Question if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) => {
+        UserIntent::Question
+            if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) =>
+        {
             Some("question")
         }
-        UserIntent::Plan if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) => {
+        UserIntent::Plan
+            if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) =>
+        {
             Some("plan")
         }
         UserIntent::Ambiguous
@@ -586,32 +651,9 @@ const QUESTION_MARKERS: &[&str] = &[
 ];
 
 const QUESTION_STARTERS: &[&str] = &[
-    "how ",
-    "what ",
-    "why ",
-    "where ",
-    "when ",
-    "which ",
-    "who ",
-    "is ",
-    "are ",
-    "does ",
-    "do ",
-    "can ",
-    "could ",
-    "would ",
-    "should ",
-    "nasıl",
-    "nedir",
-    "neden",
-    "niçin",
-    "hangi",
-    "nerede",
-    "ne ",
-    "mi ",
-    "mı ",
-    "mu ",
-    "mü ",
+    "how ", "what ", "why ", "where ", "when ", "which ", "who ", "is ", "are ", "does ", "do ",
+    "can ", "could ", "would ", "should ", "nasıl", "nedir", "neden", "niçin", "hangi", "nerede",
+    "ne ", "mi ", "mı ", "mu ", "mü ",
 ];
 
 const CHANGE_MARKERS: &[&str] = &[
@@ -919,13 +961,7 @@ mod tests {
     #[test]
     fn authorize_blocks_edit_on_question_in_build() {
         let a = classify_user_intent("How does auth work?");
-        let d = authorize_tool(
-            &a,
-            "build",
-            "edit",
-            None,
-            IntentGuidanceMode::Auto,
-        );
+        let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Auto);
         assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
     }
 
@@ -958,39 +994,21 @@ mod tests {
     #[test]
     fn authorize_refuses_write_on_ask_agent() {
         let a = classify_user_intent("Fix the bug");
-        let d = authorize_tool(
-            &a,
-            "ask",
-            "write",
-            None,
-            IntentGuidanceMode::Auto,
-        );
+        let d = authorize_tool(&a, "ask", "write", None, IntentGuidanceMode::Auto);
         assert!(matches!(d, ToolAuthDecision::Refuse { .. }), "{d:?}");
     }
 
     #[test]
     fn authorize_allows_change_intent_edits() {
         let a = classify_user_intent("Fix the auth bug in session.rs");
-        let d = authorize_tool(
-            &a,
-            "build",
-            "edit",
-            None,
-            IntentGuidanceMode::Auto,
-        );
+        let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Auto);
         assert_eq!(d, ToolAuthDecision::Allow);
     }
 
     #[test]
     fn authorize_off_skips() {
         let a = classify_user_intent("How does auth work?");
-        let d = authorize_tool(
-            &a,
-            "build",
-            "edit",
-            None,
-            IntentGuidanceMode::Off,
-        );
+        let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Off);
         assert_eq!(d, ToolAuthDecision::Allow);
     }
 }

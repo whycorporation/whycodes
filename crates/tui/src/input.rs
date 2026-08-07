@@ -1006,13 +1006,7 @@ fn copy_modal_selection(app: &mut TuiApp, col: u16, row: u16) {
             crate::clipboard::ClipRect::from_ratatui(modal),
         )
     } else {
-        crate::clipboard::text_from_cells(
-            &app.screen_cells,
-            sel.anchor_x,
-            sel.anchor_y,
-            fx,
-            fy,
-        )
+        crate::clipboard::text_from_cells(&app.screen_cells, sel.anchor_x, sel.anchor_y, fx, fy)
     };
     if text.is_empty() {
         return;
@@ -1285,8 +1279,10 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 // Drop file-override so the built-in palette is visible immediately.
                 app.config.theme_override = None;
                 app.status_message = format!("Theme → {}", t.name());
-                app.toasts
-                    .push(crate::toast::ToastKind::Success, format!("Theme · {}", t.name()));
+                app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!("Theme · {}", t.name()),
+                );
             }
         }
         _ => {}

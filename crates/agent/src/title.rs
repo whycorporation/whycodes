@@ -122,7 +122,9 @@ pub async fn generate_title(
             full_jitter: true,
         },
     };
-    let response = transport.complete(provider, &request, api_key, model).await?;
+    let response = transport
+        .complete(provider, &request, api_key, model)
+        .await?;
     let raw = response
         .content
         .iter()
@@ -291,7 +293,9 @@ mod tests {
         assert!(is_trivial_title_seed("Hi!"));
         assert!(is_trivial_title_seed("merhaba nasılsın"));
         assert!(is_trivial_title_seed("ping"));
-        assert!(!is_trivial_title_seed("fix the auth retry bug in session.rs"));
+        assert!(!is_trivial_title_seed(
+            "fix the auth retry bug in session.rs"
+        ));
         assert!(!is_trivial_title_seed("read crates/tui/src/run.rs"));
 
         let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());

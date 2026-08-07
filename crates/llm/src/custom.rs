@@ -241,7 +241,9 @@ impl LlmProvider for CustomProvider {
             // Include (NNN) so retry_with_backoff / is_retryable can see 5xx.
             return Err(whycode_core::Error::Llm(format!(
                 "{} API error ({}): {}",
-                self.name, status.as_u16(), text
+                self.name,
+                status.as_u16(),
+                text
             )));
         }
 

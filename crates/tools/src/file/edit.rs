@@ -97,11 +97,7 @@ impl Tool for EditTool {
                         Ok(_) => ToolResult {
                             tool_call_id: String::new(),
                             content: format_edit_preview_at(
-                                &shown,
-                                old_string,
-                                new_string,
-                                count,
-                                start,
+                                &shown, old_string, new_string, count, start,
                             ),
                             is_error: false,
                         },
@@ -135,11 +131,7 @@ impl Tool for EditTool {
                             Ok(_) => ToolResult {
                                 tool_call_id: String::new(),
                                 content: format_edit_preview_at(
-                                    &shown,
-                                    old_string,
-                                    new_string,
-                                    1,
-                                    start,
+                                    &shown, old_string, new_string, 1, start,
                                 ),
                                 is_error: false,
                             },

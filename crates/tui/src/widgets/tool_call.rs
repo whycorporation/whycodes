@@ -59,7 +59,9 @@ pub fn render_tool_call(
                 let shown = if line.chars().count() > MAX_COLS {
                     format!(
                         "{}…",
-                        line.chars().take(MAX_COLS.saturating_sub(1)).collect::<String>()
+                        line.chars()
+                            .take(MAX_COLS.saturating_sub(1))
+                            .collect::<String>()
                     )
                 } else {
                     line.to_string()

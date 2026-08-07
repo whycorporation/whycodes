@@ -157,12 +157,7 @@ impl Tool for ListTool {
                     out.push_str(&format!("  {:<width$}/\n", name, width = name_w));
                 } else {
                     let sz = size.map(human_size).unwrap_or_else(|| "?".into());
-                    out.push_str(&format!(
-                        "  {:<width$}  {:>10}\n",
-                        name,
-                        sz,
-                        width = name_w
-                    ));
+                    out.push_str(&format!("  {:<width$}  {:>10}\n", name, sz, width = name_w));
                 }
             }
         }
@@ -196,12 +191,7 @@ fn list_recursive(
     ignore: &[String],
     max_depth: usize,
     max_entries: usize,
-) -> (
-    Vec<(String, bool, Option<u64>)>,
-    bool,
-    usize,
-    usize,
-) {
+) -> (Vec<(String, bool, Option<u64>)>, bool, usize, usize) {
     let mut entries = Vec::new();
     let mut dir_count = 0usize;
     let mut file_count = 0usize;

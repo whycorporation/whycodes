@@ -662,9 +662,7 @@ fn shell_arg_matches(pat: &str, command: &str) -> bool {
         if prefix.is_empty() {
             return true;
         }
-        return cmd == prefix
-            || cmd.starts_with(&format!("{prefix} "))
-            || cmd.starts_with(prefix);
+        return cmd == prefix || cmd.starts_with(&format!("{prefix} ")) || cmd.starts_with(prefix);
     }
     cmd == pat || cmd.starts_with(&format!("{pat} "))
 }
@@ -676,10 +674,7 @@ const DANGEROUS_SHELL_ALLOW_BASES: &[&str] = &[
 ];
 
 fn is_dangerous_shell_allow_pattern(arg_pat: &str) -> bool {
-    let p = arg_pat
-        .trim()
-        .to_ascii_lowercase()
-        .replace(':', " ");
+    let p = arg_pat.trim().to_ascii_lowercase().replace(':', " ");
     let p = p.trim();
     // Bare `*` allow on bash is full shell — never silent-allow.
     if p == "*" {

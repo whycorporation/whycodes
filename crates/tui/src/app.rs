@@ -104,9 +104,7 @@ impl QuestionDialogState {
     }
 
     pub fn is_other_index(&self, i: usize) -> bool {
-        self.current()
-            .map(|q| i >= q.options.len())
-            .unwrap_or(true)
+        self.current().map(|q| i >= q.options.len()).unwrap_or(true)
     }
 
     pub fn move_cursor(&mut self, delta: isize) {
@@ -121,7 +119,10 @@ impl QuestionDialogState {
         self.cursor = (c % n) as usize;
         // Auto-focus free text when landing on Other or empty options.
         if self.is_other_index(self.cursor)
-            || self.current().map(|q| q.options.is_empty()).unwrap_or(false)
+            || self
+                .current()
+                .map(|q| q.options.is_empty())
+                .unwrap_or(false)
         {
             // Keep free_text_focus if already typing; otherwise select Other row.
         } else {
@@ -199,11 +200,8 @@ impl QuestionDialogState {
         if self.index + 1 >= self.questions.len() {
             // Prefer filled answers in order; require one per question.
             if self.answers.iter().all(|a| a.is_some()) {
-                let done: Vec<QuestionAnswer> = self
-                    .answers
-                    .iter()
-                    .filter_map(|a| a.clone())
-                    .collect();
+                let done: Vec<QuestionAnswer> =
+                    self.answers.iter().filter_map(|a| a.clone()).collect();
                 return Some(done);
             }
             // Hole (navigated past unanswered): jump to first unanswered.
@@ -238,7 +236,11 @@ impl QuestionDialogState {
             return false;
         }
         // Allow forward if current is answered, or target already has an answer.
-        let can = self.answers.get(self.index).and_then(|a| a.as_ref()).is_some()
+        let can = self
+            .answers
+            .get(self.index)
+            .and_then(|a| a.as_ref())
+            .is_some()
             || self
                 .answers
                 .get(self.index + 1)
@@ -257,10 +259,7 @@ impl QuestionDialogState {
         self.cursor = 0;
         self.multi_selected.clear();
         self.free_text.clear();
-        self.free_text_focus = self
-            .current()
-            .map(|q| q.options.is_empty())
-            .unwrap_or(true);
+        self.free_text_focus = self.current().map(|q| q.options.is_empty()).unwrap_or(true);
 
         let Some(q) = self.current().cloned() else {
             return;
@@ -339,7 +338,10 @@ impl QuestionDialogState {
         }
         self.cursor = idx.min(n - 1);
         if self.is_other_index(self.cursor)
-            || self.current().map(|q| q.options.is_empty()).unwrap_or(false)
+            || self
+                .current()
+                .map(|q| q.options.is_empty())
+                .unwrap_or(false)
         {
             // Stay on Other row; free-text focus opted-in by Space / o / Enter.
         } else {
@@ -708,9 +710,7 @@ impl ThinkingBlock {
 
     /// True when live tail dropped earlier lines.
     pub fn is_truncated_live(&self) -> bool {
-        self.is_running()
-            && self.collapsed
-            && line_count_gt(&self.text, THINKING_LIVE_TAIL_LINES)
+        self.is_running() && self.collapsed && line_count_gt(&self.text, THINKING_LIVE_TAIL_LINES)
     }
 
     /// True when expanded paint hit [`THINKING_EXPANDED_MAX_LINES`].

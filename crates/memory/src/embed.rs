@@ -114,15 +114,15 @@ mod tests {
 
     #[test]
     fn related_texts_score_higher() {
-        let a = embed("use cargo check -p whycode-cli after Rust edits", DEFAULT_DIM);
+        let a = embed(
+            "use cargo check -p whycode-cli after Rust edits",
+            DEFAULT_DIM,
+        );
         let b = embed("remember to run cargo check for the cli crate", DEFAULT_DIM);
         let c = embed("the weather in Istanbul is sunny today", DEFAULT_DIM);
         let rel = cosine(&a, &b);
         let unrel = cosine(&a, &c);
-        assert!(
-            rel > unrel,
-            "related={rel} should exceed unrelated={unrel}"
-        );
+        assert!(rel > unrel, "related={rel} should exceed unrelated={unrel}");
         assert!(rel > 0.15, "related score too low: {rel}");
     }
 

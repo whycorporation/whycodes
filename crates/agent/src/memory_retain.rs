@@ -236,8 +236,7 @@ async fn llm_extract_facts(
     let prompt = llm_retain_prompt(&user_clip, &asst_clip);
 
     let request = LlmRequest {
-        system: "You extract durable coding-project facts only. No secrets. If none: NONE."
-            .into(),
+        system: "You extract durable coding-project facts only. No secrets. If none: NONE.".into(),
         messages: vec![Message {
             role: Role::User,
             content: MessageContent::Text(prompt),

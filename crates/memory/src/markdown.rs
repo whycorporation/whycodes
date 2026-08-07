@@ -90,7 +90,10 @@ mod tests {
 
     #[test]
     fn cap_stops_at_line_limit() {
-        let raw = (0..10).map(|i| format!("line{i}")).collect::<Vec<_>>().join("\n");
+        let raw = (0..10)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let capped = cap_content(&raw, 3, 10_000);
         assert_eq!(capped.lines().count(), 3);
     }

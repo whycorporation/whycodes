@@ -238,9 +238,9 @@ impl Database {
     pub fn message_counts_by_session(
         &self,
     ) -> anyhow::Result<std::collections::HashMap<String, usize>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT session_id, COUNT(*) FROM messages GROUP BY session_id",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT session_id, COUNT(*) FROM messages GROUP BY session_id")?;
         let rows = stmt.query_map([], |row| {
             let id: String = row.get(0)?;
             let n: i64 = row.get(1)?;
@@ -346,10 +346,7 @@ impl Database {
              ORDER BY created_at DESC
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![project_key, limit as i64],
-            map_memory_row,
-        )?;
+        let rows = stmt.query_map(rusqlite::params![project_key, limit as i64], map_memory_row)?;
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);

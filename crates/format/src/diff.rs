@@ -120,10 +120,7 @@ pub fn format_write_preview(path: &str, content: &str) -> String {
         out.push_str(&numbered_diff_line(i + 1, '+', line));
     }
     if trunc {
-        out.push_str(&format!(
-            "… {} more lines\n",
-            total - PREVIEW_BODY_LINES
-        ));
+        out.push_str(&format!("… {} more lines\n", total - PREVIEW_BODY_LINES));
     }
     // Empty file: still show the header so the tool result is not blank.
     if total == 0 {
@@ -142,11 +139,7 @@ pub fn preview_file_path(text: &str) -> Option<&str> {
         .or_else(|| first.strip_prefix("Wrote "))?;
     // Drop trailing " ·  N replacements/lines".
     let path = rest.split("  ·  ").next().unwrap_or(rest).trim();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Parsed pieces of a numbered or bare diff line.

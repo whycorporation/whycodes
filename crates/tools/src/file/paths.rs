@@ -230,9 +230,11 @@ pub fn list_dir_entries(dir: &Path, ignore: &[String]) -> Result<Vec<DirEntryInf
     }
 
     out.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then_with(|| a.name.to_ascii_lowercase().cmp(&b.name.to_ascii_lowercase()))
+        b.is_dir.cmp(&a.is_dir).then_with(|| {
+            a.name
+                .to_ascii_lowercase()
+                .cmp(&b.name.to_ascii_lowercase())
+        })
     });
     Ok(out)
 }
@@ -302,13 +304,12 @@ mod tests {
 
     #[test]
     fn resolve_relative_and_absolute() {
-        let abs = if cfg!(windows) {
-            r"C:\tmp\x"
-        } else {
-            "/tmp/x"
-        };
+        let abs = if cfg!(windows) { r"C:\tmp\x" } else { "/tmp/x" };
         assert_eq!(resolve_path("/proj", abs), PathBuf::from(abs));
-        assert_eq!(resolve_path("/proj", "src/a.rs"), PathBuf::from("/proj/src/a.rs"));
+        assert_eq!(
+            resolve_path("/proj", "src/a.rs"),
+            PathBuf::from("/proj/src/a.rs")
+        );
         assert_eq!(resolve_path("/proj", "."), PathBuf::from("/proj"));
         assert_eq!(resolve_path("/proj", ""), PathBuf::from("/proj"));
     }

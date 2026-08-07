@@ -369,12 +369,27 @@ fn doom_loop_trips_on_third_identical_call() {
         arguments: serde_json::json!({"path": "a.rs"}),
     };
     let mut recent = VecDeque::new();
-    assert!(!crate::agent::would_doom_loop(&recent, std::slice::from_ref(&tc)));
-    recent.push_back(format!("read|{}", serde_json::to_string(&tc.arguments).unwrap()));
-    assert!(!crate::agent::would_doom_loop(&recent, std::slice::from_ref(&tc)));
-    recent.push_back(format!("read|{}", serde_json::to_string(&tc.arguments).unwrap()));
+    assert!(!crate::agent::would_doom_loop(
+        &recent,
+        std::slice::from_ref(&tc)
+    ));
+    recent.push_back(format!(
+        "read|{}",
+        serde_json::to_string(&tc.arguments).unwrap()
+    ));
+    assert!(!crate::agent::would_doom_loop(
+        &recent,
+        std::slice::from_ref(&tc)
+    ));
+    recent.push_back(format!(
+        "read|{}",
+        serde_json::to_string(&tc.arguments).unwrap()
+    ));
     // 2 recent + 1 new = 3 → trip
-    assert!(crate::agent::would_doom_loop(&recent, std::slice::from_ref(&tc)));
+    assert!(crate::agent::would_doom_loop(
+        &recent,
+        std::slice::from_ref(&tc)
+    ));
 }
 
 #[test]
@@ -416,7 +431,12 @@ fn core_tool_profile_shrinks_definitions() {
     };
     let core = ex.get_definitions_profile(&perms, ToolProfile::Core);
     let full = ex.get_definitions_profile(&perms, ToolProfile::Full);
-    assert!(core.len() < full.len(), "core={} full={}", core.len(), full.len());
+    assert!(
+        core.len() < full.len(),
+        "core={} full={}",
+        core.len(),
+        full.len()
+    );
     assert!(core.iter().any(|d| d.name == "read"));
     assert!(!core.iter().any(|d| d.name == "webfetch"));
     assert!(full.iter().any(|d| d.name == "webfetch"));

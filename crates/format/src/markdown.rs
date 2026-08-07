@@ -517,11 +517,14 @@ pub fn render_markdown(text: &str) -> String {
         }
 
         // GFM pipe table (header + separator + body).
-        if let Some((Block::Table {
-            headers,
-            aligns,
-            rows,
-        }, consumed)) = try_parse_table(&lines[i..])
+        if let Some((
+            Block::Table {
+                headers,
+                aligns,
+                rows,
+            },
+            consumed,
+        )) = try_parse_table(&lines[i..])
         {
             let hdrs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
             let table = crate::table::format_table_aligned(&hdrs, &rows, &aligns);

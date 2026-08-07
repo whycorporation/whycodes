@@ -247,10 +247,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
         format!("{idle_label}{}", " ".repeat(pad))
     };
     let ctx_color = context_meter_color(pct_f, palette);
-    let ctx_line = Line::from(Span::styled(
-        ctx_text,
-        Style::default().fg(ctx_color),
-    ));
+    let ctx_line = Line::from(Span::styled(ctx_text, Style::default().fg(ctx_color)));
 
     // Reserve right cluster (+ gap) so path truncation doesn't collide.
     let right_reserve = right_w.saturating_add(1).min(area.width);
@@ -284,9 +281,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
 
     let mut path_style = Style::default().fg(palette.dim);
     if app.cwd_hit.hovered {
-        path_style = path_style
-            .add_modifier(Modifier::UNDERLINED)
-            .fg(palette.fg);
+        path_style = path_style.add_modifier(Modifier::UNDERLINED).fg(palette.fg);
     }
     spans.push(Span::styled(path_disp, path_style));
 

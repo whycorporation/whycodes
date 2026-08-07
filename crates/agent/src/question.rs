@@ -35,7 +35,8 @@ impl QuestionError {
 /// Asked when the model calls the `question` tool.
 #[async_trait]
 pub trait QuestionPrompter: Send + Sync {
-    async fn ask(&self, questions: Vec<QuestionSpec>) -> Result<Vec<QuestionAnswer>, QuestionError>;
+    async fn ask(&self, questions: Vec<QuestionSpec>)
+    -> Result<Vec<QuestionAnswer>, QuestionError>;
 }
 
 /// Pending request for the TUI (or other UI) to fulfill.
@@ -51,9 +52,7 @@ pub struct ChannelQuestionPrompter {
 }
 
 impl ChannelQuestionPrompter {
-    pub fn new(
-        timeout: Option<Duration>,
-    ) -> (Self, mpsc::UnboundedReceiver<QuestionRequest>) {
+    pub fn new(timeout: Option<Duration>) -> (Self, mpsc::UnboundedReceiver<QuestionRequest>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (Self { tx, timeout }, rx)
     }
@@ -61,7 +60,10 @@ impl ChannelQuestionPrompter {
 
 #[async_trait]
 impl QuestionPrompter for ChannelQuestionPrompter {
-    async fn ask(&self, questions: Vec<QuestionSpec>) -> Result<Vec<QuestionAnswer>, QuestionError> {
+    async fn ask(
+        &self,
+        questions: Vec<QuestionSpec>,
+    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
         let (reply_tx, reply_rx) = oneshot::channel();
         if self
             .tx
@@ -89,7 +91,10 @@ pub struct AutoAnswerPrompter;
 
 #[async_trait]
 impl QuestionPrompter for AutoAnswerPrompter {
-    async fn ask(&self, questions: Vec<QuestionSpec>) -> Result<Vec<QuestionAnswer>, QuestionError> {
+    async fn ask(
+        &self,
+        questions: Vec<QuestionSpec>,
+    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
         Ok(questions
             .iter()
             .map(|q| {
@@ -114,7 +119,10 @@ pub struct StdinQuestionPrompter;
 
 #[async_trait]
 impl QuestionPrompter for StdinQuestionPrompter {
-    async fn ask(&self, questions: Vec<QuestionSpec>) -> Result<Vec<QuestionAnswer>, QuestionError> {
+    async fn ask(
+        &self,
+        questions: Vec<QuestionSpec>,
+    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
         // Re-use tool stdin path by serializing back to args and calling parse-free logic.
         // Inline minimal stdin to avoid tool execute needing ToolContext.
         use std::io::{self, Write};

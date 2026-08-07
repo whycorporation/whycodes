@@ -7,10 +7,7 @@
 pub fn extract_heuristic(user_text: &str, assistant_text: Option<&str>) -> Vec<String> {
     let mut out = Vec::new();
     for line in user_text.lines().chain(
-        assistant_text
-            .unwrap_or("")
-            .lines()
-            .take(40), // don't mine huge assistant dumps
+        assistant_text.unwrap_or("").lines().take(40), // don't mine huge assistant dumps
     ) {
         if let Some(fact) = line_to_fact(line) {
             out.push(fact);

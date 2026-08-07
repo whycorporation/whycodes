@@ -466,10 +466,7 @@ fn render_message(
             if !empty && !still_streaming {
                 let footer = turn_done_footer(msg, is_last, app);
                 let mut epi = vec![meta_gutter()];
-                epi.push(Span::styled(
-                    footer,
-                    Style::default().fg(palette.dim),
-                ));
+                epi.push(Span::styled(footer, Style::default().fg(palette.dim)));
                 lines.push(Line::from(""));
                 lines.push(Line::from(epi));
             }
@@ -492,11 +489,7 @@ fn render_message(
     if let Some(ref err) = msg.error {
         // Quiet callout language (same as system/toasts), not a heavy panel wash.
         lines.push(Line::from(""));
-        lines.extend(system_callout(
-            &format!("Error: {err}"),
-            palette,
-            width,
-        ));
+        lines.extend(system_callout(&format!("Error: {err}"), palette, width));
     }
 
     lines
@@ -1020,10 +1013,7 @@ fn tool_block(
     let detail = Style::default().fg(palette.dim);
     let summary = tool_summary(name, input);
 
-    let mut header = vec![
-        meta_gutter(),
-        Span::styled(display.to_string(), name_style),
-    ];
+    let mut header = vec![meta_gutter(), Span::styled(display.to_string(), name_style)];
     if !summary.is_empty() {
         header.push(Span::styled(" · ".to_string(), detail));
         header.push(Span::styled(summary, summary_style));
@@ -1061,7 +1051,9 @@ fn tool_block(
             if let Some(n) = grep_match_count(r) {
                 header.push(Span::styled(
                     format!("  {n}"),
-                    Style::default().fg(palette.highlight).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(palette.highlight)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 header.push(Span::styled(
                     if n == 1 {
@@ -1091,10 +1083,7 @@ fn tool_block(
             }
         } else if matches!(name, "read" | "read_file") {
             // read: line count chip when we have numbered body.
-            let n = r
-                .lines()
-                .filter(|l| split_read_line(l).is_some())
-                .count();
+            let n = r.lines().filter(|l| split_read_line(l).is_some()).count();
             if n > 0 {
                 header.push(Span::styled(
                     format!("  {n}"),
@@ -1317,7 +1306,9 @@ fn hard_truncate_line(line: &str, max_cols: usize) -> String {
     }
     format!(
         "{}…",
-        line.chars().take(max_cols.saturating_sub(1)).collect::<String>()
+        line.chars()
+            .take(max_cols.saturating_sub(1))
+            .collect::<String>()
     )
 }
 
@@ -1588,10 +1579,7 @@ fn tool_result_code(
             language.as_deref(),
         ))
     } else if language.is_some() && !meta.iter().any(|(is_code, _, _)| *is_code) {
-        Some(highlight_code_spans(
-            &slice.join("\n"),
-            language.as_deref(),
-        ))
+        Some(highlight_code_spans(&slice.join("\n"), language.as_deref()))
     } else {
         None
     };
@@ -1904,10 +1892,7 @@ fn tool_result_grep(
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), rail),
-            Span::styled(
-                "… more matches  ·  (l expand)".to_string(),
-                meta_style,
-            ),
+            Span::styled("… more matches  ·  (l expand)".to_string(), meta_style),
         ]));
     }
 
@@ -1930,10 +1915,7 @@ fn parse_grep_hit(line: &str) -> Option<GrepHit<'_>> {
     while i < bytes.len() {
         if bytes[i] == b':' {
             let rest = &line[i + 1..];
-            let digit_end = rest
-                .bytes()
-                .take_while(|c| c.is_ascii_digit())
-                .count();
+            let digit_end = rest.bytes().take_while(|c| c.is_ascii_digit()).count();
             if digit_end > 0 {
                 let after_digits = &rest[digit_end..];
                 let mark = after_digits.chars().next()?;
@@ -1999,12 +1981,7 @@ fn paint_grep_match(
     spans
 }
 
-fn paint_grep_literal(
-    content: &str,
-    pattern: &str,
-    base: Style,
-    hit: Style,
-) -> Vec<Span<'static>> {
+fn paint_grep_literal(content: &str, pattern: &str, base: Style, hit: Style) -> Vec<Span<'static>> {
     if pattern.is_empty() {
         return vec![Span::styled(content.to_string(), base)];
     }
@@ -2152,8 +2129,9 @@ fn empty_dash(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        SparseLines, hard_truncate_line, message_row_layout_mut, parse_grep_hit, prettify_tool_result,
-        split_read_line, tool_block, tool_display_name, tool_result, tool_summary, ToolOutHint,
+        SparseLines, ToolOutHint, hard_truncate_line, message_row_layout_mut, parse_grep_hit,
+        prettify_tool_result, split_read_line, tool_block, tool_display_name, tool_result,
+        tool_summary,
     };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
@@ -2167,7 +2145,8 @@ mod tests {
 
     #[test]
     fn prettify_minified_json_becomes_multiline() {
-        let mini = r#"{"exports":{"./config":"./config.js","./schema":"./schema.js"},"license":"MIT"}"#;
+        let mini =
+            r#"{"exports":{"./config":"./config.js","./schema":"./schema.js"},"license":"MIT"}"#;
         let out = prettify_tool_result(mini);
         assert!(
             out.lines().count() > 3,
@@ -2218,11 +2197,7 @@ mod tests {
         // Rail still present on body rows.
         let body = lines
             .iter()
-            .filter(|l| {
-                l.spans
-                    .iter()
-                    .any(|s| s.content.as_ref().contains('┃'))
-            })
+            .filter(|l| l.spans.iter().any(|s| s.content.as_ref().contains('┃')))
             .count();
         assert!(body >= 1);
     }
@@ -2267,10 +2242,16 @@ mod tests {
             .filter(|s| s.content.as_ref() == "12")
             .collect();
         assert_eq!(line_nos.len(), 2, "expected two line-number spans");
-        assert!(line_nos.iter().any(|s| s.style.fg == Some(palette.diff_add)));
-        assert!(line_nos
-            .iter()
-            .any(|s| s.style.fg == Some(palette.diff_remove)));
+        assert!(
+            line_nos
+                .iter()
+                .any(|s| s.style.fg == Some(palette.diff_add))
+        );
+        assert!(
+            line_nos
+                .iter()
+                .any(|s| s.style.fg == Some(palette.diff_remove))
+        );
     }
 
     #[test]
@@ -2336,7 +2317,9 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let path_spans: Vec<_> = lines
             .iter()
             .flat_map(|l| l.spans.iter())
-            .filter(|s| s.content.as_ref().contains("chat.rs") || s.content.as_ref().contains("grep.rs"))
+            .filter(|s| {
+                s.content.as_ref().contains("chat.rs") || s.content.as_ref().contains("grep.rs")
+            })
             .collect();
         assert!(
             path_spans.iter().any(|s| s.style.fg == Some(palette.info)),
@@ -2411,11 +2394,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             false,
             100,
         );
-        let header: String = lines[0]
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
+        let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains("grep"), "got {header}");
         assert!(header.contains("foo"), "got {header}");
         assert!(header.contains("2"), "got {header}");
@@ -2442,11 +2421,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             false,
             100,
         );
-        let header: String = lines[0]
-            .spans
-            .iter()
-            .map(|s| s.content.as_ref())
-            .collect();
+        let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains("run"), "got {header}");
         assert!(!header.contains("bash"), "got {header}");
         assert!(header.contains("cargo test"), "got {header}");

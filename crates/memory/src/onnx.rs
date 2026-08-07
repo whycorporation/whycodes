@@ -33,8 +33,7 @@ pub fn ensure_model(data_dir: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
     let onnx_path = dir.join("model.onnx");
     let tok_path = dir.join("tokenizer.json");
 
-    const ONNX_URL: &str =
-        "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
+    const ONNX_URL: &str = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx";
     const TOK_URL: &str =
         "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
 
@@ -257,7 +256,11 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
     let type_t = Tensor::from_shape(&[1, len], &type_ids)?;
 
     let result = model
-        .run(tvec!(ids_t.clone().into(), mask_t.clone().into(), type_t.into()))
+        .run(tvec!(
+            ids_t.clone().into(),
+            mask_t.clone().into(),
+            type_t.into()
+        ))
         .or_else(|_| model.run(tvec!(ids_t.into(), mask_t.into())))?;
 
     let output = result[0].to_array_view::<f32>()?;

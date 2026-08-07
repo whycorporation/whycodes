@@ -65,9 +65,7 @@ pub enum TurnEvent {
         summary: String,
     },
     /// Queue a user prompt for the next free TUI turn (`schedule` / `/loop`).
-    EnqueuePrompt {
-        text: String,
-    },
+    EnqueuePrompt { text: String },
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).

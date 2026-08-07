@@ -5,8 +5,8 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use super::paths::{
-    display_path, file_len, is_binary_bytes, resolve_path, walk_files, BINARY_SNIFF_LEN,
-    MAX_GREP_FILE_BYTES,
+    BINARY_SNIFF_LEN, MAX_GREP_FILE_BYTES, display_path, file_len, is_binary_bytes, resolve_path,
+    walk_files,
 };
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;

@@ -53,7 +53,7 @@ impl ToolProfile {
 const CORE_TOOL_NAMES: &[&str] = &[
     "apply_patch",
     "bash",
-    "bg",       // background job list/read/kill
+    "bg", // background job list/read/kill
     "edit",
     "glob",
     "grep",

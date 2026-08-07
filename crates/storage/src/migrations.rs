@@ -150,8 +150,10 @@ mod tests {
 
         // Idempotent.
         run_migrations(&conn).unwrap();
-        assert!(column_exists(&conn, "memories", "embedding").unwrap_or(false)
-            || table_exists(&conn, "memories").unwrap());
+        assert!(
+            column_exists(&conn, "memories", "embedding").unwrap_or(false)
+                || table_exists(&conn, "memories").unwrap()
+        );
     }
 
     fn table_exists(conn: &Connection, table: &str) -> Result<bool, rusqlite::Error> {

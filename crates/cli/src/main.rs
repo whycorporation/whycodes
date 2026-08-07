@@ -1291,14 +1291,13 @@ async fn cmd_run(
                     let u = &session.usage;
                     println!("{}", "Cost / usage".bold());
                     if u.is_empty() {
-                        println!(
-                            "  session: ~{} tokens (estimated)",
-                            session.token_count()
-                        );
+                        println!("  session: ~{} tokens (estimated)", session.token_count());
                     } else {
                         println!(
                             "  session: {} in / {} out · total {}",
-                            u.input_tokens, u.output_tokens, u.total()
+                            u.input_tokens,
+                            u.output_tokens,
+                            u.total()
                         );
                     }
                     continue;
@@ -1320,18 +1319,12 @@ async fn cmd_run(
                     println!("  model:    {model}");
                     println!("  project:  {}", project_dir.display());
                     let key_ok = !api_key.is_empty();
-                    println!(
-                        "  api_key:  {}",
-                        if key_ok { "set" } else { "MISSING" }
-                    );
+                    println!("  api_key:  {}", if key_ok { "set" } else { "MISSING" });
                     println!(
                         "  sandbox:  {} network={}",
                         config.security.sandbox, config.security.sandbox_network
                     );
-                    println!(
-                        "  tools:    profile={}",
-                        config.session.tool_profile
-                    );
+                    println!("  tools:    profile={}", config.session.tool_profile);
                     continue;
                 }
                 "/sessions" => {
@@ -1885,7 +1878,10 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
                 );
             }
             let data_dir = Config::data_dir()?;
-            println!("{} Running ONNX smoke (download + checksum + embed)…", "⚡".bold());
+            println!(
+                "{} Running ONNX smoke (download + checksum + embed)…",
+                "⚡".bold()
+            );
             let (dim, norm) = whycode_memory::onnx::smoke_embed(&data_dir)?;
             println!(
                 "{} OK — embedding dim={dim}, L2-norm={norm:.4} (≈1.0 expected)",
@@ -2564,9 +2560,11 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             use whycode_tools::profile::ToolProfile;
 
             let profile = ToolProfile::parse(tools);
-            let working_dir = cwd
-                .clone()
-                .unwrap_or_else(|| std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| ".".into()));
+            let working_dir = cwd.clone().unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| ".".into())
+            });
             let permissions = PermissionSet {
                 allow_file_writes: true,
                 allow_network: true,

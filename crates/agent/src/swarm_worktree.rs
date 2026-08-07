@@ -58,10 +58,7 @@ pub fn create_worktree(
     worker_id: &str,
 ) -> Result<SwarmWorktree, String> {
     if dest.exists() {
-        return Err(format!(
-            "worktree path already exists: {}",
-            dest.display()
-        ));
+        return Err(format!("worktree path already exists: {}", dest.display()));
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
@@ -250,10 +247,16 @@ pub fn run_dir(project: &Path, run_id: &str) -> PathBuf {
 pub fn format_merge_report(report: &MergeReport) -> String {
     let mut lines = Vec::new();
     if !report.applied.is_empty() {
-        lines.push(format!("**Merged into main:** {}", report.applied.join(", ")));
+        lines.push(format!(
+            "**Merged into main:** {}",
+            report.applied.join(", ")
+        ));
     }
     if !report.deleted.is_empty() {
-        lines.push(format!("**Deleted on main:** {}", report.deleted.join(", ")));
+        lines.push(format!(
+            "**Deleted on main:** {}",
+            report.deleted.join(", ")
+        ));
     }
     if !report.conflicts.is_empty() {
         lines.push("**Merge conflicts:**".into());
@@ -304,12 +307,14 @@ mod tests {
     fn init_repo() -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::TempDir::new().unwrap();
         let root = dir.path().to_path_buf();
-        assert!(Command::new("git")
-            .args(["init"])
-            .current_dir(&root)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
         // Identity for commit in bare CI environments.
         let _ = Command::new("git")
             .args(["config", "user.email", "test@whycode.local"])
@@ -321,25 +326,33 @@ mod tests {
             .status();
         std::fs::write(root.join("a.txt"), b"base-a\n").unwrap();
         std::fs::write(root.join("b.txt"), b"base-b\n").unwrap();
-        assert!(Command::new("git")
-            .args(["add", "."])
-            .current_dir(&root)
-            .status()
-            .unwrap()
-            .success());
-        assert!(Command::new("git")
-            .args(["commit", "-m", "init"])
-            .current_dir(&root)
-            .status()
-            .unwrap()
-            .success());
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
         (dir, root)
     }
 
     #[test]
     fn worktree_create_edit_merge_cleanup() {
         let (_keep, root) = init_repo();
-        let dest = root.join(".whycode").join("swarm").join("run1").join("worker-0");
+        let dest = root
+            .join(".whycode")
+            .join("swarm")
+            .join("run1")
+            .join("worker-0");
         let wt = create_worktree(&root, &dest, "worker-0").expect("create");
         assert!(wt.path.join("a.txt").exists());
 
@@ -364,7 +377,11 @@ mod tests {
     #[test]
     fn merge_detects_main_divergence() {
         let (_keep, root) = init_repo();
-        let dest = root.join(".whycode").join("swarm").join("run2").join("worker-0");
+        let dest = root
+            .join(".whycode")
+            .join("swarm")
+            .join("run2")
+            .join("worker-0");
         let wt = create_worktree(&root, &dest, "worker-0").expect("create");
 
         std::fs::write(wt.path.join("a.txt"), b"from-worker\n").unwrap();

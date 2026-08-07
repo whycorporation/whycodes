@@ -127,16 +127,12 @@ impl ToolExecutor {
     }
 
     /// Deferred catalogue: tools not in the core profile (for tool_search).
-    pub fn deferred_catalog(
-        &self,
-        permissions: &PermissionSet,
-    ) -> Vec<(String, String)> {
+    pub fn deferred_catalog(&self, permissions: &PermissionSet) -> Vec<(String, String)> {
         let mut out: Vec<_> = self
             .tools
             .values()
             .filter(|t| {
-                t.is_allowed(permissions)
-                    && !crate::profile::ToolProfile::Core.includes(t.name())
+                t.is_allowed(permissions) && !crate::profile::ToolProfile::Core.includes(t.name())
             })
             .map(|t| (t.name().to_string(), t.description().to_string()))
             .collect();
