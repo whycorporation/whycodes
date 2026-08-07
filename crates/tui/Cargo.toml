@@ -26,6 +26,7 @@ whycode-storage = { path = "../storage" }
 whycode-memory = { path = "../memory" }
 unicode-width = "0.2"
 base64.workspace = true
+regex.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

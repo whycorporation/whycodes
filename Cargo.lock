@@ -4153,6 +4153,7 @@ dependencies = [
  "chrono",
  "crossterm",
  "ratatui",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

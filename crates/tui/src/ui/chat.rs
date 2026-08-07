@@ -905,20 +905,32 @@ enum ToolOutHint {
     Diff,
     /// Syntax-highlight body with this language token (e.g. `"rust"`).
     Code(Option<String>),
+    /// Grep hits: path headers + line nos + match highlight (Grok style).
+    Grep { pattern: String },
 }
 
 fn tool_out_hint(name: &str, input: &serde_json::Value, result: &str) -> ToolOutHint {
     match name {
         "git_diff" | "apply_patch" => ToolOutHint::Diff,
         "edit" | "write" if looks_like_diff(result) => ToolOutHint::Diff,
-        "read" => {
+        "read" | "read_file" => {
             let path = input
                 .get("path")
                 .or_else(|| input.get("file_path"))
                 .or_else(|| input.get("file"))
+                .or_else(|| input.get("target_file"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             ToolOutHint::Code(detect_language(path).map(str::to_string))
+        }
+        "grep" | "search_code" | "rg" => {
+            let pattern = input
+                .get("pattern")
+                .or_else(|| input.get("query"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            ToolOutHint::Grep { pattern }
         }
         _ if looks_like_diff(result) => ToolOutHint::Diff,
         _ => ToolOutHint::Auto,
@@ -964,7 +976,7 @@ fn tool_block(
         Style::default().fg(palette.fg)
     };
     let detail = Style::default().fg(palette.dim);
-    let summary = tool_summary(input);
+    let summary = tool_summary(name, input);
 
     let mut header = vec![
         meta_gutter(),
@@ -1002,6 +1014,22 @@ fn tool_block(
                     ));
                 }
             }
+        } else if matches!(name, "grep" | "search_code" | "rg") {
+            // Grok: match count sits on the header next to the pattern.
+            if let Some(n) = grep_match_count(r) {
+                header.push(Span::styled(
+                    format!("  {n}"),
+                    Style::default().fg(palette.highlight).add_modifier(Modifier::BOLD),
+                ));
+                header.push(Span::styled(
+                    if n == 1 {
+                        " match".to_string()
+                    } else {
+                        " matches".to_string()
+                    },
+                    detail,
+                ));
+            }
         }
         if !expanded {
             let n = r.lines().count();
@@ -1029,6 +1057,29 @@ fn tool_block(
     lines
 }
 
+/// Pull `(N match…)` / hit-line count from a grep tool body for the header chip.
+fn grep_match_count(content: &str) -> Option<usize> {
+    // Footer from GrepTool: `(12 matches in 3 files; pattern \`foo\`)`
+    for line in content.lines().rev() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix('(')
+            && let Some(num) = rest
+                .split_whitespace()
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+            && (rest.contains("match") || rest.contains("hit"))
+        {
+            return Some(num);
+        }
+    }
+    // Fallback: count `path:line:…` hit lines (not context `path:line-…`).
+    let n = content
+        .lines()
+        .filter(|l| parse_grep_hit(l).is_some_and(|h| h.is_match))
+        .count();
+    if n > 0 { Some(n) } else { None }
+}
+
 /// Collapsed = short preview; expanded (`l`) = long tail.
 const TOOL_RESULT_PREVIEW: usize = 12;
 const TOOL_RESULT_DIFF_PREVIEW: usize = 20;
@@ -1054,11 +1105,18 @@ fn tool_result(
     let mode = match &hint {
         ToolOutHint::Diff => ToolOutHint::Diff,
         ToolOutHint::Code(lang) => ToolOutHint::Code(lang.clone()),
+        ToolOutHint::Grep { pattern } => ToolOutHint::Grep {
+            pattern: pattern.clone(),
+        },
         ToolOutHint::Auto => {
             if looks_like_diff(content) {
                 ToolOutHint::Diff
             } else if looks_like_json_body(content) {
                 ToolOutHint::Code(Some("json".to_string()))
+            } else if looks_like_grep_body(content) {
+                ToolOutHint::Grep {
+                    pattern: String::new(),
+                }
             } else if let Some(path) = content
                 .lines()
                 .next()
@@ -1077,8 +1135,28 @@ fn tool_result(
         ToolOutHint::Code(lang) => {
             tool_result_code(content, is_error, palette, expanded, lang, width)
         }
+        ToolOutHint::Grep { pattern } => {
+            tool_result_grep(content, is_error, palette, expanded, &pattern, width)
+        }
         ToolOutHint::Auto => tool_result_plain(content, is_error, palette, expanded, width),
     }
+}
+
+/// True when most non-empty lines look like `path:line:…` / `path:line-…` hits.
+fn looks_like_grep_body(s: &str) -> bool {
+    let mut hits = 0usize;
+    let mut lines = 0usize;
+    for line in s.lines().take(40) {
+        let t = line.trim();
+        if t.is_empty() || t == "--" || t.starts_with('(') || t.starts_with('[') {
+            continue;
+        }
+        lines += 1;
+        if parse_grep_hit(t).is_some() {
+            hits += 1;
+        }
+    }
+    lines > 0 && hits * 2 >= lines
 }
 
 /// Soften tool bodies for display: pretty-print JSON payloads (whole body or
@@ -1363,6 +1441,14 @@ fn diff_line_kind(line: &str, is_error: bool) -> DiffPaint {
 
 /// Syntax-highlight tool output (read previews). Line-numbered `read` rows
 /// keep the gutter dim and highlight only the code after `|`.
+///
+/// Grok layout:
+/// ```text
+/// read · path/to/file.rs
+/// ┃     1|fn main() {
+/// ┃     2|    …
+/// ```
+/// Meta banners (`# path`, `# lines 1–N`) stay quiet dim; code is syntax-coloured.
 fn tool_result_code(
     content: &str,
     is_error: bool,
@@ -1380,12 +1466,32 @@ fn tool_result_code(
     } else {
         TOOL_RESULT_PREVIEW
     };
-    let all: Vec<&str> = content.lines().collect();
+    // Skip redundant `# path` banner (path already lives in the tool header).
+    // Keep `# lines 1–N of M` as a quiet dim meta row when present.
+    let all: Vec<&str> = content
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            // Drop pure path banner: `# crates/foo/bar.rs`
+            if let Some(rest) = t.strip_prefix("# ") {
+                // Keep range/size meta (`# lines 1–40 of 200  |  4.2 KB`)
+                if rest.starts_with("lines ") {
+                    return true;
+                }
+                // Drop path-only banner.
+                return false;
+            }
+            true
+        })
+        .collect();
     let total = all.len();
     let slice = &all[..total.min(budget)];
     let rail = Style::default().fg(palette.dim);
+    // Gutter "  " + "┃ " + typical "   12|" ≈ 4+7 = 11 cols reserved.
+    let text_w = width.saturating_sub(11).max(8) as usize;
 
     let mut code_body = String::new();
+    // (is_code, left_gutter_or_meta, code)
     let mut meta: Vec<(bool, String, String)> = Vec::with_capacity(slice.len());
     for line in slice {
         if let Some((gutter, code)) = split_read_line(line) {
@@ -1413,6 +1519,7 @@ fn tool_result_code(
 
     let mut lines = Vec::new();
     let mut code_idx = 0usize;
+    let mut line_was_cut = false;
     match highlighted {
         Some(hl) if meta.iter().any(|(is_code, _, _)| *is_code) => {
             for (is_code, left, _) in &meta {
@@ -1420,23 +1527,50 @@ fn tool_result_code(
                     let mut spans = vec![
                         meta_gutter(),
                         Span::styled("┃ ".to_string(), rail),
-                        Span::styled(left.clone(), Style::default().fg(palette.dim)),
+                        // Grok: dim right-aligned line no + `|` separator.
+                        Span::styled(
+                            left.clone(),
+                            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                        ),
                     ];
                     if let Some(row) = hl.get(code_idx) {
+                        let mut used = 0usize;
                         for ((r, g, b), text) in row.iter() {
+                            let t = text.trim_end_matches('\n');
+                            let n = t.chars().count();
+                            if used >= text_w {
+                                line_was_cut = true;
+                                break;
+                            }
+                            if used + n > text_w {
+                                let take = text_w.saturating_sub(used);
+                                let shown = hard_truncate_line(t, take);
+                                spans.push(Span::styled(
+                                    shown,
+                                    Style::default().fg(Color::Rgb(*r, *g, *b)),
+                                ));
+                                line_was_cut = true;
+                                break;
+                            }
                             spans.push(Span::styled(
-                                text.trim_end_matches('\n').to_string(),
+                                t.to_string(),
                                 Style::default().fg(Color::Rgb(*r, *g, *b)),
                             ));
+                            used += n;
                         }
                     }
                     code_idx += 1;
                     lines.push(Line::from(spans));
                 } else {
+                    // Quiet meta (`# lines …`, truncation notes).
+                    let shown = hard_truncate_line(left, text_w.saturating_add(7));
                     lines.push(Line::from(vec![
                         meta_gutter(),
                         Span::styled("┃ ".to_string(), rail),
-                        Span::styled(left.clone(), Style::default().fg(palette.dim)),
+                        Span::styled(
+                            shown,
+                            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                        ),
                     ]));
                 }
             }
@@ -1444,16 +1578,64 @@ fn tool_result_code(
         Some(hl) => {
             for row in hl.iter().take(budget) {
                 let mut spans = vec![meta_gutter(), Span::styled("┃ ".to_string(), rail)];
+                let mut used = 0usize;
                 for ((r, g, b), text) in row.iter() {
+                    let t = text.trim_end_matches('\n');
+                    let n = t.chars().count();
+                    if used >= text_w {
+                        line_was_cut = true;
+                        break;
+                    }
+                    if used + n > text_w {
+                        spans.push(Span::styled(
+                            hard_truncate_line(t, text_w.saturating_sub(used)),
+                            Style::default().fg(Color::Rgb(*r, *g, *b)),
+                        ));
+                        line_was_cut = true;
+                        break;
+                    }
                     spans.push(Span::styled(
-                        text.trim_end_matches('\n').to_string(),
+                        t.to_string(),
                         Style::default().fg(Color::Rgb(*r, *g, *b)),
                     ));
+                    used += n;
                 }
                 lines.push(Line::from(spans));
             }
         }
-        None => return tool_result_plain(content, is_error, palette, expanded, width),
+        None => {
+            // Still paint line-numbered read rows Grok-style even without a grammar.
+            if meta.iter().any(|(is_code, _, _)| *is_code) {
+                for (is_code, left, code) in &meta {
+                    if *is_code {
+                        let shown = hard_truncate_line(code, text_w);
+                        if code.chars().count() > text_w {
+                            line_was_cut = true;
+                        }
+                        lines.push(Line::from(vec![
+                            meta_gutter(),
+                            Span::styled("┃ ".to_string(), rail),
+                            Span::styled(
+                                left.clone(),
+                                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                            ),
+                            Span::styled(shown, Style::default().fg(palette.fg)),
+                        ]));
+                    } else {
+                        lines.push(Line::from(vec![
+                            meta_gutter(),
+                            Span::styled("┃ ".to_string(), rail),
+                            Span::styled(
+                                hard_truncate_line(left, text_w.saturating_add(7)),
+                                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                            ),
+                        ]));
+                    }
+                }
+            } else {
+                return tool_result_plain(content, is_error, palette, expanded, width);
+            }
+        }
     }
 
     if total > budget {
@@ -1465,33 +1647,369 @@ fn tool_result_code(
                 Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
             ),
         ]));
+    } else if line_was_cut {
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), rail),
+            Span::styled(
+                "… long lines truncated".to_string(),
+                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+            ),
+        ]));
     }
     lines
 }
 
-/// `read` tool lines look like `   12|contents` (6-wide line no + `|`).
-fn split_read_line(line: &str) -> Option<(String, &str)> {
-    let pipe = line.find('|')?;
-    let (left, right) = line.split_at(pipe);
-    if left.is_empty() || !left.chars().all(|c| c.is_ascii_digit() || c == ' ') {
-        return None;
+/// Grok-style grep body: path headers, dim line nos, match highlight on hit text.
+///
+/// ```text
+/// grep · pattern  3 matches
+/// ┃ crates/tui/src/ui/chat.rs
+/// ┃    12│ matching line with pattern
+/// ┃    40│ another hit
+/// ┃ crates/tools/src/file/grep.rs
+/// ┃    34│ "grep"
+/// ```
+fn tool_result_grep(
+    content: &str,
+    is_error: bool,
+    palette: &ThemePalette,
+    expanded: bool,
+    pattern: &str,
+    width: u16,
+) -> Vec<Line<'static>> {
+    if is_error {
+        return tool_result_plain(content, true, palette, expanded, width);
     }
-    Some((format!("{left}|"), right.trim_start_matches('|')))
+    if content.trim().is_empty() || content.trim() == "No matches found." {
+        return tool_result_plain(content, false, palette, expanded, width);
+    }
+
+    let budget = if expanded {
+        TOOL_RESULT_EXPANDED
+    } else {
+        TOOL_RESULT_PREVIEW
+    };
+    let rail = Style::default().fg(palette.dim);
+    let path_style = Style::default()
+        .fg(palette.info)
+        .add_modifier(Modifier::BOLD);
+    let line_no_style = Style::default().fg(palette.dim).add_modifier(Modifier::DIM);
+    let body_style = Style::default().fg(palette.fg);
+    let ctx_style = Style::default().fg(palette.dim);
+    let hit_style = Style::default()
+        .fg(palette.highlight)
+        .add_modifier(Modifier::BOLD);
+    let meta_style = Style::default().fg(palette.dim).add_modifier(Modifier::DIM);
+    // Gutter + rail + "  123│ " ≈ 4 + 7
+    let text_w = width.saturating_sub(12).max(8) as usize;
+
+    let re = compile_grep_highlighter(pattern);
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut last_path: Option<String> = None;
+    let mut logical = 0usize; // rows that count against budget
+    let mut truncated = false;
+    let all_lines: Vec<&str> = content.lines().collect();
+    let total_hits = all_lines
+        .iter()
+        .filter(|l| parse_grep_hit(l).is_some())
+        .count();
+
+    for raw in &all_lines {
+        let t = raw.trim_end();
+        if t.is_empty() {
+            continue;
+        }
+        // Footer / separator — always dim, don't steal budget from hits.
+        if t == "--" {
+            if logical >= budget {
+                truncated = true;
+                break;
+            }
+            lines.push(Line::from(vec![
+                meta_gutter(),
+                Span::styled("┃ ".to_string(), rail),
+                Span::styled("──".to_string(), meta_style),
+            ]));
+            logical += 1;
+            continue;
+        }
+        if t.starts_with('(') || t.starts_with('[') || t.starts_with("No matches") {
+            // Stat footer — show once after the body, outside budget pressure.
+            continue;
+        }
+
+        if let Some(hit) = parse_grep_hit(t) {
+            // Path header when file changes (Grok groups by file).
+            if last_path.as_deref() != Some(hit.path) {
+                if logical >= budget {
+                    truncated = true;
+                    break;
+                }
+                let path_shown = hard_truncate_line(hit.path, text_w.saturating_add(6));
+                lines.push(Line::from(vec![
+                    meta_gutter(),
+                    Span::styled("┃ ".to_string(), rail),
+                    Span::styled(path_shown, path_style),
+                ]));
+                last_path = Some(hit.path.to_string());
+                logical += 1;
+            }
+
+            if logical >= budget {
+                truncated = true;
+                break;
+            }
+
+            // Line number gutter: right-align in 5 cols like Grok read.
+            let no = format!("{:>5}", hit.lineno);
+            let mark = if hit.is_match { '│' } else { '┆' };
+            let style = if hit.is_match { body_style } else { ctx_style };
+            let mut spans = vec![
+                meta_gutter(),
+                Span::styled("┃ ".to_string(), rail),
+                Span::styled(no, line_no_style),
+                Span::styled(mark.to_string(), line_no_style),
+            ];
+            let body = hard_truncate_line(hit.content, text_w);
+            if hit.is_match && re.is_some() {
+                spans.extend(paint_grep_match(&body, re.as_ref(), style, hit_style));
+            } else if hit.is_match && !pattern.is_empty() {
+                spans.extend(paint_grep_literal(&body, pattern, style, hit_style));
+            } else {
+                spans.push(Span::styled(body, style));
+            }
+            lines.push(Line::from(spans));
+            logical += 1;
+        } else {
+            if logical >= budget {
+                truncated = true;
+                break;
+            }
+            lines.push(Line::from(vec![
+                meta_gutter(),
+                Span::styled("┃ ".to_string(), rail),
+                Span::styled(hard_truncate_line(t, text_w.saturating_add(6)), meta_style),
+            ]));
+            logical += 1;
+        }
+    }
+
+    // Quiet footer with total (mirrors tool header chip when collapsed).
+    if let Some(footer) = all_lines.iter().rev().find(|l| {
+        let t = l.trim();
+        t.starts_with('(') || t.starts_with('[')
+    }) {
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), rail),
+            Span::styled(footer.trim().to_string(), meta_style),
+        ]));
+    }
+
+    if truncated {
+        let remain = total_hits.saturating_sub(
+            lines
+                .iter()
+                .filter(|l| {
+                    l.spans.iter().any(|s| {
+                        let c = s.content.as_ref();
+                        c.contains('│') || c.contains('┆')
+                    })
+                })
+                .count(),
+        );
+        // remain is approximate; prefer generic "more lines".
+        let _ = remain;
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), rail),
+            Span::styled(
+                "… more matches  ·  (l expand)".to_string(),
+                meta_style,
+            ),
+        ]));
+    }
+
+    lines
 }
 
-fn tool_summary(input: &serde_json::Value) -> String {
-    let s = input
-        .get("command")
-        .or_else(|| input.get("path"))
-        .or_else(|| input.get("file_path"))
-        .or_else(|| input.get("file"))
-        .or_else(|| input.get("pattern"))
-        .or_else(|| input.get("glob"))
-        .or_else(|| input.get("query"))
-        .or_else(|| input.get("goal"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+/// One parsed `path:line:content` / `path:line-content` hit.
+struct GrepHit<'a> {
+    path: &'a str,
+    lineno: &'a str,
+    is_match: bool,
+    content: &'a str,
+}
+
+/// Parse `path:lineno:content` or context `path:lineno-content`.
+fn parse_grep_hit(line: &str) -> Option<GrepHit<'_>> {
+    // Scan for `:digits:` or `:digits-` — path may contain `:` (rare / Windows).
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b':' {
+            let rest = &line[i + 1..];
+            let digit_end = rest
+                .bytes()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            if digit_end > 0 {
+                let after_digits = &rest[digit_end..];
+                let mark = after_digits.chars().next()?;
+                if mark == ':' || mark == '-' {
+                    let path = &line[..i];
+                    if path.is_empty() {
+                        i += 1;
+                        continue;
+                    }
+                    let lineno = &rest[..digit_end];
+                    let content = &after_digits[mark.len_utf8()..];
+                    return Some(GrepHit {
+                        path,
+                        lineno,
+                        is_match: mark == ':',
+                        content,
+                    });
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn compile_grep_highlighter(pattern: &str) -> Option<regex::Regex> {
+    let p = pattern.trim();
+    if p.is_empty() {
+        return None;
+    }
+    regex::RegexBuilder::new(p)
+        .size_limit(1 << 16)
+        .dfa_size_limit(1 << 16)
+        .case_insensitive(false)
+        .build()
+        .ok()
+}
+
+fn paint_grep_match(
+    content: &str,
+    re: Option<&regex::Regex>,
+    base: Style,
+    hit: Style,
+) -> Vec<Span<'static>> {
+    let Some(re) = re else {
+        return vec![Span::styled(content.to_string(), base)];
+    };
+    let mut spans = Vec::new();
+    let mut last = 0usize;
+    for m in re.find_iter(content) {
+        if m.start() > last {
+            spans.push(Span::styled(content[last..m.start()].to_string(), base));
+        }
+        spans.push(Span::styled(content[m.start()..m.end()].to_string(), hit));
+        last = m.end();
+    }
+    if last < content.len() {
+        spans.push(Span::styled(content[last..].to_string(), base));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(content.to_string(), base));
+    }
+    spans
+}
+
+fn paint_grep_literal(
+    content: &str,
+    pattern: &str,
+    base: Style,
+    hit: Style,
+) -> Vec<Span<'static>> {
+    if pattern.is_empty() {
+        return vec![Span::styled(content.to_string(), base)];
+    }
+    let mut spans = Vec::new();
+    let mut rest = content;
+    while let Some(idx) = rest.find(pattern) {
+        if idx > 0 {
+            spans.push(Span::styled(rest[..idx].to_string(), base));
+        }
+        spans.push(Span::styled(pattern.to_string(), hit));
+        rest = &rest[idx + pattern.len()..];
+    }
+    if !rest.is_empty() || spans.is_empty() {
+        spans.push(Span::styled(rest.to_string(), base));
+    }
+    spans
+}
+
+/// `read` tool lines look like `   12|contents` (6-wide line no + `|`).
+/// Also accepts Grok-style `   12→contents` and `   12│contents`.
+fn split_read_line(line: &str) -> Option<(String, &str)> {
+    for (sep, sep_len) in [('|', 1usize), ('│', '│'.len_utf8()), ('→', '→'.len_utf8())] {
+        if let Some(pipe) = line.find(sep) {
+            let (left, right) = line.split_at(pipe);
+            if !left.is_empty() && left.chars().all(|c| c.is_ascii_digit() || c == ' ') {
+                // Normalise display separator to `|` so gutters stay uniform.
+                return Some((format!("{left}|"), &right[sep_len..]));
+            }
+        }
+    }
+    None
+}
+
+fn tool_summary(name: &str, input: &serde_json::Value) -> String {
+    let s = match name {
+        // Grok: `grep · pattern` (path is secondary when present).
+        "grep" | "search_code" | "rg" => {
+            let pattern = input
+                .get("pattern")
+                .or_else(|| input.get("query"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let path = input.get("path").and_then(|v| v.as_str()).unwrap_or("");
+            if !pattern.is_empty() && !path.is_empty() && path != "." {
+                format!("{pattern} · {path}")
+            } else if !pattern.is_empty() {
+                pattern.to_string()
+            } else {
+                path.to_string()
+            }
+        }
+        // Grok: `read · path` (never a random other field).
+        "read" | "read_file" | "write" | "edit" => input
+            .get("path")
+            .or_else(|| input.get("file_path"))
+            .or_else(|| input.get("file"))
+            .or_else(|| input.get("target_file"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "bash" | "shell" => input
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        "glob" => input
+            .get("pattern")
+            .or_else(|| input.get("glob"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        _ => input
+            .get("command")
+            .or_else(|| input.get("path"))
+            .or_else(|| input.get("file_path"))
+            .or_else(|| input.get("file"))
+            .or_else(|| input.get("pattern"))
+            .or_else(|| input.get("glob"))
+            .or_else(|| input.get("query"))
+            .or_else(|| input.get("goal"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+    };
     let s = if s.is_empty() {
         let raw = input.to_string();
         if raw == "{}" || raw == "null" {
@@ -1555,8 +2073,8 @@ fn empty_dash(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        SparseLines, hard_truncate_line, message_row_layout_mut, prettify_tool_result, tool_result,
-        ToolOutHint,
+        SparseLines, hard_truncate_line, message_row_layout_mut, parse_grep_hit, prettify_tool_result,
+        split_read_line, tool_block, tool_result, tool_summary, ToolOutHint,
     };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
@@ -1566,6 +2084,7 @@ mod tests {
     use ratatui::style::{Color, Style};
     use ratatui::text::{Line, Span};
     use ratatui::widgets::Widget;
+    use serde_json::json;
 
     #[test]
     fn prettify_minified_json_becomes_multiline() {
@@ -1673,6 +2192,155 @@ mod tests {
         assert!(line_nos
             .iter()
             .any(|s| s.style.fg == Some(palette.diff_remove)));
+    }
+
+    #[test]
+    fn parse_grep_hit_match_and_context() {
+        let m = parse_grep_hit("crates/tui/src/ui/chat.rs:901:enum ToolOutHint {").unwrap();
+        assert_eq!(m.path, "crates/tui/src/ui/chat.rs");
+        assert_eq!(m.lineno, "901");
+        assert!(m.is_match);
+        assert_eq!(m.content, "enum ToolOutHint {");
+
+        let c = parse_grep_hit("src/foo.rs:12-// context line").unwrap();
+        assert!(!c.is_match);
+        assert_eq!(c.lineno, "12");
+        assert_eq!(c.content, "// context line");
+    }
+
+    #[test]
+    fn split_read_line_accepts_pipe_and_arrow() {
+        let (g, code) = split_read_line("    12|fn main()").unwrap();
+        assert_eq!(g, "    12|");
+        assert_eq!(code, "fn main()");
+        let (g2, code2) = split_read_line("     1→use foo;").unwrap();
+        assert_eq!(g2, "     1|");
+        assert_eq!(code2, "use foo;");
+    }
+
+    #[test]
+    fn tool_summary_grep_prefers_pattern() {
+        let s = tool_summary(
+            "grep",
+            &json!({"pattern": "ToolOutHint", "path": "crates/tui"}),
+        );
+        assert!(s.starts_with("ToolOutHint"), "got {s}");
+        assert!(s.contains("crates/tui"), "got {s}");
+    }
+
+    #[test]
+    fn tool_summary_read_is_path() {
+        let s = tool_summary("read", &json!({"path": "src/main.rs", "offset": 1}));
+        assert_eq!(s, "src/main.rs");
+    }
+
+    #[test]
+    fn tool_result_grep_groups_by_path_and_highlights() {
+        let palette = ThemeName::DefaultDark.palette();
+        let body = "\
+crates/tui/src/ui/chat.rs:901:enum ToolOutHint {
+crates/tui/src/ui/chat.rs:910:fn tool_out_hint()
+crates/tools/src/file/grep.rs:34:        \"grep\"
+
+(3 matches in 2 files; pattern `ToolOutHint`)";
+        let lines = tool_result(
+            body,
+            false,
+            &palette,
+            false,
+            ToolOutHint::Grep {
+                pattern: "ToolOutHint".into(),
+            },
+            100,
+        );
+        // Path headers should appear (info-coloured).
+        let path_spans: Vec<_> = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .filter(|s| s.content.as_ref().contains("chat.rs") || s.content.as_ref().contains("grep.rs"))
+            .collect();
+        assert!(
+            path_spans.iter().any(|s| s.style.fg == Some(palette.info)),
+            "expected path headers in info colour"
+        );
+        // Match text highlighted.
+        let hit = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.as_ref() == "ToolOutHint")
+            .expect("highlighted match");
+        assert_eq!(hit.style.fg, Some(palette.highlight));
+        // Line numbers present.
+        assert!(
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .any(|s| s.content.as_ref().contains('9') && s.style.fg == Some(palette.dim)),
+            "expected dim line numbers"
+        );
+    }
+
+    #[test]
+    fn tool_result_read_skips_path_banner_keeps_line_nos() {
+        let palette = ThemeName::DefaultDark.palette();
+        let body = "\
+# crates/tui/src/ui/chat.rs
+# lines 1–3 of 3  |  120 B
+     1|fn main() {
+     2|    println!(\"hi\");
+     3|}
+";
+        let lines = tool_result(
+            body,
+            false,
+            &palette,
+            false,
+            ToolOutHint::Code(Some("rust".into())),
+            100,
+        );
+        // Path banner must not reappear as a body row.
+        let joined: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(
+            !joined.contains("# crates/tui"),
+            "path banner should be stripped, got:\n{joined}"
+        );
+        // Line-number gutters still painted.
+        assert!(
+            lines
+                .iter()
+                .flat_map(|l| l.spans.iter())
+                .any(|s| s.content.as_ref().contains("1|") || s.content.as_ref() == "     1|"),
+            "expected line-number gutter"
+        );
+    }
+
+    #[test]
+    fn tool_block_grep_header_shows_match_chip() {
+        let palette = ThemeName::DefaultDark.palette();
+        let body = "src/a.rs:1:foo\nsrc/b.rs:2:foo\n\n(2 matches in 2 files; pattern `foo`)";
+        let lines = tool_block(
+            "grep",
+            &json!({"pattern": "foo"}),
+            Some(body),
+            false,
+            &palette,
+            false,
+            100,
+        );
+        let header: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(header.contains("grep"), "got {header}");
+        assert!(header.contains("foo"), "got {header}");
+        assert!(header.contains("2"), "got {header}");
+        assert!(header.contains("match"), "got {header}");
     }
 
     #[test]
