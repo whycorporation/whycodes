@@ -11,8 +11,11 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use whycode_format::markdown::{Block, Inline, highlight_code_spans, parse_markdown};
+use whycode_format::markdown::{
+    Block, Inline, TableAlign, highlight_code_spans, parse_markdown,
+};
 use whycode_format::mermaid::{is_mermaid_language, render_mermaid};
+use whycode_format::table::{column_widths, pad_cell};
 
 use crate::theme::ThemePalette;
 use crate::widgets::wrap::wrap_spans;
@@ -127,7 +130,116 @@ fn render_block(
                 render_code(language.as_deref(), lines, *closed, palette, max_width)
             }
         }
+
+        Block::Table {
+            headers,
+            aligns,
+            rows,
+        } => render_table(headers, aligns, rows, palette, max_width),
     }
+}
+
+/// GFM pipe table → aligned Unicode box (not soft-wrapped `| raw |` lines).
+///
+/// ```text
+/// ┌────────┬────────┐
+/// │ Tag    │ Sürüm  │
+/// ├────────┼────────┤
+/// │ latest │ 4.5.2  │
+/// └────────┴────────┘
+/// ```
+fn render_table(
+    headers: &[String],
+    aligns: &[TableAlign],
+    rows: &[Vec<String>],
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+) -> Vec<Line<'static>> {
+    if headers.is_empty() {
+        return Vec::new();
+    }
+    let col_count = headers.len();
+    let widths = column_widths(headers, rows, max_width);
+    let border = Style::default().fg(palette.dim);
+    let header_style = Style::default()
+        .fg(palette.accent)
+        .add_modifier(Modifier::BOLD);
+    let cell_style = Style::default().fg(palette.fg);
+
+    let mut out = Vec::with_capacity(rows.len() + 4);
+    out.push(table_border_line(&widths, BorderKind::Top, border));
+    out.push(table_row_line(
+        headers,
+        &widths,
+        aligns,
+        col_count,
+        header_style,
+        border,
+    ));
+    out.push(table_border_line(&widths, BorderKind::Mid, border));
+    for row in rows {
+        let cells: Vec<String> = (0..col_count)
+            .map(|i| row.get(i).cloned().unwrap_or_default())
+            .collect();
+        out.push(table_row_line(
+            &cells,
+            &widths,
+            aligns,
+            col_count,
+            cell_style,
+            border,
+        ));
+    }
+    out.push(table_border_line(&widths, BorderKind::Bot, border));
+    out
+}
+
+#[derive(Clone, Copy)]
+enum BorderKind {
+    Top,
+    Mid,
+    Bot,
+}
+
+fn table_border_line(widths: &[usize], kind: BorderKind, style: Style) -> Line<'static> {
+    let (l, m, r, h) = match kind {
+        BorderKind::Top => ('┌', '┬', '┐', '─'),
+        BorderKind::Mid => ('├', '┼', '┤', '─'),
+        BorderKind::Bot => ('└', '┴', '┘', '─'),
+    };
+    let mut s = String::new();
+    s.push(l);
+    for (i, w) in widths.iter().enumerate() {
+        if i > 0 {
+            s.push(m);
+        }
+        s.extend(std::iter::repeat(h).take(w + 2));
+    }
+    s.push(r);
+    Line::from(Span::styled(s, style))
+}
+
+fn table_row_line(
+    cells: &[String],
+    widths: &[usize],
+    aligns: &[TableAlign],
+    col_count: usize,
+    cell_style: Style,
+    border_style: Style,
+) -> Line<'static> {
+    let mut spans = Vec::with_capacity(col_count * 4 + 1);
+    spans.push(Span::styled("│".to_string(), border_style));
+    for i in 0..col_count {
+        let raw = cells.get(i).map(|s| s.as_str()).unwrap_or("");
+        let align = aligns.get(i).copied().unwrap_or(TableAlign::Left);
+        let w = widths.get(i).copied().unwrap_or(1);
+        let padded = pad_cell(raw, w, align);
+        spans.push(Span::styled(" ".to_string(), cell_style));
+        spans.push(Span::styled(padded, cell_style));
+        spans.push(Span::styled(" ".to_string(), cell_style));
+        spans.push(Span::styled("│".to_string(), border_style));
+    }
+    Line::from(spans)
 }
 
 fn is_diff_language(language: Option<&str>) -> bool {
@@ -425,6 +537,37 @@ mod tests {
         assert!(out[0].contains("rust"), "{:?}", out);
         assert!(out.iter().any(|l| l.contains("let x = 1;")), "{:?}", out);
         assert!(out.last().unwrap().contains('└'), "{:?}", out);
+    }
+
+    #[test]
+    fn gfm_pipe_table_renders_as_aligned_box() {
+        let md = "\
+| Tag | Sürüm |
+|-----|--------|
+| latest | 4.5.2 |
+| 3x | 3.21.11 |
+";
+        let out = rendered(md);
+        let joined = out.join("\n");
+        // Box chrome — not raw pipe-markdown soft-wrap debris.
+        assert!(joined.contains('┌'), "{joined}");
+        assert!(joined.contains('│'), "{joined}");
+        assert!(joined.contains('└'), "{joined}");
+        assert!(joined.contains("Tag"), "{joined}");
+        assert!(joined.contains("Sürüm"), "{joined}");
+        assert!(joined.contains("latest"), "{joined}");
+        assert!(joined.contains("4.5.2"), "{joined}");
+        // Separator markdown must not leak as a body row.
+        assert!(!joined.contains("|-----|"), "{joined}");
+        // Header row is accent+bold.
+        let lines = render(md, &palette());
+        let header_span = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.as_ref().contains("Tag"))
+            .expect("header cell");
+        assert!(header_span.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(header_span.style.fg, Some(palette().accent));
     }
 
     #[test]

@@ -56,6 +56,15 @@ impl Inline {
     }
 }
 
+/// Column alignment from a GFM separator row (`---`, `:---`, `---:`, `:---:`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TableAlign {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+
 /// A block-level element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
@@ -77,6 +86,16 @@ pub enum Block {
         lines: Vec<String>,
         closed: bool,
     },
+    /// GFM pipe table: header + separator + zero or more body rows.
+    ///
+    /// Cells are plain text (inline markup stripped to display text). The TUI
+    /// paints this as an aligned box; without this variant pipe lines soft-wrap
+    /// as paragraphs and look broken.
+    Table {
+        headers: Vec<String>,
+        aligns: Vec<TableAlign>,
+        rows: Vec<Vec<String>>,
+    },
     Blank,
 }
 
@@ -91,18 +110,24 @@ pub use crate::highlight::highlight_code_spans;
 /// Deliberately line-oriented and total: any input produces blocks, and an
 /// unterminated fence yields `Code { closed: false }` rather than an error, so
 /// a partially streamed response still renders.
+///
+/// GFM pipe tables are detected when a row is immediately followed by a
+/// separator (`|---|---|`); body rows are consumed until a blank / non-row.
 pub fn parse_markdown(text: &str) -> Vec<Block> {
+    let lines: Vec<&str> = text.lines().collect();
     let mut blocks = Vec::new();
     let mut fence: Option<(Option<String>, Vec<String>)> = None;
+    let mut i = 0usize;
 
-    for line in text.lines() {
+    while i < lines.len() {
+        let line = lines[i];
         let trimmed = line.trim_start();
 
         if trimmed.starts_with("```") {
             match fence.take() {
-                Some((language, lines)) => blocks.push(Block::Code {
+                Some((language, code_lines)) => blocks.push(Block::Code {
                     language,
-                    lines,
+                    lines: code_lines,
                     closed: true,
                 }),
                 None => {
@@ -110,11 +135,20 @@ pub fn parse_markdown(text: &str) -> Vec<Block> {
                     fence = Some(((!lang.is_empty()).then(|| lang.to_string()), Vec::new()));
                 }
             }
+            i += 1;
             continue;
         }
 
-        if let Some((_, lines)) = fence.as_mut() {
-            lines.push(line.to_string());
+        if let Some((_, code_lines)) = fence.as_mut() {
+            code_lines.push(line.to_string());
+            i += 1;
+            continue;
+        }
+
+        // GFM table: header + separator (+ optional body). Needs a lookahead.
+        if let Some((table, consumed)) = try_parse_table(&lines[i..]) {
+            blocks.push(table);
+            i += consumed;
             continue;
         }
 
@@ -134,17 +168,150 @@ pub fn parse_markdown(text: &str) -> Vec<Block> {
         } else {
             blocks.push(Block::Paragraph(parse_inline(line)));
         }
+        i += 1;
     }
 
-    if let Some((language, lines)) = fence {
+    if let Some((language, code_lines)) = fence {
         blocks.push(Block::Code {
             language,
-            lines,
+            lines: code_lines,
             closed: false,
         });
     }
 
     blocks
+}
+
+/// Try to parse a GFM pipe table starting at `lines[0]`.
+///
+/// Returns `(Block::Table, lines_consumed)` or `None` if this is not a table
+/// (e.g. a lone `| a | b |` without a separator — still a paragraph while
+/// streaming, until the `---` row arrives).
+fn try_parse_table(lines: &[&str]) -> Option<(Block, usize)> {
+    if lines.len() < 2 {
+        return None;
+    }
+    let header_line = lines[0];
+    let sep_line = lines[1];
+    if !looks_like_table_row(header_line) || !is_table_separator(sep_line) {
+        return None;
+    }
+
+    let headers = split_table_cells(header_line);
+    if headers.is_empty() || headers.iter().all(|h| h.is_empty()) {
+        return None;
+    }
+    let col_count = headers.len();
+    let aligns = parse_table_alignments(sep_line, col_count);
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut n = 2usize;
+    while n < lines.len() {
+        let l = lines[n];
+        if l.trim().is_empty() {
+            break;
+        }
+        // Don't swallow the next table's separator or a non-row paragraph.
+        if is_table_separator(l) || !looks_like_table_row(l) {
+            break;
+        }
+        let mut cells = split_table_cells(l);
+        cells.resize(col_count, String::new());
+        if cells.len() > col_count {
+            cells.truncate(col_count);
+        }
+        rows.push(cells);
+        n += 1;
+    }
+
+    Some((
+        Block::Table {
+            headers,
+            aligns,
+            rows,
+        },
+        n,
+    ))
+}
+
+/// A table data/header row has at least two pipe-separated cells.
+fn looks_like_table_row(line: &str) -> bool {
+    let t = line.trim();
+    if !t.contains('|') {
+        return false;
+    }
+    // Reject pure separator rows here — they are handled by `is_table_separator`.
+    if is_table_separator(t) {
+        return false;
+    }
+    split_table_cells(t).len() >= 2
+}
+
+/// GFM separator: each cell is dashes with optional leading/trailing colons.
+fn is_table_separator(line: &str) -> bool {
+    let cells = split_table_cells(line);
+    if cells.is_empty() {
+        return false;
+    }
+    cells.iter().all(|c| {
+        let c = c.trim();
+        if c.is_empty() {
+            return false;
+        }
+        let mut saw_dash = false;
+        for ch in c.chars() {
+            match ch {
+                '-' => saw_dash = true,
+                ':' | ' ' => {}
+                _ => return false,
+            }
+        }
+        saw_dash
+    })
+}
+
+fn parse_table_alignments(sep_line: &str, col_count: usize) -> Vec<TableAlign> {
+    let mut aligns: Vec<TableAlign> = split_table_cells(sep_line)
+        .iter()
+        .map(|c| {
+            let c = c.trim();
+            let left = c.starts_with(':');
+            let right = c.ends_with(':');
+            match (left, right) {
+                (true, true) => TableAlign::Center,
+                (false, true) => TableAlign::Right,
+                _ => TableAlign::Left,
+            }
+        })
+        .collect();
+    aligns.resize(col_count, TableAlign::Left);
+    aligns.truncate(col_count);
+    aligns
+}
+
+/// Split a pipe row into cell strings; strips surrounding pipes.
+///
+/// Inline markdown in a cell is flattened to plain display text so column
+/// widths stay stable (bold markers would skew alignment).
+fn split_table_cells(line: &str) -> Vec<String> {
+    let t = line.trim();
+    let t = t.strip_prefix('|').unwrap_or(t);
+    let t = t.strip_suffix('|').unwrap_or(t);
+    // Trailing empty after final `|` already stripped; still split on remaining.
+    if t.is_empty() {
+        return Vec::new();
+    }
+    t.split('|')
+        .map(|cell| flatten_inline(cell.trim()))
+        .collect()
+}
+
+/// `**bold**` / `` `code` `` → plain text for table cell measurement.
+fn flatten_inline(s: &str) -> String {
+    parse_inline(s)
+        .into_iter()
+        .map(|span| span.text().to_string())
+        .collect()
 }
 
 fn heading(trimmed: &str) -> Option<(u8, &str)> {
@@ -305,14 +472,17 @@ fn find(chars: &[char], from: usize, needle: &str) -> Option<usize> {
 /// - `# headers` → bold + underline
 /// - `- lists` → bullet points
 /// - `[links](url)` → cyan underlined
+/// - GFM pipe tables → aligned box-drawing table
 pub fn render_markdown(text: &str) -> String {
     let mut output = String::with_capacity(text.len() * 2);
     let lines: Vec<&str> = text.lines().collect();
     let mut in_code_block = false;
     let mut code_lang = String::new();
     let mut code_buffer = String::new();
+    let mut i = 0usize;
 
-    for line in &lines {
+    while i < lines.len() {
+        let line = lines[i];
         // Handle fenced code blocks
         if line.trim_start().starts_with("```") {
             if in_code_block {
@@ -321,6 +491,7 @@ pub fn render_markdown(text: &str) -> String {
                 code_buffer.clear();
                 code_lang.clear();
                 in_code_block = false;
+                i += 1;
                 continue;
             } else {
                 // Start of code block
@@ -331,6 +502,7 @@ pub fn render_markdown(text: &str) -> String {
                     .unwrap_or("")
                     .trim()
                     .to_string();
+                i += 1;
                 continue;
             }
         }
@@ -340,6 +512,22 @@ pub fn render_markdown(text: &str) -> String {
                 code_buffer.push('\n');
             }
             code_buffer.push_str(line);
+            i += 1;
+            continue;
+        }
+
+        // GFM pipe table (header + separator + body).
+        if let Some((Block::Table {
+            headers,
+            aligns,
+            rows,
+        }, consumed)) = try_parse_table(&lines[i..])
+        {
+            let hdrs: Vec<&str> = headers.iter().map(|s| s.as_str()).collect();
+            let table = crate::table::format_table_aligned(&hdrs, &rows, &aligns);
+            output.push_str(&table);
+            output.push('\n');
+            i += consumed;
             continue;
         }
 
@@ -368,6 +556,7 @@ pub fn render_markdown(text: &str) -> String {
             output.push_str(&format_inline(line));
             output.push('\n');
         }
+        i += 1;
     }
 
     // Close any unclosed code block
@@ -669,6 +858,70 @@ mod tests {
     #[test]
     fn empty_input_parses_to_nothing() {
         assert!(parse_markdown("").is_empty());
+    }
+
+    #[test]
+    fn parses_gfm_pipe_table() {
+        let md = "\
+| Tag | Sürüm |
+|-----|--------|
+| latest | 4.5.2 |
+| 3x | 3.21.11 |
+| 2x | 2.18.1 |
+";
+        let blocks = parse_markdown(md);
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        match &blocks[0] {
+            Block::Table {
+                headers,
+                aligns,
+                rows,
+            } => {
+                assert_eq!(headers, &["Tag".to_string(), "Sürüm".to_string()]);
+                assert_eq!(aligns.len(), 2);
+                assert_eq!(rows.len(), 3);
+                assert_eq!(rows[0], vec!["latest".to_string(), "4.5.2".to_string()]);
+                assert_eq!(rows[1][0], "3x");
+                assert_eq!(rows[2][1], "2.18.1");
+            }
+            other => panic!("expected Table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn table_alignment_from_separator() {
+        let md = "| L | C | R |\n|:---|:---:|---:|\n| a | b | c |\n";
+        let blocks = parse_markdown(md);
+        match &blocks[0] {
+            Block::Table { aligns, .. } => {
+                assert_eq!(
+                    aligns,
+                    &[TableAlign::Left, TableAlign::Center, TableAlign::Right]
+                );
+            }
+            other => panic!("expected Table, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lone_pipe_row_without_separator_is_paragraph() {
+        // Streaming: separator not yet arrived — keep as prose.
+        let blocks = parse_markdown("| Tag | Sürüm |");
+        assert!(
+            matches!(blocks[0], Block::Paragraph(_)),
+            "got {:?}",
+            blocks[0]
+        );
+    }
+
+    #[test]
+    fn render_markdown_emits_box_table() {
+        let md = "| Tag | Ver |\n|-----|-----|\n| a | 1 |\n";
+        let out = render_markdown(md);
+        assert!(out.contains('┌'), "{out}");
+        assert!(out.contains("Tag"), "{out}");
+        assert!(out.contains('│'), "{out}");
+        assert!(!out.contains("|-----|"), "{out}");
     }
 
     // Code-span highlighting tests live in `highlight` (shared module).
