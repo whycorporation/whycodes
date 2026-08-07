@@ -9,6 +9,7 @@
   "llm": 23,
   "lsp": 0,
   "mcp": 0,
+  "memory": 0,
   "plugin": 0,
   "protocol": 0,
   "sandbox": 0,
@@ -19,5 +20,6 @@
   "skill": 0,
   "storage": 0,
   "tools": 0,
-  "tui": 2
+  "tui": 1
 }
+
