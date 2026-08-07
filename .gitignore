@@ -10,3 +10,5 @@ target/
 .whycode/external_dirs_allowed
 # Swarm worker worktrees (created/removed per run; never commit)
 .whycode/swarm/
+# Machine-local notes / ops scrap (self-hosted runner, secrets, host facts)
+local/
