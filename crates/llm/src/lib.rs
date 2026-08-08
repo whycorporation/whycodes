@@ -2,6 +2,7 @@ pub mod anthropic;
 pub mod cache;
 pub mod capabilities;
 pub mod client_identity;
+pub mod copilot;
 pub mod custom;
 pub mod deepseek;
 pub mod error_class;

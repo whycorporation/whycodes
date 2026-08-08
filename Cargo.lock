@@ -1492,6 +1492,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d98f6fed1fde3f8c21bc40a1abb88dd75e67924f9cffc3ef95607bad8017f8e2"
 
 [[package]]
+name = "is-docker"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "928bae27f42bc99b60d9ac7334e3a21d10ad8f1835a4e12ec3ec0464765ed1b3"
+dependencies = [
+ "once_cell",
+]
+
+[[package]]
 name = "is-terminal"
 version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1500,6 +1509,16 @@ dependencies = [
  "hermit-abi",
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "is-wsl"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173609498df190136aa7dea1a91db051746d339e18476eed5ca40521f02d7aa5"
+dependencies = [
+ "is-docker",
+ "once_cell",
 ]
 
 [[package]]
@@ -1962,6 +1981,16 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "open"
+version = "5.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f9cfef937e9c486488c7e3d949ae31c0f1d06bdacd75b99c086cb35356e30408"
+dependencies = [
+ "is-wsl",
+ "libc",
+]
 
 [[package]]
 name = "option-ext"
@@ -3817,6 +3846,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "whycode-auth"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "open",
+ "rand 0.8.7",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "whycode-cli"
 version = "0.1.0"
 dependencies = [
@@ -3839,6 +3887,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "whycode-agent",
+ "whycode-auth",
  "whycode-config",
  "whycode-core",
  "whycode-format",
@@ -4162,6 +4211,7 @@ dependencies = [
  "tracing",
  "unicode-width 0.2.0",
  "whycode-agent",
+ "whycode-auth",
  "whycode-config",
  "whycode-core",
  "whycode-format",

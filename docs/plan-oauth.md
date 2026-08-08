@@ -1,6 +1,10 @@
 # Plan — OAuth and credential discovery
 
-**Status:** blocked (2026-07-31) · **Was:** phase 3 · **Depends on:** first install/release path ([plan-distribution.md](plan-distribution.md)) · **Blocks:** nothing
+**Status:** partially shipped (2026-08-09) — login/store/refresh for
+anthropic, openai, github-copilot, google; API-call routing live for
+anthropic + github-copilot. See [auth.md](auth.md). **Remaining:** Codex
+backend + Code Assist call routing for openai/google, credential discovery
+(consent model below), `/connect` in-TUI login. · **Blocks:** nothing
 
 ## Why this is blocked rather than in progress
 
@@ -80,33 +84,39 @@ Out:
 
 ## Tasks
 
-- [ ] `crates/auth`: token storage, expiry tracking, refresh
-- [ ] File permissions on the token store: `0600` on Unix, restrictive ACL on
+- [x] `crates/auth`: token storage, expiry tracking, refresh
+- [x] File permissions on the token store: `0600` on Unix, restrictive ACL on
       Windows; refuse to use a world-readable store
-- [ ] Anthropic OAuth device flow
-- [ ] OpenAI OAuth device flow
-- [ ] Automatic refresh, with a single retry on a 401 that looks like expiry
+- [x] Anthropic OAuth flow (browser + paste `code#state` — the public
+      client's registered redirect is not a loopback address)
+- [x] OpenAI OAuth flow (browser + loopback callback on registered port 1455)
+- [x] Google OAuth flow (browser + loopback callback, ephemeral port)
+- [x] GitHub Copilot (device-code grant + Copilot API-token exchange)
+- [x] Automatic refresh on use (access-token grant refresh; Copilot token
+      re-exchange). Single retry on a 401-that-looks-like-expiry: still open
 - [ ] Discovery: locate known credential paths per platform, report findings
 - [ ] Consent prompt per source path, with the decision persisted
 - [ ] Reject symlinked credential sources; never write to a discovered file
-- [ ] `login`, `logout`, and the `debug` reporting
+- [x] `login`, `logout`, and the `debug` reporting
 - [ ] `/connect` in the TUI offers login instead of only printing help
-- [ ] `docs/auth.md` documenting every path read and every file written
+      (it now loads stored OAuth tokens; launching the browser flow from
+      inside the TUI is still open)
+- [x] `docs/auth.md` documenting every path read and every file written
 
 ## Acceptance criteria
 
-- [ ] `whycode login --provider anthropic` completes a device flow and a
+- [x] `whycode auth login anthropic` completes the browser flow and a
       subsequent `whycode generate "hi"` works with no API key set
-- [ ] An expired access token refreshes without user interaction
+- [x] An expired access token refreshes without user interaction
 - [ ] Discovery finds a Claude Code credential file when present and does
       **not** read it until approved
 - [ ] Approving a source persists, so the prompt does not reappear
 - [ ] A symlinked credential source is refused with a clear message
 - [ ] No discovered file is modified — verified by comparing mtime and content
       hash before and after a session
-- [ ] `whycode debug` shows auth state and never prints a token, not even
+- [x] `whycode debug` shows auth state and never prints a token, not even
       truncated
-- [ ] Secrets do not appear in logs at any tracing level
+- [x] Secrets do not appear in logs at any tracing level
 
 ## Risks
 

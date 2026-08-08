@@ -203,6 +203,12 @@ pub enum Commands {
         cmd: MemoryCmd,
     },
 
+    /// Subscription login via OAuth (Claude Pro/Max, ChatGPT, Copilot, Gemini)
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthCmd,
+    },
+
     /// Show usage statistics
     Stats,
 
@@ -305,6 +311,25 @@ pub enum ProviderCmd {
         /// Provider name to set as default
         name: String,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuthCmd {
+    /// Log in with a provider subscription (opens a browser)
+    Login {
+        /// Provider: anthropic | openai | github-copilot | google
+        provider: String,
+        /// Print the sign-in URL instead of opening a browser
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Remove stored OAuth credentials for a provider
+    Logout {
+        /// Provider: anthropic | openai | github-copilot | google
+        provider: String,
+    },
+    /// Show which providers have stored OAuth credentials (never prints tokens)
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
@@ -501,6 +526,9 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             Commands::Serve { .. } => true,
             #[cfg(feature = "self-update")]
             Commands::Upgrade => true,
+            // OAuth login does network I/O (token endpoints + a loopback
+            // listener) even though logout/status are local.
+            Commands::Auth { .. } => true,
             // Local file / sqlite / print-only commands.
             Commands::Provider { .. }
             | Commands::Model { .. }
@@ -627,6 +655,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Config { cmd: config_cmd } => cmd_config(config_cmd).await,
         Commands::Session { cmd: session_cmd } => cmd_session(session_cmd).await,
         Commands::Memory { cmd: memory_cmd } => cmd_memory(cli, memory_cmd).await,
+        Commands::Auth { cmd } => cmd_auth(cmd).await,
         Commands::Stats => cmd_stats().await,
         Commands::Debug => cmd_debug().await,
         #[cfg(feature = "self-update")]
@@ -675,7 +704,11 @@ fn resolve_dir(cli: &Cli) -> PathBuf {
     }
 }
 
-fn get_api_key(provider: &str, config: &Config) -> Option<String> {
+/// Resolve the credential for `provider`: env var → config `api_key` →
+/// OAuth token store (`whycode auth login`), refreshing the token when it
+/// is near expiry. Env and config win so a stored subscription login never
+/// overrides an explicit key.
+async fn get_api_key(provider: &str, config: &Config) -> Option<String> {
     let env_var = provider_env_var(provider);
     if let Ok(key) = std::env::var(&env_var)
         && !key.is_empty()
@@ -693,6 +726,13 @@ fn get_api_key(provider: &str, config: &Config) -> Option<String> {
         && let Ok(key) = std::env::var("OPENAI_API_KEY")
     {
         return Some(key);
+    }
+    // OAuth subscription login (`whycode auth login <provider>`).
+    if whycode_auth::providers::supports_oauth(provider)
+        && let Ok(data_dir) = Config::data_dir()
+        && let Some(token) = whycode_auth::providers::access_token(provider, &data_dir).await
+    {
+        return Some(token);
     }
     None
 }
@@ -845,7 +885,7 @@ async fn cmd_run(
 
     // Interactive mode always starts (OpenCode-style). API key is optional until
     // the user actually sends a prompt that needs the LLM.
-    let mut api_key = get_api_key(&provider, &config).unwrap_or_default();
+    let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
     // Full-screen TUI unless --plain / WHYCODE_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
@@ -1092,7 +1132,7 @@ async fn cmd_run(
                 && let Some(custom) = config.commands.get(name)
             {
                 let rendered = custom.render(rest);
-                if !ensure_api_key(&mut api_key, &provider, &config) {
+                if !ensure_api_key(&mut api_key, &provider, &config).await {
                     continue;
                 }
                 println!("{} /{} → prompt", "⚡".bold(), name.cyan());
@@ -1386,7 +1426,7 @@ async fn cmd_run(
                         if let Some((p, m)) = rest.split_once('/') {
                             provider = p.to_string();
                             model = m.to_string();
-                            if let Some(k) = get_api_key(&provider, &config) {
+                            if let Some(k) = get_api_key(&provider, &config).await {
                                 api_key = k;
                             }
                             println!(
@@ -1428,7 +1468,7 @@ async fn cmd_run(
                     if let Ok(cfg) = Config::load() {
                         config = cfg;
                     }
-                    if let Some(k) = get_api_key(&provider, &config) {
+                    if let Some(k) = get_api_key(&provider, &config).await {
                         api_key = k;
                         println!(
                             "{} API key loaded for {} ({}…)",
@@ -1440,6 +1480,12 @@ async fn cmd_run(
                         println!("Add a provider:");
                         println!("  whycode provider add {} --api-key <key>", provider);
                         println!("  or set env {}", provider_env_var(&provider));
+                        if whycode_auth::providers::supports_oauth(&provider) {
+                            println!(
+                                "  or log in with your subscription: whycode auth login {}",
+                                provider
+                            );
+                        }
                         println!();
                         println!(
                             "Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ..."
@@ -1543,7 +1589,7 @@ async fn cmd_run(
         // Expand @file references (OpenCode parity)
         let expanded = expand_user_input(&input, &project_dir);
 
-        if !ensure_api_key(&mut api_key, &provider, &config) {
+        if !ensure_api_key(&mut api_key, &provider, &config).await {
             continue;
         }
 
@@ -1625,24 +1671,31 @@ async fn cmd_run(
     Ok(())
 }
 
-/// Refresh API key from env/config; print how to connect if still missing.
-/// Returns false if no key is available (caller should not call the LLM).
-fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -> bool {
+/// Refresh API key from env/config/OAuth store; print how to connect if
+/// still missing. Returns false if no key is available (caller should not
+/// call the LLM).
+async fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -> bool {
     if !api_key.is_empty() {
         return true;
     }
-    if let Some(k) = get_api_key(provider, config) {
+    if let Some(k) = get_api_key(provider, config).await {
         *api_key = k;
         return true;
     }
     let env = provider_env_var(provider);
+    let oauth_hint = if whycode_auth::providers::supports_oauth(provider) {
+        format!("\n  → whycode auth login {provider}  (subscription)")
+    } else {
+        String::new()
+    };
     eprintln!(
-        "{}\n  {}\n  {}\n  {}",
+        "{}\n  {}\n  {}{}\n  {}",
         format!("Setup needed · no API key for `{provider}`")
             .yellow()
             .bold(),
         format!("→ export {env}=…").dimmed(),
         format!("→ whycode provider add {provider} --api-key <key>").dimmed(),
+        oauth_hint.dimmed(),
         "Then /connect and try again.".dimmed(),
     );
     false
@@ -2118,13 +2171,19 @@ async fn cmd_generate(
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
 
-    let api_key = match get_api_key(&provider, &config) {
+    let api_key = match get_api_key(&provider, &config).await {
         Some(k) => k,
         None => {
+            let oauth_hint = if whycode_auth::providers::supports_oauth(&provider) {
+                format!(" Or log in with your subscription: `whycode auth login {provider}`.")
+            } else {
+                String::new()
+            };
             let msg = format!(
-                "No API key for provider '{}'. Set {} env var.",
+                "No API key for provider '{}'. Set {} env var.{}",
                 provider,
-                provider_env_var(&provider)
+                provider_env_var(&provider),
+                oauth_hint
             );
             return emit_headless_setup_error(format, &msg);
         }
@@ -3557,6 +3616,89 @@ async fn cmd_stats() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// Auth (OAuth subscription login)
+// ────────────────────────────────────────────────────────────────────────
+
+async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
+    let data_dir = Config::data_dir()?;
+    let store = whycode_auth::TokenStore::new(&data_dir);
+    match cmd {
+        AuthCmd::Login {
+            provider,
+            no_browser,
+        } => {
+            if !whycode_auth::providers::supports_oauth(provider) {
+                anyhow::bail!(
+                    "provider `{provider}` does not support OAuth login (supported: {})",
+                    whycode_auth::OAUTH_PROVIDERS.join(", ")
+                );
+            }
+            whycode_auth::providers::login(provider, &store, !no_browser).await?;
+            println!(
+                "{} Logged in to {} — credential stored in {}",
+                "✓".green(),
+                provider.cyan(),
+                store.path().display()
+            );
+        }
+        AuthCmd::Logout { provider } => {
+            if store.remove(provider)? {
+                println!(
+                    "{} Removed stored credentials for {}",
+                    "✓".green(),
+                    provider.cyan()
+                );
+            } else {
+                println!("No stored credentials for `{provider}`.");
+            }
+        }
+        AuthCmd::Status => {
+            let entries = store.list()?;
+            if entries.is_empty() {
+                println!(
+                    "No OAuth logins yet. Run: whycode auth login <{}>",
+                    whycode_auth::OAUTH_PROVIDERS.join("|")
+                );
+            } else {
+                println!("{} OAuth logins ({}):", "🔑".bold(), store.path().display());
+                for (name, auth) in entries {
+                    println!(
+                        "  {:<15} {} · {}",
+                        name.cyan(),
+                        auth.method,
+                        auth_expiry_label(&auth).dimmed()
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Human expiry label for `auth status` / `debug` — never token material.
+fn auth_expiry_label(auth: &whycode_auth::ProviderAuth) -> String {
+    // Copilot's API token (the one that actually expires) lives in extra.
+    if let Some(at) = auth
+        .token
+        .extra
+        .get("copilot_expires_at")
+        .and_then(|v| v.as_str())
+    {
+        return format!("copilot token expires {at}");
+    }
+    match auth.token.expires_at {
+        Some(at) => {
+            if auth.token.is_expired() {
+                format!("expired {at} (refreshes on next use)")
+            } else {
+                format!("expires {at}")
+            }
+        }
+        None => "no expiry".to_string(),
+    }
+}
+
 /// `debug` — Show debug information
 async fn cmd_debug() -> anyhow::Result<()> {
     println!("{} Debug Information:", "🔧".bold());
@@ -3660,6 +3802,31 @@ async fn cmd_debug() -> anyhow::Result<()> {
                 println!("    {} = (not set)", var.dimmed());
             }
         }
+    }
+
+    // OAuth subscription logins — method + expiry only, never token material.
+    println!("  OAuth (auth.json):");
+    match Config::data_dir() {
+        Ok(dir) => {
+            let store = whycode_auth::TokenStore::new(&dir);
+            match store.list() {
+                Ok(entries) if entries.is_empty() => {
+                    println!("    (none — `whycode auth login <provider>`)");
+                }
+                Ok(entries) => {
+                    for (name, auth) in entries {
+                        println!(
+                            "    {:<15} {} · {}",
+                            name,
+                            auth.method,
+                            auth_expiry_label(&auth)
+                        );
+                    }
+                }
+                Err(e) => println!("    error reading store: {e}"),
+            }
+        }
+        Err(e) => println!("    data dir error: {e}"),
     }
 
     Ok(())
