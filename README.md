@@ -601,12 +601,12 @@ Still-open work with acceptance criteria:
 | [docs/plan-oauth.md](docs/plan-oauth.md) | Partially shipped — [docs/auth.md](docs/auth.md) |
 | [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; residual stats / CI ceilings |
 | [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done |
-| [docs/plan-features-improvements.md](docs/plan-features-improvements.md) | FEATURES matrix + TUI discoverability |
-| [docs/plan-memory.md](docs/plan-memory.md) | Shipped v1+v2 (retain, sync, code RAG, ONNX opt) |
+| [docs/plan-optimize-2026-08.md](docs/plan-optimize-2026-08.md) | Session A done; Session B open |
 
 ### Archived phases
 
-Completed or dropped numbered phases (1, 4, 7, 8, 9) live under
+Completed or dropped numbered phases (1, 4, 7, 8, 9) and shipped feature
+plans (memory, parallel multi-session, A1–A7, …) live under
 [docs/archive/](docs/archive/README.md). Do not treat them as open work.
 
 Post-launch deferred: **ACP** (Agent Client Protocol) and `web` surface — see

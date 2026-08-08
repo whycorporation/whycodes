@@ -19,6 +19,8 @@ use crate::types::{
 pub struct LspClient {
     writer: Arc<Mutex<ChildStdin>>,
     stdout: Arc<Mutex<BufReader<ChildStdout>>>,
+    /// Server process handle. Never read directly: owned here so the `Child`
+    /// outlives the client (the server exits on its own once stdin closes).
     #[allow(dead_code)]
     child: Arc<Mutex<Child>>,
     next_id: Arc<Mutex<i64>>,
