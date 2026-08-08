@@ -1038,6 +1038,10 @@ pub struct TuiApp {
     pub pending_auto_prompts: std::collections::VecDeque<String>,
     /// Idle follow-up suggestion (`tui.prompt_suggestions = "idle"`). Tab accepts when input empty.
     pub pending_suggestion: Option<String>,
+    /// OAuth paste-code flow: while set, the next submitted input line is
+    /// the pasted `code#state`, not a prompt. Dropping the sender cancels
+    /// the in-flight login (the flow's receiver errors out).
+    pub auth_code_sink: Option<tokio::sync::oneshot::Sender<String>>,
     /// Running background shell jobs (status bar chip).
     pub bg_running_count: usize,
     /// Model switch from the picker dialog: `(provider, model)`.
@@ -1480,6 +1484,7 @@ impl TuiApp {
             pending_prompt: None,
             pending_auto_prompts: std::collections::VecDeque::new(),
             pending_suggestion: None,
+            auth_code_sink: None,
             bg_running_count: 0,
             pending_model: None,
             pending_session_id: None,
@@ -2486,6 +2491,24 @@ impl TuiApp {
 
     /// Submit current input as user message and queue it for the agent.
     pub fn submit_input(&mut self) {
+        // OAuth paste-code flow intercepts before anything else: the input
+        // line is the sign-in code, not a prompt for the agent.
+        if let Some(sink) = self.auth_code_sink.take() {
+            let code = self.input_buffer.trim().to_string();
+            self.input_buffer.clear();
+            self.input_lines.clear();
+            self.input_cursor = 0;
+            self.pending_pastes.clear();
+            if code.is_empty() {
+                // Dropping the sender cancels the flow.
+                self.status_message = "sign-in cancelled".into();
+            } else {
+                let _ = sink.send(code);
+                self.status_message = "code received — finishing sign-in…".into();
+            }
+            self.mark_dirty();
+            return;
+        }
         let display_text = self.input_buffer.trim().to_string();
         let has_images = !self.pending_images.is_empty();
         if display_text.is_empty() && !has_images {

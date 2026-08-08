@@ -24,6 +24,12 @@ whycode auth logout <provider>        # remove stored credential
 
 `whycode debug` also lists stored logins (method + expiry only).
 
+In the TUI, `/connect` reloads the credential for the active provider; when
+none exists and the provider supports OAuth, it starts the login flow
+in-place — the browser opens from the TUI, loopback/device flows report
+progress in the transcript, and Anthropic's paste flow collects
+`code#state` through the prompt box (Esc cancels).
+
 ## What is stored, and where
 
 | Path | Contents | Permissions |

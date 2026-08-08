@@ -101,9 +101,11 @@ Out:
 - [ ] Consent prompt per source path, with the decision persisted
 - [ ] Reject symlinked credential sources; never write to a discovered file
 - [x] `login`, `logout`, and the `debug` reporting
-- [ ] `/connect` in the TUI offers login instead of only printing help
-      (it now loads stored OAuth tokens; launching the browser flow from
-      inside the TUI is still open)
+- [x] `/connect` in the TUI offers login instead of only printing help —
+      with no credential it spawns the provider's OAuth flow via
+      `LoginUi`/`login_with_ui` (loopback + device flows report over the
+      event channel; the anthropic paste flow collects `code#state` through
+      the prompt box, Esc cancels)
 - [x] `docs/auth.md` documenting every path read and every file written
 
 ## Acceptance criteria

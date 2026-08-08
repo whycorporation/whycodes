@@ -355,6 +355,12 @@ fn is_bare_slash_draft(buf: &str) -> bool {
 /// Cancel-while-busy is owned by the run loop (has the CancelFlag); here we
 /// only handle idle clear / mode exit. Slash + help still steal Esc.
 fn handle_escape(app: &mut TuiApp) {
+    // 0. Steal: an in-flight OAuth paste-code login is cancelled first.
+    if app.auth_code_sink.take().is_some() {
+        app.status_message = "sign-in cancelled".into();
+        app.mark_dirty();
+        return;
+    }
     // 1. Steal: slash suggest
     if app.slash_suggest.active {
         app.slash_suggest.dismiss();
