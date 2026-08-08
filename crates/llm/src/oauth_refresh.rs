@@ -52,6 +52,22 @@ fn source_dir(provider: &str) -> Option<PathBuf> {
     sources().read().ok()?.get(provider).cloned()
 }
 
+/// Read a provider-specific extra stored with the OAuth credential (e.g.
+/// `openai_account_id`, sent as the `chatgpt-account-id` header on the
+/// Codex backend). `None` when no source is registered or the key is
+/// absent. Never returns token material — callers must name a non-secret
+/// extra key.
+pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
+    let dir = source_dir(provider)?;
+    let store = whycode_auth::TokenStore::new(&dir);
+    let auth = store.get(provider).ok()??;
+    auth.token
+        .extra
+        .get(key)?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// Send the request built by `build(current_key)`; on a 401 with a
 /// registered OAuth source, force-refresh the stored token and send
 /// `build(new_key)` once. `build` must be cheap to call twice (the body is

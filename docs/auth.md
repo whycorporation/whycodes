@@ -43,7 +43,7 @@ community CLIs — whycode has no registered client of its own.
 | Provider | Flow | Works for API calls |
 |----------|------|---------------------|
 | `anthropic` | PKCE; the public client's redirect shows `code#state` on a console page → paste it into the terminal | ✅ yes — token sent as `Authorization: Bearer` + `anthropic-beta: oauth-2025-04-20` |
-| `openai` | PKCE → loopback callback on the registered port `localhost:1455` | ⚠️ login + refresh work; ChatGPT-subscription tokens only authorize the Codex backend (`chatgpt.com/backend-api`), not `api.openai.com` — call routing is a follow-up |
+| `openai` | PKCE → loopback callback on the registered port `localhost:1455` | ✅ yes — JWT-shaped subscription tokens are routed to the Codex backend (`chatgpt.com/backend-api/codex/responses`, Responses API) with the stored `chatgpt-account-id`; API keys keep the `api.openai.com` chat-completions path (`crates/llm/src/codex.rs`) |
 | `github-copilot` | GitHub device-code grant → GitHub token is exchanged for the short-lived Copilot API token | ✅ yes — `github-copilot` provider calls `api.githubcopilot.com/chat/completions`; the Copilot token re-exchanges automatically near expiry |
 | `google` | PKCE → loopback callback on an ephemeral port | ⚠️ login + refresh work; Gemini-subscription calls need the Code Assist endpoint (`cloudcode-pa.googleapis.com`), not the API-key `generativelanguage` route — call routing is a follow-up |
 

@@ -76,6 +76,11 @@ impl LlmProvider for OpenAiProvider {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
+        // ChatGPT-subscription OAuth tokens are rejected by api.openai.com;
+        // route them to the Codex backend (Responses API) instead.
+        if super::codex::is_chatgpt_oauth_token(api_key) {
+            return super::codex::complete(request, api_key, model).await;
+        }
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
@@ -139,6 +144,11 @@ impl LlmProvider for OpenAiProvider {
         model: &str,
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
+        // See `complete`: JWT-shaped subscription tokens go to the Codex
+        // backend, API keys keep the chat-completions path.
+        if super::codex::is_chatgpt_oauth_token(api_key) {
+            return super::codex::stream(request, api_key, model).await;
+        }
         let mut body = self.build_body(request, model);
         super::openai_compat::attach_stream_usage_option(&mut body);
 
