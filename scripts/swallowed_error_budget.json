@@ -1,5 +1,6 @@
 {
   "agent": 29,
+  "auth": 6,
   "cli": 32,
   "command-risk": 0,
   "config": 1,
