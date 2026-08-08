@@ -20,7 +20,7 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 
 † whycode ACP: deliberately **post-product** (`docs/status.md`, 2026-08-04).  
 ‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.  
-§ whycode OAuth: login/store/refresh shipped for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login`, [auth.md](auth.md)); API-call routing live for anthropic + github-copilot — openai/google routing is a follow-up ([plan-oauth](plan-oauth.md)).
+§ whycode OAuth: login/store/refresh shipped for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login`, [auth.md](auth.md)); API-call routing live for all four (openai → Codex backend, google → Code Assist). Remaining: credential import, in-TUI `/connect` login ([plan-oauth](plan-oauth.md)).
 
 ---
 

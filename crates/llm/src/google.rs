@@ -51,6 +51,11 @@ impl LlmProvider for GoogleProvider {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
+        // Google OAuth subscription tokens are rejected by the API-key
+        // generativelanguage route; send them to the Code Assist endpoint.
+        if super::codeassist::is_google_oauth_token(api_key) {
+            return super::codeassist::complete(request, api_key, model).await;
+        }
         let body = self.build_body(request);
 
         let url = self.build_complete_url(model, api_key);
@@ -112,6 +117,11 @@ impl LlmProvider for GoogleProvider {
         model: &str,
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
+        // See `complete`: OAuth tokens go to Code Assist, API keys keep
+        // the generativelanguage route.
+        if super::codeassist::is_google_oauth_token(api_key) {
+            return super::codeassist::stream(request, api_key, model).await;
+        }
         let mut body = self.build_body(request);
         body["generationConfig"] = serde_json::json!({});
 
