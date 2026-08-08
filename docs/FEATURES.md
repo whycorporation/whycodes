@@ -20,7 +20,7 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 
 † whycode ACP: deliberately **post-product** (`docs/status.md`, 2026-08-04).  
 ‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.  
-§ whycode OAuth: login/store/refresh shipped for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login`, [auth.md](auth.md)); API-call routing live for all four (openai → Codex backend, google → Code Assist). Remaining: credential import, in-TUI `/connect` login ([plan-oauth](plan-oauth.md)).
+§ whycode OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login` or in-TUI `/connect`); API-call routing live for all four (openai → Codex backend, google → Code Assist). Credential import: `whycode auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([auth.md](auth.md), [plan-oauth](plan-oauth.md)).
 
 ---
 
@@ -96,8 +96,8 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | xAI / Grok | ✅ | ✅★ | ✅ | ✅ | ❌ | ❌ | ❌ | ⚠️ | ✅ |
 | OpenRouter / Ollama / local | ✅ | ⚠️ | ✅ | ✅ | ❌ | ⚠️ | ⚠️ | ✅ + llama.cpp | ⚠️ |
 | OpenAI-compatible custom | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ |
-| OAuth / subscription login | ⚠️ 4 providers § | ✅ xAI | ✅ | ✅★ | ✅ | ✅ ChatGPT | ✅ Google | ✅ `/login` | ✅ Cursor |
-| Credential import | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | n/a |
+| OAuth / subscription login | ✅ 4 providers § | ✅ xAI | ✅ | ✅★ | ✅ | ✅ ChatGPT | ✅ Google | ✅ `/login` | ✅ Cursor |
+| Credential import | ✅ 4 CLIs, consent § | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | n/a |
 
 ---
 
@@ -263,7 +263,6 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 
 | Gap | Who has it | Note |
 |---|---|---|
-| OAuth polish + credential import | jcode★ (import), Codex, Gemini, Pi `/login` | login/store/refresh ✅ for anthropic/openai/github-copilot/google ([auth.md](auth.md)); remaining: openai/google call routing, credential discovery, TUI `/connect` — [plan-oauth](plan-oauth.md) |
 | Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [archive/plan-memory](archive/plan-memory.md) |
 | Swarm | jcode★ / whycode `swarm` | git worktrees + 3-way merge + claims toast |
 | Browser automation | jcode, Claude, Cursor★ | None |

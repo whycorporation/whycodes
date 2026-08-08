@@ -108,14 +108,14 @@ impl TokenStore {
 }
 
 #[cfg(unix)]
-fn set_owner_only(path: &Path) -> Result<()> {
+pub(crate) fn set_owner_only(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(())
 }
 
 #[cfg(not(unix))]
-fn set_owner_only(_path: &Path) -> Result<()> {
+pub(crate) fn set_owner_only(_path: &Path) -> Result<()> {
     // Windows ACL hardening is a follow-up; the store still lives under the
     // per-user data directory which is not shared by default.
     Ok(())

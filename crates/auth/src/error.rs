@@ -27,6 +27,12 @@ pub enum AuthError {
     #[error("token refresh failed for `{0}`: {1}")]
     Refresh(String, String),
 
+    #[error("credential import needs explicit approval for this source path: {0}")]
+    ConsentRequired(String),
+
+    #[error("refusing to import a symlinked credential file: {0}")]
+    SymlinkRejected(String),
+
     #[error("could not open a browser; visit this URL manually: {0}")]
     BrowserUnavailable(String),
 

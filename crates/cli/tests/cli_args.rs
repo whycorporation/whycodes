@@ -184,9 +184,30 @@ fn test_auth_help_lists_subcommands() {
     let o = run(&["auth", "--help"]);
     assert_ok(&["auth", "--help"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
-    for sub in ["login", "logout", "status"] {
+    for sub in ["login", "logout", "status", "import"] {
         assert!(s.contains(sub), "auth help should list `{sub}`: {s}");
     }
+}
+
+#[test]
+fn test_auth_import_runs_offline() {
+    // Isolate HOME so the scan finds nothing and never touches the real
+    // consent store — the command must exit cleanly without prompting.
+    let home = std::env::temp_dir().join(format!("whycode-test-home-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(["auth", "import"])
+        .env("HOME", &home)
+        .env("XDG_DATA_HOME", home.join(".local/share"))
+        .output()
+        .expect("spawn whycode auth import");
+    assert_ok(&["auth", "import"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("No credentials"),
+        "empty HOME should report no findings: {s}"
+    );
+    let _ = std::fs::remove_dir_all(&home);
 }
 
 #[test]

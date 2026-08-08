@@ -35,6 +35,7 @@ progress in the transcript, and Anthropic's paste flow collects
 | Path | Contents | Permissions |
 |------|----------|-------------|
 | `<data_dir>/auth.json` | OAuth access/refresh tokens per provider | `0600` (owner-only; a looser file is refused) |
+| `<data_dir>/auth-consent.json` | Per-path approve/deny decisions for credential import | `0600` |
 
 `<data_dir>` is the platform data dir (`~/.local/share/whycode` on Linux,
 `~/Library/Application Support/com.whycorporation.whycode` on macOS).
@@ -58,6 +59,35 @@ does not expire; the derived Copilot token does and is re-exchanged). If a
 provider still answers 401 on a token the store considered fresh, the
 credential is force-renewed and the request retried exactly once; a second
 401 surfaces as a normal error.
+
+## Credential import (discovery)
+
+`whycode auth import` scans for credential files written by other CLIs and
+imports them **only after explicit per-path approval**:
+
+| Source | File read | Provider |
+|--------|-----------|----------|
+| Claude Code | `~/.claude/.credentials.json` | `anthropic` |
+| Codex CLI | `~/.codex/auth.json` | `openai` |
+| Gemini CLI | `~/.gemini/oauth_creds.json` | `google` |
+| GitHub Copilot | `~/.config/github-copilot/hosts.json` | `github-copilot` |
+
+The consent model (mirroring jcode's `OAUTH.md`):
+
+- Discovery reports existence **without reading contents**; a file is read
+  only after you answer `y` for that exact path, and the decision is
+  persisted in `auth-consent.json` so the prompt never reappears.
+- A source file is **never modified** — no move, rewrite, or permission
+  change (a test pins content-hash + mtime stability across an import).
+- **Symlinked sources are refused**, even with approval.
+- Imported credentials are stored in `auth.json` with method `imported`;
+  refresh and the 401 re-auth path work the same as for OAuth logins.
+  Codex imports also carry `account_id` so the Codex backend route gets
+  its `chatgpt-account-id` header.
+- macOS Keychain entries (Claude Code's store on that platform) are out of
+  scope; use `whycode auth login anthropic` there.
+
+To reset a decision, delete `auth-consent.json` (or edit out the path).
 
 ## Adding a new OAuth provider (standard)
 
