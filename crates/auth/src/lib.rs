@@ -12,6 +12,7 @@
 //! - Secrets never appear in logs at any tracing level.
 //! - `Debug` impls redact token material.
 
+pub mod discover;
 pub mod error;
 pub mod flow;
 pub mod pkce;

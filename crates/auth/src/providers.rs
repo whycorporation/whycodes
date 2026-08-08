@@ -853,8 +853,9 @@ fn token_from_json(json: &Value) -> Result<OAuthToken> {
 
 /// Extract `chatgpt_account_id` from a Codex `id_token` JWT (payload only;
 /// the channel was already authenticated by the TLS token exchange). Stored
-/// for the Codex backend route, which needs it as a header.
-fn openai_account_id_from_jwt(id_token: &str) -> Option<String> {
+/// for the Codex backend route, which needs it as a header. `pub(crate)`
+/// for credential import (Codex `auth.json` may lack `account_id`).
+pub(crate) fn openai_account_id_from_jwt(id_token: &str) -> Option<String> {
     let payload = id_token.split('.').nth(1)?;
     let bytes = URL_SAFE_NO_PAD.decode(payload).ok()?;
     let json: Value = serde_json::from_slice(&bytes).ok()?;

@@ -330,6 +330,9 @@ pub enum AuthCmd {
     },
     /// Show which providers have stored OAuth credentials (never prints tokens)
     Status,
+    /// Find credentials of other CLIs (Claude Code, Codex, Gemini, Copilot)
+    /// and import them after explicit per-path approval
+    Import,
 }
 
 #[derive(Subcommand, Debug)]
@@ -3677,6 +3680,103 @@ async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
                 }
             }
         }
+        AuthCmd::Import => cmd_auth_import(&data_dir).await?,
+    }
+    Ok(())
+}
+
+/// `auth import` — scan for other CLIs' credential files, ask once per new
+/// source (the decision is persisted), import approved ones. Sources are
+/// only ever read, never modified; symlinks are refused.
+async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
+    use whycode_auth::discover::{ConsentStore, SourceState, import, scan};
+
+    let consent = ConsentStore::new(data_dir);
+    let found = scan(&consent);
+    if found.is_empty() {
+        println!(
+            "No credentials from other CLIs found (looked for {}).",
+            whycode_auth::discover::KNOWN_SOURCES
+                .iter()
+                .map(|s| s.label)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{} Found credentials (a source is read only after your approval, and never modified):",
+        "🔍".bold()
+    );
+    for f in &found {
+        let state = match f.state {
+            SourceState::New => "new".yellow(),
+            SourceState::Approved => "approved".green(),
+            SourceState::Denied => "denied".dimmed(),
+            SourceState::Symlink => "symlink — refused".red(),
+        };
+        println!(
+            "  {:<15} {:<45} {}",
+            f.source.label.cyan(),
+            f.path.display().to_string().dimmed(),
+            state
+        );
+    }
+    println!();
+
+    let store = whycode_auth::TokenStore::new(data_dir);
+    let mut imported = 0usize;
+    for f in &found {
+        match f.state {
+            SourceState::Symlink | SourceState::Denied => {}
+            SourceState::Approved => match import(&store, &consent, f) {
+                Ok(()) => {
+                    imported += 1;
+                    println!(
+                        "{} Imported {} → `{}`",
+                        "✓".green(),
+                        f.source.label.cyan(),
+                        f.source.provider
+                    );
+                }
+                Err(e) => println!("{} {}: {e}", "✗".red(), f.source.label),
+            },
+            SourceState::New => {
+                print!(
+                    "Import {} ({}) as `{}`? [y/N] ",
+                    f.source.label,
+                    f.path.display(),
+                    f.source.provider
+                );
+                use std::io::Write as _;
+                std::io::stdout().flush().ok();
+                let answer = tokio::task::spawn_blocking(|| {
+                    let mut line = String::new();
+                    std::io::stdin().read_line(&mut line).map(|_| line)
+                })
+                .await??;
+                let yes = matches!(answer.trim().to_lowercase().as_str(), "y" | "yes");
+                consent.record(&f.path, yes)?;
+                if yes {
+                    match import(&store, &consent, f) {
+                        Ok(()) => {
+                            imported += 1;
+                            println!("{} Imported `{}`", "✓".green(), f.source.provider);
+                        }
+                        Err(e) => println!("{} {}: {e}", "✗".red(), f.source.label),
+                    }
+                } else {
+                    println!("Skipped (won't ask again — delete {} to reset)", consent.path().display());
+                }
+            }
+        }
+    }
+    if imported > 0 {
+        println!(
+            "\n{} {imported} credential(s) ready — `whycode auth status` lists them.",
+            "✓".green()
+        );
     }
     Ok(())
 }

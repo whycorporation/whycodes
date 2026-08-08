@@ -1,10 +1,16 @@
 # Plan — OAuth and credential discovery
 
-**Status:** partially shipped (2026-08-09) — login/store/refresh for
-anthropic, openai, github-copilot, google; API-call routing live for all
-four (openai → Codex backend Responses API, google → Code Assist endpoint).
-See [auth.md](auth.md). **Remaining:** credential discovery (consent model
-below), `/connect` in-TUI login. · **Blocks:** nothing
+**Status:** shipped (2026-08-09) — login/store/refresh for anthropic,
+openai, github-copilot, google; API-call routing live for all four (openai
+→ Codex backend Responses API, google → Code Assist endpoint); 401
+refresh+retry; `/connect` in-TUI login; credential discovery with the
+consent model below (`whycode auth import`). See [auth.md](auth.md).
+· **Blocks:** nothing
+
+> The "blocked" reasoning below was resolved by the owner on 2026-08-09:
+> flows ride the public client ids of the first-party CLIs (documented in
+> [auth.md](auth.md) with the terms caveat), and discovery shipped with the
+> consent model as the mitigation.
 
 ## Why this is blocked rather than in progress
 
@@ -97,9 +103,9 @@ Out:
       (`crates/llm/src/oauth_refresh.rs`: registered OAuth sources force a
       renewal once per rejected request; generic retry still treats 401 as
       non-retryable)
-- [ ] Discovery: locate known credential paths per platform, report findings
-- [ ] Consent prompt per source path, with the decision persisted
-- [ ] Reject symlinked credential sources; never write to a discovered file
+- [x] Discovery: locate known credential paths per platform, report findings
+- [x] Consent prompt per source path, with the decision persisted
+- [x] Reject symlinked credential sources; never write to a discovered file
 - [x] `login`, `logout`, and the `debug` reporting
 - [x] `/connect` in the TUI offers login instead of only printing help —
       with no credential it spawns the provider's OAuth flow via
@@ -113,12 +119,12 @@ Out:
 - [x] `whycode auth login anthropic` completes the browser flow and a
       subsequent `whycode generate "hi"` works with no API key set
 - [x] An expired access token refreshes without user interaction
-- [ ] Discovery finds a Claude Code credential file when present and does
+- [x] Discovery finds a Claude Code credential file when present and does
       **not** read it until approved
-- [ ] Approving a source persists, so the prompt does not reappear
-- [ ] A symlinked credential source is refused with a clear message
-- [ ] No discovered file is modified — verified by comparing mtime and content
-      hash before and after a session
+- [x] Approving a source persists, so the prompt does not reappear
+- [x] A symlinked credential source is refused with a clear message
+- [x] No discovered file is modified — verified by comparing mtime and content
+      hash before and after a session (discover.rs import test)
 - [x] `whycode debug` shows auth state and never prints a token, not even
       truncated
 - [x] Secrets do not appear in logs at any tracing level
