@@ -31,34 +31,50 @@ Everything is strictly single-session:
 
 ## Design
 
-### TUI: per-session runtime + tabs
+### TUI: per-session runtime + dashboard (revised 2026-08-08)
 
-1. **`SessionRuntime` struct** (new, in `crates/tui/src/run.rs` or
-   `crates/tui/src/session_runtime.rs`): extracts the current single-session
-   locals —
+Competitive research (Claude Code Agent View, Codex `/agent`, OpenCode
+session-list, Gemini CLI) shows **no first-party CLI ships a tab bar**:
+tabs were proposed in OpenCode (#12548, PR #17984) and stalled; what
+shipped everywhere is a **live-status picker/dashboard** + fast cycle keys.
+Splits are universally delegated to tmux/Zellij. Design revised accordingly:
+
+1. **`SessionRuntime` struct** (`crates/tui/src/session_runtime.rs`):
+   extracts the single-session locals —
    `{ agent, session, history, busy, cancel_flag, turn_join, session_backup,
-      event_tx, done_tx, pending_perm_queue, pending_question_queue,
-      perm_prompter, question_prompter }`.
-2. `run()` holds `Vec<SessionRuntime>` + `active: usize`. The render path uses
-   the active runtime; background runtimes keep their turn tasks alive and keep
-   receiving events.
-3. **Event routing**: each runtime keeps its own `event_rx`/`done_rx`; the main
-   loop drains all runtimes (round-robin `try_recv`) and only repaints when the
-   active runtime changed, or marks a "dirty/activity" dot on inactive tabs.
-   Alternative (heavier): tag every `TurnEvent`/`TurnOutcome` with
-   `session_id` over one channel — rejected, per-runtime channels are simpler
-   and match the existing move-out/move-back pattern.
-4. **Tab UI**: a session tab bar above the scrollback (title + busy spinner +
-   unread dot). Keys: `Ctrl+PageDown/PageUp` (or `Alt+]`/`Alt+[`) cycle tabs;
-   `Ctrl+N` opens a new empty session tab; `/sessions` picker gains a "live"
-   section listing in-memory runtimes above persisted sessions; closing a tab
-   (`/close` or `Ctrl+W` when idle) persists and drops the runtime.
-5. **Persistence**: one `Database` per `SessionRuntime` (SQLite connections
-   are cheap; avoids a global Mutex). Saving stays on the existing
-   `save_to_db` path, now per runtime.
-6. **Permission/question prompts**: each runtime owns its prompter pair;
-   dialogs only ever show for the active tab. Background runtime needing
-   approval shows a "!" badge on its tab and its turn waits.
+     event_tx, done_tx, pending_perm_queue, pending_question_queue,
+     perm_prompter, question_prompter }`.
+2. **Per-session state machine** — `working / waiting_permission /
+   waiting_input / idle / done / error` + `unread` flag. This drives every
+   visual (dashboard grouping, cycle-key order, badges); the widget choice
+   stays a thin rendering decision on top.
+3. `run()` holds `Vec<SessionRuntime>` + `active: usize` (+ MRU stack).
+   The render path uses the active runtime; background runtimes keep their
+   turn tasks alive and keep receiving events.
+4. **Event routing**: each runtime keeps its own `event_rx`/`done_rx`; the
+   main loop drains all runtimes (round-robin `try_recv`). Events on the
+   active runtime repaint; events on inactive runtimes set `unread` and
+   update state only. Per-runtime channels (not session-tagged single
+   channel) — matches the existing move-out/move-back pattern.
+5. **Dashboard overlay** (Claude Agent View-style, the primary surface):
+   rows grouped `Needs input → Working → Idle/Done`; each row = title,
+   state glyph/spinner, one-line last-activity preview, age. `Ctrl+O`
+   opens; `Enter` attaches; `Esc`/`←` detaches; `Space` peeks the last
+   lines. Permission/question prompts never steal the active session's
+   dialog — a background session needing approval shows `!` in the
+   dashboard and its turn waits.
+6. **Cycle keys**: `Ctrl+PageDown/PageUp` cycles live sessions in order;
+   `Ctrl+Tab` MRU-switches; `Ctrl+N` opens a new empty session.
+   No persistent tab strip by default (vertical space); a config-gated
+   1-row strip may follow if users ask.
+7. **View state**: each runtime carries its own transcript view
+   (messages, scroll offset, input draft) so switching is lossless.
+8. **Persistence**: one `Database` per `SessionRuntime` (SQLite
+   connections are cheap; avoids a global Mutex). Saving stays on the
+   existing `save_to_db` path, now per runtime.
+9. **Permission/question prompts**: each runtime owns its prompter pair;
+   dialogs only ever show for the active session. Background runtime
+   needing approval gets `waiting_permission` state + dashboard `!`.
 
 ### CLI: parallel fan-out (headless)
 
@@ -70,19 +86,16 @@ Everything is strictly single-session:
 
 ## Steps
 
-- [ ] S1: Extract `SessionRuntime` from `run.rs` locals; single-runtime
-      behaviour unchanged. Regression guard: existing TUI tests pass, and
-      `agent.wire_event_sink(event_tx.clone())` plus title/catalog/suggest
-      channels behave identically after extraction (these shared channels are
-      the easiest thing to break silently). Catalog/suggest stay global for
-      now (model catalog is process-wide); title keeps the existing
-      `(session_id, title)` tagging so async titles land on the right runtime.
-- [ ] S2: `Vec<SessionRuntime>` + active index; drain-all event loop; tab bar
-      render; cycle keys; `Ctrl+N` new session.
-- [ ] S3: `/sessions` picker live section; switch-to-live-runtime path
-      (no idle wait); tab close.
-- [ ] S4: Per-runtime `Database` + permission/question prompters; badge on
-      background approval requests.
+- [x] S1: Extract `SessionRuntime` from `run.rs` locals; single-runtime
+      behaviour unchanged. (done 2026-08-08, `9345bbb`)
+- [ ] S2: `Vec<SessionRuntime>` + active index + MRU; per-session state
+      machine; drain-all event loop; lossless view-state switch; `Ctrl+N`
+      new session, `Ctrl+PageUp/Down` order cycle, `Ctrl+Tab` MRU.
+- [ ] S3: Dashboard overlay (grouped Needs-input → Working → Idle; peek,
+      attach/detach, `Ctrl+O`); `/sessions` picker gains a "live" section;
+      session close (persist + drop runtime, cap 8 with clear error).
+- [ ] S4: Per-runtime `Database` + permission/question prompters;
+      `waiting_permission` badge for background approvals.
 - [ ] S5: CLI parallel fan-out for `generate` (`-j`). Failure mode: each
       prompt gets its own `result` envelope with `is_error` (per-prompt
       failures never abort siblings); process exit code is non-zero if any
@@ -93,11 +106,11 @@ Everything is strictly single-session:
 
 ## Acceptance criteria
 
-- Two sessions in one TUI: start a long turn in tab A, switch to tab B, chat
-  normally; tab A shows spinner, completes in background, its output is intact
-  when switching back.
-- Permission prompt raised by a background tab does not steal the dialog from
-  the active tab; tab badge appears instead.
+- Two sessions in one TUI: start a long turn in session A, `Ctrl+Tab` to
+  session B, chat normally; A keeps working in background, its output is
+  intact when switching back (transcript, scroll, draft all preserved).
+- Permission prompt raised by a background session does not steal the
+  active session's dialog; dashboard shows `!` on that session instead.
 - Restarting whycode: both sessions are persisted and resumable via
   `--resume` / `/sessions`.
 - `whycode generate "a" "b" -j 2 --format json` prints two envelopes, two
@@ -112,5 +125,8 @@ Everything is strictly single-session:
 - The `TurnOutcome` move-out/move-back pattern must stay per runtime; never
   share an `Agent` between runtimes (it carries per-session state:
   `cwd_override`, `activated_tools`, `subagent_usage_pending`).
-- Memory: each runtime holds a full message history; cap live tabs
+- Memory: each runtime holds a full message history; cap live sessions
   (suggest 8) with a clear error.
+- Competitive UX research (2026-08-08, librarian): Claude Code Agent View =
+  dashboard reference; OpenCode tabs stalled; splits delegated to tmux.
+  Tab bar rejected as primary surface.

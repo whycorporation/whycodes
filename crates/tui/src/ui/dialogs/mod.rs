@@ -123,6 +123,38 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::Sessions => {
+            let items: Vec<SelectItem> = app
+                .sessions_rows
+                .iter()
+                .map(|r| {
+                    let unread = if r.unread { " ●" } else { "" };
+                    SelectItem::with_detail(
+                        format!("{} {}{}", r.glyph, r.title, unread),
+                        format!("{} · {}", r.state_label, r.preview),
+                    )
+                })
+                .collect();
+            let selected = app.sessions_cursor.min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                " Live sessions  ·  Enter switch  ·  Ctrl+N new ",
+                &items,
+                selected,
+                "One session — Ctrl+N opens another.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         _ => {}
     }
 }

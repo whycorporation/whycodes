@@ -935,6 +935,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.session_list.selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Sessions => {
+                        app.sessions_cursor = idx;
+                        confirm_dialog(app, active);
+                    }
                     DialogKind::Model => {
                         app.model_selection.selected = idx;
                         confirm_dialog(app, active);
@@ -1131,6 +1135,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.session_list.selected = idx.min(len - 1);
             }
         }
+        DialogKind::Sessions => {
+            let len = app.sessions_rows.len();
+            if len > 0 {
+                app.sessions_cursor = idx.min(len - 1);
+            }
+        }
         DialogKind::Theme => {
             let len = crate::theme::ThemeName::ALL.len();
             if len > 0 {
@@ -1271,6 +1281,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_session_id = Some(entry.id.clone());
             }
         }
+        DialogKind::Sessions => {
+            if let Some(row) = app.sessions_rows.get(app.sessions_cursor) {
+                app.pending_session_switch = Some(row.parked_idx.unwrap_or(usize::MAX));
+            }
+        }
         DialogKind::Theme => {
             use crate::theme::ThemeName;
             if let Some(t) = ThemeName::ALL.get(app.theme_selected).copied() {
@@ -1397,6 +1412,10 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
                 app.session_list.sessions.len(),
                 delta,
             );
+        }
+        DialogKind::Sessions => {
+            app.sessions_cursor =
+                move_selection(app.sessions_cursor, app.sessions_rows.len(), delta);
         }
         DialogKind::Theme => {
             app.theme_selected = move_selection(

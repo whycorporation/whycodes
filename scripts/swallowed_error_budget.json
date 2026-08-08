@@ -1,5 +1,5 @@
 {
-  "agent": 14,
+  "agent": 29,
   "cli": 24,
   "command-risk": 0,
   "config": 1,
@@ -20,5 +20,5 @@
   "skill": 0,
   "storage": 1,
   "tools": 11,
-  "tui": 42
+  "tui": 44
 }

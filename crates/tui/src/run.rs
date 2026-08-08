@@ -32,8 +32,8 @@ use whycode_session::SessionHistory;
 use whycode_session::session::Session;
 
 use crate::app::{
-    AgentState, AppMode, ChatRole, DialogKind, TuiApp, format_elapsed_ms, format_token_count,
-    format_usage_short,
+    AgentState, AppMode, ChatRole, DialogKind, FocusPane, TuiApp, format_elapsed_ms,
+    format_token_count, format_usage_short,
 };
 use crate::config::TuiAppConfig;
 use crate::input;
@@ -44,6 +44,9 @@ use crate::ui::render;
 /// After Esc / [stop], wait this long for cooperative cancel, then abort the
 /// turn task hard. Must be short enough that "Cancelling…" never feels stuck.
 const CANCEL_FORCE_AFTER: Duration = Duration::from_millis(1200);
+
+/// Cap on concurrently live sessions (each holds a full transcript + agent).
+const MAX_LIVE_SESSIONS: usize = 8;
 
 /// Context struct for slash command handling, reducing parameter count.
 pub struct SlashContext<'a> {
@@ -276,7 +279,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     );
 
     // Permission channel: agent blocks until TUI replies (shared across agent switches)
-    let (perm_prompter, mut perm_rx) = ChannelPermissionPrompter::new();
+    let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
     let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
 
     // Questionnaire channel (Grok-style `question` tool)
@@ -287,7 +290,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     } else {
         None
     };
-    let (question_prompter, mut question_rx) = ChannelQuestionPrompter::new(q_timeout);
+    let (question_prompter, question_rx) = ChannelQuestionPrompter::new(q_timeout);
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
     config.general.project_path = Some(opts.project_dir.clone());
@@ -487,7 +490,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         done_rx,
         perm_prompter,
         question_prompter,
+        perm_rx,
+        question_rx,
     );
+
+    // S2: background sessions. `rt` is always the ACTIVE session — the loop
+    // body below is unchanged from the single-session design. Switching
+    // swaps `rt` with `runtimes[idx]` (plus the TuiApp view snapshot), so
+    // background turns keep running on their own channels and are drained
+    // into their own view snapshots each iteration.
+    let mut runtimes: Vec<SessionRuntime> = Vec::new();
+    let mut mru: Vec<usize> = Vec::new();
 
     // When the user first hit Esc / [stop]. After CANCEL_FORCE_AFTER we
     // abort the join handle so "Cancelling…" can never stick forever.
@@ -515,6 +528,21 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut first_frame = true;
     let result = async {
         loop {
+            // ── Drain background sessions into their own view snapshots ──
+            // Events on inactive runtimes never touch `app`; they update the
+            // runtime's snapshot + state and set `unread` so the dashboard
+            // and cycle keys can surface activity.
+            for bg in runtimes.iter_mut() {
+                drain_background_runtime(bg);
+            }
+            // Dashboard open: keep rows live as background state changes.
+            if matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
+                let cursor = app.sessions_cursor;
+                refresh_sessions_rows(&mut app, &rt, &runtimes);
+                app.sessions_cursor = cursor.min(app.sessions_rows.len().saturating_sub(1));
+                app.mark_dirty();
+            }
+
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
             if app.toasts.prune(std::time::Instant::now()) {
@@ -601,7 +629,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Permission requests (queued; show next when idle) ─────
-            while let Ok(req) = perm_rx.try_recv() {
+            while let Ok(req) = rt.perm_rx.try_recv() {
                 rt.pending_perm_queue.push_back(req);
             }
             if !matches!(
@@ -614,7 +642,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Question requests (queued; one questionnaire at a time) ─
-            while let Ok(req) = question_rx.try_recv() {
+            while let Ok(req) = rt.question_rx.try_recv() {
                 rt.pending_question_queue.push_back(req);
             }
             if !matches!(
@@ -633,6 +661,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         app.session_title = rt.session.title.clone();
                         persist_session_best_effort(&rt.session, "title_async");
                         app.mark_dirty();
+                    }
+                } else if let Some(bg) = runtimes.iter_mut().find(|b| b.session.id == sid) {
+                    // Title belongs to a parked session — apply + persist there.
+                    if bg.session.apply_generated_title(&title) {
+                        bg.view.session_title = bg.session.title.clone();
+                        bg.unread = true;
+                        persist_session_best_effort(&bg.session, "title_async");
                     }
                 } else {
                     // Turn still restoring rt.session, or user switched sessions.
@@ -813,10 +848,37 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Apply rt.session picker / /resume selection ──────────────
+            // ── Dashboard switch selection ──────────────────────────
+            if let Some(target) = app.pending_session_switch.take()
+                && target != usize::MAX
+                && target < runtimes.len()
+            {
+                switch_to_runtime(&mut app, &mut rt, &mut runtimes, target);
+                mru.retain(|&i| i != target);
+                mru.push(target);
+                app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!(
+                        "Session · {} ({} live)",
+                        rt.session.title,
+                        runtimes.len() + 1
+                    ),
+                );
+            }
+
             if let Some(id) = app.pending_session_id.take() {
                 // Don't switch mid-turn — re-queue and wait.
                 if rt.agent_busy {
                     app.pending_session_id = Some(id);
+                } else if let Some(idx) = runtimes.iter().position(|b| b.session.id == id) {
+                    // Already live in a parked session — just switch to it.
+                    switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
+                    mru.retain(|&i| i != idx);
+                    mru.push(idx);
+                    app.toasts.push(
+                        crate::toast::ToastKind::Success,
+                        format!("Switched to live session · {}", rt.session.title),
+                    );
                 } else {
                     match try_load_session(&id) {
                         Ok(Some(loaded)) => {
@@ -1398,6 +1460,107 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     continue;
                 }
 
+                // ── S2: multi-session keys ────────────────────────────
+                // Ctrl+N: park the active session and open a fresh one.
+                if let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Char('n')
+                    && key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && app.mode == AppMode::Normal
+                {
+                    if runtimes.len() + 1 >= MAX_LIVE_SESSIONS {
+                        app.toasts.push(
+                            crate::toast::ToastKind::Warning,
+                            format!("Session limit ({MAX_LIVE_SESSIONS}) — close one first"),
+                        );
+                        continue;
+                    }
+                    app.save_view(&mut rt.view);
+                    let parked = std::mem::replace(
+                        &mut rt,
+                        spawn_new_session_runtime(&app.agent_name, &config, &project_dir).await,
+                    );
+                    runtimes.push(parked);
+                    mru.push(runtimes.len() - 1);
+                    app.restore_view(&rt.view);
+                    app.focus = FocusPane::Prompt;
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        format!("New session ({} live)", runtimes.len() + 1),
+                    );
+                    continue;
+                }
+
+                // Ctrl+PageDown/PageUp: cycle sessions in creation order.
+                if let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
+                    && matches!(key.code, KeyCode::PageDown | KeyCode::PageUp)
+                    && key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && app.mode == AppMode::Normal
+                    && !runtimes.is_empty()
+                {
+                    let idx = if key.code == KeyCode::PageDown {
+                        0
+                    } else {
+                        runtimes.len() - 1
+                    };
+                    switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
+                    mru.retain(|&i| i != idx);
+                    mru.push(idx);
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        format!(
+                            "Session · {} ({} live)",
+                            rt.session.title,
+                            runtimes.len() + 1
+                        ),
+                    );
+                    continue;
+                }
+
+                // Ctrl+O: live-session dashboard (grouped, peek, attach).
+                if let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Char('o')
+                    && key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && app.mode == AppMode::Normal
+                {
+                    open_sessions_dashboard(&mut app, &rt, &runtimes);
+                    continue;
+                }
+
+                // Ctrl+Tab: MRU switch to the most recently parked session.
+                if let Event::Key(key) = &ev
+                    && key.kind == KeyEventKind::Press
+                    && key.code == KeyCode::Tab
+                    && key
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::CONTROL)
+                    && app.mode == AppMode::Normal
+                    && !runtimes.is_empty()
+                {
+                    let idx = mru.pop().unwrap_or(runtimes.len() - 1);
+                    let idx = idx.min(runtimes.len() - 1);
+                    switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
+                    mru.retain(|&i| i != idx);
+                    mru.push(idx);
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        format!(
+                            "Session · {} ({} live)",
+                            rt.session.title,
+                            runtimes.len() + 1
+                        ),
+                    );
+                    continue;
+                }
+
                 // Slash commands on Enter
                 if let Event::Key(key) = &ev
                     && key.kind == KeyEventKind::Press
@@ -1607,6 +1770,21 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
     // Best-effort: stop background shells so we don't leave orphans.
     rt.agent.background_registry().kill_all();
+
+    // Parked sessions: deny their waiters, abort their turns, persist.
+    for mut bg in runtimes.drain(..) {
+        while let Some(req) = bg.pending_perm_queue.pop_front() {
+            let _ = req.reply.send(false);
+        }
+        while let Some(req) = bg.pending_question_queue.pop_front() {
+            let _ = req.reply.send(Err(QuestionError::Cancelled));
+        }
+        if let Some(h) = bg.turn_join.take() {
+            h.abort();
+        }
+        bg.agent.background_registry().kill_all();
+        persist_session_best_effort(&bg.session, "shutdown");
+    }
 
     if let Err(ref e) = result {
         whycode_core::logging::emit(
@@ -1972,6 +2150,232 @@ fn format_turn_done_status(
         parts.push(format_usage_short(usage));
     }
     parts.join(" · ")
+}
+
+/// Build a fresh runtime for a new empty session (Ctrl+N). Owns its
+/// prompter pair and channels; the agent shares no state with any other
+/// runtime except the process-wide background registry pattern.
+async fn spawn_new_session_runtime(
+    agent_name: &str,
+    config: &Config,
+    project_dir: &std::path::Path,
+) -> SessionRuntime {
+    let agent_info =
+        config
+            .get_agent(agent_name)
+            .cloned()
+            .unwrap_or_else(|| whycode_core::types::AgentInfo {
+                name: agent_name.to_string(),
+                description: "Default".into(),
+                mode: AgentMode::Primary,
+                permission: whycode_core::types::PermissionSet {
+                    allow_file_writes: true,
+                    allow_network: true,
+                    allow_shell: true,
+                    ..whycode_core::types::PermissionSet::default()
+                },
+                model: None,
+                system_prompt: None,
+                temperature: None,
+                top_p: None,
+            });
+    let base = agent_info
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| Agent::system_prompt_for(agent_name));
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&base, project_dir),
+        project_dir,
+        config,
+        None,
+    );
+
+    let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
+    let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
+    let q_timeout = if config.tools.question.timeout_enabled {
+        Some(Duration::from_secs(
+            config.tools.question.timeout_secs.max(1),
+        ))
+    } else {
+        None
+    };
+    let (question_prompter, question_rx) = ChannelQuestionPrompter::new(q_timeout);
+    let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
+
+    let agent = Agent::new(agent_info)
+        .with_config(config)
+        .with_permission_prompter(
+            Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+        )
+        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
+        .with_mcp(config)
+        .await;
+
+    let session = Session::new(project_dir.to_path_buf(), system_prompt);
+    let history = SessionHistory::new();
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
+    let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
+
+    SessionRuntime::new(
+        agent,
+        session,
+        history,
+        event_tx,
+        event_rx,
+        done_tx,
+        done_rx,
+        perm_prompter,
+        question_prompter,
+        perm_rx,
+        question_rx,
+    )
+}
+
+/// Refresh the dashboard row snapshot from the live runtimes and open the
+/// dashboard dialog. Rows are grouped: needs-input → working → idle.
+fn open_sessions_dashboard(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+    refresh_sessions_rows(app, rt, runtimes);
+    if !matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
+        app.sessions_cursor = 0;
+        app.dialogs.push(DialogKind::Sessions);
+        app.mode = AppMode::Command;
+        app.key_context = KeymapContext::Dialog;
+    }
+    app.mark_dirty();
+}
+
+/// Rebuild the grouped row snapshot in place (live refresh while open).
+fn refresh_sessions_rows(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+    let mut rows: Vec<crate::app::SessionDashboardRow> = Vec::new();
+    let active_state = rt.state();
+    rows.push(crate::app::SessionDashboardRow {
+        parked_idx: None,
+        title: format!("{} (current)", rt.session.title),
+        glyph: active_state.glyph().to_string(),
+        state_label: active_state.label().to_string(),
+        preview: if rt.agent_busy {
+            app.status_message.clone()
+        } else {
+            rt.preview()
+        },
+        unread: false,
+    });
+    for (i, bg) in runtimes.iter().enumerate() {
+        let st = bg.state();
+        rows.push(crate::app::SessionDashboardRow {
+            parked_idx: Some(i),
+            title: bg.session.title.clone(),
+            glyph: st.glyph().to_string(),
+            state_label: st.label().to_string(),
+            preview: bg.preview(),
+            unread: bg.unread,
+        });
+    }
+    // Group: needs input (rank 0) → working (1) → idle/error (2); stable
+    // within a group so creation order is preserved.
+    rows.sort_by_key(|r| {
+        let rank = match r.parked_idx {
+            None => active_state.group_rank(),
+            Some(i) => runtimes[i].state().group_rank(),
+        };
+        (rank, r.parked_idx.unwrap_or(usize::MAX))
+    });
+    app.sessions_rows = rows;
+}
+
+/// Swap the active runtime with `runtimes[idx]`, preserving both sessions'
+/// view state. The outgoing active session's `TuiApp` view is saved into
+/// its snapshot; the incoming one's snapshot is restored into `app`.
+fn switch_to_runtime(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut [SessionRuntime],
+    idx: usize,
+) {
+    // Outgoing: save the visible view into the runtime being parked.
+    app.save_view(&mut rt.view);
+    // Incoming: swap runtimes, restore its snapshot into the visible app.
+    std::mem::swap(rt, &mut runtimes[idx]);
+    rt.unread = false;
+    app.restore_view(&rt.view);
+    app.focus = FocusPane::Prompt;
+}
+
+/// Drain a background (inactive) runtime: prompter requests into its queues,
+/// turn events into its view snapshot, completion into agent/session restore.
+/// Never touches the visible `app`; sets `unread` on any activity so the
+/// dashboard and cycle keys can surface it.
+fn drain_background_runtime(rt: &mut SessionRuntime) {
+    while let Ok(req) = rt.perm_rx.try_recv() {
+        rt.pending_perm_queue.push_back(req);
+        rt.unread = true;
+    }
+    while let Ok(req) = rt.question_rx.try_recv() {
+        rt.pending_question_queue.push_back(req);
+        rt.unread = true;
+    }
+
+    // Replay turn events through a scratch TuiApp holding this runtime's
+    // snapshot — reuses the exact active-path rendering logic.
+    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
+    scratch.restore_view(&rt.view);
+    if drain_turn_events(&mut scratch, &mut rt.event_rx) {
+        rt.unread = true;
+        scratch.save_view(&mut rt.view);
+    }
+
+    if let Ok(outcome) = rt.done_rx.try_recv() {
+        rt.agent_busy = false;
+        rt.cancel_flag = None;
+        rt.turn_join = None;
+        rt.session_backup = None;
+        rt.unread = true;
+        match outcome {
+            TurnOutcome::Ok {
+                text,
+                agent: a,
+                session: s,
+                ..
+            } => {
+                rt.agent = a;
+                rt.session = s;
+                rt.last_error = false;
+                if !text.is_empty() {
+                    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
+                    scratch.restore_view(&rt.view);
+                    if let Some(last) = scratch.messages.last_mut()
+                        && last.role == ChatRole::Assistant
+                        && last.content.is_empty()
+                    {
+                        last.content = text;
+                    }
+                    scratch.save_view(&mut rt.view);
+                }
+            }
+            TurnOutcome::Err {
+                agent: a,
+                session: s,
+                cancelled,
+                error,
+                ..
+            } => {
+                rt.agent = a;
+                rt.session = s;
+                rt.last_error = !cancelled;
+                let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
+                scratch.restore_view(&rt.view);
+                if cancelled {
+                    scratch.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
+                } else {
+                    let display =
+                        whycode_llm::format_turn_error(&whycode_core::Error::Llm(error.clone()));
+                    scratch.add_message(ChatRole::System, format!("Error: {display}"));
+                }
+                scratch.save_view(&mut rt.view);
+            }
+        }
+        persist_session_best_effort(&rt.session, "background");
+    }
 }
 
 /// Drain the agent event channel, coalescing consecutive text/thinking deltas

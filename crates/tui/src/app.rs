@@ -51,6 +51,8 @@ pub enum DialogKind {
     /// Grok-style interactive questionnaire (`question` tool).
     Question(QuestionDialogState),
     SessionList,
+    /// Live multi-session dashboard (S2/S3): grouped rows, peek, attach.
+    Sessions,
     Status,
     Theme,
     Workspace,
@@ -1042,6 +1044,15 @@ pub struct TuiApp {
     pub pending_model: Option<(String, String)>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
     pub pending_session_id: Option<String>,
+    /// Dashboard: cursor row in the grouped live-session list.
+    pub sessions_cursor: usize,
+    /// Dashboard: switch target — index into the parked runtimes vec,
+    /// or `usize::MAX` for "stay on current".
+    pub pending_session_switch: Option<usize>,
+    /// Dashboard rows snapshot, refreshed by the run loop on open.
+    /// Each row: (parked index or None = active session, title, state glyph,
+    /// state label, preview, unread).
+    pub sessions_rows: Vec<SessionDashboardRow>,
     /// Re-fetch `GET /v1/models` for the active provider (config base + key).
     pub pending_catalog_refresh: bool,
 
@@ -1133,6 +1144,18 @@ pub struct SessionEntry {
 pub struct SessionListState {
     pub sessions: Vec<SessionEntry>,
     pub selected: usize,
+}
+
+/// One dashboard row: a live (in-memory) session, active or parked.
+#[derive(Debug, Clone)]
+pub struct SessionDashboardRow {
+    /// Index into the parked runtimes vec; `None` = the active session.
+    pub parked_idx: Option<usize>,
+    pub title: String,
+    pub glyph: String,
+    pub state_label: String,
+    pub preview: String,
+    pub unread: bool,
 }
 
 /// Slash command authored from the input buffer.
@@ -1453,6 +1476,9 @@ impl TuiApp {
             bg_running_count: 0,
             pending_model: None,
             pending_session_id: None,
+            sessions_cursor: 0,
+            pending_session_switch: None,
+            sessions_rows: Vec::new(),
             pending_catalog_refresh: false,
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
@@ -2241,6 +2267,46 @@ impl TuiApp {
         // Session totals remain available via /cost (session.usage).
         self.sync_context_estimate(session);
         self.turn_usage = None;
+        self.mark_dirty();
+    }
+
+    /// Snapshot the per-session view state into `view` (switching away).
+    pub fn save_view(&self, view: &mut crate::session_runtime::ViewSnapshot) {
+        view.messages = self.messages.clone();
+        view.session_title = self.session_title.clone();
+        view.status_message = self.status_message.clone();
+        view.current_agent_state = self.current_agent_state.clone();
+        view.scroll_offset = self.scroll_offset;
+        view.auto_scroll = self.auto_scroll;
+        view.selected_msg = self.selected_msg;
+        view.input_buffer = self.input_buffer.clone();
+        view.input_lines = self.input_lines.clone();
+        view.input_cursor = self.input_cursor;
+        view.intent_badge = self.intent_badge.clone();
+        view.intent_kind = self.intent_kind.clone();
+        view.turn_usage = self.turn_usage.clone();
+        view.context_used = self.context_used;
+        view.pending_suggestion = self.pending_suggestion.clone();
+    }
+
+    /// Restore a previously saved per-session view state (switching back).
+    pub fn restore_view(&mut self, view: &crate::session_runtime::ViewSnapshot) {
+        self.messages = view.messages.clone();
+        self.session_title = view.session_title.clone();
+        self.status_message = view.status_message.clone();
+        self.current_agent_state = view.current_agent_state.clone();
+        self.scroll_offset = view.scroll_offset;
+        self.auto_scroll = view.auto_scroll;
+        self.selected_msg = view.selected_msg;
+        self.input_buffer = view.input_buffer.clone();
+        self.input_lines = view.input_lines.clone();
+        self.input_cursor = view.input_cursor;
+        self.intent_badge = view.intent_badge.clone();
+        self.intent_kind = view.intent_kind.clone();
+        self.turn_usage = view.turn_usage.clone();
+        self.context_used = view.context_used;
+        self.pending_suggestion = view.pending_suggestion.clone();
+        self.dialogs.clear();
         self.mark_dirty();
     }
 
