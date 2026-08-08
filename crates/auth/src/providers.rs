@@ -55,7 +55,35 @@ pub enum FlowKind {
     DeviceCode,
 }
 
+/// How the token endpoint wants grant payloads encoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TokenEncoding {
+    /// `application/x-www-form-urlencoded` — the RFC 6749 standard.
+    Form,
+    /// `application/json` — Anthropic's token endpoint.
+    Json,
+}
+
+/// A provider whose API credential is *derived* from the OAuth token by a
+/// second exchange (GitHub OAuth token → short-lived Copilot API token).
+/// Everything the exchange needs is described here so the flow code stays
+/// provider-agnostic.
+#[derive(Clone, Copy, Debug)]
+pub struct DerivedCredential {
+    /// Exchange endpoint, called as GET with the OAuth token.
+    pub url: &'static str,
+    /// Authorization header scheme for the exchange: "token" (GitHub) or
+    /// "Bearer".
+    pub auth_scheme: &'static str,
+    /// Extra request headers (client gating, e.g. Editor-Version).
+    pub headers: &'static [(&'static str, &'static str)],
+}
+
 /// Static description of one provider's OAuth endpoints.
+///
+/// Adding a provider is *only* adding a literal here — no code branches
+/// elsewhere. `validate()` (run by the conformance tests) rejects malformed
+/// specs.
 pub struct ProviderSpec {
     pub name: &'static str,
     pub label: &'static str,
@@ -68,6 +96,12 @@ pub struct ProviderSpec {
     pub authorize_url: &'static str,
     pub token_url: &'static str,
     pub scopes: &'static str,
+    /// Grant encoding for `token_url`.
+    pub token_encoding: TokenEncoding,
+    /// Fixed redirect for flows whose client has one registered
+    /// (`PasteCodePkce`). Loopback flows construct theirs from the bound
+    /// port, so this stays `None` there.
+    pub redirect_uri: Option<&'static str>,
     /// Fixed loopback port when the registered redirect demands one
     /// (OpenAI). `None` → bind an ephemeral port.
     pub loopback_port: Option<u16>,
@@ -75,6 +109,9 @@ pub struct ProviderSpec {
     pub callback_path: &'static str,
     /// Extra authorize-url query pairs (provider-specific switches).
     pub extra_authorize: &'static [(&'static str, &'static str)],
+    /// Set when the API credential is derived from the OAuth token by a
+    /// second exchange instead of being the access token itself.
+    pub derived: Option<DerivedCredential>,
 }
 
 /// Look up the OAuth spec for a provider name.
@@ -91,9 +128,12 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             authorize_url: "https://claude.ai/oauth/authorize",
             token_url: "https://console.anthropic.com/v1/oauth/token",
             scopes: "org:create_api_key user:profile user:inference",
+            token_encoding: TokenEncoding::Json,
+            redirect_uri: Some("https://console.anthropic.com/oauth/code/callback"),
             loopback_port: None,
             callback_path: "",
             extra_authorize: &[("code", "true")],
+            derived: None,
         }),
         // Public Codex CLI client. Redirect is registered as
         // http://localhost:1455/auth/callback — the port is not optional.
@@ -106,12 +146,15 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             authorize_url: "https://auth.openai.com/oauth/authorize",
             token_url: "https://auth.openai.com/oauth/token",
             scopes: "openid profile email offline_access",
+            token_encoding: TokenEncoding::Form,
+            redirect_uri: None,
             loopback_port: Some(1455),
             callback_path: "/auth/callback",
             extra_authorize: &[
                 ("id_token_add_organizations", "true"),
                 ("codex_cli_simplified_flow", "true"),
             ],
+            derived: None,
         }),
         // Public Gemini CLI installed-app client. Any loopback port works.
         "google" => Ok(ProviderSpec {
@@ -123,9 +166,12 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
             scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+            token_encoding: TokenEncoding::Form,
+            redirect_uri: None,
             loopback_port: None,
             callback_path: "/oauth2callback",
             extra_authorize: &[("access_type", "offline"), ("prompt", "consent")],
+            derived: None,
         }),
         // Public VS Code GitHub client (device flow enabled). Copilot API
         // access comes from exchanging the GitHub token afterwards.
@@ -138,9 +184,16 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             authorize_url: "https://github.com/login/device/code",
             token_url: "https://github.com/login/oauth/access_token",
             scopes: "read:user",
+            token_encoding: TokenEncoding::Form,
+            redirect_uri: None,
             loopback_port: None,
             callback_path: "",
             extra_authorize: &[],
+            derived: Some(DerivedCredential {
+                url: "https://api.github.com/copilot_internal/v2/token",
+                auth_scheme: "token",
+                headers: &[("Editor-Version", "vscode/1.95.0")],
+            }),
         }),
         other => Err(AuthError::UnsupportedProvider(other.to_string())),
     }
@@ -187,8 +240,8 @@ async fn ensure_fresh(
     store: &TokenStore,
     token: OAuthToken,
 ) -> Result<OAuthToken> {
-    if spec.name == "github-copilot" {
-        return ensure_fresh_copilot(spec, store, token).await;
+    if spec.derived.is_some() {
+        return ensure_fresh_derived(spec, store, token).await;
     }
     if !token.is_expired() {
         return Ok(token);
@@ -214,12 +267,16 @@ async fn ensure_fresh(
     Ok(refreshed)
 }
 
-/// The credential sent to the provider's API.
+/// The credential sent to the provider's API: the derived token when the
+/// spec declares one, otherwise the access token itself.
 fn usable_token(spec: &ProviderSpec, token: &OAuthToken) -> Option<String> {
-    if spec.name == "github-copilot" {
+    if spec.derived.is_some() {
+        // "copilot_token" is the pre-rename key; read it so stores written
+        // by older builds keep working.
         return token
             .extra
-            .get("copilot_token")
+            .get("derived_token")
+            .or_else(|| token.extra.get("copilot_token"))
             .and_then(Value::as_str)
             .map(str::to_string);
     }
@@ -281,9 +338,14 @@ async fn loopback_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuth
 
 async fn paste_code_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuthToken> {
     let pkce = Pkce::new();
-    // The public Claude client's registered redirect — a console page that
-    // displays the code. It is not a loopback address, hence the paste step.
-    let redirect_uri = "https://console.anthropic.com/oauth/code/callback";
+    // Paste flows exist because the registered redirect is a fixed provider
+    // page (not loopback) — `validate()` guarantees it is set.
+    let redirect_uri = spec.redirect_uri.ok_or_else(|| {
+        AuthError::Provider(format!(
+            "{}: paste-code flow needs a registered redirect_uri in the spec",
+            spec.name
+        ))
+    })?;
     let url = flow::authorize_url(
         spec.authorize_url,
         spec.client_id,
@@ -421,79 +483,101 @@ async fn device_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuthTo
         }
     };
 
-    // Exchange the GitHub token for the short-lived Copilot API token.
+    // Exchange the OAuth token for the derived API credential (e.g. the
+    // short-lived Copilot token). `validate()` guarantees `derived` is set
+    // for device-flow providers that need it.
     let mut token = OAuthToken {
         access_token: github_token,
         refresh_token: None,
         expires_at: None, // GitHub OAuth tokens from the device flow do not expire
         extra: Default::default(),
     };
-    let (copilot_token, copilot_expires) = exchange_copilot_token(&token.access_token).await?;
-    set_copilot_extra(&mut token, &copilot_token, copilot_expires);
+    if let Some(derived) = spec.derived {
+        let (derived_token, derived_expires) =
+            exchange_derived_token(&derived, &token.access_token).await?;
+        set_derived_extra(&mut token, &derived_token, derived_expires);
+    }
     Ok(token)
 }
 
-/// GET the Copilot API token for a GitHub OAuth token.
-async fn exchange_copilot_token(github_token: &str) -> Result<(String, DateTime<Utc>)> {
-    let resp = http_client()?
-        .get("https://api.github.com/copilot_internal/v2/token")
+/// GET the derived API token described by the spec (e.g. GitHub OAuth
+/// token → Copilot API token).
+async fn exchange_derived_token(
+    derived: &DerivedCredential,
+    access_token: &str,
+) -> Result<(String, DateTime<Utc>)> {
+    let mut req = http_client()?
+        .get(derived.url)
         .header("Accept", "application/json")
-        .header("Authorization", format!("token {github_token}"))
-        .header("Editor-Version", "vscode/1.95.0")
-        .send()
-        .await?;
+        .header(
+            "Authorization",
+            format!("{} {access_token}", derived.auth_scheme),
+        );
+    for (k, v) in derived.headers {
+        req = req.header(*k, *v);
+    }
+    let resp = req.send().await?;
     let status = resp.status();
     let json: Value = resp.json().await?;
     if !status.is_success() {
         let msg = json["message"].as_str().unwrap_or("unknown error");
         return Err(AuthError::TokenExchange(format!(
-            "Copilot token exchange failed ({status}): {msg} — is Copilot enabled for this GitHub account?"
+            "derived-token exchange failed ({status}): {msg}"
         )));
     }
     let token = json["token"]
         .as_str()
-        .ok_or_else(|| AuthError::TokenExchange("Copilot exchange: missing token".to_string()))?
+        .ok_or_else(|| AuthError::TokenExchange("derived exchange: missing token".to_string()))?
         .to_string();
     let expires_at = json["expires_at"]
         .as_i64()
         .and_then(|secs| DateTime::from_timestamp(secs, 0))
         .ok_or_else(|| {
-            AuthError::TokenExchange("Copilot exchange: missing expires_at".to_string())
+            AuthError::TokenExchange("derived exchange: missing expires_at".to_string())
         })?;
     Ok((token, expires_at))
 }
 
-fn set_copilot_extra(token: &mut OAuthToken, copilot_token: &str, expires: DateTime<Utc>) {
+fn set_derived_extra(token: &mut OAuthToken, derived_token: &str, expires: DateTime<Utc>) {
     token.extra.insert(
-        "copilot_token".to_string(),
-        Value::String(copilot_token.to_string()),
+        "derived_token".to_string(),
+        Value::String(derived_token.to_string()),
     );
     token.extra.insert(
-        "copilot_expires_at".to_string(),
+        "derived_expires_at".to_string(),
         Value::String(expires.to_rfc3339()),
     );
 }
 
-/// The Copilot API token lives in `extra`; re-exchange when it is near
-/// expiry. The underlying GitHub token itself does not expire.
-async fn ensure_fresh_copilot(
+/// The derived API token lives in `extra`; re-exchange when it is near
+/// expiry. The underlying OAuth token itself does not expire (GitHub
+/// device-flow tokens).
+async fn ensure_fresh_derived(
     spec: &ProviderSpec,
     store: &TokenStore,
     mut token: OAuthToken,
 ) -> Result<OAuthToken> {
-    let fresh = token
-        .extra
-        .get("copilot_expires_at")
+    let derived = spec
+        .derived
+        .ok_or_else(|| AuthError::Provider(format!("{}: no derived credential spec", spec.name)))?;
+    // "copilot_*" keys are the pre-rename names; read them so stores
+    // written by older builds keep working.
+    let extra_get =
+        |key: &str, legacy: &str| token.extra.get(key).or_else(|| token.extra.get(legacy));
+    let fresh = extra_get("derived_expires_at", "copilot_expires_at")
         .and_then(Value::as_str)
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .map(|at| Utc::now() + chrono::Duration::seconds(60) < at.with_timezone(&Utc))
         .unwrap_or(false);
-    if fresh && token.extra.contains_key("copilot_token") {
+    if fresh && extra_get("derived_token", "copilot_token").is_some() {
         return Ok(token);
     }
-    tracing::debug!("Copilot API token expired; re-exchanging");
-    let (copilot_token, expires) = exchange_copilot_token(&token.access_token).await?;
-    set_copilot_extra(&mut token, &copilot_token, expires);
+    tracing::debug!(
+        provider = spec.name,
+        "derived API token expired; re-exchanging"
+    );
+    let (derived_token, expires) = exchange_derived_token(&derived, &token.access_token).await?;
+    set_derived_extra(&mut token, &derived_token, expires);
     store.set(
         spec.name,
         ProviderAuth {
@@ -508,79 +592,95 @@ async fn ensure_fresh_copilot(
 // Token endpoint helpers
 // ────────────────────────────────────────────────────────────────────────
 
-/// Authorization-code exchange (PKCE). Anthropic speaks JSON at its token
-/// endpoint; OpenAI and Google use the standard form encoding.
+/// Grant payload ready to send — kept pure so the conformance tests can
+/// assert per-provider encodings without any network.
+enum GrantBody {
+    Json(Value),
+    Form(Vec<(&'static str, String)>),
+}
+
+/// Authorization-code exchange (PKCE) body, encoded per `spec.token_encoding`.
+fn code_exchange_body(
+    spec: &ProviderSpec,
+    code: &str,
+    redirect_uri: &str,
+    pkce: &Pkce,
+) -> GrantBody {
+    match spec.token_encoding {
+        TokenEncoding::Json => GrantBody::Json(serde_json::json!({
+            "grant_type": "authorization_code",
+            "client_id": spec.client_id,
+            "code": code,
+            "state": pkce.state,
+            "redirect_uri": redirect_uri,
+            "code_verifier": pkce.verifier,
+        })),
+        TokenEncoding::Form => {
+            let mut form: Vec<(&'static str, String)> = vec![
+                ("grant_type", "authorization_code".to_string()),
+                ("client_id", spec.client_id.to_string()),
+                ("code", code.to_string()),
+                ("redirect_uri", redirect_uri.to_string()),
+                ("code_verifier", pkce.verifier.clone()),
+            ];
+            if let Some(secret) = spec.client_secret {
+                form.push(("client_secret", secret.to_string()));
+            }
+            GrantBody::Form(form)
+        }
+    }
+}
+
+/// Refresh-token grant body, encoded per `spec.token_encoding`.
+fn refresh_body(spec: &ProviderSpec, refresh_token: &str) -> GrantBody {
+    match spec.token_encoding {
+        TokenEncoding::Json => GrantBody::Json(serde_json::json!({
+            "grant_type": "refresh_token",
+            "client_id": spec.client_id,
+            "refresh_token": refresh_token,
+        })),
+        TokenEncoding::Form => {
+            let mut form: Vec<(&'static str, String)> = vec![
+                ("grant_type", "refresh_token".to_string()),
+                ("client_id", spec.client_id.to_string()),
+                ("refresh_token", refresh_token.to_string()),
+            ];
+            if let Some(secret) = spec.client_secret {
+                form.push(("client_secret", secret.to_string()));
+            }
+            GrantBody::Form(form)
+        }
+    }
+}
+
+async fn send_grant(spec: &ProviderSpec, body: GrantBody) -> Result<OAuthToken> {
+    let client = http_client()?;
+    let req = client.post(spec.token_url);
+    let resp = match body {
+        GrantBody::Json(json) => req.json(&json).send().await?,
+        GrantBody::Form(form) => {
+            req.header("Accept", "application/json")
+                .form(&form)
+                .send()
+                .await?
+        }
+    };
+    parse_token_response(resp).await
+}
+
+/// Authorization-code exchange (PKCE).
 async fn exchange_code(
     spec: &ProviderSpec,
     code: &str,
     redirect_uri: &str,
     pkce: &Pkce,
 ) -> Result<OAuthToken> {
-    let client = http_client()?;
-    let resp = if spec.name == "anthropic" {
-        client
-            .post(spec.token_url)
-            .json(&serde_json::json!({
-                "grant_type": "authorization_code",
-                "client_id": spec.client_id,
-                "code": code,
-                "state": pkce.state,
-                "redirect_uri": redirect_uri,
-                "code_verifier": pkce.verifier,
-            }))
-            .send()
-            .await?
-    } else {
-        let mut form: Vec<(&str, &str)> = vec![
-            ("grant_type", "authorization_code"),
-            ("client_id", spec.client_id),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("code_verifier", pkce.verifier.as_str()),
-        ];
-        if let Some(secret) = spec.client_secret {
-            form.push(("client_secret", secret));
-        }
-        client
-            .post(spec.token_url)
-            .header("Accept", "application/json")
-            .form(&form)
-            .send()
-            .await?
-    };
-    parse_token_response(resp).await
+    send_grant(spec, code_exchange_body(spec, code, redirect_uri, pkce)).await
 }
 
 /// Refresh-token grant for providers that issue refresh tokens.
 async fn refresh_grant(spec: &ProviderSpec, refresh_token: &str) -> Result<OAuthToken> {
-    let client = http_client()?;
-    let resp = if spec.name == "anthropic" {
-        client
-            .post(spec.token_url)
-            .json(&serde_json::json!({
-                "grant_type": "refresh_token",
-                "client_id": spec.client_id,
-                "refresh_token": refresh_token,
-            }))
-            .send()
-            .await?
-    } else {
-        let mut form: Vec<(&str, &str)> = vec![
-            ("grant_type", "refresh_token"),
-            ("client_id", spec.client_id),
-            ("refresh_token", refresh_token),
-        ];
-        if let Some(secret) = spec.client_secret {
-            form.push(("client_secret", secret));
-        }
-        client
-            .post(spec.token_url)
-            .header("Accept", "application/json")
-            .form(&form)
-            .send()
-            .await?
-    };
-    parse_token_response(resp).await
+    send_grant(spec, refresh_body(spec, refresh_token)).await
 }
 
 /// Parse a token-endpoint response, surfacing provider errors without
@@ -654,6 +754,150 @@ fn http_client() -> Result<reqwest::Client> {
 /// True when `provider` has an OAuth flow at all (for CLI validation).
 pub fn supports_oauth(provider: &str) -> bool {
     OAUTH_PROVIDERS.contains(&provider)
+}
+
+/// Validate a provider spec against the invariants the flow code relies on.
+/// Returns the list of violations (empty = valid). Driven by the
+/// conformance tests so that adding a provider is *only* adding a spec
+/// literal — a malformed literal fails the test suite, not production.
+pub fn validate(spec: &ProviderSpec) -> Vec<String> {
+    fn check(issues: &mut Vec<String>, cond: bool, msg: impl Into<String>) {
+        if !cond {
+            issues.push(msg.into());
+        }
+    }
+
+    let mut issues: Vec<String> = Vec::new();
+
+    check(&mut issues, !spec.name.is_empty(), "name is empty");
+    check(
+        &mut issues,
+        OAUTH_PROVIDERS.contains(&spec.name),
+        format!("{}: missing from OAUTH_PROVIDERS in lib.rs", spec.name),
+    );
+    check(
+        &mut issues,
+        !spec.label.is_empty(),
+        format!("{}: label is empty", spec.name),
+    );
+    check(
+        &mut issues,
+        !spec.client_id.is_empty() && !spec.client_id.contains(char::is_whitespace),
+        format!("{}: client_id is empty or contains whitespace", spec.name),
+    );
+    for (field, url) in [
+        ("authorize_url", spec.authorize_url),
+        ("token_url", spec.token_url),
+    ] {
+        let ok = matches!(url::Url::parse(url), Ok(u) if u.scheme() == "https");
+        check(
+            &mut issues,
+            ok,
+            format!("{}: {field} must be an absolute https URL", spec.name),
+        );
+    }
+    check(
+        &mut issues,
+        !spec.scopes.trim().is_empty(),
+        format!("{}: scopes are empty", spec.name),
+    );
+    if let Some(secret) = spec.client_secret {
+        check(
+            &mut issues,
+            !secret.is_empty(),
+            format!("{}: client_secret is Some(\"\")", spec.name),
+        );
+    }
+
+    // Flow-specific invariants.
+    match spec.flow {
+        FlowKind::LoopbackPkce => {
+            check(
+                &mut issues,
+                spec.callback_path.starts_with('/'),
+                format!(
+                    "{}: loopback flow needs callback_path starting with '/'",
+                    spec.name
+                ),
+            );
+            check(
+                &mut issues,
+                spec.redirect_uri.is_none(),
+                format!(
+                    "{}: loopback flow builds its redirect from the bound port; set redirect_uri = None",
+                    spec.name
+                ),
+            );
+        }
+        FlowKind::PasteCodePkce => {
+            let ok = match spec.redirect_uri {
+                Some(uri) => matches!(url::Url::parse(uri), Ok(u) if u.scheme() == "https"),
+                None => false,
+            };
+            check(
+                &mut issues,
+                ok,
+                format!(
+                    "{}: paste-code flow needs a registered https redirect_uri",
+                    spec.name
+                ),
+            );
+        }
+        FlowKind::DeviceCode => {
+            check(
+                &mut issues,
+                spec.redirect_uri.is_none() && spec.callback_path.is_empty(),
+                format!(
+                    "{}: device flow has no redirect; leave redirect_uri None and callback_path empty",
+                    spec.name
+                ),
+            );
+        }
+    }
+
+    // Authorize-url extras: no empty or duplicate keys.
+    for (i, (k, v)) in spec.extra_authorize.iter().enumerate() {
+        check(
+            &mut issues,
+            !k.is_empty() && !v.is_empty(),
+            format!(
+                "{}: extra_authorize[{i}] has an empty key or value",
+                spec.name
+            ),
+        );
+        check(
+            &mut issues,
+            !spec.extra_authorize[..i].iter().any(|(ek, _)| ek == k),
+            format!("{}: duplicate extra_authorize key `{k}`", spec.name),
+        );
+    }
+
+    // Derived credential exchange description.
+    if let Some(d) = spec.derived {
+        let ok = matches!(url::Url::parse(d.url), Ok(u) if u.scheme() == "https");
+        check(
+            &mut issues,
+            ok,
+            format!("{}: derived.url must be an absolute https URL", spec.name),
+        );
+        check(
+            &mut issues,
+            matches!(d.auth_scheme, "token" | "Bearer"),
+            format!(
+                "{}: derived.auth_scheme must be \"token\" or \"Bearer\"",
+                spec.name
+            ),
+        );
+        for (k, v) in d.headers {
+            check(
+                &mut issues,
+                !k.is_empty() && !v.is_empty(),
+                format!("{}: derived header has an empty key or value", spec.name),
+            );
+        }
+    }
+
+    issues
 }
 
 #[cfg(test)]
@@ -742,7 +986,7 @@ mod tests {
     }
 
     #[test]
-    fn copilot_usable_token_comes_from_extra() {
+    fn derived_usable_token_comes_from_extra() {
         let spec = spec_for("github-copilot").unwrap();
         let mut token = OAuthToken {
             access_token: "gh".to_string(),
@@ -751,7 +995,146 @@ mod tests {
             extra: Default::default(),
         };
         assert!(usable_token(&spec, &token).is_none());
-        set_copilot_extra(&mut token, "cop", Utc::now() + chrono::Duration::hours(1));
+        set_derived_extra(&mut token, "cop", Utc::now() + chrono::Duration::hours(1));
         assert_eq!(usable_token(&spec, &token).as_deref(), Some("cop"));
+
+        // Legacy "copilot_token" key (pre-rename stores) still resolves.
+        let mut legacy = OAuthToken {
+            access_token: "gh".to_string(),
+            refresh_token: None,
+            expires_at: None,
+            extra: Default::default(),
+        };
+        legacy.extra.insert(
+            "copilot_token".to_string(),
+            Value::String("old".to_string()),
+        );
+        assert_eq!(usable_token(&spec, &legacy).as_deref(), Some("old"));
+    }
+
+    // ── Conformance suite ────────────────────────────────────────────────
+    // Adding a provider must be *only* a new spec literal in `spec_for` +
+    // a name in `OAUTH_PROVIDERS`. These tests reject malformed literals,
+    // drift between the moving parts, and wrong grant encodings — with no
+    // network involved.
+
+    #[test]
+    fn conformance_every_advertised_provider_validates() {
+        for name in OAUTH_PROVIDERS {
+            let spec = spec_for(name).expect(name);
+            let issues = validate(&spec);
+            assert!(issues.is_empty(), "{name}: {}", issues.join("; "));
+        }
+    }
+
+    #[test]
+    fn conformance_error_message_lists_every_provider() {
+        // Tripwire against drift between error.rs and the registry.
+        let msg = AuthError::UnsupportedProvider("x".to_string()).to_string();
+        for name in OAUTH_PROVIDERS {
+            assert!(
+                msg.contains(name),
+                "UnsupportedProvider message misses {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn conformance_authorize_url_has_required_pkce_params() {
+        for name in OAUTH_PROVIDERS {
+            let spec = spec_for(name).expect(name);
+            if spec.flow == FlowKind::DeviceCode {
+                continue; // device flow starts at the token endpoint family
+            }
+            let pkce = Pkce {
+                verifier: "v".to_string(),
+                challenge: "c".to_string(),
+                state: "s".to_string(),
+            };
+            let redirect = spec
+                .redirect_uri
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("http://localhost:9999{}", spec.callback_path));
+            let url = flow::authorize_url(
+                spec.authorize_url,
+                spec.client_id,
+                &redirect,
+                spec.scopes,
+                &pkce,
+                spec.extra_authorize,
+            );
+            for param in [
+                "response_type=code",
+                "client_id=",
+                "redirect_uri=",
+                "scope=",
+                "state=s",
+                "code_challenge=c",
+                "code_challenge_method=S256",
+            ] {
+                assert!(
+                    url.contains(param),
+                    "{name}: authorize URL missing `{param}`"
+                );
+            }
+            // The verifier must never appear in a URL.
+            assert!(
+                !url.contains("code_verifier"),
+                "{name}: verifier leaked into URL"
+            );
+        }
+    }
+
+    #[test]
+    fn conformance_grant_bodies_match_declared_encoding() {
+        let pkce = Pkce {
+            verifier: "ver".to_string(),
+            challenge: "ch".to_string(),
+            state: "st".to_string(),
+        };
+        for name in OAUTH_PROVIDERS {
+            let spec = spec_for(name).expect(name);
+            if spec.flow == FlowKind::DeviceCode {
+                continue;
+            }
+            match (
+                spec.token_encoding,
+                code_exchange_body(&spec, "code1", "http://localhost/cb", &pkce),
+                refresh_body(&spec, "ref1"),
+            ) {
+                (TokenEncoding::Json, GrantBody::Json(ex), GrantBody::Json(re)) => {
+                    assert_eq!(ex["grant_type"], "authorization_code");
+                    assert_eq!(ex["state"], "st");
+                    assert_eq!(ex["code_verifier"], "ver");
+                    assert_eq!(re["grant_type"], "refresh_token");
+                }
+                (TokenEncoding::Form, GrantBody::Form(ex), GrantBody::Form(re)) => {
+                    fn form_get<'a>(f: &'a [(&'static str, String)], k: &str) -> Option<&'a str> {
+                        f.iter().find(|(fk, _)| fk == &k).map(|(_, v)| v.as_str())
+                    }
+                    assert_eq!(form_get(&ex, "grant_type"), Some("authorization_code"));
+                    assert_eq!(form_get(&ex, "code_verifier"), Some("ver"));
+                    assert_eq!(form_get(&re, "refresh_token"), Some("ref1"));
+                    // client_secret present iff the spec declares one.
+                    assert_eq!(
+                        form_get(&ex, "client_secret").is_some(),
+                        spec.client_secret.is_some(),
+                        "{name}: client_secret / form mismatch"
+                    );
+                }
+                _ => panic!("{name}: grant body encoding does not match token_encoding"),
+            }
+        }
+    }
+
+    #[test]
+    fn conformance_validate_catches_broken_specs() {
+        // Guard the guard: a deliberately broken spec must produce issues.
+        let mut broken = spec_for("google").unwrap();
+        broken.client_id = "";
+        broken.flow = FlowKind::PasteCodePkce; // …but redirect_uri stays None
+        broken.authorize_url = "http://insecure.example.com";
+        let issues = validate(&broken);
+        assert!(issues.len() >= 3, "expected >=3 issues, got: {issues:?}");
     }
 }

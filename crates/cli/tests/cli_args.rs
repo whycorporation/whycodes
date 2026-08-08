@@ -178,3 +178,32 @@ fn test_unknown_flag() {
     let o = run(&["--nonexistent-flag"]);
     assert!(!o.status.success());
 }
+
+#[test]
+fn test_auth_help_lists_subcommands() {
+    let o = run(&["auth", "--help"]);
+    assert_ok(&["auth", "--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    for sub in ["login", "logout", "status"] {
+        assert!(s.contains(sub), "auth help should list `{sub}`: {s}");
+    }
+}
+
+#[test]
+fn test_auth_status_runs_offline() {
+    // Works with or without an existing store; never prints token material.
+    let o = run(&["auth", "status"]);
+    assert_ok(&["auth", "status"], &o);
+}
+
+#[test]
+fn test_auth_login_rejects_unknown_provider_without_network() {
+    // Must fail fast, before any browser/listener/token-endpoint step.
+    let o = run(&["auth", "login", "definitely-not-a-provider"]);
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("does not support OAuth login"),
+        "stderr should name the supported set: {err}"
+    );
+}

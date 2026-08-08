@@ -3678,14 +3678,16 @@ async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
 
 /// Human expiry label for `auth status` / `debug` — never token material.
 fn auth_expiry_label(auth: &whycode_auth::ProviderAuth) -> String {
-    // Copilot's API token (the one that actually expires) lives in extra.
-    if let Some(at) = auth
+    // A derived API token (e.g. Copilot's) is the one that actually expires;
+    // it lives in extra. "copilot_expires_at" is the pre-rename key name.
+    let derived_expiry = auth
         .token
         .extra
-        .get("copilot_expires_at")
-        .and_then(|v| v.as_str())
-    {
-        return format!("copilot token expires {at}");
+        .get("derived_expires_at")
+        .or_else(|| auth.token.extra.get("copilot_expires_at"))
+        .and_then(|v| v.as_str());
+    if let Some(at) = derived_expiry {
+        return format!("derived API token expires {at}");
     }
     match auth.token.expires_at {
         Some(at) => {
