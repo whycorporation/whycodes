@@ -50,6 +50,43 @@ community CLIs — whycode has no registered client of its own.
 Expired access tokens refresh transparently on next use (GitHub's token
 does not expire; the derived Copilot token does and is re-exchanged).
 
+## Adding a new OAuth provider (standard)
+
+The design goal: adding a provider is **only** adding one `ProviderSpec`
+literal plus one registry entry — no branches in flow code. The conformance
+suite (`cargo test -p whycode-auth`) rejects a malformed spec before it can
+misbehave at runtime.
+
+Checklist:
+
+1. **`crates/auth/src/lib.rs`** — add the name to `OAUTH_PROVIDERS`.
+2. **`crates/auth/src/providers.rs` → `spec_for()`** — add one match arm:
+   - Pick the `flow`: `LoopbackPkce` (browser → localhost callback),
+     `PasteCodePkce` (registered redirect is a fixed web page → user pastes
+     `code#state`), or `DeviceCode` (RFC 8628 grant).
+   - Set `token_encoding` (`Form` = RFC 6749 default, `Json` for
+     Anthropic-style endpoints) — grant bodies are built from this, never
+     from the provider name.
+   - `redirect_uri`: `Some(..)` for paste flows, `None` for loopback
+     (constructed from the bound port).
+   - `derived`: `Some(DerivedCredential { .. })` when the API credential
+     comes from a second exchange (Copilot model), else `None`.
+3. **`crates/auth/src/error.rs`** — add the name to the
+   `UnsupportedProvider` message (tripwire test enforces this).
+4. **`docs/auth.md`** — add a row to the flow table above.
+
+The suite then verifies, for every advertised provider: `validate()`
+invariants (https URLs, flow/redirect consistency, unique authorize extras,
+derived-exchange description), the authorize URL carries all required PKCE
+params and never the verifier, and the grant bodies match the declared
+`token_encoding` (including `client_secret` presence). CLI tests
+(`crates/cli/tests/cli_args.rs`) pin the `auth` surface offline.
+
+If the provider's *API calls* need a nonstandard endpoint or headers, that
+is a separate, explicit step: a provider module in `crates/llm` (see
+`copilot.rs`) registered in `provider.rs`. Login/refresh/storage never
+depend on it.
+
 ## Provider terms caveat
 
 Using a subscription credential through a third-party client is a matter
