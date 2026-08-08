@@ -713,18 +713,21 @@ async fn get_api_key(provider: &str, config: &Config) -> Option<String> {
     if let Ok(key) = std::env::var(&env_var)
         && !key.is_empty()
     {
+        whycode_llm::oauth_refresh::unregister(provider);
         return Some(key);
     }
     if let Some(pc) = config.get_provider(provider)
         && let Some(key) = &pc.api_key
         && !key.is_empty()
     {
+        whycode_llm::oauth_refresh::unregister(provider);
         return Some(key.clone());
     }
     // Fallback to generic env vars
     if provider == "openai"
         && let Ok(key) = std::env::var("OPENAI_API_KEY")
     {
+        whycode_llm::oauth_refresh::unregister(provider);
         return Some(key);
     }
     // OAuth subscription login (`whycode auth login <provider>`).
@@ -732,6 +735,8 @@ async fn get_api_key(provider: &str, config: &Config) -> Option<String> {
         && let Ok(data_dir) = Config::data_dir()
         && let Some(token) = whycode_auth::providers::access_token(provider, &data_dir).await
     {
+        // A 401 on this credential may trigger one forced refresh + retry.
+        whycode_llm::oauth_refresh::register(provider, data_dir);
         return Some(token);
     }
     None

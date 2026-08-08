@@ -165,11 +165,10 @@ impl LlmProvider for AnthropicProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = authed_post(self.default_base_url(), api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+        let resp = super::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+            authed_post(self.default_base_url(), key).json(&body)
+        })
+        .await?;
 
         let status = resp.status();
         let json: Value = resp
@@ -234,11 +233,10 @@ impl LlmProvider for AnthropicProvider {
         let body = self.build_body(request, model);
         let api_key = api_key.to_string();
 
-        let resp = authed_post(self.default_base_url(), &api_key)
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+        let resp = super::oauth_refresh::send_with_refresh_retry(self.name(), &api_key, |key| {
+            authed_post(self.default_base_url(), key).json(&body)
+        })
+        .await?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
