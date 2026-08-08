@@ -598,7 +598,7 @@ Still-open work with acceptance criteria:
 | Plan | Status |
 |---|---|
 | [docs/plan-distribution.md](docs/plan-distribution.md) | Implemented; first `v*` release exercises remaining criteria |
-| [docs/plan-oauth.md](docs/plan-oauth.md) | Blocked on owner (client id + terms) |
+| [docs/plan-oauth.md](docs/plan-oauth.md) | Partially shipped — [docs/auth.md](docs/auth.md) |
 | [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; residual stats / CI ceilings |
 | [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done |
 | [docs/plan-features-improvements.md](docs/plan-features-improvements.md) | FEATURES matrix + TUI discoverability |

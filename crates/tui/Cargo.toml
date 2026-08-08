@@ -16,6 +16,7 @@ thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 whycode-core = { path = "../core" }
+whycode-auth = { path = "../auth" }
 whycode-config = { path = "../config" }
 whycode-session = { path = "../session" }
 whycode-agent = { path = "../agent" }

@@ -15,6 +15,22 @@ pub struct AnthropicProvider {
     name: String,
 }
 
+/// POST with the right auth header for the credential type.
+///
+/// OAuth subscription tokens (`sk-ant-oat…`, from `whycode auth login
+/// anthropic`) must go in `Authorization: Bearer` with the oauth beta flag;
+/// plain API keys go in `x-api-key`. Sending an OAuth token as `x-api-key`
+/// is rejected by the API.
+fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
+    let req = super::client_identity::post(url).header("anthropic-version", "2023-06-01");
+    if api_key.starts_with("sk-ant-oat") {
+        req.header("Authorization", format!("Bearer {api_key}"))
+            .header("anthropic-beta", "oauth-2025-04-20")
+    } else {
+        req.header("x-api-key", api_key)
+    }
+}
+
 impl AnthropicProvider {
     pub fn new() -> Self {
         Self {
@@ -149,9 +165,7 @@ impl LlmProvider for AnthropicProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = super::client_identity::post(self.default_base_url())
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
+        let resp = authed_post(self.default_base_url(), api_key)
             .json(&body)
             .send()
             .await
@@ -220,9 +234,7 @@ impl LlmProvider for AnthropicProvider {
         let body = self.build_body(request, model);
         let api_key = api_key.to_string();
 
-        let resp = super::client_identity::post(self.default_base_url())
-            .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01")
+        let resp = authed_post(self.default_base_url(), &api_key)
             .json(&body)
             .send()
             .await

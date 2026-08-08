@@ -1014,6 +1014,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
                 {
                     api_key = k;
+                } else if whycode_auth::providers::supports_oauth(&p)
+                    && let Ok(dir) = Config::data_dir()
+                    && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
+                {
+                    // OAuth subscription login (`whycode auth login <p>`).
+                    api_key = tok;
                 }
                 // Drop stale window; re-fetch when idle so we never contend with a turn.
                 app.clear_api_context_window();
@@ -3321,14 +3327,27 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             {
                 *ctx.api_key = k;
             }
+            // OAuth subscription login (`whycode auth login <provider>`).
+            if ctx.api_key.is_empty()
+                && whycode_auth::providers::supports_oauth(ctx.provider)
+                && let Ok(dir) = Config::data_dir()
+                && let Some(tok) = whycode_auth::providers::access_token(ctx.provider, &dir).await
+            {
+                *ctx.api_key = tok;
+            }
             if ctx.api_key.is_empty() {
                 ctx.app.status_message = format!("no API key · set {env_name}");
+                let oauth_hint = if whycode_auth::providers::supports_oauth(ctx.provider) {
+                    format!("\n → whycode auth login {}  (subscription)", ctx.provider)
+                } else {
+                    String::new()
+                };
                 ctx.app.add_message(
                     ChatRole::System,
                     format!(
                         "No API key for `{}`\n\
                          → export {env_name}=…\n\
-                         → whycode provider add {} --api-key <key> · then /connect",
+                         → whycode provider add {} --api-key <key>{oauth_hint} · then /connect",
                         ctx.provider, ctx.provider
                     ),
                 );

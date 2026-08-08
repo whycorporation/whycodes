@@ -82,6 +82,7 @@ impl Default for ProviderRegistry {
         let mut registry = Self::new();
         registry.register(Box::new(super::anthropic::AnthropicProvider::new()));
         registry.register(Box::new(super::openai::OpenAiProvider::new()));
+        registry.register(Box::new(super::copilot::CopilotProvider::new()));
         registry.register(Box::new(super::google::GoogleProvider::new()));
         registry.register(Box::new(super::deepseek::DeepSeekProvider::new()));
         registry.register(Box::new(super::openrouter::OpenRouterProvider::new()));

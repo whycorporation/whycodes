@@ -23,7 +23,7 @@ Last updated: **2026-08-08** (parallel multi-session shipped; perf residual + pl
 |---|---|---|---|
 | Performance residual | [plan-performance.md](plan-performance.md) | **mostly done+** | Subagent usage fold + bench ceilings shipped. Live provider reconcile still manual. |
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets live. Public repo / Homebrew binary / install smoke = **owner last step**, not current focus. |
-| OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | blocked | Owner: client registration + provider terms before any code. |
+| OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **partially shipped** | `whycode auth login` for anthropic/openai/github-copilot/google; calls routed for anthropic + copilot ([auth.md](auth.md)). Credential discovery still open. |
 | Context + TUI paint | [plan-perf-context-tui.md](plan-perf-context-tui.md) | done | Token-budget compact, tool result cap, layout height cache, dirty-draw, stream coalesce. |
 | Semantic memory | [plan-memory.md](plan-memory.md) | **shipped v1+v2** | Retain, sync, code RAG, subagent banks, optional ONNX. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
@@ -57,7 +57,7 @@ Priority (owner: **public install / repo visibility last**):
 1. **Performance residual** — subagent usage fold + CI bench ceilings shipped ([plan-performance.md](plan-performance.md)). Live provider reconcile optional/manual.
 2. **Plugins depth** — `plugins.toml` → `plugin_*` tools; `whycode plugins list`; project+global load. Marketplace still out of scope.
 3. **Latency P2 (optional)** — residual rows in [plan-latency-competitors.md](plan-latency-competitors.md).
-4. **OAuth** — blocked until owner terms decisions.
+4. **OAuth** — subscription login shipped (2026-08-09); credential discovery + openai/google call routing open.
 5. **ACP / web** — deferred post product launch.
 6. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`.
 
