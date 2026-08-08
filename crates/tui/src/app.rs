@@ -156,9 +156,11 @@ impl QuestionDialogState {
             }
             let free = {
                 let t = self.free_text.trim();
-                if !t.is_empty() && (self.is_other_index(self.cursor) || self.free_text_focus) {
-                    Some(t.to_string())
-                } else if !t.is_empty() && selected.is_empty() {
+                if !t.is_empty()
+                    && (self.is_other_index(self.cursor)
+                        || self.free_text_focus
+                        || selected.is_empty())
+                {
                     Some(t.to_string())
                 } else if self.is_other_index(self.cursor) && t.is_empty() {
                     // Other with no text — require text
@@ -284,10 +286,10 @@ impl QuestionDialogState {
             if !ans.selected.is_empty() {
                 self.cursor = self.multi_selected.iter().copied().min().unwrap_or(0);
             }
-        } else if let Some(label) = ans.selected.first() {
-            if let Some(i) = q.options.iter().position(|o| &o.label == label) {
-                self.cursor = i;
-            }
+        } else if let Some(label) = ans.selected.first()
+            && let Some(i) = q.options.iter().position(|o| &o.label == label)
+        {
+            self.cursor = i;
         }
     }
 
@@ -1272,7 +1274,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
 ];
 
 /// Autocomplete state for slash commands while typing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SlashSuggestState {
     pub active: bool,
     pub matches: Vec<usize>,
@@ -1366,19 +1368,6 @@ impl SlashSuggestState {
             Some(idx)
         } else {
             None
-        }
-    }
-}
-
-impl Default for SlashSuggestState {
-    fn default() -> Self {
-        Self {
-            active: false,
-            matches: Vec::new(),
-            selected: 0,
-            hovered: None,
-            list_hit: None,
-            list_scroll_start: 0,
         }
     }
 }
@@ -1687,6 +1676,7 @@ impl TuiApp {
     }
 
     /// Apply hit boxes from a select-style list paint.
+    #[allow(clippy::too_many_arguments)]
     pub fn apply_select_paint(
         &mut self,
         close_hit: Option<Rect>,

@@ -51,6 +51,7 @@ impl RetainSnapshot {
 /// can return immediately. This full await is for headless / tests.
 ///
 /// Returns saved fact strings (for UI toast/status). Failures are logged only.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_post_turn_retain(
     session: &Session,
     assistant_text: &str,
@@ -68,8 +69,8 @@ pub async fn run_post_turn_retain(
     let snap = RetainSnapshot::from_session(session, assistant_text);
     let mut saved = run_heuristic_retain(&snap, settings, data_dir);
 
-    if should_llm_retain(settings, saved.len(), snap.turn_index) {
-        if let Ok(more) = run_llm_retain_facts(
+    if should_llm_retain(settings, saved.len(), snap.turn_index)
+        && let Ok(more) = run_llm_retain_facts(
             &snap,
             settings,
             provider,
@@ -79,9 +80,8 @@ pub async fn run_post_turn_retain(
             data_dir,
         )
         .await
-        {
-            merge_facts(&mut saved, more);
-        }
+    {
+        merge_facts(&mut saved, more);
     }
 
     saved
@@ -91,6 +91,7 @@ pub async fn run_post_turn_retain(
 ///
 /// Never blocks the agent turn. Emits `TurnEvent::Status` when facts are saved
 /// so the TUI can show a quiet status/toast after `Idle`.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_post_turn_retain(
     session: &Session,
     assistant_text: &str,
@@ -117,22 +118,22 @@ pub fn spawn_post_turn_retain(
     tokio::spawn(async move {
         let mut saved = run_heuristic_retain(&snap, &settings, &data_dir);
 
-        if should_llm_retain(&settings, saved.len(), snap.turn_index) {
-            if let Some(provider) = registry.get(&provider_name) {
-                match run_llm_retain_facts(
-                    &snap,
-                    &settings,
-                    provider,
-                    &provider_name,
-                    &model,
-                    &api_key,
-                    &data_dir,
-                )
-                .await
-                {
-                    Ok(more) => merge_facts(&mut saved, more),
-                    Err(e) => tracing::debug!("llm retain skipped: {e}"),
-                }
+        if should_llm_retain(&settings, saved.len(), snap.turn_index)
+            && let Some(provider) = registry.get(&provider_name)
+        {
+            match run_llm_retain_facts(
+                &snap,
+                &settings,
+                provider,
+                &provider_name,
+                &model,
+                &api_key,
+                &data_dir,
+            )
+            .await
+            {
+                Ok(more) => merge_facts(&mut saved, more),
+                Err(e) => tracing::debug!("llm retain skipped: {e}"),
             }
         }
 

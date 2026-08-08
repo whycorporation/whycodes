@@ -15,8 +15,7 @@ pub fn load_capped(path: &Path, max_lines: usize, max_bytes: usize) -> String {
 
 fn cap_content(raw: &str, max_lines: usize, max_bytes: usize) -> String {
     let mut out = String::new();
-    let mut lines = 0usize;
-    for line in raw.lines() {
+    for (lines, line) in raw.lines().enumerate() {
         let candidate_len = out.len() + line.len() + 1;
         if lines >= max_lines || candidate_len > max_bytes {
             break;
@@ -25,7 +24,6 @@ fn cap_content(raw: &str, max_lines: usize, max_bytes: usize) -> String {
             out.push('\n');
         }
         out.push_str(line);
-        lines += 1;
     }
     out.trim().to_string()
 }

@@ -184,6 +184,19 @@ impl Tool for ListTool {
     }
 }
 
+/// One listed entry: (display_name, is_dir, size).
+type ListEntry = (String, bool, Option<u64>);
+
+/// Recursive listing result: entries, truncated flag, dir count, file count.
+type ListRecursiveOut = (Vec<ListEntry>, bool, usize, usize);
+
+struct WalkState<'a> {
+    entries: &'a mut Vec<ListEntry>,
+    dir_count: &'a mut usize,
+    file_count: &'a mut usize,
+    truncated: &'a mut bool,
+}
+
 /// Recursive listing with depth limit and skip-dir pruning.
 /// Returns (display_name, is_dir, size), truncated flag, total dir/file counts.
 fn list_recursive(
@@ -191,7 +204,7 @@ fn list_recursive(
     ignore: &[String],
     max_depth: usize,
     max_entries: usize,
-) -> (Vec<(String, bool, Option<u64>)>, bool, usize, usize) {
+) -> ListRecursiveOut {
     let mut entries = Vec::new();
     let mut dir_count = 0usize;
     let mut file_count = 0usize;
@@ -204,12 +217,9 @@ fn list_recursive(
         max_depth: usize,
         ignore: &[String],
         max_entries: usize,
-        entries: &mut Vec<(String, bool, Option<u64>)>,
-        dir_count: &mut usize,
-        file_count: &mut usize,
-        truncated: &mut bool,
+        state: &mut WalkState,
     ) {
-        if *truncated {
+        if *state.truncated {
             return;
         }
         let Ok(level) = list_dir_entries(dir, ignore) else {
@@ -217,13 +227,13 @@ fn list_recursive(
         };
         for e in level {
             if e.is_dir {
-                *dir_count += 1;
+                *state.dir_count += 1;
             } else {
-                *file_count += 1;
+                *state.file_count += 1;
             }
 
-            if entries.len() >= max_entries {
-                *truncated = true;
+            if state.entries.len() >= max_entries {
+                *state.truncated = true;
                 return;
             }
 
@@ -233,7 +243,7 @@ fn list_recursive(
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_else(|_| e.name.clone());
 
-            entries.push((rel, e.is_dir, e.size));
+            state.entries.push((rel, e.is_dir, e.size));
 
             if e.is_dir && depth < max_depth && !is_skip_dir(&e.name) {
                 walk(
@@ -243,10 +253,7 @@ fn list_recursive(
                     max_depth,
                     ignore,
                     max_entries,
-                    entries,
-                    dir_count,
-                    file_count,
-                    truncated,
+                    state,
                 );
             }
         }
@@ -259,10 +266,12 @@ fn list_recursive(
         max_depth,
         ignore,
         max_entries,
-        &mut entries,
-        &mut dir_count,
-        &mut file_count,
-        &mut truncated,
+        &mut WalkState {
+            entries: &mut entries,
+            dir_count: &mut dir_count,
+            file_count: &mut file_count,
+            truncated: &mut truncated,
+        },
     );
 
     // Keep dirs-first-ish: directories first, then name

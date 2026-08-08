@@ -96,6 +96,7 @@ pub fn dialog_frame(
 }
 
 /// Like [`dialog_frame`] but with explicit placement (center or bottom dock).
+#[allow(clippy::too_many_arguments)]
 pub fn dialog_frame_placed(
     frame: &mut Frame,
     title: &str,

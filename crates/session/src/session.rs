@@ -587,14 +587,12 @@ impl Session {
         };
         if let Some(first) = self.messages.first_mut()
             && first.role == Role::User
+            && let MessageContent::Text(t) = &first.content
+            && t.starts_with("[Compacted")
         {
-            if let MessageContent::Text(t) = &first.content
-                && t.starts_with("[Compacted")
-            {
-                first.content = MessageContent::Text(body);
-                self.touch();
-                return;
-            }
+            first.content = MessageContent::Text(body);
+            self.touch();
+            return;
         }
         self.messages.insert(
             0,

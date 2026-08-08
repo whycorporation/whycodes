@@ -115,34 +115,6 @@ fn file_tool_path(tc: &ToolCall) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-#[cfg(test)]
-mod permission_detail_tests {
-    use super::{format_permission_detail, format_shell_risk_detail};
-    use serde_json::json;
-
-    #[test]
-    fn single_command_is_plain_string() {
-        let d = format_permission_detail(&json!({"command": "ls -la"}));
-        assert_eq!(d, "ls -la");
-    }
-
-    #[test]
-    fn object_keys_are_labeled_not_compact_json() {
-        let d = format_permission_detail(&json!({"path": "src/main.rs", "offset": 10}));
-        assert!(d.contains("path: src/main.rs"), "{d}");
-        assert!(d.contains("offset: 10"), "{d}");
-        assert!(!d.starts_with('{'), "must not be compact JSON: {d}");
-    }
-
-    #[test]
-    fn shell_risk_has_command_and_risk_sections() {
-        let d = format_shell_risk_detail("rm -rf /tmp/x", "destructive delete");
-        assert!(d.contains("Command:"), "{d}");
-        assert!(d.contains("rm -rf /tmp/x"), "{d}");
-        assert!(d.contains("Risk: destructive delete"), "{d}");
-    }
-}
-
 /// Tools that must never fan out in parallel (side effects, races, or UI ask).
 const SERIAL_TOOLS: &[&str] = &[
     "bash",
@@ -684,9 +656,7 @@ impl Agent {
         if key.is_empty() {
             return None;
         }
-        if self.provider_registry.get(&use_provider_name).is_none() {
-            return None;
-        }
+        self.provider_registry.get(&use_provider_name)?;
 
         let assistant = session.first_assistant_snippet(400);
         Some((use_provider_name, use_model, key, user, assistant))
@@ -928,23 +898,21 @@ impl Agent {
                     if outcome.still_over(self.compaction_threshold)
                         && self.compaction_llm
                         && !api_key.is_empty()
-                    {
-                        if let Some(summary) = self
+                        && let Some(summary) = self
                             .llm_compact_summary(session, provider_name, model, api_key)
                             .await
-                        {
-                            session.prepend_compact_summary(&summary);
-                            outcome = whycode_session::CompactOutcome {
-                                tokens_before: outcome.tokens_before,
-                                tokens_after: session.token_count(),
-                                messages_before: outcome.messages_before,
-                                messages_after: session.messages.len(),
-                            };
-                            emit(
-                                &events,
-                                TurnEvent::Status("Compacted context (LLM summary)…".into()),
-                            );
-                        }
+                    {
+                        session.prepend_compact_summary(&summary);
+                        outcome = whycode_session::CompactOutcome {
+                            tokens_before: outcome.tokens_before,
+                            tokens_after: session.token_count(),
+                            messages_before: outcome.messages_before,
+                            messages_after: session.messages.len(),
+                        };
+                        emit(
+                            &events,
+                            TurnEvent::Status("Compacted context (LLM summary)…".into()),
+                        );
                     }
                     if outcome.reduced() {
                         emit(
@@ -1000,34 +968,31 @@ impl Agent {
 
             // First LLM step: ephemeral intent posture (not stored in session;
             // keeps system prompt cache-stable). Notice is already on Intent event.
-            if turn_count == 1 {
-                if crate::intent::should_inject(self.intent_guidance, &turn_intent) {
-                    if let Some(suffix) =
-                        crate::intent::posture_suffix(&turn_intent, &self.info.name)
-                    {
-                        // Append to last user message in the request only.
-                        use whycode_core::types::{MessageContent, Role};
-                        for msg in request.messages.iter_mut().rev() {
-                            if msg.role != Role::User {
-                                continue;
-                            }
-                            match &mut msg.content {
-                                MessageContent::Text(t) => t.push_str(&suffix),
-                                MessageContent::Blocks(blocks) => {
-                                    blocks.push(ContentBlock::Text {
-                                        text: suffix.clone(),
-                                    });
-                                }
-                            }
-                            tracing::debug!(
-                                intent = turn_intent.intent.as_str(),
-                                confidence = turn_intent.confidence,
-                                agent = %self.info.name,
-                                "intent posture injected into request"
-                            );
-                            break;
+            if turn_count == 1
+                && crate::intent::should_inject(self.intent_guidance, &turn_intent)
+                && let Some(suffix) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
+            {
+                // Append to last user message in the request only.
+                use whycode_core::types::{MessageContent, Role};
+                for msg in request.messages.iter_mut().rev() {
+                    if msg.role != Role::User {
+                        continue;
+                    }
+                    match &mut msg.content {
+                        MessageContent::Text(t) => t.push_str(&suffix),
+                        MessageContent::Blocks(blocks) => {
+                            blocks.push(ContentBlock::Text {
+                                text: suffix.clone(),
+                            });
                         }
                     }
+                    tracing::debug!(
+                        intent = turn_intent.intent.as_str(),
+                        confidence = turn_intent.confidence,
+                        agent = %self.info.name,
+                        "intent posture injected into request"
+                    );
+                    break;
                 }
             }
 
@@ -1529,6 +1494,7 @@ impl Agent {
     /// tests in `command-risk` cover classification, but only this method
     /// proves that a catastrophic command is refused even when the permission
     /// map says `allow`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_with_permission(
         &self,
         tc: &ToolCall,
@@ -1678,38 +1644,38 @@ impl Agent {
         }
 
         // Path-scoped rules: `edit(src/**)`, `write(docs/**)`, …
-        if let Some(path) = file_tool_path(tc) {
-            if let Some(path_act) = self.info.permission.action_for_path(&tc.name, &path) {
-                match path_act {
-                    PermissionAction::Deny => {
+        if let Some(path) = file_tool_path(tc)
+            && let Some(path_act) = self.info.permission.action_for_path(&tc.name, &path)
+        {
+            match path_act {
+                PermissionAction::Deny => {
+                    return ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!(
+                            "Permission denied for `{}` on path `{path}` by path rule.",
+                            tc.name
+                        ),
+                        is_error: true,
+                    };
+                }
+                PermissionAction::Allow => {
+                    risk_confirmed = true;
+                }
+                PermissionAction::Ask if !risk_confirmed => {
+                    let detail = format!(
+                        "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
+                        tc.name
+                    );
+                    if !self.permission_prompter.ask(&tc.name, &detail).await {
                         return ToolResult {
                             tool_call_id: tc.id.clone(),
-                            content: format!(
-                                "Permission denied for `{}` on path `{path}` by path rule.",
-                                tc.name
-                            ),
+                            content: format!("User denied permission for tool '{}'.", tc.name),
                             is_error: true,
                         };
                     }
-                    PermissionAction::Allow => {
-                        risk_confirmed = true;
-                    }
-                    PermissionAction::Ask if !risk_confirmed => {
-                        let detail = format!(
-                            "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
-                            tc.name
-                        );
-                        if !self.permission_prompter.ask(&tc.name, &detail).await {
-                            return ToolResult {
-                                tool_call_id: tc.id.clone(),
-                                content: format!("User denied permission for tool '{}'.", tc.name),
-                                is_error: true,
-                            };
-                        }
-                        risk_confirmed = true;
-                    }
-                    PermissionAction::Ask => {}
+                    risk_confirmed = true;
                 }
+                PermissionAction::Ask => {}
             }
         }
 
@@ -2446,7 +2412,7 @@ impl Agent {
             self.swarm_worktrees && crate::swarm_worktree::is_git_repo(&session.project_path);
         let run_id = format!(
             "{}-{}",
-            &session.id.chars().take(8).collect::<String>(),
+            session.id.chars().take(8).collect::<String>(),
             chrono::Utc::now().format("%H%M%S")
         );
         let swarm_run_dir = crate::swarm_worktree::run_dir(&repo_root, &run_id);
@@ -3115,5 +3081,33 @@ pub fn memory_settings_from_config(
         auto_index_max_files: m.auto_index_max_files,
         auto_index_max_chunks: m.auto_index_max_chunks,
         subagent_banks: m.subagent_banks,
+    }
+}
+
+#[cfg(test)]
+mod permission_detail_tests {
+    use super::{format_permission_detail, format_shell_risk_detail};
+    use serde_json::json;
+
+    #[test]
+    fn single_command_is_plain_string() {
+        let d = format_permission_detail(&json!({"command": "ls -la"}));
+        assert_eq!(d, "ls -la");
+    }
+
+    #[test]
+    fn object_keys_are_labeled_not_compact_json() {
+        let d = format_permission_detail(&json!({"path": "src/main.rs", "offset": 10}));
+        assert!(d.contains("path: src/main.rs"), "{d}");
+        assert!(d.contains("offset: 10"), "{d}");
+        assert!(!d.starts_with('{'), "must not be compact JSON: {d}");
+    }
+
+    #[test]
+    fn shell_risk_has_command_and_risk_sections() {
+        let d = format_shell_risk_detail("rm -rf /tmp/x", "destructive delete");
+        assert!(d.contains("Command:"), "{d}");
+        assert!(d.contains("rm -rf /tmp/x"), "{d}");
+        assert!(d.contains("Risk: destructive delete"), "{d}");
     }
 }

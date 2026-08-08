@@ -644,32 +644,32 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Cooperative cancel covers stream/tools via select!. This is the
             // hard backstop for spawn_blocking shells / wedged HTTP that never
             // yield: abort the join handle and restore rt.agent/rt.session.
-            if rt.agent_busy {
-                if let Some(since) = cancel_requested_at {
-                    let force = since.elapsed() >= CANCEL_FORCE_AFTER || app.pending_cancel; // second [stop] while cancelling
-                    if force {
-                        app.pending_cancel = false;
-                        force_stop_turn(
-                            &mut app,
-                            &mut rt.agent,
-                            &mut rt.session,
-                            &mut rt.agent_busy,
-                            &mut rt.cancel_flag,
-                            &mut cancel_requested_at,
-                            &mut rt.turn_join,
-                            &mut rt.session_backup,
-                            &mut rt.pending_question_queue,
-                            &mut rt.pending_perm_queue,
-                            &mut rt.done_rx,
-                            &config,
-                            &project_dir,
-                            &provider,
-                            &model,
-                            rt.event_tx.clone(),
-                            Arc::clone(&rt.perm_prompter),
-                            Arc::clone(&rt.question_prompter),
-                        );
-                    }
+            if rt.agent_busy
+                && let Some(since) = cancel_requested_at
+            {
+                let force = since.elapsed() >= CANCEL_FORCE_AFTER || app.pending_cancel; // second [stop] while cancelling
+                if force {
+                    app.pending_cancel = false;
+                    force_stop_turn(
+                        &mut app,
+                        &mut rt.agent,
+                        &mut rt.session,
+                        &mut rt.agent_busy,
+                        &mut rt.cancel_flag,
+                        &mut cancel_requested_at,
+                        &mut rt.turn_join,
+                        &mut rt.session_backup,
+                        &mut rt.pending_question_queue,
+                        &mut rt.pending_perm_queue,
+                        &mut rt.done_rx,
+                        &config,
+                        &project_dir,
+                        &provider,
+                        &model,
+                        rt.event_tx.clone(),
+                        Arc::clone(&rt.perm_prompter),
+                        Arc::clone(&rt.question_prompter),
+                    );
                 }
             }
 
@@ -1002,10 +1002,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Drain scheduled /loop prompts when idle (no pending manual submit).
-            if !rt.agent_busy && app.pending_prompt.is_none() {
-                if let Some(next) = app.pending_auto_prompts.pop_front() {
-                    app.pending_prompt = Some(next);
-                }
+            if !rt.agent_busy
+                && app.pending_prompt.is_none()
+                && let Some(next) = app.pending_auto_prompts.pop_front()
+            {
+                app.pending_prompt = Some(next);
             }
 
             // ── Start turn if needed ──────────────────────────────────
@@ -1334,7 +1335,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         &mut app,
                         key.code,
                         &mut rt.pending_question_queue,
-                        &mut rt.pending_perm_queue,
+                        &rt.pending_perm_queue,
                     );
                     if handled {
                         app.mark_dirty();
@@ -1668,10 +1669,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 fn print_session_summary(summary: &str) {
     #[cfg(unix)]
     {
-        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty") {
-            if writeln!(tty, "{summary}").is_ok() && tty.flush().is_ok() {
-                return;
-            }
+        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty")
+            && writeln!(tty, "{summary}").is_ok()
+            && tty.flush().is_ok()
+        {
+            return;
         }
     }
     let mut out = io::stdout();
@@ -1824,6 +1826,7 @@ fn force_stop_turn(
     app.mark_dirty();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rebuild_agent_after_force_stop(
     agent: &mut Agent,
     session: &mut Session,
@@ -2188,6 +2191,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn cycle_agent(
     app: &mut TuiApp,
     agent: &mut Agent,
@@ -2289,28 +2293,28 @@ fn handle_question_key(
                 return true;
             }
             finish_cancel(app, pending_question_queue, pending_perm_queue);
-            return true;
+            true
         }
         KeyCode::Up | KeyCode::Char('k') if !state.free_text_focus => {
             state.move_cursor(-1);
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Down | KeyCode::Char('j') if !state.free_text_focus => {
             state.move_cursor(1);
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         // Multi-question navigate (Grok-style ←/→ between questions)
         KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('[') if !state.free_text_focus => {
             let _ = state.go_prev_question();
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Right | KeyCode::Char('l') | KeyCode::Char(']') if !state.free_text_focus => {
             let _ = state.go_next_question();
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         // Copy full questionnaire to clipboard
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('c') | KeyCode::Char('C')
@@ -2329,7 +2333,7 @@ fn handle_question_key(
                 );
             }
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Char(' ') if !state.free_text_focus => {
             if state.current().map(|q| q.multi_select).unwrap_or(false) {
@@ -2338,7 +2342,7 @@ fn handle_question_key(
                 state.free_text_focus = true;
             }
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Char('o') | KeyCode::Char('O') if !state.free_text_focus => {
             // Jump to Other…
@@ -2346,7 +2350,7 @@ fn handle_question_key(
             state.cursor = other;
             state.free_text_focus = true;
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Enter => {
             if let Some(answers) = state.confirm_current() {
@@ -2355,17 +2359,17 @@ fn handle_question_key(
                 // Still on this question (e.g. empty Other → focus free text)
                 app.dialogs.push(DialogKind::Question(state));
             }
-            return true;
+            true
         }
         KeyCode::Backspace if state.free_text_focus => {
             state.free_text.pop();
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Char(c) if state.free_text_focus && !c.is_control() => {
             state.free_text.push(c);
             app.dialogs.push(DialogKind::Question(state));
-            return true;
+            true
         }
         KeyCode::Char(c) if !state.free_text_focus && !c.is_control() => {
             // Digit shortcut 1..n for single-select
@@ -2388,7 +2392,7 @@ fn handle_question_key(
                 }
             }
             app.dialogs.push(DialogKind::Question(state));
-            return false;
+            false
         }
         _ => {
             app.dialogs.push(DialogKind::Question(state));
@@ -3477,7 +3481,7 @@ fn context_report(
     for (role, n) in by_role {
         lines.push(format!("    {role}: {n}"));
     }
-    tool_sizes.sort_by(|a, b| b.0.cmp(&a.0));
+    tool_sizes.sort_by_key(|e| std::cmp::Reverse(e.0));
     if !tool_sizes.is_empty() {
         lines.push("  largest tool results:".into());
         for (chars, label) in tool_sizes.into_iter().take(8) {

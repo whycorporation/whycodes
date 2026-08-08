@@ -42,7 +42,7 @@ impl ToolProfile {
     pub fn includes(self, name: &str) -> bool {
         match self {
             Self::Full => true,
-            Self::Core => CORE_TOOL_NAMES.iter().any(|n| *n == name),
+            Self::Core => CORE_TOOL_NAMES.contains(&name),
         }
     }
 }

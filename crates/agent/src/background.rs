@@ -444,7 +444,7 @@ fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
             let excess = g.output.len() - MAX_JOB_OUTPUT_BYTES;
             g.output.drain(..excess);
             if !g.output.starts_with('…') {
-                g.output.insert_str(0, "…");
+                g.output.insert(0, '…');
             }
         }
     }

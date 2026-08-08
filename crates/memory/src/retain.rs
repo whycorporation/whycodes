@@ -14,10 +14,10 @@ pub fn extract_heuristic(user_text: &str, assistant_text: Option<&str>) -> Vec<S
         }
     }
     // Whole-message patterns (not line-based)
-    if let Some(fact) = message_to_fact(user_text) {
-        if !out.iter().any(|f| f.eq_ignore_ascii_case(&fact)) {
-            out.push(fact);
-        }
+    if let Some(fact) = message_to_fact(user_text)
+        && !out.iter().any(|f| f.eq_ignore_ascii_case(&fact))
+    {
+        out.push(fact);
     }
     out
 }

@@ -206,7 +206,7 @@ fn table_border_line(widths: &[usize], kind: BorderKind, style: Style) -> Line<'
         if i > 0 {
             s.push(m);
         }
-        s.extend(std::iter::repeat(h).take(w + 2));
+        s.extend(std::iter::repeat_n(h, w + 2));
     }
     s.push(r);
     Line::from(Span::styled(s, style))

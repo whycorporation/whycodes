@@ -596,6 +596,7 @@ fn cursor_row_col(
 
 /// Split one wrapped row into styled spans so slash-command tokens and
 /// collapsed paste chips stay highlighted even when a wrap cuts mid-token.
+#[allow(clippy::too_many_arguments)]
 fn styled_input_row(
     buf: &str,
     start: usize,

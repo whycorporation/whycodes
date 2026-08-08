@@ -58,14 +58,14 @@ fn ensure_file(path: &Path, url: &str, pinned: Option<&str>) -> anyhow::Result<(
     }
     download(url, path)?;
     let digest = sha256_file(path)?;
-    if let Some(expected) = pinned {
-        if !digest.eq_ignore_ascii_case(expected) {
-            let _ = std::fs::remove_file(path);
-            anyhow::bail!(
-                "checksum mismatch for {}: got {digest}, expected {expected}",
-                path.display()
-            );
-        }
+    if let Some(expected) = pinned
+        && !digest.eq_ignore_ascii_case(expected)
+    {
+        let _ = std::fs::remove_file(path);
+        anyhow::bail!(
+            "checksum mismatch for {}: got {digest}, expected {expected}",
+            path.display()
+        );
     }
     write_sidecar(&sidecar, &digest)?;
     Ok(())

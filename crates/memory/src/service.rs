@@ -303,80 +303,78 @@ impl MemoryService {
             parts.push(block);
         }
 
-        if self.settings.auto_inject {
-            if let Some(q) = query.map(str::trim).filter(|s| !s.is_empty()) {
-                let hits = self.search(
-                    q,
-                    self.settings.recall_top_k,
-                    self.settings.recall_min_score,
-                )?;
-                if !hits.is_empty() {
-                    let mut lines = Vec::new();
-                    let mut used = 0usize;
-                    let header = "# Recalled Memories (from prior sessions; verify if stale)\n";
-                    used += header.len();
-                    let mut ids = Vec::new();
-                    for hit in &hits {
-                        let line = format!(
-                            "- [{:.2}] {} (id:{})\n",
-                            hit.score,
-                            hit.entry.text.trim(),
-                            &hit.entry.id[..8.min(hit.entry.id.len())]
-                        );
-                        if used + line.len() > char_budget && !lines.is_empty() {
-                            break;
-                        }
-                        used += line.len();
-                        lines.push(line);
-                        ids.push(hit.entry.id.clone());
+        if self.settings.auto_inject
+            && let Some(q) = query.map(str::trim).filter(|s| !s.is_empty())
+        {
+            let hits = self.search(
+                q,
+                self.settings.recall_top_k,
+                self.settings.recall_min_score,
+            )?;
+            if !hits.is_empty() {
+                let mut lines = Vec::new();
+                let mut used = 0usize;
+                let header = "# Recalled Memories (from prior sessions; verify if stale)\n";
+                used += header.len();
+                let mut ids = Vec::new();
+                for hit in &hits {
+                    let line = format!(
+                        "- [{:.2}] {} (id:{})\n",
+                        hit.score,
+                        hit.entry.text.trim(),
+                        &hit.entry.id[..8.min(hit.entry.id.len())]
+                    );
+                    if used + line.len() > char_budget && !lines.is_empty() {
+                        break;
                     }
-                    if !lines.is_empty() {
-                        parts.push(format!("{header}{}", lines.join("")));
-                        if let Ok(db) = self.open_db() {
-                            for id in ids {
-                                let _ = db.touch_memory_recall(&id);
-                            }
+                    used += line.len();
+                    lines.push(line);
+                    ids.push(hit.entry.id.clone());
+                }
+                if !lines.is_empty() {
+                    parts.push(format!("{header}{}", lines.join("")));
+                    if let Ok(db) = self.open_db() {
+                        for id in ids {
+                            let _ = db.touch_memory_recall(&id);
                         }
                     }
                 }
+            }
 
-                // Code RAG
-                if self.settings.code_inject {
-                    if let Ok(code_hits) =
-                        self.search_code(q, self.settings.code_top_k, self.settings.code_min_score)
-                    {
-                        if !code_hits.is_empty() {
-                            let mut lines = Vec::new();
-                            let mut used = 0usize;
-                            let header = "# Code context (indexed; verify in repo)\n";
-                            used += header.len();
-                            for hit in &code_hits {
-                                let snippet = hit
-                                    .entry
-                                    .text
-                                    .lines()
-                                    .take(8)
-                                    .collect::<Vec<_>>()
-                                    .join("\n");
-                                let line = format!(
-                                    "### {} ({}-{}) [{:.2}]\n```\n{}\n```\n",
-                                    hit.entry.path,
-                                    hit.entry.start_line,
-                                    hit.entry.end_line,
-                                    hit.score,
-                                    snippet
-                                );
-                                if used + line.len() > char_budget && !lines.is_empty() {
-                                    break;
-                                }
-                                used += line.len();
-                                lines.push(line);
-                            }
-                            if !lines.is_empty() {
-                                parts.push(format!("{header}{}", lines.join("\n")));
-                            }
-                        }
+            // Code RAG
+            if self.settings.code_inject
+                && let Ok(code_hits) =
+                    self.search_code(q, self.settings.code_top_k, self.settings.code_min_score)
+                && !code_hits.is_empty()
+            {
+                let mut lines = Vec::new();
+                let mut used = 0usize;
+                let header = "# Code context (indexed; verify in repo)\n";
+                used += header.len();
+                for hit in &code_hits {
+                    let snippet = hit
+                        .entry
+                        .text
+                        .lines()
+                        .take(8)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let line = format!(
+                        "### {} ({}-{}) [{:.2}]\n```\n{}\n```\n",
+                        hit.entry.path,
+                        hit.entry.start_line,
+                        hit.entry.end_line,
+                        hit.score,
+                        snippet
+                    );
+                    if used + line.len() > char_budget && !lines.is_empty() {
+                        break;
                     }
+                    used += line.len();
+                    lines.push(line);
+                }
+                if !lines.is_empty() {
+                    parts.push(format!("{header}{}", lines.join("\n")));
                 }
             }
         }
@@ -399,10 +397,10 @@ fn resolve_id(db: &Database, bank_key: &str, id_or_prefix: &str) -> anyhow::Resu
     if id_or_prefix.is_empty() {
         return Ok(None);
     }
-    if let Some(row) = db.get_memory(id_or_prefix)? {
-        if row.project_key == bank_key {
-            return Ok(Some(row.id));
-        }
+    if let Some(row) = db.get_memory(id_or_prefix)?
+        && row.project_key == bank_key
+    {
+        return Ok(Some(row.id));
     }
     let rows = db.list_memories(bank_key, 10_000)?;
     let matches: Vec<_> = rows
@@ -547,10 +545,14 @@ mod tests {
         let data = dir.path().join("data");
         let project = dir.path().join("proj");
         std::fs::create_dir_all(&project).unwrap();
-        let mut main = MemorySettings::default();
-        main.agent_bank = None;
-        let mut explore = MemorySettings::default();
-        explore.agent_bank = Some("explore".into());
+        let main = MemorySettings {
+            agent_bank: None,
+            ..Default::default()
+        };
+        let explore = MemorySettings {
+            agent_bank: Some("explore".into()),
+            ..Default::default()
+        };
         let s_main = MemoryService::open(&project, &data, main).unwrap();
         let s_ex = MemoryService::open(&project, &data, explore).unwrap();
         s_main

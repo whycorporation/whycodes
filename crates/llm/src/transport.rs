@@ -104,12 +104,10 @@ pub fn user_facing_error(err: &whycode_core::Error) -> String {
     let c: ClassifiedError = classify(err);
     // Prefer clean copy; append short kind tag for power users.
     let base = c.user_message();
-    if c.kind.as_str() == "unknown" {
-        base
-    } else if base.contains(c.kind.as_str()) {
+    if c.kind.as_str() == "unknown" || base.contains(c.kind.as_str()) {
         base
     } else {
-        format!("{base}")
+        base.to_string()
     }
 }
 

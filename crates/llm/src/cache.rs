@@ -108,15 +108,15 @@ pub fn apply_anthropic_cache_policy(body: &mut Value, cfg: &CacheConfig) {
     let hint = ephemeral();
 
     // 1) Last tool
-    if cfg.tools && budget > 0 {
-        if let Some(tools) = body.get_mut("tools").and_then(|t| t.as_array_mut())
-            && let Some(last) = tools.last_mut()
-            && let Some(obj) = last.as_object_mut()
-            && !obj.contains_key("cache_control")
-        {
-            obj.insert("cache_control".into(), hint.clone());
-            budget = budget.saturating_sub(1);
-        }
+    if cfg.tools
+        && budget > 0
+        && let Some(tools) = body.get_mut("tools").and_then(|t| t.as_array_mut())
+        && let Some(last) = tools.last_mut()
+        && let Some(obj) = last.as_object_mut()
+        && !obj.contains_key("cache_control")
+    {
+        obj.insert("cache_control".into(), hint.clone());
+        budget = budget.saturating_sub(1);
     }
 
     // 2) System — promote string → text block array, mark last part

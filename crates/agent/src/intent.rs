@@ -431,7 +431,7 @@ fn segment_looks_read_only(seg: &str) -> bool {
         .find(|t| !t.contains('=') || t.starts_with('-'))
         .unwrap_or("");
     let head = token.rsplit('/').next().unwrap_or(token);
-    READ_ONLY_SHELL_HEADS.iter().any(|h| head == *h)
+    READ_ONLY_SHELL_HEADS.contains(&head)
 }
 
 const READ_ONLY_SHELL_HEADS: &[&str] = &[
@@ -553,12 +553,12 @@ pub fn authorize_tool(
     }
 
     // Read-only shell never needs intent confirm.
-    if matches!(tool_name, "bash" | "shell") {
-        if let Some(cmd) = command {
-            if is_read_only_shell(cmd) && shell_head_readonly_ok(cmd) {
-                return ToolAuthDecision::Allow;
-            }
-        }
+    if matches!(tool_name, "bash" | "shell")
+        && let Some(cmd) = command
+        && is_read_only_shell(cmd)
+        && shell_head_readonly_ok(cmd)
+    {
+        return ToolAuthDecision::Allow;
     }
 
     let restricted_agent = matches!(agent_name, "ask" | "plan" | "explore" | "scout");
