@@ -70,6 +70,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         row("Ctrl+N", "New session"),
         row("Ctrl+Tab", "Switch session (recent)"),
         row("Ctrl+PgUp/PgDn", "Cycle sessions"),
+        row("Ctrl+W", "Close live session (in /sessions)"),
         Line::from(""),
         section("Scrollback"),
         row("j/k · ↑/↓", "Select message"),

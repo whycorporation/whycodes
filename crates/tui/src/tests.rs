@@ -1055,11 +1055,13 @@ fn session_list_selection_identifies_entry_for_resume() {
             id: "aaa-111".into(),
             title: "First".into(),
             messages: 2,
+            live: None,
         },
         SessionEntry {
             id: "bbb-222".into(),
             title: "Second".into(),
             messages: 5,
+            live: None,
         },
     ];
     app.session_list.selected = 1;

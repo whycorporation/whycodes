@@ -68,16 +68,18 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 .iter()
                 .map(|s| {
                     let short: String = s.id.chars().take(8).collect();
-                    SelectItem::with_detail(
-                        s.title.clone(),
-                        format!("{short} · {} messages", s.messages),
-                    )
+                    let label = if s.live.is_some() {
+                        format!("▸ {}", s.title)
+                    } else {
+                        s.title.clone()
+                    };
+                    SelectItem::with_detail(label, format!("{short} · {} messages", s.messages))
                 })
                 .collect();
             let selected = app.session_list.selected;
             let info = render_select(
                 frame,
-                " Sessions  ·  Enter to resume ",
+                " Sessions  ·  Enter resume/switch  ·  Ctrl+W close live ",
                 &items,
                 selected,
                 "No sessions yet — they are recorded as you use whycode.",

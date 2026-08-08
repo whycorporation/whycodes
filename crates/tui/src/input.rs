@@ -1202,6 +1202,26 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             }
         }
         _ => {
+            // Ctrl+W on the session picker: close the selected live session.
+            if matches!(active, DialogKind::SessionList)
+                && key.code == KeyCode::Char('w')
+                && key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL)
+            {
+                if let Some(entry) = app.session_list.sessions.get(app.session_list.selected)
+                    && let Some(idx) = entry.live
+                {
+                    app.session_list.pending_close = Some(idx);
+                    dismiss_dialog(app);
+                } else {
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        "Only live sessions close here — persisted ones stay in history",
+                    );
+                }
+                return true;
+            }
             // PageUp / PageDown jump by viewport size (list pickers).
             let page = app.dialog_list_visible.max(1) as isize;
             match key.code {
@@ -1278,7 +1298,16 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
         }
         DialogKind::SessionList => {
             if let Some(entry) = app.session_list.sessions.get(app.session_list.selected) {
-                app.pending_session_id = Some(entry.id.clone());
+                match entry.live {
+                    // Live parked runtime → switch; live active → no-op close.
+                    Some(idx) => {
+                        app.pending_session_switch =
+                            Some(if idx == usize::MAX { usize::MAX } else { idx });
+                    }
+                    None => {
+                        app.pending_session_id = Some(entry.id.clone());
+                    }
+                }
             }
         }
         DialogKind::Sessions => {

@@ -542,6 +542,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 app.sessions_cursor = cursor.min(app.sessions_rows.len().saturating_sub(1));
                 app.mark_dirty();
             }
+            // Session picker open: keep the live section at the top fresh.
+            if matches!(app.dialogs.active(), Some(DialogKind::SessionList)) {
+                refresh_picker_live_section(&mut app, &rt, &runtimes);
+            }
 
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
@@ -848,6 +852,78 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Apply rt.session picker / /resume selection ──────────────
+            // ── Picker close selection (Ctrl+W on a live row) ────────
+            if let Some(close_idx) = app.session_list.pending_close.take() {
+                if close_idx == usize::MAX {
+                    // Closing the ACTIVE session: only when idle and others
+                    // exist — park nothing, switch to the most recent parked.
+                    if rt.agent_busy {
+                        app.toasts.push(
+                            crate::toast::ToastKind::Warning,
+                            "Turn in flight — Esc first, then close",
+                        );
+                    } else if runtimes.is_empty() {
+                        app.toasts.push(
+                            crate::toast::ToastKind::Info,
+                            "Last live session stays open",
+                        );
+                    } else {
+                        rt.persist("close");
+                        let idx = mru.pop().unwrap_or(runtimes.len() - 1);
+                        let idx = idx.min(runtimes.len() - 1);
+                        let mut closed = std::mem::replace(&mut rt, runtimes.remove(idx));
+                        // The closed runtime's turn guard is idle; drop it.
+                        closed.turn_join.take();
+                        mru.retain(|&i| i != idx);
+                        for i in mru.iter_mut() {
+                            if *i > idx {
+                                *i -= 1;
+                            }
+                        }
+                        rt.unread = false;
+                        app.restore_view(&rt.view);
+                        app.focus = FocusPane::Prompt;
+                        app.toasts.push(
+                            crate::toast::ToastKind::Info,
+                            format!(
+                                "Closed · now {} ({} live)",
+                                rt.session.title,
+                                runtimes.len() + 1
+                            ),
+                        );
+                    }
+                } else if close_idx < runtimes.len() {
+                    // Closing a PARKED session: deny waiters, abort its turn,
+                    // persist, drop the runtime.
+                    let mut bg = runtimes.remove(close_idx);
+                    while let Some(req) = bg.pending_perm_queue.pop_front() {
+                        let _ = req.reply.send(false);
+                    }
+                    while let Some(req) = bg.pending_question_queue.pop_front() {
+                        let _ = req.reply.send(Err(QuestionError::Cancelled));
+                    }
+                    if let Some(h) = bg.turn_join.take() {
+                        h.abort();
+                    }
+                    bg.agent.background_registry().kill_all();
+                    bg.persist("close");
+                    mru.retain(|&i| i != close_idx);
+                    for i in mru.iter_mut() {
+                        if *i > close_idx {
+                            *i -= 1;
+                        }
+                    }
+                    app.toasts.push(
+                        crate::toast::ToastKind::Info,
+                        format!(
+                            "Closed · {} ({} live)",
+                            bg.session.title,
+                            runtimes.len() + 1
+                        ),
+                    );
+                }
+            }
+
             // ── Dashboard switch selection ──────────────────────────
             if let Some(target) = app.pending_session_switch.take()
                 && target != usize::MAX
@@ -2283,6 +2359,59 @@ fn refresh_sessions_rows(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Sess
     app.sessions_rows = rows;
 }
 
+/// Rewrite the picker's live section in place: live rows (active + parked
+/// runtimes) sit at the top, persisted-only rows below. Persisted rows keep
+/// their relative order; the cursor stays on the same entry when possible.
+fn refresh_picker_live_section(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+    let selected_id = app
+        .session_list
+        .sessions
+        .get(app.session_list.selected)
+        .map(|e| e.id.clone());
+
+    let mut live_rows: Vec<crate::app::SessionEntry> = Vec::new();
+    live_rows.push(crate::app::SessionEntry {
+        id: rt.session.id.clone(),
+        title: format!("{} (current)", rt.session.title),
+        messages: rt.session.messages.len(),
+        live: Some(usize::MAX),
+    });
+    for (i, bg) in runtimes.iter().enumerate() {
+        let st = bg.state();
+        live_rows.push(crate::app::SessionEntry {
+            id: bg.session.id.clone(),
+            title: format!("{} {} {}", st.glyph(), bg.session.title, st.label()),
+            messages: bg.session.messages.len(),
+            live: Some(i),
+        });
+    }
+    let live_ids: std::collections::HashSet<&str> =
+        live_rows.iter().map(|e| e.id.as_str()).collect();
+    let mut persisted: Vec<crate::app::SessionEntry> = app
+        .session_list
+        .sessions
+        .iter()
+        .filter(|e| e.live.is_none() && !live_ids.contains(e.id.as_str()))
+        .cloned()
+        .collect();
+    // First open: sessions list is empty until the slash command fills it —
+    // merge DB rows then.
+    if persisted.is_empty() && app.session_list.sessions.iter().all(|e| e.live.is_some()) {
+        persisted = load_session_entries()
+            .into_iter()
+            .filter(|e| !live_ids.contains(e.id.as_str()))
+            .collect();
+    }
+    let mut merged = live_rows;
+    merged.extend(persisted);
+    app.session_list.sessions = merged;
+    if let Some(id) = selected_id
+        && let Some(pos) = app.session_list.sessions.iter().position(|e| e.id == id)
+    {
+        app.session_list.selected = pos;
+    }
+}
+
 /// Swap the active runtime with `runtimes[idx]`, preserving both sessions'
 /// view state. The outgoing active session's `TuiApp` view is saved into
 /// its snapshot; the incoming one's snapshot is restored into `app`.
@@ -3703,6 +3832,7 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
             messages,
             id: s.id,
             title,
+            live: None,
         });
     }
     out

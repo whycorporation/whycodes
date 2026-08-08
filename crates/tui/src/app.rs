@@ -1137,6 +1137,9 @@ pub struct SessionEntry {
     pub id: String,
     pub title: String,
     pub messages: usize,
+    /// Live (in-memory) session: parked runtime index, or `Some(usize::MAX)`
+    /// for the currently active session. `None` = persisted-only row.
+    pub live: Option<usize>,
 }
 
 /// Session list dialog state.
@@ -1144,6 +1147,10 @@ pub struct SessionEntry {
 pub struct SessionListState {
     pub sessions: Vec<SessionEntry>,
     pub selected: usize,
+    /// Row chosen for closing (Ctrl+W): parked runtime index, or
+    /// `Some(usize::MAX)` for the active session. Persisted-only rows are
+    /// never closed from the picker (use `/sessions` management instead).
+    pub pending_close: Option<usize>,
 }
 
 /// One dashboard row: a live (in-memory) session, active or parked.
