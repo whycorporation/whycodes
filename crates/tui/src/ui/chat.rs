@@ -124,7 +124,10 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     for i in 0..4 {
         lines.push(Line::from(vec![
             Span::raw(pad.clone()),
-            Span::styled(HOME_LOGO_WHY[i].to_string(), Style::default().fg(palette.dim)),
+            Span::styled(
+                HOME_LOGO_WHY[i].to_string(),
+                Style::default().fg(palette.dim),
+            ),
             Span::raw(" "),
             Span::styled(
                 HOME_LOGO_CODE[i].to_string(),

@@ -8,6 +8,10 @@ pub struct Database {
     conn: Connection,
 }
 
+/// Message tuple accepted by [`Database::replace_messages`]:
+/// (msg id, role, content json, tool_call_id, name).
+pub type MessageInsert = (String, String, String, Option<String>, Option<String>);
+
 /// How long to wait for another process to release a database lock before
 /// giving up. Without this SQLite returns SQLITE_BUSY immediately, so two
 /// whycode processes touching the same database can fail spuriously.
@@ -209,13 +213,7 @@ impl Database {
     pub fn replace_messages(
         &self,
         session_id: &str,
-        messages: &[(
-            String,         // msg id
-            String,         // role
-            String,         // content json
-            Option<String>, // tool_call_id
-            Option<String>, // name
-        )],
+        messages: &[MessageInsert],
     ) -> anyhow::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
@@ -390,6 +388,7 @@ impl Database {
 
     // ── Code chunks (codebase RAG) ───────────────────────────────────────
 
+    #[allow(clippy::too_many_arguments)]
     pub fn insert_code_chunk(
         &self,
         id: &str,

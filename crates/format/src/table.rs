@@ -198,7 +198,7 @@ fn format_border(widths: &[usize], kind: BorderKind) -> String {
         if i > 0 {
             s.push(m);
         }
-        s.extend(std::iter::repeat(h).take(w + 2));
+        s.extend(std::iter::repeat_n(h, w + 2));
     }
     s.push(r);
     s

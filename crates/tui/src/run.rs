@@ -38,6 +38,7 @@ use crate::app::{
 use crate::config::TuiAppConfig;
 use crate::input;
 use crate::keymap::KeymapContext;
+use crate::session_runtime::SessionRuntime;
 use crate::ui::render;
 
 /// After Esc / [stop], wait this long for cooperative cancel, then abort the
@@ -163,7 +164,7 @@ fn restore_terminal_on(out: &mut impl Write) {
     );
 }
 
-enum TurnOutcome {
+pub enum TurnOutcome {
     Ok {
         text: String,
         agent: Agent,
@@ -303,7 +304,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     app.session_title = session.title.clone();
     // Code RAG: index once if empty (skips when chunks already exist).
     maybe_session_auto_index(&opts.project_dir, &config, &mut app);
-    let mut history = SessionHistory::new();
+    let history = SessionHistory::new();
 
     // CLI `--continue` / `--resume`: hydrate before first paint when possible.
     if let Some(ref want) = opts.resume_session_id {
@@ -457,8 +458,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         Some(serde_json::json!({ "term_w": tw, "term_h": th })),
     );
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<TurnEvent>();
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
+    let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();
+    let (done_tx, done_rx) = mpsc::unbounded_channel::<TurnOutcome>();
     // Async session titles (small-model refine) — never blocks agent_busy.
     // Payload: (session_id, title) so a late refine cannot touch another session.
     let (title_tx, mut title_rx) = mpsc::unbounded_channel::<(String, String)>();
@@ -476,24 +477,23 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // Background jobs / schedule enqueue use the same long-lived event channel.
     agent.wire_event_sink(event_tx.clone());
 
-    let mut agent_busy = false;
-    let mut cancel_flag: Option<CancelFlag> = None;
+    let mut rt = SessionRuntime::new(
+        agent,
+        session,
+        history,
+        event_tx,
+        event_rx,
+        done_tx,
+        done_rx,
+        perm_prompter,
+        question_prompter,
+    );
+
     // When the user first hit Esc / [stop]. After CANCEL_FORCE_AFTER we
     // abort the join handle so "Cancelling…" can never stick forever.
     let mut cancel_requested_at: Option<Instant> = None;
-    // Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
-    let mut turn_join: Option<tokio::task::JoinHandle<()>> = None;
-    // Session clone taken just before the turn task starts (after user msg).
-    // Restored if we have to abort the task (which would otherwise drop agent/session).
-    let mut session_backup: Option<Session> = None;
     let mut spinner_frame: usize = 0;
-    // Permission queue: multiple tool asks can complete without serializing
-    // the whole parallel tool batch on a single oneshot slot.
-    let mut pending_question_queue: std::collections::VecDeque<QuestionRequest> =
-        std::collections::VecDeque::new();
-    let mut pending_perm_queue: std::collections::VecDeque<whycode_agent::PermissionRequest> =
-        std::collections::VecDeque::new();
-    // Title may arrive before TurnOutcome restores the real session; hold it.
+    // Title may arrive before TurnOutcome restores the real rt.session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
 
     // Keep home empty so the brand logo shows (no system spam).
@@ -524,7 +524,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Animation paths that do not arrive as terminal events still need
             // periodic paints (spinner, toast stack). Idle with a clean flag
             // skips the draw entirely → 0 idle redraws/s.
-            let animate = agent_busy || !app.toasts.is_empty();
+            let animate = rt.agent_busy || !app.toasts.is_empty();
             if app.needs_redraw || animate || first_frame {
                 let completed = match terminal.draw(|f| render::render(f, &mut app)) {
                     Ok(c) => c,
@@ -569,13 +569,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 break;
             }
 
-            // ── Stream events from agent (coalesce text/thinking deltas) ──
-            if drain_turn_events(&mut app, &mut event_rx) {
+            // ── Stream events from rt.agent (coalesce text/thinking deltas) ──
+            if drain_turn_events(&mut app, &mut rt.event_rx) {
                 app.mark_dirty();
             }
 
             // Spinner while generating (generic status only)
-            if agent_busy
+            if rt.agent_busy
                 && !matches!(
                     app.current_agent_state,
                     AgentState::WaitingForPermission | AgentState::WaitingForQuestion
@@ -602,12 +602,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Permission requests (queued; show next when idle) ─────
             while let Ok(req) = perm_rx.try_recv() {
-                pending_perm_queue.push_back(req);
+                rt.pending_perm_queue.push_back(req);
             }
             if !matches!(
                 app.current_agent_state,
                 AgentState::WaitingForPermission | AgentState::WaitingForQuestion
-            ) && let Some(front) = pending_perm_queue.front()
+            ) && let Some(front) = rt.pending_perm_queue.front()
             {
                 app.ask_permission(front.tool_name.clone(), front.detail.clone());
                 app.mark_dirty();
@@ -615,27 +615,27 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Question requests (queued; one questionnaire at a time) ─
             while let Ok(req) = question_rx.try_recv() {
-                pending_question_queue.push_back(req);
+                rt.pending_question_queue.push_back(req);
             }
             if !matches!(
                 app.current_agent_state,
                 AgentState::WaitingForPermission | AgentState::WaitingForQuestion
-            ) && let Some(front) = pending_question_queue.front()
+            ) && let Some(front) = rt.pending_question_queue.front()
             {
                 app.ask_question(front.questions.clone());
                 app.mark_dirty();
             }
 
-            // ── Async title refine (does not hold agent_busy) ─────────
+            // ── Async title refine (does not hold rt.agent_busy) ─────────
             while let Ok((sid, title)) = title_rx.try_recv() {
-                if session.id == sid {
-                    if session.apply_generated_title(&title) {
-                        app.session_title = session.title.clone();
-                        persist_session_best_effort(&session, "title_async");
+                if rt.session.id == sid {
+                    if rt.session.apply_generated_title(&title) {
+                        app.session_title = rt.session.title.clone();
+                        persist_session_best_effort(&rt.session, "title_async");
                         app.mark_dirty();
                     }
                 } else {
-                    // Turn still restoring session, or user switched sessions.
+                    // Turn still restoring rt.session, or user switched sessions.
                     pending_async_title = Some((sid, title));
                 }
             }
@@ -643,43 +643,43 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // ── Force-stop if cancel is ignored too long ──────────────
             // Cooperative cancel covers stream/tools via select!. This is the
             // hard backstop for spawn_blocking shells / wedged HTTP that never
-            // yield: abort the join handle and restore agent/session.
-            if agent_busy {
+            // yield: abort the join handle and restore rt.agent/rt.session.
+            if rt.agent_busy {
                 if let Some(since) = cancel_requested_at {
                     let force = since.elapsed() >= CANCEL_FORCE_AFTER || app.pending_cancel; // second [stop] while cancelling
                     if force {
                         app.pending_cancel = false;
                         force_stop_turn(
                             &mut app,
-                            &mut agent,
-                            &mut session,
-                            &mut agent_busy,
-                            &mut cancel_flag,
+                            &mut rt.agent,
+                            &mut rt.session,
+                            &mut rt.agent_busy,
+                            &mut rt.cancel_flag,
                             &mut cancel_requested_at,
-                            &mut turn_join,
-                            &mut session_backup,
-                            &mut pending_question_queue,
-                            &mut pending_perm_queue,
-                            &mut done_rx,
+                            &mut rt.turn_join,
+                            &mut rt.session_backup,
+                            &mut rt.pending_question_queue,
+                            &mut rt.pending_perm_queue,
+                            &mut rt.done_rx,
                             &config,
                             &project_dir,
                             &provider,
                             &model,
-                            event_tx.clone(),
-                            Arc::clone(&perm_prompter),
-                            Arc::clone(&question_prompter),
+                            rt.event_tx.clone(),
+                            Arc::clone(&rt.perm_prompter),
+                            Arc::clone(&rt.question_prompter),
                         );
                     }
                 }
             }
 
             // ── Turn finished ─────────────────────────────────────────
-            if let Ok(outcome) = done_rx.try_recv() {
-                agent_busy = false;
-                cancel_flag = None;
+            if let Ok(outcome) = rt.done_rx.try_recv() {
+                rt.agent_busy = false;
+                rt.cancel_flag = None;
                 cancel_requested_at = None;
-                turn_join = None;
-                session_backup = None;
+                rt.turn_join = None;
+                rt.session_backup = None;
                 // One deferred catalog pass if we still lack a live window.
                 // Avoid re-fetching after every turn (would race fast follow-ups).
                 if app.api_context_window.is_none() {
@@ -699,15 +699,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         session: s,
                         work_ms: _,
                     } => {
-                        agent = a;
-                        session = s;
+                        rt.agent = a;
+                        rt.session = s;
                         // Apply a title that raced ahead of this restore.
                         if let Some((sid, title)) = pending_async_title.take()
-                            && session.id == sid
+                            && rt.session.id == sid
                         {
-                            let _ = session.apply_generated_title(&title);
+                            let _ = rt.session.apply_generated_title(&title);
                         }
-                        app.session_title = session.title.clone();
+                        app.session_title = rt.session.title.clone();
                         // Ensure final text is present
                         if !text.is_empty()
                             && let Some(last) = app.messages.last_mut()
@@ -717,30 +717,30 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             last.content = text.clone();
                         }
                         // Auto-retain runs inside Agent::run_turn (heuristic + LLM).
-                        // Surface agent Status events as toasts already via drain path.
+                        // Surface rt.agent Status events as toasts already via drain path.
                         app.finish_open_thinking();
                         app.current_agent_state = AgentState::Idle;
                         // Silent providers leave turn_usage empty — estimate fill
                         // from the transcript so the footer is not stuck at 0.
                         if app.turn_usage.is_none() {
-                            app.sync_context_estimate(&session);
+                            app.sync_context_estimate(&rt.session);
                         }
                         // Agent may have switched branches; keep footer current.
                         app.refresh_git_branch();
                         app.status_message = format_turn_done_status(
                             &app,
-                            agent.info.name.as_str(),
+                            rt.agent.info.name.as_str(),
                             &provider,
                             &model,
                             elapsed_ms,
                             false,
                         );
                         // Persist after every completed turn (success path).
-                        persist_session_best_effort(&session, "ok");
+                        persist_session_best_effort(&rt.session, "ok");
                         // A7: optional idle follow-up suggestion (default off).
                         maybe_spawn_prompt_suggestion(
                             &config,
-                            &session,
+                            &rt.session,
                             &provider,
                             &model,
                             &api_key,
@@ -755,25 +755,25 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         cancelled,
                         work_ms: _,
                     } => {
-                        agent = a;
-                        session = s;
+                        rt.agent = a;
+                        rt.session = s;
                         if let Some((sid, title)) = pending_async_title.take()
-                            && session.id == sid
+                            && rt.session.id == sid
                         {
-                            let _ = session.apply_generated_title(&title);
+                            let _ = rt.session.apply_generated_title(&title);
                         }
-                        app.session_title = session.title.clone();
+                        app.session_title = rt.session.title.clone();
                         app.finish_open_thinking();
                         // Transcript may have partial assistant text; refresh estimate
                         // when no provider usage landed this turn.
                         if app.turn_usage.is_none() {
-                            app.sync_context_estimate(&session);
+                            app.sync_context_estimate(&rt.session);
                         }
                         if cancelled {
                             app.current_agent_state = AgentState::Idle;
                             app.status_message = format_turn_done_status(
                                 &app,
-                                agent.info.name.as_str(),
+                                rt.agent.info.name.as_str(),
                                 &provider,
                                 &model,
                                 elapsed_ms,
@@ -781,7 +781,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             );
                             app.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
                             // Still flush so cancel mid-turn is not lost on crash.
-                            persist_session_best_effort(&session, "cancelled");
+                            persist_session_best_effort(&rt.session, "cancelled");
                         } else {
                             // Clean user-facing copy; full wire body stays in logs.
                             let display = whycode_llm::format_turn_error(
@@ -799,54 +799,54 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 "tui",
                                 "error",
                                 "turn.error",
-                                Some(session.id.as_str()),
+                                Some(rt.session.id.as_str()),
                                 Some(serde_json::json!({
                                     "error": error,
                                     "display": display,
                                     "elapsed_ms": elapsed_ms,
                                 })),
                             );
-                            persist_session_best_effort(&session, "error");
+                            persist_session_best_effort(&rt.session, "error");
                         }
                     }
                 }
             }
 
-            // ── Apply session picker / /resume selection ──────────────
+            // ── Apply rt.session picker / /resume selection ──────────────
             if let Some(id) = app.pending_session_id.take() {
                 // Don't switch mid-turn — re-queue and wait.
-                if agent_busy {
+                if rt.agent_busy {
                     app.pending_session_id = Some(id);
                 } else {
                     match try_load_session(&id) {
                         Ok(Some(loaded)) => {
-                            // Persist the current session first so nothing is lost
+                            // Persist the current rt.session first so nothing is lost
                             // when switching away from an unsaved turn.
-                            if !session.messages.is_empty() {
-                                persist_session_best_effort(&session, "switch");
+                            if !rt.session.messages.is_empty() {
+                                persist_session_best_effort(&rt.session, "switch");
                             }
                             let n = loaded.messages.len();
-                            history = SessionHistory::new();
-                            session = loaded;
-                            session.system_prompt = with_project_memory(
-                                &Agent::with_agents_md(&agent.system_prompt(), &project_dir),
+                            rt.history = SessionHistory::new();
+                            rt.session = loaded;
+                            rt.session.system_prompt = with_project_memory(
+                                &Agent::with_agents_md(&rt.agent.system_prompt(), &project_dir),
                                 &project_dir,
                                 &config,
                                 None,
                             );
                             if config.session.auto_title
-                                && session.maybe_upgrade_title_from_history()
+                                && rt.session.maybe_upgrade_title_from_history()
                             {
-                                persist_session_best_effort(&session, "title_backfill");
+                                persist_session_best_effort(&rt.session, "title_backfill");
                             }
-                            let title = session.title.clone();
-                            app.load_messages_from_session(&session);
+                            let title = rt.session.title.clone();
+                            app.load_messages_from_session(&rt.session);
                             app.toasts.push(
                                 crate::toast::ToastKind::Success,
                                 format!("Resumed · {title} ({n} msgs)"),
                             );
                             app.status_message =
-                                format!("Resumed session {}", short_session_id(&session.id));
+                                format!("Resumed rt.session {}", short_session_id(&rt.session.id));
                         }
                         Ok(None) => {
                             app.toasts.push(
@@ -879,7 +879,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
                 // Drop stale window; re-fetch when idle so we never contend with a turn.
                 app.clear_api_context_window();
-                if agent_busy {
+                if rt.agent_busy {
                     catalog_fetch_pending = true;
                 } else {
                     catalog_fetch_pending = false;
@@ -902,7 +902,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             if app.pending_catalog_refresh {
                 app.pending_catalog_refresh = false;
                 app.clear_api_context_window();
-                if agent_busy {
+                if rt.agent_busy {
                     // Don't contend with the in-flight turn; retry when idle.
                     catalog_fetch_pending = true;
                 } else {
@@ -918,7 +918,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Deferred / idle catalog: never race the first (or any) user turn.
-            if catalog_fetch_pending && !agent_busy && app.pending_prompt.is_none() && !missing_key
+            if catalog_fetch_pending
+                && !rt.agent_busy
+                && app.pending_prompt.is_none()
+                && !missing_key
             {
                 catalog_fetch_pending = false;
                 spawn_model_context_fetch(&config, &provider, &model, &api_key, catalog_tx.clone());
@@ -926,7 +929,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // A7 suggestion results
             while let Ok(suggestion) = suggest_rx.try_recv() {
-                if !suggestion.trim().is_empty() && !agent_busy {
+                if !suggestion.trim().is_empty() && !rt.agent_busy {
                     app.pending_suggestion = Some(suggestion.clone());
                     app.toasts.push(
                         crate::toast::ToastKind::Info,
@@ -964,49 +967,51 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // Mouse `[stop]` on the turn strip (or other UI) → cancel.
             // Second click while already cancelling → immediate force-stop.
-            if agent_busy && app.pending_cancel {
+            if rt.agent_busy && app.pending_cancel {
                 app.pending_cancel = false;
                 if cancel_requested_at.is_some() {
                     force_stop_turn(
                         &mut app,
-                        &mut agent,
-                        &mut session,
-                        &mut agent_busy,
-                        &mut cancel_flag,
+                        &mut rt.agent,
+                        &mut rt.session,
+                        &mut rt.agent_busy,
+                        &mut rt.cancel_flag,
                         &mut cancel_requested_at,
-                        &mut turn_join,
-                        &mut session_backup,
-                        &mut pending_question_queue,
-                        &mut pending_perm_queue,
-                        &mut done_rx,
+                        &mut rt.turn_join,
+                        &mut rt.session_backup,
+                        &mut rt.pending_question_queue,
+                        &mut rt.pending_perm_queue,
+                        &mut rt.done_rx,
                         &config,
                         &project_dir,
                         &provider,
                         &model,
-                        event_tx.clone(),
-                        Arc::clone(&perm_prompter),
-                        Arc::clone(&question_prompter),
+                        rt.event_tx.clone(),
+                        Arc::clone(&rt.perm_prompter),
+                        Arc::clone(&rt.question_prompter),
                     );
                 } else {
                     begin_cancel(
                         &mut app,
-                        &cancel_flag,
+                        &rt.cancel_flag,
                         &mut cancel_requested_at,
-                        &mut pending_question_queue,
-                        &mut pending_perm_queue,
+                        &mut rt.pending_question_queue,
+                        &mut rt.pending_perm_queue,
                     );
                 }
             }
 
             // Drain scheduled /loop prompts when idle (no pending manual submit).
-            if !agent_busy && app.pending_prompt.is_none() {
+            if !rt.agent_busy && app.pending_prompt.is_none() {
                 if let Some(next) = app.pending_auto_prompts.pop_front() {
                     app.pending_prompt = Some(next);
                 }
             }
 
             // ── Start turn if needed ──────────────────────────────────
-            if !agent_busy && let Some(prompt) = app.pending_prompt.take() {
+            if !rt.agent_busy
+                && let Some(prompt) = app.pending_prompt.take()
+            {
                 let submit_images = std::mem::take(&mut app.pending_submit_images);
 
                 // Lazy-load API key from env/config when user first chats
@@ -1046,9 +1051,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     continue;
                 }
 
-                agent_busy = true;
+                rt.agent_busy = true;
                 let flag = new_cancel_flag();
-                cancel_flag = Some(Arc::clone(&flag));
+                rt.cancel_flag = Some(Arc::clone(&flag));
                 cancel_requested_at = None;
                 app.mark_turn_started();
                 app.current_agent_state = AgentState::Generating;
@@ -1064,29 +1069,31 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
 
                 let expanded = expand_at_files(&prompt, &project_dir);
-                history.push_before_turn(&session.messages, &project_dir);
+                rt.history
+                    .push_before_turn(&rt.session.messages, &project_dir);
                 // Auto-recall memories relevant to this user turn (Grok/jcode style).
                 refresh_session_memory(
-                    &mut session,
-                    &agent,
+                    &mut rt.session,
+                    &rt.agent,
                     &project_dir,
                     &config,
                     Some(&expanded),
                 );
                 if submit_images.is_empty() {
-                    session.add_user_message(&expanded);
+                    rt.session.add_user_message(&expanded);
                 } else {
                     match crate::images::build_user_blocks(&expanded, &submit_images) {
-                        Ok(blocks) => session.add_user_message_blocks(blocks),
+                        Ok(blocks) => rt.session.add_user_message_blocks(blocks),
                         Err(e) => {
                             app.toasts.push(
                                 crate::toast::ToastKind::Warning,
                                 format!("Image attach failed: {e}"),
                             );
                             if expanded.trim().is_empty() {
-                                session.add_user_message(&format!("(failed to load image: {e})"));
+                                rt.session
+                                    .add_user_message(&format!("(failed to load image: {e})"));
                             } else {
-                                session.add_user_message(&expanded);
+                                rt.session.add_user_message(&expanded);
                             }
                         }
                     }
@@ -1096,11 +1103,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 // first user message so resumed legacy placeholders name from
                 // the original topic, not the latest follow-up.
                 if config.session.auto_title {
-                    let seed = session
+                    let seed = rt
+                        .session
                         .first_user_text()
                         .unwrap_or_else(|| expanded.clone());
-                    if session.apply_heuristic_title(&seed) {
-                        app.session_title = session.title.clone();
+                    if rt.session.apply_heuristic_title(&seed) {
+                        app.session_title = rt.session.title.clone();
                     }
                 }
 
@@ -1109,7 +1117,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     &provider,
                     &model,
                     &expanded,
-                    agent.model_fast().or(config.session.model_fast.as_deref()),
+                    rt.agent
+                        .model_fast()
+                        .or(config.session.model_fast.as_deref()),
                 );
                 if route_model != model || route_provider != provider {
                     tracing::info!(
@@ -1121,7 +1131,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         "tui",
                         "info",
                         "turn.route_fast",
-                        Some(session.id.as_str()),
+                        Some(rt.session.id.as_str()),
                         Some(serde_json::json!({
                             "from": format!("{provider}/{model}"),
                             "to": format!("{route_provider}/{route_model}"),
@@ -1132,19 +1142,19 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 let provider2 = route_provider;
                 let model2 = route_model;
                 let api_key2 = api_key.clone();
-                let event_tx2 = event_tx.clone();
-                let done_tx2 = done_tx.clone();
+                let event_tx2 = rt.event_tx.clone();
+                let done_tx2 = rt.done_tx.clone();
                 let cancel2 = Some(flag);
                 let auto_title = config.session.auto_title;
                 let title_model = config.session.title_model.clone();
                 let title_tx2 = title_tx.clone();
-                // Title refine still uses session provider/model (or title_model).
+                // Title refine still uses rt.session provider/model (or title_model).
                 let title_provider = provider.clone();
                 let title_session_model = model.clone();
 
-                // Move agent + session into background task
+                // Move rt.agent + rt.session into background task
                 let ag = std::mem::replace(
-                    &mut agent,
+                    &mut rt.agent,
                     // temporary placeholder; restored when turn completes
                     Agent::new(whycode_core::types::AgentInfo {
                         name: "_pending".into(),
@@ -1157,18 +1167,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         top_p: None,
                     }),
                 );
-                // Snapshot for force-abort recovery (task owns the live session).
-                session_backup = Some(session.clone());
+                // Snapshot for force-abort recovery (task owns the live rt.session).
+                rt.session_backup = Some(rt.session.clone());
                 let sess = std::mem::replace(
-                    &mut session,
+                    &mut rt.session,
                     Session::new(project_dir.clone(), String::new()),
                 );
 
-                turn_join = Some(tokio::spawn(async move {
+                rt.turn_join = Some(tokio::spawn(async move {
                     let agent = ag;
                     let mut session = sess;
                     // Time only the agent loop. Title refine runs async *after*
-                    // we release agent_busy so the user can type immediately.
+                    // we release rt.agent_busy so the user can type immediately.
                     let work_t0 = std::time::Instant::now();
                     let result = agent
                         .run_turn_with_events(
@@ -1222,10 +1232,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // How long to wait for a keystroke before looping again.
             //
             // Paint is gated by `needs_redraw` / animation — poll timeout no
-            // longer implies a full redraw. Short timeout while the agent is
+            // longer implies a full redraw. Short timeout while the rt.agent is
             // busy or toasts are live so spinner / stream / expiry stay snappy;
             // long timeout when idle so we do not spin the CPU.
-            let idle = !agent_busy && app.toasts.is_empty() && !app.needs_redraw;
+            let idle = !rt.agent_busy && app.toasts.is_empty() && !app.needs_redraw;
             let poll_for = if idle {
                 Duration::from_millis(500)
             } else {
@@ -1270,17 +1280,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         | KeyCode::Char('a')
                         | KeyCode::Char('A')
                         | KeyCode::Enter => {
-                            if let Some(req) = pending_perm_queue.pop_front() {
+                            if let Some(req) = rt.pending_perm_queue.pop_front() {
                                 let _ = req.reply.send(true);
                             }
                             app.dialogs.pop();
                             app.mode = AppMode::Normal;
                             app.key_context = KeymapContext::Normal;
-                            if let Some(next) = pending_perm_queue.front() {
+                            if let Some(next) = rt.pending_perm_queue.front() {
                                 app.ask_permission(next.tool_name.clone(), next.detail.clone());
                                 app.status_message = format!(
                                     "Allowed — {} more permission(s)…",
-                                    pending_perm_queue.len()
+                                    rt.pending_perm_queue.len()
                                 );
                             } else {
                                 app.current_agent_state = AgentState::Generating;
@@ -1293,17 +1303,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         | KeyCode::Char('d')
                         | KeyCode::Char('D')
                         | KeyCode::Esc => {
-                            if let Some(req) = pending_perm_queue.pop_front() {
+                            if let Some(req) = rt.pending_perm_queue.pop_front() {
                                 let _ = req.reply.send(false);
                             }
                             app.dialogs.pop();
                             app.mode = AppMode::Normal;
                             app.key_context = KeymapContext::Normal;
-                            if let Some(next) = pending_perm_queue.front() {
+                            if let Some(next) = rt.pending_perm_queue.front() {
                                 app.ask_permission(next.tool_name.clone(), next.detail.clone());
                                 app.status_message = format!(
                                     "Denied — {} more permission(s)…",
-                                    pending_perm_queue.len()
+                                    rt.pending_perm_queue.len()
                                 );
                             } else {
                                 app.current_agent_state = AgentState::Generating;
@@ -1323,8 +1333,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     let handled = handle_question_key(
                         &mut app,
                         key.code,
-                        &mut pending_question_queue,
-                        &mut pending_perm_queue,
+                        &mut rt.pending_question_queue,
+                        &mut rt.pending_perm_queue,
                     );
                     if handled {
                         app.mark_dirty();
@@ -1334,7 +1344,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
                 // Mouse single-select may finish the questionnaire from input.rs
                 if let Some(answers) = app.pending_question_answers.take() {
-                    if let Some(req) = pending_question_queue.pop_front() {
+                    if let Some(req) = rt.pending_question_queue.pop_front() {
                         let _ = req.reply.send(Ok(answers));
                     }
                     if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
@@ -1342,8 +1352,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         app.key_context = KeymapContext::Normal;
                         resume_after_question(
                             &mut app,
-                            &pending_question_queue,
-                            &pending_perm_queue,
+                            &rt.pending_question_queue,
+                            &rt.pending_perm_queue,
                         );
                     }
                 }
@@ -1351,14 +1361,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 // [✗] / Esc may dismiss Question via input.rs — complete oneshot
                 if app.question_dismissed {
                     app.question_dismissed = false;
-                    if let Some(req) = pending_question_queue.pop_front() {
+                    if let Some(req) = rt.pending_question_queue.pop_front() {
                         let _ = req.reply.send(Err(QuestionError::Cancelled));
                     }
                     if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
                         resume_after_question(
                             &mut app,
-                            &pending_question_queue,
-                            &pending_perm_queue,
+                            &rt.pending_question_queue,
+                            &rt.pending_perm_queue,
                         );
                     }
                 }
@@ -1371,17 +1381,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         .modifiers
                         .contains(crossterm::event::KeyModifiers::CONTROL)
                     && app.mode == AppMode::Normal
-                    && !agent_busy
+                    && !rt.agent_busy
                 {
                     cycle_agent(
                         &mut app,
-                        &mut agent,
-                        &mut session,
+                        &mut rt.agent,
+                        &mut rt.session,
                         &config,
                         &project_dir,
-                        Arc::clone(&perm_prompter),
-                        Arc::clone(&question_prompter),
-                        &event_tx,
+                        Arc::clone(&rt.perm_prompter),
+                        Arc::clone(&rt.question_prompter),
+                        &rt.event_tx,
                     )
                     .await;
                     continue;
@@ -1392,7 +1402,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     && key.kind == KeyEventKind::Press
                     && key.code == KeyCode::Enter
                     && app.mode == AppMode::Normal
-                    && !agent_busy
+                    && !rt.agent_busy
                 {
                     let mut text = app.input_buffer.trim().to_string();
                     if app.slash_suggest.active
@@ -1409,16 +1419,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             &text,
                             &mut SlashContext {
                                 app: &mut app,
-                                session: &mut session,
-                                history: &mut history,
-                                agent: &mut agent,
+                                session: &mut rt.session,
+                                history: &mut rt.history,
+                                agent: &mut rt.agent,
                                 config: &config,
                                 project_dir: &project_dir,
                                 provider: &mut provider,
                                 model: &mut model,
                                 api_key: &mut api_key,
-                                perm_prompter: Arc::clone(&perm_prompter),
-                                question_prompter: Arc::clone(&question_prompter),
+                                perm_prompter: Arc::clone(&rt.perm_prompter),
+                                question_prompter: Arc::clone(&rt.question_prompter),
                             },
                         )
                         .await;
@@ -1428,7 +1438,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
                 // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
                 // and focus still work so the user can queue thoughts.
-                if agent_busy
+                if rt.agent_busy
                     && let Event::Key(key) = &ev
                     && key.kind == KeyEventKind::Press
                 {
@@ -1438,31 +1448,31 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             if cancel_requested_at.is_some() {
                                 force_stop_turn(
                                     &mut app,
-                                    &mut agent,
-                                    &mut session,
-                                    &mut agent_busy,
-                                    &mut cancel_flag,
+                                    &mut rt.agent,
+                                    &mut rt.session,
+                                    &mut rt.agent_busy,
+                                    &mut rt.cancel_flag,
                                     &mut cancel_requested_at,
-                                    &mut turn_join,
-                                    &mut session_backup,
-                                    &mut pending_question_queue,
-                                    &mut pending_perm_queue,
-                                    &mut done_rx,
+                                    &mut rt.turn_join,
+                                    &mut rt.session_backup,
+                                    &mut rt.pending_question_queue,
+                                    &mut rt.pending_perm_queue,
+                                    &mut rt.done_rx,
                                     &config,
                                     &project_dir,
                                     &provider,
                                     &model,
-                                    event_tx.clone(),
-                                    Arc::clone(&perm_prompter),
-                                    Arc::clone(&question_prompter),
+                                    rt.event_tx.clone(),
+                                    Arc::clone(&rt.perm_prompter),
+                                    Arc::clone(&rt.question_prompter),
                                 );
                             } else {
                                 begin_cancel(
                                     &mut app,
-                                    &cancel_flag,
+                                    &rt.cancel_flag,
                                     &mut cancel_requested_at,
-                                    &mut pending_question_queue,
-                                    &mut pending_perm_queue,
+                                    &mut rt.pending_question_queue,
+                                    &mut rt.pending_perm_queue,
                                 );
                             }
                             app.esc_armed_at = None;
@@ -1474,26 +1484,26 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 .contains(crossterm::event::KeyModifiers::CONTROL) =>
                         {
                             // Quit: always force-stop so we never hang on exit.
-                            if agent_busy {
+                            if rt.agent_busy {
                                 force_stop_turn(
                                     &mut app,
-                                    &mut agent,
-                                    &mut session,
-                                    &mut agent_busy,
-                                    &mut cancel_flag,
+                                    &mut rt.agent,
+                                    &mut rt.session,
+                                    &mut rt.agent_busy,
+                                    &mut rt.cancel_flag,
                                     &mut cancel_requested_at,
-                                    &mut turn_join,
-                                    &mut session_backup,
-                                    &mut pending_question_queue,
-                                    &mut pending_perm_queue,
-                                    &mut done_rx,
+                                    &mut rt.turn_join,
+                                    &mut rt.session_backup,
+                                    &mut rt.pending_question_queue,
+                                    &mut rt.pending_perm_queue,
+                                    &mut rt.done_rx,
                                     &config,
                                     &project_dir,
                                     &provider,
                                     &model,
-                                    event_tx.clone(),
-                                    Arc::clone(&perm_prompter),
-                                    Arc::clone(&question_prompter),
+                                    rt.event_tx.clone(),
+                                    Arc::clone(&rt.perm_prompter),
+                                    Arc::clone(&rt.question_prompter),
                                 );
                             }
                             app.running = false;
@@ -1510,31 +1520,31 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 if cancel_requested_at.is_some() {
                                     force_stop_turn(
                                         &mut app,
-                                        &mut agent,
-                                        &mut session,
-                                        &mut agent_busy,
-                                        &mut cancel_flag,
+                                        &mut rt.agent,
+                                        &mut rt.session,
+                                        &mut rt.agent_busy,
+                                        &mut rt.cancel_flag,
                                         &mut cancel_requested_at,
-                                        &mut turn_join,
-                                        &mut session_backup,
-                                        &mut pending_question_queue,
-                                        &mut pending_perm_queue,
-                                        &mut done_rx,
+                                        &mut rt.turn_join,
+                                        &mut rt.session_backup,
+                                        &mut rt.pending_question_queue,
+                                        &mut rt.pending_perm_queue,
+                                        &mut rt.done_rx,
                                         &config,
                                         &project_dir,
                                         &provider,
                                         &model,
-                                        event_tx.clone(),
-                                        Arc::clone(&perm_prompter),
-                                        Arc::clone(&question_prompter),
+                                        rt.event_tx.clone(),
+                                        Arc::clone(&rt.perm_prompter),
+                                        Arc::clone(&rt.question_prompter),
                                     );
                                 } else {
                                     begin_cancel(
                                         &mut app,
-                                        &cancel_flag,
+                                        &rt.cancel_flag,
                                         &mut cancel_requested_at,
-                                        &mut pending_question_queue,
-                                        &mut pending_perm_queue,
+                                        &mut rt.pending_question_queue,
+                                        &mut rt.pending_perm_queue,
                                     );
                                 }
                             } else {
@@ -1587,15 +1597,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
     .await;
 
-    // Deny any hanging permissions / questionnaires so agent tasks can finish
-    while let Some(req) = pending_perm_queue.pop_front() {
+    // Deny any hanging permissions / questionnaires so rt.agent tasks can finish
+    while let Some(req) = rt.pending_perm_queue.pop_front() {
         let _ = req.reply.send(false);
     }
-    while let Some(req) = pending_question_queue.pop_front() {
+    while let Some(req) = rt.pending_question_queue.pop_front() {
         let _ = req.reply.send(Err(QuestionError::Cancelled));
     }
     // Best-effort: stop background shells so we don't leave orphans.
-    agent.background_registry().kill_all();
+    rt.agent.background_registry().kill_all();
 
     if let Err(ref e) = result {
         whycode_core::logging::emit(
@@ -1606,7 +1616,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         );
     }
 
-    // Cleanup must not fail the process after a successful session — best-effort.
+    // Cleanup must not fail the process after a successful rt.session — best-effort.
     let _ = disable_raw_mode();
     if keyboard_enhanced {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
@@ -1628,9 +1638,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
 
     // Final flush + Cline-style summary on the normal terminal (scrollback).
-    persist_session_best_effort(&session, "exit");
+    persist_session_best_effort(&rt.session, "exit");
     let model_label = format!("{provider}/{model}");
-    let summary = session.format_exit_summary(session_started.elapsed(), &model_label, "whycode");
+    let summary =
+        rt.session
+            .format_exit_summary(session_started.elapsed(), &model_label, "whycode");
     print_session_summary(&summary);
 
     whycode_core::logging::emit(
@@ -1639,8 +1651,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         "tui.stopped",
         Some(serde_json::json!({
             "ok": result.is_ok(),
-            "session_id": session.id,
-            "messages": session.messages.len(),
+            "session_id": rt.session.id,
+            "messages": rt.session.messages.len(),
             "duration_s": session_started.elapsed().as_secs(),
         })),
     );
@@ -1703,7 +1715,7 @@ fn begin_cancel(
 /// Hard-stop: abort the turn task, restore agent/session, free the UI.
 ///
 /// Called after [`CANCEL_FORCE_AFTER`] or on a second Esc/[stop] while already
-/// cancelling. Guarantees `agent_busy` becomes false.
+/// cancelling. Guarantees `rt.agent_busy` becomes false.
 #[allow(clippy::too_many_arguments)]
 fn force_stop_turn(
     app: &mut TuiApp,

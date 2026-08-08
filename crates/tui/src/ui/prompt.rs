@@ -12,8 +12,8 @@
 // The input block grows upward as text wraps, capped at MAX_INPUT_ROWS.
 
 use crate::app::{AgentState, AppMode, TuiApp};
-use crate::tokens::layout;
 use crate::theme::ThemePalette;
+use crate::tokens::layout;
 use crate::widgets::wrap::wrap_text;
 use ratatui::{
     Frame,

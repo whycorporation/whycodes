@@ -1164,13 +1164,13 @@ impl Config {
         }
 
         // WHYCODE_NO_MEMORY=1 disables cross-session memory inject/write.
-        if let Ok(val) = std::env::var("WHYCODE_NO_MEMORY") {
-            if matches!(
+        if let Ok(val) = std::env::var("WHYCODE_NO_MEMORY")
+            && matches!(
                 val.to_ascii_lowercase().as_str(),
                 "1" | "true" | "yes" | "on"
-            ) {
-                self.memory.enabled = false;
-            }
+            )
+        {
+            self.memory.enabled = false;
         }
         if let Ok(val) = std::env::var("WHYCODE_MEMORY") {
             match val.to_ascii_lowercase().as_str() {
