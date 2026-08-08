@@ -6,7 +6,7 @@ Feature comparison of terminal coding agents.
 
 **Product surface:** Claude Code · Cursor
 
-Last updated: **2026-08-07** (tool_search, shell globs, compact breaker, /diff /cost, worktree; bg/schedule).  
+Last updated: **2026-08-09** (OAuth subscription login rows corrected vs `crates/auth`; tool_search, shell globs, compact breaker, /diff /cost, worktree; bg/schedule).  
 Sources are listed at the end of the file. Cells are at “yes / partial / no” granularity; not every minor release is re-verified.
 
 ### Legend
@@ -19,7 +19,8 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 | ★ | Notable strength in this area |
 
 † whycode ACP: deliberately **post-product** (`docs/status.md`, 2026-08-04).  
-‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.
+‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.  
+§ whycode OAuth: login/store/refresh shipped for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login`, [auth.md](auth.md)); API-call routing live for anthropic + github-copilot — openai/google routing is a follow-up ([plan-oauth](plan-oauth.md)).
 
 ---
 
@@ -31,7 +32,7 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 | **Surface** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI | TUI, CLI, IDE, app, cloud | TUI, CLI, IDE companion | TUI, CLI, SDK/RPC | IDE, CLI, cloud agents |
 | **Language** | Rust | Rust | TypeScript | Rust | Closed (native binary) | Rust | TypeScript | TypeScript | Closed (VS Code based) |
 | **License** | MIT | Apache-2.0 | MIT | MIT | Proprietary | Apache-2.0 | Apache-2.0 | MIT | Proprietary |
-| **Auth** | API key | xAI login + API | API + OAuth | API + OAuth | Claude sub / API | ChatGPT plan / API | Google OAuth / API / Vertex | BYOK API + `/login` | Cursor account |
+| **Auth** | API key + OAuth | xAI login + API | API + OAuth | API + OAuth | Claude sub / API | ChatGPT plan / API | Google OAuth / API / Vertex | BYOK API + `/login` | Cursor account |
 | **Model** | Multi-provider | Grok + custom | 75+ provider | Multi + OAuth | Claude (+ limited) | OpenAI / Codex models | Gemini 3 (1M ctx) | Multi BYOK | Claude / GPT / Gemini / Composer |
 | **Open source** | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | No |
 
@@ -95,7 +96,7 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | xAI / Grok | ✅ | ✅★ | ✅ | ✅ | ❌ | ❌ | ❌ | ⚠️ | ✅ |
 | OpenRouter / Ollama / local | ✅ | ⚠️ | ✅ | ✅ | ❌ | ⚠️ | ⚠️ | ✅ + llama.cpp | ⚠️ |
 | OpenAI-compatible custom | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ |
-| OAuth / subscription login | ❌ | ✅ xAI | ✅ | ✅★ | ✅ | ✅ ChatGPT | ✅ Google | ✅ `/login` | ✅ Cursor |
+| OAuth / subscription login | ⚠️ 4 providers § | ✅ xAI | ✅ | ✅★ | ✅ | ✅ ChatGPT | ✅ Google | ✅ `/login` | ✅ Cursor |
 | Credential import | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | n/a |
 
 ---
@@ -262,7 +263,7 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 
 | Gap | Who has it | Note |
 |---|---|---|
-| OAuth / subscription login | jcode, OC, CC, Grok, Codex, Gemini, Pi `/login`, Cursor | [plan-oauth](plan-oauth.md) |
+| OAuth polish + credential import | jcode★ (import), Codex, Gemini, Pi `/login` | login/store/refresh ✅ for anthropic/openai/github-copilot/google ([auth.md](auth.md)); remaining: openai/google call routing, credential discovery, TUI `/connect` — [plan-oauth](plan-oauth.md) |
 | Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [archive/plan-memory](archive/plan-memory.md) |
 | Swarm | jcode★ / whycode `swarm` | git worktrees + 3-way merge + claims toast |
 | Browser automation | jcode, Claude, Cursor★ | None |
