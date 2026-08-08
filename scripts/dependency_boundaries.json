@@ -17,10 +17,12 @@
     "core",
     "format",
     "llm",
+    "mcp",
     "memory",
     "protocol",
     "server",
     "session",
+    "skill",
     "storage",
     "tools",
     "tui"
@@ -48,7 +50,8 @@
     "storage"
   ],
   "mcp": [
-    "core"
+    "core",
+    "tools"
   ],
   "plugin": [
     "config",

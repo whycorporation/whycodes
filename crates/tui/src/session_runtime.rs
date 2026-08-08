@@ -19,9 +19,20 @@ use whycode_agent::permission::{ChannelPermissionPrompter, PermissionRequest};
 use whycode_agent::{CancelFlag, ChannelQuestionPrompter, QuestionRequest, TurnEvent};
 use whycode_session::SessionHistory;
 use whycode_session::session::Session;
+use whycode_storage::db::Database;
 
 use crate::app::{AgentState, ChatMessage, ChatRole};
 use crate::run::TurnOutcome;
+
+/// Open a dedicated connection for one runtime (same db file as the rest
+/// of the app; SQLite serializes writers). `None` when the data dir is
+/// unavailable.
+fn open_runtime_db() -> Option<Database> {
+    let data_dir = whycode_config::Config::data_dir().ok()?;
+    std::fs::create_dir_all(&data_dir).ok()?;
+    let db_path = data_dir.join("whycode.db");
+    Database::open(&db_path.to_string_lossy()).ok()
+}
 
 /// Live-session state for the dashboard and cycle ordering.
 ///
@@ -154,10 +165,14 @@ pub struct SessionRuntime {
     pub view: ViewSnapshot,
     /// Something happened since the user last looked at this session.
     pub unread: bool,
-    /// Last turn ended in error (sticky until a new turn starts).
+    /// Last turn ended in error (sticky until the next turn starts).
     pub last_error: bool,
     /// When this runtime was created (dashboard age).
     pub created_at: std::time::Instant,
+    /// Per-runtime SQLite connection (S4) — connections are cheap, and one
+    /// per runtime avoids a global Mutex around every persist. `None` when
+    /// the data dir is unavailable; persists become best-effort no-ops.
+    pub db: Option<Database>,
 }
 
 impl SessionRuntime {
@@ -200,6 +215,23 @@ impl SessionRuntime {
             unread: false,
             last_error: false,
             created_at: std::time::Instant::now(),
+            db: open_runtime_db(),
+        }
+    }
+
+    /// Persist the session through this runtime's own connection.
+    pub fn persist(&self, reason: &str) {
+        let Some(db) = self.db.as_ref() else {
+            return;
+        };
+        if let Err(e) = self.session.save_to_db(db) {
+            whycode_core::logging::emit_sid(
+                "session",
+                "warn",
+                "session.persist_failed",
+                Some(self.session.id.as_str()),
+                Some(serde_json::json!({ "reason": reason, "error": e.to_string() })),
+            );
         }
     }
 

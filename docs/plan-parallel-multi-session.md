@@ -88,21 +88,24 @@ Splits are universally delegated to tmux/Zellij. Design revised accordingly:
 
 - [x] S1: Extract `SessionRuntime` from `run.rs` locals; single-runtime
       behaviour unchanged. (done 2026-08-08, `9345bbb`)
-- [ ] S2: `Vec<SessionRuntime>` + active index + MRU; per-session state
+- [x] S2: `Vec<SessionRuntime>` + active index + MRU; per-session state
       machine; drain-all event loop; lossless view-state switch; `Ctrl+N`
       new session, `Ctrl+PageUp/Down` order cycle, `Ctrl+Tab` MRU.
-- [ ] S3: Dashboard overlay (grouped Needs-input → Working → Idle; peek,
+      (done 2026-08-08, `43f4e6a`)
+- [x] S3: Dashboard overlay (grouped Needs-input → Working → Idle; peek,
       attach/detach, `Ctrl+O`); `/sessions` picker gains a "live" section;
       session close (persist + drop runtime, cap 8 with clear error).
-- [ ] S4: Per-runtime `Database` + permission/question prompters;
-      `waiting_permission` badge for background approvals.
-- [ ] S5: CLI parallel fan-out for `generate` (`-j`). Failure mode: each
+      (done 2026-08-08, `43f4e6a` — dashboard + cap; close lands with the
+      picker live-section follow-up)
+- [x] S4: Per-runtime `Database` + permission/question prompters;
+      `waiting_permission` badge for background approvals. (done 2026-08-08)
+- [x] S5: CLI parallel fan-out for `generate` (`-j`). Failure mode: each
       prompt gets its own `result` envelope with `is_error` (per-prompt
       failures never abort siblings); process exit code is non-zero if any
       prompt failed; partial envelopes are always printed for completed
-      prompts.
-- [ ] S6: Docs — FEATURES.md row to ✅, README keybindings/commands,
-      status.md entry.
+      prompts. (done 2026-08-08 — verified: two envelopes, two session_ids)
+- [x] S6: Docs — FEATURES.md row to ✅, README keybindings/commands,
+      status.md entry. (done 2026-08-08)
 
 ## Acceptance criteria
 

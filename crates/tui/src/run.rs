@@ -659,7 +659,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 if rt.session.id == sid {
                     if rt.session.apply_generated_title(&title) {
                         app.session_title = rt.session.title.clone();
-                        persist_session_best_effort(&rt.session, "title_async");
+                        rt.persist("title_async");
                         app.mark_dirty();
                     }
                 } else if let Some(bg) = runtimes.iter_mut().find(|b| b.session.id == sid) {
@@ -667,7 +667,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     if bg.session.apply_generated_title(&title) {
                         bg.view.session_title = bg.session.title.clone();
                         bg.unread = true;
-                        persist_session_best_effort(&bg.session, "title_async");
+                        bg.persist("title_async");
                     }
                 } else {
                     // Turn still restoring rt.session, or user switched sessions.
@@ -771,7 +771,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             false,
                         );
                         // Persist after every completed turn (success path).
-                        persist_session_best_effort(&rt.session, "ok");
+                        rt.persist("ok");
                         // A7: optional idle follow-up suggestion (default off).
                         maybe_spawn_prompt_suggestion(
                             &config,
@@ -816,7 +816,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             );
                             app.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
                             // Still flush so cancel mid-turn is not lost on crash.
-                            persist_session_best_effort(&rt.session, "cancelled");
+                            rt.persist("cancelled");
                         } else {
                             // Clean user-facing copy; full wire body stays in logs.
                             let display = whycode_llm::format_turn_error(
@@ -841,7 +841,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                     "elapsed_ms": elapsed_ms,
                                 })),
                             );
-                            persist_session_best_effort(&rt.session, "error");
+                            rt.persist("error");
                         }
                     }
                 }
@@ -885,7 +885,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             // Persist the current rt.session first so nothing is lost
                             // when switching away from an unsaved turn.
                             if !rt.session.messages.is_empty() {
-                                persist_session_best_effort(&rt.session, "switch");
+                                rt.persist("switch");
                             }
                             let n = loaded.messages.len();
                             rt.history = SessionHistory::new();
@@ -899,7 +899,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             if config.session.auto_title
                                 && rt.session.maybe_upgrade_title_from_history()
                             {
-                                persist_session_best_effort(&rt.session, "title_backfill");
+                                rt.persist("title_backfill");
                             }
                             let title = rt.session.title.clone();
                             app.load_messages_from_session(&rt.session);
@@ -1783,7 +1783,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             h.abort();
         }
         bg.agent.background_registry().kill_all();
-        persist_session_best_effort(&bg.session, "shutdown");
+        bg.persist("shutdown");
     }
 
     if let Err(ref e) = result {
@@ -1817,7 +1817,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
 
     // Final flush + Cline-style summary on the normal terminal (scrollback).
-    persist_session_best_effort(&rt.session, "exit");
+    rt.persist("exit");
     let model_label = format!("{provider}/{model}");
     let summary =
         rt.session
@@ -2374,7 +2374,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 scratch.save_view(&mut rt.view);
             }
         }
-        persist_session_best_effort(&rt.session, "background");
+        rt.persist("background");
     }
 }
 

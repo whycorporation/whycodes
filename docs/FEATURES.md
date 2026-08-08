@@ -109,7 +109,7 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Subagent | ✅ `task` | ✅ | ✅ | ✅ | ✅ | ✅ headless spawn | ✅ complete_task | ⚠️ ext | ✅ subagents |
 | Built-in explore / scout | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ minimal | ⚠️ |
 | Özel agent tanımları | ✅ config | ✅ | ✅ | ✅ | ✅ | ⚠️ AGENTS.md | ⚠️ GEMINI.md | ✅ extensions | ✅ rules/agents |
-| Parallel multi-session | ❌ | ⚠️ | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅★ cloud fan-out |
+| Parallel multi-session | ✅ Ctrl+O/N/Tab | ⚠️ | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅★ cloud fan-out |
 | Swarm + conflict notify | ✅ worktrees + claims | ❌ | ❌ | ✅★ | ⚠️ teams | ❌ | ❌ | ❌ | ⚠️ |
 | Max turns / loop guard | ✅★ doom-loop | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 

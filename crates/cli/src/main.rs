@@ -102,12 +102,17 @@ pub enum Commands {
 
     /// Generate code from a prompt (non-interactive)
     Generate {
-        /// The prompt to generate code for
-        prompt: String,
+        /// The prompt(s) to generate code for; multiple prompts run with -j
+        #[arg(required = true)]
+        prompt: Vec<String>,
 
         /// Maximum conversation turns
         #[arg(short = 't', long, default_value = "25")]
         max_turns: usize,
+
+        /// Parallel workers when multiple prompts are given
+        #[arg(short = 'j', long, default_value = "1")]
+        jobs: usize,
 
         /// Output format for headless / CI: text (default), json, or stream-json
         #[arg(
@@ -605,8 +610,9 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Generate {
             prompt,
             max_turns,
+            jobs,
             format,
-        } => cmd_generate(cli, prompt, *max_turns, *format).await,
+        } => cmd_generate(cli, prompt, *max_turns, *jobs, *format).await,
         Commands::Acp => cmd_acp(cli).await,
         Commands::Pr { title, base } => cmd_pr(cli, title.as_deref(), base.as_deref()).await,
         Commands::Github { cmd: gh_cmd } => cmd_github(cli, gh_cmd).await,
@@ -813,7 +819,15 @@ async fn cmd_run(
                  (e.g. `whycode run \"…\" --format {format}` or `whycode generate \"…\" --format {format}`)"
             );
         };
-        return cmd_generate(cli, prompt, max_turns, format).await;
+        let prompt_owned = prompt.to_string();
+        return cmd_generate(
+            cli,
+            std::slice::from_ref(&prompt_owned),
+            max_turns,
+            1,
+            format,
+        )
+        .await;
     }
 
     let project_dir_early = resolve_dir(cli);
@@ -2088,8 +2102,9 @@ async fn run_init_agents_md(
 /// `generate` — Non-interactive code generation (supports `--format` for CI).
 async fn cmd_generate(
     cli: &Cli,
-    prompt: &str,
+    prompts: &[String],
     max_turns: usize,
+    jobs: usize,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     let project_dir = resolve_dir(cli);
@@ -2115,9 +2130,33 @@ async fn cmd_generate(
         }
     };
 
-    if prompt.is_empty() {
+    if prompts.iter().all(|p| p.is_empty()) {
         return emit_headless_setup_error(format, "empty prompt");
     }
+
+    // S5: parallel fan-out. Each prompt gets its own Agent + Session; a
+    // semaphore caps concurrency at `jobs`. Per-prompt failures never abort
+    // siblings; the process exits non-zero if any prompt failed.
+    if prompts.len() > 1 {
+        let mut agent_info = agent_info_for(cli, &config);
+        agent_info.permission = config.effective_permission(&agent_info.permission);
+        return run_generate_parallel(
+            prompts,
+            &config,
+            agent_info,
+            &provider,
+            &model,
+            &agent_name,
+            &api_key,
+            max_turns,
+            jobs.max(1),
+            format,
+            &project_dir,
+        )
+        .await;
+    }
+
+    let prompt = &prompts[0];
 
     let mut agent_info = agent_info_for(cli, &config);
     agent_info.permission = config.effective_permission(&agent_info.permission);
@@ -2169,6 +2208,234 @@ async fn cmd_generate(
         format,
     )
     .await
+}
+
+/// S5: run N prompts concurrently, each with its own Agent + Session.
+///
+/// A semaphore caps in-flight turns at `jobs`. Every prompt always gets a
+/// final envelope: `Result` (ok or is_error) for json/stream-json, plain
+/// text or an error line for text. One prompt's failure never aborts the
+/// others; the process returns Err if any prompt failed.
+#[allow(clippy::too_many_arguments)]
+async fn run_generate_parallel(
+    prompts: &[String],
+    config: &Config,
+    agent_info: AgentInfo,
+    provider: &str,
+    model: &str,
+    agent_name: &str,
+    api_key: &str,
+    max_turns: usize,
+    jobs: usize,
+    format: OutputFormat,
+    project_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let sem = Arc::new(tokio::sync::Semaphore::new(jobs));
+    let structured = format.is_structured();
+    let mut handles = Vec::new();
+
+    for prompt in prompts {
+        if prompt.is_empty() {
+            continue;
+        }
+        let sem = Arc::clone(&sem);
+        let config = config.clone();
+        let agent_info = agent_info.clone();
+        let provider = provider.to_string();
+        let model = model.to_string();
+        let agent_name = agent_name.to_string();
+        let api_key = api_key.to_string();
+        let prompt = prompt.clone();
+        let project_dir = project_dir.to_path_buf();
+
+        handles.push(tokio::spawn(async move {
+            let Ok(_permit) = sem.acquire_owned().await else {
+                return true;
+            };
+            run_one_parallel_turn(
+                &prompt,
+                &config,
+                agent_info,
+                &provider,
+                &model,
+                &agent_name,
+                &api_key,
+                max_turns,
+                format,
+                &project_dir,
+                structured,
+            )
+            .await
+        }));
+    }
+
+    let mut any_failed = false;
+    for h in handles {
+        match h.await {
+            Ok(false) => {}
+            Ok(true) => any_failed = true,
+            Err(e) => {
+                any_failed = true;
+                let msg = format!("worker panicked: {e}");
+                if structured {
+                    let _ = CiEvent::Error { message: msg }.emit_stdout();
+                } else {
+                    eprintln!("{} {}", "Error:".red().bold(), msg);
+                }
+            }
+        }
+    }
+
+    if any_failed {
+        Err(anyhow::anyhow!("one or more prompts failed"))
+    } else {
+        Ok(())
+    }
+}
+
+/// One prompt inside the parallel fan-out. Returns whether it failed.
+/// Stdout writes are serialized inside (CiEvent locks stdout per line).
+#[allow(clippy::too_many_arguments)]
+async fn run_one_parallel_turn(
+    prompt: &str,
+    config: &Config,
+    agent_info: AgentInfo,
+    provider: &str,
+    model: &str,
+    agent_name: &str,
+    api_key: &str,
+    max_turns: usize,
+    format: OutputFormat,
+    project_dir: &std::path::Path,
+    structured: bool,
+) -> bool {
+    let started = std::time::Instant::now();
+
+    let base_prompt = agent_info
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| Agent::system_prompt_for(agent_name));
+    let expanded = expand_user_input(prompt, project_dir);
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&base_prompt, project_dir),
+        project_dir,
+        config,
+        Some(&expanded),
+    );
+
+    let mut agent = Agent::new(agent_info)
+        .with_config(config)
+        .with_mcp(config)
+        .await;
+    if structured {
+        agent = agent
+            .with_permission_prompter(Arc::new(AutoApprovePrompter))
+            .with_question_prompter(Arc::new(whycode_agent::AutoAnswerPrompter));
+    }
+
+    let mut session =
+        whycode_session::session::Session::new(project_dir.to_path_buf(), system_prompt);
+    let session_id = session.id.clone();
+    session.add_user_message(&expanded);
+
+    let wrap = |ev: CiEvent| CiEvent::Session {
+        session_id: session_id.clone(),
+        event: Box::new(ev),
+    };
+
+    if format == OutputFormat::StreamJson {
+        let _ = wrap(CiEvent::Init {
+            session_id: session_id.clone(),
+            provider: provider.to_string(),
+            model: model.to_string(),
+            agent: agent_name.to_string(),
+            cwd: project_dir.display().to_string(),
+        })
+        .emit_stdout();
+    }
+
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let cancel = new_cancel_flag();
+    let stream = format == OutputFormat::StreamJson;
+    let sid = session_id.clone();
+    let drain = tokio::spawn(async move {
+        while let Some(ev) = event_rx.recv().await {
+            if !stream {
+                continue;
+            }
+            if let Some(ci) = turn_event_to_ci(ev) {
+                let _ = CiEvent::Session {
+                    session_id: sid.clone(),
+                    event: Box::new(ci),
+                }
+                .emit_stdout();
+            }
+        }
+    });
+
+    let turn_result = agent
+        .run_turn_with_events(
+            &mut session,
+            provider,
+            model,
+            api_key,
+            max_turns,
+            Some(event_tx),
+            Some(cancel),
+        )
+        .await;
+    let _ = drain.await;
+
+    let meta = ResultMeta {
+        session_id: session.id.clone(),
+        provider: provider.to_string(),
+        model: model.to_string(),
+        agent: agent_name.to_string(),
+        usage: session.usage.clone(),
+        duration_ms: started.elapsed().as_millis() as u64,
+    };
+
+    match turn_result {
+        Ok(response) => {
+            match format {
+                OutputFormat::Text => {
+                    if !response.is_empty() {
+                        println!("{response}");
+                    }
+                }
+                OutputFormat::Json => {
+                    let _ = meta.ok(response).emit_stdout();
+                }
+                OutputFormat::StreamJson => {
+                    let _ = wrap(meta.ok(response)).emit_stdout();
+                }
+            }
+            false
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            match format {
+                OutputFormat::Text => {
+                    eprintln!("{} {}", "Error:".red().bold(), msg);
+                }
+                OutputFormat::Json => {
+                    let _ = meta.err(&msg).emit_stdout();
+                }
+                OutputFormat::StreamJson => {
+                    if msg.to_ascii_lowercase().contains("cancel") {
+                        let _ = wrap(CiEvent::Cancelled).emit_stdout();
+                    } else {
+                        let _ = wrap(CiEvent::Error {
+                            message: msg.clone(),
+                        })
+                        .emit_stdout();
+                    }
+                    let _ = wrap(meta.err(&msg)).emit_stdout();
+                }
+            }
+            true
+        }
+    }
 }
 
 /// Parse `--format` / `--output-format` CLI values.

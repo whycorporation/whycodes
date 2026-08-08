@@ -116,6 +116,12 @@ pub enum CiEvent {
     Error { message: String },
     /// Turn cancelled (e.g. interrupt).
     Cancelled,
+    /// Parallel fan-out (`generate -j N`): wraps any event with the owning
+    /// prompt's session id so interleaved NDJSON stays attributable.
+    Session {
+        session_id: String,
+        event: Box<CiEvent>,
+    },
 }
 
 impl CiEvent {

@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-07** (perf residual + plugins depth shipped; public still last)
+Last updated: **2026-08-08** (parallel multi-session shipped; perf residual + plugins depth shipped; public still last)
 
 ## Legend
 
@@ -29,6 +29,7 @@ Last updated: **2026-08-07** (perf residual + plugins depth shipped; public stil
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
 | FEATURES accuracy | [plan-features-improvements.md](plan-features-improvements.md) | done | Matrix fixed; `/tools` `/info` surface latency knobs. |
 | **CC research A1–A7** | [plan-cc-a1-a7.md](plan-cc-a1-a7.md) | **shipped** | A1–A7 implemented 2026-08-07. Report: [report-claude-code-research.md](report-claude-code-research.md). |
+| Parallel multi-session | [plan-parallel-multi-session.md](plan-parallel-multi-session.md) | **shipped (S1–S6)** | Live sessions (Ctrl+O dashboard, Ctrl+N, Ctrl+Tab/PgUp/PgDn), per-runtime DB, `generate -j` fan-out. Design: dashboard not tabs (competitive research in plan). |
 
 ## Shipped (archived)
 

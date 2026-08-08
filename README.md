@@ -153,11 +153,23 @@ whycode generate "List open TODOs" --format json | jq '{result, usage, session_i
 # Live event types
 whycode run "Migrate the auth module" --format stream-json -t 20 \
   | jq -r 'select(.type=="result") | .result'
+
+# Parallel fan-out: N prompts, each with its own session, capped at -j workers
+whycode generate "Summarize src/" "Summarize tests/" -j 2 --format json \
+  | jq -r '.session_id'
 ```
+
+With multiple prompts, `generate` runs each in its own agent + session
+concurrently (semaphore at `-j` workers). Every prompt always produces a
+final envelope — per-prompt failures never abort siblings, and the process
+exits non-zero if any prompt failed. In `stream-json`, parallel events are
+wrapped as `{"type":"session","session_id":…,"event":{…}}` so interleaved
+output stays attributable.
 
 `stream-json` events use a `type` field: `init`, `text_delta`, `thinking_delta`,
 `tool_start`, `tool_end`, `usage`, `status`, `result`, `error`, `cancelled`.
 The last event is always `result` (with `is_error` and optional `error`).
+Parallel runs add a `session` wrapper (see above).
 
 Structured formats auto-approve tool permission prompts so pipelines do not
 hang on stdin (catastrophic shell risk is still hard-blocked). Prefer explicit
@@ -172,6 +184,10 @@ calls and thinking. `--plain` switches to a line-based stdin REPL.
 |---|---|
 | `Tab` | Focus prompt ↔ scrollback |
 | `Ctrl+T` | Cycle primary agents (`build` ↔ `plan`), when idle |
+| `Ctrl+O` | Live session dashboard (needs-input → working → idle) |
+| `Ctrl+N` | New parallel session (up to 8 live) |
+| `Ctrl+Tab` | Switch to most recent session |
+| `Ctrl+PgUp/PgDn` | Cycle sessions in order |
 | `Esc` | Cancel the in-flight turn (keeps partial output); dismiss a dialog; double-Esc clears the draft |
 | `?` | Toggle the help / keybinding cheatsheet |
 | `:` | Enter command mode (`:theme`, `:q`, …) |
