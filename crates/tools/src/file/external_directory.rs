@@ -27,12 +27,18 @@ impl ExternalDirectoryTool {
 
         let allowed_content = match std::fs::read_to_string(&allowed_file) {
             Ok(content) => content,
-            Err(_) => return false,
+            Err(e) => {
+                tracing::debug!(path = %allowed_file.display(), error = %e, "external dirs allowlist unreadable; denying");
+                return false;
+            }
         };
 
         let canon_path = match std::fs::canonicalize(path) {
             Ok(p) => p,
-            Err(_) => return false,
+            Err(e) => {
+                tracing::debug!(path = %path, error = %e, "external path canonicalize failed; denying");
+                return false;
+            }
         };
 
         for line in allowed_content.lines() {
@@ -42,7 +48,10 @@ impl ExternalDirectoryTool {
             }
             let allowed = match std::fs::canonicalize(line) {
                 Ok(p) => p,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::debug!(line = %line, error = %e, "allowlist entry canonicalize failed; skipping");
+                    continue;
+                }
             };
             // Check if the requested path is equal to or a child of an allowed directory
             if canon_path == allowed || canon_path.starts_with(&allowed) {
@@ -127,7 +136,10 @@ impl Tool for ExternalDirectoryTool {
                         Ok(e) => {
                             let meta = match e.metadata() {
                                 Ok(m) => m,
-                                Err(_) => continue,
+                                Err(err) => {
+                                    tracing::debug!(error = %err, "entry metadata failed; skipping");
+                                    continue;
+                                }
                             };
                             let name = e.file_name().to_string_lossy().to_string();
                             let file_type = if meta.is_dir() {
@@ -140,7 +152,10 @@ impl Tool for ExternalDirectoryTool {
                             let size = meta.len();
                             output.push_str(&format!("{:<10} {:>10} {}\n", file_type, size, name));
                         }
-                        Err(_) => continue,
+                        Err(err) => {
+                            tracing::debug!(error = %err, "dir entry read failed; skipping");
+                            continue;
+                        }
                     }
                 }
 

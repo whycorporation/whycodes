@@ -1,14 +1,15 @@
 {
-  "agent": 2,
-  "cli": 21,
+  "agent": 14,
+  "cli": 24,
   "command-risk": 0,
   "config": 1,
   "core": 8,
   "format": 3,
   "function": 0,
-  "llm": 3,
+  "llm": 4,
   "lsp": 1,
   "mcp": 0,
+  "memory": 9,
   "plugin": 0,
   "protocol": 0,
   "sandbox": 0,
@@ -19,5 +20,5 @@
   "skill": 0,
   "storage": 1,
   "tools": 11,
-  "tui": 25
+  "tui": 42
 }
