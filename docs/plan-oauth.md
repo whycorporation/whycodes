@@ -1,11 +1,10 @@
 # Plan — OAuth and credential discovery
 
 **Status:** partially shipped (2026-08-09) — login/store/refresh for
-anthropic, openai, github-copilot, google; API-call routing live for
-anthropic + github-copilot + openai (Codex backend, Responses API). See
-[auth.md](auth.md). **Remaining:** Code Assist call routing for google,
-credential discovery (consent model below), `/connect` in-TUI login. ·
-**Blocks:** nothing
+anthropic, openai, github-copilot, google; API-call routing live for all
+four (openai → Codex backend Responses API, google → Code Assist endpoint).
+See [auth.md](auth.md). **Remaining:** credential discovery (consent model
+below), `/connect` in-TUI login. · **Blocks:** nothing
 
 ## Why this is blocked rather than in progress
 
