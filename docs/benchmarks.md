@@ -202,7 +202,7 @@ inherits the console and the screen flickers briefly during a run.
 
 ### Update, 2026-08-04 — dirty-draw + context economy
 
-See [plan-perf-context-tui.md](plan-perf-context-tui.md). After this work the
+See [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md). After this work the
 event loop only paints when `needs_redraw` is set, the agent is busy (spinner),
 or a toast is live. Idle sessions with no input should report **~0 draws/s**
 after the first frame (re-measure with
@@ -298,7 +298,7 @@ and a gate that catches nothing reads as assurance while providing none.
 
 ## Binary size, hashing, and token heuristics (2026-08-04)
 
-See also [plan-perf-hotpath.md](plan-perf-hotpath.md).
+See also [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md).
 
 **Release profile.** Workspace `[profile.release]` now sets `strip = true`,
 `lto = "thin"`, and `codegen-units = 1`. On Linux x86_64 (2026-08-04):

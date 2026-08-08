@@ -4016,7 +4016,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
- "tower",
  "tracing",
  "whycode-core",
  "whycode-tools",

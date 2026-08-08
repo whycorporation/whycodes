@@ -1,76 +1,76 @@
-# Özellikler ve karşılaştırmalı tablo
+# Feature matrix
 
-Terminal coding agent’ların özellik matrisi.
+Feature comparison of terminal coding agents.
 
 **Terminal / harness:** whycode · Grok Build · OpenCode · jcode · Codex CLI · Gemini CLI · Pi  
 
-**Ürün yüzeyi:** Claude Code · Cursor
+**Product surface:** Claude Code · Cursor
 
-Son güncelleme: **2026-08-07** (tool_search, shell globs, compact breaker, /diff /cost, worktree; bg/schedule).  
-Kaynaklar dosya sonundadır. Hücreler “var / kısmi / yok” seviyesindedir; her minor sürüm bire bir doğrulanmaz.
+Last updated: **2026-08-07** (tool_search, shell globs, compact breaker, /diff /cost, worktree; bg/schedule).  
+Sources are listed at the end of the file. Cells are at “yes / partial / no” granularity; not every minor release is re-verified.
 
-### Sembol
+### Legend
 
 | | |
 |:---:|---|
-| ✅ | Var / production |
-| ⚠️ | Kısmi, iskelet veya sınırlı |
-| ❌ | Yok / roadmap |
-| ★ | Bu alanda belirgin güçlü yön |
+| ✅ | Yes / production |
+| ⚠️ | Partial, skeleton, or limited |
+| ❌ | No / roadmap |
+| ★ | Notable strength in this area |
 
-† whycode ACP: bilinçli **ürün sonrası** (`docs/status.md`, 2026-08-04).  
-‡ Gemini CLI: ücretsiz/Google One kullanıcıları için **Antigravity CLI** geçişi duyuruldu (2026-06-18); matris hâlâ Gemini CLI dokümantasyonuna göre.
+† whycode ACP: deliberately **post-product** (`docs/status.md`, 2026-08-04).  
+‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.
 
 ---
 
-## Ürün özeti
+## Product summary
 
 | | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Tür** | Terminal agent | Terminal agent | Multi-surface | Agent harness | Resmi ürün ajanı | Terminal agent | Terminal agent | Minimal harness | AI IDE + agent |
-| **Yüzey** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI | TUI, CLI, IDE, app, cloud | TUI, CLI, IDE companion | TUI, CLI, SDK/RPC | IDE, CLI, cloud agents |
-| **Dil** | Rust | Rust | TypeScript | Rust | Kapalı (native binary) | Rust | TypeScript | TypeScript | Kapalı (VS Code tabanlı) |
-| **Lisans** | MIT | Apache-2.0 | MIT | MIT | Proprietary | Apache-2.0 | Apache-2.0 | MIT | Proprietary |
-| **Kimlik** | API key | xAI login + API | API + OAuth | API + OAuth | Claude sub / API | ChatGPT plan / API | Google OAuth / API / Vertex | BYOK API + `/login` | Cursor hesap |
-| **Model** | Çoklu provider | Grok + custom | 75+ provider | Çoklu + OAuth | Claude (+ sınırlı) | OpenAI / Codex modelleri | Gemini 3 (1M ctx) | Çoklu BYOK | Claude / GPT / Gemini / Composer |
-| **Açık kaynak** | Evet | Evet | Evet | Evet | Hayır | Evet | Evet | Evet | Hayır |
+| **Type** | Terminal agent | Terminal agent | Multi-surface | Agent harness | First-party product agent | Terminal agent | Terminal agent | Minimal harness | AI IDE + agent |
+| **Surface** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI | TUI, CLI, IDE, app, cloud | TUI, CLI, IDE companion | TUI, CLI, SDK/RPC | IDE, CLI, cloud agents |
+| **Language** | Rust | Rust | TypeScript | Rust | Closed (native binary) | Rust | TypeScript | TypeScript | Closed (VS Code based) |
+| **License** | MIT | Apache-2.0 | MIT | MIT | Proprietary | Apache-2.0 | Apache-2.0 | MIT | Proprietary |
+| **Auth** | API key | xAI login + API | API + OAuth | API + OAuth | Claude sub / API | ChatGPT plan / API | Google OAuth / API / Vertex | BYOK API + `/login` | Cursor account |
+| **Model** | Multi-provider | Grok + custom | 75+ provider | Multi + OAuth | Claude (+ limited) | OpenAI / Codex models | Gemini 3 (1M ctx) | Multi BYOK | Claude / GPT / Gemini / Composer |
+| **Open source** | Yes | Yes | Yes | Yes | No | Yes | Yes | Yes | No |
 
-| Ürün | Konum |
+| Product | Position |
 |---|---|
 | **whycode** | Shell safety, latency stack, mouse TUI, Windows CI |
-| **Grok Build** | Zengin TUI; skills / plugins / hooks; ACP |
-| **OpenCode** | Geniş OSS ekosistem; TUI + desktop + IDE |
-| **jcode** | Düşük RAM / boot; swarm; semantic memory |
-| **Claude Code** | Anthropic ürün yüzeyi (web, desktop, IDE, CI) |
+| **Grok Build** | Rich TUI; skills / plugins / hooks; ACP |
+| **OpenCode** | Broad OSS ecosystem; TUI + desktop + IDE |
+| **jcode** | Low RAM / boot; swarm; semantic memory |
+| **Claude Code** | Anthropic product surface (web, desktop, IDE, CI) |
 | **Codex CLI** | OpenAI terminal agent; OS sandbox; AGENTS.md; cloud Codex |
-| **Gemini CLI** | Google terminal agent; ücretsiz kota; Search grounding; plan mode |
+| **Gemini CLI** | Google terminal agent; free tier; Search grounding; plan mode |
 | **Pi** | Minimal harness; extensions/skills; multi-provider; container sandbox |
 | **Cursor** | IDE-first Agent + Tab; cloud agents; multi-model |
 
 ---
 
-## 1. Platform, dağıtım, runtime
+## 1. Platform, distribution, runtime
 
-Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Claude · **Codex** · **Gem** Gemini · **Pi** · **Cur** Cursor
+Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Claude · **Codex** · **Gem** Gemini · **Pi** · **Cur** Cursor
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Tek binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ Rust | ⚠️ npm/Node | ⚠️ npm; bin build var | ❌ IDE; CLI ayrı |
+| Single binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ Rust | ⚠️ npm/Node | ⚠️ npm; bin build exists | ❌ IDE; CLI separate |
 | Install (curl / npm / brew) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ curl+npm+brew | ✅ npm+brew | ✅ npm+curl | ✅ app + `@cursor/cli` |
 | Self-update | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ npm channel | ✅ `pi update` | ✅ app update |
-| Homebrew / paket | ⚠️ HEAD | ⚠️ | ✅ | ✅ | ✅ | ✅ cask | ✅ | ⚠️ npm | ✅ |
+| Homebrew / package | ⚠️ HEAD | ⚠️ | ✅ | ✅ | ✅ | ✅ cask | ✅ | ⚠️ npm | ✅ |
 | Linux / macOS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Windows native | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ docs | ✅ |
-| Cross-platform CI (full) | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ✅ CI badges | ✅ | n/a ürün |
-| Runtime bağımlılık yok | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ❌ Node | ❌ Node | n/a |
-| In-process arama (rg yok) | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ ships rg helper | ⚠️ | n/a IDE search |
-| Açık kaynak | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Cross-platform CI (full) | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ✅ CI badges | ✅ | n/a product |
+| No runtime dependency | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ❌ Node | ❌ Node | n/a |
+| In-process search (no rg) | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ ships rg helper | ⚠️ | n/a IDE search |
+| Open source | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
 
 ---
 
-## 2. Arayüzler (surfaces)
+## 2. Surfaces
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Fullscreen TUI | ✅ | ✅★ | ✅★ | ✅★ | ✅ | ✅ | ✅ | ✅ | ❌ (IDE UI) |
 | Headless / plain | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ `-p` + json | ✅ print/RPC/json | ✅ Cursor CLI |
@@ -84,11 +84,11 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 
 ---
 
-## 3. LLM provider ve kimlik
+## 3. LLM providers & auth
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Çoklu provider (API) | ✅ | ✅ custom | ✅★ 75+ | ✅★ | ⚠️ | ❌ OpenAI ailesi | ❌ Gemini ailesi | ✅★ unified API | ✅ multi |
+| Multi-provider (API) | ✅ | ✅ custom | ✅★ 75+ | ✅★ | ⚠️ | ❌ OpenAI family | ❌ Gemini family | ✅★ unified API | ✅ multi |
 | Anthropic | ✅ | ⚠️ | ✅ | ✅ OAuth | ✅ | ❌ | ❌ | ✅ | ✅ |
 | OpenAI | ✅ | ⚠️ | ✅ | ✅ OAuth | ⚠️ | ✅★ | ❌ | ✅ | ✅ |
 | Google / Gemini | ✅ | ⚠️ | ✅ | ✅ OAuth | ⚠️ | ❌ | ✅★ | ✅ | ✅ |
@@ -100,35 +100,35 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 
 ---
 
-## 4. Agent sistemi
+## 4. Agent system
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Full-access agent | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ Agent |
 | Plan / read-only mode | ✅ Ctrl+T | ✅ | ✅ Tab | ✅ | ✅ | ⚠️ approval modes | ✅ plan mode | ⚠️ | ✅ plan |
 | Subagent | ✅ `task` | ✅ | ✅ | ✅ | ✅ | ✅ headless spawn | ✅ complete_task | ⚠️ ext | ✅ subagents |
 | Built-in explore / scout | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ minimal | ⚠️ |
-| Özel agent tanımları | ✅ config | ✅ | ✅ | ✅ | ✅ | ⚠️ AGENTS.md | ⚠️ GEMINI.md | ✅ extensions | ✅ rules/agents |
+| Custom agent definitions | ✅ config | ✅ | ✅ | ✅ | ✅ | ⚠️ AGENTS.md | ⚠️ GEMINI.md | ✅ extensions | ✅ rules/agents |
 | Parallel multi-session | ✅ Ctrl+O/N/Tab | ⚠️ | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅★ cloud fan-out |
 | Swarm + conflict notify | ✅ worktrees + claims | ❌ | ❌ | ✅★ | ⚠️ teams | ❌ | ❌ | ❌ | ⚠️ |
 | Max turns / loop guard | ✅★ doom-loop | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
 ---
 
-## 5. Araçlar (tools)
+## 5. Tools
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | read / write / edit | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | apply_patch / multi-hunk | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ replace | ⚠️ | ✅ |
-| grep / glob / list | ✅ | ✅ | ✅ | ✅★ | ✅ | ✅ | ✅ | ⚠️ az built-in | ✅ |
+| grep / glob / list | ✅ | ✅ | ✅ | ✅★ | ✅ | ✅ | ✅ | ⚠️ few built-in | ✅ |
 | bash / shell | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ sandboxed | ✅ | ✅ | ✅ |
 | websearch / fetch | ✅ | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ search flag | ✅★ Google Search + fetch | ⚠️ ext/MCP | ✅ |
 | git tools | ✅ built-in | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ shell | ⚠️ shell | ⚠️ shell | ✅ |
 | GitHub issue / PR | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ✅ GH Action | ❌ | ✅ Bugbot/PR |
 | todo / plan / question | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ | ✅ todos+ask_user+plan | ⚠️ | ⚠️ |
 | LSP | ✅★ crate | ⚠️ | ✅ | ❌ | ⚠️ | ⚠️ | ⚠️ | ❌ | ✅ IDE |
-| Core / minimal tool set | ✅★ profile | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅★ az araç | ⚠️ |
+| Core / minimal tool set | ✅★ profile | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ✅★ few tools | ⚠️ |
 | Deferred tool load / ToolSearch | ✅ `tool_search` | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Parallel tools | ✅★ | ✅ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ |
 | Browser automation | ❌ | ⚠️ | ⚠️ | ✅★ | ✅ | ⚠️ | ⚠️ | ❌ | ✅★ cloud VM |
@@ -137,15 +137,15 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 
 ---
 
-## 6. Güvenlik ve izinler
+## 6. Security & permissions
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ approval policy | ✅ confirm mutators | ❌ built-in yok | ✅ |
+| allow / ask / deny | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ approval policy | ✅ confirm mutators | ❌ no built-in | ✅ |
 | Permission globs / policy | ✅ tool + bash + path | ✅ | ✅ | ⚠️ | ✅ | ✅ sandbox_mode | ✅ policy engine | ⚠️ container | ⚠️ |
 | Multi-ask queue | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 | Auto-approve / full-auto | ✅ env | ✅ | ⚠️ | ⚠️ | ✅ | ✅ full access mode | ⚠️ trusted folders | ⚠️ | ✅ |
-| Shell risk sınıflandırması | ✅★ 4-tier | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ sandbox tiers | ⚠️ | ❌ | ⚠️ |
+| Shell risk classification | ✅★ 4-tier | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ sandbox tiers | ⚠️ | ❌ | ⚠️ |
 | Catastrophic hard-block | ✅★ | ⚠️ | ❌ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ |
 | OS / container sandbox | ✅★ bwrap | ✅ | ❌ | ⚠️ | ✅ | ✅★ Landlock/seccomp/AppContainer | ✅ sandbox docs | ⚠️ Docker/Gondolin | ⚠️ cloud VM |
 | Network allowlist / net-off | ✅ HTTP tools | ⚠️ | ❌ | ⚠️ | ✅ | ✅ net-off default legacy | ⚠️ | ⚠️ container | ⚠️ |
@@ -153,9 +153,9 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 
 ---
 
-## 7. Uzantılar: MCP, skills, plugins
+## 7. Extensions: MCP, skills, plugins
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | MCP client | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ packages/ext | ✅ |
 | MCP HTTP/SSE | ✅ | ⚠️ | ✅ | ❌ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
@@ -168,11 +168,11 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 
 ---
 
-## 8. Oturum, bellek, context
+## 8. Session, memory, context
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Kalıcı session | ✅ SQLite | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ checkpoint | ✅ JSONL sessions | ✅ |
+| Persistent session | ✅ SQLite | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ checkpoint | ✅ JSONL sessions | ✅ |
 | Resume / list | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ checkpointing | ✅ tree/branch | ✅ |
 | Cross-harness resume | ❌ | ⚠️ | ⚠️ | ✅★ | n/a | ⚠️ | ⚠️ | ⚠️ | ❌ |
 | Undo / redo | ✅ git | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ branch | ✅ IDE |
@@ -185,22 +185,22 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 
 ## 9. TUI / UX
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Live stream text + tools | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thinking / reasoning | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ✅ |
 | Markdown + highlight | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅★ |
 | Inline diff | ✅ | ✅★ | ✅ | ✅ | ✅ | ⚠️ | ✅ confirm diff | ⚠️ | ✅★ |
 | Mermaid | ✅ | ⚠️ | ❌ | ✅★ | ❌ | ❌ | ❌ | ❌ | ⚠️ |
-| Theme sistemi | ✅ 29+JSON | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ themes | ✅ IDE |
+| Theme system | ✅ 29+JSON | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ themes | ✅ IDE |
 | Mouse chrome (stop/scroll) | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | n/a |
 | `@file` / `!shell` / image | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ @ + ! + image | ⚠️ | ✅ |
 
 ---
 
-## 10. Latency / agent-loop (whycode odağı)
+## 10. Latency / agent loop (whycode focus)
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Shared HTTP keep-alive | ✅★ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ⚠️ | ⚠️ | n/a |
 | Prompt / token cache | ✅★ | ⚠️ | ✅★ | ⚠️ | ✅ | ⚠️ OpenAI cache | ✅ token caching | ⚠️ | ⚠️ |
@@ -209,15 +209,15 @@ Kısa başlıklar: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **C
 | Doom-loop guard | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Tool result prune | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Autocompact circuit breaker | ✅★ 3× | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
-| TTFT metrik (JSONL) | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| TTFT metric (JSONL) | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
-Detay: [plan-latency-competitors.md](plan-latency-competitors.md).
+Details: [plan-latency-competitors.md](plan-latency-competitors.md).
 
 ---
 
-## 11. Çoklu ajan, arka plan, otomasyon
+## 11. Multi-agent, background, automation
 
-| Özellik | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
+| Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Background tasks UI | ✅ `bg` + toast | ✅ | ⚠️ | ✅ | ✅ | ⚠️ | ⚠️ shell bg | ❌ | ✅★ |
 | Scheduled / loop | ✅ `schedule` + `/loop` | ✅ | ❌ | ⚠️ ambient | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ |
@@ -227,92 +227,92 @@ Detay: [plan-latency-competitors.md](plan-latency-competitors.md).
 
 ---
 
-## 12. Performans (yayınlanan / ölçülen)
+## 12. Performance (published / measured)
 
-Farklı makineler / tarihler; mertebe içindir. jcode README bench tablosu (Linux, 10× PTY) + whycode [benchmarks.md](benchmarks.md).
+Different machines / dates; orders of magnitude only. jcode README bench table (Linux, 10× PTY) + whycode [benchmarks.md](benchmarks.md).
 
-| Metrik | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
+| Metric | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
 |---|---|---|---|---|---|---|---|---|---|
-| Boot / TTFF | **~1.0 ms** `--version` (Linux; Win baseline was ~21 ms) | — | ~1036 ms | **~14 ms** | ~3437 ms | ~883 ms | — | ~591 ms | IDE (saniye mertebesi) |
-| 1 session PSS | **~4.1 MB** idle TUI | — | ~372 MB | **~28 MB** (embed off) | ~387 MB | ~140 MB | — | ~144 MB | IDE (yüzlerce MB+) |
+| Boot / TTFF | **~1.0 ms** `--version` (Linux; Win baseline was ~21 ms) | — | ~1036 ms | **~14 ms** | ~3437 ms | ~883 ms | — | ~591 ms | IDE (order of seconds) |
+| 1 session PSS | **~4.1 MB** idle TUI | — | ~372 MB | **~28 MB** (embed off) | ~387 MB | ~140 MB | — | ~144 MB | IDE (hundreds of MB+) |
 | 10 session PSS | **~16.8 MB** | — | ~3.2 GB | **~117 MB** | ~2.3 GB | ~335 MB | — | ~833 MB | — |
-| Kaynak | whycode benches | — | jcode bench | jcode README | jcode bench | jcode bench | public free-tier docs | jcode bench | ürün class |
+| Source | whycode benches | — | jcode bench | jcode README | jcode bench | jcode bench | public free-tier docs | jcode bench | product class |
 
-whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`. Grok Build / Gemini CLI için karşılaştırılabilir PSS tablosu yayınlanmadı (—).
+whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. No comparable PSS table published for Grok Build / Gemini CLI (—).
 
 ---
 
-## 13. whycode’a özel güçlü yanlar
+## 13. whycode-specific strengths
 
-| Alan | Detay |
+| Area | Detail |
 |---|---|
-| **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic` (sonuncusu asla onaylanmaz) |
+| **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic` (last is never approvable) |
 | **Latency stack** | Core tools, prompt cache, parallel reads, doom-loop, fast-route, async title |
 | **Mouse TUI** | HitArea: context %, stop, scrollbar, slash hover |
-| **LSP crate** | Ayrı `whycode-lsp` |
+| **LSP crate** | Separate `whycode-lsp` |
 | **Windows CI** | Linux + macOS + Windows full suite |
-| **Küçük kod tabanı** | ~50k LOC Rust |
+| **Small codebase** | ~50k LOC Rust |
 | **OpenCode interop** | Theme JSON, AGENTS.md, `.opencode/commands` |
-| **In-process grep** | `rg` PATH’te olmasa da çalışır |
-| **Yerel share** | `127.0.0.1` only |
+| **In-process grep** | Works without `rg` on PATH |
+| **Local share** | `127.0.0.1` only |
 
 ---
 
-## 14. whycode’da olmayan / zayıf (rakiplere göre)
+## 14. Missing / weak in whycode (vs competitors)
 
-| Boşluk | Kimde var | Not |
+| Gap | Who has it | Note |
 |---|---|---|
 | OAuth / subscription login | jcode, OC, CC, Grok, Codex, Gemini, Pi `/login`, Cursor | [plan-oauth](plan-oauth.md) |
-| Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [plan-memory](plan-memory.md) |
+| Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [archive/plan-memory](archive/plan-memory.md) |
 | Swarm | jcode★ / whycode `swarm` | git worktrees + 3-way merge + claims toast |
-| Browser automation | jcode, Claude, Cursor★ | Yok |
+| Browser automation | jcode, Claude, Cursor★ | None |
 | Desktop / IDE | OpenCode, Claude, Codex app/IDE, **Cursor★** | `web` + `acp` stub |
 | Plugin marketplace | Grok, OpenCode, Cursor, Gemini ext, Pi packages | Config hooks ✅ |
 | OS sandbox (non-Linux) | Grok, Claude, **Codex★**, Gemini sandbox | Linux bwrap ✅ |
-| Cloud agents | Claude, **Codex Web**, **Cursor★** | Yok |
-| Free model kota | **Gemini CLI★** (1k req/day) | Yok |
-| Minimal harness | **Pi★** | Core profile var |
-| Self-dev / self-extend | jcode, **Pi★** | Yok |
-| MCP-as-server export | **Codex★** | Yok |
+| Cloud agents | Claude, **Codex Web**, **Cursor★** | None |
+| Free model tier | **Gemini CLI★** (1k req/day) | None |
+| Minimal harness | **Pi★** | Core profile exists |
+| Self-dev / self-extend | jcode, **Pi★** | None |
+| MCP-as-server export | **Codex★** | None |
 
 ---
 
-## 15. Hızlı “kim ne için?”
+## 15. Quick “who is what for?”
 
-| İhtiyaç | Yön |
+| Need | Pick |
 |---|---|
-| En düşük RAM, swarm, memory | **jcode** |
-| Claude abonelik + web/desktop/IDE/CI | **Claude Code** |
-| Model özgürlüğü + OSS multi-surface | **OpenCode** |
+| Lowest RAM, swarm, memory | **jcode** |
+| Claude subscription + web/desktop/IDE/CI | **Claude Code** |
+| Model freedom + OSS multi-surface | **OpenCode** |
 | Grok + plugins + ACP | **Grok Build** |
 | OpenAI + OS sandbox + cloud Codex | **Codex CLI** |
-| Ücretsiz kota + Search + plan mode | **Gemini CLI** |
+| Free tier + Search + plan mode | **Gemini CLI** |
 | Minimal, extension-first harness | **Pi** |
 | IDE-first + Tab + cloud agents | **Cursor** |
 | Shell safety + latency + mouse TUI + Windows CI | **whycode** |
 
-### Rakip notları (kısa)
+### Competitor notes (short)
 
-| Ürün | Not |
+| Product | Note |
 |---|---|
-| **Codex CLI** | Apache-2.0 Rust; ChatGPT login veya API; sandbox (Landlock/seccomp/AppContainer); AGENTS.md; MCP client + `mcp-server`; IDE eklentisi + Codex Web/App. |
-| **Gemini CLI** | Apache-2.0 TypeScript; Google OAuth ücretsiz kota; built-in Search/fetch/plan/todos; sandbox + policy; GEMINI.md; stream-json. Antigravity CLI geçişi duyurusu var (‡). |
-| **Pi** | MIT TypeScript monorepo (Earendil); multi-provider; az built-in tool + TS extensions/skills/themes; session tree + compaction; **built-in FS/net permission yok** — container önerilir. |
-| **Cursor** | Proprietary IDE; Agent + Tab + multi-model; Cloud Agents (browser/desktop VM); MCP/skills/hooks; ayrı headless CLI. |
+| **Codex CLI** | Apache-2.0 Rust; ChatGPT login or API; sandbox (Landlock/seccomp/AppContainer); AGENTS.md; MCP client + `mcp-server`; IDE extension + Codex Web/App. |
+| **Gemini CLI** | Apache-2.0 TypeScript; Google OAuth free tier; built-in Search/fetch/plan/todos; sandbox + policy; GEMINI.md; stream-json. Antigravity CLI migration announced (‡). |
+| **Pi** | MIT TypeScript monorepo (Earendil); multi-provider; few built-in tools + TS extensions/skills/themes; session tree + compaction; **no built-in FS/net permission** — container recommended. |
+| **Cursor** | Proprietary IDE; Agent + Tab + multi-model; Cloud Agents (browser/desktop VM); MCP/skills/hooks; separate headless CLI. |
 
 ---
 
-## 16. whycode özellik envanteri (tek başına)
+## 16. whycode feature inventory (standalone)
 
 ### CLI
 
-| Komut | Durum |
+| Command | Status |
 |---|---|
-| `run` / varsayılan TUI | ✅ |
+| `run` / default TUI | ✅ |
 | `generate` (one-shot) | ✅ |
 | `--format text\|json\|stream-json` (CI / NDJSON) | ✅ |
 | `--continue` / `--resume` | ✅ |
-| `acp` | ⚠️ stub (ürün sonrası) |
+| `acp` | ⚠️ stub (post-product) |
 | `pr` / `github` | ✅ |
 | `serve` (API + local share) | ✅ |
 | `web` | ⚠️ stub |
@@ -321,28 +321,28 @@ whycode: process startup + criterion hot-path; agent TTFT için JSONL `ttft_ms`.
 
 ### Slash commands (TUI)
 
-`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info`, `/theme`/`/themes` (picker + isimle uygula) — custom: `.whycode/commands/*.md` ve `.opencode/commands`. Plain ek: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
+`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info`, `/theme`/`/themes` (picker + apply by name) — custom: `.whycode/commands/*.md` and `.opencode/commands`. Extra plain: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
 
 ### Built-in tools
 
-**Core profile (default, LLM şemasına giden):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash` (alias `shell`, `background: true`), `bg`, `schedule`, `swarm`, `todowrite` (alias `todo`), `todoread`, `task`.
+**Core profile (default, sent to the LLM schema):** `read`, `write`, `edit`, `apply_patch`, `grep`, `glob`, `list`, `bash` (alias `shell`, `background: true`), `bg`, `schedule`, `swarm`, `todowrite` (alias `todo`), `todoread`, `task`.
 
 **Full profile:** + `git_status`/`git_diff`/`git_log`/`git_blame`/`git_commit`, `github_issue`/`github_pr`, `webfetch`, `websearch`, `plan`, `question`, `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, MCP `{server}_{tool}`.
 
 ### Agents
 
-| Agent | Mod |
+| Agent | Mode |
 |---|---|
-| `build` | primary, full access (varsayılan); soft intent posture |
+| `build` | primary, full access (default); soft intent posture |
 | `plan` | primary, read-only planning (`Ctrl+T`) |
 | `ask` | primary, read-only Q&A / explain (`Ctrl+T`) |
 | `general` | subagent (`task`) |
 | `explore` | subagent, read-only search |
 | `scout` | subagent, docs/deps research |
 
-**Intent katmanı:** hard mode (ask/plan tool denylist) + build prompt protocol + sıfır-LLM heuristic (`session.intent_guidance = auto|off|always`). TUI: `[Q]`/`chg`/`plan` badge + Warning toast (mode mismatch). Tool auth: question/plan turunda mutator → Confirm; read-only shell serbest.
+**Intent layer:** hard mode (ask/plan tool denylist) + build prompt protocol + zero-LLM heuristic (`session.intent_guidance = auto|off|always`). TUI: `[Q]`/`chg`/`plan` badge + warning toast (mode mismatch). Tool auth: mutator in question/plan turn → Confirm; read-only shell unrestricted.
 
-### Config (latency + güvenlik)
+### Config (latency + security)
 
 ```toml
 [session]
@@ -363,7 +363,7 @@ edit = "allow"
 bash_risk_threshold = "destructive"  # caution | destructive | off
 sandbox = "workspace"                # off | workspace
 sandbox_network = true
-sandbox_fallback = "allow"           # allow | deny (bwrap yoksa)
+sandbox_fallback = "allow"           # allow | deny (when bwrap is missing)
 # network_allowlist = ["github.com", "crates.io"]
 # network_denylist = ["tracking.example.com"]
 
@@ -374,17 +374,17 @@ sandbox_fallback = "allow"           # allow | deny (bwrap yoksa)
 # block_on_failure = true
 ```
 
-### Güvenlik (kısa)
+### Security (short)
 
-- Tool izin: `allow` / `ask` / `deny` + glob; TUI **multi-ask queue** (paralel ask birikimi).
-- Shell risk: `safe` → `caution` → `destructive` → `catastrophic` (sonuncusu asla onaylanmaz).
-- OS sandbox: Linux `bwrap` workspace; diğer OS fallback.
-- HTTP tool domain allow/denylist; shell ağı binary (`sandbox_network`).
-- Config shell hooks (`pre_tool` / `post_tool`); plugin marketplace iskelet.
+- Tool permission: `allow` / `ask` / `deny` + glob; TUI **multi-ask queue** (parallel ask backlog).
+- Shell risk: `safe` → `caution` → `destructive` → `catastrophic` (last is never approved).
+- OS sandbox: Linux `bwrap` workspace; other-OS fallback.
+- HTTP tool domain allow/denylist; shell network is binary (`sandbox_network`).
+- Config shell hooks (`pre_tool` / `post_tool`); plugin marketplace skeleton.
 
 ---
 
-## Kaynaklar
+## Sources
 
 - whycode: [README.md](../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](benchmarks.md)
 - OpenCode: <https://opencode.ai/> · <https://github.com/anomalyco/opencode>
@@ -396,6 +396,6 @@ sandbox_fallback = "allow"           # allow | deny (bwrap yoksa)
 - Pi: <https://pi.dev/> · <https://github.com/earendil-works/pi>
 - Cursor: <https://cursor.com/> · <https://cursor.com/docs>
 
-Performans satırları (TTFF/PSS): jcode README karşılaştırma tablosu + whycode `docs/benchmarks.md` (farklı makineler).
+Performance rows (TTFF/PSS): jcode README comparison table + whycode `docs/benchmarks.md` (different machines).
 
-Bu tablo living snapshot’tır. Büyük özellik veya rakip konum değişince aynı PR’da güncelle.
+This table is a living snapshot. Update it in the same PR when a major feature or competitor position changes.

@@ -24,7 +24,6 @@ use chrono::Utc;
 use serde::Serialize;
 use serde_json::json;
 use tracing::{Event, Subscriber};
-use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
@@ -587,12 +586,6 @@ impl tracing::field::Visit for JsonVisitor {
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
         self.fields.insert(field.name().to_string(), json!(value));
     }
-}
-
-// Silence unused import if LevelFilter unused in some builds.
-#[allow(dead_code)]
-fn _level_filter_floor() -> LevelFilter {
-    LevelFilter::INFO
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

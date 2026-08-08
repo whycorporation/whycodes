@@ -1,7 +1,7 @@
 # Plan — Competitive latency research & whycode roadmap
 
 **Status:** active (revised) · **Priority:** P0 · **Last review:** 2026-08-05  
-**Related:** [plan-perf-hotpath.md](plan-perf-hotpath.md), [plan-perf-context-tui.md](plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
+**Related:** [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md), [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
 **Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
 ## Goal
@@ -138,7 +138,7 @@ From open issues (latency/correctness adjacency):
 | In-process search (agentgrep spirit) | Already: Rust `grep`/`glob` tools; keep **no shell dependency** |
 | Warm daemon optional | P2: document/strengthen `serve` for multi-session |
 | Curated tool set on heavy providers | **P0** core tool profile |
-| Memory | Separate plan ([plan-memory.md](plan-memory.md)); not TTFT P0 |
+| Memory | Separate plan ([archive/plan-memory.md](archive/plan-memory.md)); not TTFT P0 |
 | Swarm | Stay **out** of latency P0; revisit only for huge monorepos |
 | Effort / fast model switch | **P0/P1** model routing + keybind |
 
@@ -206,7 +206,7 @@ compaction_threshold = 150000
 1. LLM-summary compact agent — only if prune+drop insufficient  
 2. Speculative stream-arg early `read` (I/O before JSON closes)  
 3. Long-lived daemon multi-session warm  
-4. Cross-session memory ([plan-memory.md](plan-memory.md))  
+4. Cross-session memory ([archive/plan-memory.md](archive/plan-memory.md))  
 5. Swarm — monorepo only (phase-7 still holds)  
 6. First-token race failover / semantic response cache
 

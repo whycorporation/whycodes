@@ -1,6 +1,6 @@
 # Plan — Performance hot path (binary, hash, math)
 
-**Status:** done · **Depends on:** crate boundaries (shipped) · **Related:** [plan-performance.md](plan-performance.md), [benchmarks.md](benchmarks.md)
+**Status:** done · **Depends on:** crate boundaries (shipped) · **Related:** [plan-performance.md](../plan-performance.md), [benchmarks.md](../benchmarks.md)
 
 ## Diagnosis
 
@@ -41,4 +41,4 @@
 - Highlight/mermaid unit tests green (cache key semantics preserved)
 - Workspace builds green; token_counter tests green
 - Closed memo returns `Arc` — warm `highlight` **~261 ns** / 100 lines (was ~84 µs deep-clone)
-- Bench split cold vs warm; numbers in [benchmarks.md](benchmarks.md)
+- Bench split cold vs warm; numbers in [benchmarks.md](../benchmarks.md)

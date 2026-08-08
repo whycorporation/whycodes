@@ -19,7 +19,6 @@ whycode-tools = { path = "../tools" }
 
 [dev-dependencies]
 axum = { version = "0.7", features = ["macros"] }
-tower = "0.5"
 async-stream = "0.3"
 tokio = { workspace = true, features = ["full", "test-util", "macros", "rt-multi-thread"] }
 http-body-util = "0.1"

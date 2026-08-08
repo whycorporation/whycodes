@@ -18,6 +18,8 @@ const PROTOCOL_VERSION: &str = "2025-03-26";
 
 enum Transport {
     Stdio {
+        /// Never read directly: held so `kill_on_drop(true)` on the spawned
+        /// command reaps the server process when the transport is dropped.
         #[allow(dead_code)]
         child: Child,
         writer: ChildStdin,
