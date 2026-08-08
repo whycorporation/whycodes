@@ -421,6 +421,31 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-09 — new crate must register in the three budget JSONs
+
+**Symptom:** CI `budgets` job fails after adding `crates/auth`:
+`error: crate 'auth' has no entry in panic_budget.json` (then the same for
+`dependency_boundaries.json`, `swallowed_error_budget.json` — each fix
+revealed the next).
+
+**Root cause:** `scripts/check_panic_budget.py`,
+`check_dependency_boundaries.py`, and `check_swallowed_error_budget.py`
+enumerate `crates/*` and require an entry per crate. A new workspace member
+fails all three until registered. The boundary file additionally requires
+every new dependency *edge* (`cli → auth`, `tui → auth`).
+
+**Fix:** `"auth": 0` in panic budget, `"auth": 6` in swallowed-error budget
+(counted via the script's patterns; best-effort stdout flush / browser-page
+writes), `"auth": []` + cli/tui edges in dependency boundaries.
+
+**Prevention:** When adding a crate: (1) add it to all three
+`scripts/*.json` budgets in the same commit, (2) run the three check
+scripts locally before push. They run in seconds and are the whole
+`budgets` CI job.
+
+---
+
+
 ### Template (copy for new entries)
 
 ```markdown

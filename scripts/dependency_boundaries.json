@@ -11,8 +11,10 @@
     "session",
     "tools"
   ],
+  "auth": [],
   "cli": [
     "agent",
+    "auth",
     "config",
     "core",
     "format",
@@ -102,6 +104,7 @@
   ],
   "tui": [
     "agent",
+    "auth",
     "config",
     "core",
     "format",
