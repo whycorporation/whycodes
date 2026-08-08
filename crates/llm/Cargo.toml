@@ -8,6 +8,7 @@ repository.workspace = true
 [dependencies]
 whycode-core = { path = "../core" }
 whycode-config = { path = "../config" }
+whycode-auth = { path = "../auth" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

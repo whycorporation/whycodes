@@ -229,8 +229,65 @@ pub async fn access_token(provider: &str, data_dir: &Path) -> Option<String> {
     let spec = spec_for(provider).ok()?;
     let store = TokenStore::new(data_dir);
     let auth = store.get(spec.name).ok()??;
-    let token = ensure_fresh(&spec, &store, auth.token).await.ok()?;
+    let token = ensure_fresh(&spec, &store, &auth.method, auth.token)
+        .await
+        .ok()?;
     usable_token(&spec, &token)
+}
+
+/// Force a credential renewal regardless of the expiry window and return
+/// the usable API credential.
+///
+/// Used after a provider answers 401 on a token the store considered fresh
+/// (revoked server-side, clock skew, a derived token invalidated early).
+/// How many times a rejection may trigger this is the *caller's* policy
+/// (whycode-llm does it once per request); this function only guarantees
+/// the store ends up holding the newest credential the provider will issue.
+/// `None` when not logged in, when the credential has no renewal path, or
+/// when the provider refuses the renewal — the stored credential is never
+/// deleted here, and the import method is preserved.
+pub async fn force_refresh(provider: &str, data_dir: &Path) -> Option<String> {
+    let spec = spec_for(provider).ok()?;
+    let store = TokenStore::new(data_dir);
+    let auth = store.get(spec.name).ok()??;
+    let method = auth.method.clone();
+    let token = force_fresh(&spec, &store, &method, auth.token).await.ok()?;
+    usable_token(&spec, &token)
+}
+
+/// Like `ensure_fresh` but ignores the freshness window: always renew.
+async fn force_fresh(
+    spec: &ProviderSpec,
+    store: &TokenStore,
+    method: &str,
+    token: OAuthToken,
+) -> Result<OAuthToken> {
+    if spec.derived.is_some() {
+        tracing::debug!(
+            provider = spec.name,
+            "derived API token rejected; forcing re-exchange"
+        );
+        return reexchange_derived(spec, store, method, token).await;
+    }
+    let Some(refresh) = token.refresh_token.clone() else {
+        // No way to renew — the user must log in again.
+        return Err(AuthError::NotLoggedIn(spec.name.to_string()));
+    };
+    tracing::debug!(
+        provider = spec.name,
+        "OAuth credential rejected; forcing refresh"
+    );
+    let refreshed = refresh_grant(spec, &refresh)
+        .await
+        .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
+    store.set(
+        spec.name,
+        ProviderAuth {
+            method: method.to_string(),
+            token: refreshed.clone(),
+        },
+    )?;
+    Ok(refreshed)
 }
 
 /// Load + refresh if needed and return the token; kept separate so a
@@ -238,10 +295,11 @@ pub async fn access_token(provider: &str, data_dir: &Path) -> Option<String> {
 async fn ensure_fresh(
     spec: &ProviderSpec,
     store: &TokenStore,
+    method: &str,
     token: OAuthToken,
 ) -> Result<OAuthToken> {
     if spec.derived.is_some() {
-        return ensure_fresh_derived(spec, store, token).await;
+        return ensure_fresh_derived(spec, store, method, token).await;
     }
     if !token.is_expired() {
         return Ok(token);
@@ -260,7 +318,7 @@ async fn ensure_fresh(
     store.set(
         spec.name,
         ProviderAuth {
-            method: "oauth".to_string(),
+            method: method.to_string(),
             token: refreshed.clone(),
         },
     )?;
@@ -555,11 +613,9 @@ fn set_derived_extra(token: &mut OAuthToken, derived_token: &str, expires: DateT
 async fn ensure_fresh_derived(
     spec: &ProviderSpec,
     store: &TokenStore,
-    mut token: OAuthToken,
+    method: &str,
+    token: OAuthToken,
 ) -> Result<OAuthToken> {
-    let derived = spec
-        .derived
-        .ok_or_else(|| AuthError::Provider(format!("{}: no derived credential spec", spec.name)))?;
     // "copilot_*" keys are the pre-rename names; read them so stores
     // written by older builds keep working.
     let extra_get =
@@ -576,12 +632,27 @@ async fn ensure_fresh_derived(
         provider = spec.name,
         "derived API token expired; re-exchanging"
     );
+    reexchange_derived(spec, store, method, token).await
+}
+
+/// Run the derived-token exchange and persist the result, preserving the
+/// credential's import method. Shared by the expiry path and the forced
+/// re-exchange after a 401.
+async fn reexchange_derived(
+    spec: &ProviderSpec,
+    store: &TokenStore,
+    method: &str,
+    mut token: OAuthToken,
+) -> Result<OAuthToken> {
+    let derived = spec
+        .derived
+        .ok_or_else(|| AuthError::Provider(format!("{}: no derived credential spec", spec.name)))?;
     let (derived_token, expires) = exchange_derived_token(&derived, &token.access_token).await?;
     set_derived_extra(&mut token, &derived_token, expires);
     store.set(
         spec.name,
         ProviderAuth {
-            method: "oauth".to_string(),
+            method: method.to_string(),
             token: token.clone(),
         },
     )?;
@@ -1136,5 +1207,36 @@ mod tests {
         broken.authorize_url = "http://insecure.example.com";
         let issues = validate(&broken);
         assert!(issues.len() >= 3, "expected >=3 issues, got: {issues:?}");
+    }
+
+    #[tokio::test]
+    async fn force_refresh_without_login_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(force_refresh("anthropic", dir.path()).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn force_refresh_without_renewal_path_keeps_credential() {
+        // A stored credential with no refresh token (and no derived
+        // exchange) cannot be renewed: force_refresh must return None and
+        // must NOT delete the stored credential.
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::new(dir.path());
+        store
+            .set(
+                "anthropic",
+                ProviderAuth {
+                    method: "oauth".to_string(),
+                    token: OAuthToken {
+                        access_token: "acc".to_string(),
+                        refresh_token: None,
+                        expires_at: None,
+                        extra: Default::default(),
+                    },
+                },
+            )
+            .unwrap();
+        assert!(force_refresh("anthropic", dir.path()).await.is_none());
+        assert!(store.get("anthropic").unwrap().is_some());
     }
 }

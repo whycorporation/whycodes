@@ -93,7 +93,10 @@ Out:
 - [x] Google OAuth flow (browser + loopback callback, ephemeral port)
 - [x] GitHub Copilot (device-code grant + Copilot API-token exchange)
 - [x] Automatic refresh on use (access-token grant refresh; Copilot token
-      re-exchange). Single retry on a 401-that-looks-like-expiry: still open
+      re-exchange) + single retry on a 401-that-looks-like-expiry
+      (`crates/llm/src/oauth_refresh.rs`: registered OAuth sources force a
+      renewal once per rejected request; generic retry still treats 401 as
+      non-retryable)
 - [ ] Discovery: locate known credential paths per platform, report findings
 - [ ] Consent prompt per source path, with the decision persisted
 - [ ] Reject symlinked credential sources; never write to a discovered file

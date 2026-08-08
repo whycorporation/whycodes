@@ -48,7 +48,10 @@ community CLIs — whycode has no registered client of its own.
 | `google` | PKCE → loopback callback on an ephemeral port | ⚠️ login + refresh work; Gemini-subscription calls need the Code Assist endpoint (`cloudcode-pa.googleapis.com`), not the API-key `generativelanguage` route — call routing is a follow-up |
 
 Expired access tokens refresh transparently on next use (GitHub's token
-does not expire; the derived Copilot token does and is re-exchanged).
+does not expire; the derived Copilot token does and is re-exchanged). If a
+provider still answers 401 on a token the store considered fresh, the
+credential is force-renewed and the request retried exactly once; a second
+401 surfaces as a normal error.
 
 ## Adding a new OAuth provider (standard)
 

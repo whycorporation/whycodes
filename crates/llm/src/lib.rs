@@ -11,6 +11,7 @@ pub mod google;
 pub mod groq;
 pub mod mistral;
 pub mod model_catalog;
+pub mod oauth_refresh;
 pub mod ollama;
 pub mod openai;
 pub mod openai_compat;

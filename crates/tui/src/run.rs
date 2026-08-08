@@ -1014,11 +1014,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
                 {
                     api_key = k;
+                    whycode_llm::oauth_refresh::unregister(&p);
                 } else if whycode_auth::providers::supports_oauth(&p)
                     && let Ok(dir) = Config::data_dir()
                     && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
                 {
                     // OAuth subscription login (`whycode auth login <p>`).
+                    whycode_llm::oauth_refresh::register(&p, dir);
                     api_key = tok;
                 }
                 // Drop stale window; re-fetch when idle so we never contend with a turn.
@@ -3333,6 +3335,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 && let Ok(dir) = Config::data_dir()
                 && let Some(tok) = whycode_auth::providers::access_token(ctx.provider, &dir).await
             {
+                whycode_llm::oauth_refresh::register(ctx.provider, dir);
                 *ctx.api_key = tok;
             }
             if ctx.api_key.is_empty() {
