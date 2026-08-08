@@ -61,6 +61,68 @@ pub struct SlashContext<'a> {
     pub api_key: &'a mut String,
     pub perm_prompter: Arc<ChannelPermissionPrompter>,
     pub question_prompter: Arc<ChannelQuestionPrompter>,
+    pub auth_tx: mpsc::UnboundedSender<AuthFlowEvent>,
+}
+
+/// Messages from an in-flight OAuth login task (`/connect` with no stored
+/// credential starts one) back to the TUI event loop.
+pub enum AuthFlowEvent {
+    /// Progress text from the flow (URL to open, device code, waiting…).
+    Note(String),
+    /// Anthropic paste flow: the flow needs the user to paste `code#state`.
+    /// The next submitted input line is forwarded through this sender.
+    NeedCode(tokio::sync::oneshot::Sender<String>),
+    /// Flow finished: Ok(label) on success, Err(message) on failure.
+    Done {
+        provider: String,
+        result: Result<String, String>,
+    },
+}
+
+/// Drives `whycode_auth::providers::LoginUi` from the TUI: notes land in
+/// the chat transcript, the pasted code is collected via the prompt box.
+struct TuiLoginUi {
+    tx: mpsc::UnboundedSender<AuthFlowEvent>,
+}
+
+impl whycode_auth::providers::LoginUi for TuiLoginUi {
+    fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool) {
+        let browser = if browser_opened {
+            "Browser opened — complete the sign-in there."
+        } else {
+            "Open the URL above manually."
+        };
+        let _ = self
+            .tx
+            .send(AuthFlowEvent::Note(format!("Sign in with {label}:\n  {url}\n{browser}")));
+    }
+
+    fn note(&mut self, text: &str) {
+        let _ = self.tx.send(AuthFlowEvent::Note(text.to_string()));
+    }
+
+    fn show_device_code(&mut self, user_code: &str, verification_uri: &str, browser_opened: bool) {
+        let browser = if browser_opened {
+            "Browser opened — enter the code there."
+        } else {
+            "Open the URL manually."
+        };
+        let _ = self.tx.send(AuthFlowEvent::Note(format!(
+            "GitHub Copilot login:\n  1. Visit  {verification_uri}\n  2. Enter code:  {user_code}\n{browser}"
+        )));
+    }
+
+    fn prompt_pasted_code(
+        &mut self,
+    ) -> impl std::future::Future<Output = whycode_auth::error::Result<String>> + Send {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = self.tx.send(AuthFlowEvent::NeedCode(tx));
+        async move {
+            rx.await.map_err(|_| {
+                whycode_auth::AuthError::FlowCancelled("sign-in dismissed".to_string())
+            })
+        }
+    }
 }
 
 fn bind_agent_prompters(
@@ -476,6 +538,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut catalog_fetch_pending = false;
     // A7 idle prompt suggestions (default off).
     let (suggest_tx, mut suggest_rx) = mpsc::unbounded_channel::<String>();
+    // In-TUI OAuth login (`/connect`): flow progress → event loop.
+    let (auth_tx, mut auth_rx) = mpsc::unbounded_channel::<AuthFlowEvent>();
 
     // Background jobs / schedule enqueue use the same long-lived event channel.
     agent.wire_event_sink(event_tx.clone());
@@ -1085,6 +1149,56 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
             }
 
+            // OAuth login flow progress (`/connect` spawned task).
+            while let Ok(ev) = auth_rx.try_recv() {
+                match ev {
+                    AuthFlowEvent::Note(text) => {
+                        app.add_message(ChatRole::System, &text);
+                        app.status_message = text.lines().next().unwrap_or("").to_string();
+                    }
+                    AuthFlowEvent::NeedCode(sink) => {
+                        app.auth_code_sink = Some(sink);
+                        app.status_message =
+                            "Paste the sign-in code, then Enter · Esc cancels".into();
+                        app.focus_prompt();
+                    }
+                    AuthFlowEvent::Done { provider: p, result } => match result {
+                        Ok(_) => {
+                            // Load the fresh credential for the active provider.
+                            if p == provider
+                                && let Ok(dir) = Config::data_dir()
+                                && let Some(tok) =
+                                    whycode_auth::providers::access_token(&p, &dir).await
+                            {
+                                whycode_llm::oauth_refresh::register(&p, dir);
+                                api_key = tok;
+                            }
+                            app.add_message(
+                                ChatRole::System,
+                                format!("✓ Signed in to `{p}` (subscription)"),
+                            );
+                            app.status_message = format!("Signed in · {p}");
+                            app.toasts.push(
+                                crate::toast::ToastKind::Success,
+                                format!("Connected · {p}"),
+                            );
+                        }
+                        Err(msg) => {
+                            app.add_message(
+                                ChatRole::System,
+                                format!("Sign-in to `{p}` failed: {msg}"),
+                            );
+                            app.status_message = format!("sign-in failed · {p}");
+                            app.toasts.push(
+                                crate::toast::ToastKind::Error,
+                                truncate_toast(&format!("sign-in failed: {msg}"), 64),
+                            );
+                        }
+                    },
+                }
+                app.mark_dirty();
+            }
+
             // ── Apply async single-model context_length from gateway ──
             while let Ok((for_provider, for_model, window)) = catalog_rx.try_recv() {
                 if for_provider != provider || for_model != model {
@@ -1677,6 +1791,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 api_key: &mut api_key,
                                 perm_prompter: Arc::clone(&rt.perm_prompter),
                                 question_prompter: Arc::clone(&rt.question_prompter),
+                                auth_tx: auth_tx.clone(),
                             },
                         )
                         .await;
@@ -3340,24 +3455,46 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             }
             if ctx.api_key.is_empty() {
                 ctx.app.status_message = format!("no API key · set {env_name}");
-                let oauth_hint = if whycode_auth::providers::supports_oauth(ctx.provider) {
-                    format!("\n → whycode auth login {}  (subscription)", ctx.provider)
-                } else {
-                    String::new()
-                };
+                let oauth_supported = whycode_auth::providers::supports_oauth(ctx.provider);
                 ctx.app.add_message(
                     ChatRole::System,
                     format!(
                         "No API key for `{}`\n\
                          → export {env_name}=…\n\
-                         → whycode provider add {} --api-key <key>{oauth_hint} · then /connect",
+                         → whycode provider add {} --api-key <key> · then /connect",
                         ctx.provider, ctx.provider
                     ),
                 );
-                ctx.app.toasts.push(
-                    crate::toast::ToastKind::Warning,
-                    format!("Still no key for {}", ctx.provider),
-                );
+                // OAuth-supported provider: offer the login flow right here
+                // instead of only printing help (plan-oauth `/connect`).
+                if oauth_supported
+                    && let Ok(dir) = Config::data_dir()
+                {
+                    let p = ctx.provider.to_string();
+                    let tx = ctx.auth_tx.clone();
+                    ctx.app.add_message(
+                        ChatRole::System,
+                        format!("Starting `{p}` subscription sign-in… (Esc cancels)"),
+                    );
+                    tokio::spawn(async move {
+                        let store = whycode_auth::TokenStore::new(&dir);
+                        let mut ui = TuiLoginUi { tx: tx.clone() };
+                        let result =
+                            whycode_auth::providers::login_with_ui(&p, &store, true, &mut ui)
+                                .await
+                                .map(|_| p.clone())
+                                .map_err(|e| e.to_string());
+                        let _ = tx.send(AuthFlowEvent::Done {
+                            provider: p,
+                            result,
+                        });
+                    });
+                } else {
+                    ctx.app.toasts.push(
+                        crate::toast::ToastKind::Warning,
+                        format!("Still no key for {}", ctx.provider),
+                    );
+                }
             } else {
                 ctx.app.status_message = format!("API key loaded · {}", ctx.provider);
                 ctx.app.add_message(

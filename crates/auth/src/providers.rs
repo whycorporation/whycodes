@@ -199,17 +199,82 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
     }
 }
 
+/// User-interaction hooks for the login flows. The CLI implements this
+/// with stdout/stdin ([`CliLoginUi`]); the TUI drives it from status lines
+/// and the prompt box. Token material never passes through this interface.
+pub trait LoginUi {
+    /// Show the authorize URL; `browser_opened` reports whether the
+    /// browser launch succeeded (the flow attempts it when requested).
+    fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool);
+    /// Progress note ("waiting for the browser redirect", …).
+    fn note(&mut self, text: &str);
+    /// Device flow: the code the user must enter at `verification_uri`.
+    fn show_device_code(&mut self, user_code: &str, verification_uri: &str, browser_opened: bool);
+    /// Paste-code flow only: obtain the pasted `code#state`.
+    fn prompt_pasted_code(&mut self) -> impl Future<Output = Result<String>> + Send;
+}
+
+/// stdout/stdin [`LoginUi`] used by `whycode auth login`.
+pub struct CliLoginUi;
+
+impl LoginUi for CliLoginUi {
+    fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool) {
+        println!("Open this URL to log in with {label}:\n\n  {url}\n");
+        if browser_opened {
+            println!("Browser opened — complete the sign-in there.");
+        }
+    }
+
+    fn note(&mut self, text: &str) {
+        println!("{text}");
+        std::io::stdout().flush().ok();
+    }
+
+    fn show_device_code(&mut self, user_code: &str, verification_uri: &str, browser_opened: bool) {
+        println!("\nGitHub Copilot login:");
+        println!("  1. Visit  {verification_uri}");
+        println!("  2. Enter code:  {user_code}\n");
+        if browser_opened {
+            println!("Browser opened — enter the code there.");
+        }
+    }
+
+    async fn prompt_pasted_code(&mut self) -> Result<String> {
+        println!("After signing in, the browser shows a code. Paste it here:");
+        print!("> ");
+        std::io::stdout().flush().ok();
+        let pasted = tokio::task::spawn_blocking(|| {
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map(|_| line)
+        })
+        .await
+        .map_err(|e| AuthError::FlowCancelled(format!("stdin task failed: {e}")))?
+        .map_err(AuthError::Io)?;
+        Ok(pasted.trim().to_string())
+    }
+}
+
 /// Run the full login flow for `provider` and persist the credential.
 ///
 /// Prints user-facing instructions (URLs, device codes) on stdout; never
 /// prints token material. When `open_browser` is false the URL is only
 /// printed for manual use.
 pub async fn login(provider: &str, store: &TokenStore, open_browser: bool) -> Result<ProviderAuth> {
+    login_with_ui(provider, store, open_browser, &mut CliLoginUi).await
+}
+
+/// [`login`] with a caller-provided UI driver (TUI dialogs, tests).
+pub async fn login_with_ui<U: LoginUi>(
+    provider: &str,
+    store: &TokenStore,
+    open_browser: bool,
+    ui: &mut U,
+) -> Result<ProviderAuth> {
     let spec = spec_for(provider)?;
     let token = match spec.flow {
-        FlowKind::LoopbackPkce => loopback_login(&spec, open_browser).await?,
-        FlowKind::PasteCodePkce => paste_code_login(&spec, open_browser).await?,
-        FlowKind::DeviceCode => device_login(&spec, open_browser).await?,
+        FlowKind::LoopbackPkce => loopback_login(&spec, open_browser, ui).await?,
+        FlowKind::PasteCodePkce => paste_code_login(&spec, open_browser, ui).await?,
+        FlowKind::DeviceCode => device_login(&spec, open_browser, ui).await?,
     };
     let auth = ProviderAuth {
         method: "oauth".to_string(),
@@ -345,7 +410,21 @@ fn usable_token(spec: &ProviderSpec, token: &OAuthToken) -> Option<String> {
 // Browser + localhost callback (OpenAI, Google)
 // ────────────────────────────────────────────────────────────────────────
 
-async fn loopback_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuthToken> {
+/// Open `url` in the browser; `Ok(false)` = no browser available (the UI
+/// already has the URL for manual use).
+fn try_open_browser(url: &str) -> Result<bool> {
+    match flow::open_browser(url) {
+        Ok(()) => Ok(true),
+        Err(AuthError::BrowserUnavailable(_)) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+async fn loopback_login(
+    spec: &ProviderSpec,
+    open_browser: bool,
+    ui: &mut impl LoginUi,
+) -> Result<OAuthToken> {
     let pkce = Pkce::new();
     let listener = match spec.loopback_port {
         Some(port) => std::net::TcpListener::bind(("127.0.0.1", port)).map_err(|e| {
@@ -367,18 +446,9 @@ async fn loopback_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuth
         spec.extra_authorize,
     );
 
-    println!("Open this URL to log in with {}:\n\n  {url}\n", spec.label);
-    if open_browser {
-        match flow::open_browser(&url) {
-            Ok(()) => println!("Browser opened — complete the sign-in there."),
-            Err(AuthError::BrowserUnavailable(_)) => {
-                println!("(Could not open a browser; visit the URL manually.)")
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    println!("Waiting for the sign-in to complete…");
-    std::io::stdout().flush().ok();
+    let opened = open_browser && try_open_browser(&url)?;
+    ui.show_sign_in(spec.label, &url, opened);
+    ui.note("Waiting for the sign-in to complete…");
 
     let expected_state = pkce.state.clone();
     let callback = tokio::task::spawn_blocking(move || {
@@ -394,7 +464,11 @@ async fn loopback_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuth
 // Browser + paste `code#state` (Anthropic)
 // ────────────────────────────────────────────────────────────────────────
 
-async fn paste_code_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuthToken> {
+async fn paste_code_login(
+    spec: &ProviderSpec,
+    open_browser: bool,
+    ui: &mut impl LoginUi,
+) -> Result<OAuthToken> {
     let pkce = Pkce::new();
     // Paste flows exist because the registered redirect is a fixed provider
     // page (not loopback) — `validate()` guarantees it is set.
@@ -413,27 +487,9 @@ async fn paste_code_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAu
         spec.extra_authorize,
     );
 
-    println!("Open this URL to log in with {}:\n\n  {url}\n", spec.label);
-    if open_browser {
-        match flow::open_browser(&url) {
-            Ok(()) => println!("Browser opened — complete the sign-in there."),
-            Err(AuthError::BrowserUnavailable(_)) => {
-                println!("(Could not open a browser; visit the URL manually.)")
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    println!("After signing in, the browser shows a code. Paste it here:");
-    print!("> ");
-    std::io::stdout().flush().ok();
-
-    let pasted = tokio::task::spawn_blocking(|| {
-        let mut line = String::new();
-        std::io::stdin().read_line(&mut line).map(|_| line)
-    })
-    .await
-    .map_err(|e| AuthError::FlowCancelled(format!("stdin task failed: {e}")))?
-    .map_err(AuthError::Io)?;
+    let opened = open_browser && try_open_browser(&url)?;
+    ui.show_sign_in(spec.label, &url, opened);
+    let pasted = ui.prompt_pasted_code().await?;
     let pasted = pasted.trim();
     if pasted.is_empty() {
         return Err(AuthError::FlowCancelled("no code pasted".to_string()));
@@ -456,7 +512,11 @@ async fn paste_code_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAu
 // GitHub device flow + Copilot token exchange
 // ────────────────────────────────────────────────────────────────────────
 
-async fn device_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuthToken> {
+async fn device_login(
+    spec: &ProviderSpec,
+    open_browser: bool,
+    ui: &mut impl LoginUi,
+) -> Result<OAuthToken> {
     let client = http_client()?;
     let resp = client
         .post(spec.authorize_url)
@@ -481,20 +541,9 @@ async fn device_login(spec: &ProviderSpec, open_browser: bool) -> Result<OAuthTo
     let mut interval = resp["interval"].as_u64().unwrap_or(5).max(1);
     let expires_in = resp["expires_in"].as_u64().unwrap_or(900);
 
-    println!("\nGitHub Copilot login:");
-    println!("  1. Visit  {verification_uri}");
-    println!("  2. Enter code:  {user_code}\n");
-    if open_browser {
-        match flow::open_browser(&verification_uri) {
-            Ok(()) => println!("Browser opened — enter the code there."),
-            Err(AuthError::BrowserUnavailable(_)) => {
-                println!("(Could not open a browser; visit the URL manually.)")
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    println!("Waiting for authorization…");
-    std::io::stdout().flush().ok();
+    let opened = open_browser && try_open_browser(&verification_uri)?;
+    ui.show_device_code(&user_code, &verification_uri, opened);
+    ui.note("Waiting for authorization…");
 
     let deadline = std::time::Instant::now() + DEVICE_FLOW_MAX.min(Duration::from_secs(expires_in));
     let github_token = loop {
