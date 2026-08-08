@@ -12,3 +12,4 @@ target/
 .whycode/swarm/
 # Machine-local notes / ops scrap (self-hosted runner, secrets, host facts)
 local/
+.whycode/todos.json
