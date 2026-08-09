@@ -640,9 +640,9 @@ cargo test --workspace
 ```
 
 Note that clippy is run with `--all-targets`, so test code is linted under
-`-D warnings` too. Tests and release builds run on `ubuntu-latest`,
-`windows-latest` and `macos-latest`, so platform-specific behaviour needs a
-`#[cfg]` branch rather than a Unix-only assumption.
+`-D warnings` too. CI tests run on Linux; tagged release builds also cover
+Windows and macOS, so platform-specific behaviour needs a `#[cfg]` branch
+rather than a Unix-only assumption.
 
 The tree was reformatted with `rustfmt` in a single commit. Exclude it from
 blame output:
