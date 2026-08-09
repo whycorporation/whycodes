@@ -1471,7 +1471,7 @@ async fn cmd_run(
                     }
                     continue;
                 }
-                "/connect" => {
+                "/connect" | "/login" => {
                     // Re-load config + env in case user set a key in another shell
                     if let Ok(cfg) = Config::load() {
                         config = cfg;
@@ -1734,7 +1734,7 @@ fn print_slash_help() {
     println!("  /continue              — Resume the most recent session");
     println!("  /models [provider/id]  — List or switch models");
     println!("  /agent [name]          — List or switch agents (build|plan|…)");
-    println!("  /connect               — Provider setup help");
+    println!("  /connect, /login       — Provider setup help");
     println!("  /thinking              — Toggle thinking display");
     println!("  /themes                — Theme info");
     println!("  /tools                 — List tools for current agent");

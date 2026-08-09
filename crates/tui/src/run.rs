@@ -3439,7 +3439,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 "No share files found".into()
             };
         }
-        "/connect" => {
+        "/connect" | "/login" => {
             // Reload key from env / config
             if let Ok(cfg) = Config::load()
                 && let Some(pc) = cfg.get_provider(ctx.provider)

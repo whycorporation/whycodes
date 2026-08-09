@@ -239,7 +239,7 @@ Available in both the TUI and the `--plain` REPL:
 | `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |
 | `/agent [name]` | Show or switch the agent |
-| `/connect` | Provider and API key setup help |
+| `/connect` `/login` | Provider and API key setup help (starts OAuth login when missing) |
 | `/remember [text]` | Save a durable project memory |
 | `/memory` | Show memory path and recent entries |
 | `/themes` | Theme picker (TUI) / list theme names (plain) |

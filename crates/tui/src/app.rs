@@ -1286,6 +1286,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Provider / API key help",
     },
     SlashCommand {
+        name: "/login",
+        hint: "Alias for /connect",
+    },
+    SlashCommand {
         name: "/theme",
         hint: "[name] Switch theme (picker if no name)",
     },
