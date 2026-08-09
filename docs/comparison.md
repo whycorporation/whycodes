@@ -59,7 +59,7 @@ Snapshot from 2026-07-31, with current status (2026-08-04):
 |---|---|---|
 | No shell risk classification | open | **done** — [archive/phase-1](archive/phase-1-command-risk.md) + OS sandbox [phase-9](archive/phase-9-sandbox.md) |
 | No binaries / self-update | open | **implemented** — [plan-distribution](plan-distribution.md); first `v*` tag still needed |
-| API keys only | open | **blocked** — [plan-oauth](plan-oauth.md) (owner terms decision) |
+| API keys only | open | **blocked** — [plan-oauth](plan-oauth.md) (provider-terms decision) |
 | No quality budgets | open | **done** — [budgets.md](budgets.md), [archive/phase-4](archive/phase-4-ci-budgets.md) |
 | No benchmarks | open | **mostly done** — [benchmarks.md](benchmarks.md), residual [plan-performance](plan-performance.md) |
 | No memory across sessions | open | **shipped v1** — [archive/plan-memory](archive/plan-memory.md) (hash embed + MEMORY.md) |

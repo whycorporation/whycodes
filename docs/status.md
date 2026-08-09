@@ -78,7 +78,7 @@ Priority (owner: **public install / repo visibility last**):
 | 2026-08-04 | **ACP deferred until after product launch** | Ship terminal product first. Real ACP is post-release IDE surface work. |
 | 2026-08-04 | Archive completed phase docs; keep only open plans live | Numbered 1–9 cluttered the tree; done work lives under `docs/archive/`. |
 | 2026-08-04 | Network allowlist for HTTP tools (`webfetch` / search / GitHub) | Domain gate on agent egress; shell stays `sandbox_network` binary (no proxy). |
-| 2026-08-04 | Cut `v0.1.0` first release assets | Four targets + `SHA256SUMS`. Repo remains private until owner opens it for anonymous install. |
+| 2026-08-04 | Cut `v0.1.0` first release assets | Four targets + `SHA256SUMS`. Repo stays private until deliberately opened for anonymous install. |
 | 2026-08-04 | Persist session token usage + real `stats` | Provider-reported totals in SQLite; no more message×500 estimate. |
 | 2026-08-04 | Config pre/post tool hooks | Shell hooks around tool calls; `block_on_failure` on pre only. Marketplace later. |
 | 2026-08-05 | Latency P0/P1 shipped | OpenCode-parity cache, core tools, routing, doom-loop, prune; see plan-latency-competitors. |

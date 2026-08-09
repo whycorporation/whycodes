@@ -7,20 +7,20 @@ refresh+retry; `/connect` in-TUI login; credential discovery with the
 consent model below (`whycode auth import`). See [auth.md](auth.md).
 · **Blocks:** nothing
 
-> The "blocked" reasoning below was resolved by the owner on 2026-08-09:
+> The "blocked" reasoning below was resolved on 2026-08-09:
 > flows ride the public client ids of the first-party CLIs (documented in
 > [auth.md](auth.md) with the terms caveat), and discovery shipped with the
 > consent model as the mitigation.
 
-## Why this is blocked rather than in progress
+## Why this was blocked
 
-Both halves of this phase turn on a question that cannot be answered by writing
-code, and getting it wrong has consequences beyond a bug.
+Both halves of this phase turned on a question that could not be answered by
+writing code, and getting it wrong has consequences beyond a bug.
 
 **The OAuth flows need a registered client.** A device flow is not something a
 third-party client can simply perform against Anthropic or OpenAI; it needs a
 client identifier issued to whycode. Registering one is an act by the project
-owner, under whatever terms the provider attaches.
+maintainer, under whatever terms the provider attaches.
 
 **Credential discovery may not be permitted at all.** Reading Claude Code's or
 Codex's stored OAuth token and using it through a different client is precisely
@@ -31,15 +31,14 @@ shipping its flow… If a flow is not permitted, do not ship it."* That check ha
 not been done, and it is a reading of legal terms, not an engineering task.
 
 Implementing the consent model and the token store first would be building the
-machinery for something that might not be allowed to ship. So the phase waits on
-two owner decisions:
+machinery for something that might not be allowed to ship. So the phase waited
+on two maintainer decisions:
 
 1. Register an OAuth client with Anthropic and OpenAI, or decide not to.
 2. Read each provider's terms on third-party use of an existing credential, and
    record per provider whether discovery is permitted.
 
-Once those are answered, the tasks below are ordinary work. Until then, API keys
-remain the only supported path, which is at least honest about what it is.
+Once those were answered, the tasks below became ordinary work.
 
 ## Problem
 

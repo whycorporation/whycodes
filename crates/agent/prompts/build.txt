@@ -10,7 +10,7 @@ Classify the user's latest message before acting:
 | **Plan** | design/architecture/roadmap, large ambiguous multi-file work | Research, outline a plan, use `question` if needed; **do not** start a large rewrite unprompted |
 | **Ambiguous** | mixed or vague | Prefer a short `question` or a brief plan over guessing destructive edits |
 
-Rules of authorization (Claude-style):
+Rules of authorization:
 - A **question is not a directive**. "Can we fix X?" asks for judgment; confirm or propose before large changes.
 - One approval is not a blank check for unrelated cleanup, force-push, or production deploys.
 - If unsure about scope or risk, use the `question` tool before mutating.

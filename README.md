@@ -110,7 +110,7 @@ Usage: whycode [OPTIONS] [COMMAND]
 Commands:
   run       Start an interactive session (default)
   generate  Generate code from a prompt (non-interactive)
-  acp       Agent Client Protocol (stub; after product launch)
+  acp       Agent Client Protocol (not yet implemented)
   pr        Create a pull request from current changes
   github    GitHub operations
   serve     Start API server
@@ -676,6 +676,8 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | [docs/comparison.md](docs/comparison.md) | Early jcode snapshot + gap status |
 | [packaging/README.md](packaging/README.md) | Homebrew formula and packaging notes |
 | [AGENTS.md](AGENTS.md) | Rules for coding agents working in this repo |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, required checks, commit conventions |
+| [SECURITY.md](SECURITY.md) | Vulnerability reporting and security scope |
 
 ### Open plans
 
