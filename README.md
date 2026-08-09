@@ -601,32 +601,45 @@ converged on, so a repository set up for another agent needs no changes:
 
 ## Architecture
 
-```
-crates/
-├── core/         — Leaf types, Tool trait, sandbox settings, errors, logging
-├── auth/         — OAuth subscription login (PKCE / device code, token store)
-├── config/       — Config load / merge / validate
-├── command-risk/ — Shell command risk classification
-├── sandbox/      — OS sandbox for shell (bubblewrap on Linux)
-├── format/       — Markdown, syntax highlight, diffs, tables
-├── protocol/     — CI / stream-json event envelopes
-├── schema/       — Schema validation
-├── llm/          — LLM providers
-├── tools/        — Tool system and built-ins
-├── session/      — Conversation, compaction, undo/redo
-├── memory/       — Cross-session semantic / auto memory (MEMORY.md + embeddings)
-├── agent/        — Agent loop, subagents, AGENTS.md
-├── skill/        — Skill registry
-├── plugin/       — Plugin loader
-├── function/     — Function-tool helpers
-├── mcp/          — MCP client
-├── lsp/          — LSP tool
-├── storage/      — SQLite sessions + memories
-├── server/       — HTTP API (local share)
-├── sdk/          — Library client API
-├── tui/          — Terminal UI (ratatui)
-└── cli/          — Command line entry point (clap)
-```
+The workspace splits the binary into 23 crates with a strict, one-way layering:
+**foundations → services → orchestration → applications**. Allowed internal
+edges are allowlisted in [`scripts/dependency_boundaries.json`](scripts/dependency_boundaries.json)
+and verified in CI, so a layering violation fails the build instead of
+accumulating. Two rules keep the graph acyclic:
+
+- `core` holds leaf types, the `Tool` trait, errors and logging, and depends on
+  **no** other workspace crate.
+- `config` (user-config loading and policy) depends only on `core`; `core`
+  never re-exports `config` — that pair would be a cycle.
+
+| Layer | Crate | Responsibility |
+|---|---|---|
+| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging |
+| | `command-risk` | Shell command risk classification (pure functions, no I/O) |
+| | `auth` | OAuth subscription login: PKCE / device code, token store |
+| | `config` | Config load / merge / validate |
+| | `storage` | SQLite persistence for sessions and memories |
+| | `format` | Markdown rendering, syntax highlighting, diffs, tables |
+| | `protocol` | CI / stream-json event envelopes |
+| | `schema` | Schema validation |
+| | `sandbox` | OS sandbox for shell commands (bubblewrap on Linux) |
+| | `lsp` | Language-server client backing the LSP tool |
+| | `skill` | Skill registry |
+| | `function` | Function-tool helpers |
+| Services | `llm` | LLM providers — *auth, config* |
+| | `session` | Conversation state, compaction, undo/redo — *storage* |
+| | `memory` | Cross-session memory: `MEMORY.md`, semantic recall, code index — *storage* |
+| | `plugin` | Shell plugin loader — *config* |
+| | `tools` | Tool system and built-ins — *format, lsp, memory, sandbox, skill* |
+| | `mcp` | MCP client; external tools bind as `{server}_{tool}` — *tools* |
+| Orchestration | `agent` | Agent loop, subagents, swarm, `AGENTS.md` loading — *command-risk, config, llm, mcp, memory, plugin, sandbox, session, tools* |
+| Applications | `cli` | The only binary (`whycode`); every subcommand, wires all layers together |
+| | `tui` | Full-screen terminal UI (ratatui), the default interface — *agent, auth, config, format, llm, memory, session, storage, tools* |
+| | `server` | Local HTTP API for session sharing — *agent, config, llm, session, tools* |
+| | `sdk` | Library client API for embedding — *agent, config, llm, session, tools* |
+
+(Italic entries list internal dependencies beyond `core`, which everything
+uses.)
 
 ## Development
 
