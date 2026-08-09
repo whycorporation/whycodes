@@ -321,7 +321,7 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 
 ### Slash commands (TUI)
 
-`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`, `/tools`, `/info`, `/theme`/`/themes` (picker + apply by name) — custom: `.whycode/commands/*.md` and `.opencode/commands`. Extra plain: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
+`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`/`/login`, `/tools`, `/info`, `/theme`/`/themes` (picker + apply by name) — custom: `.whycode/commands/*.md` and `.opencode/commands`. Extra plain: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
 
 ### Built-in tools
 
