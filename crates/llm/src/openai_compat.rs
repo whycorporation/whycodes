@@ -837,14 +837,14 @@ mod tests {
         assert!(stream_events_for_chat_delta(&delta).is_empty());
     }
 
-    // ── Rakip regresyonları: OpenAI-uyum şema sanitize (whycode-watch) ─────
+    // ── Regressions reported against other agents: schema sanitize ────────
 
     use serde_json::json;
 
     #[test]
     fn sanitize_strips_unsupported_keywords_recursively() {
-        // jcode#687 (uniqueItems) + jcode#754 (propertyNames): tek keyword
-        // tüm tool catalog'unu 400'e düşürüyordu.
+        // jcode#687 (uniqueItems) + jcode#754 (propertyNames): a single
+        // unsupported keyword used to 400 the whole tool catalog.
         let schema = json!({
             "type": "object",
             "properties": {
@@ -863,7 +863,7 @@ mod tests {
         let out = sanitize_schema_for_openai(&schema);
         assert!(out.pointer("/properties/ids/uniqueItems").is_none());
         assert!(out.pointer("/properties/data/propertyNames").is_none());
-        // Diğer her şey korunur.
+        // Everything else is preserved.
         assert_eq!(
             out.pointer("/properties/ids/items/type"),
             Some(&json!("string"))
@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn sanitize_adds_missing_types() {
-        // jcode#713: type'sız property OpenAI'ı 400'e düşürüyordu.
+        // jcode#713: a property without `type` used to 400 OpenAI.
         let schema = json!({
             "properties": {
                 "key": { "type": "string" },
@@ -885,26 +885,26 @@ mod tests {
             "required": ["key", "value"]
         });
         let out = sanitize_schema_for_openai(&schema);
-        // Kök: properties+required → object.
+        // Root: properties+required → object.
         assert_eq!(out["type"], json!("object"));
-        // type'sız yaprak: tam birleşim (her JSON değeri kabul).
+        // Leaf without `type`: full union (every JSON value accepted).
         assert_eq!(
             out.pointer("/properties/value/type"),
             Some(&json!([
                 "string", "number", "integer", "boolean", "object", "array", "null"
             ]))
         );
-        // items taşıyan ama type'sız düğüm → array.
+        // Node with `items` but no `type` → array.
         let arr = sanitize_schema_for_openai(&json!({ "items": { "type": "string" } }));
         assert_eq!(arr["type"], json!("array"));
-        // anyOf/$ref taşıyan düğümlere dokunulmaz.
+        // Nodes carrying anyOf/$ref are left untouched.
         let any = sanitize_schema_for_openai(&json!({ "anyOf": [{ "type": "string" }] }));
         assert!(any.get("type").is_none());
     }
 
     #[test]
     fn sanitize_leaves_annotation_values_untouched() {
-        // `default` içindeki veri şema değildir; type kazanmamalı.
+        // Data inside `default` is not a schema; it must not gain a type.
         let schema = json!({
             "type": "object",
             "properties": {
@@ -946,7 +946,7 @@ mod tests {
 
     #[test]
     fn truncated_tool_arguments_yield_empty_object() {
-        // opencode#36766: stream yarım kaldığında panic/400 yerine zararsız {}.
+        // opencode#36766: a truncated stream yields a harmless {} instead of a panic/400.
         let parsed = parse_tool_arguments(&json!(r#"{"patchText": "@@ -1,3"#));
         assert_eq!(parsed, json!({}));
         assert_eq!(parse_tool_arguments(&json!("")), json!({}));

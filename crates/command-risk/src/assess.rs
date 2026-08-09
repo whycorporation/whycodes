@@ -805,16 +805,16 @@ mod tests {
         );
     }
 
-    // ── Rakip regresyonları (kaynak: whycode-watch) ─────────────────────
+    // ── Regressions reported against other agents ───────────────────────
 
     #[test]
     fn null_device_redirects_are_not_gated() {
-        // jcode#738/#709/#751: rutin stderr susturma gate'lenmemeli.
+        // jcode#738/#709/#751: routine stderr silencing must not be gated.
         assert_eq!(level("echo hi 2>/dev/null"), RiskLevel::Safe);
         assert_eq!(level("grep -rn TODO . 2>/dev/null"), RiskLevel::Safe);
         assert_eq!(level("cargo test 2>/dev/null >/dev/null"), RiskLevel::Safe);
         assert_eq!(level("ls 2>NUL"), RiskLevel::Safe);
-        // Ama gerçek cihaz dosyaları ve home'un kendisi hâlâ korunuyor.
+        // Real device files and the home directory itself stay protected.
         assert_eq!(level("echo x > /dev/sda"), RiskLevel::Destructive);
         assert_eq!(level("> ~/.bashrc"), RiskLevel::Destructive);
         assert_eq!(level("> ~"), RiskLevel::Catastrophic);
@@ -822,13 +822,13 @@ mod tests {
 
     #[test]
     fn shell_c_literal_string_is_assessed_recursively() {
-        // jcode#725: guardrail kelimenin `bash` olmasında duruyordu.
+        // jcode#725: the guardrail used to stop at the word `bash`.
         assert_eq!(level(r#"bash -c "rm -rf ~""#), RiskLevel::Catastrophic);
         assert_eq!(level(r#"sh -c "rm -rf /etc""#), RiskLevel::Catastrophic);
         assert_eq!(level(r#"bash -lc "rm -rf target""#), RiskLevel::Caution);
-        // Zararsız string hâlâ serbest.
+        // Harmless strings stay ungated.
         assert_eq!(level(r#"bash -c "ls -la""#), RiskLevel::Safe);
-        // İç içe: her seviye bir tırnak katmanı tüketir, sonuna gelinir.
+        // Nested: each level consumes one quoting layer, through to the end.
         assert_eq!(
             level(r#"bash -c "bash -c 'rm -rf ~'""#),
             RiskLevel::Catastrophic
@@ -837,7 +837,7 @@ mod tests {
 
     #[test]
     fn shell_c_dynamic_string_escalates_promptably() {
-        // jcode#725: bilinemeyen -c string'i refuse değil, prompt.
+        // jcode#725: an unknowable -c string prompts rather than refuses.
         assert_eq!(level(r#"bash -c "$(build_cmd)""#), RiskLevel::Destructive);
     }
 
@@ -850,20 +850,20 @@ mod tests {
 
     #[test]
     fn subshell_and_control_flow_bodies_do_not_bypass() {
-        // jcode#725: subshell ve if/while gövdeleri guardrail'ı atlıyordu.
+        // jcode#725: subshell and if/while bodies used to bypass the guardrail.
         assert_eq!(level("( rm -rf ~ )"), RiskLevel::Catastrophic);
         assert_eq!(level("if true; then rm -rf ~; fi"), RiskLevel::Catastrophic);
         assert_eq!(
             level(r#"while read -r f; do rm -rf "$f"; done < list"#),
             RiskLevel::Destructive
         );
-        // Zararsız kontrol akışı hâlâ serbest.
+        // Harmless control flow stays ungated.
         assert_eq!(level("if true; then ls; fi"), RiskLevel::Safe);
     }
 
     #[test]
     fn compound_command_names_the_right_culprit() {
-        // claude-code#28240: prompt `cd`'ye değil `rm`'in hedefine işaret etmeli.
+        // claude-code#28240: the prompt must name the `rm` target, not `cd`.
         let r = reason("cd /tmp && rm -rf ~");
         assert!(r.contains('~'), "{r}");
         assert!(level("cd /tmp && rm -rf ~") == RiskLevel::Catastrophic);
@@ -871,7 +871,7 @@ mod tests {
 
     #[test]
     fn variable_expansion_does_not_bypass() {
-        // claude-code#43713: expansion'lar guardrail'ı atlamamalı.
+        // claude-code#43713: expansions must not bypass the guardrail.
         assert_eq!(level(r#"rm -rf "${HOME}""#), RiskLevel::Catastrophic);
         assert_eq!(level(r#"rm -rf "$BUILD_DIR""#), RiskLevel::Destructive);
     }

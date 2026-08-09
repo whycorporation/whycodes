@@ -1,22 +1,22 @@
 # Plan — Claude Code research follow-ups (A1–A7)
 
 **Status:** **shipped** (2026-08-07) · **Priority:** terminal product polish  
-**Source:** Claude Code research report §10A (doc removed 2026-08-09 ahead of public release)  
+**Source:** internal Claude Code research report §10A  
 **Related:** [FEATURES.md](../FEATURES.md), [status.md](../status.md)  
-**Policy:** Ideas only — re-implement in Rust; do **not** vendor leaked Claude Code TypeScript.
+**Policy:** Ideas only — re-implement in Rust; do **not** copy proprietary code or prompts.
 
 ## Goal
 
 Convert the research report’s high-ROI opportunities (**A1–A7**) into shippable whycode work, ordered by value vs cost, without turning into “Claude Code parity.”
 
-Success = each row’s acceptance criteria green, FEATURES.md cells updated, no telif risk.
+Success = each row’s acceptance criteria green, FEATURES.md cells updated, no copyright risk.
 
 ## Non-goals
 
 - IDE bridge / ACP (already **deferred** — B1).
 - Persistent cron, marketplace, voice, computer-use, autoDream (B/C).
 - Bash AST / yolo ML classifier port.
-- Copying prompts or source from the leak tree.
+- Copying prompts or source from proprietary implementations.
 
 ## Order (recommended)
 

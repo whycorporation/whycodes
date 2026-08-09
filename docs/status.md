@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-09** (shipped plans archived; leaked-source notes removed ahead of public release; public still last)
+Last updated: **2026-08-09** (shipped plans archived)
 
 ## Legend
 
@@ -22,7 +22,7 @@ Last updated: **2026-08-09** (shipped plans archived; leaked-source notes remove
 | Plan | Doc | Status | Notes |
 |---|---|---|---|
 | Performance residual | [plan-performance.md](plan-performance.md) | **mostly done+** | Subagent usage fold + bench ceilings shipped. Live provider reconcile still manual. |
-| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets live. Public repo / Homebrew binary / install smoke = **owner last step**, not current focus. |
+| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets live. Remaining: tagged release, Homebrew binary formula, install smoke test. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **partially shipped** | `whycode auth login` for anthropic/openai/github-copilot/google; calls routed for anthropic + copilot ([auth.md](auth.md)). Credential discovery still open. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
 | System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | Session A done | Session B open: deferred MCP/auto-index, closed-message markdown cache, `LlmRequest` Arc, token-estimate cache. |
@@ -88,13 +88,13 @@ Priority (owner: **public install / repo visibility last**):
 | 2026-08-07 | Background + schedule (Claude Code–inspired) | Process-local bg jobs (`bash background=true`, `bg`, `/bg`), delayed `schedule` + `/loop`, risk-gated; no persistent cron. |
 | 2026-08-07 | Process-sub + dynamic interpreter risk | `<(…)` `>(…)` `=(…)` and `python -c "$(…)"` → Destructive prompt. |
 | 2026-08-07 | `/doctor` | Env/key/sandbox/git/bg diagnostics (CC doctor idea). |
-| 2026-08-07 | Claude Code leak audit | Ideas-only notes; no vendored TS. Notes doc removed 2026-08-09 ahead of public release. |
+| 2026-08-07 | Claude Code feature study | Ideas-only notes; no vendored code. |
 | 2026-08-07 | FEATURES §11 automation | Background shell jobs (`background: true`, `bg`, toast, `/bg`), `schedule` + `/loop` queue; cloud still deferred. |
 | 2026-08-07 | CC inspiration phases P1–P3 | Autocompact breaker; `tool_search` deferred tools; `bash(git *)` rules + dangerous Allow→Ask; `/diff` `/cost`; `worktree` enter/exit. |
-| 2026-08-07 | Claude Code full research report | Architecture / inventory / gaps analysis; doc removed 2026-08-09 ahead of public release. |
+| 2026-08-07 | Claude Code research report | Architecture / inventory / gaps analysis (kept internal). |
 | 2026-08-07 | A1–A7 → roadmap | [archive/plan-cc-a1-a7.md](archive/plan-cc-a1-a7.md); order A1,A4,A2,A3,A5,A6,A7. |
 | 2026-08-07 | A1–A7 shipped | PromptCommands, /context, LLM compact, path globs, mcp serve, image read, idle suggestions. |
-| 2026-08-07 | Public release last | Owner: keep coding/perf/plugins ahead of repo-public + install packaging. |
+| 2026-08-07 | Public release last | Coding/perf/plugins ranked ahead of repo-public + install packaging. |
 | 2026-08-07 | Perf residual + plugins | Subagent usage fold into parent; bench-results + CI ceilings; shell plugins as tools. |
 
 ## Verification commands

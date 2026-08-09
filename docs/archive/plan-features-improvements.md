@@ -15,7 +15,7 @@
 |----------------------|---------|-----|
 | Mouse-interactive ❌ | HitArea, stop, scrollbar, slash hover | ✅★ |
 | Resume “plain only” | TUI `/sessions` `/resume` `/continue` | ✅ |
-| Loop koruması only max turns | + doom-loop 3× | ✅★ |
+| Loop protection only max turns | + doom-loop 3× | ✅★ |
 | No latency section | Full stack shipped | new §10 |
 | OpenCode “Go/TS” | TS/Effect mono-repo | wording |
 | LOC ~24k | ~50k crate .rs | update |
