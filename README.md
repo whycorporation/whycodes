@@ -7,10 +7,14 @@ tool use — either in a full-screen TUI or as a one-shot CLI invocation.
 - Ships as a single binary with no runtime dependencies. Search runs in-process,
   so `ripgrep` and `grep` are not required on `PATH`.
 - Built and tested on Linux, macOS and Windows in CI.
-- Works with Anthropic, OpenAI, Google, Groq, xAI, DeepSeek, Ollama, OpenRouter,
-  Mistral, Together, and any OpenAI-compatible endpoint.
+- Works with Anthropic, OpenAI, Google, GitHub Copilot, Groq, xAI, DeepSeek,
+  Ollama, OpenRouter, Mistral, Together, and any OpenAI-compatible endpoint.
+  API keys or subscription login (`whycode auth login` — Claude Pro/Max,
+  ChatGPT Plus/Pro, Copilot, Gemini).
 - Reads the project's `AGENTS.md`, connects to MCP servers, and drives language
   servers over LSP.
+- Remembers project knowledge across sessions — auto-maintained `MEMORY.md`,
+  semantic fact recall and a lightweight code index; `--no-memory` opts out.
 - Latency-focused agent loop: core tool profile, Anthropic prompt cache,
   parallel safe tools, trivial-chat fast model route, doom-loop guard — see
   [docs/FEATURES.md](docs/FEATURES.md) §10 and
@@ -115,8 +119,11 @@ Commands:
   provider  Provider management (add, list, remove, default)
   model     Model management
   agent     Agent configuration
+  plugins   List shell plugins from plugins.toml (global + project)
   config    Configuration management
   session   Session management (list, view, delete, rename, share)
+  memory    Cross-session memory (list, search, add, delete, clear, path, …)
+  auth      Subscription login via OAuth (Claude Pro/Max, ChatGPT, Copilot, Gemini)
   stats     Show usage statistics
   debug     Show debug information
   upgrade   Self-update
@@ -130,6 +137,7 @@ Options (global):
   -r, --resume <SESSION_ID>  Resume a saved session (full id or unique prefix)
       --plain                Use plain stdin REPL instead of the full-screen TUI
       --debug                Write debug logs under the data dir
+      --no-memory            Disable cross-session memory for this process
 ```
 
 The prompt is a positional argument rather than a flag — `whycode generate
@@ -216,31 +224,43 @@ Available in both the TUI and the `--plain` REPL:
 | `/new` `/clear` | Start a new session |
 | `/rename [name]` | Set the session title (locks auto-title) |
 | `/init` | Create or update `AGENTS.md` |
+| `/review` | AI review of git changes (read-only) |
+| `/security-review` | Security-focused review of changes |
+| `/commit` | Draft (and optionally create) a git commit |
+| `/diff` | Git status + `diff --stat` for the project |
 | `/undo` | Undo the last turn and restore files via git |
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact` `/summarize` | Compact the conversation context |
+| `/context` | Context window breakdown |
+| `/cost` `/usage` | Session + last-turn token usage |
 | `/sessions` | Open the session picker (Enter to resume) |
 | `/resume [id]` | Resume by id/prefix, or open the picker |
 | `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |
 | `/agent [name]` | Show or switch the agent |
 | `/connect` | Provider and API key setup help |
+| `/remember [text]` | Save a durable project memory |
+| `/memory` | Show memory path and recent entries |
+| `/themes` | Theme picker (TUI) / list theme names (plain) |
 | `/tools` | List the tools available to the current agent |
 | `/info` `/details` | Session details |
+| `/doctor` | Environment / config diagnostics |
 
 TUI only:
 
 | Command | Description |
 |---|---|
+| `/theme [name]` | Switch theme (opens the picker when no name is given) |
 | `/unshare` | Delete the local share files for this session |
+| `/bg` | List or kill background shell jobs (`/bg kill <id>`) |
+| `/loop` | Queue a prompt for N sequential turns (`/loop 3 <prompt>`; `/loop stop`) |
 
 `--plain` REPL only:
 
 | Command | Description |
 |---|---|
 | `/thinking` | Toggle display of thinking output |
-| `/themes` | List the available TUI themes |
 
 Commands defined under `.whycode/commands/` are available alongside these; see
 [Custom commands](#custom-commands).
@@ -280,17 +300,48 @@ disable.
 | Files | `read`, `write`, `edit`, `apply_patch` |
 | Search | `grep`, `glob`, `list` |
 | Execution | `bash` (alias `shell`) |
-| Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit` |
+| Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` |
 | Web | `webfetch`, `websearch` |
-| Workflow | `task`, `plan`, `todowrite` (alias `todo`), `todoread`, `question` |
-| Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate` |
+| Workflow | `task`, `swarm`, `plan`, `todowrite` (alias `todo`), `todoread`, `question`, `bg`, `schedule` |
+| Memory | `memory` |
+| Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search` |
 
 `grep` is implemented in-process with the `regex` crate. It skips dot
 directories, common build directories and binary files, and needs no external
 search binary.
 
 MCP server tools are bound automatically under `{server}_{tool}`.
+
+## Memory
+
+Whycode remembers project knowledge across sessions, on by default:
+
+- **Auto memory** — a human-editable `MEMORY.md` per project.
+- **Semantic facts** — durable facts (preferences, build commands, decisions)
+  stored in SQLite with embeddings. Top hits are auto-injected into the system
+  prompt, and new facts are auto-retained after each turn (heuristic, with a
+  small-model pass as backstop).
+- **Code RAG** — a lightweight chunk index over the repo, built with
+  `whycode memory index` and searched with `whycode memory code-search`.
+
+Manage it headlessly (`whycode memory list|search|add|delete|clear|path`, plus
+`export`/`import` for cross-machine sync), from the prompt (`/remember`,
+`/memory`), or let the agent file facts itself through its `memory` tool.
+Project scope lives in `.whycode/memory` (git-shareable); user scope lives in
+the data dir.
+
+```toml
+[memory]
+enabled = true        # master switch
+auto_inject = true    # recall relevant facts into the prompt
+auto_retain = true    # extract durable facts after each turn
+```
+
+`whycode --no-memory` disables the whole subsystem for one run. The default
+embedder is a cheap local hashing model; an optional ONNX MiniLM backend
+(`--features onnx`) improves recall — `whycode memory onnx-smoke` verifies the
+model download.
 
 ## Configuration
 
@@ -339,6 +390,25 @@ Settings are layered, with each level overriding the one above it:
 
 Project instructions belong in an `AGENTS.md` at the repository root; `/init`
 generates one. It is injected into the system prompt automatically.
+
+### Subscription login (OAuth)
+
+API keys are not the only option — `whycode auth login` signs in with an
+existing subscription:
+
+```bash
+whycode auth login anthropic        # Claude Pro/Max (browser)
+whycode auth login openai           # ChatGPT Plus/Pro (browser)
+whycode auth login github-copilot   # device code on github.com
+whycode auth login google           # Gemini (browser)
+whycode auth status                 # who is logged in (never prints tokens)
+```
+
+Credential resolution is env var → config `api_key` → OAuth store, so an
+explicit key always wins over a stored login. `whycode auth import` adopts
+credentials from other CLIs (Claude Code, Codex, Gemini, Copilot) after
+explicit per-path approval. Details and storage layout:
+[docs/auth.md](docs/auth.md).
 
 ### Themes
 
@@ -533,7 +603,9 @@ converged on, so a repository set up for another agent needs no changes:
 
 ```
 crates/
-├── core/         — Shared types, config, error handling
+├── core/         — Leaf types, Tool trait, sandbox settings, errors, logging
+├── auth/         — OAuth subscription login (PKCE / device code, token store)
+├── config/       — Config load / merge / validate
 ├── command-risk/ — Shell command risk classification
 ├── sandbox/      — OS sandbox for shell (bubblewrap on Linux)
 ├── format/       — Markdown, syntax highlight, diffs, tables
@@ -542,13 +614,14 @@ crates/
 ├── llm/          — LLM providers
 ├── tools/        — Tool system and built-ins
 ├── session/      — Conversation, compaction, undo/redo
+├── memory/       — Cross-session semantic / auto memory (MEMORY.md + embeddings)
 ├── agent/        — Agent loop, subagents, AGENTS.md
 ├── skill/        — Skill registry
 ├── plugin/       — Plugin loader
 ├── function/     — Function-tool helpers
 ├── mcp/          — MCP client
 ├── lsp/          — LSP tool
-├── storage/      — SQLite sessions
+├── storage/      — SQLite sessions + memories
 ├── server/       — HTTP API (local share)
 ├── sdk/          — Library client API
 ├── tui/          — Terminal UI (ratatui)
