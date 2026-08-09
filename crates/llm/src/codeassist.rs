@@ -146,9 +146,10 @@ async fn project_id(api_key: &str) -> whycode_core::Result<String> {
         };
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         let resp = get(&format!("/{name}"), api_key).await?;
-        operation = resp.json().await.map_err(|e| {
-            whycode_core::Error::Llm(format!("Code Assist operation poll: {e}"))
-        })?;
+        operation = resp
+            .json()
+            .await
+            .map_err(|e| whycode_core::Error::Llm(format!("Code Assist operation poll: {e}")))?;
     }
 
     let project = operation["response"]["cloudaicompanionProject"]["id"]
@@ -228,7 +229,9 @@ fn build_inner_request(request: &LlmRequest) -> Value {
                             "functionCall": { "name": name, "args": input }
                         })),
                         ContentBlock::ToolResult {
-                            tool_use_id, content, ..
+                            tool_use_id,
+                            content,
+                            ..
                         } => {
                             let name = names.get(tool_use_id.as_str()).copied().unwrap_or("tool");
                             parts.push(json!({
@@ -397,8 +400,7 @@ pub async fn stream(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
-{
+) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
     let project = project_id(api_key).await?;
     let body = json!({
         "model": model,
@@ -524,10 +526,7 @@ mod tests {
         assert_eq!(contents[1]["parts"][0]["functionCall"]["name"], "bash");
         assert_eq!(contents[1]["parts"][0]["functionCall"]["args"]["cmd"], "ls");
         // ToolResult must be matched back to its tool *name* via the id map.
-        assert_eq!(
-            contents[2]["parts"][0]["functionResponse"]["name"],
-            "bash"
-        );
+        assert_eq!(contents[2]["parts"][0]["functionResponse"]["name"], "bash");
         assert_eq!(
             contents[2]["parts"][0]["functionResponse"]["response"]["result"],
             "a.rs"
@@ -552,7 +551,10 @@ mod tests {
         }
         assert!(matches!(
             events[2],
-            StreamEvent::Usage { input_tokens: 7, output_tokens: 3 }
+            StreamEvent::Usage {
+                input_tokens: 7,
+                output_tokens: 3
+            }
         ));
         assert!(matches!(events[3], StreamEvent::MessageStop));
     }

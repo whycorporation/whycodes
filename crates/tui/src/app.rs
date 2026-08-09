@@ -2502,8 +2502,10 @@ impl TuiApp {
             if code.is_empty() {
                 // Dropping the sender cancels the flow.
                 self.status_message = "sign-in cancelled".into();
+            } else if sink.send(code).is_err() {
+                // Receiver dropped: the flow task already went away.
+                self.status_message = "sign-in flow already closed".into();
             } else {
-                let _ = sink.send(code);
                 self.status_message = "code received — finishing sign-in…".into();
             }
             self.mark_dirty();

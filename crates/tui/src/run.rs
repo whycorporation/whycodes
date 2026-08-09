@@ -85,6 +85,16 @@ struct TuiLoginUi {
     tx: mpsc::UnboundedSender<AuthFlowEvent>,
 }
 
+impl TuiLoginUi {
+    /// Best-effort delivery to the TUI event loop: a send only fails when the
+    /// loop is gone (shutdown), and then the note has nowhere to land anyway.
+    fn send(&self, event: AuthFlowEvent) {
+        if self.tx.send(event).is_err() {
+            tracing::debug!("auth-flow event dropped: TUI event loop closed");
+        }
+    }
+}
+
 impl whycode_auth::providers::LoginUi for TuiLoginUi {
     fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool) {
         let browser = if browser_opened {
@@ -92,13 +102,13 @@ impl whycode_auth::providers::LoginUi for TuiLoginUi {
         } else {
             "Open the URL above manually."
         };
-        let _ = self
-            .tx
-            .send(AuthFlowEvent::Note(format!("Sign in with {label}:\n  {url}\n{browser}")));
+        self.send(AuthFlowEvent::Note(format!(
+            "Sign in with {label}:\n  {url}\n{browser}"
+        )));
     }
 
     fn note(&mut self, text: &str) {
-        let _ = self.tx.send(AuthFlowEvent::Note(text.to_string()));
+        self.send(AuthFlowEvent::Note(text.to_string()));
     }
 
     fn show_device_code(&mut self, user_code: &str, verification_uri: &str, browser_opened: bool) {
@@ -107,7 +117,7 @@ impl whycode_auth::providers::LoginUi for TuiLoginUi {
         } else {
             "Open the URL manually."
         };
-        let _ = self.tx.send(AuthFlowEvent::Note(format!(
+        self.send(AuthFlowEvent::Note(format!(
             "GitHub Copilot login:\n  1. Visit  {verification_uri}\n  2. Enter code:  {user_code}\n{browser}"
         )));
     }
@@ -116,7 +126,7 @@ impl whycode_auth::providers::LoginUi for TuiLoginUi {
         &mut self,
     ) -> impl std::future::Future<Output = whycode_auth::error::Result<String>> + Send {
         let (tx, rx) = tokio::sync::oneshot::channel();
-        let _ = self.tx.send(AuthFlowEvent::NeedCode(tx));
+        self.send(AuthFlowEvent::NeedCode(tx));
         async move {
             rx.await.map_err(|_| {
                 whycode_auth::AuthError::FlowCancelled("sign-in dismissed".to_string())
@@ -1162,7 +1172,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             "Paste the sign-in code, then Enter · Esc cancels".into();
                         app.focus_prompt();
                     }
-                    AuthFlowEvent::Done { provider: p, result } => match result {
+                    AuthFlowEvent::Done {
+                        provider: p,
+                        result,
+                    } => match result {
                         Ok(_) => {
                             // Load the fresh credential for the active provider.
                             if p == provider
@@ -1178,10 +1191,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 format!("✓ Signed in to `{p}` (subscription)"),
                             );
                             app.status_message = format!("Signed in · {p}");
-                            app.toasts.push(
-                                crate::toast::ToastKind::Success,
-                                format!("Connected · {p}"),
-                            );
+                            app.toasts
+                                .push(crate::toast::ToastKind::Success, format!("Connected · {p}"));
                         }
                         Err(msg) => {
                             app.add_message(
@@ -3467,9 +3478,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
                 // OAuth-supported provider: offer the login flow right here
                 // instead of only printing help (plan-oauth `/connect`).
-                if oauth_supported
-                    && let Ok(dir) = Config::data_dir()
-                {
+                if oauth_supported && let Ok(dir) = Config::data_dir() {
                     let p = ctx.provider.to_string();
                     let tx = ctx.auth_tx.clone();
                     ctx.app.add_message(
@@ -3484,10 +3493,15 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                                 .await
                                 .map(|_| p.clone())
                                 .map_err(|e| e.to_string());
-                        let _ = tx.send(AuthFlowEvent::Done {
-                            provider: p,
-                            result,
-                        });
+                        if tx
+                            .send(AuthFlowEvent::Done {
+                                provider: p,
+                                result,
+                            })
+                            .is_err()
+                        {
+                            tracing::debug!("auth-flow Done dropped: TUI event loop closed");
+                        }
                     });
                 } else {
                     ctx.app.toasts.push(

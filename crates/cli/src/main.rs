@@ -3750,7 +3750,9 @@ async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
                     f.source.provider
                 );
                 use std::io::Write as _;
-                std::io::stdout().flush().ok();
+                if let Err(e) = std::io::stdout().flush() {
+                    eprintln!("warning: could not flush prompt: {e}");
+                }
                 let answer = tokio::task::spawn_blocking(|| {
                     let mut line = String::new();
                     std::io::stdin().read_line(&mut line).map(|_| line)
@@ -3767,7 +3769,10 @@ async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
                         Err(e) => println!("{} {}: {e}", "✗".red(), f.source.label),
                     }
                 } else {
-                    println!("Skipped (won't ask again — delete {} to reset)", consent.path().display());
+                    println!(
+                        "Skipped (won't ask again — delete {} to reset)",
+                        consent.path().display()
+                    );
                 }
             }
         }

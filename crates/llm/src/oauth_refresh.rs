@@ -61,11 +61,7 @@ pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
     let dir = source_dir(provider)?;
     let store = whycode_auth::TokenStore::new(&dir);
     let auth = store.get(provider).ok()??;
-    auth.token
-        .extra
-        .get(key)?
-        .as_str()
-        .map(str::to_string)
+    auth.token.extra.get(key)?.as_str().map(str::to_string)
 }
 
 /// Send the request built by `build(current_key)`; on a 401 with a
