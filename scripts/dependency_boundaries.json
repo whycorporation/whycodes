@@ -41,6 +41,7 @@
     "core"
   ],
   "llm": [
+    "auth",
     "config",
     "core"
   ],

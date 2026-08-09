@@ -252,9 +252,9 @@ fn ms_to_datetime(ms: i64) -> Result<chrono::DateTime<chrono::Utc>> {
 }
 
 fn need<'a>(json: &'a Value, pointer: &str) -> Result<&'a str> {
-    json.pointer(pointer).and_then(Value::as_str).ok_or_else(|| {
-        AuthError::TokenExchange(format!("credential file is missing {pointer}"))
-    })
+    json.pointer(pointer)
+        .and_then(Value::as_str)
+        .ok_or_else(|| AuthError::TokenExchange(format!("credential file is missing {pointer}")))
 }
 
 /// Claude Code `~/.claude/.credentials.json`:
@@ -353,11 +353,7 @@ mod tests {
         f.write_all(content.as_bytes()).unwrap();
     }
 
-    fn found_for(
-        source: &'static KnownSource,
-        path: PathBuf,
-        state: SourceState,
-    ) -> FoundSource {
+    fn found_for(source: &'static KnownSource, path: PathBuf, state: SourceState) -> FoundSource {
         FoundSource {
             source,
             path,
@@ -513,7 +509,10 @@ mod tests {
         let after = std::fs::read_to_string(&path).unwrap();
         assert_eq!(sha2::Sha256::digest(after.as_bytes()), before_hash);
         let after_meta = std::fs::metadata(&path).unwrap();
-        assert_eq!(before_meta.modified().unwrap(), after_meta.modified().unwrap());
+        assert_eq!(
+            before_meta.modified().unwrap(),
+            after_meta.modified().unwrap()
+        );
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;

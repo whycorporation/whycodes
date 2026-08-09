@@ -300,8 +300,7 @@ pub async fn stream(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
-{
+) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
     let body = build_body(request, model);
     let resp = post(api_key, &body).await?;
 
@@ -484,10 +483,19 @@ mod tests {
     fn completed_maps_usage_cache_and_stop() {
         let payload = r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":4,"input_tokens_details":{"cached_tokens":6}}}}"#;
         let events = events_for_payload(payload);
-        assert!(matches!(events[0], StreamEvent::CacheUsage { read_input_tokens: 6, .. }));
+        assert!(matches!(
+            events[0],
+            StreamEvent::CacheUsage {
+                read_input_tokens: 6,
+                ..
+            }
+        ));
         assert!(matches!(
             events[1],
-            StreamEvent::Usage { input_tokens: 10, output_tokens: 4 }
+            StreamEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 4
+            }
         ));
         assert!(matches!(events[2], StreamEvent::MessageStop));
     }
