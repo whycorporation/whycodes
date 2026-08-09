@@ -97,6 +97,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         row("Ctrl+L", "Clear session"),
         row("/help", "This screen"),
         row("/connect", "Provider help"),
+        row("/login", "Sign in (OAuth)"),
         row(":theme", "Change theme"),
         row(":q", "Quit"),
     ];

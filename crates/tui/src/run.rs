@@ -135,6 +135,40 @@ impl whycode_auth::providers::LoginUi for TuiLoginUi {
     }
 }
 
+/// Spawn the OAuth subscription login flow for `provider`, reporting progress
+/// back to the event loop via `tx`. Shared by `/connect` (current provider,
+/// no key) and `/login` (explicit picker choice).
+fn spawn_oauth_login(
+    app: &mut TuiApp,
+    tx: &mpsc::UnboundedSender<AuthFlowEvent>,
+    dir: std::path::PathBuf,
+    provider: &str,
+) {
+    let p = provider.to_string();
+    let tx = tx.clone();
+    app.add_message(
+        ChatRole::System,
+        format!("Starting `{p}` subscription sign-in… (Esc cancels)"),
+    );
+    tokio::spawn(async move {
+        let store = whycode_auth::TokenStore::new(&dir);
+        let mut ui = TuiLoginUi { tx: tx.clone() };
+        let result = whycode_auth::providers::login_with_ui(&p, &store, true, &mut ui)
+            .await
+            .map(|_| p.clone())
+            .map_err(|e| e.to_string());
+        if tx
+            .send(AuthFlowEvent::Done {
+                provider: p,
+                result,
+            })
+            .is_err()
+        {
+            tracing::debug!("auth-flow Done dropped: TUI event loop closed");
+        }
+    });
+}
+
 fn bind_agent_prompters(
     agent: Agent,
     perm: &Arc<ChannelPermissionPrompter>,
@@ -1116,6 +1150,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     "Model → {p}/{m}  ·  window {}",
                     format_token_count(app.max_context_tokens),
                 );
+            }
+
+            // ── `/login` picker selection → start OAuth sign-in ──
+            if let Some(p) = app.pending_login_provider.take()
+                && let Ok(dir) = Config::data_dir()
+            {
+                spawn_oauth_login(&mut app, &auth_tx, dir, &p);
             }
 
             // ── Re-fetch when slash /models switches provider ──
@@ -3439,7 +3480,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 "No share files found".into()
             };
         }
-        "/connect" | "/login" => {
+        "/connect" => {
             // Reload key from env / config
             if let Ok(cfg) = Config::load()
                 && let Some(pc) = cfg.get_provider(ctx.provider)
@@ -3479,30 +3520,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 // OAuth-supported provider: offer the login flow right here
                 // instead of only printing help (plan-oauth `/connect`).
                 if oauth_supported && let Ok(dir) = Config::data_dir() {
-                    let p = ctx.provider.to_string();
-                    let tx = ctx.auth_tx.clone();
-                    ctx.app.add_message(
-                        ChatRole::System,
-                        format!("Starting `{p}` subscription sign-in… (Esc cancels)"),
-                    );
-                    tokio::spawn(async move {
-                        let store = whycode_auth::TokenStore::new(&dir);
-                        let mut ui = TuiLoginUi { tx: tx.clone() };
-                        let result =
-                            whycode_auth::providers::login_with_ui(&p, &store, true, &mut ui)
-                                .await
-                                .map(|_| p.clone())
-                                .map_err(|e| e.to_string());
-                        if tx
-                            .send(AuthFlowEvent::Done {
-                                provider: p,
-                                result,
-                            })
-                            .is_err()
-                        {
-                            tracing::debug!("auth-flow Done dropped: TUI event loop closed");
-                        }
-                    });
+                    spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, ctx.provider.as_str());
                 } else {
                     ctx.app.toasts.push(
                         crate::toast::ToastKind::Warning,
@@ -3518,6 +3536,39 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.toasts.push(
                     crate::toast::ToastKind::Success,
                     format!("Connected · {}", ctx.provider),
+                );
+            }
+        }
+        "/login" => {
+            let arg = rest.trim();
+            if arg.is_empty() {
+                // No argument: open the provider picker, one row per OAuth
+                // provider, annotated with the stored-credential status.
+                let mut rows = Vec::new();
+                if let Ok(dir) = Config::data_dir() {
+                    let store = whycode_auth::TokenStore::new(&dir);
+                    for name in whycode_auth::OAUTH_PROVIDERS {
+                        let label = whycode_auth::providers::spec_for(name)
+                            .map(|s| s.label)
+                            .unwrap_or(name);
+                        let connected = store.get(name).ok().flatten().is_some();
+                        rows.push(crate::app::LoginProviderRow {
+                            provider: (*name).to_string(),
+                            label: label.to_string(),
+                            connected,
+                        });
+                    }
+                }
+                ctx.app.login_dialog = crate::app::LoginDialogState { selected: 0, rows };
+                crate::input::open_dialog(ctx.app, DialogKind::Login);
+            } else if whycode_auth::providers::supports_oauth(arg) {
+                if let Ok(dir) = Config::data_dir() {
+                    spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, arg);
+                }
+            } else {
+                ctx.app.status_message = format!(
+                    "OAuth login not available for `{arg}` ({})",
+                    whycode_auth::OAUTH_PROVIDERS.join(", ")
                 );
             }
         }

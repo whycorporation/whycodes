@@ -1313,6 +1313,35 @@ fn dismiss_clears_popup_state_so_a_new_slash_reopens_clean() {
 }
 
 #[test]
+fn login_picker_enter_sets_pending_provider() {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut app = TuiApp::new(test_config());
+    app.login_dialog.rows = vec![
+        crate::app::LoginProviderRow {
+            provider: "anthropic".to_string(),
+            label: "Anthropic (Claude Pro/Max)".to_string(),
+            connected: true,
+        },
+        crate::app::LoginProviderRow {
+            provider: "openai".to_string(),
+            label: "OpenAI (ChatGPT Plus/Pro)".to_string(),
+            connected: false,
+        },
+    ];
+    crate::input::open_dialog(&mut app, DialogKind::Login);
+    crate::input::handle_event(
+        &mut app,
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+    );
+    crate::input::handle_event(
+        &mut app,
+        crossterm::event::Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+    );
+    assert_eq!(app.pending_login_provider.as_deref(), Some("openai"));
+    assert!(app.dialogs.active().is_none());
+}
+
+#[test]
 fn double_slash_still_lists_every_command() {
     use crate::app::BUILTIN_SLASH_COMMANDS;
     let mut app = TuiApp::new(test_config());
