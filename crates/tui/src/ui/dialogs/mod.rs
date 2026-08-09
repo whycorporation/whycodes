@@ -157,6 +157,40 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::Login => {
+            let items: Vec<SelectItem> = app
+                .login_dialog
+                .rows
+                .iter()
+                .map(|r| {
+                    let status = if r.connected {
+                        "✓ connected"
+                    } else {
+                        "not connected"
+                    };
+                    SelectItem::with_detail(r.label.clone(), format!("{} · {status}", r.provider))
+                })
+                .collect();
+            let selected = app.login_dialog.selected.min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                " Sign in  ·  Enter starts OAuth login ",
+                &items,
+                selected,
+                "No OAuth providers available.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         _ => {}
     }
 }

@@ -953,6 +953,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.theme_selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Login => {
+                        app.login_dialog.selected = idx;
+                        confirm_dialog(app, active);
+                    }
                     DialogKind::Provider
                         if app.provider_dialog.mode == crate::app::ProviderDialogMode::Select =>
                     {
@@ -1153,6 +1157,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.theme_selected = idx.min(len - 1);
             }
         }
+        DialogKind::Login => {
+            let len = app.login_dialog.rows.len();
+            if len > 0 {
+                app.login_dialog.selected = idx.min(len - 1);
+            }
+        }
         DialogKind::Question(_) => {
             if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
                 st.set_cursor(idx);
@@ -1335,6 +1345,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 );
             }
         }
+        DialogKind::Login => {
+            if let Some(row) = app.login_dialog.rows.get(app.login_dialog.selected) {
+                app.pending_login_provider = Some(row.provider.clone());
+            }
+        }
         _ => {}
     }
     dismiss_dialog(app);
@@ -1456,6 +1471,13 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
             app.theme_selected = move_selection(
                 app.theme_selected,
                 crate::theme::ThemeName::ALL.len(),
+                delta,
+            );
+        }
+        DialogKind::Login => {
+            app.login_dialog.selected = move_selection(
+                app.login_dialog.selected,
+                app.login_dialog.rows.len(),
                 delta,
             );
         }

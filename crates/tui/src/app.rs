@@ -56,6 +56,26 @@ pub enum DialogKind {
     Status,
     Theme,
     Workspace,
+    /// OAuth sign-in picker (`/login`): one row per subscription provider.
+    Login,
+}
+
+/// One row in the `/login` provider picker.
+#[derive(Debug, Clone)]
+pub struct LoginProviderRow {
+    /// Provider id (`anthropic`, `openai`, …) passed to the OAuth flow.
+    pub provider: String,
+    /// Human label from the provider spec ("Anthropic (Claude Pro/Max)").
+    pub label: String,
+    /// A credential already sits in the token store.
+    pub connected: bool,
+}
+
+/// State of the `/login` OAuth provider picker.
+#[derive(Debug, Clone, Default)]
+pub struct LoginDialogState {
+    pub selected: usize,
+    pub rows: Vec<LoginProviderRow>,
 }
 
 /// Live state for an open questionnaire modal.
@@ -988,6 +1008,7 @@ pub struct TuiApp {
     pub provider_dialog: ProviderDialogState,
     pub model_selection: ModelSelectionState,
     pub session_list: SessionListState,
+    pub login_dialog: LoginDialogState,
     /// Last-paint hit box for the modal `[✗]` control (click = cancel).
     pub dialog_close_hit: Option<Rect>,
     /// Full modal rect (border inclusive). Text selection/copy is clipped to this
@@ -1046,6 +1067,8 @@ pub struct TuiApp {
     pub bg_running_count: usize,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
+    /// `/login` picker result: provider id awaiting an OAuth flow spawn.
+    pub pending_login_provider: Option<String>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
     pub pending_session_id: Option<String>,
     /// Dashboard: cursor row in the grouped live-session list.
@@ -1287,7 +1310,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "/login",
-        hint: "Alias for /connect",
+        hint: "[provider] OAuth subscription sign-in (picker if none)",
     },
     SlashCommand {
         name: "/theme",
@@ -1464,6 +1487,7 @@ impl TuiApp {
             provider_dialog: ProviderDialogState::default(),
             model_selection: ModelSelectionState::default(),
             session_list: SessionListState::default(),
+            login_dialog: LoginDialogState::default(),
             dialog_close_hit: None,
             dialog_modal_hit: None,
             dialog_list_hit: None,
@@ -1491,6 +1515,7 @@ impl TuiApp {
             auth_code_sink: None,
             bg_running_count: 0,
             pending_model: None,
+            pending_login_provider: None,
             pending_session_id: None,
             sessions_cursor: 0,
             pending_session_switch: None,

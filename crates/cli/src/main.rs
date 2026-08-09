@@ -1471,7 +1471,7 @@ async fn cmd_run(
                     }
                     continue;
                 }
-                "/connect" | "/login" => {
+                "/connect" => {
                     // Re-load config + env in case user set a key in another shell
                     if let Ok(cfg) = Config::load() {
                         config = cfg;
@@ -1499,6 +1499,57 @@ async fn cmd_run(
                             "Env vars: ANTHROPIC_API_KEY, OPENAI_API_KEY, XAI_API_KEY, GOOGLE_API_KEY, ..."
                         );
                         let _ = cmd_provider(&ProviderCmd::List).await;
+                    }
+                    continue;
+                }
+                "/login" => {
+                    let arg = rest.trim();
+                    if arg.is_empty() {
+                        println!("{}", "Subscription sign-in (OAuth):".bold());
+                        if let Ok(dir) = Config::data_dir() {
+                            let store = whycode_auth::TokenStore::new(&dir);
+                            for name in whycode_auth::OAUTH_PROVIDERS {
+                                let label = whycode_auth::providers::spec_for(name)
+                                    .map(|s| s.label)
+                                    .unwrap_or(name);
+                                let status = if store.get(name).ok().flatten().is_some() {
+                                    "connected".green()
+                                } else {
+                                    "not connected".dimmed()
+                                };
+                                println!(
+                                    "  {} {} — {}",
+                                    format!("{name:<15}").cyan(),
+                                    label,
+                                    status
+                                );
+                            }
+                        }
+                        println!(
+                            "\nSign in: {}  ·  CLI: {}",
+                            "/login <provider>".cyan(),
+                            "whycode auth login <provider>".cyan()
+                        );
+                    } else if whycode_auth::providers::supports_oauth(arg) {
+                        if let Err(e) = cmd_auth(&AuthCmd::Login {
+                            provider: arg.to_string(),
+                            no_browser: false,
+                        })
+                        .await
+                        {
+                            eprintln!("{} {e}", "sign-in failed:".red());
+                        }
+                        if arg == provider.as_str()
+                            && let Some(k) = get_api_key(&provider, &config).await
+                        {
+                            api_key = k;
+                        }
+                    } else {
+                        println!(
+                            "OAuth login is not available for `{}` — choose from: {}",
+                            arg.red(),
+                            whycode_auth::OAUTH_PROVIDERS.join(", ")
+                        );
                     }
                     continue;
                 }
@@ -1734,7 +1785,8 @@ fn print_slash_help() {
     println!("  /continue              — Resume the most recent session");
     println!("  /models [provider/id]  — List or switch models");
     println!("  /agent [name]          — List or switch agents (build|plan|…)");
-    println!("  /connect, /login       — Provider setup help");
+    println!("  /connect               — Provider setup help");
+    println!("  /login [provider]      — Subscription sign-in (list if none)");
     println!("  /thinking              — Toggle thinking display");
     println!("  /themes                — Theme info");
     println!("  /tools                 — List tools for current agent");
