@@ -1,7 +1,7 @@
 # Plan — Distribution and self-update
 
-**Status:** implemented (assets cut) · **Priority:** **last** (owner: do not block on public repo / install smoke)  
-**Residual:** repo visibility=public, Homebrew binary formula, Windows install.ps1 smoke — when owner is ready.
+**Status:** implemented (assets cut) · **Priority:** **last**  
+**Residual:** repo visibility=public, Homebrew binary formula, Windows install.ps1 smoke.
 
 ## Problem
 
@@ -112,9 +112,8 @@ test the installers, which is the part usually left untested.
 
 Everything in Tasks is written and its syntax is checked in CI. The acceptance
 criteria left unticked all require a published release to exercise, and cutting
-one is an outward-facing action with a version number attached — that is the
-repository owner's call, not something to do as a side effect of implementing
-the workflow.
+one is an outward-facing action with a version number attached — a deliberate
+maintainer decision, not a side effect of implementing the workflow.
 
 To exercise them:
 

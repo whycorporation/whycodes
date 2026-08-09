@@ -124,7 +124,7 @@ pub enum Commands {
         format: OutputFormat,
     },
 
-    /// Agent Client Protocol (stub; after product launch)
+    /// Agent Client Protocol (not yet implemented)
     Acp,
 
     /// Create a pull request from current changes
