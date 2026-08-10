@@ -80,7 +80,26 @@ impl ClassifiedError {
             }
             ErrorKind::Network => "Network error reaching the provider".into(),
             ErrorKind::Timeout => "Request timed out".into(),
-            ErrorKind::Auth => "Authentication failed — check API key".into(),
+            ErrorKind::Auth => {
+                let lower = self.message.to_ascii_lowercase();
+                if lower.contains("not eligible") && lower.contains("code assist") {
+                    // Gemini Code Assist free-tier eligibility is account-based;
+                    // the credential is fine, so "check API key" misleads.
+                    return "Google account is not eligible for Gemini Code Assist (free tier) — use an AI Studio API key (GOOGLE_API_KEY) or a different account".into();
+                }
+                if self.status == Some(403) {
+                    // A 403 usually carries the actionable reason (plan, region,
+                    // eligibility) in the provider body — surface it.
+                    let m = self.message.trim().trim_start_matches("LLM error:").trim();
+                    let snippet = if m.len() > 160 {
+                        format!("{}…", m.chars().take(159).collect::<String>())
+                    } else {
+                        m.to_string()
+                    };
+                    return format!("Forbidden by the provider (HTTP 403): {snippet}");
+                }
+                "Authentication failed — check API key".into()
+            }
             ErrorKind::Client => {
                 if let Some(s) = self.status {
                     format!("Request rejected (HTTP {s})")
@@ -259,8 +278,11 @@ pub fn extract_http_status(msg: &str) -> Option<u16> {
         while let Some(start) = rest.find(*open) {
             let after = &rest[start + 1..];
             if let Some(end) = after.find(*close) {
-                let inner = &after[..end];
-                if let Ok(code) = inner.trim().parse::<u16>()
+                // Accept a leading numeric code with optional text: "(403)",
+                // "(403 Forbidden)". Non-numeric parens are skipped.
+                let inner = after[..end].trim();
+                let digits: String = inner.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(code) = digits.parse::<u16>()
                     && (100..600).contains(&code)
                 {
                     return Some(code);
@@ -381,6 +403,34 @@ mod tests {
     }
 
     #[test]
+    fn auth_403_surfaces_the_provider_reason() {
+        let c = classify_message(
+            "LLM error: Code Assist onboardUser (403 Forbidden): account lacks region X",
+        );
+        assert_eq!(c.kind, ErrorKind::Auth);
+        let msg = c.user_message();
+        assert!(msg.contains("403"), "{msg}");
+        assert!(msg.contains("account lacks region X"), "{msg}");
+        assert!(!msg.contains("check API key"), "{msg}");
+    }
+
+    #[test]
+    fn code_assist_ineligibility_gets_actionable_copy() {
+        let c = classify_message(
+            "LLM error: Code Assist onboardUser (403 Forbidden): Your account is not eligible for Gemini Code Assist for individuals at this time",
+        );
+        let msg = c.user_message();
+        assert!(msg.contains("not eligible"), "{msg}");
+        assert!(msg.contains("GOOGLE_API_KEY"), "{msg}");
+    }
+
+    #[test]
+    fn auth_401_keeps_the_key_hint() {
+        let c = classify_message("Provider API error (401): Unauthorized");
+        assert_eq!(c.user_message(), "Authentication failed — check API key");
+    }
+
+    #[test]
     fn classifies_auth() {
         let c = classify_message("Provider API error (401): Unauthorized");
         assert_eq!(c.kind, ErrorKind::Auth);
@@ -408,5 +458,7 @@ mod tests {
         assert_eq!(extract_http_status("[500]: boom"), Some(500));
         assert_eq!(extract_http_status("API error (503): x"), Some(503));
         assert_eq!(extract_http_status(r#""status": 502"#), Some(502));
+        assert_eq!(extract_http_status("(403 Forbidden): nope"), Some(403));
+        assert_eq!(extract_http_status("(next page)"), None);
     }
 }
