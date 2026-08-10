@@ -28,7 +28,12 @@ In the TUI, `/connect` reloads the credential for the active provider; when
 none exists and the provider supports OAuth, it starts the login flow
 in-place — the browser opens from the TUI, loopback/device flows report
 progress in the transcript, and Anthropic's paste flow collects
-`code#state` through the prompt box (Esc cancels).
+`code#state` through the prompt box (Esc cancels). `/login` opens a provider
+picker annotated with which subscriptions are already connected, and starts
+the same flow for the chosen one. Subscription backends do not expose a
+listable `/models` endpoint, so after a login the `/models` picker offers
+each connected provider's suggested models
+(`whycode_auth::providers::suggested_models`).
 
 ## What is stored, and where
 

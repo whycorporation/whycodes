@@ -1227,9 +1227,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 whycode_llm::oauth_refresh::register(&p, dir);
                                 api_key = tok;
                             }
+                            let hint = if p == provider {
+                                String::new()
+                            } else {
+                                format!(" — switch with /models {p}/<model>")
+                            };
                             app.add_message(
                                 ChatRole::System,
-                                format!("✓ Signed in to `{p}` (subscription)"),
+                                format!("✓ Signed in to `{p}` (subscription){hint}"),
                             );
                             app.status_message = format!("Signed in · {p}");
                             app.toasts
@@ -3993,12 +3998,28 @@ fn spawn_model_context_fetch(
 }
 
 /// Every provider/model pair the config knows about, for the model picker.
+///
+/// OAuth subscription logins (`/login`) bypass config, so their providers
+/// would never appear here: merge in the suggested models for any provider
+/// with a credential in the token store.
 fn configured_models(config: &Config) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = config
         .providers
         .values()
         .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
         .collect();
+    if let Ok(dir) = Config::data_dir() {
+        let store = whycode_auth::TokenStore::new(&dir);
+        for name in whycode_auth::OAUTH_PROVIDERS {
+            if store.get(name).ok().flatten().is_some() {
+                out.extend(
+                    whycode_auth::providers::suggested_models(name)
+                        .iter()
+                        .map(|m| ((*name).to_string(), (*m).to_string())),
+                );
+            }
+        }
+    }
     out.sort();
     out.dedup();
     out

@@ -877,6 +877,22 @@ pub fn supports_oauth(provider: &str) -> bool {
     OAUTH_PROVIDERS.contains(&provider)
 }
 
+/// Models worth offering in pickers for a subscription (OAuth) login.
+///
+/// These backends do not expose a freely listable `/models` endpoint for
+/// subscription credentials (Code Assist is RPC-style, Codex is a Responses
+/// API), so pickers cannot discover them live and suggest these instead.
+/// Keep the ids aligned with what each backend actually serves.
+pub fn suggested_models(provider: &str) -> &'static [&'static str] {
+    match provider {
+        "anthropic" => &["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
+        "openai" => &["gpt-5.1-codex", "gpt-5.1"],
+        "github-copilot" => &["gpt-4o", "claude-sonnet-4-5"],
+        "google" => &["gemini-2.5-pro", "gemini-2.5-flash"],
+        _ => &[],
+    }
+}
+
 /// Validate a provider spec against the invariants the flow code relies on.
 /// Returns the list of violations (empty = valid). Driven by the
 /// conformance tests so that adding a provider is *only* adding a spec
@@ -1034,6 +1050,17 @@ mod tests {
             assert!(spec.authorize_url.starts_with("https://"));
             assert!(spec.token_url.starts_with("https://"));
         }
+    }
+
+    #[test]
+    fn every_oauth_provider_suggests_at_least_one_model() {
+        for name in OAUTH_PROVIDERS {
+            assert!(
+                !suggested_models(name).is_empty(),
+                "{name}: a logged-in user must see a model in the picker"
+            );
+        }
+        assert!(suggested_models("ollama").is_empty());
     }
 
     #[test]
