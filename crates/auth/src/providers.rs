@@ -882,13 +882,14 @@ pub fn supports_oauth(provider: &str) -> bool {
 /// These backends do not expose a freely listable `/models` endpoint for
 /// subscription credentials (Code Assist is RPC-style, Codex is a Responses
 /// API), so pickers cannot discover them live and suggest these instead.
-/// Keep the ids aligned with what each backend actually serves.
+/// Verified against vendor model docs on 2026-08; re-check when a vendor
+/// announces a generation bump.
 pub fn suggested_models(provider: &str) -> &'static [&'static str] {
     match provider {
-        "anthropic" => &["claude-sonnet-4-5", "claude-opus-4-1", "claude-haiku-4-5"],
-        "openai" => &["gpt-5.1-codex", "gpt-5.1"],
-        "github-copilot" => &["gpt-4o", "claude-sonnet-4-5"],
-        "google" => &["gemini-2.5-pro", "gemini-2.5-flash"],
+        "anthropic" => &["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"],
+        "openai" => &["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
+        "github-copilot" => &["gpt-4.1", "gpt-4o"],
+        "google" => &["gemini-3.6-flash", "gemini-3.5-flash"],
         _ => &[],
     }
 }
