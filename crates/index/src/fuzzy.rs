@@ -8,13 +8,24 @@
 //! score to keep junk out of short queries.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use nucleo::pattern::{CaseMatching, MultiPattern, Normalization, Pattern};
 use nucleo::{Config, Injector, Matcher, Nucleo};
 
-/// Background matcher threads. Two is plenty for path matching; more would
-/// only fight the UI thread.
-const MATCHER_THREADS: usize = 2;
+/// Matcher threads scale with the host: matching cost grows with item count,
+/// and a TUI frame budget is 16 ms. Two threads starve at 35k+ items; four
+/// keeps full rematches in the low single-digit ms there.
+fn matcher_threads() -> usize {
+    match std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2)
+    {
+        0..=4 => 2,
+        5..=8 => 3,
+        _ => 4,
+    }
+}
 
 /// Per-item payload stored alongside the matched column.
 #[derive(Debug, Clone, Copy)]
@@ -49,17 +60,28 @@ pub struct FuzzyEngine {
     matcher: Matcher,
     /// Last parsed query (drives the incremental-reparse fast path).
     query: String,
+    /// True while the matcher workers are busy (from the last `tick(0)`).
+    running: bool,
 }
 
 impl FuzzyEngine {
-    pub fn new() -> Self {
+    /// `results_dirty` is shared with the index so one flag wakes the UI;
+    /// nucleo's notify callback flips it whenever workers publish results.
+    pub fn new(results_dirty: Arc<AtomicBool>) -> Self {
         let config = Config::DEFAULT.match_paths();
-        let mut nucleo = Nucleo::new(config.clone(), Arc::new(|| {}), Some(MATCHER_THREADS), 1);
+        let notify = move || results_dirty.store(true, Ordering::Release);
+        let mut nucleo = Nucleo::new(
+            config.clone(),
+            Arc::new(notify),
+            Some(matcher_threads()),
+            1,
+        );
         nucleo.pattern = MultiPattern::new(1);
         Self {
             nucleo,
             matcher: Matcher::new(config),
             query: String::new(),
+            running: false,
         }
     }
 
@@ -90,10 +112,24 @@ impl FuzzyEngine {
         self.query.clear();
     }
 
-    /// Run a query and return up to `limit` best matches, best first.
-    pub fn query(&mut self, pattern: &str, limit: usize) -> Vec<FileMatch> {
-        if pattern.is_empty() {
-            return Vec::new(); // browse mode is served by the store, not fuzzy
+    /// Nudge the matcher without waiting; returns true while work (matching
+    /// or walk ingestion) is still in flight.
+    pub fn nudge(&mut self) -> bool {
+        let status = self.nucleo.tick(0);
+        self.running = status.running || self.nucleo.active_injectors() > 0;
+        self.running
+    }
+
+    /// Non-blocking query update: reparse the pattern and nudge the matcher
+    /// workers, then return immediately. Results are read back with
+    /// [`read`](Self::read); `results_dirty` flips when they are fresh.
+    ///
+    /// This is the UI path — a keystroke must never wait on a full rematch
+    /// (measured 3–16 ms at 35k items, worse beyond; that used to block the
+    /// frame and flash stale/empty rows on `tick` timeout).
+    pub fn set_query(&mut self, pattern: &str) {
+        if pattern == self.query {
+            return;
         }
         let append = pattern.as_bytes().starts_with(self.query.as_bytes())
             && !pattern.ends_with('\\')
@@ -110,16 +146,29 @@ impl FuzzyEngine {
         );
         self.query.clear();
         self.query.push_str(pattern);
-        // Bounded wait: worker threads usually finish in well under this.
-        self.nucleo.tick(10);
+        self.nucleo.tick(0);
+    }
+
+    /// Read the matches currently in the snapshot (best-first, capped at
+    /// `limit`). Never blocks longer than a `tick(0)`; the second return
+    /// value is true while the matcher workers are still refining results.
+    pub fn read(&mut self, limit: usize) -> (Vec<FileMatch>, bool) {
+        let pattern = self.query.clone();
+        if pattern.is_empty() {
+            let status = self.nucleo.tick(0);
+            self.running = status.running;
+            return (Vec::new(), self.running); // browse mode is store-backed
+        }
+        let status = self.nucleo.tick(0);
+        self.running = status.running;
 
         // Split borrows: snapshot borrows `nucleo`, indices need `matcher`.
         let Self {
             nucleo, matcher, ..
         } = self;
         let snapshot = nucleo.snapshot();
-        let col_pattern = Pattern::parse(pattern, CaseMatching::Smart, Normalization::Smart);
-        let floor = min_score(pattern);
+        let col_pattern = Pattern::parse(&pattern, CaseMatching::Smart, Normalization::Smart);
+        let floor = min_score(&pattern);
 
         // `matched_items` yields best-first; scores are recomputed per item
         // (cheap at picker sizes) so the length-scaled floor can drop junk.
@@ -147,13 +196,21 @@ impl FuzzyEngine {
                 root: 0, // filled in by the caller (per-root engine)
             });
         }
-        out
+        (out, self.running)
+    }
+
+    /// Blocking convenience for tests and one-shot tools: set the query and
+    /// wait (bounded) for the matcher to settle, then read.
+    pub fn query_blocking(&mut self, pattern: &str, limit: usize) -> Vec<FileMatch> {
+        self.set_query(pattern);
+        self.nucleo.tick(50);
+        self.read(limit).0
     }
 }
 
 impl Default for FuzzyEngine {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(AtomicBool::new(false)))
     }
 }
 
@@ -162,7 +219,7 @@ mod tests {
     use super::*;
 
     fn engine() -> FuzzyEngine {
-        let e = FuzzyEngine::new();
+        let e = FuzzyEngine::default();
         let inj = e.injector();
         FuzzyEngine::push(&inj, "src/main.rs", false);
         FuzzyEngine::push(&inj, "src/lib.rs", false);
@@ -176,7 +233,7 @@ mod tests {
     #[test]
     fn query_finds_paths_with_indices() {
         let mut e = engine();
-        let hits = e.query("main.rs", 10);
+        let hits = e.query_blocking("main.rs", 10);
         assert!(!hits.is_empty());
         assert_eq!(hits[0].rel, "src/main.rs");
         assert!(!hits[0].is_dir);
@@ -187,7 +244,7 @@ mod tests {
     #[test]
     fn query_matches_subsequence_across_dirs() {
         let mut e = engine();
-        let hits = e.query("tuiapp", 10);
+        let hits = e.query_blocking("tuiapp", 10);
         assert!(
             hits.iter().any(|h| h.rel == "crates/tui/src/app.rs"),
             "{hits:?}"
@@ -197,28 +254,28 @@ mod tests {
     #[test]
     fn short_query_drops_weak_tail() {
         let mut e = engine();
-        let hits = e.query("zzzzz", 10);
+        let hits = e.query_blocking("zzzzz", 10);
         assert!(hits.is_empty(), "{hits:?}");
     }
 
     #[test]
     fn dirs_strip_trailing_slash() {
         let mut e = engine();
-        let hits = e.query("docs", 10);
+        let hits = e.query_blocking("docs", 10);
         assert!(hits.iter().any(|h| h.rel == "docs" && h.is_dir));
     }
 
     #[test]
     fn restart_clears_items() {
         let mut e = engine();
-        assert!(!e.query("main", 10).is_empty());
+        assert!(!e.query_blocking("main", 10).is_empty());
         e.restart();
-        assert!(e.query("main", 10).is_empty());
+        assert!(e.query_blocking("main", 10).is_empty());
     }
 
     #[test]
     fn empty_query_is_browse_not_fuzzy() {
         let mut e = engine();
-        assert!(e.query("", 10).is_empty());
+        assert!(e.query_blocking("", 10).is_empty());
     }
 }

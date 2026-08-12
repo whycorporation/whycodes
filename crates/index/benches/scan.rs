@@ -67,19 +67,41 @@ fn bench_query(c: &mut Criterion) {
     g.bench_function("query_warm", |b| {
         b.iter(|| idx.query("mod42.rs", 20))
     });
-    g.bench_function("query_prefix_growth", |b| {
-        // Simulates typing: each query extends the previous (append fast path).
-        let qs = ["m", "mo", "mod", "mod4", "mod42", "mod42."];
-        b.iter(|| {
-            for q in qs {
-                std::hint::black_box(idx.query(q, 20));
-            }
-        })
-    });
     g.bench_function("browse_top", |b| b.iter(|| idx.browse(0, "")));
     g.bench_function("entries_snapshot", |b| b.iter(|| idx.entries()));
     g.finish();
 }
 
-criterion_group!(benches, bench_walk, bench_query);
+/// Keystroke cost + full settle at 20k entries — the scale story of the
+/// async query path (UI must stay non-blocking even when rematches take ms).
+fn bench_query_scale(c: &mut Criterion) {
+    let tmp = synthetic_repo(200, 100); // ~20k files
+    let idx = WorkspaceIndex::start_with(
+        vec![tmp.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(std::time::Duration::from_secs(60)));
+    let mut g = c.benchmark_group("index-20k");
+    g.bench_function("query_now_nonblocking", |b| {
+        b.iter(|| idx.query_now("mod42.rs", 20))
+    });
+    g.bench_function("query_settle", |b| {
+        b.iter(|| {
+            idx.query_now("mod42.rs", 20);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while idx.matching() && std::time::Instant::now() < deadline {
+                if idx.take_results_dirty() {
+                    std::hint::black_box(idx.read_matches(20));
+                }
+                std::thread::yield_now();
+            }
+        })
+    });
+    g.finish();
+}
+
+criterion_group!(benches, bench_walk, bench_query, bench_query_scale);
 criterion_main!(benches);

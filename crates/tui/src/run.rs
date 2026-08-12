@@ -670,6 +670,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 app.mark_dirty();
             }
 
+            // `@file` picker: adopt matcher results published by the index
+            // worker threads (async fuzzy — keystrokes never block).
+            if app.file_suggest.poll_matches() {
+                app.mark_dirty();
+            }
+
             // Animation paths that do not arrive as terminal events still need
             // periodic paints (spinner, toast stack). Idle with a clean flag
             // skips the draw entirely → 0 idle redraws/s.
@@ -1564,8 +1570,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // longer implies a full redraw. Short timeout while the rt.agent is
             // busy or toasts are live so spinner / stream / expiry stay snappy;
             // long timeout when idle so we do not spin the CPU.
-            let idle = !rt.agent_busy && app.toasts.is_empty() && !app.needs_redraw;
-            let poll_for = if idle {
+            let awaiting_matches = app.file_suggest.awaiting_matches();
+            let idle = !rt.agent_busy
+                && app.toasts.is_empty()
+                && !app.needs_redraw
+                && !awaiting_matches;
+            let poll_for = if awaiting_matches {
+                // Fuzzy workers are mid-rematch: stay near frame cadence so
+                // results land within ~1 frame of being published.
+                Duration::from_millis(16)
+            } else if idle {
                 Duration::from_millis(500)
             } else {
                 Duration::from_millis(40)

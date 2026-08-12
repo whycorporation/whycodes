@@ -480,6 +480,25 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
   parallel mode; `hidden(false)` + own policy so whitelisted dot-dirs
   (`.github`, `.whycode`) survive.
 
+**Round 2 (async query model) — measured at 34.8k entries (cargo registry):**
+
+- `nucleo.tick(10)` per keystroke blocks 3–16 ms and *returns a stale/empty
+  snapshot on timeout* → picker flashes "no matches" while typing. The fix is
+  Grok's daemon insight: `reparse + tick(0)` (never blocks), worker threads
+  publish, the nucleo `notify` callback flips a shared `AtomicBool`, and the
+  run loop adopts results via `poll_matches()` at the loop top.
+- Poll-cadence race: when the picker is awaiting results, the idle 500 ms
+  `event::poll` must drop to ~16 ms (`awaiting_matches()`), and a
+  `results_pending` latch must survive until the first publish — otherwise a
+  late notify waits out a long poll.
+- Matcher threads scale with cores (2 → 4 ≥9 cores); `query_warm` bench
+  38 µs → 17 µs after scaling.
+- Measured (release): 34.8k-file cold scan **246 ms**, `query_now` **16 µs**
+  (never blocks), settle 6–16 ms (~1 frame), whole-example RSS **~22 MB**
+  (~0.6 KB/entry — nucleo stores Utf32 columns; the 200k-entry cap implies
+  ~120 MB. If that ever bites, the escape hatch is a custom matcher over the
+  store, jcode-fuzzy style — nucleo is the RAM cost, not the store).
+
 ---
 
 
