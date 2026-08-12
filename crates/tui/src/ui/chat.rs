@@ -403,10 +403,7 @@ fn message_is_closed(app: &TuiApp, index: usize) -> bool {
         }
     }
     // While the agent is busy, the last assistant bubble may still grow.
-    if app.is_busy()
-        && index + 1 == app.messages.len()
-        && matches!(msg.role, ChatRole::Assistant)
-    {
+    if app.is_busy() && index + 1 == app.messages.len() && matches!(msg.role, ChatRole::Assistant) {
         return false;
     }
     true
