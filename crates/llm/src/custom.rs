@@ -285,7 +285,7 @@ mod tests {
     fn make_req() -> LlmRequest {
         LlmRequest {
             system: "You are helpful.".to_string(),
-            messages: vec![],
+            messages: std::sync::Arc::from([]),
             tools: vec![],
             max_tokens: None,
             temperature: None,
@@ -353,7 +353,7 @@ mod tests {
         let mut req = req;
         // Build a body that includes a tool call in history.
         use whycode_core::types::{ContentBlock, Message, MessageContent, Role};
-        req.messages = vec![Message {
+        req.messages = std::sync::Arc::from(vec![Message {
             role: Role::Assistant,
             content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
                 id: "c1".into(),
@@ -362,7 +362,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: None,
-        }];
+        }]);
         let body = p.build_body(&req, "any/model");
         let args = &body["messages"]
             .as_array()

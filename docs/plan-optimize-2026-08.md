@@ -1,6 +1,6 @@
 # Plan — System optimization (2026-08)
 
-**Status:** Session A done + chat virtualize · **Owner:** agent · **Baseline:** `docs/benchmarks.md`
+**Status:** Session A + B done · **Owner:** agent · **Baseline:** `docs/benchmarks.md`
 
 ## Context
 
@@ -25,18 +25,20 @@ on the async path — not more LTO.
 | 11 | `init_logging` prefers env (no extra load when set) | Low | ✅ |
 | 12 | Virtualize chat paint (visible messages only) | Med | ✅ |
 
-## Session B — open (follow-up)
+## Session B — long-session / clone / first paint
 
-- Defer MCP + auto-index past first paint
-- Closed-message markdown line cache
-- `LlmRequest` Arc / no full transcript clone per step
-- Token estimate cache / byte fast path
+| # | Item | Risk | Status |
+|---|------|------|--------|
+| 1 | Defer MCP + auto-index past first paint | Low | ✅ |
+| 2 | Closed-message markdown line cache | Med | ✅ |
+| 3 | `LlmRequest` `Arc<[Message]>` + COW intent inject | Med | ✅ |
+| 4 | Token estimate cache + ASCII byte fast path | Low | ✅ |
 
-## Measurement after Session A
+## Measurement after Session B
 
 ```bash
 cargo test -p whycode-storage -p whycode-session -p whycode-tools -p whycode-agent --lib
 cargo check --workspace
-cargo build --release -p whycode-cli
+cargo build -p whycode-cli
 # optional: python scripts/bench_startup.py --runs 10
 ```

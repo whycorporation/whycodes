@@ -51,8 +51,14 @@ impl CompactOutcome {
 }
 
 /// ~4 Unicode scalars per token (matches `whycode_llm` fallback family).
+///
+/// ASCII uses byte length (same as scalar count); non-ASCII still walks chars.
 fn estimate_tokens(text: &str) -> usize {
-    let n = text.chars().count();
+    let n = if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().count()
+    };
     if n == 0 { 0 } else { n.div_ceil(4) }
 }
 
@@ -70,6 +76,82 @@ fn message_tokens(msg: &Message) -> usize {
                 ContentBlock::Image { .. } => 100,
             })
             .sum(),
+    }
+}
+
+/// Running token estimate kept index-aligned with `Session::messages`.
+///
+/// Skipped on serde so export JSON stays stable; rebuilt after load or when
+/// `valid` is false (deserialize default).
+#[derive(Debug, Clone)]
+struct SessionTokenCache {
+    system: usize,
+    per_msg: Vec<usize>,
+    total: usize,
+    valid: bool,
+}
+
+impl Default for SessionTokenCache {
+    fn default() -> Self {
+        Self {
+            system: 0,
+            per_msg: Vec::new(),
+            total: 0,
+            valid: false,
+        }
+    }
+}
+
+impl SessionTokenCache {
+    fn from_parts(system_prompt: &str, messages: &[Message]) -> Self {
+        let system = estimate_tokens(system_prompt);
+        let per_msg: Vec<usize> = messages.iter().map(message_tokens).collect();
+        let total = system + per_msg.iter().sum::<usize>();
+        Self {
+            system,
+            per_msg,
+            total,
+            valid: true,
+        }
+    }
+
+    fn ensure(&mut self, system_prompt: &str, messages: &[Message]) {
+        if self.valid && self.per_msg.len() == messages.len() {
+            return;
+        }
+        *self = Self::from_parts(system_prompt, messages);
+    }
+
+    fn push_msg(&mut self, msg: &Message) {
+        if !self.valid {
+            return;
+        }
+        let t = message_tokens(msg);
+        self.per_msg.push(t);
+        self.total = self.total.saturating_add(t);
+    }
+
+    fn set_system(&mut self, system_prompt: &str) {
+        if !self.valid {
+            return;
+        }
+        let system = estimate_tokens(system_prompt);
+        self.total = self
+            .total
+            .saturating_sub(self.system)
+            .saturating_add(system);
+        self.system = system;
+    }
+
+    fn rebuild(&mut self, system_prompt: &str, messages: &[Message]) {
+        *self = Self::from_parts(system_prompt, messages);
+    }
+
+    fn invalidate(&mut self) {
+        self.valid = false;
+        self.per_msg.clear();
+        self.system = 0;
+        self.total = 0;
     }
 }
 
@@ -159,6 +241,9 @@ pub struct Session {
     /// `#[serde(default)]` so sessions exported before this existed still load.
     #[serde(default)]
     pub usage: whycode_core::types::Usage,
+    /// Incremental char/4 estimate (system + per-message). Not persisted.
+    #[serde(skip)]
+    token_cache: SessionTokenCache,
 }
 
 impl Session {
@@ -167,6 +252,7 @@ impl Session {
         let now = chrono::Utc::now();
         let id = uuid::Uuid::new_v4().to_string();
         let title = crate::title::default_title(&project_path, &id);
+        let token_cache = SessionTokenCache::from_parts(&system_prompt, &[]);
         Self {
             id,
             title,
@@ -177,6 +263,7 @@ impl Session {
             created_at: now,
             updated_at: now,
             usage: Default::default(),
+            token_cache,
         }
     }
 
@@ -312,34 +399,40 @@ impl Session {
 
     /// Add a user message
     pub fn add_user_message(&mut self, content: &str) {
-        self.messages.push(Message {
+        let msg = Message {
             role: Role::User,
             content: MessageContent::Text(content.to_string()),
             tool_call_id: None,
             name: None,
-        });
+        };
+        self.token_cache.push_msg(&msg);
+        self.messages.push(msg);
         self.touch();
     }
 
     /// Add a user message with structured content blocks (text + images, etc.).
     pub fn add_user_message_blocks(&mut self, blocks: Vec<ContentBlock>) {
-        self.messages.push(Message {
+        let msg = Message {
             role: Role::User,
             content: MessageContent::Blocks(blocks),
             tool_call_id: None,
             name: None,
-        });
+        };
+        self.token_cache.push_msg(&msg);
+        self.messages.push(msg);
         self.touch();
     }
 
     /// Add an assistant message with content blocks
     pub fn add_assistant_message(&mut self, blocks: Vec<ContentBlock>) {
-        self.messages.push(Message {
+        let msg = Message {
             role: Role::Assistant,
             content: MessageContent::Blocks(blocks),
             tool_call_id: None,
             name: None,
-        });
+        };
+        self.token_cache.push_msg(&msg);
+        self.messages.push(msg);
         self.touch();
     }
 
@@ -363,12 +456,14 @@ impl Session {
                 } else {
                     MessageContent::Text(cap_tool_text(result.content))
                 };
-            self.messages.push(Message {
+            let msg = Message {
                 role: Role::Tool,
                 content,
                 tool_call_id: Some(result.tool_call_id),
                 name: None,
-            });
+            };
+            self.token_cache.push_msg(&msg);
+            self.messages.push(msg);
         }
         self.touch();
     }
@@ -383,7 +478,7 @@ impl Session {
     ) -> LlmRequest {
         LlmRequest {
             system: self.system_prompt.clone(),
-            messages: self.messages.clone(),
+            messages: std::sync::Arc::from(self.messages.as_slice()),
             tools: tools.to_vec(),
             max_tokens,
             temperature,
@@ -451,16 +546,31 @@ impl Session {
     /// Update the system prompt
     pub fn set_system_prompt(&mut self, prompt: &str) {
         self.system_prompt = prompt.to_string();
+        self.token_cache.set_system(&self.system_prompt);
         self.touch();
     }
 
     /// Estimate token count (Unicode chars / 4, same family as the LLM fallback).
     ///
     /// Not provider BPE — good enough for compaction thresholds and the context
-    /// meter when usage has not been reported yet.
+    /// meter when usage has not been reported yet. O(1) when the running cache
+    /// is valid; rebuilds after load or bulk mutation.
     pub fn token_count(&self) -> usize {
-        estimate_tokens(&self.system_prompt)
-            + self.messages.iter().map(message_tokens).sum::<usize>()
+        if self.token_cache.valid && self.token_cache.per_msg.len() == self.messages.len() {
+            return self.token_cache.total;
+        }
+        // `token_count` is `&self` on the hot path; rebuild without interior
+        // mutability by recomputing. Callers that mutate should keep the cache
+        // warm via push/rebuild helpers.
+        let system = estimate_tokens(&self.system_prompt);
+        system + self.messages.iter().map(message_tokens).sum::<usize>()
+    }
+
+    /// Like [`token_count`] but refreshes the running cache when stale.
+    fn token_count_cached(&mut self) -> usize {
+        self.token_cache
+            .ensure(&self.system_prompt, &self.messages);
+        self.token_cache.total
     }
 
     /// Cap oversized tool result bodies already in the transcript.
@@ -508,6 +618,7 @@ impl Session {
             }
         }
         if n > 0 {
+            self.token_cache.invalidate();
             self.touch();
         }
         n
@@ -569,6 +680,7 @@ impl Session {
             }
         }
         if n > 0 {
+            self.token_cache.invalidate();
             self.touch();
         }
         n
@@ -591,6 +703,7 @@ impl Session {
             && t.starts_with("[Compacted")
         {
             first.content = MessageContent::Text(body);
+            self.token_cache.invalidate();
             self.touch();
             return;
         }
@@ -603,6 +716,7 @@ impl Session {
                 name: None,
             },
         );
+        self.token_cache.invalidate();
         self.touch();
     }
 
@@ -641,7 +755,7 @@ impl Session {
     }
 
     pub fn compact(&mut self, max_tokens: usize) -> CompactOutcome {
-        let tokens_before = self.token_count();
+        let tokens_before = self.token_count_cached();
         let messages_before = self.messages.len();
 
         self.truncate_large_tool_results();
@@ -650,11 +764,11 @@ impl Session {
         let target = max_tokens.saturating_mul(3) / 4;
         let target = target.max(1);
 
-        if self.token_count() <= target {
+        if self.token_count_cached() <= target {
             self.touch();
             return CompactOutcome {
                 tokens_before,
-                tokens_after: self.token_count(),
+                tokens_after: self.token_count_cached(),
                 messages_before,
                 messages_after: self.messages.len(),
             };
@@ -681,7 +795,7 @@ impl Session {
             self.touch();
             return CompactOutcome {
                 tokens_before,
-                tokens_after: self.token_count(),
+                tokens_after: self.token_count_cached(),
                 messages_before,
                 messages_after: self.messages.len(),
             };
@@ -698,10 +812,12 @@ impl Session {
         });
         new_messages.extend(self.messages[start..].iter().cloned());
         self.messages = new_messages;
+        self.token_cache
+            .rebuild(&self.system_prompt, &self.messages);
         self.touch();
         CompactOutcome {
             tokens_before,
-            tokens_after: self.token_count(),
+            tokens_after: self.token_count_cached(),
             messages_before,
             messages_after: self.messages.len(),
         }
@@ -764,6 +880,7 @@ impl Session {
 
         let project_path = std::path::PathBuf::from(row.project_path);
         let title_source = crate::title::infer_source_from_title(&row.title, &project_path);
+        let token_cache = SessionTokenCache::from_parts("", &messages);
         Ok(Some(Self {
             id: row.id,
             title: row.title,
@@ -774,6 +891,7 @@ impl Session {
             created_at,
             updated_at,
             usage: row.usage,
+            token_cache,
         }))
     }
 }
@@ -927,6 +1045,8 @@ impl Session {
 
         let removed = self.messages.len() - message_index - 1;
         self.messages.truncate(message_index + 1);
+        self.token_cache
+            .rebuild(&self.system_prompt, &self.messages);
         self.touch();
         removed
     }
@@ -934,6 +1054,8 @@ impl Session {
     /// Replace the entire message list (used by undo/redo).
     pub fn set_messages(&mut self, messages: Vec<Message>) {
         self.messages = messages;
+        self.token_cache
+            .rebuild(&self.system_prompt, &self.messages);
         self.touch();
     }
 
@@ -945,6 +1067,8 @@ impl Session {
             Some(idx) => {
                 let removed = self.messages.len() - idx;
                 self.messages.truncate(idx);
+                self.token_cache
+                    .rebuild(&self.system_prompt, &self.messages);
                 self.touch();
                 removed
             }

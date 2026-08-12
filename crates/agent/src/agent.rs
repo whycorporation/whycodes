@@ -456,14 +456,14 @@ impl Agent {
             system: "You compress coding-agent chat history. Write a dense bullet summary of \
                      goals, decisions, file paths, and open tasks. No preamble. ≤400 words."
                 .into(),
-            messages: vec![Message {
+            messages: std::sync::Arc::from(vec![Message {
                 role: Role::User,
                 content: MessageContent::Text(format!(
                     "Summarize this earlier conversation for context continuity:\n\n{transcript}"
                 )),
                 tool_call_id: None,
                 name: None,
-            }],
+            }]),
             tools: vec![],
             max_tokens: Some(800),
             temperature: Some(0.2),
@@ -527,6 +527,12 @@ impl Agent {
     /// Always reloads built-ins; adds `plugin_*` from global/project
     /// `plugins.toml`, then MCP server tools when configured.
     pub async fn with_mcp(mut self, config: &whycode_config::Config) -> Self {
+        self.load_mcp(config).await;
+        self
+    }
+
+    /// Like [`Self::with_mcp`] but for an already-owned agent (TUI deferred load).
+    pub async fn load_mcp(&mut self, config: &whycode_config::Config) {
         let project = config.general.project_path.as_deref();
         let mut full = ToolExecutor::new();
         let n_plug = full.register_config_plugins(project);
@@ -544,7 +550,6 @@ impl Agent {
                 tracing::info!(count = n_mcp, "MCP tools registered");
             }
         }
-        self
     }
 
     /// Load shell plugins only (when not calling [`Self::with_mcp`]).
@@ -985,7 +990,7 @@ impl Agent {
             {
                 // Append to last user message in the request only.
                 use whycode_core::types::{MessageContent, Role};
-                for msg in request.messages.iter_mut().rev() {
+                for msg in request.messages_mut().iter_mut().rev() {
                     if msg.role != Role::User {
                         continue;
                     }

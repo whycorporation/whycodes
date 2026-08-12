@@ -198,7 +198,7 @@ fn build_inner_request(request: &LlmRequest) -> Value {
     // blocks only carry the call id. Recover names from earlier ToolUse
     // blocks in the same history.
     let mut names: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
-    for m in &request.messages {
+    for m in request.messages.iter() {
         if let MessageContent::Blocks(blocks) = &m.content {
             for b in blocks {
                 if let ContentBlock::ToolUse { id, name, .. } = b {
@@ -209,7 +209,7 @@ fn build_inner_request(request: &LlmRequest) -> Value {
     }
 
     let mut contents: Vec<Value> = Vec::new();
-    for m in &request.messages {
+    for m in request.messages.iter() {
         let role = match m.role {
             Role::Assistant => "model",
             _ => "user",
@@ -470,7 +470,7 @@ mod tests {
     fn history_with_tool_call() -> LlmRequest {
         LlmRequest {
             system: "sys".to_string(),
-            messages: vec![
+            messages: std::sync::Arc::from(vec![
                 Message {
                     role: Role::User,
                     content: MessageContent::Text("run ls".to_string()),
@@ -497,7 +497,7 @@ mod tests {
                     tool_call_id: None,
                     name: None,
                 },
-            ],
+            ]),
             tools: vec![ToolDefinition {
                 name: "bash".to_string(),
                 description: "Run a command".to_string(),

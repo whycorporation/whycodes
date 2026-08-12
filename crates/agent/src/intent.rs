@@ -253,7 +253,7 @@ pub fn apply_intent_to_request(
     let suffix = posture_suffix(&assessment, agent_name)?;
 
     // Find last user message and append (clone-safe on owned request).
-    for msg in request.messages.iter_mut().rev() {
+    for msg in request.messages_mut().iter_mut().rev() {
         if msg.role != Role::User {
             continue;
         }
@@ -868,12 +868,12 @@ mod tests {
     fn apply_mutates_request_not_empty() {
         let mut req = LlmRequest {
             system: "sys".into(),
-            messages: vec![whycode_core::types::Message {
+            messages: std::sync::Arc::from(vec![whycode_core::types::Message {
                 role: Role::User,
                 content: MessageContent::Text("How does auth work?".into()),
                 tool_call_id: None,
                 name: None,
-            }],
+            }]),
             tools: vec![],
             max_tokens: None,
             temperature: None,
@@ -899,12 +899,12 @@ mod tests {
     fn off_mode_skips() {
         let mut req = LlmRequest {
             system: "sys".into(),
-            messages: vec![whycode_core::types::Message {
+            messages: std::sync::Arc::from(vec![whycode_core::types::Message {
                 role: Role::User,
                 content: MessageContent::Text("How does auth work?".into()),
                 tool_call_id: None,
                 name: None,
-            }],
+            }]),
             tools: vec![],
             max_tokens: None,
             temperature: None,

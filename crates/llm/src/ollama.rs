@@ -64,7 +64,7 @@ impl OllamaProvider {
             }));
         }
 
-        for msg in &request.messages {
+        for msg in request.messages.iter() {
             let role = match msg.role {
                 whycode_core::types::Role::Assistant => "assistant",
                 whycode_core::types::Role::User => "user",

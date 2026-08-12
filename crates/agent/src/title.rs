@@ -95,12 +95,12 @@ pub async fn generate_title(
 
     let request = LlmRequest {
         system: TITLE_SYSTEM.to_string(),
-        messages: vec![Message {
+        messages: std::sync::Arc::from(vec![Message {
             role: Role::User,
             content: MessageContent::Text(body),
             tool_call_id: None,
             name: None,
-        }],
+        }]),
         tools: Vec::new(),
         max_tokens: Some(48),
         temperature: Some(0.2),

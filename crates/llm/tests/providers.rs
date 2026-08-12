@@ -11,12 +11,12 @@ use whycode_llm::retry;
 fn make_basic_request() -> LlmRequest {
     LlmRequest {
         system: "You are a helpful assistant.".to_string(),
-        messages: vec![Message {
+        messages: std::sync::Arc::from(vec![Message {
             role: Role::User,
             content: MessageContent::Text("Hello!".to_string()),
             tool_call_id: None,
             name: None,
-        }],
+        }]),
         tools: vec![],
         max_tokens: Some(1024),
         temperature: Some(0.7),
