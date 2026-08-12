@@ -70,12 +70,7 @@ impl FuzzyEngine {
     pub fn new(results_dirty: Arc<AtomicBool>) -> Self {
         let config = Config::DEFAULT.match_paths();
         let notify = move || results_dirty.store(true, Ordering::Release);
-        let mut nucleo = Nucleo::new(
-            config.clone(),
-            Arc::new(notify),
-            Some(matcher_threads()),
-            1,
-        );
+        let mut nucleo = Nucleo::new(config.clone(), Arc::new(notify), Some(matcher_threads()), 1);
         nucleo.pattern = MultiPattern::new(1);
         Self {
             nucleo,

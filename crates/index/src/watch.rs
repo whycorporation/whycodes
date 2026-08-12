@@ -141,10 +141,30 @@ mod tests {
     fn change_mapping_filters_policy() {
         let roots = vec![PathBuf::from("/proj")];
         let mut out = Vec::new();
-        push_change(&roots, Path::new("/proj/src/main.rs"), ChangeKind::Upsert, &mut out);
-        push_change(&roots, Path::new("/proj/target/x.o"), ChangeKind::Upsert, &mut out);
-        push_change(&roots, Path::new("/proj/.env"), ChangeKind::Upsert, &mut out);
-        push_change(&roots, Path::new("/other/f.rs"), ChangeKind::Upsert, &mut out);
+        push_change(
+            &roots,
+            Path::new("/proj/src/main.rs"),
+            ChangeKind::Upsert,
+            &mut out,
+        );
+        push_change(
+            &roots,
+            Path::new("/proj/target/x.o"),
+            ChangeKind::Upsert,
+            &mut out,
+        );
+        push_change(
+            &roots,
+            Path::new("/proj/.env"),
+            ChangeKind::Upsert,
+            &mut out,
+        );
+        push_change(
+            &roots,
+            Path::new("/other/f.rs"),
+            ChangeKind::Upsert,
+            &mut out,
+        );
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].rel, "src/main.rs");
         assert_eq!(out[0].root, 0);

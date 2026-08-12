@@ -64,9 +64,7 @@ fn bench_query(c: &mut Criterion) {
     );
     assert!(idx.wait_ready(std::time::Duration::from_secs(30)));
     let mut g = c.benchmark_group("index");
-    g.bench_function("query_warm", |b| {
-        b.iter(|| idx.query("mod42.rs", 20))
-    });
+    g.bench_function("query_warm", |b| b.iter(|| idx.query("mod42.rs", 20)));
     g.bench_function("browse_top", |b| b.iter(|| idx.browse(0, "")));
     g.bench_function("entries_snapshot", |b| b.iter(|| idx.entries()));
     g.finish();
