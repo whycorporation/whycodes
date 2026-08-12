@@ -117,38 +117,37 @@ impl Tool for ListTool {
             .unwrap_or(DEFAULT_MAX_ENTRIES)
             .clamp(1, HARD_MAX_ENTRIES);
 
-        let (entries, truncated, dir_count, file_count) = if recursive {
-            // Fast path: the warm workspace index already knows the tree.
-            match ctx
-                .file_index
-                .as_deref()
-                .and_then(|idx| list_recursive_index(idx, &target, &ignore, max_depth, max_entries))
-            {
-                Some(out) => out,
-                None => list_recursive(&target, &ignore, max_depth, max_entries),
-            }
-        } else {
-            match list_dir_entries(&target, &ignore) {
-                Ok(all) => {
-                    let dir_count = all.iter().filter(|e| e.is_dir).count();
-                    let file_count = all.len() - dir_count;
-                    let truncated = all.len() > max_entries;
-                    let entries: Vec<(String, bool, Option<u64>)> = all
-                        .into_iter()
-                        .take(max_entries)
-                        .map(|e| (e.name, e.is_dir, e.size))
-                        .collect();
-                    (entries, truncated, dir_count, file_count)
+        let (entries, truncated, dir_count, file_count) =
+            if recursive {
+                // Fast path: the warm workspace index already knows the tree.
+                match ctx.file_index.as_deref().and_then(|idx| {
+                    list_recursive_index(idx, &target, &ignore, max_depth, max_entries)
+                }) {
+                    Some(out) => out,
+                    None => list_recursive(&target, &ignore, max_depth, max_entries),
                 }
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: e,
-                        is_error: true,
-                    };
+            } else {
+                match list_dir_entries(&target, &ignore) {
+                    Ok(all) => {
+                        let dir_count = all.iter().filter(|e| e.is_dir).count();
+                        let file_count = all.len() - dir_count;
+                        let truncated = all.len() > max_entries;
+                        let entries: Vec<(String, bool, Option<u64>)> = all
+                            .into_iter()
+                            .take(max_entries)
+                            .map(|e| (e.name, e.is_dir, e.size))
+                            .collect();
+                        (entries, truncated, dir_count, file_count)
+                    }
+                    Err(e) => {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: e,
+                            is_error: true,
+                        };
+                    }
                 }
-            }
-        };
+            };
 
         let mut out = format!("Contents of {}:\n", shown);
         if entries.is_empty() {

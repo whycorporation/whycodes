@@ -192,8 +192,7 @@ impl GrepTool {
         } else {
             // Fast path: enumerate from the warm workspace index (no walk).
             // Dotfile-targeting includes bypass it (index skips hidden files).
-            let targets_hidden =
-                file_glob.is_some_and(|g| g.starts_with('.') || g.contains("/."));
+            let targets_hidden = file_glob.is_some_and(|g| g.starts_with('.') || g.contains("/."));
             let indexed = if targets_hidden {
                 None
             } else {
