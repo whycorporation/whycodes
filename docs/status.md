@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-13** (Session B optimize shipped)
+Last updated: **2026-08-13** (plan status sync: OAuth + optimize done; performance ceilings closed)
 
 ## Legend
 
@@ -17,15 +17,15 @@ Last updated: **2026-08-13** (Session B optimize shipped)
 | `dropped` | Deliberately abandoned; rationale kept in archive |
 | `deferred` | Explicitly postponed (e.g. post product launch) |
 
-## Open plans
+## Plans
 
 | Plan | Doc | Status | Notes |
 |---|---|---|---|
-| Performance residual | [plan-performance.md](plan-performance.md) | **mostly done+** | Subagent usage fold + bench ceilings shipped. Live provider reconcile still manual. |
-| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets live. Remaining: tagged release, Homebrew binary formula, install smoke test. |
-| OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **partially shipped** | `whycode auth login` for anthropic/openai/github-copilot/google; calls routed for anthropic + copilot ([auth.md](auth.md)). Credential discovery still open. |
-| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
-| System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **Session A+B done** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
+| Performance residual | [plan-performance.md](plan-performance.md) | **mostly done** | Subagent usage fold + `bench-results.json` + CI ceilings shipped. Live provider reconcile optional/manual. |
+| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall shipped (`v0.1.0`). Remaining: public repo, Homebrew binary formula, Windows install smoke. |
+| OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([auth.md](auth.md)). Residual: Windows ACL on store. |
+| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **P0+P1 done** | Cache, parallel tools, core profile, routing, doom-loop; P2 optional/deferred. |
+| System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done (A+B)** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
 
 ## Shipped (archived)
 
@@ -56,12 +56,13 @@ Index of archives: [archive/README.md](archive/README.md).
 
 Priority (owner: **public install / repo visibility last**):
 
-1. **Performance residual** — subagent usage fold + CI bench ceilings shipped ([plan-performance.md](plan-performance.md)). Live provider reconcile optional/manual.
+1. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
 2. **Plugins depth** — `plugins.toml` → `plugin_*` tools; `whycode plugins list`; project+global load. Marketplace still out of scope.
-3. **Latency P2 (optional)** — residual rows in [plan-latency-competitors.md](plan-latency-competitors.md).
-4. **OAuth** — subscription login shipped (2026-08-09); credential discovery + openai/google call routing open.
+3. **Performance residual (optional)** — live provider token reconcile against a real API session ([plan-performance.md](plan-performance.md)).
+4. **Latency P2 (optional)** — residual rows in [plan-latency-competitors.md](plan-latency-competitors.md).
 5. **ACP / web** — deferred post product launch.
-6. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`.
+
+Shipped this cycle: OAuth + credential discovery, optimize Session A+B, performance CI ceilings.
 
 ## Decision log
 

@@ -18,9 +18,12 @@ Completed or deliberately dropped phases from the original numbered roadmap
 | [plan-parallel-multi-session.md](plan-parallel-multi-session.md) | **shipped** S1–S6 — live sessions, dashboard, per-runtime DB |
 | [plan-memory.md](plan-memory.md) | **shipped v1+v2** — retain, sync, code RAG, subagent banks, ONNX opt |
 
-Living tracker: [`../status.md`](../status.md).  
-Still-open plans: [`../plan-distribution.md`](../plan-distribution.md),
-[`../plan-oauth.md`](../plan-oauth.md),
-[`../plan-performance.md`](../plan-performance.md),
-[`../plan-latency-competitors.md`](../plan-latency-competitors.md),
-[`../plan-optimize-2026-08.md`](../plan-optimize-2026-08.md).
+Living tracker: [`../status.md`](../status.md).
+
+| Plan | Outcome |
+|---|---|
+| [`../plan-oauth.md`](../plan-oauth.md) | **done / shipped** — login, routing, discovery |
+| [`../plan-optimize-2026-08.md`](../plan-optimize-2026-08.md) | **done** — Session A+B |
+| [`../plan-latency-competitors.md`](../plan-latency-competitors.md) | **P0+P1 done** — P2 optional |
+| [`../plan-performance.md`](../plan-performance.md) | **mostly done** — live reconcile optional |
+| [`../plan-distribution.md`](../plan-distribution.md) | **implemented** — residual public release steps |

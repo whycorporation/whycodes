@@ -84,8 +84,9 @@ Out (full automation — partial scaffolding exists):
 - [x] `whycode upgrade` on the newest version says so and exits 0 (with token on private)
 - [x] `whycode upgrade` failing mid-download leaves the existing binary intact
       (unit: `replace_binary` restore path)
-- [ ] Uninstall removes the binary and reports what it removed; it does not
+- [x] Uninstall removes the binary and reports what it removed; it does not
       touch the config or data directories without `--purge`
+      (`scripts/uninstall.sh` / `scripts/uninstall.ps1`)
 
 **Ship gate remaining:** make `whycorporation/whycode` **public** so
 `curl … | sh` works without a token. Private installs work today via

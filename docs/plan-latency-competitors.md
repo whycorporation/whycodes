@@ -1,6 +1,6 @@
 # Plan — Competitive latency research & whycode roadmap
 
-**Status:** active (revised) · **Priority:** P0 · **Last review:** 2026-08-05  
+**Status:** P0+P1 done · P2 optional/deferred · **Priority:** P0 (core complete) · **Last review:** 2026-08-13  
 **Related:** [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md), [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
 **Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
