@@ -1,0 +1,140 @@
+{
+  "date": "2026-08-13",
+  "machine": {
+    "platform": "Linux x86_64",
+    "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
+    "kernel": "7.1.6-1-cachyos"
+  },
+  "binary": "target/release/whycode",
+  "profile": "release",
+  "binary_size_mb": 13.7,
+  "version_ms_p95": 2.7,
+  "version_rss_mb": 0.52,
+  "startup": {
+    "version": {
+      "runs": 20,
+      "median_ms": 1.24,
+      "p95_ms": 2.7,
+      "min_ms": 1.08,
+      "max_ms": 2.7
+    },
+    "help": {
+      "runs": 20,
+      "median_ms": 1.91,
+      "p95_ms": 2.68,
+      "min_ms": 1.69,
+      "max_ms": 2.68
+    },
+    "config-show": {
+      "runs": 20,
+      "median_ms": 2.61,
+      "p95_ms": 3.84,
+      "min_ms": 2.4,
+      "max_ms": 3.84
+    }
+  },
+  "memory": {
+    "version": {
+      "runs": 5,
+      "median_mb": 0.52,
+      "max_mb": 0.59
+    },
+    "config-show": {
+      "runs": 5,
+      "median_mb": 5.48,
+      "max_mb": 7.68
+    },
+    "session-list": {
+      "runs": 5,
+      "median_mb": 9.42,
+      "max_mb": 9.57
+    }
+  },
+  "multi_session": {
+    "settle_s": 2.0,
+    "counts": {
+      "1": {
+        "runs": 5,
+        "sessions": 1,
+        "median_pss_mb": 6.7,
+        "max_pss_mb": 6.9,
+        "min_pss_mb": 6.5,
+        "median_process_count": 1,
+        "samples_mb": [
+          6.5,
+          6.6,
+          6.7,
+          6.7,
+          6.9
+        ]
+      },
+      "10": {
+        "runs": 5,
+        "sessions": 10,
+        "median_pss_mb": 26.5,
+        "max_pss_mb": 26.5,
+        "min_pss_mb": 26.4,
+        "median_process_count": 10,
+        "samples_mb": [
+          26.4,
+          26.5,
+          26.5,
+          26.5,
+          26.5
+        ],
+        "extra_over_one_mb": 19.8,
+        "per_added_session_mb": 2.2
+      }
+    }
+  },
+  "first_frame_note": "pty harness ~2s (keyboard enhancement query timeout on 0x0); real tty ~15-20ms tui.starting\u2192first_frame",
+  "first_frame_harness": {
+    "median_ms": 2048.5,
+    "min_ms": 2017.6,
+    "max_ms": 2074.2
+  },
+  "idle_draws_harness": {
+    "median_per_s": 16.6,
+    "window_ms": 3000
+  },
+  "hot_paths": {
+    "assess": {
+      "safe_short_ns": 575,
+      "safe_build_us": 2.06,
+      "caution_us": 2.32,
+      "destructive_us": 2.44,
+      "catastrophic_us": 1.33,
+      "pipeline_us": 5.08
+    },
+    "parse_markdown": {
+      "typical_us": 5.68,
+      "stream_200_us": 2.69,
+      "stream_1000_us": 10.0,
+      "stream_4000_us": 45.1
+    },
+    "highlight_warm": {
+      "rust_10_ns": 50.2,
+      "rust_100_ns": 266,
+      "rust_500_us": 1.27,
+      "untagged_100_ns": 222
+    },
+    "highlight_cold": {
+      "rust_10_ms": 1.78,
+      "rust_100_ms": 1.89
+    },
+    "render_markdown_ansi": {
+      "typical_ms": 1.36,
+      "code_200_ms": 43.2
+    }
+  },
+  "index": {
+    "walk_root_t1_ms": 4.95,
+    "walk_root_t4_ms": 5.08,
+    "walk_root_t8_ms": 4.84,
+    "query_warm_us": 14.2,
+    "browse_top_us": 29.2,
+    "entries_snapshot_us": 128,
+    "query_now_nonblocking_20k_us": 14.6,
+    "query_settle_20k_us": 14.7
+  }
+}
