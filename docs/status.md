@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-09** (shipped plans archived)
+Last updated: **2026-08-13** (Session B optimize shipped)
 
 ## Legend
 
@@ -25,7 +25,7 @@ Last updated: **2026-08-09** (shipped plans archived)
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets live. Remaining: tagged release, Homebrew binary formula, install smoke test. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **partially shipped** | `whycode auth login` for anthropic/openai/github-copilot/google; calls routed for anthropic + copilot ([auth.md](auth.md)). Credential discovery still open. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | P0+P1 done | Cache, parallel tools, core profile, routing, doom-loop; P2 optional. |
-| System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | Session A done | Session B open: deferred MCP/auto-index, closed-message markdown cache, `LlmRequest` Arc, token-estimate cache. |
+| System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **Session A+B done** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
 
 ## Shipped (archived)
 

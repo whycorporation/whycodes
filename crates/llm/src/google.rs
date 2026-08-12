@@ -201,7 +201,7 @@ impl GoogleProvider {
             });
         }
 
-        for msg in &request.messages {
+        for msg in request.messages.iter() {
             let role = match msg.role {
                 whycode_core::types::Role::User => "user",
                 whycode_core::types::Role::Assistant => "model",

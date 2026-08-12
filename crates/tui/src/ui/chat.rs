@@ -58,12 +58,19 @@ pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
             total += h;
             continue;
         }
+        if let Some((w, b, ref lines)) = msg.line_cache
+            && w == width
+            && b == busy
+        {
+            total += lines.len();
+            continue;
+        }
         total += render_message(msg, app, &palette, i, width).len();
     }
     (starts, total)
 }
 
-/// Like [`message_row_layout`] but writes height caches on miss.
+/// Like [`message_row_layout`] but writes height / line caches on miss.
 pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usize) {
     let busy = app.is_busy();
     let n = app.messages.len();
@@ -76,12 +83,23 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
             && b == busy
         {
             h
-        } else {
-            let h = {
-                let palette = app.config.palette();
-                render_message(&app.messages[i], app, &palette, i, width).len()
-            };
+        } else if let Some((w, b, ref lines)) = app.messages[i].line_cache
+            && w == width
+            && b == busy
+        {
+            let h = lines.len();
             app.messages[i].layout_cache = Some((width, busy, h));
+            h
+        } else {
+            let lines = {
+                let palette = app.config.palette();
+                render_message(&app.messages[i], app, &palette, i, width)
+            };
+            let h = lines.len();
+            app.messages[i].layout_cache = Some((width, busy, h));
+            if message_is_closed(app, i) {
+                app.messages[i].line_cache = Some((width, busy, lines));
+            }
             h
         };
         total += h;
@@ -185,6 +203,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 
     let mut lines: Vec<Line> = Vec::with_capacity(height.saturating_add(8));
     let n = app.messages.len();
+    let busy = app.is_busy();
     for i in 0..n {
         let msg_start = starts[i];
         let msg_end = if i + 1 < n { starts[i + 1] } else { total };
@@ -195,7 +214,24 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 
         let selected =
             app.selected_msg == Some(i) && app.focus == crate::app::FocusPane::Scrollback;
-        let mut msg_lines = render_message(&app.messages[i], app, palette, i, content_width);
+
+        // Closed messages: reuse cached lines (no markdown re-parse per paint).
+        // Selection mutates the first content row (caret / user highlight), so
+        // only the unselected path may serve the cache.
+        let mut msg_lines = if !selected
+            && let Some((w, b, ref cached)) = app.messages[i].line_cache
+            && w == content_width
+            && b == busy
+        {
+            cached.clone()
+        } else {
+            let rendered = render_message(&app.messages[i], app, palette, i, content_width);
+            if !selected && message_is_closed(app, i) {
+                app.messages[i].line_cache = Some((content_width, busy, rendered.clone()));
+                app.messages[i].layout_cache = Some((content_width, busy, rendered.len()));
+            }
+            rendered
+        };
         if selected {
             // Grok: selected entry gets a left caret on its first content row.
             let caret = Span::styled(
@@ -348,6 +384,32 @@ impl Widget for SparseLines {
             }
         }
     }
+}
+
+/// Closed = not the live streaming tail (and no open thinking).
+///
+/// Only closed bubbles get a line cache so spinner frames do not re-parse
+/// finished markdown. The last assistant message while `app.is_busy()` is open.
+fn message_is_closed(app: &TuiApp, index: usize) -> bool {
+    let Some(msg) = app.messages.get(index) else {
+        return false;
+    };
+    // Any open thinking block is still streaming.
+    for b in &msg.blocks {
+        if let ChatBlock::Thinking(t) = b
+            && t.is_running()
+        {
+            return false;
+        }
+    }
+    // While the agent is busy, the last assistant bubble may still grow.
+    if app.is_busy()
+        && index + 1 == app.messages.len()
+        && matches!(msg.role, ChatRole::Assistant)
+    {
+        return false;
+    }
+    true
 }
 
 fn render_message(

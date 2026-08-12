@@ -190,7 +190,9 @@ impl Usage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmRequest {
     pub system: String,
-    pub messages: Vec<Message>,
+    /// Shared transcript slice — clone of `LlmRequest` is O(1) on messages.
+    /// Intent inject and other rare mutations COW via [`LlmRequest::messages_mut`].
+    pub messages: std::sync::Arc<[Message]>,
     pub tools: Vec<ToolDefinition>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
@@ -202,6 +204,19 @@ pub struct LlmRequest {
     /// (Anthropic) attach OpenCode-style cache breakpoints.
     #[serde(default = "default_use_prompt_cache")]
     pub use_prompt_cache: bool,
+}
+
+impl LlmRequest {
+    /// COW access for rare in-place edits (intent posture, tests).
+    ///
+    /// Clones the transcript only when this `Arc` is shared; unique Arcs
+    /// (fresh `build_request`) mutate in place with no extra copy.
+    pub fn messages_mut(&mut self) -> &mut [Message] {
+        if std::sync::Arc::get_mut(&mut self.messages).is_none() {
+            self.messages = std::sync::Arc::from(self.messages.to_vec());
+        }
+        std::sync::Arc::get_mut(&mut self.messages).expect("messages Arc is unique")
+    }
 }
 
 fn default_use_prompt_cache() -> bool {

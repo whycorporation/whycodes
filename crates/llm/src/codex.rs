@@ -375,7 +375,7 @@ mod tests {
     fn request_with_tools() -> LlmRequest {
         LlmRequest {
             system: "You are whycode.".to_string(),
-            messages: vec![
+            messages: std::sync::Arc::from(vec![
                 Message {
                     role: Role::User,
                     content: MessageContent::Text("hi".to_string()),
@@ -407,7 +407,7 @@ mod tests {
                         is_error: Some(false),
                     }]),
                 },
-            ],
+            ]),
             tools: vec![ToolDefinition {
                 name: "read".to_string(),
                 description: "Read a file".to_string(),

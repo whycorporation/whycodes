@@ -528,12 +528,16 @@ pub struct ChatMessage {
     /// Cached display row count for `(width, busy_epilogue)` — see
     /// [`ChatMessage::invalidate_layout`].
     pub layout_cache: Option<(u16, bool, usize)>,
+    /// Cached painted lines for closed messages at `(width, busy)`.
+    /// Avoids re-parsing markdown on every spinner frame for finished bubbles.
+    pub line_cache: Option<(u16, bool, Vec<ratatui::text::Line<'static>>)>,
 }
 
 impl ChatMessage {
-    /// Drop cached height so the next layout pass re-measures this message.
+    /// Drop cached height/lines so the next layout pass re-measures this message.
     pub fn invalidate_layout(&mut self) {
         self.layout_cache = None;
+        self.line_cache = None;
     }
 }
 
@@ -2388,6 +2392,7 @@ impl TuiApp {
             duration_ms: None,
             image_labels: vec![],
             layout_cache: None,
+            line_cache: None,
         });
         self.mark_dirty();
     }
@@ -2407,6 +2412,7 @@ impl TuiApp {
             duration_ms: None,
             image_labels,
             layout_cache: None,
+            line_cache: None,
         });
         self.mark_dirty();
     }
@@ -2466,6 +2472,7 @@ impl TuiApp {
             duration_ms: None,
             image_labels: vec![],
             layout_cache: None,
+            line_cache: None,
         };
         self.messages.push(msg);
         self.mark_dirty();
@@ -2511,6 +2518,7 @@ impl TuiApp {
             duration_ms: None,
             image_labels: vec![],
             layout_cache: None,
+            line_cache: None,
         };
         self.messages.push(msg);
         self.mark_dirty();
@@ -2672,6 +2680,7 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                 duration_ms: None,
                 image_labels: vec![],
                 layout_cache: None,
+            line_cache: None,
             });
             continue;
         }
@@ -2688,6 +2697,7 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                     duration_ms: None,
                     image_labels: vec![],
                     layout_cache: None,
+            line_cache: None,
                 });
             }
             MessageContent::Blocks(blocks) => {
@@ -2764,6 +2774,7 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                     duration_ms: None,
                     image_labels,
                     layout_cache: None,
+            line_cache: None,
                 });
             }
         }

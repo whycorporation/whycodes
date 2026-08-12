@@ -36,7 +36,7 @@ pub fn convert_messages_with_format(
         }));
     }
 
-    for msg in &request.messages {
+    for msg in request.messages.iter() {
         if let Some(obj) = convert_one_message(msg, args_format) {
             messages.push(obj);
         }
@@ -523,7 +523,7 @@ mod tests {
     fn req_with(messages: Vec<Message>) -> LlmRequest {
         LlmRequest {
             system: "sys".into(),
-            messages,
+            messages: std::sync::Arc::from(messages),
             tools: vec![],
             max_tokens: None,
             temperature: None,

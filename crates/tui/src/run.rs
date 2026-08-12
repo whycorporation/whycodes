@@ -408,6 +408,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
     config.general.project_path = Some(opts.project_dir.clone());
+    // Plugins only at boot — MCP connect can block on slow servers. Defer MCP
+    // (+ memory auto-index) until after the first frame so the TUI paints ASAP.
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_file_index(file_index.clone())
@@ -415,13 +417,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
-        .with_mcp(&config)
-        .await;
+        .with_plugins(Some(opts.project_dir.as_path()));
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
-    // Code RAG: index once if empty (skips when chunks already exist).
-    maybe_session_auto_index(&opts.project_dir, &config, &mut app);
+    // Code RAG auto-index deferred past first paint (see loop below).
     let history = SessionHistory::new();
 
     // CLI `--continue` / `--resume`: hydrate before first paint when possible.
@@ -704,6 +704,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             "h": completed.area.height,
                         })),
                     );
+                    // After first paint: MCP connect + code RAG auto-index.
+                    // Both can block; doing them here keeps startup feel snappy.
+                    rt.agent.load_mcp(&config).await;
+                    maybe_session_auto_index(&project_dir, &config, &mut app);
+                    if !app.toasts.is_empty() {
+                        app.mark_dirty();
+                    }
                 }
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
@@ -3892,12 +3899,12 @@ fn maybe_spawn_prompt_suggestion(
         );
         let request = LlmRequest {
             system: "You propose a single follow-up user prompt for a coding agent.".into(),
-            messages: vec![Message {
+            messages: std::sync::Arc::from(vec![Message {
                 role: Role::User,
                 content: MessageContent::Text(body),
                 tool_call_id: None,
                 name: None,
-            }],
+            }]),
             tools: vec![],
             max_tokens: Some(40),
             temperature: Some(0.4),

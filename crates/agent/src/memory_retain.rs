@@ -238,12 +238,12 @@ async fn llm_extract_facts(
 
     let request = LlmRequest {
         system: "You extract durable coding-project facts only. No secrets. If none: NONE.".into(),
-        messages: vec![Message {
+        messages: std::sync::Arc::from(vec![Message {
             role: Role::User,
             content: MessageContent::Text(prompt),
             tool_call_id: None,
             name: None,
-        }],
+        }]),
         tools: Vec::new(),
         max_tokens: Some(200),
         temperature: Some(0.1),
