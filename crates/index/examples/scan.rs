@@ -34,7 +34,6 @@ fn main() {
         let t = Instant::now();
         let hits = idx.query_now(q, 10);
         let first_us = t.elapsed().as_micros();
-        let mut final_hits = hits.len();
         let mut top = hits
             .first()
             .map(|m| m.rel.clone())
@@ -43,7 +42,6 @@ fn main() {
         while idx.matching() && Instant::now() < deadline {
             if idx.take_results_dirty() {
                 let h = idx.read_matches(10);
-                final_hits = h.len();
                 if let Some(m) = h.first() {
                     top = m.rel.clone();
                 }
@@ -52,7 +50,7 @@ fn main() {
         }
         // Final read: the last publish can land after the loop's last poll.
         let h = idx.read_matches(10);
-        final_hits = h.len();
+        let final_hits = h.len();
         if let Some(m) = h.first() {
             top = m.rel.clone();
         }
@@ -63,5 +61,9 @@ fn main() {
     }
     let t = Instant::now();
     let top = idx.browse(0, "");
-    println!("browse : {} entries in {}µs", top.len(), t.elapsed().as_micros());
+    println!(
+        "browse : {} entries in {}µs",
+        top.len(),
+        t.elapsed().as_micros()
+    );
 }
