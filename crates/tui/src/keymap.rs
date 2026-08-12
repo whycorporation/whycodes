@@ -56,6 +56,8 @@ pub enum Action {
     SwitchAgent,
     /// Tab: Prompt ↔ Scrollback
     ToggleFocus,
+    /// Ctrl+Space: open the `@file` picker at the cursor.
+    FileComplete,
     FocusPrompt,
     FocusScrollback,
     /// Move selection in scrollback (j/k)
@@ -160,6 +162,10 @@ impl Keymap {
                     // Grok: Tab toggles focus; Ctrl+T cycles agent (was bare Tab)
                     (false, KeyCode::Tab) => return Some(Action::ToggleFocus),
                     (true, KeyCode::Char('t')) => return Some(Action::SwitchAgent),
+                    // Ctrl+Space arrives as Char(' ') on most terminals, Null on a few.
+                    (true, KeyCode::Char(' ')) | (true, KeyCode::Null) => {
+                        return Some(Action::FileComplete);
+                    }
                     // Page scroll works from either focus (Grok: PgUp/Dn from prompt)
                     (false, KeyCode::PageUp) => return Some(Action::ScrollPageUp),
                     (false, KeyCode::PageDown) => return Some(Action::ScrollPageDown),

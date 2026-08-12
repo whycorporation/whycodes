@@ -965,8 +965,12 @@ async fn cmd_run(
 
     let mut agent_name = agent_name;
     config.general.project_path = Some(project_dir.clone());
+    let file_index = whycode_index::WorkspaceIndex::start(
+        whycode_index::WorkspaceIndex::project_roots(&project_dir),
+    );
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
+        .with_file_index(file_index)
         .with_mcp(&config)
         .await;
     let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
@@ -2293,8 +2297,12 @@ async fn cmd_generate(
 
     // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
     // Catastrophic shell risk still hard-blocks regardless of this.
+    let file_index = whycode_index::WorkspaceIndex::start(
+        whycode_index::WorkspaceIndex::project_roots(&project_dir),
+    );
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
+        .with_file_index(file_index)
         .with_mcp(&config)
         .await;
     if format.is_structured() {
@@ -2442,8 +2450,12 @@ async fn run_one_parallel_turn(
         Some(&expanded),
     );
 
+    let file_index = whycode_index::WorkspaceIndex::start(
+        whycode_index::WorkspaceIndex::project_roots(project_dir),
+    );
     let mut agent = Agent::new(agent_info)
         .with_config(config)
+        .with_file_index(file_index)
         .with_mcp(config)
         .await;
     if structured {

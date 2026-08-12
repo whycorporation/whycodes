@@ -61,6 +61,7 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 | `whycode-tools` | `crates/tools` | Built-in tools (`file/`, `git/`, `github/`, `web/`, `agent_tools/`) |
 | `whycode-memory` | `crates/memory` | Cross-session semantic / auto memory (MEMORY.md + hash embed) |
 | `whycode-storage` | `crates/storage` | SQLite sessions + memories |
+| `whycode-index` | `crates/index` | Workspace file index: background `ignore`-walk → `nucleo` fuzzy + store; `notify` deltas. Powers TUI `@`-picker and glob/grep/list fast paths |
 
 Package names use the `whycode-` prefix even when the directory is shorter (e.g. `crates/llm` → `-p whycode-llm`).
 

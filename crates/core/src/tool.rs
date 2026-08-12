@@ -21,6 +21,9 @@ pub struct ToolContext {
     pub agent_id: Option<String>,
     /// Display label for conflict messages (defaults to `agent_id`).
     pub agent_label: Option<String>,
+    /// Resident workspace file index (when the host started one). File tools
+    /// use it as a warm fast path for enumeration and fall back to walking.
+    pub file_index: Option<std::sync::Arc<whycode_index::WorkspaceIndex>>,
 }
 
 impl ToolContext {
@@ -33,6 +36,7 @@ impl ToolContext {
             file_claims: None,
             agent_id: None,
             agent_label: None,
+            file_index: None,
         }
     }
 
@@ -45,6 +49,7 @@ impl ToolContext {
             file_claims: None,
             agent_id: None,
             agent_label: None,
+            file_index: None,
         }
     }
 

@@ -446,6 +446,43 @@ scripts locally before push. They run in seconds and are the whole
 ---
 
 
+### 2026-08-12 — workspace file index (`whycode-index`): picker + tool fast paths
+
+**Context:** The TUI had a dead `ui/autocomplete.rs` (never wired, sync
+`read_dir` per keystroke) and three drifted hand-rolled walkers
+(`tools/file/paths.rs`, `memory/code_index.rs`, autocomplete). Researched
+Grok Build (`xai-grok-workspace/file_system/`: `ignore`-crate walk → streaming
+`nucleo` injection, interned FileIndex, fsnotify deltas) and jcode
+(`jcode-fuzzy` typo-tolerant matcher, agentgrep's `ignore`+`globset` walk).
+
+**What shipped:** `crates/index` — background parallel `ignore` walk
+(gitignore-aware, `require_git(false)`, symlink-confined, policy-pruned via
+the single `policy` module) feeding both a per-root `nucleo` engine (picker)
+and a store (tools). `notify` watcher → 250 ms debounced deltas; removals
+rebuild that root's engine (nucleo has no per-item removal). `@` in the
+prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
+
+**Pitfalls encoded in the design:**
+
+- nucleo **0.5.0 (crates.io) has no `snapshot.matches()`** — Grok pins a git
+  rev. Use `matched_items()` + per-item `pattern.indices(..)` for score and
+  highlight positions (cheap at picker sizes).
+- Injector pushes are thread-safe and stream during the walk; `restart()`
+  is the only way to remove items.
+- Lock order is **fuzzy → store**, never reversed (delta application takes
+  both); queries lock only fuzzy, browse/tools lock only store.
+- The scanner thread must NOT hold an `Arc` cycle: split `WorkspaceIndex`
+  (handle, owns `JoinHandle`) from `Shared` (thread's `Arc` target), or the
+  last external drop never runs.
+- Hidden files (`.env`!) are excluded by policy — secret hygiene. Tools'
+  dotfile-targeting patterns (`.*`) bypass the index and walk the disk.
+- `ignore` crate: `filter_entry` drives descent control in both serial and
+  parallel mode; `hidden(false)` + own policy so whitelisted dot-dirs
+  (`.github`, `.whycode`) survive.
+
+---
+
+
 ### Template (copy for new entries)
 
 ```markdown

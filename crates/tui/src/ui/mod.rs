@@ -3,6 +3,7 @@
 
 pub mod chat;
 pub mod dialogs;
+pub mod file_suggest;
 pub mod header;
 pub mod layout;
 pub mod markdown;

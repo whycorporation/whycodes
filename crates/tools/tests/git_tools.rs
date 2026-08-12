@@ -25,6 +25,7 @@ fn repo_ctx() -> ToolContext {
         file_claims: None,
         agent_id: None,
         agent_label: None,
+        file_index: None,
     }
 }
 

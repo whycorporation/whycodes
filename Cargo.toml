@@ -23,6 +23,7 @@ members = [
     "crates/command-risk",
     "crates/sandbox",
     "crates/memory",
+    "crates/index",
 ]
 resolver = "2"
 
@@ -63,6 +64,11 @@ tempfile = "3"
 # Fast non-cryptographic hashing for trusted internal maps and memo keys.
 # Do not use for integrity (upgrade SHA-256 stays on sha2).
 rustc-hash = "2"
+# ripgrep's directory walker: gitignore-aware, parallel. Backs whycode-index.
+ignore = "0.4"
+# helix/fzf-grade fuzzy matcher with background worker threads. Backs the
+# TUI file picker in whycode-index.
+nucleo = "0.5"
 
 # Release: smallest ship binary + hot-path inlining (format, risk, TUI).
 # full LTO (was thin) + panic=abort cuts page-in for Boot/TTFF (`--version`).

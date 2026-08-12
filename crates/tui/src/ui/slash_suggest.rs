@@ -33,26 +33,26 @@ const SCROLLBAR_GUTTER: u16 = 2;
 /// We synthesise the same relative steps from `palette.bg` so every theme
 /// still gets a readable track/thumb pair (the old accent-on-dialog │ bar
 /// vanished into the panel on most dark themes).
-struct DropdownColors {
+pub(crate) struct DropdownColors {
     /// Panel + normal row background.
-    panel: Color,
+    pub(crate) panel: Color,
     /// Selected row wash.
-    selected: Color,
+    pub(crate) selected: Color,
     /// Top/bottom hairline + count label background.
-    chrome: Color,
+    pub(crate) chrome: Color,
     /// Hairline / count foreground.
-    chrome_fg: Color,
+    pub(crate) chrome_fg: Color,
     /// Scrollbar track cell background.
-    track: Color,
+    pub(crate) track: Color,
     /// Scrollbar thumb solid fill (painted as bg=fg full block).
-    thumb: Color,
-    name: Color,
-    name_selected: Color,
-    hint: Color,
+    pub(crate) thumb: Color,
+    pub(crate) name: Color,
+    pub(crate) name_selected: Color,
+    pub(crate) hint: Color,
 }
 
 impl DropdownColors {
-    fn from_palette(p: &ThemePalette) -> Self {
+    pub(crate) fn from_palette(p: &ThemePalette) -> Self {
         // Lift the canvas toward white for elevated surfaces; clamp so light
         // themes don't blow out.
         let panel = elevate(p.bg, 26);
@@ -279,7 +279,7 @@ fn paint_row(
     let _ = buf.set_line(x, y, &line, width);
 }
 
-fn fill_bg(buf: &mut Buffer, area: Rect, bg: Color) {
+pub(crate) fn fill_bg(buf: &mut Buffer, area: Rect, bg: Color) {
     if area.width == 0 || area.height == 0 {
         return;
     }
@@ -294,12 +294,12 @@ fn fill_bg(buf: &mut Buffer, area: Rect, bg: Color) {
     }
 }
 
-fn set_line(buf: &mut Buffer, x: u16, y: u16, text: &str, width: u16, style: Style) {
+pub(crate) fn set_line(buf: &mut Buffer, x: u16, y: u16, text: &str, width: u16, style: Style) {
     let line = Line::from(Span::styled(text.to_string(), style));
     let _ = buf.set_line(x, y, &line, width);
 }
 
-fn truncate_to(s: &str, max: usize) -> String {
+pub(crate) fn truncate_to(s: &str, max: usize) -> String {
     if max == 0 {
         return String::new();
     }
@@ -315,7 +315,7 @@ fn truncate_to(s: &str, max: usize) -> String {
 }
 
 /// Lift an sRGB colour toward white by `delta` per channel (clamped).
-fn elevate(c: Color, delta: u8) -> Color {
+pub(crate) fn elevate(c: Color, delta: u8) -> Color {
     let (r, g, b) = to_rgb(c);
     Color::Rgb(
         r.saturating_add(delta),

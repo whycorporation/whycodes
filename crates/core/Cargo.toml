@@ -9,6 +9,7 @@ repository.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+whycode-index = { path = "../index" }
 thiserror.workspace = true
 anyhow.workspace = true
 chrono.workspace = true

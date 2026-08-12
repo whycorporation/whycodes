@@ -1,23 +1,11 @@
 //! Lightweight codebase RAG (hash embeddings over source chunks).
 
 use std::path::Path;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::embed::{cosine, decode_blob, encode_blob};
 use crate::service::{CodeHit, MemoryService};
-
-const SKIP_DIRS: &[&str] = &[
-    ".git",
-    "target",
-    "node_modules",
-    "dist",
-    "build",
-    ".next",
-    "vendor",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".whycode",
-];
 
 const EXT_OK: &[&str] = &[
     "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", "kt", "c", "h", "cpp", "hpp", "cs", "rb",
@@ -33,7 +21,7 @@ impl MemoryService {
         }
         let root = crate::project_key::project_root(&self.project_path);
         let mut files = Vec::new();
-        walk_files(&root, &root, &mut files, max_files)?;
+        walk_files(&root, &mut files, max_files);
         files.sort();
 
         let db = self.open_db()?;
@@ -114,51 +102,28 @@ impl MemoryService {
     }
 }
 
-fn walk_files(
-    root: &Path,
-    dir: &Path,
-    out: &mut Vec<String>,
-    max_files: usize,
-) -> std::io::Result<()> {
-    if out.len() >= max_files {
-        return Ok(());
-    }
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(()),
-    };
-    for ent in entries.flatten() {
-        if out.len() >= max_files {
-            break;
+/// Collect indexable source files under `root` via the shared workspace
+/// walker (gitignore-aware, policy-pruned — see `whycode_index::walk`).
+fn walk_files(root: &Path, out: &mut Vec<String>, max_files: usize) {
+    let scanned = AtomicUsize::new(0);
+    let cancel = AtomicBool::new(false);
+    let collected = Mutex::new(std::mem::take(out));
+    whycode_index::walk::walk_root(root, 4, usize::MAX, &scanned, &cancel, &|e| {
+        if e.is_dir {
+            return;
         }
-        let path = ent.path();
-        let name = ent.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') && name != ".github" {
-            // still allow .github? skip dot dirs except none
-            if path.is_dir() {
-                continue;
-            }
+        let ext = e.rel.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        if !EXT_OK.contains(&ext.as_str()) {
+            return;
         }
-        if path.is_dir() {
-            if SKIP_DIRS.iter().any(|s| *s == name) {
-                continue;
-            }
-            walk_files(root, &path, out, max_files)?;
-        } else if path.is_file() {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            if !EXT_OK.iter().any(|e| *e == ext) {
-                continue;
-            }
-            if let Ok(rel) = path.strip_prefix(root) {
-                out.push(rel.to_string_lossy().replace('\\', "/"));
-            }
+        let mut g = collected.lock().unwrap_or_else(|p| p.into_inner());
+        if g.len() >= max_files {
+            cancel.store(true, Ordering::Relaxed);
+            return;
         }
-    }
-    Ok(())
+        g.push(e.rel.to_string());
+    });
+    *out = collected.into_inner().unwrap_or_else(|p| p.into_inner());
 }
 
 /// Sliding windows of `window` lines with `overlap` lines shared.

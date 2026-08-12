@@ -8,27 +8,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Directories pruned during recursive walks (grep/glob/list recursive).
-/// Mirrors common ripgrep / IDE defaults plus Rust/JS build artifacts.
-pub const SKIP_DIRS: &[&str] = &[
-    ".git",
-    "target",
-    "node_modules",
-    ".venv",
-    "venv",
-    "dist",
-    "build",
-    ".next",
-    ".nuxt",
-    ".turbo",
-    ".cache",
-    "__pycache__",
-    ".tox",
-    "coverage",
-    ".cargo",
-    "vendor",
-    ".idea",
-    ".vscode",
-];
+/// Single source of truth lives in `whycode_index::policy`; re-exported here
+/// so existing call sites keep working.
+pub const SKIP_DIRS: &[&str] = whycode_index::policy::SKIP_DIRS;
 
 /// Bytes sniffed for a NUL (binary) marker.
 pub const BINARY_SNIFF_LEN: usize = 8192;
@@ -72,28 +54,52 @@ pub fn display_path(path: &Path, working_dir: &str) -> String {
 }
 
 /// Whether a directory name should be pruned from recursive walks.
+/// Delegates to the shared index policy (skip-list + hidden-dir rules).
 pub fn is_skip_dir(name: &str) -> bool {
-    if name == "." || name == ".." {
-        return true;
+    whycode_index::policy::is_pruned_dir(name)
+}
+
+/// Entries under `root` from the warm workspace index, shaped like
+/// [`walk_files`] results: (absolute path, `root`-relative `/` path, is_dir).
+///
+/// Returns `None` when the index is absent, still scanning (cold), or `root`
+/// is not inside the primary index root — callers then fall back to walking.
+/// Note the index never lists hidden files (secret hygiene: `.env` & co. stay
+/// out of agent context); patterns explicitly targeting dotfiles should walk.
+pub fn index_entries(
+    index: &whycode_index::WorkspaceIndex,
+    root: &Path,
+) -> Option<Vec<(PathBuf, String, bool, u64)>> {
+    if !index.is_ready() {
+        return None;
     }
-    // Hidden dirs except a few useful project markers
-    if name.starts_with('.')
-        && !matches!(
-            name,
-            ".whycode" | ".github" | ".config" | ".cargo" // .cargo at project root can hold config; still skip deep
-        )
-    {
-        // Always skip VCS / env / cache style hidden dirs
-        if matches!(
-            name,
-            ".git" | ".svn" | ".hg" | ".venv" | ".tox" | ".cache" | ".next" | ".nuxt" | ".turbo"
-        ) {
-            return true;
+    // The index canonicalizes roots; match that so symlinked working dirs
+    // (e.g. /tmp on macOS) still hit the fast path.
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let primary = index.primary_root();
+    let rel_root = root.strip_prefix(primary).ok()?;
+    let prefix = rel_root.to_string_lossy().replace('\\', "/");
+    let prefix = prefix.trim_matches('/').to_string();
+    let mut out = Vec::new();
+    index.visit(|e| {
+        let in_scope = if prefix.is_empty() {
+            true
+        } else {
+            e.rel.len() > prefix.len()
+                && e.rel.starts_with(&prefix)
+                && e.rel.as_bytes()[prefix.len()] == b'/'
+        };
+        if !in_scope {
+            return;
         }
-        // Other hidden: skip by default for speed (models rarely need .*)
-        return true;
-    }
-    SKIP_DIRS.contains(&name)
+        let rel = if prefix.is_empty() {
+            e.rel.to_string()
+        } else {
+            e.rel[prefix.len() + 1..].to_string()
+        };
+        out.push((primary.join(&*e.rel), rel, e.is_dir, e.size));
+    });
+    Some(out)
 }
 
 /// Human-readable byte size (e.g. `12.4 KB`).

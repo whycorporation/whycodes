@@ -1,0 +1,21 @@
+[package]
+name = "whycode-index"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ignore.workspace = true
+nucleo.workspace = true
+notify.workspace = true
+rustc-hash.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "scan"
+harness = false

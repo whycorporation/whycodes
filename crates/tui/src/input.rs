@@ -73,6 +73,8 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     // prompt does not reflow/flicker; full body is restored on submit.
     app.insert_paste_text(&text);
     app.slash_suggest.refresh(&app.input_buffer);
+    app.file_suggest
+        .refresh(&app.input_buffer, app.input_cursor);
     app.esc_armed_at = None;
 }
 
@@ -125,6 +127,40 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         }
         Some(Action::EscapeMode) => {
             handle_escape(app);
+            true
+        }
+        // `@file` picker: Tab drills into dirs / accepts files, Enter accepts,
+        // arrows navigate. These guards precede the slash-suggest ones; the
+        // two popups are mutually exclusive by construction.
+        Some(Action::ToggleFocus) if app.file_suggest.active => {
+            app.file_suggest
+                .accept(&mut app.input_buffer, &mut app.input_cursor);
+            app.mark_dirty();
+            true
+        }
+        Some(Action::SubmitInput) if app.file_suggest.active => {
+            if app.file_suggest.matches.is_empty() {
+                app.file_suggest.dismiss();
+            } else {
+                app.file_suggest
+                    .accept(&mut app.input_buffer, &mut app.input_cursor);
+            }
+            app.mark_dirty();
+            true
+        }
+        Some(Action::InputHistoryPrev) if app.file_suggest.active => {
+            app.file_suggest.step(-1);
+            true
+        }
+        Some(Action::InputHistoryNext) if app.file_suggest.active => {
+            app.file_suggest.step(1);
+            true
+        }
+        Some(Action::FileComplete) => {
+            app.focus_prompt();
+            app.file_suggest
+                .activate(&mut app.input_buffer, &mut app.input_cursor);
+            app.mark_dirty();
             true
         }
         // Slash-suggest: Tab completes; Up/Down navigate the list.
@@ -323,6 +359,8 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
                         app.input_buffer.insert(pos, c);
                         app.input_cursor = pos + c.len_utf8();
                         app.slash_suggest.refresh(&app.input_buffer);
+                        app.file_suggest
+                            .refresh(&app.input_buffer, app.input_cursor);
                         app.esc_armed_at = None;
                     }
                 }
@@ -370,6 +408,12 @@ fn handle_escape(app: &mut TuiApp) {
             app.input_buffer.clear();
             app.input_cursor = 0;
         }
+        app.esc_armed_at = None;
+        return;
+    }
+    // 1b. Steal: `@file` picker (leave the typed `@token` as-is).
+    if app.file_suggest.active {
+        app.file_suggest.dismiss();
         app.esc_armed_at = None;
         return;
     }
@@ -440,6 +484,8 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
             }
             app.slash_suggest.refresh(&app.input_buffer);
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
         }
         // Empty buffer + staged images: Backspace peels off the last attachment.
         Action::InputBackspace
@@ -467,6 +513,8 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
             }
             app.slash_suggest.refresh(&app.input_buffer);
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
         }
         Action::InputClear => {
             app.input_buffer.clear();
@@ -474,6 +522,7 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.pending_images.clear();
             app.pending_pastes.clear();
             app.slash_suggest.dismiss();
+            app.file_suggest.dismiss();
         }
         Action::InputLeft => {
             let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
@@ -486,6 +535,8 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             } else {
                 app.input_cursor = prev_boundary(&app.input_buffer, app.input_cursor);
             }
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
         }
         Action::InputRight if app.input_cursor < app.input_buffer.len() => {
             let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
@@ -496,18 +547,25 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             } else {
                 app.input_cursor = next_boundary(&app.input_buffer, app.input_cursor);
             }
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
         }
         Action::InputHome => {
             app.input_cursor = 0;
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
         }
         Action::InputEnd => {
             app.input_cursor = app.input_buffer.len();
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
         }
         Action::InputNewline => {
             let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
             app.input_buffer.insert(pos, '\n');
             app.input_cursor = pos + 1;
             app.slash_suggest.dismiss();
+            app.file_suggest.dismiss();
         }
         Action::InputHistoryPrev if !app.input_history.is_empty() && app.input_history_idx > 0 => {
             app.input_history_idx -= 1;
@@ -618,6 +676,17 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                     app.slash_suggest.dismiss();
                     app.mark_dirty();
                 }
+                app.mouse_sel = None;
+                return true;
+            }
+            // File picker: click a row to select + apply (dirs drill down).
+            if app.file_suggest.active
+                && let Some(idx) = app.file_suggest.row_index_at(mouse.column, mouse.row)
+            {
+                app.file_suggest.selected = idx;
+                app.file_suggest
+                    .accept(&mut app.input_buffer, &mut app.input_cursor);
+                app.mark_dirty();
                 app.mouse_sel = None;
                 return true;
             }

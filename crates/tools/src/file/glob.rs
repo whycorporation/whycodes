@@ -31,7 +31,8 @@ impl Tool for GlobTool {
 
     fn description(&self) -> &str {
         "Find files by glob pattern under the project (e.g. `**/*.rs`, `crates/**/mod.rs`). \
-         Skips heavy dirs (target, node_modules, .git, …) for speed. Prefer over shell find."
+         Respects .gitignore; skips heavy dirs (target, node_modules, .git, …). \
+         Served from the live file index when warm. Prefer over shell find."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -103,39 +104,68 @@ impl Tool for GlobTool {
         let mut total = 0usize;
         let mut hit_cap = false;
 
-        walk_files(&root, &mut |path, rel| {
-            let name = path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-
+        // Returns false when way over the cap → callers stop iterating.
+        let mut match_one = |name: &str, rel: &str, results: &mut Vec<String>| {
             let ok = if match_name_only {
-                pattern.matches(&name) || pattern.matches(rel)
+                pattern.matches(name) || pattern.matches(rel)
             } else {
                 pattern.matches(rel)
                     // Also allow patterns that include leading ** implicitly
                     || pattern.matches(&format!("./{rel}"))
             };
-
             if ok {
                 total += 1;
                 if results.len() < max_results {
                     results.push(rel.to_string());
                 } else {
                     hit_cap = true;
-                    // Keep counting a bit for accurate totals, but stop walk if way over
-                    if total > max_results.saturating_mul(5) {
-                        return false;
-                    }
                 }
             }
-            true
-        });
+            total <= max_results.saturating_mul(5)
+        };
+
+        // Fast path: the warm workspace index answers without any syscalls.
+        // Patterns targeting dotfiles bypass it (the index skips hidden files
+        // by design) and take the classic walk below.
+        let targets_hidden = pattern_str.starts_with('.') || pattern_str.contains("/.");
+        let indexed = if targets_hidden {
+            None
+        } else {
+            ctx.file_index
+                .as_deref()
+                .and_then(|idx| super::paths::index_entries(idx, &root))
+        };
+
+        let mut walked = false;
+        if let Some(entries) = &indexed {
+            for (path, rel, is_dir, _size) in entries {
+                if *is_dir {
+                    continue;
+                }
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if !match_one(&name, rel, &mut results) {
+                    break;
+                }
+            }
+        } else {
+            walked = true;
+            walk_files(&root, &mut |path, rel| {
+                let name = path
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                match_one(&name, rel, &mut results)
+            });
+        }
 
         // Fallback: if the walk found nothing, try the classic glob crate on the
         // joined pattern once — covers odd absolute patterns without exploding
         // into target/ when the walk already pruned correctly and truly found nothing.
-        if results.is_empty() && total == 0 {
+        // (Skipped when the index answered: a warm index is authoritative.)
+        if walked && results.is_empty() && total == 0 {
             let joined = if Path::new(pattern_str).is_absolute() {
                 pattern_str.to_string()
             } else {

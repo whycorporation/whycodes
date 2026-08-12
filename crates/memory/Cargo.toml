@@ -13,6 +13,7 @@ onnx = ["dep:tract-onnx", "dep:tokenizers"]
 
 [dependencies]
 whycode-core = { path = "../core" }
+whycode-index = { path = "../index" }
 whycode-storage = { path = "../storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }
