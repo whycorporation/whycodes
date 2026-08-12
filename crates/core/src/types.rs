@@ -212,10 +212,9 @@ impl LlmRequest {
     /// Clones the transcript only when this `Arc` is shared; unique Arcs
     /// (fresh `build_request`) mutate in place with no extra copy.
     pub fn messages_mut(&mut self) -> &mut [Message] {
-        if std::sync::Arc::get_mut(&mut self.messages).is_none() {
-            self.messages = std::sync::Arc::from(self.messages.to_vec());
-        }
-        std::sync::Arc::get_mut(&mut self.messages).expect("messages Arc is unique")
+        // COW: clone the transcript only when this Arc is shared. Panic-free
+        // (no expect/unwrap) so the core panic budget stays at zero.
+        std::sync::Arc::make_mut(&mut self.messages)
     }
 }
 

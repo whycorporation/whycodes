@@ -83,23 +83,12 @@ fn message_tokens(msg: &Message) -> usize {
 ///
 /// Skipped on serde so export JSON stays stable; rebuilt after load or when
 /// `valid` is false (deserialize default).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct SessionTokenCache {
     system: usize,
     per_msg: Vec<usize>,
     total: usize,
     valid: bool,
-}
-
-impl Default for SessionTokenCache {
-    fn default() -> Self {
-        Self {
-            system: 0,
-            per_msg: Vec::new(),
-            total: 0,
-            valid: false,
-        }
-    }
 }
 
 impl SessionTokenCache {
@@ -568,8 +557,7 @@ impl Session {
 
     /// Like [`token_count`] but refreshes the running cache when stale.
     fn token_count_cached(&mut self) -> usize {
-        self.token_cache
-            .ensure(&self.system_prompt, &self.messages);
+        self.token_cache.ensure(&self.system_prompt, &self.messages);
         self.token_cache.total
     }
 

@@ -2680,7 +2680,7 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                 duration_ms: None,
                 image_labels: vec![],
                 layout_cache: None,
-            line_cache: None,
+                line_cache: None,
             });
             continue;
         }
@@ -2697,7 +2697,7 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                     duration_ms: None,
                     image_labels: vec![],
                     layout_cache: None,
-            line_cache: None,
+                    line_cache: None,
                 });
             }
             MessageContent::Blocks(blocks) => {
@@ -2774,7 +2774,7 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                     duration_ms: None,
                     image_labels,
                     layout_cache: None,
-            line_cache: None,
+                    line_cache: None,
                 });
             }
         }
