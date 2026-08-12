@@ -680,17 +680,17 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup, required checks, commit conventions |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting and security scope |
 
-### Open plans
-
-Still-open work with acceptance criteria:
+### Plans
 
 | Plan | Status |
 |---|---|
-| [docs/plan-distribution.md](docs/plan-distribution.md) | Implemented; first `v*` release exercises remaining criteria |
-| [docs/plan-oauth.md](docs/plan-oauth.md) | Partially shipped — [docs/auth.md](docs/auth.md) |
-| [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; residual stats / CI ceilings |
-| [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done |
-| [docs/plan-optimize-2026-08.md](docs/plan-optimize-2026-08.md) | Session A done; Session B open |
+| [docs/plan-distribution.md](docs/plan-distribution.md) | Implemented; residual: public repo, Homebrew binary formula, Windows install smoke |
+| [docs/plan-oauth.md](docs/plan-oauth.md) | **Done / shipped** — [docs/auth.md](docs/auth.md) |
+| [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; live provider reconcile optional/manual |
+| [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done; P2 optional |
+| [docs/plan-optimize-2026-08.md](docs/plan-optimize-2026-08.md) | **Session A+B done** |
+
+Living tracker: [docs/status.md](docs/status.md).
 
 ### Archived phases
 

@@ -1,6 +1,6 @@
 # Plan — Performance measurement (residual)
 
-**Status:** mostly done · **Was:** phase 5 · **Depends on:** CI budgets (shipped) · **Blocks:** honest positioning claims until residual items close
+**Status:** mostly done · **Was:** phase 5 · **Depends on:** CI budgets (shipped) · **Blocks:** none for launch (live provider reconcile optional/manual)
 
 ## Problem
 
@@ -58,8 +58,9 @@ Out:
 - [x] Per-session usage persisted in SQLite; `whycode stats` aggregates it
 - [x] `docs/benchmarks.md` recording the method precisely enough to reproduce:
       machine, build profile, terminal, run count
-- [ ] `bench-results.json` committed per run
-- [ ] CI job gating startup, memory and idle draws against ceilings
+- [x] `bench-results.json` committed per run (`docs/bench-results.json`)
+- [x] CI job gating startup / memory against ceilings
+      (`scripts/check_bench_ceilings.py` in CI budgets job; generous Linux ceilings)
 - [x] Record the first measured numbers in `docs/comparison.md`
 
 ## Acceptance criteria
@@ -67,13 +68,16 @@ Out:
 - [x] Each benchmark is reproducible: two runs on the same machine and build
       agree within 10% on the median
 - [x] The method doc is specific enough for someone else to reproduce it
-- [ ] A deliberate 2× startup regression fails the CI gate
+- [x] A deliberate 2× startup regression fails the CI gate
+      (`check_bench_ceilings.py` on `version_ms_p95` / `version_rss_mb`;
+      idle-draw / first-frame gates remain local via `docs/benchmarks.md`)
 - [x] Idle redraws over 10 seconds with no input is 0, or the number is
       recorded with an explanation of why it is not
 - [ ] Token counts reconcile with the provider's reported usage within 1% on
-      at least one real session
-- [ ] Benchmarks run on all three platforms, or the doc states which platform
-      the ceilings apply to and why
+      at least one real session (**manual** — needs a live provider turn)
+- [x] Benchmarks run on all three platforms, or the doc states which platform
+      the ceilings apply to and why (`docs/benchmarks.md`: Linux x86_64
+      ceilings; multi-session PSS is Linux-only via `/proc`)
 
 ## Risks
 
@@ -139,4 +143,5 @@ the provider's own numbers in both the TUI and the plain REPL.
 - **Reconciliation against a live provider** still needs a real API session
   (manual); arithmetic remains unit-tested.
 
-**Status:** residual code items shipped; live provider reconcile remains manual.
+**Status:** **mostly done** — residual code + CI ceilings shipped; live
+provider reconcile remains manual (optional, not blocking).

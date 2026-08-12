@@ -1,11 +1,12 @@
 # Plan — OAuth and credential discovery
 
-**Status:** shipped (2026-08-09) — login/store/refresh for anthropic,
-openai, github-copilot, google; API-call routing live for all four (openai
-→ Codex backend Responses API, google → Code Assist endpoint); 401
-refresh+retry; `/connect` in-TUI login; credential discovery with the
+**Status:** **done / shipped** (2026-08-09) — login/store/refresh for
+anthropic, openai, github-copilot, google; API-call routing live for all
+four (openai → Codex backend Responses API, google → Code Assist endpoint);
+401 refresh+retry; `/connect` in-TUI login; credential discovery with the
 consent model below (`whycode auth import`). See [auth.md](auth.md).
-· **Blocks:** nothing
+Residual non-blockers: Windows restrictive ACL on the token store (Unix
+`0600` is solid). · **Blocks:** nothing
 
 > The "blocked" reasoning below was resolved on 2026-08-09:
 > flows ride the public client ids of the first-party CLIs (documented in
@@ -90,8 +91,8 @@ Out:
 ## Tasks
 
 - [x] `crates/auth`: token storage, expiry tracking, refresh
-- [x] File permissions on the token store: `0600` on Unix, restrictive ACL on
-      Windows; refuse to use a world-readable store
+- [x] File permissions on the token store: `0600` on Unix; refuse to use a
+      world-readable store (Windows restrictive ACL is a residual follow-up)
 - [x] Anthropic OAuth flow (browser + paste `code#state` — the public
       client's registered redirect is not a loopback address)
 - [x] OpenAI OAuth flow (browser + loopback callback on registered port 1455)
