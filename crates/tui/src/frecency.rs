@@ -57,9 +57,10 @@ impl Frecency {
     /// Load the table for `project_root` (canonical). Missing/corrupt files
     /// start empty.
     pub fn load(project_root: &Path) -> Self {
-        let path = whycode_config::Config::data_dir()
-            .ok()
-            .map(|d| d.join("frecency").join(format!("{}.json", project_key(project_root))));
+        let path = whycode_config::Config::data_dir().ok().map(|d| {
+            d.join("frecency")
+                .join(format!("{}.json", project_key(project_root)))
+        });
         let inner = path
             .as_ref()
             .and_then(|p| std::fs::read_to_string(p).ok())
@@ -85,10 +86,11 @@ impl Frecency {
     /// Record one accepted selection.
     pub fn record(&mut self, rel: &str) {
         let now = now_epoch();
-        let e = self.inner.map.entry(rel.to_string()).or_insert(Stats {
-            count: 0,
-            last: 0,
-        });
+        let e = self
+            .inner
+            .map
+            .entry(rel.to_string())
+            .or_insert(Stats { count: 0, last: 0 });
         e.count = e.count.saturating_add(1);
         e.last = now;
         if self.inner.map.len() > MAX_ENTRIES {
@@ -200,4 +202,3 @@ mod tests {
         assert!(g.boost("a/b.rs") > 0);
     }
 }
-

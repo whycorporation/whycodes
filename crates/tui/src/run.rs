@@ -1571,10 +1571,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // busy or toasts are live so spinner / stream / expiry stay snappy;
             // long timeout when idle so we do not spin the CPU.
             let awaiting_matches = app.file_suggest.awaiting_matches();
-            let idle = !rt.agent_busy
-                && app.toasts.is_empty()
-                && !app.needs_redraw
-                && !awaiting_matches;
+            let idle =
+                !rt.agent_busy && app.toasts.is_empty() && !app.needs_redraw && !awaiting_matches;
             let poll_for = if awaiting_matches {
                 // Fuzzy workers are mid-rematch: stay near frame cadence so
                 // results land within ~1 frame of being published.
@@ -1760,7 +1758,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     app.save_view(&mut rt.view);
                     let parked = std::mem::replace(
                         &mut rt,
-                        spawn_new_session_runtime(&app.agent_name, &config, &project_dir, &file_index).await,
+                        spawn_new_session_runtime(
+                            &app.agent_name,
+                            &config,
+                            &project_dir,
+                            &file_index,
+                        )
+                        .await,
                     );
                     runtimes.push(parked);
                     mru.push(runtimes.len() - 1);
