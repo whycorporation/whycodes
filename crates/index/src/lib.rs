@@ -17,8 +17,8 @@
 //! let hits = index.query("main.rs", 20);
 //! ```
 
-pub mod policy;
 mod fuzzy;
+pub mod policy;
 mod store;
 pub mod walk;
 mod watch;
@@ -31,9 +31,9 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 pub use fuzzy::FileMatch;
+use fuzzy::FuzzyEngine;
 pub use store::{Entry, IndexStore};
 pub use walk::{WalkEntry, WalkStats, walk_root};
-use fuzzy::FuzzyEngine;
 use watch::{Change, ChangeKind, Command};
 
 /// Default cap on indexed entries per root.
@@ -245,7 +245,6 @@ impl WorkspaceIndex {
         self.is_ready()
     }
 
-
     /// Non-blocking picker query: point every engine at `pattern` and read
     /// the matches currently available. Never waits on a rematch — fresh
     /// results are announced via [`take_results_dirty`] and picked up with
@@ -282,10 +281,7 @@ impl WorkspaceIndex {
     /// True while any engine is still matching or ingesting (walk running).
     /// UIs should keep polling on a short cadence while this holds.
     pub fn matching(&self) -> bool {
-        self.shared
-            .states
-            .iter()
-            .any(|s| lock(&s.fuzzy).nudge())
+        self.shared.states.iter().any(|s| lock(&s.fuzzy).nudge())
     }
 
     /// Merge current fuzzy results across roots, best-first, capped.
@@ -421,7 +417,6 @@ fn sanitize_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     }
     out
 }
-
 
 /// Scanner thread body: initial scan, then watcher-fed delta loop.
 fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
@@ -565,7 +560,6 @@ fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,7 +645,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert_eq!(idx.len(), before + 1, "create must be indexed");
-        assert!(idx.query("new_file", 10).iter().any(|m| m.rel == "src/new_file.rs"));
+        assert!(
+            idx.query("new_file", 10)
+                .iter()
+                .any(|m| m.rel == "src/new_file.rs")
+        );
 
         // Delete → disappears from the store (fuzzy engine rebuilds).
         fs::remove_file(dir.path().join("src/new_file.rs")).unwrap();
@@ -678,9 +676,9 @@ mod tests {
         let root = dir.path().canonicalize().unwrap();
         let roots = sanitize_roots(vec![
             root.clone(),
-            root.join("src"),          // nested → dropped
-            root.join("missing"),      // nonexistent → dropped
-            root.clone(),              // dup → dropped
+            root.join("src"),     // nested → dropped
+            root.join("missing"), // nonexistent → dropped
+            root.clone(),         // dup → dropped
         ]);
         assert_eq!(roots, vec![root]);
     }
@@ -759,4 +757,3 @@ mod tests {
         assert!(!idx.matching());
     }
 }
-

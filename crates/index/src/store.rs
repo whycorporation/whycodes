@@ -119,12 +119,10 @@ impl IndexStore {
             .entries
             .iter()
             .filter(|e| {
-                e.root == root
-                    && e.rel.starts_with(prefix.as_str())
-                    && {
-                        let rest = &e.rel[prefix.len()..];
-                        !rest.is_empty() && !rest.contains('/')
-                    }
+                e.root == root && e.rel.starts_with(prefix.as_str()) && {
+                    let rest = &e.rel[prefix.len()..];
+                    !rest.is_empty() && !rest.contains('/')
+                }
             })
             .collect();
         out.sort_by(|a, b| {
@@ -165,7 +163,11 @@ mod tests {
         assert_eq!(s.len(), n);
         assert!(s.insert(0, "new.rs".into(), false, 1)); // insert
         assert_eq!(s.len(), n + 1);
-        let e = s.entries().iter().find(|e| &*e.rel == "src/main.rs").unwrap();
+        let e = s
+            .entries()
+            .iter()
+            .find(|e| &*e.rel == "src/main.rs")
+            .unwrap();
         assert_eq!(e.size, 200);
     }
 
@@ -200,6 +202,10 @@ mod tests {
         assert_eq!(src, vec!["src/lib.rs", "src/main.rs"]);
         let ext = s.browse(1, "");
         assert_eq!(ext.len(), 1);
-        assert!(s.browse(0, "docs").iter().all(|e| &*e.rel == "docs/guide.md"));
+        assert!(
+            s.browse(0, "docs")
+                .iter()
+                .all(|e| &*e.rel == "docs/guide.md")
+        );
     }
 }
