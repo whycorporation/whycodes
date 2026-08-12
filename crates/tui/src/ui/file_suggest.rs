@@ -14,6 +14,7 @@ use ratatui::{Frame, buffer::Buffer};
 use whycode_index::{FileMatch, ScanStatus, WorkspaceIndex};
 
 use crate::app::TuiApp;
+use crate::frecency::Frecency;
 use crate::theme::ThemePalette;
 use crate::ui::scrollbar::{paint_scrollbar, scroll_center};
 use crate::ui::slash_suggest::{DropdownColors, elevate, fill_bg, set_line, truncate_to};
@@ -43,6 +44,12 @@ pub struct FileSuggestState {
     /// First visible match index when scrolled (paint meta).
     pub list_scroll_start: usize,
     index: Option<Arc<WorkspaceIndex>>,
+    /// Frecency table for the project (loaded with the index).
+    frecency: Option<Frecency>,
+    /// A fuzzy query was issued and no settled results were consumed since.
+    /// Keeps the run loop on a short poll cadence until workers publish;
+    /// without it a late publish could wait out a 500 ms idle poll.
+    results_pending: bool,
 }
 
 /// Find the `@token` covering `cursor`: a maximal run of non-terminator
@@ -82,12 +89,46 @@ fn at_token(buffer: &str, cursor: usize) -> Option<(usize, usize)> {
 
 impl FileSuggestState {
     pub fn set_index(&mut self, index: Arc<WorkspaceIndex>) {
+        // Frecency is keyed by the canonical primary root — same project,
+        // same habits, regardless of the directory the user launched from.
+        if self.frecency.is_none() && !index.roots().is_empty() {
+            self.frecency = Some(Frecency::load(index.primary_root()));
+        }
         self.index = Some(index);
     }
 
     /// Index scan status for the popup title (None when no index is set).
     pub fn scan_status(&self) -> Option<ScanStatus> {
         self.index.as_ref().map(|i| i.status())
+    }
+
+    /// Display label for a non-primary root (matches keep provenance).
+    pub fn root_label(&self, root: u16) -> Option<String> {
+        if root == 0 {
+            return None;
+        }
+        let index = self.index.as_ref()?;
+        index
+            .roots()
+            .get(root as usize)
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+    }
+
+    /// Apply frecency boosts and re-sort (best first). Associated fn so the
+    /// call sites can split-borrow `self.frecency` and `self.matches`.
+    fn apply_boosts(frecency: Option<&Frecency>, matches: &mut [FileMatch]) {
+        let Some(fr) = frecency else {
+            return;
+        };
+        for m in matches.iter_mut() {
+            m.score = m.score.saturating_add(fr.boost(&m.rel));
+        }
+        matches.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.rel.len().cmp(&b.rel.len()))
+        });
     }
 
     /// Ctrl+Space: ensure an `@` token exists at the cursor, then open.
@@ -129,9 +170,51 @@ impl FileSuggestState {
             self.active = true; // still open: render shows "index unavailable"
             return;
         };
-        self.matches = index.query(&self.query, QUERY_LIMIT);
+        // Non-blocking: workers rematch in the background; poll_matches()
+        // picks up fresh results via the dirty flag (no frame ever blocks
+        // on a full rematch and no stale-empty flash on big trees).
+        self.matches = index.query_now(&self.query, QUERY_LIMIT);
+        Self::apply_boosts(self.frecency.as_ref(), &mut self.matches);
         self.selected = 0;
+        // Browse forms are store-backed (complete instantly); only fuzzy
+        // queries need the short-poll window.
+        self.results_pending = !self.query.is_empty() && !self.query.ends_with('/');
         self.active = true;
+    }
+
+    /// Run-loop hook: adopt freshly published matcher results. Returns true
+    /// when the visible list changed (caller should mark the frame dirty).
+    pub fn poll_matches(&mut self) -> bool {
+        if !self.active {
+            return false;
+        }
+        let Some(index) = &self.index else {
+            return false;
+        };
+        if !index.take_results_dirty() {
+            return false;
+        }
+        self.matches = index.read_matches(QUERY_LIMIT);
+        Self::apply_boosts(self.frecency.as_ref(), &mut self.matches);
+        if self.selected >= self.matches.len() {
+            self.selected = 0;
+        }
+        if !index.matching() {
+            self.results_pending = false;
+        }
+        true
+    }
+
+    /// True while fresh matches may still arrive — the run loop keeps a
+    /// short poll cadence and keeps repainting during that window.
+    pub fn awaiting_matches(&self) -> bool {
+        if !self.active {
+            return false;
+        }
+        let Some(index) = &self.index else {
+            return false;
+        };
+        self.results_pending || index.matching()
     }
 
     pub fn dismiss(&mut self) {
@@ -142,6 +225,7 @@ impl FileSuggestState {
         self.hovered = None;
         self.list_hit = None;
         self.list_scroll_start = 0;
+        self.results_pending = false;
     }
 
     pub fn step(&mut self, delta: isize) {
@@ -181,6 +265,10 @@ impl FileSuggestState {
             self.refresh(buffer, *cursor);
             true
         } else {
+            // A file pick is a habit signal: frecency boosts it next time.
+            if let Some(fr) = &mut self.frecency {
+                fr.record(&m.rel);
+            }
             self.dismiss();
             false
         }
@@ -315,6 +403,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
             break;
         }
         let m = app.file_suggest.matches[item_idx].clone();
+        let root_tag = app.file_suggest.root_label(m.root);
         let selected = item_idx == app.file_suggest.selected;
         let mouse_hover = app.file_suggest.hovered == Some(item_idx) && !selected;
         let y = items_area.y + vis_row as u16;
@@ -341,6 +430,7 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
             y,
             content_w,
             &m,
+            root_tag,
             selected,
             row_bg,
             &colors,
@@ -367,6 +457,7 @@ fn paint_row(
     y: u16,
     width: u16,
     m: &FileMatch,
+    root_tag: Option<String>,
     selected: bool,
     row_bg: Color,
     colors: &DropdownColors,
@@ -415,10 +506,10 @@ fn paint_row(
     }
 
     // External roots get a dim source tag so matches stay attributable.
-    if m.root > 0 {
-        let tag = format!("  [root {}]", m.root);
+    if let Some(label) = root_tag {
+        let tag = format!("  {label}");
         spans.push(Span::styled(tag.clone(), dim_style));
-        used += tag.len();
+        used += tag.chars().count();
     }
 
     if (width as usize) > used {
@@ -442,6 +533,99 @@ mod tests {
         assert_eq!(at_token("@", 1), Some((0, 1)));
         assert_eq!(at_token("a@", 2), None); // glued to a word → not a mention
         assert_eq!(at_token(" @", 2), Some((1, 2))); // space-separated → mention
+    }
+
+    /// Picker over a real index: activate → fuzzy → drill down → accept.
+    #[test]
+    fn picker_flow_over_real_index() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(tmp.path().join("src/lib.rs"), "// lib").unwrap();
+        std::fs::write(tmp.path().join("README.md"), "hi").unwrap();
+
+        let idx = WorkspaceIndex::start_with(
+            vec![tmp.path().to_path_buf()],
+            whycode_index::IndexOptions {
+                watch: false,
+                ..Default::default()
+            },
+        );
+        assert!(idx.wait_ready(std::time::Duration::from_secs(10)));
+
+        let mut st = FileSuggestState::default();
+        st.set_index(idx);
+
+        // Matching is async: poll (like the run loop does) until it lands.
+        fn poll_until(st: &mut FileSuggestState, pred: impl Fn(&FileSuggestState) -> bool) -> bool {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while std::time::Instant::now() < deadline {
+                if pred(st) {
+                    return true;
+                }
+                st.poll_matches();
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            pred(st)
+        }
+
+        // Type "@mai" — picker opens and fuzzy-finds main.rs.
+        let mut buf = String::from("@mai");
+        let mut cur = buf.len();
+        st.refresh(&buf, cur);
+        assert!(st.active);
+        assert!(poll_until(&mut st, |s| s.matches.iter().any(|m| m.rel == "src/main.rs")));
+
+        // Accept the file → token replaced with @path + trailing space, closed.
+        while !st.current().is_some_and(|m| m.rel == "src/main.rs") {
+            st.step(1);
+        }
+        let open = st.accept(&mut buf, &mut cur);
+        assert!(!open);
+        assert_eq!(buf, "@src/main.rs ");
+        assert!(!st.active);
+
+        // "@s" → drill into src/ with Tab-style accept, picker stays open.
+        let mut buf = String::from("@s");
+        let mut cur = 2;
+        st.refresh(&buf, cur);
+        assert!(st.active);
+        assert!(poll_until(&mut st, |s| s
+            .matches
+            .iter()
+            .any(|m| m.is_dir && m.rel == "src")));
+        while !st.current().is_some_and(|m| m.is_dir && m.rel == "src") {
+            st.step(1);
+        }
+        let open = st.accept(&mut buf, &mut cur);
+        assert!(open);
+        assert_eq!(buf, "@src/");
+        // Now browsing inside src/ — main.rs and lib.rs listed (browse is
+        // store-backed, so visible immediately; poll once for safety).
+        assert!(poll_until(&mut st, |s| s.matches.iter().any(|m| m.rel == "src/main.rs")
+            && s.matches.iter().any(|m| m.rel == "src/lib.rs")));
+    }
+
+    #[test]
+    fn frecency_lifts_picked_files() {
+        let mut st = FileSuggestState::default();
+        st.frecency = Some(Frecency::ephemeral());
+        let mut matches = vec![
+            FileMatch {
+                rel: "src/main.rs".into(),
+                score: 100,
+                ..Default::default()
+            },
+            FileMatch {
+                rel: "src/mail.rs".into(),
+                score: 110,
+                ..Default::default()
+            },
+        ];
+        st.frecency.as_mut().unwrap().record("src/main.rs");
+        FileSuggestState::apply_boosts(st.frecency.as_ref(), &mut matches);
+        assert_eq!(matches[0].rel, "src/main.rs"); // boosted past the raw winner
+        assert!(matches[0].score > 110);
     }
 }
 

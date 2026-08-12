@@ -98,6 +98,9 @@ struct Shared {
     truncated: AtomicBool,
     cancel: AtomicBool,
     cmd_tx: Sender<Command>,
+    /// Flipped by nucleo worker threads (via the notify callback) whenever
+    /// fresh fuzzy results are ready; the UI polls with [`take_results_dirty`].
+    results_dirty: Arc<AtomicBool>,
     threads: usize,
     max_entries: usize,
     watch: bool,
@@ -135,10 +138,11 @@ impl WorkspaceIndex {
     /// an earlier root are dropped (they would duplicate entries).
     pub fn start_with(roots: Vec<PathBuf>, opts: IndexOptions) -> Arc<Self> {
         let roots = sanitize_roots(roots);
+        let results_dirty = Arc::new(AtomicBool::new(false));
         let states = (0..roots.len())
             .map(|_| RootState {
                 store: RwLock::new(IndexStore::new()),
-                fuzzy: Mutex::new(FuzzyEngine::new()),
+                fuzzy: Mutex::new(FuzzyEngine::new(results_dirty.clone())),
             })
             .collect();
         let (cmd_tx, cmd_rx) = mpsc::channel();
@@ -157,6 +161,7 @@ impl WorkspaceIndex {
             truncated: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             cmd_tx,
+            results_dirty,
             threads,
             max_entries: opts.max_entries,
             watch: opts.watch,
@@ -241,13 +246,71 @@ impl WorkspaceIndex {
     }
 
 
-    /// Fuzzy query across all roots; merged best-first, capped at `limit`.
-    ///
-    /// Never touches the filesystem. While the initial scan runs, partial
-    /// results stream back (entries injected so far are already matchable).
+    /// Non-blocking picker query: point every engine at `pattern` and read
+    /// the matches currently available. Never waits on a rematch — fresh
+    /// results are announced via [`take_results_dirty`] and picked up with
+    /// [`read_matches`](Self::read_matches).
     ///
     /// Special forms: an empty pattern browses the top level of the primary
-    /// root; a pattern ending in `/` browses that directory.
+    /// root; a pattern ending in `/` browses that directory (store-backed,
+    /// always synchronous).
+    pub fn query_now(&self, pattern: &str, limit: usize) -> Vec<FileMatch> {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            return self.browse(0, "");
+        }
+        if let Some(dir) = pattern.strip_suffix('/') {
+            return self.browse(0, dir);
+        }
+        for state in &self.shared.states {
+            lock(&state.fuzzy).set_query(pattern);
+        }
+        self.read_fuzzy(limit).0
+    }
+
+    /// Non-blocking re-read of current matches (call when
+    /// [`take_results_dirty`](Self::take_results_dirty) returns true).
+    pub fn read_matches(&self, limit: usize) -> Vec<FileMatch> {
+        self.read_fuzzy(limit).0
+    }
+
+    /// One-shot check for freshly published matcher results.
+    pub fn take_results_dirty(&self) -> bool {
+        self.shared.results_dirty.swap(false, Ordering::Acquire)
+    }
+
+    /// True while any engine is still matching or ingesting (walk running).
+    /// UIs should keep polling on a short cadence while this holds.
+    pub fn matching(&self) -> bool {
+        self.shared
+            .states
+            .iter()
+            .any(|s| lock(&s.fuzzy).nudge())
+    }
+
+    /// Merge current fuzzy results across roots, best-first, capped.
+    fn read_fuzzy(&self, limit: usize) -> (Vec<FileMatch>, bool) {
+        let mut all = Vec::new();
+        let mut running = false;
+        for (i, state) in self.shared.states.iter().enumerate() {
+            let (mut hits, r) = lock(&state.fuzzy).read(limit);
+            running |= r;
+            for h in &mut hits {
+                h.root = i as u16;
+            }
+            all.extend(hits);
+        }
+        all.sort_by(|a, b| {
+            b.score
+                .cmp(&a.score)
+                .then_with(|| a.rel.len().cmp(&b.rel.len()))
+        });
+        all.truncate(limit);
+        (all, running)
+    }
+
+    /// Blocking fuzzy query (tests / one-shot callers). UIs should use
+    /// [`query_now`](Self::query_now) + the dirty flag instead.
     pub fn query(&self, pattern: &str, limit: usize) -> Vec<FileMatch> {
         let pattern = pattern.trim();
         if pattern.is_empty() {
@@ -258,7 +321,7 @@ impl WorkspaceIndex {
         }
         let mut all = Vec::new();
         for (i, state) in self.shared.states.iter().enumerate() {
-            let mut hits = lock(&state.fuzzy).query(pattern, limit);
+            let mut hits = lock(&state.fuzzy).query_blocking(pattern, limit);
             for h in &mut hits {
                 h.root = i as u16;
             }
@@ -581,7 +644,9 @@ mod tests {
 
         // Create → appears.
         fs::write(dir.path().join("src/new_file.rs"), "// new").unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        // Generous window: under parallel test load (all crates at once) the
+        // inotify → 250 ms debounce → apply chain can be starved for seconds.
+        let deadline = Instant::now() + Duration::from_secs(15);
         while idx.len() < before + 1 && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -590,7 +655,7 @@ mod tests {
 
         // Delete → disappears from the store (fuzzy engine rebuilds).
         fs::remove_file(dir.path().join("src/new_file.rs")).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             let gone = {
                 let mut found = false;
@@ -641,6 +706,57 @@ mod tests {
         let idx = WorkspaceIndex::start_with(vec![], IndexOptions::default());
         assert!(idx.roots().is_empty());
         assert!(idx.query("x", 5).is_empty());
+    }
+
+    /// The UI contract: query_now never blocks on a rematch, fresh results
+    /// arrive via the dirty flag, and matching eventually settles.
+    #[test]
+    fn async_query_eventually_consistent() {
+        // 5k files — big enough that a full rematch is measurable.
+        let dir = tempfile::TempDir::new().unwrap();
+        for d in 0..50 {
+            let p = dir.path().join(format!("pkg{d}/src"));
+            fs::create_dir_all(&p).unwrap();
+            for f in 0..100 {
+                fs::write(p.join(format!("file{f}.rs")), "x").unwrap();
+            }
+        }
+        fs::write(dir.path().join("pkg7/src/needle.rs"), "x").unwrap();
+        let idx = WorkspaceIndex::start_with(
+            vec![dir.path().to_path_buf()],
+            IndexOptions {
+                watch: false,
+                ..Default::default()
+            },
+        );
+        assert!(idx.wait_ready(Duration::from_secs(30)));
+
+        // set path returns fast even with a full rematch queued.
+        let t = Instant::now();
+        let _ = idx.query_now("needle.rs", 10);
+        let first_ms = t.elapsed().as_secs_f64() * 1000.0;
+        assert!(first_ms < 50.0, "query_now blocked {first_ms:.1}ms");
+
+        // Dirty flag flips and results converge without another keystroke.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut found = false;
+        while Instant::now() < deadline {
+            if idx.take_results_dirty() {
+                let hits = idx.read_matches(10);
+                if hits.iter().any(|m| m.rel.ends_with("needle.rs")) {
+                    found = true;
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(found, "needle.rs never appeared via dirty-flag polling");
+        // …and matching reports quiescence once converged.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while idx.matching() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(!idx.matching());
     }
 }
 
