@@ -7,6 +7,7 @@
   "core": 0,
   "format": 1,
   "function": 0,
+  "index": 0,
   "llm": 23,
   "lsp": 0,
   "mcp": 0,
@@ -23,4 +24,3 @@
   "tools": 0,
   "tui": 1
 }
-
