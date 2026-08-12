@@ -24,12 +24,22 @@ Function level, for the two paths that run on a hot loop:
 ```bash
 cargo bench -p whycode-format        # markdown + highlighting, per frame
 cargo bench -p whycode-command-risk  # shell risk gate, per tool call
+cargo bench -p whycode-index         # workspace walk + @-picker query path
 ```
 
 These use criterion. They are not run in CI — criterion's own comparison against
 the previous run is per machine, and a shared runner would report noise as a
 regression. They are for changing the code in these paths and checking the
 before and after on one machine.
+
+Optional process-level JSON for ceilings:
+
+```bash
+python scripts/bench_startup.py --runs 20 --json /tmp/startup.json
+python scripts/bench_memory.py --runs 5 --json /tmp/memory.json
+# merge into docs/bench-results.json, then:
+python scripts/check_bench_ceilings.py --results docs/bench-results.json
+```
 
 ## Method
 
@@ -94,6 +104,35 @@ These are single-machine numbers on a developer laptop, not a controlled
 environment. They are useful as a baseline to compare future runs against, not
 as a published claim.
 
+### Re-measure, 2026-08-13 (Linux x86_64, release, HEAD `ad7b82c`)
+
+Machine: Intel Core i5-4200H @ 2.80 GHz, CachyOS, release binary **13.7 MB**
+(unstripped size on disk after thin LTO profile; comparable to the 12–15 MB
+band from earlier passes). Recorded JSON: [`bench-results.json`](bench-results.json).
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.2 ms** | 2.7 ms | **0.5 MB** |
+| `--help` | **1.9 ms** | 2.7 ms | — |
+| `config show` | **2.6 ms** | 3.8 ms | **5.5 MB** |
+| `session list` | — | — | **9.4 MB** |
+| binary size | **13.7 MB** | — | — |
+
+Startup is in the same band as 2026-08-05 (median ~1–3 ms). p95 is a little
+noisier on this laptop under load; still far under the loose CI ceiling
+(50 ms / 40 MB in `check_bench_ceilings.py`).
+
+**Multi-session PSS** (idle TUI, 2 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **6.7 MB** | was 4.1 MB on 2026-08-04 |
+| 10 | **26.5 MB** | was 16.8 MB |
+| per added session | **~2.2 MB** | was ~1.4 MB |
+
+Higher than the 08-04 row: workspace file index + later TUI/session chrome are
+on the path now. Still a lower bound (idle, no agent turn).
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -113,7 +152,7 @@ having them at all.
 | `highlight_code_spans`, 100 lines of Rust (2026-07-31) | 5.83 ms | 92 µs | 63× |
 | `highlight_code_spans`, 500 lines (2026-07-31) | 29.3 ms | 468 µs | 63× |
 
-### Re-measure, 2026-08-04 (Linux, release/`--quick`)
+### Re-measure, 2026-08-04 (Linux, release)
 
 Criterion on this machine after FxHash + **Arc closed memo** (cache hit no
 longer deep-clones every span). Cold = first paint of a new body; warm =
@@ -160,6 +199,59 @@ so it measures syntect only.
 | 200-line Rust fence | 41.5 ms |
 
 Still paid once per response on the CLI/`--plain` path, not per TUI frame.
+
+### Re-measure, 2026-08-13 (Linux, criterion sample-size 15–20)
+
+Same machine as the process-level re-measure above. Warm highlight and parse
+are stable; cold highlight is noisier (syntect + memo seed).
+
+**`highlight_code_spans`**
+
+| Case | cold | warm |
+|---|---|---|
+| Rust, 10 lines | ~1.8 ms | **50 ns** |
+| Rust, 100 lines | ~1.9 ms | **266 ns** |
+| Rust, 500 lines | (noisy) | **1.27 µs** |
+| untagged, 100 lines (warm) | — | 222 ns |
+
+**`parse_markdown`**
+
+| Case | time |
+|---|---|
+| typical response | 5.7 µs |
+| streaming prefix 200 / 1000 / 4000 chars | 2.7 / 10.0 / 45.1 µs |
+
+**`assess` (command-risk)**
+
+| Case | time |
+|---|---|
+| safe short (`ls -la` class) | 575 ns |
+| safe build (`cargo test …`) | 2.06 µs |
+| caution / destructive / catastrophic | 2.32 / 2.44 / 1.33 µs |
+| pipeline | 5.08 µs |
+
+**`render_markdown` (ANSI, uncached per call)**
+
+| Case | time |
+|---|---|
+| typical response | 1.36 ms |
+| 200-line Rust fence | 43.2 ms |
+
+### Index (`whycode-index`, 2026-08-13)
+
+Workspace file index powers the `@`-picker and tool fast paths. Criterion
+target: `cargo bench -p whycode-index --bench scan`.
+
+| Case | time |
+|---|---|
+| walk root (1 / 4 / 8 threads) | ~4.9 / 5.1 / 4.8 ms |
+| query warm | **14 µs** |
+| browse top | 29 µs |
+| entries snapshot | 128 µs |
+| 20k query_now (non-blocking) | **15 µs** |
+| 20k query_settle | 15 µs |
+
+Walk time is for the bench fixture tree, not a multi-GB monorepo.
 
 **The tokeniser allocated per character.** `match_operator` collected each of
 its fifteen candidate operators into a `Vec<char>` at every character position,
@@ -209,6 +301,31 @@ after the first frame (re-measure with
 `python scripts/bench_first_frame.py --runs 10 --idle-ms 3000`). The previous
 ~2/s figure came from repainting on every 500 ms poll timeout.
 
+### Re-measure, 2026-08-13 — harness vs real terminal
+
+**Do not quote the bare-pty harness as TTFF.** On this machine
+`scripts/bench_first_frame.py` allocates a pty that reports **0×0** size.
+`crossterm` then runs a keyboard-enhancement capability query that times out
+at ~**2.0 s** before the first draw. Logs show a fixed
+`tui.starting` → `tui.size_fallback` → `tui.first_frame` gap of ~2000 ms and
+`first_frame` area `0×0`. That is an artifact of the harness PTY, not the
+interactive path.
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness (`bench_first_frame.py`, empty project) | **~2049 ms** median | **~16.6/s** over 3 s | 0×0 PTY + enhancement timeout; idle poll falls to 40 ms / 16 ms when `file_suggest` is active |
+| Real terminal (unified.jsonl, e.g. 2026-08-12 41×167) | **~15–20 ms** `tui.starting`→`tui.first_frame` | expected ~0 when fully idle | authentic user path |
+
+So the 2026-07-31 **~4.7 ms** in-proc number is the right *shape* for a
+working terminal (process already past config, first paint); the 2026-08-13
+harness row is only useful as a regression detector for “did the PTY path get
+worse?” and must be labelled as such.
+
+Idle ~16.6/s under the harness is also not the dirty-draw regression story:
+with a zero-size / capability-probing PTY the loop stays on the short poll
+path more often. On a real idle session the 2026-08-04 dirty-draw design still
+targets **~0 draws/s** after the first frame.
+
 Also landed in the same pass:
 
 - **Token-budget compact** — drops oldest messages until under `¾ · max_tokens`
@@ -251,6 +368,10 @@ provider key, no user input), 2 s settle after spawn, 3 runs, median:
 | 1 | **4.1 MB** | one idle TUI |
 | 10 | **16.8 MB** | ten concurrent idle TUIs |
 | per added session | **~1.4 MB** | (10 − 1) / 9 |
+
+**2026-08-13 re-measure** (same method, 5 runs, after workspace index + later
+TUI chrome): **6.7 MB** (1) / **26.5 MB** (10) / **~2.2 MB** per added
+session. See the process-level table above.
 
 Method matches the shape jcode publishes: N live interactive processes, PSS
 from `smaps_rollup`, not RSS. These are idle sessions (prompt drawn, no
