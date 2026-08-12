@@ -289,7 +289,6 @@ impl FileSuggestState {
     }
 }
 
-
 // ── render ──────────────────────────────────────────────────────────────
 
 /// Render the picker just above the prompt (same anchor as the slash menu).
@@ -449,7 +448,6 @@ pub fn render(frame: &mut Frame, prompt_area: Rect, app: &mut TuiApp, palette: &
     }
 }
 
-
 #[allow(clippy::too_many_arguments)]
 fn paint_row(
     buf: &mut Buffer,
@@ -574,7 +572,10 @@ mod tests {
         let mut cur = buf.len();
         st.refresh(&buf, cur);
         assert!(st.active);
-        assert!(poll_until(&mut st, |s| s.matches.iter().any(|m| m.rel == "src/main.rs")));
+        assert!(poll_until(&mut st, |s| s
+            .matches
+            .iter()
+            .any(|m| m.rel == "src/main.rs")));
 
         // Accept the file → token replaced with @path + trailing space, closed.
         while !st.current().is_some_and(|m| m.rel == "src/main.rs") {
@@ -602,14 +603,19 @@ mod tests {
         assert_eq!(buf, "@src/");
         // Now browsing inside src/ — main.rs and lib.rs listed (browse is
         // store-backed, so visible immediately; poll once for safety).
-        assert!(poll_until(&mut st, |s| s.matches.iter().any(|m| m.rel == "src/main.rs")
+        assert!(poll_until(&mut st, |s| s
+            .matches
+            .iter()
+            .any(|m| m.rel == "src/main.rs")
             && s.matches.iter().any(|m| m.rel == "src/lib.rs")));
     }
 
     #[test]
     fn frecency_lifts_picked_files() {
-        let mut st = FileSuggestState::default();
-        st.frecency = Some(Frecency::ephemeral());
+        let mut st = FileSuggestState {
+            frecency: Some(Frecency::ephemeral()),
+            ..Default::default()
+        };
         let mut matches = vec![
             FileMatch {
                 rel: "src/main.rs".into(),
@@ -628,4 +634,3 @@ mod tests {
         assert!(matches[0].score > 110);
     }
 }
-
