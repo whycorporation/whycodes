@@ -1034,6 +1034,9 @@ pub struct TuiApp {
     // ── slash suggestion popup ──
     pub slash_suggest: SlashSuggestState,
 
+    // ── `@file` picker (workspace index backed) ──
+    pub file_suggest: crate::ui::file_suggest::FileSuggestState,
+
     // ── transient notices ──
     pub toasts: crate::toast::Toasts,
     pub help_scroll: usize,
@@ -1499,6 +1502,7 @@ impl TuiApp {
             question_dismissed: false,
             pending_question_answers: None,
             slash_suggest: SlashSuggestState::default(),
+            file_suggest: crate::ui::file_suggest::FileSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
             sidebar: SidebarState::default(),
@@ -1598,7 +1602,27 @@ impl TuiApp {
             self.slash_suggest.hovered = None;
             changed = true;
         }
+        // File picker hover row (index into matches).
+        if self.file_suggest.active {
+            if let Some(idx) = self.file_suggest.row_index_at(c, r) {
+                if self.file_suggest.hovered != Some(idx) {
+                    self.file_suggest.hovered = Some(idx);
+                    changed = true;
+                }
+            } else if self.file_suggest.hovered.is_some() {
+                self.file_suggest.hovered = None;
+                changed = true;
+            }
+        } else if self.file_suggest.hovered.is_some() {
+            self.file_suggest.hovered = None;
+            changed = true;
+        }
         changed
+    }
+
+    /// Install the workspace file index (called once at startup).
+    pub fn set_file_index(&mut self, index: std::sync::Arc<whycode_index::WorkspaceIndex>) {
+        self.file_suggest.set_index(index);
     }
 
     /// Update context fill from a provider usage event (per LLM step).
@@ -1943,6 +1967,7 @@ impl TuiApp {
         self.pending_images.clear();
         self.pending_pastes.clear();
         self.slash_suggest.dismiss();
+        self.file_suggest.dismiss();
         self.esc_armed_at = None;
     }
 

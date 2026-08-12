@@ -11,6 +11,7 @@ onnx = ["whycode-memory/onnx"]
 
 [dependencies]
 whycode-core = { path = "../core" }
+whycode-index = { path = "../index" }
 whycode-format = { path = "../format" }
 whycode-skill = { path = "../skill" }
 whycode-lsp = { path = "../lsp" }

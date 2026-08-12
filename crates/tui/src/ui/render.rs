@@ -17,6 +17,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::chat;
 use super::dialogs;
+use super::file_suggest;
 use super::prompt;
 use super::sidebar;
 use super::slash_suggest;
@@ -209,6 +210,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
     }
     prompt::render(frame, chunks[2], app, palette);
     slash_suggest::render(frame, chunks[2], app, palette);
+    file_suggest::render(frame, chunks[2], app, palette);
 }
 
 /// session: optional sidebar + padded main column
@@ -256,6 +258,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     }
     prompt::render(frame, chunks[2], app, palette);
     slash_suggest::render(frame, chunks[2], app, palette);
+    file_suggest::render(frame, chunks[2], app, palette);
 }
 
 fn turn_status_height(app: &mut TuiApp) -> u16 {

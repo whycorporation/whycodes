@@ -64,7 +64,7 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | Windows native | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ docs | ✅ |
 | Cross-platform CI (full) | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ✅ CI badges | ✅ | n/a product |
 | No runtime dependency | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ❌ Node | ❌ Node | n/a |
-| In-process search (no rg) | ✅ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ ships rg helper | ⚠️ | n/a IDE search |
+| In-process search (no rg) | ✅ +live index | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ ships rg helper | ⚠️ | n/a IDE search |
 | Open source | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ |
 
 ---
@@ -195,7 +195,7 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | Mermaid | ✅ | ⚠️ | ❌ | ✅★ | ❌ | ❌ | ❌ | ❌ | ⚠️ |
 | Theme system | ✅ 29+JSON | ✅ | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ themes | ✅ IDE |
 | Mouse chrome (stop/scroll) | ✅★ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | n/a |
-| `@file` / `!shell` / image | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ @ + ! + image | ⚠️ | ✅ |
+| `@file` / `!shell` / image | ✅ +fuzzy picker | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ @ + ! + image | ⚠️ | ✅ |
 
 ---
 

@@ -28,6 +28,7 @@ onnx = ["whycode-memory/onnx", "whycode-tools/onnx", "whycode-agent/onnx"]
 
 [dependencies]
 whycode-core = { path = "../core" }
+whycode-index = { path = "../index" }
 whycode-auth = { path = "../auth" }
 whycode-config = { path = "../config" }
 whycode-llm = { path = "../llm" }

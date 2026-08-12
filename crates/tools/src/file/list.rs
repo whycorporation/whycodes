@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
 
-use super::paths::{display_path, human_size, is_skip_dir, list_dir_entries, resolve_path};
+use super::paths::{
+    display_path, glob_match, human_size, is_skip_dir, list_dir_entries, resolve_path,
+};
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 
@@ -34,8 +36,8 @@ impl Tool for ListTool {
 
     fn description(&self) -> &str {
         "List files and directories in a path (dirs first, with sizes). \
-         Prefer this over shell `ls`. Optional recursive listing skips heavy \
-         dirs (target, node_modules, .git, …). Use `glob` for pattern search."
+         Prefer this over shell `ls`. Optional recursive listing respects .gitignore \
+         and skips heavy dirs (target, node_modules, .git, …). Use `glob` for pattern search."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -116,7 +118,15 @@ impl Tool for ListTool {
             .clamp(1, HARD_MAX_ENTRIES);
 
         let (entries, truncated, dir_count, file_count) = if recursive {
-            list_recursive(&target, &ignore, max_depth, max_entries)
+            // Fast path: the warm workspace index already knows the tree.
+            match ctx
+                .file_index
+                .as_deref()
+                .and_then(|idx| list_recursive_index(idx, &target, &ignore, max_depth, max_entries))
+            {
+                Some(out) => out,
+                None => list_recursive(&target, &ignore, max_depth, max_entries),
+            }
         } else {
             match list_dir_entries(&target, &ignore) {
                 Ok(all) => {
@@ -195,6 +205,49 @@ struct WalkState<'a> {
     dir_count: &'a mut usize,
     file_count: &'a mut usize,
     truncated: &'a mut bool,
+}
+
+/// Index-backed recursive listing: same shape as [`list_recursive`] without
+/// touching the filesystem. Returns None when the index is cold / out of
+/// scope (caller falls back to the walk).
+fn list_recursive_index(
+    index: &whycode_index::WorkspaceIndex,
+    root: &Path,
+    ignore: &[String],
+    max_depth: usize,
+    max_entries: usize,
+) -> Option<ListRecursiveOut> {
+    let entries = super::paths::index_entries(index, root)?;
+    let mut out: Vec<ListEntry> = Vec::new();
+    let mut dir_count = 0usize;
+    let mut file_count = 0usize;
+    let mut truncated = false;
+    for (_abs, rel, is_dir, size) in entries {
+        // Depth in components: `a/b/c` is 3 (walk starts counting at 1).
+        let depth = rel.bytes().filter(|b| *b == b'/').count() + 1;
+        if depth > max_depth {
+            continue;
+        }
+        let name = rel.rsplit('/').next().unwrap_or(&rel);
+        if ignore.iter().any(|pat| glob_match(pat, name)) {
+            continue;
+        }
+        if is_dir {
+            dir_count += 1;
+        } else {
+            file_count += 1;
+        }
+        if out.len() >= max_entries {
+            truncated = true;
+            continue; // keep counting for accurate totals
+        }
+        out.push((rel, is_dir, if is_dir { None } else { Some(size) }));
+    }
+    out.sort_by(|a, b| {
+        b.1.cmp(&a.1)
+            .then_with(|| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()))
+    });
+    Some((out, truncated, dir_count, file_count))
 }
 
 /// Recursive listing with depth limit and skip-dir pruning.

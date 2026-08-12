@@ -54,6 +54,8 @@ pub struct SubagentRunner {
     file_claims: Option<whycode_core::FileClaimRegistry>,
     agent_id: Option<String>,
     agent_label: Option<String>,
+    /// Workspace file index inherited from the parent agent (tools fast path).
+    file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
 }
 
 impl SubagentRunner {
@@ -77,7 +79,14 @@ impl SubagentRunner {
             file_claims: None,
             agent_id: None,
             agent_label: None,
+            file_index: None,
         }
+    }
+
+    /// Inherit the parent agent's workspace file index.
+    pub fn with_file_index(mut self, index: Option<Arc<whycode_index::WorkspaceIndex>>) -> Self {
+        self.file_index = index;
+        self
     }
 
     /// Attach parent memory settings (subagent_banks, inject knobs).
@@ -207,6 +216,7 @@ impl SubagentRunner {
             file_claims: self.file_claims.clone(),
             agent_id: self.agent_id.clone(),
             agent_label: self.agent_label.clone(),
+            file_index: self.file_index.clone(),
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {

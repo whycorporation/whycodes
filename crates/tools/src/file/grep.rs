@@ -36,7 +36,7 @@ impl Tool for GrepTool {
 
     fn description(&self) -> &str {
         "Search file contents with regex (in-process, no ripgrep required). \
-         Skips binaries and heavy dirs (target, node_modules, .git, …). \
+         Respects .gitignore; skips binaries and heavy dirs (target, node_modules, .git, …). \
          Prefer over shell grep for project code search."
     }
 
@@ -101,6 +101,7 @@ impl Tool for GrepTool {
             .unwrap_or(DEFAULT_MAX_RESULTS)
             .clamp(1, HARD_MAX_RESULTS);
 
+        let file_index = ctx.file_index.clone();
         // FS walk + regex on a blocking pool so parallel tool batches do not
         // pin Tokio workers (stream drain / permission UI stay responsive).
         let result = tokio::task::spawn_blocking(move || {
@@ -112,6 +113,7 @@ impl Tool for GrepTool {
                 context,
                 max_results,
                 &working_dir,
+                file_index.as_deref(),
             )
         })
         .await;
@@ -141,6 +143,7 @@ impl Tool for GrepTool {
 }
 
 impl GrepTool {
+    #[allow(clippy::too_many_arguments)]
     fn search(
         pattern: &str,
         path: &Path,
@@ -149,6 +152,7 @@ impl GrepTool {
         context: usize,
         max_results: usize,
         working_dir: &str,
+        file_index: Option<&whycode_index::WorkspaceIndex>,
     ) -> Result<String, String> {
         let mut builder = regex::RegexBuilder::new(pattern);
         builder.case_insensitive(case_insensitive);
@@ -186,7 +190,17 @@ impl GrepTool {
                 max_results,
             );
         } else {
-            walk_files(path, &mut |file, rel| {
+            // Fast path: enumerate from the warm workspace index (no walk).
+            // Dotfile-targeting includes bypass it (index skips hidden files).
+            let targets_hidden =
+                file_glob.is_some_and(|g| g.starts_with('.') || g.contains("/."));
+            let indexed = if targets_hidden {
+                None
+            } else {
+                file_index.and_then(|idx| super::paths::index_entries(idx, path))
+            };
+
+            let mut visit_one = |file: &Path, rel: &str| -> bool {
                 if matches.len() >= max_results {
                     truncated = true;
                     return false;
@@ -204,7 +218,20 @@ impl GrepTool {
                 files_searched += 1;
                 Self::search_file(file, rel, &re, context, &mut matches, max_results);
                 matches.len() < max_results
-            });
+            };
+
+            if let Some(entries) = indexed {
+                for (file, rel, is_dir, _size) in entries {
+                    if is_dir {
+                        continue;
+                    }
+                    if !visit_one(&file, &rel) {
+                        break;
+                    }
+                }
+            } else {
+                walk_files(path, &mut |file, rel| visit_one(file, rel));
+            }
             if matches.len() >= max_results {
                 truncated = true;
             }

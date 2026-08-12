@@ -298,6 +298,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
     let mut app = TuiApp::new(tui_cfg);
 
+    // Workspace file index: background scan of the project + allowed external
+    // dirs; powers the `@file` picker (Ctrl+Space) and, once warm, the file
+    // tools' glob/grep/list fast paths.
+    let file_index = whycode_index::WorkspaceIndex::start(
+        whycode_index::WorkspaceIndex::project_roots(&opts.project_dir),
+    );
+    app.set_file_index(file_index.clone());
+
     // Session chrome labels
     app.provider_name = opts.provider.clone();
     app.model_name = opts.model.clone();
@@ -402,6 +410,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     config.general.project_path = Some(opts.project_dir.clone());
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
+        .with_file_index(file_index.clone())
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
         )
@@ -816,6 +825,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         rt.event_tx.clone(),
                         Arc::clone(&rt.perm_prompter),
                         Arc::clone(&rt.question_prompter),
+                        &file_index,
                     );
                 }
             }
@@ -1306,6 +1316,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         rt.event_tx.clone(),
                         Arc::clone(&rt.perm_prompter),
                         Arc::clone(&rt.question_prompter),
+                        &file_index,
                     );
                 } else {
                     begin_cancel(
@@ -1735,7 +1746,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     app.save_view(&mut rt.view);
                     let parked = std::mem::replace(
                         &mut rt,
-                        spawn_new_session_runtime(&app.agent_name, &config, &project_dir).await,
+                        spawn_new_session_runtime(&app.agent_name, &config, &project_dir, &file_index).await,
                     );
                     runtimes.push(parked);
                     mru.push(runtimes.len() - 1);
@@ -1885,6 +1896,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                     rt.event_tx.clone(),
                                     Arc::clone(&rt.perm_prompter),
                                     Arc::clone(&rt.question_prompter),
+                                    &file_index,
                                 );
                             } else {
                                 begin_cancel(
@@ -1924,6 +1936,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                     rt.event_tx.clone(),
                                     Arc::clone(&rt.perm_prompter),
                                     Arc::clone(&rt.question_prompter),
+                                    &file_index,
                                 );
                             }
                             app.running = false;
@@ -1957,6 +1970,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                         rt.event_tx.clone(),
                                         Arc::clone(&rt.perm_prompter),
                                         Arc::clone(&rt.question_prompter),
+                                        &file_index,
                                     );
                                 } else {
                                     begin_cancel(
@@ -2172,6 +2186,7 @@ fn force_stop_turn(
     event_tx: mpsc::UnboundedSender<TurnEvent>,
     perm_prompter: Arc<ChannelPermissionPrompter>,
     question_prompter: Arc<ChannelQuestionPrompter>,
+    file_index: &Arc<whycode_index::WorkspaceIndex>,
 ) {
     // Always re-signal cancel in case the task is still cooperative.
     if let Some(flag) = cancel_flag.as_ref() {
@@ -2228,6 +2243,7 @@ fn force_stop_turn(
             event_tx,
             perm_prompter,
             question_prompter,
+            file_index,
         );
     } else {
         session_backup.take();
@@ -2270,6 +2286,7 @@ fn rebuild_agent_after_force_stop(
     event_tx: mpsc::UnboundedSender<TurnEvent>,
     perm_prompter: Arc<ChannelPermissionPrompter>,
     question_prompter: Arc<ChannelQuestionPrompter>,
+    file_index: &Arc<whycode_index::WorkspaceIndex>,
 ) {
     let name = if preferred_name.is_empty() || preferred_name == "_pending" {
         if config.default_agent.is_empty() {
@@ -2307,6 +2324,7 @@ fn rebuild_agent_after_force_stop(
     *agent = Agent::new(info)
         .with_config(config)
         .with_background_registry(bg)
+        .with_file_index(file_index.clone())
         .with_permission_prompter(perm_prompter as Arc<dyn whycode_agent::PermissionPrompter>)
         .with_question_prompter(question_prompter as Arc<dyn QuestionPrompter>);
     agent.wire_event_sink(event_tx);
@@ -2415,6 +2433,7 @@ async fn spawn_new_session_runtime(
     agent_name: &str,
     config: &Config,
     project_dir: &std::path::Path,
+    file_index: &Arc<whycode_index::WorkspaceIndex>,
 ) -> SessionRuntime {
     let agent_info =
         config
@@ -2460,6 +2479,7 @@ async fn spawn_new_session_runtime(
 
     let agent = Agent::new(agent_info)
         .with_config(config)
+        .with_file_index(file_index.clone())
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
         )

@@ -196,6 +196,9 @@ pub struct Agent {
     cwd_override: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// Subagent token usage waiting to be folded into the parent session.
     subagent_usage_pending: Arc<std::sync::Mutex<whycode_core::types::Usage>>,
+    /// Resident workspace file index shared with file tools (warm fast path
+    /// for glob/grep/list enumeration). Started by the host (TUI/CLI).
+    file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
 }
 
 /// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
@@ -264,6 +267,7 @@ impl Agent {
             subagent_usage_pending: Arc::new(std::sync::Mutex::new(
                 whycode_core::types::Usage::default(),
             )),
+            file_index: None,
         }
     }
 
@@ -274,6 +278,12 @@ impl Agent {
 
     pub fn with_tool_executor(mut self, executor: ToolExecutor) -> Self {
         self.tool_executor = Arc::new(executor);
+        self
+    }
+
+    /// Share the workspace file index with this agent's file tools.
+    pub fn with_file_index(mut self, index: Arc<whycode_index::WorkspaceIndex>) -> Self {
+        self.file_index = Some(index);
         self
     }
 
@@ -422,6 +432,7 @@ impl Agent {
             file_claims: None,
             agent_id: None,
             agent_label: None,
+            file_index: self.file_index.clone(),
         }
     }
 
@@ -2500,6 +2511,7 @@ impl Agent {
         let agents_md_path = session.project_path.clone();
         let repo_root_arc = repo_root.clone();
         let swarm_run_dir = swarm_run_dir.clone();
+        let file_index = self.file_index.clone();
 
         let mut handles = Vec::with_capacity(specs.len());
 
@@ -2522,6 +2534,7 @@ impl Agent {
             let events_tx = events.cloned();
             let repo_root = repo_root_arc.clone();
             let swarm_run_dir = swarm_run_dir.clone();
+            let file_index = file_index.clone();
 
             handles.push(tokio::spawn(async move {
                 let _guard = match permit.acquire().await {
@@ -2673,7 +2686,8 @@ impl Agent {
                 // physical isolation holds during the run and merge does 3-way.
                 let mut runner =
                     SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
-                        .with_memory(memory);
+                        .with_memory(memory)
+                        .with_file_index(file_index.clone());
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
@@ -2910,7 +2924,8 @@ impl Agent {
             self.sandbox.clone(),
             self.network.clone(),
         )
-        .with_memory(self.memory.clone());
+        .with_memory(self.memory.clone())
+        .with_file_index(self.file_index.clone());
 
         match runner.run(task, provider_name, model, api_key).await {
             Ok(result) => {
@@ -2984,7 +2999,8 @@ impl Agent {
             self.sandbox.clone(),
             self.network.clone(),
         )
-        .with_memory(self.memory.clone());
+        .with_memory(self.memory.clone())
+        .with_file_index(self.file_index.clone());
 
         let result = runner.run(task, provider_name, model, api_key).await?;
 
@@ -3021,7 +3037,8 @@ impl Agent {
                 self.sandbox.clone(),
                 self.network.clone(),
             )
-            .with_memory(self.memory.clone()),
+            .with_memory(self.memory.clone())
+            .with_file_index(self.file_index.clone()),
         );
 
         let mut handles = Vec::with_capacity(goals.len());
