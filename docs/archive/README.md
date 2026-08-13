@@ -24,6 +24,6 @@ Living tracker: [`../status.md`](../status.md).
 |---|---|
 | [`../plan-oauth.md`](../plan-oauth.md) | **done / shipped** — login, routing, discovery |
 | [`../plan-optimize-2026-08.md`](../plan-optimize-2026-08.md) | **done** — Session A+B |
-| [`../plan-latency-competitors.md`](../plan-latency-competitors.md) | **P0+P1 done** — P2 optional |
+| [`../plan-latency-competitors.md`](../plan-latency-competitors.md) | **done** — P0+P1+P2 |
 | [`../plan-performance.md`](../plan-performance.md) | **mostly done** — live reconcile optional |
 | [`../plan-distribution.md`](../plan-distribution.md) | **implemented** — residual public release steps |

@@ -4602,6 +4602,10 @@ fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config
         out.push_str("  model_fast: (auto small sibling on trivial chat)\n");
     }
     out.push_str(&format!(
+        "  model_race: {} (after {}ms)\n  response_cache: {}\n",
+        config.session.model_race, config.session.race_after_ms, config.session.response_cache
+    ));
+    out.push_str(&format!(
         "  swarm:     enabled={} max_agents={} worktrees={}\n",
         config.swarm.enabled, config.swarm.max_agents, config.swarm.worktrees
     ));

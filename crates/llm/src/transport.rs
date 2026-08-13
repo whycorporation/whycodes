@@ -12,6 +12,8 @@ use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 use crate::error_class::{ClassifiedError, classify};
 use crate::provider::LlmProvider;
+use crate::race::{EventStream, RaceOutcome, StreamTarget, stream_raced};
+use crate::response_cache::{ResponseCache, text_only_response};
 use crate::retry::{RetryPolicy, execute_with_policy};
 
 /// Bundle of transport defaults used across the product.
@@ -60,6 +62,9 @@ impl LlmTransport {
     }
 
     /// Non-streaming completion with retry + optional timeout.
+    ///
+    /// Tools-free requests consult the process-local response cache (exact,
+    /// then semantic) so title/compact/retain retries skip a second prefill.
     pub async fn complete(
         &self,
         provider: &dyn LlmProvider,
@@ -67,6 +72,10 @@ impl LlmTransport {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
+        if let Some(hit) = ResponseCache::global().lookup(request, model) {
+            debug!(model, "llm.complete_cache_hit");
+            return Ok(ResponseCache::to_response(&hit, model));
+        }
         debug!(
             provider = provider.name(),
             model,
@@ -80,7 +89,7 @@ impl LlmTransport {
             provider.complete(request, api_key, model)
         });
 
-        match timeout {
+        let resp = match timeout {
             Some(t) => match tokio::time::timeout(t, work).await {
                 Ok(r) => r,
                 Err(_) => Err(whycode_core::Error::Llm(format!(
@@ -89,8 +98,58 @@ impl LlmTransport {
                 ))),
             },
             None => work.await,
+        }?;
+        if let Some(text) = text_only_response(&resp) {
+            ResponseCache::global().store(request, model, &text);
         }
+        Ok(resp)
     }
+
+    /// Stream a turn: optional response-cache replay, then first-token race.
+    pub async fn stream_turn(
+        &self,
+        primary: StreamTarget<'_>,
+        request: &LlmRequest,
+        opts: StreamTurnOpts<'_>,
+    ) -> whycode_core::Result<StreamTurn> {
+        if opts.cache
+            && let Some(hit) = ResponseCache::global().lookup(request, primary.model)
+        {
+            debug!(model = primary.model, "llm.stream_cache_hit");
+            let text = hit.text;
+            let events: EventStream = Box::pin(async_stream::stream! {
+                yield Ok(StreamEvent::TextDelta { text });
+                yield Ok(StreamEvent::MessageStop);
+            });
+            return Ok(StreamTurn {
+                events,
+                cache_hit: true,
+                race: RaceOutcome::PrimaryOnly,
+            });
+        }
+
+        let (events, race) =
+            stream_raced(self, primary, opts.race, request, opts.race_after).await?;
+        Ok(StreamTurn {
+            events,
+            cache_hit: false,
+            race,
+        })
+    }
+}
+
+/// Options for [`LlmTransport::stream_turn`].
+pub struct StreamTurnOpts<'a> {
+    pub cache: bool,
+    pub race: Option<StreamTarget<'a>>,
+    pub race_after: Duration,
+}
+
+/// Opened turn stream plus how it was sourced.
+pub struct StreamTurn {
+    pub events: EventStream,
+    pub cache_hit: bool,
+    pub race: RaceOutcome,
 }
 
 /// Global default transport (cheap to construct; no shared state yet).

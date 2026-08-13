@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-13** (warm multi-session `whycode serve`; prior: richer compact + speculative early `read`)
+Last updated: **2026-08-13** (latency P2: first-token race + semantic response cache)
 
 ## Legend
 
@@ -24,7 +24,7 @@ Last updated: **2026-08-13** (warm multi-session `whycode serve`; prior: richer 
 | Performance residual | [plan-performance.md](plan-performance.md) | **mostly done** | Subagent usage fold + `bench-results.json` + CI ceilings shipped. Live provider reconcile optional/manual. |
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall shipped (`v0.1.0`). Remaining: public repo, Homebrew binary formula, Windows install smoke. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([auth.md](auth.md)). Residual: Windows ACL on store. |
-| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **P0+P1 done · P2 partial** | Cache, parallel tools, core profile, routing, doom-loop; LLM compact quality + speculative early `read` + **warm multi-session `serve`** shipped; semantic-cache / swarm product still optional. |
+| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **done (P0+P1+P2)** | Cache, parallel tools, core profile, routing, doom-loop; compact + speculative `read` + warm `serve`; first-token race + text-only semantic cache. Swarm stays lightweight. |
 | System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done (A+B)** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
 
 ## Shipped (archived)
@@ -59,10 +59,9 @@ Priority (owner: **public install / repo visibility last**):
 1. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
 2. **Plugins depth** — `plugins.toml` → `plugin_*` tools; `whycode plugins list`; project+global load. Marketplace still out of scope.
 3. **Performance residual (optional)** — live provider token reconcile against a real API session ([plan-performance.md](plan-performance.md)).
-4. **Latency P2 (optional)** — residual rows in [plan-latency-competitors.md](plan-latency-competitors.md).
-5. **ACP / web** — deferred post product launch.
+4. **ACP / web** — deferred post product launch.
 
-Shipped this cycle: OAuth + credential discovery, optimize Session A+B, performance CI ceilings.
+Shipped this cycle: OAuth + credential discovery, optimize Session A+B, performance CI ceilings, latency P2 (race + response cache).
 
 ## Decision log
 
@@ -97,6 +96,7 @@ Shipped this cycle: OAuth + credential discovery, optimize Session A+B, performa
 | 2026-08-07 | A1–A7 shipped | PromptCommands, /context, LLM compact, path globs, mcp serve, image read, idle suggestions. |
 | 2026-08-07 | Public release last | Coding/perf/plugins ranked ahead of repo-public + install packaging. |
 | 2026-08-07 | Perf residual + plugins | Subagent usage fold into parent; bench-results + CI ceilings; shell plugins as tools. |
+| 2026-08-13 | Latency P2 closed | First-token race (`model_race`) + process-local exact/semantic text cache (`response_cache`). |
 
 ## Verification commands
 

@@ -11,10 +11,10 @@ use futures::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
 use std::path::PathBuf;
-use std::time::Duration;
 use std::sync::Arc;
-use whycode_agent::events::TurnEvent;
+use std::time::Duration;
 use whycode_agent::Agent;
+use whycode_agent::events::TurnEvent;
 use whycode_session::session::Session;
 
 use crate::AppState;
@@ -276,10 +276,8 @@ pub async fn chat(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
     Json(req): Json<ChatRequest>,
-) -> Result<
-    Sse<std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>>,
-    StatusCode,
-> {
+) -> Result<Sse<std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>>, StatusCode>
+{
     if req.message.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -595,5 +593,3 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
-
-

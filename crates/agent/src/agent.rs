@@ -175,6 +175,11 @@ pub struct Agent {
     use_prompt_cache: bool,
     /// Optional fast model for trivial chat (`provider/model` or bare id).
     model_fast: Option<String>,
+    /// First-token race: `off` / `auto` / `provider/model`.
+    model_race: String,
+    race_after: std::time::Duration,
+    /// Process-local text-only response cache.
+    response_cache: bool,
     /// Cross-session memory settings (from config).
     memory: whycode_memory::MemorySettings,
     /// Heuristic intent posture for build turns (`auto` / `off` / `always`).
@@ -254,6 +259,9 @@ impl Agent {
             tool_profile: ToolProfile::Core,
             use_prompt_cache: true,
             model_fast: None,
+            model_race: "off".into(),
+            race_after: std::time::Duration::from_millis(800),
+            response_cache: true,
             memory: whycode_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
             swarm_enabled: true,
@@ -335,6 +343,17 @@ impl Agent {
             "none" | "off" | "false" | "0"
         );
         self.model_fast = config.session.model_fast.clone();
+        self.model_race = config.session.model_race.clone();
+        self.race_after = std::time::Duration::from_millis(config.session.race_after_ms);
+        self.response_cache = !matches!(
+            config
+                .session
+                .response_cache
+                .trim()
+                .to_ascii_lowercase()
+                .as_str(),
+            "off" | "false" | "0" | "none"
+        );
         self.memory = memory_settings_from_config(config);
         self.intent_guidance =
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
@@ -361,6 +380,8 @@ impl Agent {
             compaction_threshold = self.compaction_threshold,
             tool_profile = self.tool_profile.as_str(),
             use_prompt_cache = self.use_prompt_cache,
+            model_race = %self.model_race,
+            response_cache = self.response_cache,
             memory_enabled = self.memory.enabled,
             intent_guidance = ?self.intent_guidance,
             swarm_enabled = self.swarm_enabled,
@@ -409,6 +430,29 @@ impl Agent {
 
     pub fn model_fast(&self) -> Option<&str> {
         self.model_fast.as_deref()
+    }
+
+    /// Resolve an optional first-token race partner (`off` / `auto` / ref).
+    fn race_partner(&self, provider_name: &str, model: &str) -> Option<(String, String)> {
+        let raw = self.model_race.trim();
+        if raw.is_empty()
+            || matches!(
+                raw.to_ascii_lowercase().as_str(),
+                "off" | "false" | "0" | "none"
+            )
+        {
+            return None;
+        }
+        let (p, m) = if raw.eq_ignore_ascii_case("auto") {
+            crate::title::resolve_title_model(provider_name, model, None)
+        } else {
+            crate::title::resolve_title_model(provider_name, model, Some(raw))
+        };
+        if p == provider_name && m == model {
+            return None;
+        }
+        self.provider_registry.get(&p)?;
+        Some((p, m))
     }
 
     /// Build tool context for a session, applying permission network flags.
@@ -1038,8 +1082,7 @@ impl Agent {
             let mut accumulated_text = String::new();
             let mut turn_usage = whycode_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
-            let mut speculative_reads: Vec<crate::speculative_read::SpeculativeRead> =
-                Vec::new();
+            let mut speculative_reads: Vec<crate::speculative_read::SpeculativeRead> = Vec::new();
             let step_t0 = Instant::now();
 
             // Professional transport: classify + full-jitter backoff + Retry-After.
@@ -1047,16 +1090,50 @@ impl Agent {
             // Race the open against cancel so a hung gateway cannot ignore Esc.
             // Bind transport so `stream()`'s future is not tied to a temporary.
             let transport = whycode_llm::default_transport();
-            let mut event_stream = tokio::select! {
+            let race_ids = self.race_partner(provider_name, model);
+            let race_provider = race_ids
+                .as_ref()
+                .and_then(|(p, _)| self.provider_registry.get(p.as_str()));
+            let race_target = match (race_ids.as_ref(), race_provider) {
+                (Some((_, m)), Some(rp)) => Some(whycode_llm::StreamTarget {
+                    provider: rp,
+                    api_key,
+                    model: m.as_str(),
+                }),
+                _ => None,
+            };
+            let turn = tokio::select! {
                 biased;
                 _ = wait_until_cancelled(&cancel) => {
                     emit(&events, TurnEvent::Cancelled);
                     return Err(whycode_core::Error::Agent("Cancelled".into()));
                 }
-                opened = transport.stream(provider, &request, api_key, model) => {
-                    opened?
-                }
+                opened = transport.stream_turn(
+                    whycode_llm::StreamTarget {
+                        provider,
+                        api_key,
+                        model,
+                    },
+                    &request,
+                    whycode_llm::StreamTurnOpts {
+                        cache: self.response_cache && request.tools.is_empty(),
+                        race: race_target,
+                        race_after: self.race_after,
+                    },
+                ) => opened?,
             };
+            let cache_hit = turn.cache_hit;
+            let race_tag = turn.race.as_str();
+            if cache_hit {
+                emit(&events, TurnEvent::Status("Response cache hit".into()));
+            } else if turn.race.raced() {
+                let partner = race_ids.as_ref().map(|(_, m)| m.as_str()).unwrap_or("?");
+                emit(
+                    &events,
+                    TurnEvent::Status(format!("First-token race: {partner} ({race_tag})")),
+                );
+            }
+            let mut event_stream = turn.events;
 
             // Stream body: check cancel between tokens *and* while idle waiting
             // for the next SSE line (select! with wait_until_cancelled).
@@ -1171,6 +1248,15 @@ impl Agent {
             let tool_calls = assembler.finish();
             let step_ms = step_t0.elapsed().as_millis();
 
+            if self.response_cache
+                && !cache_hit
+                && request.tools.is_empty()
+                && tool_calls.is_empty()
+                && !accumulated_text.trim().is_empty()
+            {
+                whycode_llm::ResponseCache::global().store(&request, model, &accumulated_text);
+            }
+
             // Emit ToolStart with final parsed arguments (not the empty first chunk).
             for tc in &tool_calls {
                 if ttft_ms.is_none() {
@@ -1235,6 +1321,8 @@ impl Agent {
                         "output_tokens": turn_usage.output_tokens,
                         "cache_read_tokens": turn_usage.cache_read_input_tokens,
                         "cache_creation_tokens": turn_usage.cache_creation_input_tokens,
+                        "response_cache_hit": cache_hit,
+                        "race": race_tag,
                         "done": true,
                     })),
                 );
@@ -1329,6 +1417,8 @@ impl Agent {
                         "output_tokens": turn_usage.output_tokens,
                         "cache_read_tokens": turn_usage.cache_read_input_tokens,
                         "cache_creation_tokens": turn_usage.cache_creation_input_tokens,
+                        "response_cache_hit": cache_hit,
+                        "race": race_tag,
                         "done": false,
                     })),
                 );
@@ -1379,6 +1469,8 @@ impl Agent {
                 "ttft_ms": ttft_ms,
                 "worked_ms": user_turn_t0.elapsed().as_millis(),
                 "tools_profile": self.tool_profile.as_str(),
+                "response_cache": self.response_cache,
+                "model_race": self.model_race,
             })),
         );
 
@@ -1437,29 +1529,28 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = if let Some(early) =
-                self.take_speculative_read(tc, tool_ctx, speculative).await
-            {
-                early
-            } else {
-                tokio::select! {
-                    biased;
-                    _ = wait_until_cancelled(cancel) => {
-                        emit(events, TurnEvent::Cancelled);
-                        return Err(whycode_core::Error::Agent("Cancelled".into()));
+            let result =
+                if let Some(early) = self.take_speculative_read(tc, tool_ctx, speculative).await {
+                    early
+                } else {
+                    tokio::select! {
+                        biased;
+                        _ = wait_until_cancelled(cancel) => {
+                            emit(events, TurnEvent::Cancelled);
+                            return Err(whycode_core::Error::Agent("Cancelled".into()));
+                        }
+                        r = self.execute_with_permission(
+                            tc,
+                            session,
+                            tool_ctx,
+                            provider_name,
+                            model,
+                            api_key,
+                            turn_intent,
+                            events.as_ref(),
+                        ) => r,
                     }
-                    r = self.execute_with_permission(
-                        tc,
-                        session,
-                        tool_ctx,
-                        provider_name,
-                        model,
-                        api_key,
-                        turn_intent,
-                        events.as_ref(),
-                    ) => r,
-                }
-            };
+                };
             emit(
                 events,
                 TurnEvent::ToolEnd {
@@ -1489,15 +1580,12 @@ impl Agent {
             // the LLM stream). Remaining calls run in parallel as before.
             let mut early: Vec<Option<ToolResult>> = Vec::with_capacity(tool_calls.len());
             for tc in tool_calls {
-                early.push(
-                    self.take_speculative_read(tc, tool_ctx, speculative)
-                        .await,
-                );
+                early.push(self.take_speculative_read(tc, tool_ctx, speculative).await);
             }
             // ToolStart already emitted by the caller for every call.
             let futs: Vec<_> = tool_calls
                 .iter()
-                .zip(early.into_iter())
+                .zip(early)
                 .map(|(tc, pre)| {
                     let this = self;
                     async move {
@@ -1550,29 +1638,28 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = if let Some(early) =
-                self.take_speculative_read(tc, tool_ctx, speculative).await
-            {
-                early
-            } else {
-                tokio::select! {
-                    biased;
-                    _ = wait_until_cancelled(cancel) => {
-                        emit(events, TurnEvent::Cancelled);
-                        return Err(whycode_core::Error::Agent("Cancelled".into()));
+            let result =
+                if let Some(early) = self.take_speculative_read(tc, tool_ctx, speculative).await {
+                    early
+                } else {
+                    tokio::select! {
+                        biased;
+                        _ = wait_until_cancelled(cancel) => {
+                            emit(events, TurnEvent::Cancelled);
+                            return Err(whycode_core::Error::Agent("Cancelled".into()));
+                        }
+                        r = self.execute_with_permission(
+                            tc,
+                            session,
+                            tool_ctx,
+                            provider_name,
+                            model,
+                            api_key,
+                            turn_intent,
+                            events.as_ref(),
+                        ) => r,
                     }
-                    r = self.execute_with_permission(
-                        tc,
-                        session,
-                        tool_ctx,
-                        provider_name,
-                        model,
-                        api_key,
-                        turn_intent,
-                        events.as_ref(),
-                    ) => r,
-                }
-            };
+                };
             emit(
                 events,
                 TurnEvent::ToolEnd {

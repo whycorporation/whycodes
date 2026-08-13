@@ -6,7 +6,7 @@ Feature comparison of terminal coding agents.
 
 **Product surface:** Claude Code · Cursor
 
-Last updated: **2026-08-09** (OAuth subscription login rows corrected vs `crates/auth`; tool_search, shell globs, compact breaker, /diff /cost, worktree; bg/schedule).  
+Last updated: **2026-08-13** (latency P2: first-token race + text-only semantic cache).  
 Sources are listed at the end of the file. Cells are at “yes / partial / no” granularity; not every minor release is re-verified.
 
 ### Legend
@@ -211,6 +211,8 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | Tool result prune | ✅★ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Autocompact circuit breaker | ✅★ 3× | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | TTFT metric (JSONL) | ✅★ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| First-token race failover | ✅ `model_race` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Semantic response cache | ✅ text-only | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
 Details: [plan-latency-competitors.md](plan-latency-competitors.md).
 
@@ -248,7 +250,7 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 | Area | Detail |
 |---|---|
 | **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic` (last is never approvable) |
-| **Latency stack** | Core tools, prompt cache, parallel reads, doom-loop, fast-route, async title |
+| **Latency stack** | Core tools, prompt cache, parallel reads, doom-loop, fast-route, race, text cache |
 | **Mouse TUI** | HitArea: context %, stop, scrollbar, slash hover |
 | **LSP crate** | Separate `whycode-lsp` |
 | **Windows CI** | Linux + macOS + Windows full suite |
@@ -349,6 +351,9 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 tool_profile = "core"     # or "full"
 prompt_cache = "auto"     # or "none"
 model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional trivial-chat route
+model_race = "off"        # off | auto | provider/model — first-token failover
+# race_after_ms = 800
+response_cache = "auto"   # auto | off — text-only exact + semantic
 intent_guidance = "auto"  # auto | off | always — build-mode question/plan posture
 compaction_threshold = 150000
 auto_title = true

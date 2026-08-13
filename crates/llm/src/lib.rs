@@ -19,7 +19,9 @@ pub mod openai;
 pub mod openai_compat;
 pub mod openrouter;
 pub mod provider;
+pub mod race;
 pub mod rate_limit;
+pub mod response_cache;
 pub mod retry;
 pub mod together;
 pub mod token_counter;
@@ -38,6 +40,11 @@ pub use model_catalog::{
     parse_models_json,
 };
 pub use provider::{LlmProvider, ProviderRegistry};
+pub use race::{RaceOutcome, StreamTarget, stream_raced};
+pub use response_cache::{CachedText, ResponseCache, text_only_response};
 pub use retry::{RetryPolicy, execute_with_policy, retry_with_backoff};
-pub use transport::{LlmTransport, default_transport, format_turn_error, user_facing_error};
+pub use transport::{
+    LlmTransport, StreamTurn, StreamTurnOpts, default_transport, format_turn_error,
+    user_facing_error,
+};
 pub use types::*;
