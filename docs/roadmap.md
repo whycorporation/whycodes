@@ -13,7 +13,7 @@ whycode-shaped surface (not a jcode clone). Each item is a shippable slice.
 2. **Live sidebar + `panel` tool** — files / MCP / todos / preview canvas.
 3. **Session RAG + consolidate** — search past turns; periodic fact tidy.
 4. **Swarm mailbox + stale-read** — worker DM; “this file moved” on read.
-5. **`whycode connect`** — TUI attaches to `whycode serve`.
+5. **`whycode connect`** — TUI attaches to `whycode serve` (this slice).
 6. **Foreign session import** — Claude / Codex / OpenCode / Pi transcripts.
 7. **Browser tool** — CDP, permission `ask`, not in the core profile.
 

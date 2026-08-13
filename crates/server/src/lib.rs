@@ -81,6 +81,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/sessions", get(routes::list_sessions))
         .route("/api/session/new", post(routes::create_session))
         .route("/api/session/:id", get(routes::get_session))
+        .route(
+            "/api/session/:id/messages",
+            get(routes::get_session_messages),
+        )
         .route("/api/session/:id/chat", post(routes::chat))
         // Single param route: id may be bare, `foo.json`, or `foo.md`
         // (axum rejects overlapping `/s/:id` + `/s/:id.json`).

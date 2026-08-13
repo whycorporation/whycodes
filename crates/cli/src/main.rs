@@ -152,6 +152,16 @@ pub enum Commands {
         port: u16,
     },
 
+    /// Attach a TUI to a running `whycode serve` (not `/connect` login)
+    Connect {
+        /// Host:port or URL (default 127.0.0.1:3030)
+        #[arg(default_value = "127.0.0.1:3030")]
+        addr: String,
+        /// Session id (creates a new one when omitted)
+        #[arg(long)]
+        session: Option<String>,
+    },
+
     /// Open web UI
     Web,
 
@@ -541,6 +551,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Mcp { .. } => true,
             #[cfg(feature = "server")]
             Commands::Serve { .. } => true,
+            Commands::Connect { .. } => true,
             #[cfg(feature = "self-update")]
             Commands::Upgrade => true,
             // OAuth login does network I/O (token endpoints + a loopback
@@ -626,7 +637,11 @@ fn init_logging(cli: &Cli) {
     });
 
     // Full-screen TUI is the default for Run / bare invoke without --plain.
-    let is_tui = !cli.plain && matches!(&cli.command, None | Some(Commands::Run { .. }));
+    let is_tui = !cli.plain
+        && matches!(
+            &cli.command,
+            None | Some(Commands::Run { .. }) | Some(Commands::Connect { .. })
+        );
 
     let opts = whycode_core::logging::InitOptions {
         data_dir,
@@ -663,6 +678,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Github { cmd: gh_cmd } => cmd_github(cli, gh_cmd).await,
         #[cfg(feature = "server")]
         Commands::Serve { port } => cmd_serve(*port).await,
+        Commands::Connect { addr, session } => cmd_connect(cli, addr, session.as_deref()).await,
         Commands::Web => cmd_web().await,
         Commands::Mcp { cmd: mcp_cmd } => cmd_mcp(mcp_cmd).await,
         Commands::Provider { cmd: provider_cmd } => cmd_provider(provider_cmd).await,
@@ -938,6 +954,7 @@ async fn cmd_run(
             initial_prompt: prompt.map(|s| s.to_string()),
             config,
             resume_session_id: resume_want,
+            remote: None,
         })
         .await
         .map_err(|e| {
@@ -2927,6 +2944,68 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `connect` — Attach a TUI to `whycode serve`. `/connect` remains OAuth login.
+async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Result<()> {
+    use whycode_tui::remote;
+
+    let base = remote::normalize_base(addr);
+    match remote::health(&base).await {
+        Ok(h) => {
+            println!(
+                "{} Attached to {base} (project {}, uptime {}s)",
+                "•".bold(),
+                h.get("project").and_then(|p| p.as_str()).unwrap_or("?"),
+                h.get("uptime_secs").and_then(|u| u.as_u64()).unwrap_or(0)
+            );
+        }
+        Err(e) => {
+            anyhow::bail!(
+                "cannot reach {base}: {e}\n\nStart the daemon first:\n  whycode serve\nthen:\n  whycode connect {addr}"
+            );
+        }
+    }
+
+    println!(
+        "{}",
+        "Note: the remote agent auto-approves tool prompts.".yellow()
+    );
+
+    let session_id = if let Some(id) = session.filter(|s| !s.is_empty()) {
+        id.to_string()
+    } else {
+        remote::create_session(&base).await?
+    };
+    println!("{} session {}", "•".bold(), session_id.cyan());
+
+    let project_dir = resolve_dir(cli);
+    let mut config = Config::load_layered(&project_dir)
+        .or_else(|_| Config::load())
+        .unwrap_or_default();
+    config.load_command_files(&project_dir);
+    let provider = resolve_provider(cli, &config);
+    let model = resolve_model(cli, &config);
+    let agent_name = resolve_agent(cli, &config);
+    let api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+
+    if !whycode_tui::tui_available() {
+        anyhow::bail!("connect needs a real TUI terminal (not --plain)");
+    }
+
+    whycode_tui::run(whycode_tui::TuiRunOptions {
+        project_dir,
+        provider,
+        model,
+        api_key,
+        agent_name,
+        max_turns: 25,
+        initial_prompt: None,
+        config,
+        resume_session_id: None,
+        remote: Some(whycode_tui::RemoteAttach::new(base, session_id)),
+    })
+    .await
 }
 
 /// `serve` — Warm multi-session API + local share server.

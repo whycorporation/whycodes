@@ -11,6 +11,7 @@ pub mod images;
 pub mod input;
 pub mod keymap;
 pub mod paste;
+pub mod remote;
 pub mod run;
 pub mod session_runtime;
 pub mod theme;
@@ -21,6 +22,7 @@ pub mod ui;
 pub mod widgets;
 
 pub use app::TuiApp;
+pub use remote::RemoteAttach;
 pub use run::{RESUME_LATEST, TuiRunOptions, resolve_and_load_session, run, tui_available};
 
 #[cfg(test)]
