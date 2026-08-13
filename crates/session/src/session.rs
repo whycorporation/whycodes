@@ -1267,7 +1267,7 @@ impl Session {
 
 /// Default system prompt for the main agent
 pub fn default_system_prompt() -> String {
-    include_str!("../../agent/prompt.txt").to_string()
+    include_str!("../../agent/prompts/default.txt").to_string()
 }
 
 #[cfg(test)]

@@ -38,7 +38,7 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    cargo clippy -p whycode-<crate> --all-targets -- -D warnings
    ```
 
-   A `let _ = send(...)`, `Err(_) =>`, `return x.ok();`, or a new `whycode-*` Cargo.toml line will fail CI even when the crate compiles. Handle the error (name it / log it) or register the edge in `scripts/dependency_boundaries.json` in the **same** commit. Details: [`docs/KNOWHOW.md`](docs/KNOWHOW.md) rule 8.
+   A `let _ = send(...)`, `Err(_) =>`, `return x.ok();`, or a new `whycode-*` Cargo.toml line will fail CI even when the crate compiles. Handle the error (name it / log it) or register the edge in `scripts/dependency_boundaries.json` in the **same** commit. Details: [`docs/knowhow.md`](docs/knowhow.md) rule 8.
 
 ### Why
 
@@ -80,6 +80,6 @@ Dependency rule of thumb: **leaf types and traits stay in `core`**; I/O and poli
 
 ## Hard-won pitfalls (read when touching TUI / terminal)
 
-See **[`docs/KNOWHOW.md`](docs/KNOWHOW.md)** — living log of silent exits, mouse/event-loop return values, `/dev/tty`, SIGPIPE, context-window vs rate limits, etc.
+See **[`docs/knowhow.md`](docs/knowhow.md)** — living log of silent exits, mouse/event-loop return values, `/dev/tty`, SIGPIPE, context-window vs rate limits, etc.
 
 When you fix a non-obvious bug of that kind: **append a short entry** to that file (template at the bottom) so the next session does not repeat it.

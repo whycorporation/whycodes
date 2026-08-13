@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::webfetch::html_to_text;
+use super::fetch::html_to_text;
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 

@@ -168,9 +168,9 @@ fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
 /// POST to the Codex backend with one OAuth-aware retry: a 401 force-renews
 /// the stored credential via `oauth_refresh` and resends once.
 async fn post(api_key: &str, body: &Value) -> whycode_core::Result<reqwest::Response> {
-    let account_id = super::oauth_refresh::stored_extra("openai", "openai_account_id").await;
-    super::oauth_refresh::send_with_refresh_retry("openai", api_key, |key| {
-        let req = super::client_identity::post(CODEX_RESPONSES_URL)
+    let account_id = crate::oauth_refresh::stored_extra("openai", "openai_account_id").await;
+    crate::oauth_refresh::send_with_refresh_retry("openai", api_key, |key| {
+        let req = crate::client_identity::post(CODEX_RESPONSES_URL)
             .header("Authorization", format!("Bearer {key}"))
             .header("OpenAI-Beta", "responses=experimental")
             .header("Accept", "text/event-stream")

@@ -56,7 +56,7 @@ impl ProviderRegistry {
                 continue;
             }
             // Create a CustomProvider for this config entry
-            let custom = Box::new(super::custom::CustomProvider::from_config(pc));
+            let custom = Box::new(super::providers::custom::CustomProvider::from_config(pc));
             self.providers.insert(name.clone(), custom);
         }
     }
@@ -80,17 +80,21 @@ impl ProviderRegistry {
 impl Default for ProviderRegistry {
     fn default() -> Self {
         let mut registry = Self::new();
-        registry.register(Box::new(super::anthropic::AnthropicProvider::new()));
-        registry.register(Box::new(super::openai::OpenAiProvider::new()));
-        registry.register(Box::new(super::copilot::CopilotProvider::new()));
-        registry.register(Box::new(super::google::GoogleProvider::new()));
-        registry.register(Box::new(super::deepseek::DeepSeekProvider::new()));
-        registry.register(Box::new(super::openrouter::OpenRouterProvider::new()));
-        registry.register(Box::new(super::ollama::OllamaProvider::new()));
-        registry.register(Box::new(super::xai::XaiProvider::new()));
-        registry.register(Box::new(super::mistral::MistralProvider::new()));
-        registry.register(Box::new(super::together::TogetherProvider::new()));
-        registry.register(Box::new(super::groq::GroqProvider::new()));
+        registry.register(Box::new(
+            super::providers::anthropic::AnthropicProvider::new(),
+        ));
+        registry.register(Box::new(super::providers::openai::OpenAiProvider::new()));
+        registry.register(Box::new(super::providers::copilot::CopilotProvider::new()));
+        registry.register(Box::new(super::providers::google::GoogleProvider::new()));
+        registry.register(Box::new(super::providers::deepseek::DeepSeekProvider::new()));
+        registry.register(Box::new(
+            super::providers::openrouter::OpenRouterProvider::new(),
+        ));
+        registry.register(Box::new(super::providers::ollama::OllamaProvider::new()));
+        registry.register(Box::new(super::providers::xai::XaiProvider::new()));
+        registry.register(Box::new(super::providers::mistral::MistralProvider::new()));
+        registry.register(Box::new(super::providers::together::TogetherProvider::new()));
+        registry.register(Box::new(super::providers::groq::GroqProvider::new()));
         registry
     }
 }

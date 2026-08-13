@@ -3,10 +3,10 @@ use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
 use crate::{
-    apply_patch, bg, browser, code_mode, edit, external_directory, git_blame, git_commit, git_diff,
-    git_log, git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, panel,
-    plan, question, read, schedule, shell, skill_tool, swarm, swarm_msg, task, todo_read,
-    todo_write, tool_search, truncate_tool, webfetch, websearch, worktree, write,
+    apply_patch, background, blame, browser, code_mode, commit, diff, edit, external_directory,
+    fetch, glob, grep, issue, list, log, lsp, memory, panel, plan, pr, question, read, schedule,
+    search, shell, skill, status, swarm, swarm_message, task, todo_read, todo_write, tool_search,
+    truncate, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -33,34 +33,34 @@ impl ToolExecutor {
         executor.register(Box::new(shell::ShellTool::new()));
         executor.register(Box::new(shell::ShellTool::as_shell()));
         executor.register(Box::new(browser::BrowserTool::new()));
-        executor.register(Box::new(webfetch::WebFetchTool::new()));
-        executor.register(Box::new(websearch::WebSearchTool::new()));
-        executor.register(Box::new(github_issue::GithubIssueTool::new()));
-        executor.register(Box::new(github_pr::GitHubPrTool::new()));
+        executor.register(Box::new(fetch::WebFetchTool::new()));
+        executor.register(Box::new(search::WebSearchTool::new()));
+        executor.register(Box::new(issue::GithubIssueTool::new()));
+        executor.register(Box::new(pr::GitHubPrTool::new()));
         executor.register(Box::new(task::TaskTool::new()));
         executor.register(Box::new(swarm::SwarmTool::new()));
-        executor.register(Box::new(swarm_msg::SwarmMsgTool::new()));
-        executor.register(Box::new(bg::BgTool::new()));
+        executor.register(Box::new(swarm_message::SwarmMsgTool::new()));
+        executor.register(Box::new(background::BgTool::new()));
         executor.register(Box::new(schedule::ScheduleTool::new()));
         executor.register(Box::new(tool_search::ToolSearchTool::new()));
         executor.register(Box::new(worktree::WorktreeTool::new()));
-        executor.register(Box::new(git_diff::GitDiffTool::new()));
-        executor.register(Box::new(git_log::GitLogTool::new()));
-        executor.register(Box::new(git_status::GitStatusTool::new()));
-        executor.register(Box::new(git_blame::GitBlameTool::new()));
-        executor.register(Box::new(git_commit::GitCommitTool::new()));
+        executor.register(Box::new(diff::GitDiffTool::new()));
+        executor.register(Box::new(log::GitLogTool::new()));
+        executor.register(Box::new(status::GitStatusTool::new()));
+        executor.register(Box::new(blame::GitBlameTool::new()));
+        executor.register(Box::new(commit::GitCommitTool::new()));
         executor.register(Box::new(apply_patch::ApplyPatchTool::new()));
         executor.register(Box::new(todo_write::TodoWriteTool::new()));
         executor.register(Box::new(todo_read::TodoReadTool::new()));
-        executor.register(Box::new(memory_tool::MemoryTool::new()));
+        executor.register(Box::new(memory::MemoryTool::new()));
         executor.register(Box::new(question::QuestionTool::new()));
         executor.register(Box::new(panel::PanelTool::new()));
         executor.register(Box::new(plan::PlanTool::new()));
         executor.register(Box::new(code_mode::CodeModeTool::new()));
         executor.register(Box::new(external_directory::ExternalDirectoryTool::new()));
-        executor.register(Box::new(truncate_tool::TruncateTool::new()));
-        executor.register(Box::new(skill_tool::SkillTool::new()));
-        executor.register(Box::new(lsp_tool::LspTool::new()));
+        executor.register(Box::new(truncate::TruncateTool::new()));
+        executor.register(Box::new(skill::SkillTool::new()));
+        executor.register(Box::new(lsp::LspTool::new()));
 
         // Alias for common model tool names
         executor.register(Box::new(todo_write::TodoWriteTool::as_todo()));
@@ -195,9 +195,7 @@ impl ToolExecutor {
 
         let n = by_name.len();
         for cfg in by_name.into_values() {
-            self.register(Box::new(crate::plugin_tool::PluginShellTool::from_config(
-                cfg,
-            )));
+            self.register(Box::new(crate::plugin::PluginShellTool::from_config(cfg)));
         }
         n
     }

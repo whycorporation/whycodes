@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent};
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
 pub struct CopilotProvider {
@@ -22,7 +22,7 @@ pub struct CopilotProvider {
 /// POST with the headers the Copilot API expects: bearer token plus the
 /// editor identity pair it uses for client gating.
 fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
-    super::client_identity::post(url)
+    crate::client_identity::post(url)
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Editor-Version", "vscode/1.95.0")
         .header("Copilot-Integration-Id", "vscode-chat")
@@ -56,7 +56,7 @@ impl LlmProvider for CopilotProvider {
         let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = super::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
             authed_post(self.default_base_url(), key).json(&body)
         })
         .await?;
@@ -92,7 +92,7 @@ impl LlmProvider for CopilotProvider {
                 content.push(ContentBlock::ToolUse {
                     id: tc["id"].as_str().unwrap_or("").to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: super::openai_compat::parse_tool_arguments(&func["arguments"]),
+                    input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
                 });
             }
         }
@@ -101,7 +101,7 @@ impl LlmProvider for CopilotProvider {
         Ok(LlmResponse {
             content,
             stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: super::openai_compat::usage_from_chat_completion(usage),
+            usage: crate::openai_compat::usage_from_chat_completion(usage),
             model: model.to_string(),
         })
     }
@@ -114,9 +114,9 @@ impl LlmProvider for CopilotProvider {
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
-        super::openai_compat::attach_stream_usage_option(&mut body);
+        crate::openai_compat::attach_stream_usage_option(&mut body);
 
-        let resp = super::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
             authed_post(self.default_base_url(), key).json(&body)
         })
         .await?;
@@ -155,14 +155,14 @@ impl LlmProvider for CopilotProvider {
                                 let choice = &event["choices"][0];
                                 let delta = &choice["delta"];
 
-                                for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
                                     yield Ok(ev);
                                 }
 
                                 // Final include_usage chunk often has empty choices —
                                 // do not require finish_reason.
                                 if let Some(ev) =
-                                    super::openai_compat::stream_usage_from_chunk(&event)
+                                    crate::openai_compat::stream_usage_from_chunk(&event)
                                 {
                                     yield Ok(ev);
                                 }

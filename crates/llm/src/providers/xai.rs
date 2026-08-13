@@ -1,23 +1,22 @@
-/// OpenAI-compatible LLM provider.
-/// Works with OpenAI, xAI (Grok), DeepSeek, OpenRouter, and other
-/// OpenAI-compatible APIs.
+/// xAI Grok LLM provider.
+/// OpenAI-compatible API at api.x.ai.
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent};
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
-pub struct OpenAiProvider {
+pub struct XaiProvider {
     name: String,
 }
 
-impl OpenAiProvider {
+impl XaiProvider {
     pub fn new() -> Self {
         Self {
-            name: "openai".to_string(),
+            name: "xai".to_string(),
         }
     }
 
@@ -35,8 +34,6 @@ impl OpenAiProvider {
         if !request.tools.is_empty() {
             body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
             body["tool_choice"] = serde_json::json!("auto");
-            // Encourage the model to emit independent tool calls in one step
-            // so our agent can fan them out (Codex / OpenAI latency guide).
             body["parallel_tool_calls"] = serde_json::json!(true);
         }
 
@@ -52,22 +49,22 @@ impl OpenAiProvider {
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
-        super::openai_compat::convert_messages(request)
+        crate::openai_compat::convert_messages(request)
     }
 
     fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
-        super::openai_compat::convert_tools(tools)
+        crate::openai_compat::convert_tools(tools)
     }
 }
 
 #[async_trait]
-impl LlmProvider for OpenAiProvider {
+impl LlmProvider for XaiProvider {
     fn name(&self) -> &str {
         &self.name
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.openai.com/v1/chat/completions"
+        "https://api.x.ai/v1/chat/completions"
     }
 
     async fn complete(
@@ -76,15 +73,10 @@ impl LlmProvider for OpenAiProvider {
         api_key: &str,
         model: &str,
     ) -> whycode_core::Result<LlmResponse> {
-        // ChatGPT-subscription OAuth tokens are rejected by api.openai.com;
-        // route them to the Codex backend (Responses API) instead.
-        if super::codex::is_chatgpt_oauth_token(api_key) {
-            return super::codex::complete(request, api_key, model).await;
-        }
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = super::client_identity::post(self.default_base_url())
+        let resp = crate::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
@@ -100,7 +92,7 @@ impl LlmProvider for OpenAiProvider {
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
             return Err(whycode_core::Error::Llm(format!(
-                "OpenAI API error ({}): {}",
+                "xAI API error ({}): {}",
                 status, err_msg
             )));
         }
@@ -123,7 +115,7 @@ impl LlmProvider for OpenAiProvider {
                 content.push(ContentBlock::ToolUse {
                     id: tc["id"].as_str().unwrap_or("").to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: super::openai_compat::parse_tool_arguments(&func["arguments"]),
+                    input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
                 });
             }
         }
@@ -132,7 +124,7 @@ impl LlmProvider for OpenAiProvider {
         Ok(LlmResponse {
             content,
             stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: super::openai_compat::usage_from_chat_completion(usage),
+            usage: crate::openai_compat::usage_from_chat_completion(usage),
             model: model.to_string(),
         })
     }
@@ -144,15 +136,10 @@ impl LlmProvider for OpenAiProvider {
         model: &str,
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
-        // See `complete`: JWT-shaped subscription tokens go to the Codex
-        // backend, API keys keep the chat-completions path.
-        if super::codex::is_chatgpt_oauth_token(api_key) {
-            return super::codex::stream(request, api_key, model).await;
-        }
         let mut body = self.build_body(request, model);
-        super::openai_compat::attach_stream_usage_option(&mut body);
+        crate::openai_compat::attach_stream_usage_option(&mut body);
 
-        let resp = super::client_identity::post(self.default_base_url())
+        let resp = crate::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
@@ -161,10 +148,7 @@ impl LlmProvider for OpenAiProvider {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
-                "OpenAI API error: {}",
-                text
-            )));
+            return Err(whycode_core::Error::Llm(format!("xAI API error: {}", text)));
         }
 
         let s = stream! {
@@ -193,14 +177,12 @@ impl LlmProvider for OpenAiProvider {
                                 let choice = &event["choices"][0];
                                 let delta = &choice["delta"];
 
-                                for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
                                     yield Ok(ev);
                                 }
 
-                                // Final include_usage chunk often has empty choices —
-                                // do not require finish_reason.
                                 if let Some(ev) =
-                                    super::openai_compat::stream_usage_from_chunk(&event)
+                                    crate::openai_compat::stream_usage_from_chunk(&event)
                                 {
                                     yield Ok(ev);
                                 }
@@ -218,7 +200,7 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
-impl Default for OpenAiProvider {
+impl Default for XaiProvider {
     fn default() -> Self {
         Self::new()
     }

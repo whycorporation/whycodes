@@ -1,34 +1,27 @@
-pub mod anthropic;
 pub mod cache;
 pub mod capabilities;
 pub mod client_identity;
-pub mod codeassist;
-pub mod codex;
-pub mod copilot;
-pub mod custom;
-pub mod deepseek;
 pub mod error_class;
 pub mod fallback;
-pub mod google;
-pub mod groq;
-pub mod mistral;
 pub mod model_catalog;
 pub mod oauth_refresh;
-pub mod ollama;
-pub mod openai;
 pub mod openai_compat;
-pub mod openrouter;
 pub mod provider;
+pub mod providers;
 pub mod race;
 pub mod rate_limit;
 pub mod response_cache;
 pub mod retry;
-pub mod together;
+pub mod thinking;
 pub mod token_counter;
 pub mod transport;
 pub mod types;
 pub mod usage_dump;
-pub mod xai;
+
+pub use providers::{
+    anthropic, codeassist, codex, copilot, custom, deepseek, google, groq, mistral, ollama, openai,
+    openrouter, together, xai,
+};
 
 pub use cache::{CacheConfig, CachePolicy, apply_anthropic_cache_policy};
 pub use capabilities::{ModelCapabilities, detect_capabilities, resolve_context_window};

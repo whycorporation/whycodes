@@ -85,7 +85,11 @@ impl ThinkingConfig {
             .map(|n| n as u32)
             .unwrap_or(4000);
 
-        let budget = if budget_tokens == 0 { 4000 } else { budget_tokens };
+        let budget = if budget_tokens == 0 {
+            4000
+        } else {
+            budget_tokens
+        };
         Some(Self {
             budget_tokens: budget,
             enabled,

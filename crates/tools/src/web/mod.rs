@@ -1,4 +1,4 @@
 pub mod browser;
-pub mod mcp_websearch;
-pub mod webfetch;
-pub mod websearch;
+pub mod fetch;
+pub mod mcp_search;
+pub mod search;

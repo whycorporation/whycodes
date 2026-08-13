@@ -59,8 +59,8 @@ fn cache_project(id: &str) {
 /// stored credential once via `oauth_refresh` (Google tokens last 1h, so a
 /// revoked or early-expired token is the common failure).
 async fn post(path: &str, api_key: &str, body: &Value) -> whycode_core::Result<reqwest::Response> {
-    super::oauth_refresh::send_with_refresh_retry("google", api_key, |key| {
-        super::client_identity::post(format!("{BASE}{path}").as_str())
+    crate::oauth_refresh::send_with_refresh_retry("google", api_key, |key| {
+        crate::client_identity::post(format!("{BASE}{path}").as_str())
             .header("Authorization", format!("Bearer {key}"))
             .json(body)
     })
@@ -69,8 +69,8 @@ async fn post(path: &str, api_key: &str, body: &Value) -> whycode_core::Result<r
 
 /// GET an LRO status (`GET {BASE}/{operation_name}`) with the same retry.
 async fn get(path: &str, api_key: &str) -> whycode_core::Result<reqwest::Response> {
-    super::oauth_refresh::send_with_refresh_retry("google", api_key, |key| {
-        super::client_identity::http_client()
+    crate::oauth_refresh::send_with_refresh_retry("google", api_key, |key| {
+        crate::client_identity::http_client()
             .get(format!("{BASE}{path}").as_str())
             .header("Authorization", format!("Bearer {key}"))
     })
@@ -260,7 +260,7 @@ fn build_inner_request(request: &LlmRequest) -> Value {
             "functionDeclarations": request.tools.iter().map(|t| json!({
                 "name": t.name,
                 "description": t.description,
-                "parameters": super::openai_compat::sanitize_schema_for_openai(&t.parameters)
+                "parameters": crate::openai_compat::sanitize_schema_for_openai(&t.parameters)
             })).collect::<Vec<_>>()
         }]);
     }

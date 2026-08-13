@@ -1506,7 +1506,7 @@ impl Agent {
         // Hindsight-style auto-retain (heuristic + optional LLM). Best-effort
         // and **async** — never await here. LLM extract can take 5–12s and used
         // to keep the TUI on `generating` after the answer was already on screen
-        // (same pitfall as title refine; see docs/KNOWHOW.md).
+        // (same pitfall as title refine; see docs/knowhow.md).
         super::memory_retain::spawn_post_turn_retain(
             session,
             &final_text,

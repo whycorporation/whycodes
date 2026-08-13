@@ -6,6 +6,6 @@ pub mod grep;
 pub mod list;
 pub mod paths;
 pub mod read;
-pub mod truncate_tool;
+pub mod truncate;
 pub mod truncation_dir;
 pub mod write;

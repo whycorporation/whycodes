@@ -68,7 +68,7 @@ Snapshot from 2026-07-31, with current status (2026-08-04):
 | No memory across sessions | open | **shipped v1** — [archive/plan-memory](archive/plan-memory.md) (hash embed + MEMORY.md) |
 | No multi-agent coordination | open | **dropped** — [archive/phase-7](archive/phase-7-multi-agent.md) |
 
-Living feature matrix vs other products: [FEATURES.md](FEATURES.md).
+Living feature matrix vs other products: [features.md](features.md).
 
 ## Positioning
 

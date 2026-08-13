@@ -44,4 +44,4 @@ Package names use the `whycode-` prefix even when the directory is shorter
 (`crates/llm` → `-p whycode-llm`).
 
 Before changing the TUI event loop, mouse handling or terminal setup, read
-[KNOWHOW.md](KNOWHOW.md).
+[knowhow.md](knowhow.md).
