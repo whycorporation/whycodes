@@ -15,53 +15,24 @@ multi-turn tool use — in a full-screen TUI or as a one-shot CLI.
 
 ## Install
 
-macOS and Linux:
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.sh | sh
 ```
-
-Windows:
 
 ```powershell
 irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.ps1 | iex
 ```
 
-Both verify the download against the release `SHA256SUMS`. They do not modify
-`PATH`; they print the install directory if it is not already on it.
-`WHYCODE_INSTALL_DIR` overrides the location.
-`scripts/uninstall.sh` / `uninstall.ps1` remove it — add `--purge` / `-Purge`
-to delete config and session data as well.
-
-The binaries are unsigned, so macOS Gatekeeper and Windows SmartScreen will
-warn on first run. `whycode upgrade` replaces the running binary with the
-newest release (checksum verified) and leaves the existing one in place if
-anything fails.
-
-### Homebrew
-
 ```bash
+# Homebrew
 brew tap whycorporation/whycode https://github.com/whycorporation/whycode
 brew install --HEAD whycode
-```
 
-`--HEAD` builds from `main`. After a tagged release the formula can switch to
-prebuilt binaries — see [packaging/README.md](packaging/README.md).
-
-### From source
-
-```bash
-git clone https://github.com/whycorporation/whycode.git
-cd whycode
+# From source
 cargo build --release -p whycode-cli
 ```
 
-The binary is written to `target/release/whycode`. Optional extras (Unicode
-mermaid + extra highlight languages, ~+1.7 MB):
-
-```bash
-cargo build --release -p whycode-cli --features full
-```
+Update with `whycode upgrade`. Notes and uninstall: [packaging/README.md](packaging/README.md).
 
 ## Quick start
 
