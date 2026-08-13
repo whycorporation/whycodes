@@ -13,6 +13,9 @@ pub struct PluginConfig {
     pub description: String,
     /// Optional JSON Schema for the parameters the plugin accepts.
     pub parameters: Option<serde_json::Value>,
+    /// Working directory for the child process (`plugin.json` directory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_dir: Option<String>,
 }
 
 /// A ready-to-execute plugin instance.
@@ -70,6 +73,9 @@ impl Plugin {
         _ctx: &PluginContext,
     ) -> ToolResult {
         let mut cmd = Self::shell_command(&self.config.command);
+        if let Some(ref dir) = self.config.working_dir {
+            cmd.current_dir(dir);
+        }
 
         // Inject args as environment variables
         for (k, v) in args {
@@ -137,6 +143,7 @@ mod tests {
             command: command.into(),
             description: "test echo".into(),
             parameters: None,
+            working_dir: None,
         };
         let plugin = Plugin::new(config);
         let mut args = HashMap::new();
@@ -158,6 +165,7 @@ mod tests {
             command: "exit 1".into(),
             description: "always fails".into(),
             parameters: None,
+            working_dir: None,
         };
         let plugin = Plugin::new(config);
         let result = plugin

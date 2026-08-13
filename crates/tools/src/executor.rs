@@ -151,35 +151,53 @@ impl ToolExecutor {
         names
     }
 
-    /// Load shell plugins from global + optional project `plugins.toml`.
+    /// Load shell plugins from `plugins.toml` then `plugin.json` trees.
+    ///
+    /// Order (later same `name` wins): global toml → project toml →
+    /// `$CONFIG/plugins/*/plugin.json` → `<project>/.whycode/plugins/*/plugin.json`.
     pub fn register_config_plugins(&mut self, project_dir: Option<&std::path::Path>) -> usize {
-        let mut configs = Vec::new();
-        match whycode_skill::PluginRegistry::load_from_config() {
-            Ok(r) => configs.extend(r.plugins),
-            Err(e) => tracing::debug!(error = %e, "global plugins.toml load skipped"),
-        }
-        if let Some(dir) = project_dir {
-            let path = dir.join(".whycode").join("plugins.toml");
-            if path.exists()
-                && let Ok(content) = std::fs::read_to_string(&path)
-                && let Ok(reg) = whycode_skill::PluginRegistry::parse_toml(&content)
-            {
-                configs.extend(reg.plugins);
-            }
-        }
-        let mut n = 0;
-        let mut seen = std::collections::HashSet::new();
-        for cfg in configs {
+        let mut by_name = std::collections::BTreeMap::new();
+
+        let toml = match project_dir {
+            Some(dir) => whycode_skill::PluginRegistry::load_layered(dir).unwrap_or_else(|e| {
+                tracing::debug!(error = %e, "plugins.toml load skipped");
+                whycode_skill::PluginRegistry::new()
+            }),
+            None => whycode_skill::PluginRegistry::load_from_config().unwrap_or_else(|e| {
+                tracing::debug!(error = %e, "global plugins.toml load skipped");
+                whycode_skill::PluginRegistry::new()
+            }),
+        };
+        for cfg in toml.plugins {
             if cfg.name.trim().is_empty() || cfg.command.trim().is_empty() {
                 continue;
             }
-            if !seen.insert(cfg.name.clone()) {
-                continue; // project overrides global when same name (last wins if we reverse)
+            by_name.insert(cfg.name.clone(), cfg);
+        }
+
+        let mut mgr = whycode_plugin::PluginManager::new();
+        mgr.discover_standard(project_dir);
+        for spec in mgr.shell_specs() {
+            if spec.name.trim().is_empty() || spec.command.trim().is_empty() {
+                continue;
             }
+            by_name.insert(
+                spec.name.clone(),
+                whycode_skill::PluginConfig {
+                    name: spec.name,
+                    command: spec.command,
+                    description: spec.description,
+                    parameters: spec.parameters,
+                    working_dir: Some(spec.working_dir.to_string_lossy().into_owned()),
+                },
+            );
+        }
+
+        let n = by_name.len();
+        for cfg in by_name.into_values() {
             self.register(Box::new(crate::plugin_tool::PluginShellTool::from_config(
                 cfg,
             )));
-            n += 1;
         }
         n
     }
