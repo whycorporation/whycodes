@@ -28,6 +28,17 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
 
 4. **Fix compile errors in the same turn** before reporting done. A “done” response with a red `cargo check` is incomplete.
 5. Docs-only, comment-only, or pure markdown/config prose that cannot affect the build may skip compile — when unsure, run `cargo check -p …` anyway.
+6. **CI Budgets + Clippy are not covered by `cargo check`.** After `.rs` or `Cargo.toml` edits, run these before finishing (seconds, same as the `Budgets` / `Check & Lint` jobs):
+
+   ```bash
+   python scripts/check_panic_budget.py
+   python scripts/check_swallowed_error_budget.py
+   python scripts/check_dependency_boundaries.py
+   cargo fmt --all --check
+   cargo clippy -p whycode-<crate> --all-targets -- -D warnings
+   ```
+
+   A `let _ = send(...)`, `Err(_) =>`, `return x.ok();`, or a new `whycode-*` Cargo.toml line will fail CI even when the crate compiles. Handle the error (name it / log it) or register the edge in `scripts/dependency_boundaries.json` in the **same** commit. Details: [`docs/KNOWHOW.md`](docs/KNOWHOW.md) rule 8.
 
 ### Why
 

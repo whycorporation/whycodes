@@ -14,6 +14,7 @@ When you fix a non-obvious bug: **append an entry** (newest first under [Log](#l
 | Panic? | `ls ~/.local/share/whycode/crash/` (empty ⇒ usually not a panic) |
 | Silent clean exit | Look for `tui.exit` / `tui.loop_error` / `main.exit_error` in JSONL |
 | No TUI, plain mode | `stdin_tty` / `stdout_tty` / `/dev/tty` in `tui.starting` |
+| CI `Budgets` / `Check & Lint` red | Rule 8 — run the three `scripts/check_*.py` + `clippy -D warnings` locally |
 
 Lifecycle events written to **`~/.local/share/whycode/logs/unified.jsonl`** (always-on):
 
@@ -98,9 +99,66 @@ Do not use rate-limit headers (`x-ratelimit-limit-tokens`) as context window —
 See root `AGENTS.md`. After Rust edits: `cargo check` / `cargo build -p whycode-cli` (and tests when logic changes).  
 Users often run **`./target/release/whycode`** — rebuild **release** when verifying TUI fixes they will run that way.
 
+### 8. CI Budgets + Clippy — run locally, every Rust push
+
+`cargo check` / tests going green is **not** enough. The `Budgets` job is a sequential Python gate that does **not** compile; `Check & Lint` is `fmt --check` + `clippy --workspace --all-targets -- -D warnings`. Feature commits keep landing red because the author never ran either.
+
+**Before push, after any `.rs` / `Cargo.toml` change:**
+
+```bash
+python scripts/check_panic_budget.py
+python scripts/check_swallowed_error_budget.py
+python scripts/check_dependency_boundaries.py
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+The three budget scripts finish in seconds. They are the entire `Budgets` job. Run **all three** — the CI steps are fail-fast, so a swallowed-error fail **hides** the next boundary fail (2026-08-13: two rounds).
+
+**Swallowed-error scanner** (`scripts/check_swallowed_error_budget.py`) counts these in non-test `.rs`:
+
+| Pattern | Label |
+|---------|--------|
+| `let _ = foo(...)` | discarded result |
+| `Err(_) =>` | unnamed Err arm |
+| `.ok();` | Result dropped via `.ok()` (also matches `return x.ok();`) |
+
+Prefer **handling** over raising the crate’s number in `scripts/swallowed_error_budget.json`:
+
+- Name the error (`Err(e)` / `Err(elapsed)`), log it, or convert with `if let Ok`.
+- Channel send: `if let Err(e) = tx.send(...) { tracing::debug!(...) }` — not `let _ =`.
+- Mutex poison: `let Ok(g) = lock else { warn!(...); return; }`.
+- `return n.try_from().ok();` is a **false positive** (returns `Option`, does not drop). Rewrite to `if let Ok(n) = … { return Some(n); }` so the scanner stays quiet.
+
+Only bump a budget in the **same commit**, and say why. If the count is *below* budget, **lower** the JSON to lock the improvement in (the script prints this).
+
+**Dependency boundaries** (`scripts/dependency_boundaries.json`): any new `whycode-*` line in a crate’s `Cargo.toml` is a new **edge**. Add it to that crate’s list in the same commit, with a reason. New crate ⇒ entry in **all three** JSONs (see 2026-08-09 log).
+
+**Clippy:** `-D warnings` means style lints fail CI. Common one: `if let Some(x) = … { v } else { return None; }` → `let x = …?;`.
+
 ---
 
 ## Log
+
+### 2026-08-13 — CI Budgets + Clippy keep failing feature pushes
+
+**Symptom:** GitHub: “Some checks were not successful — 2 failing (Budgets, Check & Lint), 1 queued, 1 in progress, 2 skipped.” Happened on `feat(serve)` and again on `feat(latency)` (race + response cache). Local `cargo test` was green.
+
+**JSONL / crash:** none — this is the `budgets` + `check` CI jobs, not a runtime bug.
+
+**Root cause:** New code added scanner hits and a workspace edge without touching the budget JSONs, and nobody ran the CI scripts locally.
+
+1. **Swallowed errors** (`server` budget 0, `llm` budget 4):
+   - `crates/server/src/routes.rs` — four `let _ = tx.send(TurnEvent::Status(...))` after a chat turn.
+   - `crates/llm` — `return u32::try_from(n).ok();` / `s.parse().ok();` in `model_catalog.rs` (false positive: `return ….ok();` still matches `\.ok\(\);`), `Err(_) =>` on `tokio::time::timeout` in `race.rs` + `transport.rs`, `Err(_) => return` on a poisoned `Mutex` in `response_cache.rs`.
+2. **Hidden second fail:** Budgets steps are sequential. Swallowed-error failing skipped **Dependency boundaries**. After that was fixed, the next run failed: `server gained a dependency: auth, index, storage` — real edges from the serve daemon, never registered.
+3. **Clippy `-D warnings`:** `turn_event_json` used `if let Some(msg) = s.strip_prefix("error:") { … } else { return None; }` → `clippy::question_mark`.
+
+**Fix:** Handle, don’t swallow — `emit_status` logs a closed channel; name timeout/`Elapsed`; warn on lock poison; rewrite catalog `as_u32` to `if let Ok`. Clippy arm → `let msg = s.strip_prefix("error:")?;`. Lock budgets (`llm` 4→0, `memory` 9→8). Register `server → auth, index, storage` in `dependency_boundaries.json`.
+
+**Prevention:** Rule 8. After any `.rs` / `Cargo.toml` edit, run the three budget scripts **and** clippy `-D warnings` before push. Do not treat “I didn’t add a crate” as a skip — a single `let _ =` or a new `whycode-*` dep is enough. Do not raise a budget to paper over `let _ =` / `Err(_)` when the error can be named or logged.
+
+---
 
 ### 2026-08-07 — Stop stuck on "Cancelling…"
 
@@ -544,6 +602,8 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
 | Logging / JSONL / crash | `crates/core/src/logging.rs` |
 | CLI entry / SIGPIPE / TUI gate | `crates/cli/src/main.rs` |
 | Agent rules (build) | `AGENTS.md` |
+| CI budgets (panic / swallow / edges) | `scripts/check_*.py`, `scripts/*_budget.json`, `scripts/dependency_boundaries.json` |
+| CI workflow | `.github/workflows/ci.yml` |
 
 ## Axum: `/s/:id` vs `/s/:id.json` route conflict (2026-08-13)
 
