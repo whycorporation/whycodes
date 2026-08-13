@@ -148,6 +148,20 @@ pub struct SwarmConfig {
     /// + file claims when the project is not a git repo.
     #[serde(default = "default_true")]
     pub worktrees: bool,
+    /// `worktree` or `checkout`. When set, overrides `worktrees`.
+    #[serde(default)]
+    pub isolation: Option<String>,
+}
+
+impl SwarmConfig {
+    /// Whether to try git worktrees for this run.
+    pub fn use_worktrees(&self) -> bool {
+        match self.isolation.as_deref() {
+            Some(s) if s.eq_ignore_ascii_case("checkout") => false,
+            Some(s) if s.eq_ignore_ascii_case("worktree") => true,
+            _ => self.worktrees,
+        }
+    }
 }
 
 fn default_swarm_max_agents() -> usize {
@@ -160,6 +174,7 @@ impl Default for SwarmConfig {
             enabled: true,
             max_agents: default_swarm_max_agents(),
             worktrees: true,
+            isolation: None,
         }
     }
 }
@@ -1568,6 +1583,9 @@ impl Config {
         }
         if !other.swarm.worktrees {
             merged.swarm.worktrees = false;
+        }
+        if other.swarm.isolation.is_some() {
+            merged.swarm.isolation = other.swarm.isolation.clone();
         }
 
         if other.automation.max_background_jobs != default_max_background_jobs() {

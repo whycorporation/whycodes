@@ -64,6 +64,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "schedule", // delayed shell / prompt enqueue
     "shell",    // legacy alias of bash
     "swarm",    // parallel multi-agent + file conflict notify
+    "swarm_msg",
     "task",
     "todo", // alias of todowrite
     "todoread",

@@ -62,6 +62,7 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
         agent_label: None,
         file_index: None,
         panel: None,
+        swarm_hub: None,
     };
     agent
         .execute_with_permission(
@@ -165,6 +166,7 @@ async fn deny_still_wins_for_non_shell_tools() {
         agent_label: None,
         file_index: None,
         panel: None,
+        swarm_hub: None,
     };
     let call = whycode_core::types::ToolCall {
         id: "tc-2".to_string(),

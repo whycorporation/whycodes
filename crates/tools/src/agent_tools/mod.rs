@@ -7,6 +7,7 @@ pub mod question;
 pub mod schedule;
 pub mod skill_tool;
 pub mod swarm;
+pub mod swarm_msg;
 pub mod task;
 pub mod todo_read;
 pub mod todo_write;

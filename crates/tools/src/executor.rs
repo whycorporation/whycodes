@@ -5,8 +5,8 @@ use super::tool::{Tool, ToolContext};
 use crate::{
     apply_patch, bg, code_mode, edit, external_directory, git_blame, git_commit, git_diff, git_log,
     git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, panel, plan,
-    question, read, schedule, shell, skill_tool, swarm, task, todo_read, todo_write, tool_search,
-    truncate_tool, webfetch, websearch, worktree, write,
+    question, read, schedule, shell, skill_tool, swarm, swarm_msg, task, todo_read, todo_write,
+    tool_search, truncate_tool, webfetch, websearch, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -38,6 +38,7 @@ impl ToolExecutor {
         executor.register(Box::new(github_pr::GitHubPrTool::new()));
         executor.register(Box::new(task::TaskTool::new()));
         executor.register(Box::new(swarm::SwarmTool::new()));
+        executor.register(Box::new(swarm_msg::SwarmMsgTool::new()));
         executor.register(Box::new(bg::BgTool::new()));
         executor.register(Box::new(schedule::ScheduleTool::new()));
         executor.register(Box::new(tool_search::ToolSearchTool::new()));

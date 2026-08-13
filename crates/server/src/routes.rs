@@ -487,6 +487,26 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "text": text,
             })
         }
+        TurnEvent::SwarmMessage { from, to, text } => {
+            serde_json::json!({
+                "type": "swarm_message",
+                "from": from,
+                "to": to,
+                "text": text,
+            })
+        }
+        TurnEvent::FileStale {
+            path,
+            reader,
+            writer,
+        } => {
+            serde_json::json!({
+                "type": "file_stale",
+                "path": path,
+                "reader": reader,
+                "writer": writer,
+            })
+        }
         TurnEvent::Panel(update) => match update {
             whycode_core::PanelUpdate::Clear => {
                 serde_json::json!({"type": "panel", "action": "clear"})

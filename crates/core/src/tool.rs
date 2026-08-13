@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use std::path::Path;
 
-use crate::file_claims::{ClaimResult, FileClaimRegistry};
+use crate::file_claims::{ClaimResult, FileClaimRegistry, FileStaleEvent};
 use crate::network::NetworkPolicy;
 use crate::panel::PanelSink;
 use crate::sandbox::SandboxSettings;
+use crate::swarm_hub::SwarmHub;
 use crate::types::{PermissionSet, ToolDefinition, ToolResult};
 
 /// Context passed to tool execution
@@ -27,6 +28,8 @@ pub struct ToolContext {
     pub file_index: Option<std::sync::Arc<whycode_index::WorkspaceIndex>>,
     /// Optional sink so the `panel` tool can pin a file / diff / mermaid.
     pub panel: Option<PanelSink>,
+    /// Swarm mailbox (DM / broadcast).
+    pub swarm_hub: Option<SwarmHub>,
 }
 
 impl std::fmt::Debug for ToolContext {
@@ -41,6 +44,7 @@ impl std::fmt::Debug for ToolContext {
             .field("agent_label", &self.agent_label)
             .field("file_index", &self.file_index.as_ref().map(|_| "Some"))
             .field("panel", &self.panel.as_ref().map(|_| "Some"))
+            .field("swarm_hub", &self.swarm_hub)
             .finish()
     }
 }
@@ -57,6 +61,7 @@ impl ToolContext {
             agent_label: None,
             file_index: None,
             panel: None,
+            swarm_hub: None,
         }
     }
 
@@ -71,6 +76,7 @@ impl ToolContext {
             agent_label: None,
             file_index: None,
             panel: None,
+            swarm_hub: None,
         }
     }
 
@@ -99,6 +105,14 @@ impl ToolContext {
                 ))
             }
         }
+    }
+
+    /// After a successful read, note the path. Returns a stale-read event when
+    /// another agent wrote the file since this reader last saw it.
+    pub fn check_file_read(&self, path: &Path) -> Option<FileStaleEvent> {
+        let reg = self.file_claims.as_ref()?;
+        let id = self.agent_id.as_deref()?;
+        reg.note_read(id, path)
     }
 }
 

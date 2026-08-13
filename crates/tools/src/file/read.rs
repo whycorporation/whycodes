@@ -180,6 +180,12 @@ impl Tool for ReadTool {
                         limit
                     ));
                 }
+                if let Some(stale) = ctx.check_file_read(&full_path) {
+                    out.push_str(&format!(
+                        "\n[stale] `{}` was written by swarm agent `{}` since your last read.",
+                        shown, stale.writer_label
+                    ));
+                }
                 ToolResult {
                     tool_call_id: String::new(),
                     content: out,

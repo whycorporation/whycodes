@@ -169,7 +169,11 @@ Nothing leaves the machine. `/unshare` removes the exported files.
 
 Primary agents run the main conversation (`Ctrl+T` or `/agent`). Subagents
 are spawned by the `task` tool (or `swarm` for parallel workers in git
-worktrees) and report back.
+worktrees) and report back. Workers can `swarm_msg` each other (`to` =
+`parent` / `all` / `worker-N`). In checkout mode (`[swarm] isolation =
+"checkout"`), a `read` of a file another worker wrote is marked stale.
+Parallel TUI sessions (`Ctrl+N`) share file claims so they cannot silently
+overwrite the same path.
 
 | Agent | Mode | Role |
 |---|---|---|
@@ -194,7 +198,7 @@ model answers instead of over-eager edits. Set
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` |
 | Web | `webfetch`, `websearch` |
-| Workflow | `task`, `swarm`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel` |
+| Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel` |
 | Memory | `memory` |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search` |
 
