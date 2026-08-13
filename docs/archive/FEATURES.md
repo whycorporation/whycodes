@@ -1,4 +1,7 @@
-# Feature matrix
+# Feature matrix (archived)
+
+> Archived 2026-08-13 as a competitor snapshot. Not a living product doc.
+> Usage and capabilities: [`../guide.md`](../guide.md).
 
 Feature comparison of terminal coding agents.
 
@@ -18,9 +21,9 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 | ❌ | No / roadmap |
 | ★ | Notable strength in this area |
 
-† whycode ACP: deliberately **post-product** (`docs/status.md`, 2026-08-04).  
+† whycode ACP: deliberately **post-product** (`status.md`, 2026-08-04).  
 ‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.  
-§ whycode OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login` or in-TUI `/connect`); API-call routing live for all four (openai → Codex backend, google → Code Assist). Credential import: `whycode auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([auth.md](auth.md), [plan-oauth](plan-oauth.md)).
+§ whycode OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google` (`whycode auth login` or in-TUI `/connect`); API-call routing live for all four (openai → Codex backend, google → Code Assist). Credential import: `whycode auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([../auth.md](../auth.md), [plan-oauth](plan-oauth.md)).
 
 ---
 
@@ -214,7 +217,7 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | First-token race failover | ✅ `model_race` | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 | Semantic response cache | ✅ text-only | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
 
-Details: [plan-latency-competitors.md](plan-latency-competitors.md).
+Details: [plan-latency-competitors.md](plan-latency-competitors.md) (archived).
 
 ---
 
@@ -391,7 +394,7 @@ sandbox_fallback = "allow"           # allow | deny (when bwrap is missing)
 
 ## Sources
 
-- whycode: [README.md](../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](benchmarks.md)
+- whycode: [README.md](../../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](../benchmarks.md)
 - OpenCode: <https://opencode.ai/> · <https://github.com/anomalyco/opencode>
 - jcode: <https://github.com/1jehuang/jcode> · <https://jcode.sh>
 - Grok Build: <https://docs.x.ai/build/overview> · <https://github.com/xai-org/grok-build>

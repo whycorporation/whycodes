@@ -1,9 +1,7 @@
 # Benchmarks
 
-Living method doc for performance measurement (open residual work:
-[plan-performance.md](plan-performance.md)). Before this, whycode had no
-measurements at all — not slow ones, none — so there was no way to tell whether
-a change made things worse and no basis for any performance statement.
+How to measure whycode. Residual notes:
+[archive/plan-performance.md](archive/plan-performance.md).
 
 ## Running them
 

@@ -1,6 +1,6 @@
 # Plan — Context economy + TUI paint path
 
-**Status:** done · **Depends on:** [plan-perf-hotpath.md](plan-perf-hotpath.md) (done) · **Related:** [plan-performance.md](../plan-performance.md), [benchmarks.md](../benchmarks.md)
+**Status:** done · **Depends on:** [plan-perf-hotpath.md](plan-perf-hotpath.md) (done) · **Related:** [plan-performance.md](plan-performance.md), [../benchmarks.md](../benchmarks.md)
 
 ## Diagnosis
 
@@ -29,7 +29,7 @@ good. Remaining cost is elsewhere:
 4. [x] Dirty-flag draw loop + toast prune reports change
 5. [x] Coalesce stream text/thinking deltas per drain
 6. [x] Tests + `cargo test` / check for touched crates
-7. [x] Update [benchmarks.md](../benchmarks.md) / [status.md](../status.md); commit + push
+7. [x] Update [../benchmarks.md](../benchmarks.md) / [status.md](status.md); commit + push
 
 ## Acceptance
 

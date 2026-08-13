@@ -1,4 +1,7 @@
-# Roadmap status
+# Roadmap status (archived)
+
+> Archived 2026-08-13. Living tracker is [`../roadmap.md`](../roadmap.md).
+> Kept as the historical decision log.
 
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
@@ -23,7 +26,7 @@ Last updated: **2026-08-13** (latency P2: first-token race + semantic response c
 |---|---|---|---|
 | Performance residual | [plan-performance.md](plan-performance.md) | **mostly done** | Subagent usage fold + `bench-results.json` + CI ceilings shipped. Live provider reconcile optional/manual. |
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall shipped (`v0.1.0`). Remaining: public repo, Homebrew binary formula, Windows install smoke. |
-| OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([auth.md](auth.md)). Residual: Windows ACL on store. |
+| OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([../auth.md](../auth.md)). Residual: Windows ACL on store. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **done (P0+P1+P2)** | Cache, parallel tools, core profile, routing, doom-loop; compact + speculative `read` + warm `serve`; first-token race + text-only semantic cache. Swarm stays lightweight. |
 | System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done (A+B)** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
 

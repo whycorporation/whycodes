@@ -4,13 +4,13 @@
 anthropic, openai, github-copilot, google; API-call routing live for all
 four (openai → Codex backend Responses API, google → Code Assist endpoint);
 401 refresh+retry; `/connect` in-TUI login; credential discovery with the
-consent model below (`whycode auth import`). See [auth.md](auth.md).
+consent model below (`whycode auth import`). See [../auth.md](../auth.md).
 Residual non-blockers: Windows restrictive ACL on the token store (Unix
 `0600` is solid). · **Blocks:** nothing
 
 > The "blocked" reasoning below was resolved on 2026-08-09:
 > flows ride the public client ids of the first-party CLIs (documented in
-> [auth.md](auth.md) with the terms caveat), and discovery shipped with the
+> [../auth.md](../auth.md) with the terms caveat), and discovery shipped with the
 > consent model as the mitigation.
 
 ## Why this was blocked

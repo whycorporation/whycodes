@@ -1,11 +1,11 @@
 # Plan — FEATURES.md accuracy + discoverability
 
 **Status:** done · **Priority:** product positioning · **Depends on:** latency P0/P1 done  
-**Related:** [FEATURES.md](../FEATURES.md), [status.md](../status.md), [plan-latency-competitors.md](../plan-latency-competitors.md)
+**Related:** [FEATURES.md](FEATURES.md), [status.md](status.md), [plan-latency-competitors.md](plan-latency-competitors.md)
 
 ## Goal
 
-1. Keep [FEATURES.md](../FEATURES.md) **truthful** vs main (no stale ❌ for shipped work).  
+1. Keep [FEATURES.md](FEATURES.md) **truthful** vs main (no stale ❌ for shipped work).  
 2. Surface latency / safety knobs in TUI (`/tools`, `/info`, `/theme`) so matrix claims are **user-visible**.  
 3. Track remaining gaps that still move FEATURES cells (OAuth, memory, etc.) without re-opening dropped swarm.
 
