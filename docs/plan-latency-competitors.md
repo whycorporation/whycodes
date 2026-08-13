@@ -1,6 +1,6 @@
 # Plan — Competitive latency research & whycode roadmap
 
-**Status:** P0+P1 done · P2 partial (LLM compact quality + speculative early `read` + warm `serve` shipped) · **Priority:** P0 (core complete) · **Last review:** 2026-08-13  
+**Status:** P0+P1+P2 done · **Priority:** complete · **Last review:** 2026-08-13  
 **Related:** [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md), [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
 **Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
@@ -150,15 +150,15 @@ From open issues (latency/correctness adjacency):
 | Prompt cache system+tools | ✅ | ✅ `auto` | ⚠️ OAuth curated | ✅/implicit | ✅ Anthropic partial |
 | Cache **latest user msg** | ✅ | ✅ **auto** | ⚠️ | ⚠️ | ✅ |
 | Parallel safe tools | ✅ | ⚠️ issue #24764 | ⚠️ | ✅ | ✅ + perm queue |
-| Parallel subagents / swarm | ⚠️ teams | ⚠️ serial tasks | ✅★ swarm | ⚠️ | ❌ (dropped) |
+| Parallel subagents / swarm | ⚠️ teams | ⚠️ serial tasks | ✅★ swarm | ⚠️ | ⚠️ lightweight |
 | Shared HTTP / keep-alive | ✅ | ✅ | ✅ server | ✅ | ✅ OnceLock |
 | Non-blocking title/telemetry | ✅ | ✅ | ✅ | ✅ | ✅ async title |
 | Auto context compact | ✅ | ✅ LLM+prune | ✅ hard/soft (buggy edge) | ✅ | ✅ drop + **old-tool prune 2k** |
 | Doom-loop guard | ✅ | ✅ permission | ⚠️ | ⚠️ | ✅ 3× refuse |
 | Core / deferred tools | ✅ | ⚠️ | ⚠️ curated OAuth | — | ✅ `tool_profile=core` |
-| Repo map / memory index | ✅ | ⚠️ | ✅ memory+embed | ⚠️ | ❌ P2 |
+| Repo map / memory index | ✅ | ⚠️ | ✅ memory+embed | ⚠️ | ✅ |
 | Model routing / effort | ⚠️ | Zen models | ✅ effort keys | mini | ✅ trivial→fast |
-| Warm long-lived process | ⚠️ | ✅ server | ✅★ daemon | ⚠️ | ⚠️ catalog + pool |
+| Warm long-lived process | ⚠️ | ✅ server | ✅★ daemon | ⚠️ | ✅ `serve` |
 
 ---
 
@@ -182,6 +182,8 @@ From open issues (latency/correctness adjacency):
 | **Permission queue** | P1 | VecDeque multi-ask; Ask tools can parallelize |
 | **@file cap** | P1 | 24k chars per inlined file |
 | **prompt_cache wire** | P1 | `session.prompt_cache=none` disables markers |
+| **First-token race** | P2 | `session.model_race` + `race_after_ms`; first meaningful event wins |
+| **Semantic response cache** | P2 | exact + hashed-embed; text-only / tools-free only |
 
 ### Config knobs
 
@@ -190,6 +192,9 @@ From open issues (latency/correctness adjacency):
 tool_profile = "core"   # or "full"
 prompt_cache = "auto"   # or "none"
 model_fast = "anthropic/claude-haiku-4-5-20251001"  # optional
+model_race = "off"       # off | auto | provider/model
+race_after_ms = 800      # start partner if no first token
+response_cache = "auto"  # auto | off — text-only exact + semantic
 compaction_threshold = 150000
 ```
 
@@ -199,16 +204,14 @@ compaction_threshold = 150000
 
 ### P0 + P1 core — complete
 
-### P2 — optional product scale
+### P2 — complete
 
-1. LLM-summary compact agent — **improved** (local summary includes goals/paths; LLM uses *dropped* transcript; runs when messages were dropped, not only when still over budget)  
+1. LLM-summary compact agent — **shipped** (local summary includes goals/paths; LLM uses *dropped* transcript; runs when messages were dropped, not only when still over budget)  
 2. Speculative stream-arg early `read` — **shipped** (`crates/agent/src/speculative_read.rs`; path closes mid-stream → I/O overlaps remaining tokens)  
 3. Long-lived daemon multi-session warm — **shipped** (`whycode serve`: MCP + index + plugins at boot; in-memory sessions + SQLite; real SSE chat)  
-4. Cross-session memory ([archive/plan-memory.md](archive/plan-memory.md))  
-5. Swarm — monorepo only (phase-7 still holds)  
-6. First-token race failover / semantic response cache
-
-Remaining P2 items are product-scale (semantic cache, swarm productization), not TTFT core.
+4. Cross-session memory — **shipped** ([archive/plan-memory.md](archive/plan-memory.md))  
+5. Swarm — **shipped lightweight** (worktrees + 3-way merge + claims). Full product swarm stays out of the latency plan.  
+6. First-token race failover / semantic response cache — **shipped** (`llm/race.rs`, `llm/response_cache.rs`; `session.model_race` / `response_cache`)
 
 ---
 
@@ -243,7 +246,7 @@ Remaining P2 items are product-scale (semantic cache, swarm productization), not
 | 2026-08-05 | **Revise plan:** deep OpenCode (`cache-policy`, doom_loop, compaction) + jcode (daemon, swarm, memory, agentgrep, compaction bugs). Mark auto-compact **shipped**. Elevate **latest-user cache** + doom-loop + core tools to P0. Swarm stays non-P0. |
 | 2026-08-05 | **Implement P0.1–P0.4:** OpenCode cache policy, doom-loop, core tools default, JSONL latency metrics. |
 | 2026-08-05 | **Implement P1:** tool prune 2k, model routing, perm queue, @file cap, prompt_cache wire. |
-| TBD | LLM-summary compact only if prune+drop insufficient in production metrics. |
+| 2026-08-13 | **P2 done:** first-token race (`model_race` / `race_after_ms`) + process-local exact/semantic text cache (`response_cache`). Memory + lightweight swarm already shipped; not re-opened. |
 
 ---
 

@@ -869,6 +869,16 @@ pub struct SessionConfig {
     /// Empty = auto-pick small sibling of the session model (haiku/mini/flash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_fast: Option<String>,
+    /// First-token race partner: `off` (default), `auto` (small sibling), or
+    /// `provider/model`. When set, a slow primary TTFT starts the partner.
+    #[serde(default = "default_model_race")]
+    pub model_race: String,
+    /// How long to wait for the primary first token before opening `model_race`.
+    #[serde(default = "default_race_after_ms")]
+    pub race_after_ms: u64,
+    /// Process-local text-only response cache: `auto` (default) or `off`.
+    #[serde(default = "default_response_cache")]
+    pub response_cache: String,
     /// Heuristic intent posture for build turns: `auto` (default), `off`, or `always`.
     ///
     /// When enabled, high-confidence question/plan signals inject an ephemeral
@@ -894,6 +904,9 @@ impl Default for SessionConfig {
             tool_profile: default_tool_profile(),
             prompt_cache: default_prompt_cache(),
             model_fast: None,
+            model_race: default_model_race(),
+            race_after_ms: default_race_after_ms(),
+            response_cache: default_response_cache(),
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
         }
@@ -909,6 +922,18 @@ fn default_tool_profile() -> String {
 }
 
 fn default_prompt_cache() -> String {
+    "auto".into()
+}
+
+fn default_model_race() -> String {
+    "off".into()
+}
+
+fn default_race_after_ms() -> u64 {
+    800
+}
+
+fn default_response_cache() -> String {
     "auto".into()
 }
 
@@ -1346,6 +1371,15 @@ impl Config {
         }
         if other.session.model_fast.is_some() {
             merged.session.model_fast = other.session.model_fast.clone();
+        }
+        if other.session.model_race != default_model_race() {
+            merged.session.model_race = other.session.model_race.clone();
+        }
+        if other.session.race_after_ms != default_race_after_ms() {
+            merged.session.race_after_ms = other.session.race_after_ms;
+        }
+        if other.session.response_cache != default_response_cache() {
+            merged.session.response_cache = other.session.response_cache.clone();
         }
         if other.session.intent_guidance != default_intent_guidance() {
             merged.session.intent_guidance = other.session.intent_guidance.clone();
@@ -1860,6 +1894,22 @@ impl Config {
                 "session.max_context_tokens is set to 0. This will disable context.".to_string(),
             );
         }
+        if self.session.race_after_ms > 30_000 {
+            issues.push(format!(
+                "session.race_after_ms is {} (>30s). First-token race will wait a long time.",
+                self.session.race_after_ms
+            ));
+        }
+        let rc = self.session.response_cache.trim().to_ascii_lowercase();
+        if !matches!(
+            rc.as_str(),
+            "auto" | "on" | "true" | "1" | "off" | "false" | "0" | "none"
+        ) {
+            issues.push(format!(
+                "session.response_cache is '{}'; expected auto or off.",
+                self.session.response_cache
+            ));
+        }
 
         // Check agents
         if self.agents.is_empty() {
@@ -2068,6 +2118,9 @@ mod tests {
         assert!(cfg.providers.is_empty());
         assert!(cfg.models.is_empty());
         assert_eq!(cfg.session.intent_guidance, "auto");
+        assert_eq!(cfg.session.model_race, "off");
+        assert_eq!(cfg.session.race_after_ms, 800);
+        assert_eq!(cfg.session.response_cache, "auto");
 
         // Primary: build / plan / ask; subagents: general / explore / scout
         let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();

@@ -16,7 +16,8 @@ tool use — either in a full-screen TUI or as a one-shot CLI invocation.
 - Remembers project knowledge across sessions — auto-maintained `MEMORY.md`,
   semantic fact recall and a lightweight code index; `--no-memory` opts out.
 - Latency-focused agent loop: core tool profile, Anthropic prompt cache,
-  parallel safe tools, trivial-chat fast model route, doom-loop guard — see
+  parallel safe tools, trivial-chat fast model route, first-token race,
+  text-only response cache, doom-loop guard — see
   [docs/FEATURES.md](docs/FEATURES.md) §10 and
   [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md).
 
@@ -687,7 +688,7 @@ git config blame.ignoreRevsFile .git-blame-ignore-revs
 | [docs/plan-distribution.md](docs/plan-distribution.md) | Implemented; residual: public repo, Homebrew binary formula, Windows install smoke |
 | [docs/plan-oauth.md](docs/plan-oauth.md) | **Done / shipped** — [docs/auth.md](docs/auth.md) |
 | [docs/plan-performance.md](docs/plan-performance.md) | Mostly done; live provider reconcile optional/manual |
-| [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | P0+P1 done; P2 optional |
+| [docs/plan-latency-competitors.md](docs/plan-latency-competitors.md) | **P0+P1+P2 done** |
 | [docs/plan-optimize-2026-08.md](docs/plan-optimize-2026-08.md) | **Session A+B done** |
 
 Living tracker: [docs/status.md](docs/status.md).

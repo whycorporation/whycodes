@@ -293,9 +293,9 @@ fn collect_paths_from_message(m: &Message, paths: &mut Vec<String>, max: usize) 
             for b in blocks {
                 match b {
                     ContentBlock::Text { text }
-                    | ContentBlock::ToolResult {
-                        content: text, ..
-                    } => push_paths_from_text(text, paths, max),
+                    | ContentBlock::ToolResult { content: text, .. } => {
+                        push_paths_from_text(text, paths, max)
+                    }
                     ContentBlock::ToolUse { input, .. } => {
                         if let Some(p) = input.get("path").and_then(|v| v.as_str()) {
                             push_path(p, paths, max);
@@ -957,8 +957,7 @@ impl Session {
         }
 
         let trimmed = &self.messages[..start];
-        let dropped_transcript =
-            messages_transcript(trimmed, DROPPED_TRANSCRIPT_MAX_CHARS);
+        let dropped_transcript = messages_transcript(trimmed, DROPPED_TRANSCRIPT_MAX_CHARS);
         let summary = summarize_trimmed(trimmed);
         let mut new_messages = Vec::with_capacity(1 + self.messages.len() - start);
         new_messages.push(Message {

@@ -315,6 +315,19 @@ With `position = view_start = total - height` that never reaches the track end.
 
 ---
 
+### 2026-08-13 — First-token race + semantic response cache (P2)
+
+**What:** Close latency P2 without double-billing the default path.
+
+| Piece | Behavior |
+|-------|----------|
+| `session.model_race` | `off` (default) / `auto` (small sibling) / `provider/model`. Primary opens first; partner starts only after `race_after_ms` (800) with no text/thinking/tool token. First meaningful event wins; loser stream is dropped. |
+| `session.response_cache` | `auto` (default). Process-local exact hash + hashed n-gram embed. **Tools-free requests only** (title, compact, trivial chat). Different `system` cannot semantic-hit. |
+
+**Prevention:** Never cache a tool-using turn. Never start the race partner when primary already matches the partner model. Do not default `model_race` to `auto` (surprise haiku answers + extra prefill).
+
+---
+
 ### 2026-08-06 — Answer on screen but "generating" keeps spinning (memory retain)
 
 **Symptom:** Final assistant text is fully streamed; status strip still shows `generating Xs` for ~5–12s more. Logs: `turn.done` then silence until `auto-retained memories`.
