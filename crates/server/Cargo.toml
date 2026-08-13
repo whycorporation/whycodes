@@ -15,7 +15,12 @@ whycode-agent = { path = "../agent" }
 whycode-session = { path = "../session" }
 whycode-tools = { path = "../tools" }
 whycode-llm = { path = "../llm" }
+whycode-storage = { path = "../storage" }
+whycode-auth = { path = "../auth" }
+whycode-index = { path = "../index" }
 tower-http = { version = "0.5", features = ["cors"] }
 tracing.workspace = true
 anyhow.workspace = true
 futures.workspace = true
+async-stream.workspace = true
+chrono.workspace = true

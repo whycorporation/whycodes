@@ -531,3 +531,15 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
 | Logging / JSONL / crash | `crates/core/src/logging.rs` |
 | CLI entry / SIGPIPE / TUI gate | `crates/cli/src/main.rs` |
 | Agent rules (build) | `AGENTS.md` |
+
+## Axum: `/s/:id` vs `/s/:id.json` route conflict (2026-08-13)
+
+**Symptom:** `whycode serve` panics at router build:
+`Invalid route "/s/:id.json": insertion failed due to conflict with previously registered route: /s/:id`.
+
+**Cause:** axum/matchit treats `:id` as capturing the rest of the segment; a second
+static-suffix route on the same path pattern is rejected.
+
+**Fix:** one route `/s/:id` and dispatch on whether `id` ends with `.json` / `.md`
+(`share_dispatch` in `crates/server/src/routes.rs`).
+

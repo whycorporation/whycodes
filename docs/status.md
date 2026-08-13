@@ -3,7 +3,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-13** (P2 latency: richer compact + speculative early `read`; OAuth + optimize + ceilings already closed)
+Last updated: **2026-08-13** (warm multi-session `whycode serve`; prior: richer compact + speculative early `read`)
 
 ## Legend
 
@@ -24,7 +24,7 @@ Last updated: **2026-08-13** (P2 latency: richer compact + speculative early `re
 | Performance residual | [plan-performance.md](plan-performance.md) | **mostly done** | Subagent usage fold + `bench-results.json` + CI ceilings shipped. Live provider reconcile optional/manual. |
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall shipped (`v0.1.0`). Remaining: public repo, Homebrew binary formula, Windows install smoke. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([auth.md](auth.md)). Residual: Windows ACL on store. |
-| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **P0+P1 done · P2 partial** | Cache, parallel tools, core profile, routing, doom-loop; LLM compact quality + speculative early `read` shipped; daemon/swarm/semantic-cache still optional. |
+| Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **P0+P1 done · P2 partial** | Cache, parallel tools, core profile, routing, doom-loop; LLM compact quality + speculative early `read` + **warm multi-session `serve`** shipped; semantic-cache / swarm product still optional. |
 | System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done (A+B)** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
 
 ## Shipped (archived)

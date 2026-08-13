@@ -1,6 +1,6 @@
 # Plan — Competitive latency research & whycode roadmap
 
-**Status:** P0+P1 done · P2 partial (LLM compact quality + speculative early `read` shipped) · **Priority:** P0 (core complete) · **Last review:** 2026-08-13  
+**Status:** P0+P1 done · P2 partial (LLM compact quality + speculative early `read` + warm `serve` shipped) · **Priority:** P0 (core complete) · **Last review:** 2026-08-13  
 **Related:** [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md), [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
 **Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
@@ -203,12 +203,12 @@ compaction_threshold = 150000
 
 1. LLM-summary compact agent — **improved** (local summary includes goals/paths; LLM uses *dropped* transcript; runs when messages were dropped, not only when still over budget)  
 2. Speculative stream-arg early `read` — **shipped** (`crates/agent/src/speculative_read.rs`; path closes mid-stream → I/O overlaps remaining tokens)  
-3. Long-lived daemon multi-session warm  
+3. Long-lived daemon multi-session warm — **shipped** (`whycode serve`: MCP + index + plugins at boot; in-memory sessions + SQLite; real SSE chat)  
 4. Cross-session memory ([archive/plan-memory.md](archive/plan-memory.md))  
 5. Swarm — monorepo only (phase-7 still holds)  
 6. First-token race failover / semantic response cache
 
-Remaining P2 items are product-scale (daemon, swarm, semantic cache), not TTFT core.
+Remaining P2 items are product-scale (semantic cache, swarm productization), not TTFT core.
 
 ---
 

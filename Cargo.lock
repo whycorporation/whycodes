@@ -4272,7 +4272,9 @@ name = "whycode-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-stream",
  "axum",
+ "chrono",
  "futures",
  "serde",
  "serde_json",
@@ -4280,10 +4282,13 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "whycode-agent",
+ "whycode-auth",
  "whycode-config",
  "whycode-core",
+ "whycode-index",
  "whycode-llm",
  "whycode-session",
+ "whycode-storage",
  "whycode-tools",
 ]
 

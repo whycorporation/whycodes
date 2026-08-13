@@ -1,14 +1,20 @@
+//! HTTP handlers for the warm local server.
+
 use axum::{
     Json,
     extract::{Path, State},
     http::{StatusCode, header},
-    response::sse::{Event, Sse},
+    response::sse::{Event, KeepAlive, Sse},
     response::{Html, IntoResponse, Response},
 };
 use futures::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
 use std::path::PathBuf;
+use std::time::Duration;
+use std::sync::Arc;
+use whycode_agent::events::TurnEvent;
+use whycode_agent::Agent;
 use whycode_session::session::Session;
 
 use crate::AppState;
@@ -26,7 +32,6 @@ fn share_search_dirs() -> Vec<PathBuf> {
 }
 
 fn find_share_file(id: &str, ext: &str) -> Option<PathBuf> {
-    // Strip accidental extension from id
     let id = id.trim_end_matches(".json").trim_end_matches(".md");
     for dir in share_search_dirs() {
         let p = dir.join(format!("{id}.{ext}"));
@@ -37,45 +42,225 @@ fn find_share_file(id: &str, ext: &str) -> Option<PathBuf> {
     None
 }
 
-pub async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({"status": "ok", "version": env!("CARGO_PKG_VERSION")}))
+fn system_prompt_for(agent: &Agent, project: &std::path::Path) -> String {
+    Agent::with_agents_md(
+        &Agent::with_runtime_context(&agent.system_prompt()),
+        project,
+    )
 }
 
-pub async fn list_tools(State(_state): State<AppState>) -> Json<serde_json::Value> {
+/// Env → config api_key → OAuth store (mirrors CLI `get_api_key`).
+async fn resolve_api_key(provider: &str, config: &whycode_config::Config) -> Option<String> {
+    let env_var = format!("{}_API_KEY", provider.to_uppercase());
+    if let Ok(key) = std::env::var(&env_var)
+        && !key.is_empty()
+    {
+        whycode_llm::oauth_refresh::unregister(provider);
+        return Some(key);
+    }
+    if let Some(pc) = config.get_provider(provider)
+        && let Some(key) = &pc.api_key
+        && !key.is_empty()
+    {
+        whycode_llm::oauth_refresh::unregister(provider);
+        return Some(key.clone());
+    }
+    if provider == "openai"
+        && let Ok(key) = std::env::var("OPENAI_API_KEY")
+        && !key.is_empty()
+    {
+        whycode_llm::oauth_refresh::unregister(provider);
+        return Some(key);
+    }
+    if whycode_auth::providers::supports_oauth(provider)
+        && let Ok(data_dir) = whycode_config::Config::data_dir()
+        && let Some(token) = whycode_auth::providers::access_token(provider, &data_dir).await
+    {
+        whycode_llm::oauth_refresh::register(provider, data_dir);
+        return Some(token);
+    }
+    None
+}
+
+fn default_provider_model(config: &whycode_config::Config) -> (String, String) {
+    if let Some(dm) = &config.default_model {
+        return (dm.provider_id.clone(), dm.model_id.clone());
+    }
+    // First configured provider + a placeholder model id.
+    if let Some((name, _)) = config.providers.iter().next() {
+        return (name.clone(), "default".into());
+    }
+    ("anthropic".into(), "claude-sonnet-4-20250514".into())
+}
+
+pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let live = state.list_session_ids().len();
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "warm": {
+            "mcp": state.mcp_warm,
+            "index": state.index_warm,
+            "sessions_in_memory": live,
+        },
+        "project": state.project_dir.display().to_string(),
+        "uptime_secs": state.started_at.elapsed().as_secs(),
+        "max_turns": state.max_turns,
+    }))
+}
+
+pub async fn list_tools(State(state): State<AppState>) -> Json<serde_json::Value> {
+    // Prefer the warm agent's profile-aware catalog (core tools + activated).
     let tools: Vec<_> = whycode_tools::executor::ToolExecutor::new()
-        .get_definitions(&whycode_core::types::PermissionSet::default())
+        .get_definitions_profile(
+            &state.agent.info.permission,
+            whycode_tools::ToolProfile::Core,
+        )
         .iter()
-        .map(|t| serde_json::json!({"name": t.name, "description": t.description}))
+        .map(|t| {
+            serde_json::json!({
+                "name": t.name,
+                "description": t.description,
+            })
+        })
         .collect();
-    Json(serde_json::json!({"tools": tools}))
+    Json(serde_json::json!({
+        "tools": tools,
+        "profile": "core",
+        "note": "Catalog from warm process; MCP tools may be attached on the agent.",
+    }))
 }
 
 pub async fn list_models(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let models: Vec<_> = state
+    let mut models: Vec<_> = state
         .config
         .models
         .values()
-        .map(|m| serde_json::json!({"id": m.model_id, "provider": m.provider_id}))
+        .map(|m| {
+            serde_json::json!({
+                "id": m.model_id,
+                "provider": m.provider_id,
+            })
+        })
         .collect();
-    Json(serde_json::json!({"models": models}))
+    if models.is_empty()
+        && let Some(dm) = &state.config.default_model
+    {
+        models.push(serde_json::json!({
+            "id": dm.model_id,
+            "provider": dm.provider_id,
+            "default": true,
+        }));
+    }
+    let providers: Vec<_> = state
+        .config
+        .providers
+        .keys()
+        .map(|k| serde_json::json!({ "id": k }))
+        .collect();
+    Json(serde_json::json!({ "models": models, "providers": providers }))
 }
 
-pub async fn list_sessions(State(_state): State<AppState>) -> Json<serde_json::Value> {
-    Json(serde_json::json!({"sessions": []}))
+pub async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let mut sessions = Vec::new();
+
+    // Warm in-memory first.
+    let ids = state.list_session_ids();
+    for id in &ids {
+        if let Some(handle) = state.get_session(id) {
+            let s = handle.lock().await;
+            sessions.push(serde_json::json!({
+                "id": s.id,
+                "title": s.title,
+                "project": s.project_path.display().to_string(),
+                "messages": s.messages.len(),
+                "updated_at": s.updated_at.to_rfc3339(),
+                "source": "memory",
+            }));
+        }
+    }
+
+    // Merge SQLite rows not already live (same DB as TUI).
+    if let Some(db) = AppState::open_db()
+        && let Ok(rows) = db.list_sessions()
+    {
+        for row in rows {
+            if ids.iter().any(|i| i == &row.id) {
+                continue;
+            }
+            sessions.push(serde_json::json!({
+                "id": row.id,
+                "title": row.title,
+                "project": row.project_path,
+                "updated_at": row.updated_at,
+                "source": "db",
+            }));
+        }
+    }
+
+    Json(serde_json::json!({ "sessions": sessions }))
 }
 
 #[derive(Deserialize)]
 pub struct CreateSessionRequest {
     pub project: Option<String>,
+    /// When true (default), persist to SQLite immediately.
+    pub persist: Option<bool>,
 }
 
 pub async fn create_session(
     State(state): State<AppState>,
     Json(req): Json<CreateSessionRequest>,
 ) -> Json<serde_json::Value> {
-    let project = std::path::PathBuf::from(req.project.unwrap_or_else(|| ".".to_string()));
-    let session = Session::new(project, state.agent.system_prompt());
-    Json(serde_json::json!({"session_id": session.id}))
+    let project = req
+        .project
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.project_dir.clone());
+    let prompt = system_prompt_for(&state.agent, &project);
+    let session = Session::new(project, prompt);
+    let id = session.id.clone();
+    let title = session.title.clone();
+    let persist = req.persist.unwrap_or(true);
+    if persist
+        && let Some(db) = AppState::open_db()
+        && let Err(e) = session.save_to_db(&db)
+    {
+        tracing::warn!(error = %e, "serve: failed to persist new session");
+    }
+    state.insert_session(session);
+    Json(serde_json::json!({
+        "session_id": id,
+        "title": title,
+        "persisted": persist,
+    }))
+}
+
+pub async fn get_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let s = handle.lock().await;
+    Ok(Json(serde_json::json!({
+        "id": s.id,
+        "title": s.title,
+        "project": s.project_path.display().to_string(),
+        "messages": s.messages.len(),
+        "token_estimate": s.token_count(),
+        "updated_at": s.updated_at.to_rfc3339(),
+    })))
+}
+
+/// Load from memory, else SQLite into the warm map.
+async fn load_or_get_session(state: &AppState, id: &str) -> Option<crate::SessionHandle> {
+    if let Some(h) = state.get_session(id) {
+        return Some(h);
+    }
+    let db = AppState::open_db()?;
+    let session = Session::load_from_db(&db, id).ok().flatten()?;
+    Some(state.insert_session(session))
 }
 
 #[derive(Deserialize)]
@@ -84,21 +269,228 @@ pub struct ChatRequest {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub api_key: Option<String>,
+    pub max_turns: Option<usize>,
 }
 
 pub async fn chat(
-    State(_state): State<AppState>,
-    Path(_session_id): Path<String>,
-    Json(_req): Json<ChatRequest>,
-) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let stream = futures::stream::once(async {
-        Ok(Event::default()
-            .data(serde_json::json!({"type": "text_delta", "text": "Server mode: send a message to get started"}).to_string()))
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<ChatRequest>,
+) -> Result<
+    Sse<std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>>,
+    StatusCode,
+> {
+    if req.message.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let handle = load_or_get_session(&state, &session_id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (def_provider, def_model) = default_provider_model(&state.config);
+    let provider = req.provider.unwrap_or(def_provider);
+    let model = req.model.unwrap_or(def_model);
+    let api_key = match req.api_key.filter(|k| !k.is_empty()) {
+        Some(k) => k,
+        None => resolve_api_key(&provider, &state.config)
+            .await
+            .unwrap_or_default(),
+    };
+
+    let keep = KeepAlive::new()
+        .interval(Duration::from_secs(15))
+        .text("ping");
+
+    if api_key.is_empty() {
+        let msg = format!(
+            "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycode auth login`.",
+            provider.to_uppercase()
+        );
+        let stream = async_stream::stream! {
+            let payload = serde_json::json!({
+                "type": "error",
+                "message": msg,
+            });
+            yield Ok::<_, Infallible>(Event::default().data(payload.to_string()));
+            yield Ok(Event::default().data(
+                serde_json::json!({"type": "done"}).to_string()
+            ));
+        };
+        return Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep));
+    }
+
+    let max_turns = req.max_turns.unwrap_or(state.max_turns).max(1);
+    let agent = Arc::clone(&state.agent);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+
+    // Run the agent turn on a task so the SSE stream can forward events.
+    let chat_task = tokio::spawn(async move {
+        let mut session = handle.lock().await;
+        session.add_user_message(&req.message);
+        let result = agent
+            .run_turn_with_events(
+                &mut session,
+                &provider,
+                &model,
+                &api_key,
+                max_turns,
+                Some(tx.clone()),
+                None,
+            )
+            .await;
+        // Persist after the turn (best-effort).
+        if let Some(db) = AppState::open_db()
+            && let Err(e) = session.save_to_db(&db)
+        {
+            tracing::warn!(error = %e, "serve: failed to save session after chat");
+        }
+        match result {
+            Ok(text) => {
+                let _ = tx.send(TurnEvent::Status(format!("done:{}chars", text.len())));
+                let _ = tx.send(TurnEvent::Status("__whycode_done__".into()));
+            }
+            Err(e) => {
+                let _ = tx.send(TurnEvent::Status(format!("error:{e}")));
+                let _ = tx.send(TurnEvent::Status("__whycode_done__".into()));
+            }
+        }
     });
-    Sse::new(stream)
+
+    let stream = async_stream::stream! {
+        while let Some(ev) = rx.recv().await {
+            if let TurnEvent::Status(ref s) = ev
+                && s == "__whycode_done__"
+            {
+                break;
+            }
+            if let Some(payload) = turn_event_json(&ev) {
+                yield Ok::<_, Infallible>(Event::default().data(payload.to_string()));
+            }
+        }
+        // Ensure the worker finishes (avoids detach on client drop mid-flight).
+        let _ = chat_task.await;
+        yield Ok(Event::default().data(
+            serde_json::json!({"type": "done"}).to_string()
+        ));
+    };
+
+    Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep))
 }
 
-/// List locally shared sessions.
+fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
+    Some(match ev {
+        TurnEvent::TextDelta(text) => {
+            serde_json::json!({"type": "text_delta", "text": text})
+        }
+        TurnEvent::ThinkingDelta(text) => {
+            serde_json::json!({"type": "thinking_delta", "text": text})
+        }
+        TurnEvent::ToolStart { id, name, input } => {
+            serde_json::json!({
+                "type": "tool_start",
+                "id": id,
+                "name": name,
+                "input": input,
+            })
+        }
+        TurnEvent::ToolEnd {
+            id,
+            content,
+            is_error,
+        } => {
+            serde_json::json!({
+                "type": "tool_end",
+                "id": id,
+                "content": content,
+                "is_error": is_error,
+            })
+        }
+        TurnEvent::Usage(u) => {
+            serde_json::json!({
+                "type": "usage",
+                "input_tokens": u.input_tokens,
+                "output_tokens": u.output_tokens,
+                "cache_read_input_tokens": u.cache_read_input_tokens,
+                "cache_creation_input_tokens": u.cache_creation_input_tokens,
+            })
+        }
+        TurnEvent::Status(s) if s.starts_with("done:") || s.starts_with("error:") => {
+            if let Some(msg) = s.strip_prefix("error:") {
+                serde_json::json!({"type": "error", "message": msg})
+            } else {
+                return None;
+            }
+        }
+        TurnEvent::Status(s) => {
+            serde_json::json!({"type": "status", "message": s})
+        }
+        TurnEvent::Cancelled => {
+            serde_json::json!({"type": "cancelled"})
+        }
+        TurnEvent::Intent {
+            kind,
+            confidence,
+            badge,
+            notice_kind,
+            notice,
+        } => {
+            serde_json::json!({
+                "type": "intent",
+                "kind": kind,
+                "confidence": confidence,
+                "badge": badge,
+                "notice_kind": notice_kind,
+                "notice": notice,
+            })
+        }
+        TurnEvent::FileConflict {
+            path,
+            claimant,
+            owner,
+        } => {
+            serde_json::json!({
+                "type": "file_conflict",
+                "path": path,
+                "claimant": claimant,
+                "owner": owner,
+            })
+        }
+        TurnEvent::SwarmStatus {
+            active,
+            total,
+            message,
+        } => {
+            serde_json::json!({
+                "type": "swarm_status",
+                "active": active,
+                "total": total,
+                "message": message,
+            })
+        }
+        TurnEvent::Background {
+            id,
+            status,
+            summary,
+        } => {
+            serde_json::json!({
+                "type": "background",
+                "id": id,
+                "status": status,
+                "summary": summary,
+            })
+        }
+        TurnEvent::EnqueuePrompt { text } => {
+            serde_json::json!({
+                "type": "enqueue_prompt",
+                "text": text,
+            })
+        }
+    })
+}
+
+// ── share routes (unchanged behaviour) ──────────────────────────────────────
+
 pub async fn list_shares() -> Json<serde_json::Value> {
     let mut shares = Vec::new();
     for dir in share_search_dirs() {
@@ -122,7 +514,17 @@ pub async fn list_shares() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "shares": shares }))
 }
 
-/// Human-readable HTML view of a shared session.
+/// Dispatch share by extension embedded in `:id` (`uuid`, `uuid.json`, `uuid.md`).
+pub async fn share_dispatch(Path(id): Path<String>) -> Response {
+    if id.ends_with(".json") {
+        return share_json(Path(id)).await;
+    }
+    if id.ends_with(".md") {
+        return share_markdown(Path(id)).await;
+    }
+    share_view(Path(id)).await
+}
+
 pub async fn share_view(Path(id): Path<String>) -> Response {
     let id = id
         .trim_end_matches(".json")
@@ -130,51 +532,35 @@ pub async fn share_view(Path(id): Path<String>) -> Response {
         .to_string();
     let md = match find_share_file(&id, "md") {
         Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "(empty)".into()),
-        None => {
-            // fall back to JSON pretty as text
-            match find_share_file(&id, "json") {
-                Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "Share not found".into()),
-                None => {
-                    return (
-                        StatusCode::NOT_FOUND,
-                        Html(format!("<h1>Share not found</h1><p>id={id}</p>")),
-                    )
-                        .into_response();
-                }
+        None => match find_share_file(&id, "json") {
+            Some(p) => std::fs::read_to_string(p).unwrap_or_else(|_| "Share not found".into()),
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Html(format!("<h1>Share not found</h1><p>id={id}</p>")),
+                )
+                    .into_response();
             }
-        }
+        },
     };
-
     let escaped = html_escape(&md);
     let html = format!(
         r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Whycode share · {id}</title>
+<html><head><meta charset="utf-8"><title>Share {id}</title>
 <style>
-  :root {{ color-scheme: dark light; }}
-  body {{ font-family: ui-sans-serif, system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; line-height: 1.55; }}
-  pre {{ white-space: pre-wrap; word-break: break-word; background: #111; color: #e8e8e8; padding: 1.25rem; border-radius: 8px; overflow-x: auto; }}
-  a {{ color: #6cb6ff; }}
-  header {{ margin-bottom: 1rem; opacity: 0.85; font-size: 0.9rem; }}
-</style>
-</head>
+body {{ font-family: system-ui, sans-serif; max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }}
+pre {{ white-space: pre-wrap; background: #f6f8fa; padding: 1rem; border-radius: 6px; }}
+a {{ color: #0969da; }}
+</style></head>
 <body>
-<header>
-  <strong>Whycode share</strong> · <code>{id}</code>
-  · <a href="/s/{id}.md">markdown</a>
-  · <a href="/s/{id}.json">json</a>
-</header>
+<p><a href="/s/{id}.md">markdown</a> · <a href="/s/{id}.json">json</a></p>
 <pre>{escaped}</pre>
-</body>
-</html>"#
+</body></html>"#
     );
     Html(html).into_response()
 }
 
-pub async fn share_json(Path(id): Path<String>) -> Response {
+async fn share_json(Path(id): Path<String>) -> Response {
     let id = id.trim_end_matches(".json").to_string();
     match find_share_file(&id, "json") {
         Some(p) => match std::fs::read_to_string(p) {
@@ -185,11 +571,11 @@ pub async fn share_json(Path(id): Path<String>) -> Response {
                 .into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
-        None => (StatusCode::NOT_FOUND, "share not found").into_response(),
+        None => (StatusCode::NOT_FOUND, "Share not found").into_response(),
     }
 }
 
-pub async fn share_markdown(Path(id): Path<String>) -> Response {
+async fn share_markdown(Path(id): Path<String>) -> Response {
     let id = id.trim_end_matches(".md").to_string();
     match find_share_file(&id, "md") {
         Some(p) => match std::fs::read_to_string(p) {
@@ -200,20 +586,7 @@ pub async fn share_markdown(Path(id): Path<String>) -> Response {
                 .into_response(),
             Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
         },
-        None => {
-            // synthesize from json conversation if md missing
-            match find_share_file(&id, "json") {
-                Some(p) => match std::fs::read_to_string(p) {
-                    Ok(body) => (
-                        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
-                        body,
-                    )
-                        .into_response(),
-                    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-                },
-                None => (StatusCode::NOT_FOUND, "share not found").into_response(),
-            }
-        }
+        None => (StatusCode::NOT_FOUND, "Share not found").into_response(),
     }
 }
 
@@ -222,3 +595,5 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
+
+
