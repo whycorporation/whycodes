@@ -6,7 +6,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-14** (surface cycle archived; living tracker is roadmap.md)
+Last updated: **2026-08-14** (plugins depth shipped; living tracker is roadmap.md)
 
 ## Legend
 
@@ -46,6 +46,7 @@ Last updated: **2026-08-14** (surface cycle archived; living tracker is roadmap.
 | Parallel multi-session | [archive/plan-parallel-multi-session.md](archive/plan-parallel-multi-session.md) | shipped S1–S6 — dashboard (Ctrl+O), Ctrl+N, Ctrl+Tab, per-runtime DB |
 | Semantic memory | [archive/plan-memory.md](archive/plan-memory.md) | shipped v1+v2 — retain, sync, code RAG, subagent banks, optional ONNX |
 | whycode-shaped surface | [archive/plan-surface-2026-08.md](archive/plan-surface-2026-08.md) | shipped 2026-08-14 — bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser |
+| Plugins depth | [archive/plan-plugins-depth.md](archive/plan-plugins-depth.md) | shipped 2026-08-14 — `plugin.json` discovery, last-wins merge, `whycode plugins` |
 
 Index of archives: [archive/README.md](archive/README.md).
 
@@ -60,9 +61,8 @@ Index of archives: [archive/README.md](archive/README.md).
 
 Priority (owner: **public install / repo visibility last**):
 
-1. **Plugins depth** — wire `PluginManager` / `plugin.json` discovery. `plugins.toml` → `plugin_*` already ships. Marketplace out of scope.
-2. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
-3. **ACP / web** — deferred post product launch.
+1. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
+2. **ACP / web** — deferred post product launch.
 
 Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-08.md](plan-surface-2026-08.md).
 
@@ -102,6 +102,7 @@ Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-
 | 2026-08-13 | Latency P2 closed | First-token race (`model_race`) + process-local exact/semantic text cache (`response_cache`). |
 | 2026-08-14 | Surface cycle closed | Bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser. Archived as [plan-surface-2026-08.md](plan-surface-2026-08.md). |
 | 2026-08-14 | Token reconcile closed | `Usage::absorb_stream` + `WHYCODE_USAGE_DUMP` + `scripts/reconcile_token_usage.py`. Anthropic `message_delta.usage` sibling path. |
+| 2026-08-14 | Plugins depth closed | `plugin.json` / `manifest.json` discovery into `plugin_*`; toml+json last-wins; marketplace still out. |
 
 ## Verification commands
 

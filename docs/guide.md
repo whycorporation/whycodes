@@ -21,7 +21,7 @@ Commands:
   provider  Provider management (add, list, remove, default)
   model     Model management
   agent     Agent configuration
-  plugins   List shell plugins from plugins.toml (global + project)
+  plugins   List shell plugins (plugins.toml + plugin.json)
   config    Configuration management
   session   Session management (list, view, delete, rename, share)
   memory    Cross-session memory (list, search, add, delete, clear, path, …)
@@ -214,7 +214,7 @@ model answers instead of over-eager edits. Set
 | Web | `webfetch`, `websearch`, `browser` |
 | Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel` |
 | Memory | `memory` |
-| Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search` |
+| Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search`, `plugin_*` |
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
@@ -475,6 +475,41 @@ Focus on $ARGUMENTS.
 `/test unit` sends the body with `$ARGUMENTS` replaced by `unit`.
 `$1`, `$2`, … are also expanded.
 
+### Shell plugins
+
+External commands register as `plugin_<name>` (full profile or
+`tool_search`). Two layouts, merged last-wins by tool name:
+
+**TOML** — `~/.config/com.whycorporation.whycode/plugins.toml` or
+`.whycode/plugins.toml`:
+
+```toml
+[[plugins]]
+name = "hello"
+command = "echo hello $PLUGIN_ARG_INPUT"
+description = "Demo plugin"
+```
+
+**Directory** — `$CONFIG/plugins/<id>/plugin.json` or
+`.whycode/plugins/<id>/plugin.json` (`manifest.json` is also accepted):
+
+```json
+{
+  "name": "hello",
+  "description": "Demo plugin",
+  "command": "./run.sh"
+}
+```
+
+Relative commands resolve against the plugin directory; the child starts
+there. If `command` is omitted, `run` / `run.sh` / `plugin.sh` is used
+when present. A `tools` array exposes several commands (`plugin_<name>_<tool>`
+when there is more than one). `whycode plugins` lists the merged set.
+
+Args become `PLUGIN_ARG_<KEY>` environment variables. `PLUGIN_WORKSPACE` is
+the session cwd. Config `[hooks]` stay the hook path — `hooks` in
+`plugin.json` is reserved, not loaded.
+
 ### Interoperability
 
 | Convention | Where |
@@ -482,4 +517,5 @@ Focus on $ARGUMENTS.
 | `AGENTS.md` project instructions | Repository root |
 | Markdown slash commands | `.whycode/commands/`, also `.opencode/commands/` |
 | MCP servers | `[mcp_servers]` in `config.toml`, tools as `{server}_{tool}` |
+| Shell plugins | `plugins.toml` or `plugins/*/plugin.json` → `plugin_<name>` |
 | `allow` / `ask` / `deny` | `[permission]` in `config.toml` |

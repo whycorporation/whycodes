@@ -611,8 +611,8 @@ impl Agent {
 
     /// Register shell plugins + MCP tools on a fresh executor.
     ///
-    /// Always reloads built-ins; adds `plugin_*` from global/project
-    /// `plugins.toml`, then MCP server tools when configured.
+    /// Always reloads built-ins; adds `plugin_*` from `plugins.toml` and
+    /// `plugin.json` trees, then MCP server tools when configured.
     pub async fn with_mcp(mut self, config: &whycode_config::Config) -> Self {
         self.load_mcp(config).await;
         self

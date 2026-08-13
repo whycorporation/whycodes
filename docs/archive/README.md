@@ -29,6 +29,7 @@ Living tracker: [`../roadmap.md`](../roadmap.md).
 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done** — Session A+B |
 | [plan-latency-competitors.md](plan-latency-competitors.md) | **done** — P0+P1+P2 |
 | [plan-surface-2026-08.md](plan-surface-2026-08.md) | **done** — sidebar, RAG, swarm mailbox, connect, import, browser |
+| [plan-plugins-depth.md](plan-plugins-depth.md) | **done** — `plugin.json` discovery → `plugin_*` |
 | [plan-performance.md](plan-performance.md) | **done** — live usage reconcile + absorb_stream |
 | [plan-distribution.md](plan-distribution.md) | **implemented** — residual public-release steps |
 

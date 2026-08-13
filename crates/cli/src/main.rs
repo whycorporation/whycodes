@@ -189,7 +189,7 @@ pub enum Commands {
         name: Option<String>,
     },
 
-    /// List shell plugins from plugins.toml (global + project)
+    /// List shell plugins from plugins.toml and plugin.json trees
     Plugins {
         #[command(subcommand)]
         cmd: Option<PluginsCmd>,
@@ -3449,28 +3449,33 @@ async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
 async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::Result<()> {
     let _ = cmd; // only List for now
     let project = resolve_dir(cli);
-    let reg = whycode_skill::PluginRegistry::load_layered(&project).unwrap_or_default();
-    if reg.plugins.is_empty() {
+    let listed = whycode_tools::list_shell_plugins(Some(&project));
+    if listed.is_empty() {
         println!("{} No shell plugins configured.", "🔌".bold());
         println!();
-        println!("Create ~/.config/com.whycorporation.whycode/plugins.toml or");
-        println!("  .whycode/plugins.toml:");
+        println!("TOML: ~/.config/com.whycorporation.whycode/plugins.toml or");
+        println!("      .whycode/plugins.toml");
         println!();
         println!("  [[plugins]]");
         println!("  name = \"hello\"");
         println!("  command = \"echo hello from plugin\"");
         println!("  description = \"Demo plugin\"");
         println!();
+        println!("Or a directory plugin:");
+        println!("  .whycode/plugins/hello/plugin.json");
+        println!("  {{\"name\":\"hello\",\"command\":\"./run.sh\",\"description\":\"Demo\"}}");
+        println!();
         println!("Tools appear as plugin_<name> (tool_profile=full or tool_search).");
         return Ok(());
     }
-    println!("{} Shell plugins ({}):", "🔌".bold(), reg.plugins.len());
-    for p in &reg.plugins {
+    println!("{} Shell plugins ({}):", "🔌".bold(), listed.len());
+    for p in &listed {
         println!(
-            "  {} → {} — {}",
-            format!("plugin_{}", p.name).cyan(),
+            "  {} → {} — {} ({})",
+            p.tool_name.cyan(),
             p.command.dimmed(),
-            p.description
+            p.description,
+            p.origin.dimmed()
         );
     }
     Ok(())

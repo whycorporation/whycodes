@@ -14,6 +14,7 @@ whycode-core = { path = "../core" }
 whycode-index = { path = "../index" }
 whycode-format = { path = "../format" }
 whycode-skill = { path = "../skill" }
+whycode-plugin = { path = "../plugin" }
 whycode-lsp = { path = "../lsp" }
 whycode-sandbox = { path = "../sandbox" }
 whycode-memory = { path = "../memory" }

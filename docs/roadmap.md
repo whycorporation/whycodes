@@ -7,9 +7,7 @@ Last updated: **2026-08-14**.
 
 ## Now
 
-1. **Plugins depth** — wire `PluginManager` / `plugin.json` discovery into
-   the agent. `plugins.toml` → `plugin_*` and config hooks already ship.
-   Marketplace stays out.
+Nothing open. Later stays later.
 
 ## Later
 

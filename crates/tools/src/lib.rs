@@ -32,6 +32,6 @@ pub use web::{browser, mcp_websearch, webfetch, websearch};
 
 pub use executor::ToolExecutor;
 pub use mcp_tool::{McpCaller, McpToolBridge};
-pub use plugin_tool::PluginShellTool;
+pub use plugin_tool::{ListedPlugin, PluginShellTool, list_shell_plugins};
 pub use profile::ToolProfile;
 pub use tool::Tool;
