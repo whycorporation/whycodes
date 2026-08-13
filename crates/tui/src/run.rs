@@ -194,6 +194,8 @@ pub struct TuiRunOptions {
     /// Used by CLI `--continue` / `--resume <id>`. In-session resume uses
     /// `pending_session_id` on the app instead.
     pub resume_session_id: Option<String>,
+    /// When set, turns go to `whycode serve` over HTTP instead of an in-process agent.
+    pub remote: Option<crate::remote::RemoteAttach>,
 }
 
 /// Sentinel for `TuiRunOptions::resume_session_id`: most recently updated session.
@@ -279,6 +281,12 @@ pub enum TurnOutcome {
         agent: Agent,
         session: Session,
         /// Wall time for `run_turn` only (excludes post-turn title refine).
+        work_ms: u128,
+    },
+    /// Remote `whycode serve` turn finished; local agent/session stay in place.
+    Remote {
+        text: String,
+        error: Option<String>,
         work_ms: u128,
     },
     Err {
@@ -421,6 +429,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
         .with_plugins(Some(opts.project_dir.as_path()));
 
+    let remote = opts.remote.clone();
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
     // Code RAG auto-index deferred past first paint (see loop below).
@@ -461,6 +470,33 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 );
             }
         }
+    }
+
+    if let Some(ref rem) = remote {
+        match crate::remote::fetch_messages(&rem.base_url, &rem.session_id).await {
+            Ok((title, msgs)) => {
+                session.id = rem.session_id.clone();
+                if !title.is_empty() {
+                    session.title = title;
+                }
+                if !msgs.is_empty() {
+                    session.messages = msgs;
+                    app.load_messages_from_session(&session);
+                }
+                app.session_title = session.title.clone();
+            }
+            Err(e) => {
+                session.id = rem.session_id.clone();
+                app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    format!("Remote hydrate: {e}"),
+                );
+            }
+        }
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            format!("Attached · {} (auto-approves tools)", rem.base_url),
+        );
     }
 
     let mut provider = opts.provider.clone();
@@ -864,7 +900,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 // Stamp "Worked for Xs" from work_ms only (title refine is async
                 // and never included — see spawn_title_refine below).
                 let work_ms = match &outcome {
-                    TurnOutcome::Ok { work_ms, .. } | TurnOutcome::Err { work_ms, .. } => *work_ms,
+                    TurnOutcome::Ok { work_ms, .. }
+                    | TurnOutcome::Err { work_ms, .. }
+                    | TurnOutcome::Remote { work_ms, .. } => *work_ms,
                 };
                 let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
                 app.mark_dirty();
@@ -923,6 +961,35 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             &mut app,
                             suggest_tx.clone(),
                         );
+                    }
+                    TurnOutcome::Remote {
+                        text,
+                        error,
+                        work_ms: _,
+                    } => {
+                        app.finish_open_thinking();
+                        if let Some(err) = error {
+                            app.current_agent_state = AgentState::Idle;
+                            app.add_message(ChatRole::System, format!("Remote error: {err}"));
+                            app.status_message = "remote error".into();
+                        } else {
+                            if !text.is_empty()
+                                && let Some(last) = app.messages.last_mut()
+                                && last.role == ChatRole::Assistant
+                                && last.content.is_empty()
+                            {
+                                last.content = text.clone();
+                            }
+                            app.current_agent_state = AgentState::Idle;
+                            app.status_message = format_turn_done_status(
+                                &app,
+                                rt.agent.info.name.as_str(),
+                                &provider,
+                                &model,
+                                elapsed_ms,
+                                false,
+                            );
+                        }
                     }
                     TurnOutcome::Err {
                         error,
@@ -1361,6 +1428,58 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 && let Some(prompt) = app.pending_prompt.take()
             {
                 let submit_images = std::mem::take(&mut app.pending_submit_images);
+
+                if let Some(ref rem) = remote {
+                    drop(submit_images);
+                    let expanded = expand_at_files(&prompt, &project_dir);
+                    rt.session.add_user_message(&expanded);
+                    rt.agent_busy = true;
+                    let flag = new_cancel_flag();
+                    rt.cancel_flag = Some(Arc::clone(&flag));
+                    cancel_requested_at = None;
+                    app.mark_turn_started();
+                    app.current_agent_state = AgentState::Generating;
+                    app.status_message = "remote…".into();
+                    if app
+                        .messages
+                        .last()
+                        .map(|m| m.role != ChatRole::Assistant)
+                        .unwrap_or(true)
+                    {
+                        app.add_message(ChatRole::Assistant, "");
+                    }
+                    let rem = rem.clone();
+                    let event_tx2 = rt.event_tx.clone();
+                    let done_tx2 = rt.done_tx.clone();
+                    rt.turn_join = Some(tokio::spawn(async move {
+                        let t0 = std::time::Instant::now();
+                        let result =
+                            crate::remote::stream_chat(&rem, &expanded, event_tx2, Some(flag))
+                                .await;
+                        let work_ms = t0.elapsed().as_millis();
+                        match result {
+                            Ok(text) => {
+                                if let Err(e) = done_tx2.send(TurnOutcome::Remote {
+                                    text,
+                                    error: None,
+                                    work_ms,
+                                }) {
+                                    tracing::debug!(error = %e, "remote turn done dropped");
+                                }
+                            }
+                            Err(e) => {
+                                if let Err(send_err) = done_tx2.send(TurnOutcome::Remote {
+                                    text: String::new(),
+                                    error: Some(e.to_string()),
+                                    work_ms,
+                                }) {
+                                    tracing::debug!(error = %send_err, "remote turn err dropped");
+                                }
+                            }
+                        }
+                    }));
+                    continue;
+                }
 
                 // Lazy-load API key from env/config when user first chats
                 if api_key.is_empty() {
@@ -2253,6 +2372,7 @@ fn force_stop_turn(
                 *agent = a;
                 *session = s;
             }
+            TurnOutcome::Remote { .. } => {}
         }
     }
 
@@ -2709,6 +2829,25 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 rt.session = s;
                 rt.last_error = false;
                 if !text.is_empty() {
+                    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
+                    scratch.restore_view(&rt.view);
+                    if let Some(last) = scratch.messages.last_mut()
+                        && last.role == ChatRole::Assistant
+                        && last.content.is_empty()
+                    {
+                        last.content = text;
+                    }
+                    scratch.save_view(&mut rt.view);
+                }
+            }
+            TurnOutcome::Remote { text, error, .. } => {
+                rt.last_error = error.is_some();
+                if let Some(err) = error {
+                    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
+                    scratch.restore_view(&rt.view);
+                    scratch.add_message(ChatRole::System, format!("Remote error: {err}"));
+                    scratch.save_view(&mut rt.view);
+                } else if !text.is_empty() {
                     let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
                     scratch.restore_view(&rt.view);
                     if let Some(last) = scratch.messages.last_mut()

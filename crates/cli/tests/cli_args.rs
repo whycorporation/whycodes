@@ -27,6 +27,7 @@ fn test_cli_help() {
     assert_ok(&["--help"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(s.contains("run") && s.contains("generate"), "help: {}", s);
+    assert!(s.contains("connect"), "help should list connect: {s}");
     assert!(
         s.contains("--continue") || s.contains("-c"),
         "help should document --continue: {s}"

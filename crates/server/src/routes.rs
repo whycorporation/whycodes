@@ -253,6 +253,22 @@ pub async fn get_session(
     })))
 }
 
+pub async fn get_session_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let s = handle.lock().await;
+    Ok(Json(serde_json::json!({
+        "id": s.id,
+        "title": s.title,
+        "project": s.project_path.display().to_string(),
+        "messages": s.messages,
+    })))
+}
+
 /// Load from memory, else SQLite into the warm map.
 async fn load_or_get_session(state: &AppState, id: &str) -> Option<crate::SessionHandle> {
     if let Some(h) = state.get_session(id) {

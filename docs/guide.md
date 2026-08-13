@@ -15,6 +15,7 @@ Commands:
   pr        Create a pull request from current changes
   github    GitHub operations
   serve     Start the local API / share server
+  connect   Attach a TUI to a running serve daemon
   web       Open web UI (not yet implemented; use serve + browser)
   mcp       MCP server management
   provider  Provider management (add, list, remove, default)
@@ -168,6 +169,15 @@ see [Custom commands](#custom-commands).
 `/share` exports the session and prints `http://127.0.0.1:3030/s/<id>`.
 Serve it with `whycode serve` (`WHYCODE_SHARE_PORT` overrides the port).
 Nothing leaves the machine. `/unshare` removes the exported files.
+
+Attach another TUI to that daemon (turns run on the server; tools are
+auto-approved there). This is **not** `/connect` (OAuth login):
+
+```bash
+whycode serve
+whycode connect                 # new session on 127.0.0.1:3030
+whycode connect 127.0.0.1:3030 --session <id>
+```
 
 ## Agents
 
