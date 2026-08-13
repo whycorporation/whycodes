@@ -107,6 +107,39 @@ impl ToolCallAssembler {
         }
         calls
     }
+
+    /// Snapshot of (id, name, raw arg buffer) for speculative early tool I/O.
+    pub fn pending_snapshots(&self) -> Vec<(String, String, String)> {
+        self.calls
+            .iter()
+            .enumerate()
+            .map(|(i, tc)| {
+                let buf = if !self.arg_bufs[i].is_empty() {
+                    self.arg_bufs[i].clone()
+                } else if !tc.arguments.is_null() {
+                    // Complete object already present (Anthropic non-streamed).
+                    serde_json::to_string(&tc.arguments).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                (tc.id.clone(), tc.name.clone(), buf)
+            })
+            .collect()
+    }
+
+    /// After a delta, return the updated (id, name, buf) for the active call.
+    pub fn last_updated(&self) -> Option<(String, String, String)> {
+        let i = self.active?;
+        let tc = self.calls.get(i)?;
+        let buf = if !self.arg_bufs[i].is_empty() {
+            self.arg_bufs[i].clone()
+        } else if !tc.arguments.is_null() {
+            serde_json::to_string(&tc.arguments).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        Some((tc.id.clone(), tc.name.clone(), buf))
+    }
 }
 
 #[cfg(test)]
