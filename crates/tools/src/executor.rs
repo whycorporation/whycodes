@@ -3,10 +3,10 @@ use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
 use crate::{
-    apply_patch, bg, code_mode, edit, external_directory, git_blame, git_commit, git_diff, git_log,
-    git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, panel, plan,
-    question, read, schedule, shell, skill_tool, swarm, swarm_msg, task, todo_read, todo_write,
-    tool_search, truncate_tool, webfetch, websearch, worktree, write,
+    apply_patch, bg, browser, code_mode, edit, external_directory, git_blame, git_commit, git_diff,
+    git_log, git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, panel,
+    plan, question, read, schedule, shell, skill_tool, swarm, swarm_msg, task, todo_read,
+    todo_write, tool_search, truncate_tool, webfetch, websearch, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -32,6 +32,7 @@ impl ToolExecutor {
         // Primary name matches OpenCode (`bash`); `shell` kept as legacy alias
         executor.register(Box::new(shell::ShellTool::new()));
         executor.register(Box::new(shell::ShellTool::as_shell()));
+        executor.register(Box::new(browser::BrowserTool::new()));
         executor.register(Box::new(webfetch::WebFetchTool::new()));
         executor.register(Box::new(websearch::WebSearchTool::new()));
         executor.register(Box::new(github_issue::GithubIssueTool::new()));

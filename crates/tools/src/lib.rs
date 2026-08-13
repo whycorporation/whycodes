@@ -28,7 +28,7 @@ pub use file::{
 };
 pub use git::{git_blame, git_commit, git_diff, git_log, git_status};
 pub use github::{github_api, github_issue, github_pr};
-pub use web::{mcp_websearch, webfetch, websearch};
+pub use web::{browser, mcp_websearch, webfetch, websearch};
 
 pub use executor::ToolExecutor;
 pub use mcp_tool::{McpCaller, McpToolBridge};

@@ -477,6 +477,10 @@ impl PermissionSet {
         if matches!(tool_name, "webfetch" | "websearch" | "mcp_websearch") && !self.allow_network {
             return PermissionAction::Deny;
         }
+        // Real browser is outside the OS sandbox — never silent-allow.
+        if tool_name == "browser" {
+            return PermissionAction::Ask;
+        }
 
         PermissionAction::Allow
     }
@@ -871,6 +875,18 @@ mod tests {
         assert!(!ps.allow_shell);
         assert!(ps.allowed_paths.is_none());
         assert!(ps.rules.is_empty());
+    }
+
+    #[test]
+    fn browser_defaults_to_ask() {
+        let ps = PermissionSet {
+            allow_file_writes: true,
+            allow_shell: true,
+            allow_network: true,
+            ..Default::default()
+        };
+        assert_eq!(ps.action_for("browser"), PermissionAction::Ask);
+        assert!(ps.is_tool_allowed("browser"));
     }
 
     #[test]

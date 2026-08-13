@@ -15,7 +15,7 @@ whycode-shaped surface (not a jcode clone). Each item is a shippable slice.
 4. **Swarm mailbox + stale-read** — worker DM; “this file moved” on read.
 5. **`whycode connect`** — TUI attaches to `whycode serve` (this slice).
 6. **Foreign session import** — Claude / Codex / OpenCode / Pi transcripts.
-7. **Browser tool** — CDP, permission `ask`, not in the core profile.
+7. **Browser tool** — CDP, permission `ask`, not in the core profile (this slice).
 
 ## Later
 
