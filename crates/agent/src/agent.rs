@@ -132,6 +132,7 @@ const SERIAL_TOOLS: &[&str] = &[
     "tool_search",
     "worktree",
     "plan",
+    "browser",
     "question",
     "code_mode",
     "skill",

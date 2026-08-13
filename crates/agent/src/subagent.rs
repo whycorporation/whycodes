@@ -383,6 +383,7 @@ impl SubagentRunner {
                             | "skill"
                             | "external_directory"
                             | "memory"
+                            | "browser"
                     )
                 }) {
                 let futs: Vec<_> = tool_calls

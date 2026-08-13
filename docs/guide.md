@@ -211,13 +211,19 @@ model answers instead of over-eager edits. Set
 | Execution | `bash` (alias `shell`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` |
-| Web | `webfetch`, `websearch` |
+| Web | `webfetch`, `websearch`, `browser` |
 | Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel` |
 | Memory | `memory` |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search` |
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
+
+`browser` drives a local Chromium/Chrome via CDP (`status`, `open`, `snapshot`,
+`click`, `type`, `wait`, `screenshot`, `close`). It is **not** in the core
+profile (`tool_search` or `session.tool_profile = "full"`). Permission
+defaults to `ask`. The OS sandbox and HTTP domain allowlist do **not** apply
+inside the real browser. Set `WHYCODE_BROWSER` if Chrome is not on `PATH`.
 
 `panel` pins a file, unified diff, or mermaid diagram on the TUI sidebar
 Preview tab (`action`: `show_file` / `show_diff` / `show_mermaid` / `clear`).

@@ -82,6 +82,7 @@ mod tests {
         assert!(ToolProfile::Core.includes("read"));
         assert!(ToolProfile::Core.includes("bash"));
         assert!(!ToolProfile::Core.includes("webfetch"));
+        assert!(!ToolProfile::Core.includes("browser"));
         assert!(!ToolProfile::Core.includes("github_pr"));
         assert!(!ToolProfile::Core.includes("lsp"));
         assert!(ToolProfile::Full.includes("webfetch"));

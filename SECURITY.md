@@ -35,6 +35,10 @@ as security vulnerabilities:
 - The self-update path installing a binary whose checksum does not match the
   release's `SHA256SUMS`
 
+The built-in `browser` tool launches a real Chromium. That process is
+**outside** the shell OS sandbox and is **not** filtered by the HTTP domain
+allowlist. Treat it as an `ask`-gated capability, not a confinement boundary.
+
 Out of scope: a model producing unwanted but correctly-gated actions (that is
 a model behaviour, not a whycode vulnerability — tune `bash_risk_threshold`
 and permissions), and issues in third-party LLM providers themselves.

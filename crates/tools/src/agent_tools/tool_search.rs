@@ -27,7 +27,7 @@ impl Tool for ToolSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Discover tools not in the core profile (web, github, lsp, git_*, plan, …) \
+        "Discover tools not in the core profile (web, browser, github, lsp, git_*, plan, …) \
          and activate them for this session. Actions: search (keywords), select \
          (name or comma-separated names), list (activated + deferred catalogue)."
     }
