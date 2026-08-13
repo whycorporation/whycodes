@@ -85,10 +85,13 @@
   ],
   "server": [
     "agent",
+    "auth",
     "config",
     "core",
+    "index",
     "llm",
     "session",
+    "storage",
     "tools"
   ],
   "session": [
