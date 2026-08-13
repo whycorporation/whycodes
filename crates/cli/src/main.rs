@@ -2874,14 +2874,25 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `serve` — Start API + local share server
+/// `serve` — Warm multi-session API + local share server.
+///
+/// Loads config, MCP, plugins, and a workspace file index once so clients
+/// reconnect without cold startup cost (jcode/OpenCode daemon spirit).
 #[cfg(feature = "server")]
 async fn cmd_serve(port: u16) -> anyhow::Result<()> {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use whycode_agent::{
+        AutoAnswerPrompter, AutoApprovePrompter, PermissionPrompter, QuestionPrompter,
+    };
+
+    let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!(
-        "{} Starting Whycode API server on http://localhost:{}",
-        "🚀".bold(),
+        "{} Starting Whycode warm server on http://localhost:{}",
+        "•".bold(),
         port.to_string().cyan()
     );
+    println!("  project: {}", project_dir.display());
 
     let config = Config::load()?;
     let agent_info = config
@@ -2905,32 +2916,49 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
             temperature: None,
             top_p: None,
         });
-    let agent = Agent::new(agent_info);
+
+    // Headless: auto-approve permissions / questions (no TUI channel).
+    let file_index = whycode_index::WorkspaceIndex::start(vec![project_dir.clone()]);
+    let agent = Agent::new(agent_info)
+        .with_config(&config)
+        .with_permission_prompter(Arc::new(AutoApprovePrompter) as Arc<dyn PermissionPrompter>)
+        .with_question_prompter(Arc::new(AutoAnswerPrompter) as Arc<dyn QuestionPrompter>)
+        .with_file_index(file_index)
+        .with_plugins(Some(&project_dir))
+        .with_mcp(&config)
+        .await;
 
     let state = whycode_server::AppState {
-        agent: std::sync::Arc::new(agent),
-        config: std::sync::Arc::new(config),
+        agent: Arc::new(agent),
+        config: Arc::new(config),
+        project_dir,
+        sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        max_turns: 25,
+        mcp_warm: true,
+        index_warm: true,
+        started_at: std::time::Instant::now(),
     };
 
     let router = whycode_server::create_router(state);
-    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    // Loopback only — this is a local warm daemon, not a public API.
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     println!("  Endpoints:");
-    println!("    GET  /api/health");
+    println!("    GET  /api/health          (warm status + uptime)");
     println!("    GET  /api/tools");
     println!("    GET  /api/models");
-    println!("    GET  /api/sessions");
-    println!("    GET  /api/shares");
+    println!("    GET  /api/sessions        (memory + SQLite)");
     println!("    POST /api/session/new");
-    println!("    POST /api/session/:id/chat");
-    println!("    GET  /s/:id        — shared session (HTML)");
-    println!("    GET  /s/:id.md     — shared session (Markdown)");
-    println!("    GET  /s/:id.json   — shared session (JSON)");
+    println!("    GET  /api/session/:id");
+    println!("    POST /api/session/:id/chat  (SSE turn stream)");
+    println!("    GET  /api/shares");
+    println!("    GET  /s/:id[.json|.md]");
     println!();
     println!(
         "  Share tip: in TUI run {} then open {}",
         "/share".cyan(),
         format!("http://localhost:{port}/s/<session-id>").cyan()
     );
+    println!("  Bind: {addr} (loopback only). Ctrl+C to stop.");
     println!();
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
