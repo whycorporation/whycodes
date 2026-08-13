@@ -35,7 +35,7 @@ Notes:
   change is reviewed as part of the PR.
 - Internal crate edges are allowlisted in
   `scripts/dependency_boundaries.json`. Adding an edge is a deliberate
-  decision — see the Architecture section of the README.
+  decision — see [docs/architecture.md](docs/architecture.md).
 
 ## Conventions
 

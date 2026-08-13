@@ -2773,7 +2773,7 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
 }
 
 /// `acp` — Agent Client Protocol stub (deferred until after product launch).
-/// Real target: editor ↔ agent (JSON-RPC), not agent-to-agent. See docs/status.md.
+/// Real target: editor ↔ agent (JSON-RPC), not agent-to-agent. See docs/roadmap.md.
 async fn cmd_acp(_cli: &Cli) -> anyhow::Result<()> {
     println!("{} ACP mode — not yet implemented.", "ℹ".cyan());
     println!("Agent Client Protocol (editor ↔ agent) is planned after product launch.");

@@ -1,6 +1,6 @@
 # Plan — Performance hot path (binary, hash, math)
 
-**Status:** done · **Depends on:** crate boundaries (shipped) · **Related:** [plan-performance.md](../plan-performance.md), [benchmarks.md](../benchmarks.md)
+**Status:** done · **Depends on:** crate boundaries (shipped) · **Related:** [plan-performance.md](plan-performance.md), [../benchmarks.md](../benchmarks.md)
 
 ## Diagnosis
 

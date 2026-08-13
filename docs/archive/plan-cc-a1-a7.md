@@ -2,7 +2,7 @@
 
 **Status:** **shipped** (2026-08-07) · **Priority:** terminal product polish  
 **Source:** internal Claude Code research report §10A  
-**Related:** [FEATURES.md](../FEATURES.md), [status.md](../status.md)  
+**Related:** [FEATURES.md](FEATURES.md), [status.md](status.md)  
 **Policy:** Ideas only — re-implement in Rust; do **not** copy proprietary code or prompts.
 
 ## Goal
@@ -267,7 +267,7 @@ No new LLM call. Pure local introspection.
 | A6 | **done** | `read` images → WHYCODE_IMAGE_B64 → session Image block |
 | A7 | **done** | `tui.prompt_suggestions = "idle"`; Tab accepts; default off |
 
-Update this table + [status.md](../status.md) when a row ships. Prefer **one PR per ID** (or A1+A4 together as “slash UX”).
+Update this table + [status.md](status.md) when a row ships. Prefer **one PR per ID** (or A1+A4 together as “slash UX”).
 
 ## Verification (per PR)
 

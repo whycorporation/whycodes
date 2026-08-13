@@ -367,7 +367,7 @@ With `position = view_start = total - height` that never reaches the track end.
 | Tool prune | every step: cap + older tools → 2k chars; compact when over threshold |
 | Auto-compact | before each LLM step when over `compaction_threshold` |
 
-**Roadmap:** [plan-latency-competitors.md](plan-latency-competitors.md)
+**Roadmap:** [archive/plan-latency-competitors.md](archive/plan-latency-competitors.md)
 
 **Prevention:** Do not drop latest-user cache breakpoint; do not reintroduce sequential-only tool loops or full tool dump as default.
 

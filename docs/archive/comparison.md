@@ -1,4 +1,7 @@
-# Where whycode stands
+# Where whycode stands (archived)
+
+> Archived 2026-08-13. Early jcode snapshot; numbers may be stale.
+> Living tracker: [`../roadmap.md`](../roadmap.md).
 
 Background snapshot for the roadmap ([status.md](status.md)). Measured
 2026-07-31 against [jcode](https://github.com/1jehuang/jcode) at a shallow
@@ -61,7 +64,7 @@ Snapshot from 2026-07-31, with current status (2026-08-04):
 | No binaries / self-update | open | **implemented** — [plan-distribution](plan-distribution.md); first `v*` tag still needed |
 | API keys only | open | **blocked** — [plan-oauth](plan-oauth.md) (provider-terms decision) |
 | No quality budgets | open | **done** — [budgets.md](budgets.md), [archive/phase-4](archive/phase-4-ci-budgets.md) |
-| No benchmarks | open | **mostly done** — [benchmarks.md](benchmarks.md), residual [plan-performance](plan-performance.md) |
+| No benchmarks | open | **mostly done** — [../benchmarks.md](../benchmarks.md), residual [plan-performance](plan-performance.md) |
 | No memory across sessions | open | **shipped v1** — [archive/plan-memory](archive/plan-memory.md) (hash embed + MEMORY.md) |
 | No multi-agent coordination | open | **dropped** — [archive/phase-7](archive/phase-7-multi-agent.md) |
 
