@@ -8,7 +8,7 @@ Start here, then pick the page you need.
 | [auth.md](auth.md) | Users | API keys, OAuth login, credential import |
 | [architecture.md](architecture.md) | Contributors | Crate map and one-way layering |
 | [roadmap.md](roadmap.md) | Contributors | Current focus and deferred work |
-| [KNOWHOW.md](KNOWHOW.md) | Contributors | Bugs that are easy to reintroduce |
+| [knowhow.md](knowhow.md) | Contributors | Bugs that are easy to reintroduce |
 | [benchmarks.md](benchmarks.md) | Contributors | How to measure startup, RSS, idle draws |
 | [budgets.md](budgets.md) | Contributors | CI quality budgets (panic, swallow, edges) |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributors | Setup and required checks |

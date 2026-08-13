@@ -1,22 +1,22 @@
-/// xAI Grok LLM provider.
-/// OpenAI-compatible API at api.x.ai.
+/// Mistral AI LLM provider.
+/// OpenAI-compatible API at api.mistral.ai.
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent};
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
-pub struct XaiProvider {
+pub struct MistralProvider {
     name: String,
 }
 
-impl XaiProvider {
+impl MistralProvider {
     pub fn new() -> Self {
         Self {
-            name: "xai".to_string(),
+            name: "mistral".to_string(),
         }
     }
 
@@ -49,22 +49,22 @@ impl XaiProvider {
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
-        super::openai_compat::convert_messages(request)
+        crate::openai_compat::convert_messages(request)
     }
 
     fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
-        super::openai_compat::convert_tools(tools)
+        crate::openai_compat::convert_tools(tools)
     }
 }
 
 #[async_trait]
-impl LlmProvider for XaiProvider {
+impl LlmProvider for MistralProvider {
     fn name(&self) -> &str {
         &self.name
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.x.ai/v1/chat/completions"
+        "https://api.mistral.ai/v1/chat/completions"
     }
 
     async fn complete(
@@ -76,7 +76,7 @@ impl LlmProvider for XaiProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = super::client_identity::post(self.default_base_url())
+        let resp = crate::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
@@ -92,7 +92,7 @@ impl LlmProvider for XaiProvider {
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
             return Err(whycode_core::Error::Llm(format!(
-                "xAI API error ({}): {}",
+                "Mistral API error ({}): {}",
                 status, err_msg
             )));
         }
@@ -115,7 +115,7 @@ impl LlmProvider for XaiProvider {
                 content.push(ContentBlock::ToolUse {
                     id: tc["id"].as_str().unwrap_or("").to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: super::openai_compat::parse_tool_arguments(&func["arguments"]),
+                    input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
                 });
             }
         }
@@ -124,7 +124,7 @@ impl LlmProvider for XaiProvider {
         Ok(LlmResponse {
             content,
             stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: super::openai_compat::usage_from_chat_completion(usage),
+            usage: crate::openai_compat::usage_from_chat_completion(usage),
             model: model.to_string(),
         })
     }
@@ -137,9 +137,9 @@ impl LlmProvider for XaiProvider {
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = self.build_body(request, model);
-        super::openai_compat::attach_stream_usage_option(&mut body);
+        crate::openai_compat::attach_stream_usage_option(&mut body);
 
-        let resp = super::client_identity::post(self.default_base_url())
+        let resp = crate::client_identity::post(self.default_base_url())
             .header("Authorization", format!("Bearer {}", api_key))
             .json(&body)
             .send()
@@ -148,7 +148,10 @@ impl LlmProvider for XaiProvider {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!("xAI API error: {}", text)));
+            return Err(whycode_core::Error::Llm(format!(
+                "Mistral API error: {}",
+                text
+            )));
         }
 
         let s = stream! {
@@ -177,12 +180,12 @@ impl LlmProvider for XaiProvider {
                                 let choice = &event["choices"][0];
                                 let delta = &choice["delta"];
 
-                                for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
                                     yield Ok(ev);
                                 }
 
                                 if let Some(ev) =
-                                    super::openai_compat::stream_usage_from_chunk(&event)
+                                    crate::openai_compat::stream_usage_from_chunk(&event)
                                 {
                                     yield Ok(ev);
                                 }
@@ -200,7 +203,7 @@ impl LlmProvider for XaiProvider {
     }
 }
 
-impl Default for XaiProvider {
+impl Default for MistralProvider {
     fn default() -> Self {
         Self::new()
     }

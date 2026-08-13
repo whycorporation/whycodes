@@ -38,7 +38,7 @@ Living tracker: [`../roadmap.md`](../roadmap.md).
 | File | What it was |
 |---|---|
 | [status.md](status.md) | Full decision log (superseded by [../roadmap.md](../roadmap.md)) |
-| [FEATURES.md](FEATURES.md) | Competitor feature matrix (2026-08-13 snapshot) |
+| [features.md](features.md) | Competitor feature matrix (2026-08-13 snapshot) |
 | [comparison.md](comparison.md) | Early jcode snapshot (2026-07-31) |
 
 Relative links inside archived files may be stale. Prefer this index.

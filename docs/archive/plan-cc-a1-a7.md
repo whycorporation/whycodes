@@ -2,7 +2,7 @@
 
 **Status:** **shipped** (2026-08-07) · **Priority:** terminal product polish  
 **Source:** internal Claude Code research report §10A  
-**Related:** [FEATURES.md](FEATURES.md), [status.md](status.md)  
+**Related:** [features.md](features.md), [status.md](status.md)  
 **Policy:** Ideas only — re-implement in Rust; do **not** copy proprietary code or prompts.
 
 ## Goal

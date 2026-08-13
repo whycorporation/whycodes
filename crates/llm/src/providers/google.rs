@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
 pub struct GoogleProvider {
@@ -59,7 +59,7 @@ impl LlmProvider for GoogleProvider {
         let body = self.build_body(request);
 
         let url = self.build_complete_url(model, api_key);
-        let resp = super::client_identity::post(&url)
+        let resp = crate::client_identity::post(&url)
             .json(&body)
             .send()
             .await
@@ -126,7 +126,7 @@ impl LlmProvider for GoogleProvider {
         body["generationConfig"] = serde_json::json!({});
 
         let url = self.build_url(model, api_key);
-        let resp = super::client_identity::post(&url)
+        let resp = crate::client_identity::post(&url)
             .json(&body)
             .send()
             .await
@@ -241,7 +241,7 @@ impl GoogleProvider {
                     serde_json::json!({
                         "name": t.name,
                         "description": t.description,
-                        "parameters": super::openai_compat::sanitize_schema_for_openai(&t.parameters)
+                        "parameters": crate::openai_compat::sanitize_schema_for_openai(&t.parameters)
                     })
                 }).collect::<Vec<_>>()
             }]);

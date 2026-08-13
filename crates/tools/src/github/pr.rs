@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use super::github_api;
+use super::api;
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 
@@ -110,7 +110,7 @@ impl Tool for GitHubPrTool {
 
         // Resolve token
         let explicit_token = args["token"].as_str();
-        let token = match github_api::resolve_token(explicit_token) {
+        let token = match api::resolve_token(explicit_token) {
             Some(t) => t,
             None => {
                 return ToolResult {
@@ -172,9 +172,7 @@ impl GitHubPrTool {
         });
 
         let path = format!("repos/{owner}/{repo}/pulls");
-        match github_api::make_request(client, reqwest::Method::POST, &path, token, Some(payload))
-            .await
-        {
+        match api::make_request(client, reqwest::Method::POST, &path, token, Some(payload)).await {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
                 // Try to pretty-print the JSON response
@@ -211,7 +209,7 @@ impl GitHubPrTool {
             "repos/{owner}/{repo}/pulls?state={state}&sort=updated&direction=desc&per_page=30"
         );
 
-        match github_api::make_request(client, reqwest::Method::GET, &path, token, None).await {
+        match api::make_request(client, reqwest::Method::GET, &path, token, None).await {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
                 let formatted = if let Ok(v) = serde_json::from_str::<Value>(&text) {
@@ -254,7 +252,7 @@ impl GitHubPrTool {
         };
 
         let path = format!("repos/{owner}/{repo}/pulls/{pr_number}");
-        match github_api::make_request(client, reqwest::Method::GET, &path, token, None).await {
+        match api::make_request(client, reqwest::Method::GET, &path, token, None).await {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
                 let formatted = if let Ok(v) = serde_json::from_str::<Value>(&text) {
@@ -313,9 +311,7 @@ impl GitHubPrTool {
         });
 
         let path = format!("repos/{owner}/{repo}/pulls/{pr_number}/merge");
-        match github_api::make_request(client, reqwest::Method::PUT, &path, token, Some(payload))
-            .await
-        {
+        match api::make_request(client, reqwest::Method::PUT, &path, token, Some(payload)).await {
             Ok((status, text)) => {
                 let is_error = !status.is_success();
                 let formatted = if let Ok(v) = serde_json::from_str::<Value>(&text) {

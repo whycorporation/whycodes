@@ -45,19 +45,27 @@ Notes:
 - Leaf types and traits live in `crates/core`; user-config loading lives in
   `crates/config`. `core` never depends on `config`.
 - Behaviour changes to the TUI event loop, mouse handling or terminal setup
-  should read [`docs/KNOWHOW.md`](docs/KNOWHOW.md) first, and extend it when
+  should read [`docs/knowhow.md`](docs/knowhow.md) first, and extend it when
   they fix a non-obvious bug.
 - Platform-specific behaviour needs a `#[cfg]` branch, not a Unix-only
   assumption: tagged releases build for Linux, Windows and macOS.
 - Agent-facing repo rules are in [AGENTS.md](AGENTS.md); they apply to human
   contributors just the same.
+- Naming: Rust files and modules are `snake_case`; crate directories are
+  short `kebab-case` (package name `whycode-<dir>`); docs outside the repo
+  root are `kebab-case.md`; scripts are `snake_case` (`check_*`, `bench_*`,
+  `update_*`). Do not repeat a parent directory in the file name
+  (`git/blame.rs`, not `git/git_blame.rs`). Root meta files (`README.md`,
+  `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`) stay uppercase.
+  Agent-facing tool *string* names (`webfetch`, `git_status`) are a stable
+  product API — do not rename them to match Rust modules.
 
 ## Reporting bugs
 
 Open an issue with the command you ran, what you expected, and what happened.
 For TUI problems, the last lines of
 `~/.local/share/whycode/logs/unified.jsonl` are the fastest diagnostic — see
-[docs/KNOWHOW.md](docs/KNOWHOW.md) for what the lifecycle events mean.
+[docs/knowhow.md](docs/knowhow.md) for what the lifecycle events mean.
 
 Security issues: please use the process in [SECURITY.md](SECURITY.md) instead
 of a public issue.

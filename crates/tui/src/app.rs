@@ -1163,11 +1163,11 @@ pub struct TuiApp {
     /// Current git branch, if the project is a repo.
     pub git_branch: Option<String>,
     /// Clickable cwd path (sticky hover → underline).
-    pub cwd_hit: crate::hit::HitArea,
+    pub cwd_hit: crate::hit_area::HitArea,
     /// Context-usage meter (hover → bar+%).
-    pub context_hit: crate::hit::HitArea,
+    pub context_hit: crate::hit_area::HitArea,
     /// Turn-status `[stop]` control (click → cancel turn).
-    pub turn_stop_hit: crate::hit::HitArea,
+    pub turn_stop_hit: crate::hit_area::HitArea,
     /// Last known mouse cell (for hover tooltips).
     pub mouse_pos: Option<(u16, u16)>,
 
@@ -1595,9 +1595,9 @@ impl TuiApp {
             project_label: String::from("."),
             project_dir: PathBuf::from("."),
             git_branch: None,
-            cwd_hit: crate::hit::HitArea::default(),
-            context_hit: crate::hit::HitArea::default(),
-            turn_stop_hit: crate::hit::HitArea::default(),
+            cwd_hit: crate::hit_area::HitArea::default(),
+            context_hit: crate::hit_area::HitArea::default(),
+            turn_stop_hit: crate::hit_area::HitArea::default(),
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,

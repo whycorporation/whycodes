@@ -1,3 +1,3 @@
-pub mod github_api;
-pub mod github_issue;
-pub mod github_pr;
+pub mod api;
+pub mod issue;
+pub mod pr;

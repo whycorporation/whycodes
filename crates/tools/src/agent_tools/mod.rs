@@ -1,13 +1,13 @@
-pub mod bg;
+pub mod background;
 pub mod code_mode;
-pub mod memory_tool;
+pub mod memory;
 pub mod panel;
 pub mod plan;
 pub mod question;
 pub mod schedule;
-pub mod skill_tool;
+pub mod skill;
 pub mod swarm;
-pub mod swarm_msg;
+pub mod swarm_message;
 pub mod task;
 pub mod todo_read;
 pub mod todo_write;

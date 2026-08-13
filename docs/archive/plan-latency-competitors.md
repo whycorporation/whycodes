@@ -1,7 +1,7 @@
 # Plan — Competitive latency research & whycode roadmap
 
 **Status:** P0+P1+P2 done · **Priority:** complete · **Last review:** 2026-08-13  
-**Related:** [plan-perf-hotpath.md](plan-perf-hotpath.md), [plan-perf-context-tui.md](plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [../KNOWHOW.md](../KNOWHOW.md)  
+**Related:** [plan-perf-hotpath.md](plan-perf-hotpath.md), [plan-perf-context-tui.md](plan-perf-context-tui.md), [comparison.md](comparison.md), [features.md](features.md), [../knowhow.md](../knowhow.md)  
 **Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
 ## Goal
@@ -95,7 +95,7 @@ Issue themes (not all merged; treat as backlog inspiration):
 
 ## Deep dive: jcode
 
-**Sources:** local binary `jcode` **v0.64.2** (`2026-07-30`), `~/.jcode/config.toml` (features: `memory`, `swarm`), public GitHub issues dump (`/tmp/opencode/jcode_*.json`), whycode docs ([comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [phase-7-multi-agent.md](phase-7-multi-agent.md)).
+**Sources:** local binary `jcode` **v0.64.2** (`2026-07-30`), `~/.jcode/config.toml` (features: `memory`, `swarm`), public GitHub issues dump (`/tmp/opencode/jcode_*.json`), whycode docs ([comparison.md](comparison.md), [features.md](features.md), [phase-7-multi-agent.md](phase-7-multi-agent.md)).
 
 ### Architecture (latency-relevant)
 
@@ -269,6 +269,6 @@ compaction_threshold = 150000
 |--------|--------|
 | Binary version | `jcode version` → v0.64.2 |
 | Features | `~/.jcode/config.toml` `[features] memory/swarm` |
-| Architecture notes | [comparison.md](comparison.md), [FEATURES.md](FEATURES.md) |
+| Architecture notes | [comparison.md](comparison.md), [features.md](features.md) |
 | Swarm decision | [archive/phase-7-multi-agent.md](archive/phase-7-multi-agent.md) dropped |
 | Issue themes | compaction loops, MCP lock race, daemon, swarm_model ignore |

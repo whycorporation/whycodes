@@ -10,7 +10,7 @@ use whycode_core::types::{
     ContentBlock, LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat,
 };
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 
 /// A provider that works with any OpenAI-compatible API endpoint.
 ///
@@ -106,16 +106,16 @@ impl CustomProvider {
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
-        super::openai_compat::convert_messages_with_format(request, self.tool_arguments)
+        crate::openai_compat::convert_messages_with_format(request, self.tool_arguments)
     }
 
     fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
-        super::openai_compat::convert_tools(tools)
+        crate::openai_compat::convert_tools(tools)
     }
 
     fn build_request(&self, body: &Value) -> reqwest::RequestBuilder {
         // Identity first; config `headers` may override (e.g. custom User-Agent).
-        let mut req = super::client_identity::post(&self.base_url).json(body);
+        let mut req = crate::client_identity::post(&self.base_url).json(body);
 
         for (key, value) in &self.headers {
             req = req.header(key, value);
@@ -202,7 +202,7 @@ impl LlmProvider for CustomProvider {
                 content.push(ContentBlock::ToolUse {
                     id: tc["id"].as_str().unwrap_or("").to_string(),
                     name: f["name"].as_str().unwrap_or("").to_string(),
-                    input: super::openai_compat::parse_tool_arguments(&f["arguments"]),
+                    input: crate::openai_compat::parse_tool_arguments(&f["arguments"]),
                 });
             }
         }
@@ -211,7 +211,7 @@ impl LlmProvider for CustomProvider {
         Ok(LlmResponse {
             content,
             stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: super::openai_compat::usage_from_chat_completion(usage),
+            usage: crate::openai_compat::usage_from_chat_completion(usage),
             model: model.to_string(),
         })
     }
@@ -224,7 +224,7 @@ impl LlmProvider for CustomProvider {
     ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = self.build_body(request, model);
-        super::openai_compat::attach_stream_usage_option(&mut body);
+        crate::openai_compat::attach_stream_usage_option(&mut body);
         let resp = self
             .build_request(&body)
             .send()
@@ -258,11 +258,11 @@ impl LlmProvider for CustomProvider {
                             if data == "[DONE]" { yield Ok(StreamEvent::MessageStop); return; }
                             if let Ok(evt) = serde_json::from_str::<Value>(data) {
                                 let delta = &evt["choices"][0]["delta"];
-                                for ev in super::openai_compat::stream_events_for_chat_delta(delta) {
+                                for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
                                     yield Ok(ev);
                                 }
                                 if let Some(ev) =
-                                    super::openai_compat::stream_usage_from_chunk(&evt)
+                                    crate::openai_compat::stream_usage_from_chunk(&evt)
                                 {
                                     yield Ok(ev);
                                 }

@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use whycode_config::{Config, McpServerConfig, McpTransportKind};
 use whycode_mcp::client::McpClient;
 use whycode_tools::executor::ToolExecutor;
-use whycode_tools::mcp_tool::{McpCaller, McpToolBridge};
+use whycode_tools::mcp::{McpCaller, McpToolBridge};
 
 struct SharedMcpCaller {
     client: Arc<Mutex<McpClient>>,

@@ -1,5 +1,8 @@
-// ── theme.rs: Color theme definitions ──────────────────────────────────
+// ── theme: Color theme definitions ──────────────────────────────────
 // Built-in palettes of semantic color roles used throughout the TUI.
+
+pub mod file;
+pub mod tokens;
 
 use ratatui::style::Color;
 use std::fmt;
@@ -351,9 +354,9 @@ fn indexed_rgb(i: u8) -> (u8, u8, u8) {
 
 // ── Palette factories ──────────────────────────────────────────────────
 #[allow(clippy::too_many_lines)]
-/// Default dark palette from [`crate::tokens::dark`].
+/// Default dark palette from [`crate::theme::tokens::dark`].
 fn palette_default_dark() -> ThemePalette {
-    use crate::tokens::dark::*;
+    use crate::theme::tokens::dark::*;
     ThemePalette {
         bg: STEP1_BG,
         fg: TEXT,

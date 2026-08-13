@@ -8,7 +8,7 @@ use whycode_core::types::{
     ContentBlock, LlmRequest, LlmResponse, Message, StreamEvent, ToolDefinition, Usage,
 };
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
 /// Usage on a `message_delta` event.
@@ -22,7 +22,7 @@ fn usage_from_message_delta(event: &Value) -> Option<(u64, u64)> {
         .get("usage")
         .filter(|v| v.is_object())
         .or_else(|| event.pointer("/delta/usage").filter(|v| v.is_object()))?;
-    super::usage_dump::dump_raw_usage("anthropic", usage);
+    crate::usage_dump::dump_raw_usage("anthropic", usage);
     let input = usage
         .get("input_tokens")
         .and_then(|v| v.as_u64())
@@ -49,7 +49,7 @@ pub struct AnthropicProvider {
 /// plain API keys go in `x-api-key`. Sending an OAuth token as `x-api-key`
 /// is rejected by the API.
 fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
-    let req = super::client_identity::post(url).header("anthropic-version", "2023-06-01");
+    let req = crate::client_identity::post(url).header("anthropic-version", "2023-06-01");
     if api_key.starts_with("sk-ant-oat") {
         req.header("Authorization", format!("Bearer {api_key}"))
             .header("anthropic-beta", "oauth-2025-04-20")
@@ -96,9 +96,9 @@ impl AnthropicProvider {
 
         // OpenCode-parity: last tool + system + latest user message.
         if request.use_prompt_cache {
-            super::cache::apply_anthropic_cache_policy(
+            crate::cache::apply_anthropic_cache_policy(
                 &mut body,
-                &super::cache::CacheConfig::default(),
+                &crate::cache::CacheConfig::default(),
             );
         }
 
@@ -192,7 +192,7 @@ impl LlmProvider for AnthropicProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = super::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
             authed_post(self.default_base_url(), key).json(&body)
         })
         .await?;
@@ -237,7 +237,7 @@ impl LlmProvider for AnthropicProvider {
             .unwrap_or_default();
 
         let usage = json["usage"].clone();
-        super::usage_dump::dump_raw_usage("anthropic", &usage);
+        crate::usage_dump::dump_raw_usage("anthropic", &usage);
         Ok(LlmResponse {
             content,
             stop_reason: json["stop_reason"].as_str().map(|s| s.to_string()),
@@ -261,7 +261,7 @@ impl LlmProvider for AnthropicProvider {
         let body = self.build_body(request, model);
         let api_key = api_key.to_string();
 
-        let resp = super::oauth_refresh::send_with_refresh_retry(self.name(), &api_key, |key| {
+        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), &api_key, |key| {
             authed_post(self.default_base_url(), key).json(&body)
         })
         .await?;
@@ -301,7 +301,7 @@ impl LlmProvider for AnthropicProvider {
                                     Some("message_start") => {
                                         if let Some(msg) = event["message"].as_object() {
                                             let usage = &msg["usage"];
-                                            super::usage_dump::dump_raw_usage("anthropic", usage);
+                                            crate::usage_dump::dump_raw_usage("anthropic", usage);
                                             yield Ok(StreamEvent::Usage {
                                                 input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                                                 output_tokens: 0,

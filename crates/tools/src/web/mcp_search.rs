@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::websearch::WebSearchTool;
+use super::search::WebSearchTool;
 use crate::tool::{Tool, ToolContext};
 use whycode_core::types::ToolResult;
 

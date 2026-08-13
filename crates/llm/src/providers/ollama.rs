@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::pin::Pin;
 use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use super::provider::LlmProvider;
+use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
 pub struct OllamaProvider {
@@ -111,7 +111,7 @@ impl OllamaProvider {
                     "function": {
                         "name": t.name,
                         "description": t.description,
-                        "parameters": super::openai_compat::sanitize_schema_for_openai(&t.parameters)
+                        "parameters": crate::openai_compat::sanitize_schema_for_openai(&t.parameters)
                     }
                 })
             })
@@ -138,7 +138,7 @@ impl LlmProvider for OllamaProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = super::client_identity::post(self.default_base_url())
+        let resp = crate::client_identity::post(self.default_base_url())
             .json(&body)
             .send()
             .await
@@ -181,7 +181,7 @@ impl LlmProvider for OllamaProvider {
                         .unwrap_or("")
                         .to_string(),
                     name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: super::openai_compat::parse_tool_arguments(&func["arguments"]),
+                    input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
                 });
             }
         }
@@ -209,7 +209,7 @@ impl LlmProvider for OllamaProvider {
     {
         let body = self.build_body(request, model);
 
-        let resp = super::client_identity::post(self.default_base_url())
+        let resp = crate::client_identity::post(self.default_base_url())
             .json(&body)
             .send()
             .await
@@ -267,7 +267,7 @@ impl LlmProvider for OllamaProvider {
                                             // Ollama may send object or JSON string.
                                             let input = if raw_args.is_string() || raw_args.is_null()
                                             {
-                                                super::openai_compat::parse_tool_arguments(raw_args)
+                                                crate::openai_compat::parse_tool_arguments(raw_args)
                                             } else {
                                                 raw_args.clone()
                                             };

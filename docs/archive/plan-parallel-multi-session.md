@@ -1,6 +1,6 @@
 # Plan: Parallel multi-session
 
-Feature-matrix row: `Parallel multi-session` (docs/FEATURES.md §4) — currently ❌.
+Feature-matrix row: `Parallel multi-session` (docs/archive/features.md §4) — currently ❌.
 Goal: multiple sessions run concurrently in one whycode process; the user
 switches between live sessions without waiting for the active turn to finish,
 and headless/CLI usage can fan out prompts in parallel.
@@ -123,7 +123,7 @@ Splits are universally delegated to tmux/Zellij. Design revised accordingly:
 
 ## Risks / notes
 
-- Read docs/KNOWHOW.md before touching the event loop (mouse/event-loop
+- Read docs/knowhow.md before touching the event loop (mouse/event-loop
   return-value pitfalls, /dev/tty, silent exits).
 - The `TurnOutcome` move-out/move-back pattern must stay per runtime; never
   share an `Agent` between runtimes (it carries per-session state:

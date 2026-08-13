@@ -1,6 +1,6 @@
 //! Load real opencode theme files.
 //!
-//! The unit tests in `theme_file.rs` use a hand-written sample, which only
+//! The unit tests in `theme/file.rs` use a hand-written sample, which only
 //! proves the loader agrees with itself. These use files taken unmodified from
 //! opencode — see `fixtures/NOTICE.md` — so they test the loader against the
 //! schema as it is actually written rather than as we imagined it.

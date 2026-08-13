@@ -6,7 +6,7 @@ pub mod bench;
 pub mod clipboard;
 pub mod config;
 pub mod frecency;
-pub mod hit;
+pub mod hit_area;
 pub mod images;
 pub mod input;
 pub mod keymap;
@@ -15,15 +15,15 @@ pub mod remote;
 pub mod run;
 pub mod session_runtime;
 pub mod theme;
-pub mod theme_file;
 pub mod toast;
-pub mod tokens;
 pub mod ui;
 pub mod widgets;
 
 pub use app::TuiApp;
 pub use remote::RemoteAttach;
 pub use run::{RESUME_LATEST, TuiRunOptions, resolve_and_load_session, run, tui_available};
+pub use theme::file as theme_file;
+pub use theme::tokens;
 
 #[cfg(test)]
 mod tests;
