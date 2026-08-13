@@ -42,3 +42,22 @@ Artifact names must stay aligned with `.github/workflows/release.yml`,
 
 See `scripts/install.sh`, `install.ps1`, and `whycode upgrade`. Those remain
 the primary path until package managers are first-class.
+
+The scripts verify the download against the release `SHA256SUMS`. They do
+not modify `PATH`; they print the install directory if it is not already on
+it. `WHYCODE_INSTALL_DIR` overrides the location.
+
+`scripts/uninstall.sh` / `uninstall.ps1` remove the binary. Add `--purge` /
+`-Purge` to delete config and session data as well.
+
+The binaries are unsigned, so macOS Gatekeeper and Windows SmartScreen will
+warn on first run. `whycode upgrade` replaces the running binary with the
+newest release (checksum verified) and leaves the existing one in place if
+anything fails.
+
+From source, the binary lands at `target/release/whycode`. Optional extras
+(Unicode mermaid + extra highlight languages, ~+1.7 MB):
+
+```bash
+cargo build --release -p whycode-cli --features full
+```
