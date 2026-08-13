@@ -11,6 +11,33 @@ use whycode_core::types::{
 use super::provider::LlmProvider;
 use async_trait::async_trait;
 
+/// Usage on a `message_delta` event.
+///
+/// Anthropic's documented SSE shape is
+/// `{"type":"message_delta","delta":{...},"usage":{"output_tokens":N}}`.
+/// A few proxies nest `usage` inside `delta`. Either way, `output_tokens`
+/// is a running snapshot (not a delta) — the agent folds with `max`.
+fn usage_from_message_delta(event: &Value) -> Option<(u64, u64)> {
+    let usage = event
+        .get("usage")
+        .filter(|v| v.is_object())
+        .or_else(|| event.pointer("/delta/usage").filter(|v| v.is_object()))?;
+    super::usage_dump::dump_raw_usage("anthropic", usage);
+    let input = usage
+        .get("input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let output = usage
+        .get("output_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if input == 0 && output == 0 {
+        None
+    } else {
+        Some((input, output))
+    }
+}
+
 pub struct AnthropicProvider {
     name: String,
 }
@@ -210,6 +237,7 @@ impl LlmProvider for AnthropicProvider {
             .unwrap_or_default();
 
         let usage = json["usage"].clone();
+        super::usage_dump::dump_raw_usage("anthropic", &usage);
         Ok(LlmResponse {
             content,
             stop_reason: json["stop_reason"].as_str().map(|s| s.to_string()),
@@ -273,6 +301,7 @@ impl LlmProvider for AnthropicProvider {
                                     Some("message_start") => {
                                         if let Some(msg) = event["message"].as_object() {
                                             let usage = &msg["usage"];
+                                            super::usage_dump::dump_raw_usage("anthropic", usage);
                                             yield Ok(StreamEvent::Usage {
                                                 input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                                                 output_tokens: 0,
@@ -292,19 +321,22 @@ impl LlmProvider for AnthropicProvider {
                                         }
                                     }
                                     Some("message_delta") => {
-                                        if let Some(delta) = event["delta"].as_object() {
-                                            if let Some(sr) = delta["stop_reason"].as_str() {
-                                                yield Ok(StreamEvent::MessageDelta {
-                                                    delta: serde_json::json!({"stop_reason": sr}),
-                                                });
-                                            }
-                                            let usage = &delta["usage"];
-                                            if usage["output_tokens"].as_u64().unwrap_or(0) > 0 {
-                                                yield Ok(StreamEvent::Usage {
-                                                    input_tokens: 0,
-                                                    output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-                                                });
-                                            }
+                                        if let Some(delta) = event["delta"].as_object()
+                                            && let Some(sr) = delta["stop_reason"].as_str()
+                                        {
+                                            yield Ok(StreamEvent::MessageDelta {
+                                                delta: serde_json::json!({"stop_reason": sr}),
+                                            });
+                                        }
+                                        // Official SSE puts `usage` as a sibling
+                                        // of `delta`; some proxies nest it inside.
+                                        if let Some((input, output)) =
+                                            usage_from_message_delta(&event)
+                                        {
+                                            yield Ok(StreamEvent::Usage {
+                                                input_tokens: input,
+                                                output_tokens: output,
+                                            });
                                         }
                                     }
                                     Some("content_block_start") => {
@@ -385,5 +417,49 @@ impl LlmProvider for AnthropicProvider {
 impl Default for AnthropicProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::usage_from_message_delta;
+    use serde_json::json;
+
+    #[test]
+    fn usage_sibling_of_delta_is_official_shape() {
+        let event = json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn" },
+            "usage": { "output_tokens": 15 }
+        });
+        assert_eq!(usage_from_message_delta(&event), Some((0, 15)));
+    }
+
+    #[test]
+    fn usage_nested_in_delta_is_accepted() {
+        let event = json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn", "usage": { "output_tokens": 9 } }
+        });
+        assert_eq!(usage_from_message_delta(&event), Some((0, 9)));
+    }
+
+    #[test]
+    fn sibling_usage_wins_over_empty_nested() {
+        let event = json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn" },
+            "usage": { "input_tokens": 40, "output_tokens": 12 }
+        });
+        assert_eq!(usage_from_message_delta(&event), Some((40, 12)));
+    }
+
+    #[test]
+    fn missing_usage_is_none() {
+        let event = json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn" }
+        });
+        assert!(usage_from_message_delta(&event).is_none());
     }
 }

@@ -390,8 +390,31 @@ though it covered them.
 
 - **Memory of a busy session.** Idle TUI only; a turn with tool output and a
   long transcript is not exercised (would need a provider key or a fixture).
-- **Token accounting reconciliation.** Providers report usage; end-to-end
-  check against a real session is still open.
+
+## Token accounting reconciliation (2026-08-14)
+
+Providers report usage; we persist those numbers (not the char/4 heuristic)
+on the session and surface them in `/info`, `/cost`, and `whycode stats`.
+
+Live check: last raw `usage` object vs stored session usage, ≤1%.
+
+```bash
+cargo build -p whycode-cli
+python scripts/reconcile_token_usage.py --self-test
+python scripts/reconcile_token_usage.py --live --whycode target/debug/whycode
+```
+
+`--live` needs a configured provider. It dumps raw objects via
+`WHYCODE_USAGE_DUMP` and compares them to `generate --format json`. A single
+no-tool turn (`-t 1`, ask agent) is the intended shape — multi-step totals
+are the sum of per-step snapshots.
+
+Recorded 2026-08-14 (OpenAI-compat stream, ask agent, one turn): provider
+`prompt_tokens=1552` / `completion_tokens=12`; session stored the same
+(delta 0).
+
+In-stream fold is `Usage::absorb_stream` (`max` of snapshots), not `+=`.
+Session / subagent totals across steps still `add`.
 
 ## Comparison with other tools
 

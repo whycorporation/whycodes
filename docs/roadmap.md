@@ -10,8 +10,6 @@ Last updated: **2026-08-14**.
 1. **Plugins depth** — wire `PluginManager` / `plugin.json` discovery into
    the agent. `plugins.toml` → `plugin_*` and config hooks already ship.
    Marketplace stays out.
-2. **Performance residual** — live provider token reconcile (optional;
-   needs a real API turn).
 
 ## Later
 

@@ -1254,19 +1254,16 @@ impl Agent {
                         input_tokens,
                         output_tokens,
                     } => {
-                        // Providers report these in pieces — Anthropic sends
-                        // input at message_start and output at message_delta —
-                        // so accumulate rather than replace.
-                        turn_usage.input_tokens += input_tokens;
-                        turn_usage.output_tokens += output_tokens;
+                        // Snapshot fold (max), not sum: Anthropic splits
+                        // input/output across events; OpenAI-compat gateways
+                        // often repeat the full usage object.
+                        turn_usage.absorb_stream(input_tokens, output_tokens);
                     }
                     StreamEvent::CacheUsage {
                         creation_input_tokens,
                         read_input_tokens,
                     } => {
-                        *turn_usage.cache_creation_input_tokens.get_or_insert(0) +=
-                            creation_input_tokens;
-                        *turn_usage.cache_read_input_tokens.get_or_insert(0) += read_input_tokens;
+                        turn_usage.absorb_stream_cache(creation_input_tokens, read_input_tokens);
                     }
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}

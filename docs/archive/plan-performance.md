@@ -1,6 +1,6 @@
 # Plan — Performance measurement (residual)
 
-**Status:** mostly done · **Was:** phase 5 · **Depends on:** CI budgets (shipped) · **Blocks:** none for launch (live provider reconcile optional/manual)
+**Status:** done · **Was:** phase 5 · **Depends on:** CI budgets (shipped) · **Blocks:** none
 
 ## Problem
 
@@ -73,8 +73,11 @@ Out:
       idle-draw / first-frame gates remain local via `docs/benchmarks.md`)
 - [x] Idle redraws over 10 seconds with no input is 0, or the number is
       recorded with an explanation of why it is not
-- [ ] Token counts reconcile with the provider's reported usage within 1% on
-      at least one real session (**manual** — needs a live provider turn)
+- [x] Token counts reconcile with the provider's reported usage within 1% on
+      at least one real session (`scripts/reconcile_token_usage.py --live`;
+      2026-08-14 OpenAI-compat: provider 1552/12 vs session 1552/12, delta 0.
+      Stream fold is `Usage::absorb_stream` so repeated snapshots do not
+      double-count)
 - [x] Benchmarks run on all three platforms, or the doc states which platform
       the ceilings apply to and why (`docs/benchmarks.md`: Linux x86_64
       ceilings; multi-session PSS is Linux-only via `/proc`)
@@ -140,8 +143,10 @@ the provider's own numbers in both the TUI and the plain REPL.
 - **CI ceilings / `bench-results.json`.** `docs/bench-results.json` schema +
   `scripts/check_bench_ceilings.py` (generous Ubuntu ceilings); CI budgets job
   runs the checker (skips cleanly if file absent).
-- **Reconciliation against a live provider** still needs a real API session
-  (manual); arithmetic remains unit-tested.
+- **Reconciliation against a live provider.** `WHYCODE_USAGE_DUMP` writes each
+  raw usage object; `scripts/reconcile_token_usage.py` compares the last
+  snapshot to `generate --format json` session usage (≤1%). In-stream fold is
+  `Usage::absorb_stream` (`max`), not `+=`, so a gateway that repeats the
+  full usage object does not inflate `/cost`.
 
-**Status:** **mostly done** — residual code + CI ceilings shipped; live
-provider reconcile remains manual (optional, not blocking).
+**Status:** **done**.

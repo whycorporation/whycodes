@@ -27,6 +27,7 @@ pub mod together;
 pub mod token_counter;
 pub mod transport;
 pub mod types;
+pub mod usage_dump;
 pub mod xai;
 
 pub use cache::{CacheConfig, CachePolicy, apply_anthropic_cache_policy};

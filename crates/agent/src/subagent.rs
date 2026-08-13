@@ -281,6 +281,7 @@ impl SubagentRunner {
             // Stream response
             let mut accumulated_text = String::new();
             let mut assembler = ToolCallAssembler::new();
+            let mut step_usage = whycode_core::types::Usage::default();
 
             let mut event_stream = whycode_llm::default_transport()
                 .stream(provider, &request, api_key, model)
@@ -307,21 +308,19 @@ impl SubagentRunner {
                         tracing::debug!("Subagent thinking: {}", text);
                     }
                     StreamEvent::MessageStop => break,
-                    // Fold into total_usage; parent session adds via SubagentResult.
+                    // Per-step snapshot fold; added into total_usage after
+                    // the stream so multi-step workers still sum.
                     StreamEvent::Usage {
                         input_tokens,
                         output_tokens,
                     } => {
-                        total_usage.input_tokens += input_tokens;
-                        total_usage.output_tokens += output_tokens;
+                        step_usage.absorb_stream(input_tokens, output_tokens);
                     }
                     StreamEvent::CacheUsage {
                         creation_input_tokens,
                         read_input_tokens,
                     } => {
-                        *total_usage.cache_creation_input_tokens.get_or_insert(0) +=
-                            creation_input_tokens;
-                        *total_usage.cache_read_input_tokens.get_or_insert(0) += read_input_tokens;
+                        step_usage.absorb_stream_cache(creation_input_tokens, read_input_tokens);
                     }
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
@@ -329,6 +328,10 @@ impl SubagentRunner {
                         return Err(whycode_core::Error::Llm(message));
                     }
                 }
+            }
+
+            if !step_usage.is_empty() {
+                total_usage.add(&step_usage);
             }
 
             let tool_calls = assembler.finish();
