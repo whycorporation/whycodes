@@ -424,6 +424,33 @@ pub struct Session {
 }
 
 impl Session {
+    /// Build a session from imported messages (new id, current project).
+    pub fn from_imported(
+        project_path: PathBuf,
+        messages: Vec<whycode_core::types::Message>,
+        title_hint: Option<&str>,
+    ) -> Self {
+        let mut s = Self::new(project_path, String::new());
+        s.messages = messages;
+        if let Some(t) = title_hint {
+            s.set_title_manual(t);
+        } else {
+            let first = s
+                .messages
+                .iter()
+                .find_map(|m| {
+                    (m.role == whycode_core::types::Role::User)
+                        .then(|| m.content.as_text().map(str::to_string))
+                })
+                .flatten();
+            if let Some(first) = first {
+                s.apply_heuristic_title(&first);
+            }
+        }
+        s.token_cache = SessionTokenCache::from_parts(&s.system_prompt, &s.messages);
+        s
+    }
+
     /// Create a new session
     pub fn new(project_path: PathBuf, system_prompt: String) -> Self {
         let now = chrono::Utc::now();
