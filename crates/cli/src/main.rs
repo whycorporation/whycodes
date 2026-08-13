@@ -456,6 +456,14 @@ pub enum SessionCmd {
         /// Session ID
         id: String,
     },
+    /// Import a transcript (whycode / Claude / Codex / OpenCode / Pi)
+    Import {
+        /// File to import
+        path: PathBuf,
+        /// Format (default: auto)
+        #[arg(long, default_value = "auto")]
+        from: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -3623,6 +3631,23 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                     eprintln!("{} Session '{}' not found.", "✗".red(), id);
                 }
             }
+        }
+        SessionCmd::Import { path, from } => {
+            let raw = std::fs::read_to_string(path)
+                .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+            let kind = whycode_session::ImportKind::parse(from);
+            let messages = whycode_session::import_messages(&raw, kind)?;
+            let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let title = path.file_stem().and_then(|s| s.to_str());
+            let session = whycode_session::Session::from_imported(project, messages, title);
+            session.save_to_db(&db)?;
+            println!(
+                "{} Imported {} messages as session {}",
+                "✓".green(),
+                session.messages.len(),
+                session.id.cyan()
+            );
+            println!("Resume with: whycode --resume {}", &session.id[..8]);
         }
         SessionCmd::Share { id } => {
             match db.get_session(id).map_err(|e| anyhow::anyhow!("{}", e))? {

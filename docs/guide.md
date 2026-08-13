@@ -50,8 +50,12 @@ whycode generate "Explain the error handling in main.rs" -d ./my-project
 whycode run "Where is the retry logic?" -d ./my-project
 whycode --continue
 whycode --resume a1b2c3d4
+whycode session import ./transcript.jsonl --from auto
 whycode -P openai -m gpt-4o generate "Refactor this module"
 ```
+
+`session import` accepts `--from auto|whycode|claude|codex|opencode|pi`. Tools do
+not replay; resume with `whycode --resume <id>`.
 
 ### Output formats (headless / CI)
 
