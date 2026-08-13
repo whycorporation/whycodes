@@ -25,7 +25,7 @@ Last updated: **2026-08-14** (plugins depth shipped; living tracker is roadmap.m
 | Plan | Doc | Status | Notes |
 |---|---|---|---|
 | Performance residual | [plan-performance.md](plan-performance.md) | **done** | Subagent usage fold + CI ceilings + live reconcile (`reconcile_token_usage.py`, `Usage::absorb_stream`). |
-| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall shipped (`v0.1.0`). Remaining: public repo, Homebrew binary formula, Windows install smoke. |
+| Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall + Homebrew binary formula shipped (`v0.1.0`). Remaining: public repo, Windows install smoke. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([../auth.md](../auth.md)). Residual: Windows ACL on store. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **done (P0+P1+P2)** | Cache, parallel tools, core profile, routing, doom-loop; compact + speculative `read` + warm `serve`; first-token race + text-only semantic cache. Swarm stays lightweight. |
 | System optimization 2026-08 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done (A+B)** | Deferred MCP/auto-index past first paint; closed-msg markdown line cache; `LlmRequest` `Arc<[Message]>` + COW intent; token-estimate cache + ASCII fast path. |
@@ -61,7 +61,7 @@ Index of archives: [archive/README.md](archive/README.md).
 
 Priority (owner: **public install / repo visibility last**):
 
-1. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
+1. **Public release (last)** — repo public, Windows install smoke. Homebrew formula auto-bumps from `release.yml`. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
 2. **ACP / web** — deferred post product launch.
 
 Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-08.md](plan-surface-2026-08.md).

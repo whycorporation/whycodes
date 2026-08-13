@@ -1,40 +1,45 @@
-# Packaging (partial)
+# Packaging
 
-Distribution beyond the install scripts. This is intentionally thin; full
-package-manager automation (auto-bump CI, bottles, winget, AUR, Nix) comes
-later.
+Distribution beyond the install scripts. Dedicated package-manager repos
+(winget, AUR, Nix) stay later.
 
 ## Homebrew
 
 Formula lives in-repo at [`Formula/whycode.rb`](../Formula/whycode.rb) so a
-separate `homebrew-whycode` tap is not required yet.
+separate `homebrew-whycode` tap is not required yet. Tagged releases install
+prebuilt binaries (no Rust). `--HEAD` still compiles from `main`.
 
 ```bash
-# Source build from main (needs Rust via brew)
 brew tap whycorporation/whycode https://github.com/whycorporation/whycode
+brew install whycode
+
+# Tip of main (needs Rust via brew)
 brew install --HEAD whycode
 
-# Or one-shot without a persistent tap
-brew install --HEAD --formula \
+# One-shot without a persistent tap
+brew install --formula \
   https://raw.githubusercontent.com/whycorporation/whycode/main/Formula/whycode.rb
 ```
 
-After a tagged release publishes binaries + `SHA256SUMS`:
+`release.yml` rewrites the formula from the published `SHA256SUMS` and commits
+it to `main` after each `v*` tag. Manual backfill:
 
 ```bash
 scripts/update_homebrew_formula.sh v0.1.0
 # review Formula/whycode.rb, commit, push
-brew update && brew upgrade whycode
 ```
 
 Artifact names must stay aligned with `.github/workflows/release.yml`,
 `scripts/install.sh`, and `crates/cli/src/upgrade.rs`.
 
+If `main` is protected against `GITHUB_TOKEN` pushes, the Homebrew job will
+fail after a successful release; bump the formula locally with the script
+above or allow that bot push.
+
 ### Later
 
 - Dedicated tap repo (`whycorporation/homebrew-whycode`) if formula noise in
   the main tree becomes annoying
-- Auto-run `update_homebrew_formula.sh` from `release.yml`
 - Linux aarch64 prebuild (formula currently documents intel-only binaries)
 - winget / scoop, AUR, Nix flakes
 

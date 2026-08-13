@@ -26,7 +26,7 @@ irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/instal
 ```bash
 # Homebrew
 brew tap whycorporation/whycode https://github.com/whycorporation/whycode
-brew install --HEAD whycode
+brew install whycode
 
 # From source
 cargo build --release -p whycode-cli

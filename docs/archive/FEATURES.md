@@ -62,7 +62,7 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 | Single binary / native CLI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ Rust | ⚠️ npm/Node | ⚠️ npm; bin build exists | ❌ IDE; CLI separate |
 | Install (curl / npm / brew) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ curl+npm+brew | ✅ npm+brew | ✅ npm+curl | ✅ app + `@cursor/cli` |
 | Self-update | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ npm channel | ✅ `pi update` | ✅ app update |
-| Homebrew / package | ⚠️ HEAD | ⚠️ | ✅ | ✅ | ✅ | ✅ cask | ✅ | ⚠️ npm | ✅ |
+| Homebrew / package | ✅ formula | ⚠️ | ✅ | ✅ | ✅ | ✅ cask | ✅ | ⚠️ npm | ✅ |
 | Linux / macOS | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Windows native | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ docs | ✅ |
 | Cross-platform CI (full) | ✅★ | ⚠️ | ⚠️ | ✅ | ✅ | ⚠️ | ✅ CI badges | ✅ | n/a product |
