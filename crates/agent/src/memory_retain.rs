@@ -102,7 +102,10 @@ pub fn spawn_post_turn_retain(
     api_key: &str,
     events: Option<EventSink>,
 ) {
-    if !settings.enabled || !settings.auto_retain {
+    if !settings.enabled {
+        return;
+    }
+    if !settings.auto_retain && !settings.session_inject {
         return;
     }
 
@@ -116,24 +119,41 @@ pub fn spawn_post_turn_retain(
         .unwrap_or_else(|| PathBuf::from("."));
 
     tokio::spawn(async move {
-        let mut saved = run_heuristic_retain(&snap, &settings, &data_dir);
+        let mut saved = Vec::new();
+        if settings.auto_retain {
+            saved = run_heuristic_retain(&snap, &settings, &data_dir);
 
-        if should_llm_retain(&settings, saved.len(), snap.turn_index)
-            && let Some(provider) = registry.get(&provider_name)
-        {
-            match run_llm_retain_facts(
-                &snap,
-                &settings,
-                provider,
-                &provider_name,
-                &model,
-                &api_key,
-                &data_dir,
-            )
-            .await
+            if should_llm_retain(&settings, saved.len(), snap.turn_index)
+                && let Some(provider) = registry.get(&provider_name)
             {
-                Ok(more) => merge_facts(&mut saved, more),
-                Err(e) => tracing::debug!("llm retain skipped: {e}"),
+                match run_llm_retain_facts(
+                    &snap,
+                    &settings,
+                    provider,
+                    &provider_name,
+                    &model,
+                    &api_key,
+                    &data_dir,
+                )
+                .await
+                {
+                    Ok(more) => merge_facts(&mut saved, more),
+                    Err(e) => tracing::debug!("llm retain skipped: {e}"),
+                }
+            }
+        }
+
+        if let Ok(svc) = MemoryService::open(&snap.project_path, &data_dir, settings.clone()) {
+            if let Err(e) = svc.index_session_turn(
+                &snap.session_id,
+                snap.turn_index,
+                &snap.user_text,
+                &snap.assistant_text,
+            ) {
+                tracing::debug!("session chunk skip: {e}");
+            }
+            if let Err(e) = svc.consolidate() {
+                tracing::debug!("memory consolidate skip: {e}");
             }
         }
 

@@ -68,3 +68,15 @@ pub struct CodeChunkRow {
     pub embedding: Vec<u8>,
     pub updated_at: String,
 }
+
+/// Embedded turn excerpt for session RAG.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionChunkRow {
+    pub id: String,
+    pub project_key: String,
+    pub session_id: String,
+    pub turn_index: i64,
+    pub text: String,
+    pub embedding: Vec<u8>,
+    pub created_at: String,
+}

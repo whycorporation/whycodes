@@ -3315,6 +3315,11 @@ pub fn memory_settings_from_config(
         auto_index_max_files: m.auto_index_max_files,
         auto_index_max_chunks: m.auto_index_max_chunks,
         subagent_banks: m.subagent_banks,
+        session_inject: m.session_inject,
+        session_top_k: m.session_top_k,
+        session_min_score: m.session_min_score,
+        consolidate: m.consolidate,
+        consolidate_max: m.consolidate_max,
     }
 }
 

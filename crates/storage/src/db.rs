@@ -1,5 +1,7 @@
 use crate::migrations::run_migrations;
-use crate::models::{CodeChunkRow, MemoryRow, MessageRow, SessionRow, UsageTotals};
+use crate::models::{
+    CodeChunkRow, MemoryRow, MessageRow, SessionChunkRow, SessionRow, UsageTotals,
+};
 use rusqlite::Connection;
 use whycode_core::types::Usage;
 
@@ -447,6 +449,57 @@ impl Database {
         )?;
         Ok(n)
     }
+
+    // ── Session chunks (turn RAG) ────────────────────────────────────────
+
+    pub fn insert_session_chunk(
+        &self,
+        id: &str,
+        project_key: &str,
+        session_id: &str,
+        turn_index: i64,
+        text: &str,
+        embedding: &[u8],
+    ) -> anyhow::Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO session_chunks (
+                id, project_key, session_id, turn_index, text, embedding, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                id,
+                project_key,
+                session_id,
+                turn_index,
+                text,
+                embedding,
+                now
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_session_chunks(
+        &self,
+        project_key: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<SessionChunkRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, project_key, session_id, turn_index, text, embedding, created_at
+             FROM session_chunks WHERE project_key = ?1
+             ORDER BY created_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(
+            rusqlite::params![project_key, limit as i64],
+            map_session_chunk_row,
+        )?;
+        let mut result = Vec::new();
+        for row in rows {
+            result.push(row?);
+        }
+        Ok(result)
+    }
 }
 
 fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
@@ -459,6 +512,18 @@ fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
         created_at: row.get(5)?,
         last_recalled_at: row.get(6)?,
         recall_count: row.get(7)?,
+    })
+}
+
+fn map_session_chunk_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionChunkRow> {
+    Ok(SessionChunkRow {
+        id: row.get(0)?,
+        project_key: row.get(1)?,
+        session_id: row.get(2)?,
+        turn_index: row.get(3)?,
+        text: row.get(4)?,
+        embedding: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 

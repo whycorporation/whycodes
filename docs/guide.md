@@ -232,6 +232,12 @@ auto_retain = true
 embedder is a local hashing model; `--features onnx` adds MiniLM
 (`whycode memory onnx-smoke` verifies the download).
 
+Past turns are embedded after each turn. Search them with
+`whycode memory session-search "<query>"`; matching excerpts are also
+injected as `# Past sessions`. After retain, the fact bank is capped
+(`memory.consolidate_max`, default 80) by dropping the least-recalled
+entries.
+
 ## Configuration
 
 `config.toml` in the platform config directory. `whycode debug` prints the

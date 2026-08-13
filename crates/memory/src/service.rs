@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use whycode_storage::db::Database;
-use whycode_storage::models::MemoryRow;
+use whycode_storage::models::{MemoryRow, SessionChunkRow};
 
 // CodeHit re-exports the storage row type for callers.
 pub use whycode_storage::models::CodeChunkRow;
@@ -26,6 +26,13 @@ pub struct RecallHit {
 #[derive(Debug, Clone)]
 pub struct CodeHit {
     pub entry: CodeChunkRow,
+    pub score: f32,
+}
+
+/// A scored past-session turn hit.
+#[derive(Debug, Clone)]
+pub struct SessionHit {
+    pub entry: SessionChunkRow,
     pub score: f32,
 }
 
@@ -185,6 +192,114 @@ impl MemoryService {
         });
         hits.truncate(top_k.max(1));
         Ok(hits)
+    }
+
+    /// Embed this turn and store it for later session search.
+    pub fn index_session_turn(
+        &self,
+        session_id: &str,
+        turn_index: usize,
+        user_text: &str,
+        assistant_text: &str,
+    ) -> anyhow::Result<()> {
+        if !self.settings.enabled {
+            return Ok(());
+        }
+        let mut clip = String::new();
+        if !user_text.trim().is_empty() {
+            clip.push_str("User: ");
+            clip.push_str(user_text.trim());
+            clip.push('\n');
+        }
+        if !assistant_text.trim().is_empty() {
+            clip.push_str("Assistant: ");
+            clip.push_str(assistant_text.trim());
+        }
+        if clip.trim().is_empty() {
+            return Ok(());
+        }
+        const MAX: usize = 2000;
+        if clip.len() > MAX {
+            clip.truncate(MAX);
+        }
+        let vec = self.embed_text(&clip);
+        let blob = encode_blob(&vec);
+        let id = uuid::Uuid::new_v4().to_string();
+        let db = self.open_db()?;
+        db.insert_session_chunk(
+            &id,
+            &self.bank_key,
+            session_id,
+            turn_index as i64,
+            &clip,
+            &blob,
+        )?;
+        Ok(())
+    }
+
+    /// Semantic search over prior session turns.
+    pub fn search_sessions(
+        &self,
+        query: &str,
+        top_k: usize,
+        min_score: f32,
+    ) -> anyhow::Result<Vec<SessionHit>> {
+        let db = self.open_db()?;
+        let rows = db.list_session_chunks(&self.bank_key, 10_000)?;
+        let q = self.embed_text(query);
+        let mut hits: Vec<SessionHit> = rows
+            .into_iter()
+            .filter_map(|entry| {
+                let v = decode_blob(&entry.embedding);
+                if v.is_empty() || v.len() != q.len() {
+                    return None;
+                }
+                let score = cosine(&q, &v);
+                if score >= min_score {
+                    Some(SessionHit { entry, score })
+                } else {
+                    None
+                }
+            })
+            .collect();
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        hits.truncate(top_k.max(1));
+        Ok(hits)
+    }
+
+    /// Drop oldest unused facts when the bank is over `consolidate_max`.
+    pub fn consolidate(&self) -> anyhow::Result<usize> {
+        if !self.settings.enabled || !self.settings.consolidate {
+            return Ok(0);
+        }
+        let db = self.open_db()?;
+        let cap = self.settings.consolidate_max.max(1);
+        let rows = db.list_memories(&self.bank_key, 10_000)?;
+        if rows.len() <= cap {
+            return Ok(0);
+        }
+        let mut ranked = rows;
+        ranked.sort_by(|a, b| {
+            a.recall_count
+                .cmp(&b.recall_count)
+                .then_with(|| a.created_at.cmp(&b.created_at))
+        });
+        let overflow = ranked.len() - cap;
+        let mut dropped = 0usize;
+        for row in ranked.into_iter().take(overflow) {
+            if db.delete_memory(&row.id)? {
+                let short = &row.id[..8.min(row.id.len())];
+                if let Err(e) = markdown::remove_entry(&self.memory_md_path(), short) {
+                    tracing::debug!(id = %short, error = %e, "MEMORY.md remove after consolidate");
+                }
+                dropped += 1;
+            }
+        }
+        Ok(dropped)
     }
 
     /// Post-turn auto-retain (heuristic). Returns saved fact texts.
@@ -366,6 +481,43 @@ impl MemoryService {
                         hit.entry.end_line,
                         hit.score,
                         snippet
+                    );
+                    if used + line.len() > char_budget && !lines.is_empty() {
+                        break;
+                    }
+                    used += line.len();
+                    lines.push(line);
+                }
+                if !lines.is_empty() {
+                    parts.push(format!("{header}{}", lines.join("\n")));
+                }
+            }
+
+            if self.settings.session_inject
+                && let Ok(sess_hits) = self.search_sessions(
+                    q,
+                    self.settings.session_top_k,
+                    self.settings.session_min_score,
+                )
+                && !sess_hits.is_empty()
+            {
+                let mut lines = Vec::new();
+                let mut used = 0usize;
+                let header = "# Past sessions (related turns; verify if stale)\n";
+                used += header.len();
+                for hit in &sess_hits {
+                    let snippet = hit
+                        .entry
+                        .text
+                        .lines()
+                        .take(6)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let sid = &hit.entry.session_id;
+                    let short = &sid[..8.min(sid.len())];
+                    let line = format!(
+                        "- [{:.2}] session {short} turn {}\n{}\n",
+                        hit.score, hit.entry.turn_index, snippet
                     );
                     if used + line.len() > char_budget && !lines.is_empty() {
                         break;
@@ -564,6 +716,48 @@ mod tests {
         assert_eq!(s_ex.list(10).unwrap().len(), 1);
         assert!(s_main.list(10).unwrap()[0].text.contains("alpha"));
         assert!(s_ex.list(10).unwrap()[0].text.contains("beta"));
+    }
+
+    #[test]
+    fn session_turn_search_and_inject() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
+        svc.index_session_turn(
+            "sess-aaa",
+            1,
+            "How do we run the retry loop?",
+            "The retry loop lives in crates/llm/src/retry.rs.",
+        )
+        .unwrap();
+        let hits = svc.search_sessions("retry loop", 3, 0.05).unwrap();
+        assert!(!hits.is_empty());
+        assert!(hits[0].entry.text.contains("retry"));
+        let block = svc.build_inject_block(Some("retry loop")).unwrap();
+        assert!(block.contains("Past sessions"), "{block}");
+    }
+
+    #[test]
+    fn consolidate_drops_overflow() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let settings = MemorySettings {
+            consolidate: true,
+            consolidate_max: 2,
+            ..Default::default()
+        };
+        let svc = MemoryService::open(&project, &data, settings).unwrap();
+        svc.remember("fact alpha unique zebra", None).unwrap();
+        svc.remember("fact beta unique yak", None).unwrap();
+        svc.remember("fact gamma unique xylophone", None).unwrap();
+        assert_eq!(svc.list(10).unwrap().len(), 3);
+        let dropped = svc.consolidate().unwrap();
+        assert_eq!(dropped, 1);
+        assert_eq!(svc.list(10).unwrap().len(), 2);
     }
 
     #[test]

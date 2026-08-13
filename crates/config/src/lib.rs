@@ -708,6 +708,18 @@ pub struct MemoryConfig {
     /// Max chunks when auto-indexing.
     #[serde(default = "default_auto_index_chunks")]
     pub auto_index_max_chunks: usize,
+    /// Inject related past-session turns.
+    #[serde(default = "default_true")]
+    pub session_inject: bool,
+    #[serde(default = "default_session_top_k")]
+    pub session_top_k: usize,
+    #[serde(default = "default_session_min_score")]
+    pub session_min_score: f32,
+    /// Cap the fact bank after retain.
+    #[serde(default = "default_true")]
+    pub consolidate: bool,
+    #[serde(default = "default_consolidate_max")]
+    pub consolidate_max: usize,
 }
 
 impl Default for MemoryConfig {
@@ -735,6 +747,11 @@ impl Default for MemoryConfig {
             auto_index: true,
             auto_index_max_files: default_auto_index_files(),
             auto_index_max_chunks: default_auto_index_chunks(),
+            session_inject: true,
+            session_top_k: default_session_top_k(),
+            session_min_score: default_session_min_score(),
+            consolidate: true,
+            consolidate_max: default_consolidate_max(),
         }
     }
 }
@@ -780,6 +797,15 @@ fn default_auto_index_files() -> usize {
 }
 fn default_auto_index_chunks() -> usize {
     4000
+}
+fn default_session_top_k() -> usize {
+    3
+}
+fn default_session_min_score() -> f32 {
+    0.22
+}
+fn default_consolidate_max() -> usize {
+    80
 }
 
 fn default_agent() -> String {
@@ -1516,6 +1542,21 @@ impl Config {
         }
         if other.memory.auto_index_max_chunks != default_auto_index_chunks() {
             merged.memory.auto_index_max_chunks = other.memory.auto_index_max_chunks;
+        }
+        if !other.memory.session_inject {
+            merged.memory.session_inject = false;
+        }
+        if other.memory.session_top_k != default_session_top_k() {
+            merged.memory.session_top_k = other.memory.session_top_k;
+        }
+        if (other.memory.session_min_score - default_session_min_score()).abs() > f32::EPSILON {
+            merged.memory.session_min_score = other.memory.session_min_score;
+        }
+        if !other.memory.consolidate {
+            merged.memory.consolidate = false;
+        }
+        if other.memory.consolidate_max != default_consolidate_max() {
+            merged.memory.consolidate_max = other.memory.consolidate_max;
         }
 
         // Swarm: higher layer can disable; max_agents overrides when non-default.

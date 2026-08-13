@@ -86,6 +86,13 @@ pub struct MemorySettings {
     pub auto_index_max_chunks: usize,
     /// Subagents get isolated banks when true.
     pub subagent_banks: bool,
+    /// Inject past-session turn hits.
+    pub session_inject: bool,
+    pub session_top_k: usize,
+    pub session_min_score: f32,
+    /// After retain, drop least-used facts if the bank is over this size.
+    pub consolidate: bool,
+    pub consolidate_max: usize,
 }
 
 impl Default for MemorySettings {
@@ -114,6 +121,11 @@ impl Default for MemorySettings {
             auto_index_max_files: 1500,
             auto_index_max_chunks: 4000,
             subagent_banks: true,
+            session_inject: true,
+            session_top_k: 3,
+            session_min_score: 0.22,
+            consolidate: true,
+            consolidate_max: 80,
         }
     }
 }
