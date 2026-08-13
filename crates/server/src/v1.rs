@@ -1,0 +1,335 @@
+//! Protocol v1 HTTP handlers. The TUI attach path (`/api/*`) is unchanged.
+
+use std::convert::Infallible;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::Duration;
+
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::StatusCode,
+    response::sse::{Event, KeepAlive, Sse},
+};
+use futures::stream::Stream;
+use whycode_agent::events::{TurnEvent, new_cancel_flag};
+use whycode_protocol::sdk::{
+    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, RunRequest, SdkEvent, SessionInfo,
+    SessionList,
+};
+
+use crate::AppState;
+use crate::routes::{
+    default_provider_model, load_or_get_session, resolve_api_key, system_prompt_for,
+};
+
+pub async fn health(State(state): State<AppState>) -> Json<Handshake> {
+    Json(Handshake {
+        protocol: PROTOCOL_MAJOR,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        healthy: true,
+        project: state.project_dir.display().to_string(),
+        uptime_secs: state.started_at.elapsed().as_secs(),
+        sessions_in_memory: state.list_session_ids().len(),
+    })
+}
+
+pub async fn list_sessions(State(state): State<AppState>) -> Json<SessionList> {
+    let mut sessions = Vec::new();
+    let ids = state.list_session_ids();
+    for id in &ids {
+        if let Some(handle) = state.get_session(id) {
+            let s = handle.lock().await;
+            sessions.push(SessionInfo {
+                id: s.id.clone(),
+                title: s.title.clone(),
+                project: s.project_path.display().to_string(),
+                messages: Some(s.messages.len()),
+                updated_at: Some(s.updated_at.to_rfc3339()),
+                source: Some("memory".into()),
+            });
+        }
+    }
+    if let Some(db) = AppState::open_db()
+        && let Ok(rows) = db.list_sessions()
+    {
+        for row in rows {
+            if ids.iter().any(|i| i == &row.id) {
+                continue;
+            }
+            sessions.push(SessionInfo {
+                id: row.id,
+                title: row.title,
+                project: row.project_path,
+                messages: None,
+                updated_at: Some(row.updated_at),
+                source: Some("db".into()),
+            });
+        }
+    }
+    Json(SessionList { sessions })
+}
+
+pub async fn create_session(
+    State(state): State<AppState>,
+    Json(req): Json<CreateSessionRequest>,
+) -> Json<SessionInfo> {
+    let project = req
+        .project
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.project_dir.clone());
+    let prompt = system_prompt_for(&state.agent, &project);
+    let session = whycode_session::session::Session::new(project, prompt);
+    let persist = req.persist.unwrap_or(true);
+    if persist
+        && let Some(db) = AppState::open_db()
+        && let Err(e) = session.save_to_db(&db)
+    {
+        tracing::warn!(error = %e, "v1: failed to persist new session");
+    }
+    let info = SessionInfo {
+        id: session.id.clone(),
+        title: session.title.clone(),
+        project: session.project_path.display().to_string(),
+        messages: Some(0),
+        updated_at: Some(session.updated_at.to_rfc3339()),
+        source: Some("memory".into()),
+    };
+    state.insert_session(session);
+    Json(info)
+}
+
+pub async fn get_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<SessionInfo>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let s = handle.lock().await;
+    Ok(Json(SessionInfo {
+        id: s.id.clone(),
+        title: s.title.clone(),
+        project: s.project_path.display().to_string(),
+        messages: Some(s.messages.len()),
+        updated_at: Some(s.updated_at.to_rfc3339()),
+        source: Some("memory".into()),
+    }))
+}
+
+pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    if state.request_cancel(&id) {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+pub async fn run(
+    State(state): State<AppState>,
+    Path(session_id): Path<String>,
+    Json(req): Json<RunRequest>,
+) -> Result<Sse<std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>>, StatusCode>
+{
+    if req.message.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let handle = load_or_get_session(&state, &session_id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let (def_provider, def_model) = default_provider_model(&state.config);
+    let provider = req.provider.unwrap_or(def_provider);
+    let model = req.model.unwrap_or(def_model);
+    let api_key = resolve_api_key(&provider, &state.config)
+        .await
+        .unwrap_or_default();
+
+    let keep = KeepAlive::new()
+        .interval(Duration::from_secs(15))
+        .text("ping");
+
+    if api_key.is_empty() {
+        let msg = format!(
+            "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycode auth login`.",
+            provider.to_uppercase()
+        );
+        let stream = async_stream::stream! {
+            let ev = SdkEvent::Error {
+                code: ErrorCode::Auth,
+                message: msg,
+            };
+            if let Ok(payload) = serde_json::to_string(&ev) {
+                yield Ok::<_, Infallible>(Event::default().data(payload));
+            }
+            if let Ok(done) = serde_json::to_string(&SdkEvent::TurnDone { text: String::new() }) {
+                yield Ok(Event::default().data(done));
+            }
+        };
+        return Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep));
+    }
+
+    let max_turns = req.max_turns.unwrap_or(state.max_turns).max(1);
+    let agent = Arc::clone(&state.agent);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let cancel = new_cancel_flag();
+    state.register_cancel(&session_id, Arc::clone(&cancel));
+    let cancel_for_task = Arc::clone(&cancel);
+    let sid = session_id.clone();
+    let state_done = state.clone();
+
+    let run_task = tokio::spawn(async move {
+        let mut session = handle.lock().await;
+        session.add_user_message(&req.message);
+        let result = agent
+            .run_turn_with_events(
+                &mut session,
+                &provider,
+                &model,
+                &api_key,
+                max_turns,
+                Some(tx.clone()),
+                Some(cancel_for_task),
+            )
+            .await;
+        if let Some(db) = AppState::open_db()
+            && let Err(e) = session.save_to_db(&db)
+        {
+            tracing::warn!(error = %e, "v1: failed to save session after run");
+        }
+        state_done.take_cancel(&sid);
+        result
+    });
+
+    let stream = async_stream::stream! {
+        while let Some(ev) = rx.recv().await {
+            if let Some(sdk) = from_turn_event(&ev)
+                && let Ok(payload) = serde_json::to_string(&sdk)
+            {
+                yield Ok::<_, Infallible>(Event::default().data(payload));
+            }
+        }
+        match run_task.await {
+            Ok(Ok(text)) => {
+                if let Ok(payload) = serde_json::to_string(&SdkEvent::TurnDone { text }) {
+                    yield Ok(Event::default().data(payload));
+                }
+            }
+            Ok(Err(e)) => {
+                let ev = SdkEvent::Error {
+                    code: ErrorCode::Internal,
+                    message: e.to_string(),
+                };
+                if let Ok(payload) = serde_json::to_string(&ev) {
+                    yield Ok(Event::default().data(payload));
+                }
+                if let Ok(done) = serde_json::to_string(&SdkEvent::TurnDone { text: String::new() }) {
+                    yield Ok(Event::default().data(done));
+                }
+            }
+            Err(e) => {
+                let ev = SdkEvent::Error {
+                    code: ErrorCode::Internal,
+                    message: format!("run task: {e}"),
+                };
+                if let Ok(payload) = serde_json::to_string(&ev) {
+                    yield Ok(Event::default().data(payload));
+                }
+            }
+        }
+    };
+
+    Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep))
+}
+
+pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
+    Some(match ev {
+        TurnEvent::TextDelta(text) => SdkEvent::TextDelta { text: text.clone() },
+        TurnEvent::ThinkingDelta(text) => SdkEvent::ReasoningDelta { text: text.clone() },
+        TurnEvent::ToolStart { id, name, input } => SdkEvent::ToolStart {
+            id: id.clone(),
+            name: name.clone(),
+            input: input.clone(),
+        },
+        TurnEvent::ToolEnd {
+            id,
+            content,
+            is_error,
+        } => SdkEvent::ToolEnd {
+            id: id.clone(),
+            content: content.clone(),
+            is_error: *is_error,
+        },
+        TurnEvent::Usage(u) => SdkEvent::Usage {
+            input_tokens: u.input_tokens,
+            output_tokens: u.output_tokens,
+            cache_read_input_tokens: u.cache_read_input_tokens.unwrap_or(0),
+            cache_creation_input_tokens: u.cache_creation_input_tokens.unwrap_or(0),
+        },
+        TurnEvent::Status(s) => SdkEvent::Status { message: s.clone() },
+        TurnEvent::Cancelled => SdkEvent::Cancelled,
+        TurnEvent::Intent {
+            kind,
+            confidence,
+            badge,
+            notice_kind,
+            notice,
+        } => SdkEvent::Intent {
+            kind: kind.clone(),
+            confidence: *confidence,
+            badge: badge.clone(),
+            notice_kind: notice_kind.clone(),
+            notice: notice.clone(),
+        },
+        TurnEvent::FileConflict {
+            path,
+            claimant,
+            owner,
+        } => SdkEvent::FileConflict {
+            path: path.clone(),
+            claimant: claimant.clone(),
+            owner: owner.clone(),
+        },
+        TurnEvent::SwarmStatus {
+            active,
+            total,
+            message,
+        } => SdkEvent::SwarmStatus {
+            active: *active,
+            total: *total,
+            message: message.clone(),
+        },
+        TurnEvent::Background {
+            id,
+            status,
+            summary,
+        } => SdkEvent::Background {
+            id: id.clone(),
+            status: status.clone(),
+            summary: summary.clone(),
+        },
+        // TUI-only chrome — not part of the public v1 contract.
+        TurnEvent::EnqueuePrompt { .. }
+        | TurnEvent::Panel(_)
+        | TurnEvent::SwarmMessage { .. }
+        | TurnEvent::FileStale { .. } => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_text_and_drops_panel() {
+        let ev = from_turn_event(&TurnEvent::TextDelta("x".into())).unwrap();
+        assert!(matches!(ev, SdkEvent::TextDelta { text } if text == "x"));
+        assert!(
+            from_turn_event(&TurnEvent::EnqueuePrompt {
+                text: "later".into()
+            })
+            .is_none()
+        );
+    }
+}

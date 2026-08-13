@@ -179,6 +179,35 @@ whycode connect                 # new session on 127.0.0.1:3030
 whycode connect 127.0.0.1:3030 --session <id>
 ```
 
+## Embed via the SDK (protocol v1)
+
+`whycode-sdk` is a **thin HTTP client**. It does not link the agent loop.
+The daemon is the product; the crate speaks `/v1/*`.
+
+```rust
+use whycode_sdk::{LaunchOptions, RunOptions, WhycodeClient};
+
+// Attach to `whycode serve` already running:
+let client = WhycodeClient::connect("127.0.0.1:3030").await?;
+
+// Or spawn a private instance (inherits this process's env / API keys):
+let client = WhycodeClient::launch(LaunchOptions::default()).await?;
+
+let session = client.create_session(None::<String>).await?;
+let turn = client
+    .run(&session.id, "summarize this repo", RunOptions::default())
+    .await?;
+println!("{}", turn.text);
+client.close().await?;
+```
+
+Events on `/v1/sessions/:id/run` are tagged `ev` (`text_delta`, `tool_start`,
+`turn_done`, …). Unknown tags become `SdkEvent::Unknown` so older clients
+keep working. Branch on `SdkError.code`, not the message.
+
+`/api/*` remains for TUI attach (`whycode connect`). New integrations should
+use `/v1`.
+
 ## Agents
 
 Primary agents run the main conversation (`Ctrl+T` or `/agent`). Subagents

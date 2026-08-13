@@ -5,6 +5,7 @@
 //! held in-process and optionally persisted to the same SQLite DB as the TUI.
 
 pub mod routes;
+pub mod v1;
 
 use axum::{
     Router,
@@ -16,6 +17,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tower_http::cors::CorsLayer;
 use whycode_agent::agent::Agent;
+use whycode_agent::events::CancelFlag;
 use whycode_config::Config;
 use whycode_session::session::Session;
 
@@ -39,6 +41,8 @@ pub struct AppState {
     pub index_warm: bool,
     /// When the server process started (for `/api/health` uptime).
     pub started_at: std::time::Instant,
+    /// Per-session cancel flags for in-flight `/v1` runs.
+    pub cancel_flags: Arc<std::sync::Mutex<HashMap<String, CancelFlag>>>,
 }
 
 impl AppState {
@@ -71,6 +75,30 @@ impl AppState {
         let path = Self::db_path()?;
         whycode_storage::db::Database::open(&path.to_string_lossy()).ok()
     }
+
+    pub fn register_cancel(&self, session_id: &str, flag: CancelFlag) {
+        if let Ok(mut map) = self.cancel_flags.lock() {
+            map.insert(session_id.to_string(), flag);
+        }
+    }
+
+    pub fn take_cancel(&self, session_id: &str) -> Option<CancelFlag> {
+        self.cancel_flags.lock().ok()?.remove(session_id)
+    }
+
+    pub fn request_cancel(&self, session_id: &str) -> bool {
+        match self.cancel_flags.lock() {
+            Ok(map) => {
+                if let Some(flag) = map.get(session_id) {
+                    whycode_agent::events::request_cancel(flag);
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(_poisoned) => false,
+        }
+    }
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -86,6 +114,14 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::get_session_messages),
         )
         .route("/api/session/:id/chat", post(routes::chat))
+        .route("/v1/health", get(v1::health))
+        .route(
+            "/v1/sessions",
+            get(v1::list_sessions).post(v1::create_session),
+        )
+        .route("/v1/sessions/:id", get(v1::get_session))
+        .route("/v1/sessions/:id/run", post(v1::run))
+        .route("/v1/sessions/:id/cancel", post(v1::cancel))
         // Single param route: id may be bare, `foo.json`, or `foo.md`
         // (axum rejects overlapping `/s/:id` + `/s/:id.json`).
         .route("/s/:id", get(routes::share_dispatch))

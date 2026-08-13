@@ -3071,19 +3071,26 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         mcp_warm: true,
         index_warm: true,
         started_at: std::time::Instant::now(),
+        cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
     let router = whycode_server::create_router(state);
     // Loopback only — this is a local warm daemon, not a public API.
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     println!("  Endpoints:");
-    println!("    GET  /api/health          (warm status + uptime)");
+    println!("    GET  /v1/health              (protocol handshake)");
+    println!("    GET  /v1/sessions");
+    println!("    POST /v1/sessions");
+    println!("    GET  /v1/sessions/:id");
+    println!("    POST /v1/sessions/:id/run    (SSE v1 event stream)");
+    println!("    POST /v1/sessions/:id/cancel");
+    println!("    GET  /api/health             (TUI attach, legacy)");
     println!("    GET  /api/tools");
     println!("    GET  /api/models");
-    println!("    GET  /api/sessions        (memory + SQLite)");
+    println!("    GET  /api/sessions");
     println!("    POST /api/session/new");
     println!("    GET  /api/session/:id");
-    println!("    POST /api/session/:id/chat  (SSE turn stream)");
+    println!("    POST /api/session/:id/chat   (SSE, TUI attach)");
     println!("    GET  /api/shares");
     println!("    GET  /s/:id[.json|.md]");
     println!();
