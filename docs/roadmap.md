@@ -13,7 +13,7 @@ Nothing open. Later stays later.
 
 | Item | Notes |
 |---|---|
-| Public release | **Last.** Repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`. |
+| Public release | **Last.** Repo public, Windows install smoke. Homebrew binary formula auto-bumps from `release.yml`. Assets already cut as `v0.1.0`. |
 | ACP | Editor ↔ agent JSON-RPC. `whycode acp` is a stub. |
 | `web` surface | Same band as ACP. Use `whycode serve` + a browser for local share. |
 

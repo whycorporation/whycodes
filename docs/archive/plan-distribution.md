@@ -1,7 +1,7 @@
 # Plan — Distribution and self-update
 
 **Status:** implemented (assets cut) · **Priority:** **last**  
-**Residual:** repo visibility=public, Homebrew binary formula, Windows install.ps1 smoke.
+**Residual:** repo visibility=public, Windows install.ps1 smoke.
 
 ## Problem
 
@@ -42,9 +42,9 @@ In:
 Out (full automation — partial scaffolding exists):
 
 - Dedicated Homebrew tap repo, AUR, winget, Nix. Each is ongoing maintenance.
-  **Partial (2026-08-04):** in-repo `Formula/whycode.rb` (HEAD/source install)
-  and `scripts/update_homebrew_formula.sh` to rewrite it as a prebuilt-binary
-  formula after a tagged release. See `packaging/README.md`.
+  **Done (2026-08-14):** in-repo binary `Formula/whycode.rb` for `v0.1.0`;
+  `release.yml` re-runs `scripts/update_homebrew_formula.sh` after each tag.
+  See `packaging/README.md`. Dedicated tap repo still later.
 - Code signing and notarization. macOS Gatekeeper will warn. Document it
   rather than pretending otherwise.
 - A hosted install domain. Use the raw GitHub URL until the rest works.
@@ -68,7 +68,8 @@ Out (full automation — partial scaffolding exists):
 - [x] README: install section leads with the scripts, source build second
 - [x] Partial Homebrew: `Formula/whycode.rb` (HEAD/source) +
       `scripts/update_homebrew_formula.sh` for post-release binary formula
-- [ ] Homebrew: run update script after first published tag (manual or CI)
+- [x] Homebrew: binary formula for `v0.1.0` + `release.yml` auto-bump on
+      later tags
 - [ ] winget / AUR / Nix (on demand)
 
 ## Acceptance criteria
@@ -125,8 +126,8 @@ git tag v0.1.0 && git push origin v0.1.0
 That runs `.github/workflows/release.yml`, which builds all four targets,
 generates `SHA256SUMS` and publishes the release. The installers and
 `whycode upgrade` can then be run against it, and the remaining boxes ticked.
-After a green release, run `scripts/update_homebrew_formula.sh v0.1.0` and
-commit the formula if bottles are desired.
+After a green release, `release.yml` runs `scripts/update_homebrew_formula.sh`
+and commits `Formula/whycode.rb` to `main`. Manual backfill is the same script.
 
 Unit-tested without a release: version comparison, `SHA256SUMS` parsing
 (including the `*` binary marker `sha256sum` writes), and that `replace_binary`

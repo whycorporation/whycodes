@@ -112,3 +112,33 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             artifacts/whycode-* artifacts/SHA256SUMS
+
+  # Derived from the just-published SHA256SUMS. Lives on main (the tap default
+  # branch), not on the tag — users `brew install whycode` against main.
+  homebrew:
+    name: Homebrew formula
+    needs: publish
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Bump formula
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WHYCODE_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/update_homebrew_formula.sh "$TAG"
+          git add Formula/whycode.rb
+          if git diff --cached --quiet; then
+            echo "Formula already matches $TAG"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(homebrew): bump formula to ${TAG}"
+          git pull --rebase origin main
+          git push origin HEAD:main
