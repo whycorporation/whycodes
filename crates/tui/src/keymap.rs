@@ -32,6 +32,8 @@ pub enum Action {
     ToggleAutoScroll,
     ClearSession,
     ToggleSidebar,
+    SidebarNextTab,
+    SidebarPrevTab,
     OpenProviderDialog,
     OpenModelDialog,
     DialogConfirm,
@@ -155,6 +157,13 @@ impl Keymap {
                     }
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
+                    // Sidebar tabs: [ / ] in scrollback (prompt still types them).
+                    (false, KeyCode::Char(']')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarNextTab);
+                    }
+                    (false, KeyCode::Char('[')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarPrevTab);
+                    }
                     (true, KeyCode::Char('p')) => return Some(Action::OpenProviderDialog),
                     (true, KeyCode::Char('m')) => return Some(Action::OpenModelDialog),
                     (true, KeyCode::Char('a')) => return Some(Action::ToggleAutoScroll),
@@ -301,6 +310,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Ctrl+P", "Provider setup", KeymapContext::Normal),
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),
+        KeyBinding::new("[ / ]", "Sidebar tabs (scrollback)", KeymapContext::Normal),
         KeyBinding::new("Ctrl+A", "Toggle auto scroll", KeymapContext::Normal),
         KeyBinding::new("Ctrl+L", "Clear session", KeymapContext::Normal),
     ]

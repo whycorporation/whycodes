@@ -125,6 +125,7 @@ pub async fn run_stdio_server(
                         agent_id: None,
                         agent_label: None,
                         file_index: None,
+                        panel: None,
                     };
                     let result = executor.execute(&call, &ctx, &permissions).await;
                     let out = CallToolResult {

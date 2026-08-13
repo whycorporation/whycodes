@@ -487,6 +487,20 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "text": text,
             })
         }
+        TurnEvent::Panel(update) => match update {
+            whycode_core::PanelUpdate::Clear => {
+                serde_json::json!({"type": "panel", "action": "clear"})
+            }
+            whycode_core::PanelUpdate::File { path, .. } => {
+                serde_json::json!({"type": "panel", "action": "file", "path": path})
+            }
+            whycode_core::PanelUpdate::Diff { path, .. } => {
+                serde_json::json!({"type": "panel", "action": "diff", "path": path})
+            }
+            whycode_core::PanelUpdate::Mermaid { .. } => {
+                serde_json::json!({"type": "panel", "action": "mermaid"})
+            }
+        },
     })
 }
 

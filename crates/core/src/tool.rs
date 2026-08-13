@@ -3,11 +3,12 @@ use std::path::Path;
 
 use crate::file_claims::{ClaimResult, FileClaimRegistry};
 use crate::network::NetworkPolicy;
+use crate::panel::PanelSink;
 use crate::sandbox::SandboxSettings;
 use crate::types::{PermissionSet, ToolDefinition, ToolResult};
 
 /// Context passed to tool execution
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ToolContext {
     pub working_dir: String,
     pub session_id: Option<String>,
@@ -24,6 +25,24 @@ pub struct ToolContext {
     /// Resident workspace file index (when the host started one). File tools
     /// use it as a warm fast path for enumeration and fall back to walking.
     pub file_index: Option<std::sync::Arc<whycode_index::WorkspaceIndex>>,
+    /// Optional sink so the `panel` tool can pin a file / diff / mermaid.
+    pub panel: Option<PanelSink>,
+}
+
+impl std::fmt::Debug for ToolContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ToolContext")
+            .field("working_dir", &self.working_dir)
+            .field("session_id", &self.session_id)
+            .field("sandbox", &self.sandbox)
+            .field("network", &self.network)
+            .field("file_claims", &self.file_claims)
+            .field("agent_id", &self.agent_id)
+            .field("agent_label", &self.agent_label)
+            .field("file_index", &self.file_index.as_ref().map(|_| "Some"))
+            .field("panel", &self.panel.as_ref().map(|_| "Some"))
+            .finish()
+    }
 }
 
 impl ToolContext {
@@ -37,6 +56,7 @@ impl ToolContext {
             agent_id: None,
             agent_label: None,
             file_index: None,
+            panel: None,
         }
     }
 
@@ -50,6 +70,7 @@ impl ToolContext {
             agent_id: None,
             agent_label: None,
             file_index: None,
+            panel: None,
         }
     }
 

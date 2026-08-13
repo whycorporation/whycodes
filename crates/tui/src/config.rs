@@ -91,6 +91,7 @@ impl TuiAppConfig {
         if let Some(ref kb) = cfg.key_bindings {
             c.key_bindings = kb.clone();
         }
+        c.show_sidebar = cfg.show_sidebar;
         c
     }
 }

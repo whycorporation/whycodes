@@ -393,6 +393,16 @@ impl Agent {
         self
     }
 
+    /// Forward `panel` tool updates onto the turn event channel.
+    fn panel_sink(&self) -> Option<whycode_core::PanelSink> {
+        let tx = self.event_sink.clone()?;
+        Some(std::sync::Arc::new(move |update| {
+            if let Err(e) = tx.send(TurnEvent::Panel(update)) {
+                tracing::debug!(error = %e, "panel event dropped (listener closed)");
+            }
+        }))
+    }
+
     /// Attach a long-lived event sink (TUI) for background job notifications
     /// and scheduled prompt enqueue. Safe to call once after channel setup.
     pub fn wire_event_sink(&mut self, sink: EventSink) {
@@ -477,6 +487,7 @@ impl Agent {
             agent_id: None,
             agent_label: None,
             file_index: self.file_index.clone(),
+            panel: self.panel_sink(),
         }
     }
 
@@ -2712,6 +2723,7 @@ impl Agent {
         let repo_root_arc = repo_root.clone();
         let swarm_run_dir = swarm_run_dir.clone();
         let file_index = self.file_index.clone();
+        let panel = self.panel_sink();
 
         let mut handles = Vec::with_capacity(specs.len());
 
@@ -2735,6 +2747,7 @@ impl Agent {
             let repo_root = repo_root_arc.clone();
             let swarm_run_dir = swarm_run_dir.clone();
             let file_index = file_index.clone();
+            let panel = panel.clone();
 
             handles.push(tokio::spawn(async move {
                 let _guard = match permit.acquire().await {
@@ -2887,7 +2900,8 @@ impl Agent {
                 let mut runner =
                     SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
                         .with_memory(memory)
-                        .with_file_index(file_index.clone());
+                        .with_file_index(file_index.clone())
+                        .with_panel(panel.clone());
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
@@ -3125,7 +3139,8 @@ impl Agent {
             self.network.clone(),
         )
         .with_memory(self.memory.clone())
-        .with_file_index(self.file_index.clone());
+        .with_file_index(self.file_index.clone())
+        .with_panel(self.panel_sink());
 
         match runner.run(task, provider_name, model, api_key).await {
             Ok(result) => {
@@ -3200,7 +3215,8 @@ impl Agent {
             self.network.clone(),
         )
         .with_memory(self.memory.clone())
-        .with_file_index(self.file_index.clone());
+        .with_file_index(self.file_index.clone())
+        .with_panel(self.panel_sink());
 
         let result = runner.run(task, provider_name, model, api_key).await?;
 
@@ -3238,7 +3254,8 @@ impl Agent {
                 self.network.clone(),
             )
             .with_memory(self.memory.clone())
-            .with_file_index(self.file_index.clone()),
+            .with_file_index(self.file_index.clone())
+            .with_panel(self.panel_sink()),
         );
 
         let mut handles = Vec::with_capacity(goals.len());

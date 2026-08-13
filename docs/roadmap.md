@@ -7,27 +7,39 @@ Last updated: **2026-08-13**.
 
 ## Now
 
-1. **Public release** — repo public, Homebrew binary formula, Windows
-   install smoke. Release assets already cut as `v0.1.0`.
-2. **Plugins depth** — `plugins.toml` → `plugin_*` tools;
-   `whycode plugins list`; project + global load. Marketplace is out of
-   scope.
-3. **Performance residual (optional)** — live provider token reconcile
-   against a real API session.
+whycode-shaped surface (not a jcode clone). Each item is a shippable slice.
 
-## Deferred
+1. **Claim the numbers** — README PSS / boot (this file’s PR1).
+2. **Live sidebar + `panel` tool** — files / MCP / todos / preview canvas.
+3. **Session RAG + consolidate** — search past turns; periodic fact tidy.
+4. **Swarm mailbox + stale-read** — worker DM; “this file moved” on read.
+5. **`whycode connect`** — TUI attaches to `whycode serve`.
+6. **Foreign session import** — Claude / Codex / OpenCode / Pi transcripts.
+7. **Browser tool** — CDP, permission `ask`, not in the core profile.
+
+## Later
 
 | Item | Notes |
 |---|---|
-| ACP (Agent Client Protocol) | Editor ↔ agent JSON-RPC. `whycode acp` is a stub. After product launch. |
+| Public release | Repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`. |
+| Plugins depth | `plugins.toml` → `plugin_*` tools. Marketplace out of scope. |
+| Performance residual | Live provider token reconcile (optional). |
+| ACP | Editor ↔ agent JSON-RPC. `whycode acp` is a stub. |
 | `web` surface | Same band as ACP. Use `whycode serve` + a browser for local share. |
+
+## Out
+
+- 1000 fps render loop — idle dirty-draw stays the policy.
+- Self-dev binary reload — point the agent at this repo if you want that.
+- jcode memory graph / ambient daemon.
+- Plugin marketplace.
 
 ## Standing decisions
 
 These are still in force. The full historical log is
 [archive/status.md](archive/status.md).
 
-- The goal is not “OpenCode parity”.
+- The goal is not “OpenCode parity” (nor jcode clone).
 - Safety before features: shell risk classification and the OS sandbox stay
   on by default.
 - Default `bash_risk_threshold` is `destructive`, not `caution`.

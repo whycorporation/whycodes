@@ -56,6 +56,8 @@ pub struct SubagentRunner {
     agent_label: Option<String>,
     /// Workspace file index inherited from the parent agent (tools fast path).
     file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
+    /// Parent TUI panel sink (so workers can pin a preview).
+    panel: Option<whycode_core::PanelSink>,
 }
 
 impl SubagentRunner {
@@ -80,12 +82,19 @@ impl SubagentRunner {
             agent_id: None,
             agent_label: None,
             file_index: None,
+            panel: None,
         }
     }
 
     /// Inherit the parent agent's workspace file index.
     pub fn with_file_index(mut self, index: Option<Arc<whycode_index::WorkspaceIndex>>) -> Self {
         self.file_index = index;
+        self
+    }
+
+    /// Inherit the parent agent's side-panel sink.
+    pub fn with_panel(mut self, panel: Option<whycode_core::PanelSink>) -> Self {
+        self.panel = panel;
         self
     }
 
@@ -217,6 +226,7 @@ impl SubagentRunner {
             agent_id: self.agent_id.clone(),
             agent_label: self.agent_label.clone(),
             file_index: self.file_index.clone(),
+            panel: self.panel.clone(),
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {

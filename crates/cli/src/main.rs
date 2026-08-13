@@ -2769,6 +2769,14 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         TurnEvent::EnqueuePrompt { text } => Some(CiEvent::Status {
             message: format!("enqueue_prompt: {text}"),
         }),
+        TurnEvent::Panel(update) => Some(CiEvent::Status {
+            message: match update {
+                whycode_core::PanelUpdate::Clear => "panel clear".into(),
+                whycode_core::PanelUpdate::File { path, .. } => format!("panel file={path}"),
+                whycode_core::PanelUpdate::Diff { path, .. } => format!("panel diff={path}"),
+                whycode_core::PanelUpdate::Mermaid { .. } => "panel mermaid".into(),
+            },
+        }),
     }
 }
 

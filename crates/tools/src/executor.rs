@@ -4,8 +4,8 @@ use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 use super::tool::{Tool, ToolContext};
 use crate::{
     apply_patch, bg, code_mode, edit, external_directory, git_blame, git_commit, git_diff, git_log,
-    git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, plan, question,
-    read, schedule, shell, skill_tool, swarm, task, todo_read, todo_write, tool_search,
+    git_status, github_issue, github_pr, glob, grep, list, lsp_tool, memory_tool, panel, plan,
+    question, read, schedule, shell, skill_tool, swarm, task, todo_read, todo_write, tool_search,
     truncate_tool, webfetch, websearch, worktree, write,
 };
 
@@ -52,6 +52,7 @@ impl ToolExecutor {
         executor.register(Box::new(todo_read::TodoReadTool::new()));
         executor.register(Box::new(memory_tool::MemoryTool::new()));
         executor.register(Box::new(question::QuestionTool::new()));
+        executor.register(Box::new(panel::PanelTool::new()));
         executor.register(Box::new(plan::PlanTool::new()));
         executor.register(Box::new(code_mode::CodeModeTool::new()));
         executor.register(Box::new(external_directory::ExternalDirectoryTool::new()));

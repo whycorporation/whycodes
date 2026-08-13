@@ -1,7 +1,8 @@
 // ── ui/sidebar.rs: Sidebar panel ───────────────────────────────────────
 
-use crate::app::{SidebarTab, TuiApp};
+use crate::app::{SidebarPreview, SidebarTab, TuiApp};
 use crate::theme::ThemePalette;
+use crate::widgets::diff::{parse_unified_diff, render_unified_diff};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -22,19 +23,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         .split(area);
 
     // Tab bar.
-    let tabs = ["Files", "Diag", "MCP", "Todos"];
+    let tabs = SidebarTab::ALL;
     let tab_titles: Vec<Line> = tabs
         .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            let tab_enum = match i {
-                0 => SidebarTab::Files,
-                1 => SidebarTab::Diagnostics,
-                2 => SidebarTab::Mcp,
-                3 => SidebarTab::Todos,
-                _ => SidebarTab::Files,
-            };
-            if tab_enum == sidebar.active_tab {
+        .map(|tab_enum| {
+            let name = tab_enum.label();
+            if *tab_enum == sidebar.active_tab {
                 Line::from(Span::styled(
                     format!(" {} ", name),
                     Style::default()
@@ -69,6 +63,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         SidebarTab::Diagnostics => render_diagnostics(frame, inner, app, palette),
         SidebarTab::Mcp => render_mcp(frame, inner, app, palette),
         SidebarTab::Todos => render_todos(frame, inner, app, palette),
+        SidebarTab::Preview => render_preview(frame, inner, app, palette),
     }
 }
 
@@ -153,7 +148,7 @@ fn render_todos(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePale
     } else {
         for todo in &sidebar.todos {
             lines.push(Line::from(Span::styled(
-                format!(" ☐ {}", todo),
+                format!(" {todo}"),
                 Style::default().fg(palette.fg),
             )));
         }
@@ -161,4 +156,68 @@ fn render_todos(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePale
 
     let p = Paragraph::new(Text::from(lines));
     frame.render_widget(p, area);
+}
+
+fn render_preview(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+    match &app.sidebar.preview {
+        SidebarPreview::None => {
+            let p = Paragraph::new(Text::from(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    " No preview ",
+                    Style::default().fg(palette.dim),
+                )),
+                Line::from(Span::styled(
+                    " Agent: panel show_file / show_diff / show_mermaid ",
+                    Style::default().fg(palette.dim),
+                )),
+            ]));
+            frame.render_widget(p, area);
+        }
+        SidebarPreview::File { path, text } => {
+            let mut lines = vec![Line::from(Span::styled(
+                format!(" {path} "),
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ))];
+            for raw in text.lines().take(200) {
+                lines.push(Line::from(Span::styled(
+                    format!(" {raw}"),
+                    Style::default().fg(palette.fg),
+                )));
+            }
+            frame.render_widget(
+                Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+                area,
+            );
+        }
+        SidebarPreview::Diff { unified, .. } => {
+            let parsed = parse_unified_diff(unified);
+            render_unified_diff(frame, area, &parsed, palette);
+        }
+        SidebarPreview::Mermaid { source } => {
+            let rendered =
+                whycode_format::mermaid::render_mermaid(source, Some(area.width as usize))
+                    .unwrap_or_else(|_| {
+                        std::sync::Arc::new(source.lines().map(str::to_string).collect())
+                    });
+            let mut lines = vec![Line::from(Span::styled(
+                " mermaid ",
+                Style::default()
+                    .fg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            ))];
+            for raw in rendered.iter().take(200) {
+                lines.push(Line::from(Span::styled(
+                    format!(" {raw}"),
+                    Style::default().fg(palette.fg),
+                )));
+            }
+            frame.render_widget(
+                Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }),
+                area,
+            );
+        }
+    }
 }

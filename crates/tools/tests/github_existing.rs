@@ -21,6 +21,7 @@ fn neutral_ctx() -> ToolContext {
         agent_id: None,
         agent_label: None,
         file_index: None,
+        panel: None,
     }
 }
 

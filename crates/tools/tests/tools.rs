@@ -22,6 +22,7 @@ fn temp_ctx(dir: &TempDir) -> ToolContext {
         agent_id: None,
         agent_label: None,
         file_index: None,
+        panel: None,
     }
 }
 
