@@ -204,6 +204,10 @@ pub struct Agent {
     /// Resident workspace file index shared with file tools (warm fast path
     /// for glob/grep/list enumeration). Started by the host (TUI/CLI).
     file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
+    /// Process-wide claims for parallel TUI sessions (Ctrl+N).
+    session_claims: Option<whycode_core::FileClaimRegistry>,
+    /// Swarm mailbox when this agent is a worker (or parent mid-swarm).
+    swarm_hub: Option<whycode_core::SwarmHub>,
 }
 
 /// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
@@ -276,6 +280,8 @@ impl Agent {
                 whycode_core::types::Usage::default(),
             )),
             file_index: None,
+            session_claims: None,
+            swarm_hub: None,
         }
     }
 
@@ -293,6 +299,16 @@ impl Agent {
     pub fn with_file_index(mut self, index: Arc<whycode_index::WorkspaceIndex>) -> Self {
         self.file_index = Some(index);
         self
+    }
+
+    /// Share a process-wide claim registry (parallel TUI sessions).
+    pub fn with_session_claims(mut self, claims: whycode_core::FileClaimRegistry) -> Self {
+        self.session_claims = Some(claims);
+        self
+    }
+
+    pub fn session_claims(&self) -> Option<whycode_core::FileClaimRegistry> {
+        self.session_claims.clone()
     }
 
     pub fn with_permission_prompter(mut self, prompter: Arc<dyn PermissionPrompter>) -> Self {
@@ -362,7 +378,7 @@ impl Agent {
             .swarm
             .max_agents
             .clamp(1, crate::swarm::SWARM_HARD_MAX_AGENTS);
-        self.swarm_worktrees = config.swarm.worktrees;
+        self.swarm_worktrees = config.swarm.use_worktrees();
         self.max_background_jobs = config.automation.max_background_jobs.clamp(
             1,
             crate::background::DEFAULT_MAX_BACKGROUND_JOBS
@@ -483,11 +499,15 @@ impl Agent {
             session_id: Some(session.id.clone()),
             sandbox,
             network: self.network.clone(),
-            file_claims: None,
-            agent_id: None,
-            agent_label: None,
+            file_claims: self.session_claims.clone(),
+            agent_id: self
+                .session_claims
+                .as_ref()
+                .map(|_| format!("sess-{}", &session.id[..8.min(session.id.len())])),
+            agent_label: self.session_claims.as_ref().map(|_| self.info.name.clone()),
             file_index: self.file_index.clone(),
             panel: self.panel_sink(),
+            swarm_hub: self.swarm_hub.clone(),
         }
     }
 
@@ -2640,14 +2660,38 @@ impl Agent {
         let swarm_run_dir = crate::swarm_worktree::run_dir(&repo_root, &run_id);
 
         let claims = FileClaimRegistry::new();
+        let hub = whycode_core::SwarmHub::new();
+        hub.ensure("parent");
         if let Some(tx) = events {
-            let tx = tx.clone();
+            let tx_c = tx.clone();
             claims.set_listener(Some(std::sync::Arc::new(move |ev| {
-                let _ = tx.send(TurnEvent::FileConflict {
+                if let Err(e) = tx_c.send(TurnEvent::FileConflict {
                     path: ev.path,
                     claimant: ev.claimant_label,
                     owner: ev.owner_label,
-                });
+                }) {
+                    tracing::debug!(error = %e, "swarm conflict event dropped");
+                }
+            })));
+            let tx_s = tx.clone();
+            claims.set_stale_listener(Some(std::sync::Arc::new(move |ev| {
+                if let Err(e) = tx_s.send(TurnEvent::FileStale {
+                    path: ev.path,
+                    reader: ev.reader_id,
+                    writer: ev.writer_label,
+                }) {
+                    tracing::debug!(error = %e, "swarm stale event dropped");
+                }
+            })));
+            let tx_m = tx.clone();
+            hub.set_listener(Some(std::sync::Arc::new(move |msg| {
+                if let Err(e) = tx_m.send(TurnEvent::SwarmMessage {
+                    from: msg.from,
+                    to: msg.to,
+                    text: msg.text,
+                }) {
+                    tracing::debug!(error = %e, "swarm message event dropped");
+                }
             })));
         }
 
@@ -2724,6 +2768,7 @@ impl Agent {
         let swarm_run_dir = swarm_run_dir.clone();
         let file_index = self.file_index.clone();
         let panel = self.panel_sink();
+        let hub = hub.clone();
 
         let mut handles = Vec::with_capacity(specs.len());
 
@@ -2748,6 +2793,8 @@ impl Agent {
             let swarm_run_dir = swarm_run_dir.clone();
             let file_index = file_index.clone();
             let panel = panel.clone();
+            let hub = hub.clone();
+            hub.ensure(&worker_id);
 
             handles.push(tokio::spawn(async move {
                 let _guard = match permit.acquire().await {
@@ -2817,6 +2864,7 @@ impl Agent {
                                 "webfetch".into(),
                                 "websearch".into(),
                                 "lsp".into(),
+                                "swarm_msg".into(),
                             ]),
                             denied_tools: Some(vec![
                                 "write".into(),
@@ -2856,7 +2904,11 @@ impl Agent {
                      Prefer staying within your assigned paths."
                         .to_string()
                 } else {
-                    String::new()
+                    "\n\nYou share the main checkout with sibling workers. \
+                     File claims block double-writes. Use `swarm_msg` to tell \
+                     siblings what you changed. A `read` of a file another \
+                     worker wrote will be marked stale."
+                        .to_string()
                 };
                 let claim_note = if spec.paths.is_empty() {
                     String::new()
@@ -2901,7 +2953,8 @@ impl Agent {
                     SubagentRunner::new(registry, executor, info, worker_cwd, sandbox, network)
                         .with_memory(memory)
                         .with_file_index(file_index.clone())
-                        .with_panel(panel.clone());
+                        .with_panel(panel.clone())
+                        .with_swarm_hub(Some(hub.clone()));
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());

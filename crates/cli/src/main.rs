@@ -2798,6 +2798,16 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         TurnEvent::EnqueuePrompt { text } => Some(CiEvent::Status {
             message: format!("enqueue_prompt: {text}"),
         }),
+        TurnEvent::SwarmMessage { from, to, text } => Some(CiEvent::Status {
+            message: format!("swarm_msg from={from} to={to}: {text}"),
+        }),
+        TurnEvent::FileStale {
+            path,
+            reader,
+            writer,
+        } => Some(CiEvent::Status {
+            message: format!("file_stale path={path} reader={reader} writer={writer}"),
+        }),
         TurnEvent::Panel(update) => Some(CiEvent::Status {
             message: match update {
                 whycode_core::PanelUpdate::Clear => "panel clear".into(),

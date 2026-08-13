@@ -410,9 +410,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     config.general.project_path = Some(opts.project_dir.clone());
     // Plugins only at boot — MCP connect can block on slow servers. Defer MCP
     // (+ memory auto-index) until after the first frame so the TUI paints ASAP.
+    let session_claims = whycode_core::FileClaimRegistry::new();
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_file_index(file_index.clone())
+        .with_session_claims(session_claims.clone())
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
         )
@@ -1774,6 +1776,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             &config,
                             &project_dir,
                             &file_index,
+                            session_claims.clone(),
                         )
                         .await,
                     );
@@ -2350,12 +2353,17 @@ fn rebuild_agent_after_force_stop(
         None,
     );
     let bg = agent.background_registry().clone();
-    *agent = Agent::new(info)
+    let claims = agent.session_claims();
+    let mut next = Agent::new(info)
         .with_config(config)
         .with_background_registry(bg)
         .with_file_index(file_index.clone())
         .with_permission_prompter(perm_prompter as Arc<dyn whycode_agent::PermissionPrompter>)
         .with_question_prompter(question_prompter as Arc<dyn QuestionPrompter>);
+    if let Some(c) = claims {
+        next = next.with_session_claims(c);
+    }
+    *agent = next;
     agent.wire_event_sink(event_tx);
     // Keep existing system prompt on session if any; else set rebuilt one.
     if session.system_prompt.is_empty() {
@@ -2463,6 +2471,7 @@ async fn spawn_new_session_runtime(
     config: &Config,
     project_dir: &std::path::Path,
     file_index: &Arc<whycode_index::WorkspaceIndex>,
+    session_claims: whycode_core::FileClaimRegistry,
 ) -> SessionRuntime {
     let agent_info =
         config
@@ -2509,6 +2518,7 @@ async fn spawn_new_session_runtime(
     let agent = Agent::new(agent_info)
         .with_config(config)
         .with_file_index(file_index.clone())
+        .with_session_claims(session_claims)
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
         )
@@ -2953,6 +2963,25 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         TurnEvent::Panel(update) => {
             apply_panel_update(app, update);
         }
+        TurnEvent::SwarmMessage { from, to, text } => {
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                truncate_toast(&format!("swarm {from}→{to}: {text}"), 72),
+            );
+            app.mark_dirty();
+        }
+        TurnEvent::FileStale {
+            path,
+            reader,
+            writer,
+        } => {
+            let short = path.rsplit('/').next().unwrap_or(&path);
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                truncate_toast(&format!("stale read: {short} ({reader} vs {writer})"), 72),
+            );
+            app.mark_dirty();
+        }
     }
 }
 
@@ -3078,13 +3107,18 @@ async fn cycle_agent(
             None,
         );
         let bg = agent.background_registry().clone();
-        *agent = Agent::new(info)
+        let claims = agent.session_claims();
+        let mut next = Agent::new(info)
             .with_config(config)
             .with_background_registry(bg)
             .with_permission_prompter(
                 Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
             )
             .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
+        if let Some(c) = claims {
+            next = next.with_session_claims(c);
+        }
+        *agent = next;
         agent.wire_event_sink(event_tx.clone());
         session.set_system_prompt(&prompt);
     }

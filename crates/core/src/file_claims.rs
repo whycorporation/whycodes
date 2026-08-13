@@ -53,10 +53,34 @@ pub struct FileClaimRegistry {
     inner: Arc<FileClaimRegistryInner>,
 }
 
+/// Last writer of a path (survives `release_agent` so later reads can go stale).
+#[derive(Debug, Clone)]
+struct WriteRecord {
+    owner_id: String,
+    owner_label: String,
+    generation: u64,
+}
+
+/// A reader opened a file another agent wrote since their last read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileStaleEvent {
+    pub path: String,
+    pub reader_id: String,
+    pub writer_id: String,
+    pub writer_label: String,
+}
+
+/// Optional listener for stale-read notifications.
+pub type StaleListener = Arc<dyn Fn(FileStaleEvent) + Send + Sync>;
+
 struct FileClaimRegistryInner {
     /// Canonical absolute path string → claim.
     claims: Mutex<HashMap<String, FileClaim>>,
     listener: Mutex<Option<ConflictListener>>,
+    last_write: Mutex<HashMap<String, WriteRecord>>,
+    /// `(agent_id, path)` → last write gen this agent has seen.
+    last_seen: Mutex<HashMap<(String, String), u64>>,
+    stale_listener: Mutex<Option<StaleListener>>,
 }
 
 impl Default for FileClaimRegistryInner {
@@ -64,6 +88,9 @@ impl Default for FileClaimRegistryInner {
         Self {
             claims: Mutex::new(HashMap::new()),
             listener: Mutex::new(None),
+            last_write: Mutex::new(HashMap::new()),
+            last_seen: Mutex::new(HashMap::new()),
+            stale_listener: Mutex::new(None),
         }
     }
 }
@@ -124,7 +151,10 @@ impl FileClaimRegistry {
             Err(p) => p.into_inner(),
         };
         match map.get(&key) {
-            Some(c) if c.owner_id == agent_id => ClaimResult::Held,
+            Some(c) if c.owner_id == agent_id => {
+                self.record_write(&key, agent_id, agent_label);
+                ClaimResult::Held
+            }
             Some(c) => {
                 let ev = FileConflictEvent {
                     path: key,
@@ -141,15 +171,85 @@ impl FileClaimRegistry {
             }
             None => {
                 map.insert(
-                    key,
+                    key.clone(),
                     FileClaim {
                         owner_id: agent_id.to_string(),
                         owner_label: agent_label.to_string(),
                     },
                 );
+                self.record_write(&key, agent_id, agent_label);
                 ClaimResult::Acquired
             }
         }
+    }
+
+    fn record_write(&self, key: &str, agent_id: &str, agent_label: &str) {
+        let mut writes = match self.inner.last_write.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let generation = writes
+            .get(key)
+            .map(|w| w.generation)
+            .unwrap_or(0)
+            .saturating_add(1);
+        writes.insert(
+            key.to_string(),
+            WriteRecord {
+                owner_id: agent_id.to_string(),
+                owner_label: agent_label.to_string(),
+                generation,
+            },
+        );
+        if let Ok(mut seen) = self.inner.last_seen.lock() {
+            seen.insert((agent_id.to_string(), key.to_string()), generation);
+        }
+    }
+
+    pub fn set_stale_listener(&self, listener: Option<StaleListener>) {
+        if let Ok(mut slot) = self.inner.stale_listener.lock() {
+            *slot = listener;
+        }
+    }
+
+    /// Record a read. If another agent wrote since this reader last saw the
+    /// path, return a stale event (and notify the listener).
+    pub fn note_read(&self, agent_id: &str, path: &Path) -> Option<FileStaleEvent> {
+        let key = Self::claim_key(path);
+        let writes = match self.inner.last_write.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let write = writes.get(&key)?;
+        if write.owner_id == agent_id {
+            return None;
+        }
+        let generation = write.generation;
+        let writer_id = write.owner_id.clone();
+        let writer_label = write.owner_label.clone();
+        drop(writes);
+
+        let mut seen = match self.inner.last_seen.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        let last = seen.get(&(agent_id.to_string(), key.clone())).copied();
+        seen.insert((agent_id.to_string(), key.clone()), generation);
+        if last == Some(generation) {
+            return None;
+        }
+        let ev = FileStaleEvent {
+            path: key,
+            reader_id: agent_id.to_string(),
+            writer_id,
+            writer_label,
+        };
+        if let Ok(slot) = self.inner.stale_listener.lock()
+            && let Some(ref f) = *slot
+        {
+            f(ev.clone());
+        }
+        Some(ev)
     }
 
     fn emit_conflict(&self, ev: FileConflictEvent) {
@@ -244,5 +344,15 @@ mod tests {
         reg.try_claim("w0", "worker-0", p);
         reg.release_agent("w0");
         assert_eq!(reg.try_claim("w1", "worker-1", p), ClaimResult::Acquired);
+    }
+
+    #[test]
+    fn read_after_other_write_is_stale() {
+        let reg = FileClaimRegistry::new();
+        let p = Path::new("/tmp/whycode_claim_test_stale.rs");
+        reg.try_claim("w0", "worker-0", p);
+        let ev = reg.note_read("w1", p).expect("stale");
+        assert_eq!(ev.writer_id, "w0");
+        assert!(reg.note_read("w1", p).is_none());
     }
 }

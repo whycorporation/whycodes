@@ -69,6 +69,18 @@ pub enum TurnEvent {
     EnqueuePrompt { text: String },
     /// Pin a file / diff / mermaid on the TUI side panel.
     Panel(whycode_core::PanelUpdate),
+    /// A swarm worker sent a message (toast).
+    SwarmMessage {
+        from: String,
+        to: String,
+        text: String,
+    },
+    /// A reader opened a file another agent wrote.
+    FileStale {
+        path: String,
+        reader: String,
+        writer: String,
+    },
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).

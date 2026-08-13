@@ -22,6 +22,7 @@ fn neutral_ctx() -> ToolContext {
         agent_label: None,
         file_index: None,
         panel: None,
+        swarm_hub: None,
     }
 }
 

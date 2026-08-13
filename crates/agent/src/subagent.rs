@@ -58,6 +58,7 @@ pub struct SubagentRunner {
     file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
     /// Parent TUI panel sink (so workers can pin a preview).
     panel: Option<whycode_core::PanelSink>,
+    swarm_hub: Option<whycode_core::SwarmHub>,
 }
 
 impl SubagentRunner {
@@ -83,6 +84,7 @@ impl SubagentRunner {
             agent_label: None,
             file_index: None,
             panel: None,
+            swarm_hub: None,
         }
     }
 
@@ -95,6 +97,11 @@ impl SubagentRunner {
     /// Inherit the parent agent's side-panel sink.
     pub fn with_panel(mut self, panel: Option<whycode_core::PanelSink>) -> Self {
         self.panel = panel;
+        self
+    }
+
+    pub fn with_swarm_hub(mut self, hub: Option<whycode_core::SwarmHub>) -> Self {
+        self.swarm_hub = hub;
         self
     }
 
@@ -227,6 +234,7 @@ impl SubagentRunner {
             agent_label: self.agent_label.clone(),
             file_index: self.file_index.clone(),
             panel: self.panel.clone(),
+            swarm_hub: self.swarm_hub.clone(),
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
@@ -247,6 +255,20 @@ impl SubagentRunner {
                     "Subagent exceeded maximum turns ({})",
                     max_turns
                 )));
+            }
+
+            if let Some(hub) = &self.swarm_hub {
+                let id = self.agent_id.as_deref().unwrap_or("worker");
+                let inbox = hub.drain(id);
+                if !inbox.is_empty() {
+                    let mut note = String::from(
+                        "Swarm messages since your last turn (reply with swarm_msg if needed):\n",
+                    );
+                    for m in inbox {
+                        note.push_str(&format!("- from {}: {}\n", m.from, m.text));
+                    }
+                    session.add_user_message(&note);
+                }
             }
 
             let request = session.build_request(
