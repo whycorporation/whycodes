@@ -3,27 +3,21 @@
 Current focus and standing decisions. Completed phase plans live under
 [archive/](archive/README.md) — do not treat them as open work.
 
-Last updated: **2026-08-13**.
+Last updated: **2026-08-14**.
 
 ## Now
 
-whycode-shaped surface (not a jcode clone). Each item is a shippable slice.
-
-1. **Claim the numbers** — README PSS / boot (this file’s PR1).
-2. **Live sidebar + `panel` tool** — files / MCP / todos / preview canvas.
-3. **Session RAG + consolidate** — search past turns; periodic fact tidy.
-4. **Swarm mailbox + stale-read** — worker DM; “this file moved” on read.
-5. **`whycode connect`** — TUI attaches to `whycode serve` (this slice).
-6. **Foreign session import** — Claude / Codex / OpenCode / Pi transcripts.
-7. **Browser tool** — CDP, permission `ask`, not in the core profile (this slice).
+1. **Plugins depth** — wire `PluginManager` / `plugin.json` discovery into
+   the agent. `plugins.toml` → `plugin_*` and config hooks already ship.
+   Marketplace stays out.
+2. **Performance residual** — live provider token reconcile (optional;
+   needs a real API turn).
 
 ## Later
 
 | Item | Notes |
 |---|---|
-| Public release | Repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`. |
-| Plugins depth | `plugins.toml` → `plugin_*` tools. Marketplace out of scope. |
-| Performance residual | Live provider token reconcile (optional). |
+| Public release | **Last.** Repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0`. |
 | ACP | Editor ↔ agent JSON-RPC. `whycode acp` is a stub. |
 | `web` surface | Same band as ACP. Use `whycode serve` + a browser for local share. |
 

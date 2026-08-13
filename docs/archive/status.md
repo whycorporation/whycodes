@@ -6,7 +6,7 @@
 Living tracker for open work and past decisions. Update this file in the same
 commit as the work it describes.
 
-Last updated: **2026-08-13** (latency P2: first-token race + semantic response cache)
+Last updated: **2026-08-14** (surface cycle archived; living tracker is roadmap.md)
 
 ## Legend
 
@@ -45,6 +45,7 @@ Last updated: **2026-08-13** (latency P2: first-token race + semantic response c
 | CC research A1–A7 | [archive/plan-cc-a1-a7.md](archive/plan-cc-a1-a7.md) | shipped 2026-08-07 — PromptCommands, /context, LLM compact, path globs, mcp serve, image read, idle suggestions |
 | Parallel multi-session | [archive/plan-parallel-multi-session.md](archive/plan-parallel-multi-session.md) | shipped S1–S6 — dashboard (Ctrl+O), Ctrl+N, Ctrl+Tab, per-runtime DB |
 | Semantic memory | [archive/plan-memory.md](archive/plan-memory.md) | shipped v1+v2 — retain, sync, code RAG, subagent banks, optional ONNX |
+| whycode-shaped surface | [archive/plan-surface-2026-08.md](archive/plan-surface-2026-08.md) | shipped 2026-08-14 — bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser |
 
 Index of archives: [archive/README.md](archive/README.md).
 
@@ -59,12 +60,12 @@ Index of archives: [archive/README.md](archive/README.md).
 
 Priority (owner: **public install / repo visibility last**):
 
-1. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
-2. **Plugins depth** — `plugins.toml` → `plugin_*` tools; `whycode plugins list`; project+global load. Marketplace still out of scope.
-3. **Performance residual (optional)** — live provider token reconcile against a real API session ([plan-performance.md](plan-performance.md)).
+1. **Plugins depth** — wire `PluginManager` / `plugin.json` discovery. `plugins.toml` → `plugin_*` already ships. Marketplace out of scope.
+2. **Performance residual (optional)** — live provider token reconcile against a real API session ([plan-performance.md](plan-performance.md)).
+3. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
 4. **ACP / web** — deferred post product launch.
 
-Shipped this cycle: OAuth + credential discovery, optimize Session A+B, performance CI ceilings, latency P2 (race + response cache).
+Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-08.md](plan-surface-2026-08.md).
 
 ## Decision log
 
@@ -100,6 +101,7 @@ Shipped this cycle: OAuth + credential discovery, optimize Session A+B, performa
 | 2026-08-07 | Public release last | Coding/perf/plugins ranked ahead of repo-public + install packaging. |
 | 2026-08-07 | Perf residual + plugins | Subagent usage fold into parent; bench-results + CI ceilings; shell plugins as tools. |
 | 2026-08-13 | Latency P2 closed | First-token race (`model_race`) + process-local exact/semantic text cache (`response_cache`). |
+| 2026-08-14 | Surface cycle closed | Bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser. Archived as [plan-surface-2026-08.md](plan-surface-2026-08.md). |
 
 ## Verification commands
 

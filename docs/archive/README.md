@@ -28,6 +28,7 @@ Living tracker: [`../roadmap.md`](../roadmap.md).
 | [plan-oauth.md](plan-oauth.md) | **done** — login, routing, discovery; see [../auth.md](../auth.md) |
 | [plan-optimize-2026-08.md](plan-optimize-2026-08.md) | **done** — Session A+B |
 | [plan-latency-competitors.md](plan-latency-competitors.md) | **done** — P0+P1+P2 |
+| [plan-surface-2026-08.md](plan-surface-2026-08.md) | **done** — sidebar, RAG, swarm mailbox, connect, import, browser |
 | [plan-performance.md](plan-performance.md) | **mostly done** — live reconcile optional |
 | [plan-distribution.md](plan-distribution.md) | **implemented** — residual public-release steps |
 
