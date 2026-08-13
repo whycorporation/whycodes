@@ -345,12 +345,12 @@ pub async fn chat(
         }
         match result {
             Ok(text) => {
-                let _ = tx.send(TurnEvent::Status(format!("done:{}chars", text.len())));
-                let _ = tx.send(TurnEvent::Status("__whycode_done__".into()));
+                emit_status(&tx, format!("done:{}chars", text.len()));
+                emit_status(&tx, "__whycode_done__");
             }
             Err(e) => {
-                let _ = tx.send(TurnEvent::Status(format!("error:{e}")));
-                let _ = tx.send(TurnEvent::Status("__whycode_done__".into()));
+                emit_status(&tx, format!("error:{e}"));
+                emit_status(&tx, "__whycode_done__");
             }
         }
     });
@@ -374,6 +374,12 @@ pub async fn chat(
     };
 
     Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep))
+}
+
+fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: impl Into<String>) {
+    if let Err(e) = tx.send(TurnEvent::Status(status.into())) {
+        tracing::debug!(error = %e, "serve: chat event channel closed");
+    }
 }
 
 fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
@@ -414,11 +420,8 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
             })
         }
         TurnEvent::Status(s) if s.starts_with("done:") || s.starts_with("error:") => {
-            if let Some(msg) = s.strip_prefix("error:") {
-                serde_json::json!({"type": "error", "message": msg})
-            } else {
-                return None;
-            }
+            let msg = s.strip_prefix("error:")?;
+            serde_json::json!({"type": "error", "message": msg})
         }
         TurnEvent::Status(s) => {
             serde_json::json!({"type": "status", "message": s})

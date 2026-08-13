@@ -119,9 +119,10 @@ pub async fn stream_raced(
                 },
             ));
         }
-        Err(_) => {
+        Err(elapsed) => {
             debug!(
                 after_ms = race_after.as_millis() as u64,
+                error = %elapsed,
                 "race: no primary token yet; starting partner"
             );
         }

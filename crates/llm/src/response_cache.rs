@@ -125,9 +125,9 @@ impl ResponseCache {
         }
         let exact = exact_key(request, model);
         let now = Instant::now();
-        let mut guard = match self.inner.lock() {
-            Ok(g) => g,
-            Err(_) => return,
+        let Ok(mut guard) = self.inner.lock() else {
+            tracing::warn!("response_cache.store: lock poisoned");
+            return;
         };
         evict_expired(&mut guard, now);
         if guard.iter().any(|e| e.exact == exact) {

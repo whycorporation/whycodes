@@ -92,8 +92,8 @@ impl LlmTransport {
         let resp = match timeout {
             Some(t) => match tokio::time::timeout(t, work).await {
                 Ok(r) => r,
-                Err(_) => Err(whycode_core::Error::Llm(format!(
-                    "complete timed out after {}s",
+                Err(elapsed) => Err(whycode_core::Error::Llm(format!(
+                    "complete timed out after {}s ({elapsed})",
                     t.as_secs()
                 ))),
             },
