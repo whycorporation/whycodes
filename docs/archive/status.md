@@ -24,7 +24,7 @@ Last updated: **2026-08-14** (surface cycle archived; living tracker is roadmap.
 
 | Plan | Doc | Status | Notes |
 |---|---|---|---|
-| Performance residual | [plan-performance.md](plan-performance.md) | **mostly done** | Subagent usage fold + `bench-results.json` + CI ceilings shipped. Live provider reconcile optional/manual. |
+| Performance residual | [plan-performance.md](plan-performance.md) | **done** | Subagent usage fold + CI ceilings + live reconcile (`reconcile_token_usage.py`, `Usage::absorb_stream`). |
 | Distribution & self-update | [plan-distribution.md](plan-distribution.md) | implemented · **last** | Assets + uninstall shipped (`v0.1.0`). Remaining: public repo, Homebrew binary formula, Windows install smoke. |
 | OAuth & credential discovery | [plan-oauth.md](plan-oauth.md) | **done / shipped** | Login + routing for anthropic/openai/github-copilot/google; discovery + consent (`auth import`); `/connect` ([../auth.md](../auth.md)). Residual: Windows ACL on store. |
 | Latency competitors | [plan-latency-competitors.md](plan-latency-competitors.md) | **done (P0+P1+P2)** | Cache, parallel tools, core profile, routing, doom-loop; compact + speculative `read` + warm `serve`; first-token race + text-only semantic cache. Swarm stays lightweight. |
@@ -61,9 +61,8 @@ Index of archives: [archive/README.md](archive/README.md).
 Priority (owner: **public install / repo visibility last**):
 
 1. **Plugins depth** — wire `PluginManager` / `plugin.json` discovery. `plugins.toml` → `plugin_*` already ships. Marketplace out of scope.
-2. **Performance residual (optional)** — live provider token reconcile against a real API session ([plan-performance.md](plan-performance.md)).
-3. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
-4. **ACP / web** — deferred post product launch.
+2. **Public release (last)** — repo public, Homebrew binary formula, Windows install smoke. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
+3. **ACP / web** — deferred post product launch.
 
 Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-08.md](plan-surface-2026-08.md).
 
@@ -102,6 +101,7 @@ Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-
 | 2026-08-07 | Perf residual + plugins | Subagent usage fold into parent; bench-results + CI ceilings; shell plugins as tools. |
 | 2026-08-13 | Latency P2 closed | First-token race (`model_race`) + process-local exact/semantic text cache (`response_cache`). |
 | 2026-08-14 | Surface cycle closed | Bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser. Archived as [plan-surface-2026-08.md](plan-surface-2026-08.md). |
+| 2026-08-14 | Token reconcile closed | `Usage::absorb_stream` + `WHYCODE_USAGE_DUMP` + `scripts/reconcile_token_usage.py`. Anthropic `message_delta.usage` sibling path. |
 
 ## Verification commands
 

@@ -168,6 +168,29 @@ impl Usage {
         }
     }
 
+    /// Fold one streaming usage snapshot into this step.
+    ///
+    /// Providers send either a single final total or a running snapshot per
+    /// chunk. `max` keeps Anthropic's split input/output events and does not
+    /// double-count a gateway that repeats the full usage object.
+    /// Distinct LLM steps still use [`Usage::add`] (session / subagent fold).
+    pub fn absorb_stream(&mut self, input_tokens: u64, output_tokens: u64) {
+        self.input_tokens = self.input_tokens.max(input_tokens);
+        self.output_tokens = self.output_tokens.max(output_tokens);
+    }
+
+    /// Fold Anthropic-style cache figures from a stream snapshot.
+    pub fn absorb_stream_cache(&mut self, created: u64, read: u64) {
+        if created > 0 {
+            let slot = self.cache_creation_input_tokens.get_or_insert(0);
+            *slot = (*slot).max(created);
+        }
+        if read > 0 {
+            let slot = self.cache_read_input_tokens.get_or_insert(0);
+            *slot = (*slot).max(read);
+        }
+    }
+
     /// Everything the model was billed for.
     ///
     /// Cache reads and writes are **Anthropic-style additive** input tokens
@@ -1105,5 +1128,34 @@ mod usage_tests {
             total.cache_creation_input_tokens,
             before.cache_creation_input_tokens
         );
+    }
+
+    #[test]
+    fn absorb_stream_takes_max_not_sum() {
+        let mut step = Usage::default();
+        // Anthropic split: input at start, output on the last delta.
+        step.absorb_stream(100, 0);
+        step.absorb_stream(0, 20);
+        assert_eq!(step.input_tokens, 100);
+        assert_eq!(step.output_tokens, 20);
+        // Repeated full snapshot (OpenAI include_usage on every chunk).
+        step.absorb_stream(100, 20);
+        step.absorb_stream(100, 20);
+        assert_eq!(step.input_tokens, 100);
+        assert_eq!(step.output_tokens, 20);
+        // Running total climbs; max tracks the last snapshot.
+        step.absorb_stream(100, 35);
+        assert_eq!(step.output_tokens, 35);
+    }
+
+    #[test]
+    fn absorb_stream_cache_does_not_double() {
+        let mut step = Usage::default();
+        step.absorb_stream_cache(8, 40);
+        step.absorb_stream_cache(8, 40);
+        assert_eq!(step.cache_creation_input_tokens, Some(8));
+        assert_eq!(step.cache_read_input_tokens, Some(40));
+        step.absorb_stream_cache(0, 0);
+        assert_eq!(step.cache_creation_input_tokens, Some(8));
     }
 }

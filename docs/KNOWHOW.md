@@ -570,6 +570,31 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
   ~120 MB. If that ever bites, the escape hatch is a custom matcher over the
   store, jcode-fuzzy style — nucleo is the RAM cost, not the store).
 
+### 2026-08-14 — Stream usage is a snapshot, not a delta
+
+**Symptom:** `/cost` and `generate --format json` usage can be 2–N× the
+provider's own `usage` object when a gateway repeats `include_usage` on
+every chunk. Anthropic streaming can also show `output_tokens = 0` because
+official SSE puts `usage` next to `delta`, not inside it.
+
+**JSONL / crash:** `turn.step` `input_tokens` / `output_tokens` disagree
+with the last raw `usage` in `WHYCODE_USAGE_DUMP`.
+
+**Root cause:** The agent used `+=` on every `StreamEvent::Usage`. That is
+correct for Anthropic's *split* input-then-output events only if each field
+is sent once. OpenAI-compat `stream_options.include_usage` is a full
+snapshot; some proxies emit it on every token. Summing snapshots inflates
+the meter. Anthropic `message_delta` usage was read from `delta.usage`.
+
+**Fix:** `Usage::absorb_stream` (`max` per field) inside one stream step;
+`Usage::add` still sums distinct steps (session / subagent). Anthropic
+reads `event.usage` first, then nested `delta.usage`. Live check:
+`scripts/reconcile_token_usage.py`.
+
+**Prevention:** Do not `+=` stream usage. New provider parsers must dump
+the raw object (`usage_dump`) and emit snapshots; tests cover repeated
+full snapshots and the Anthropic sibling shape.
+
 ---
 
 

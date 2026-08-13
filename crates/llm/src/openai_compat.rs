@@ -304,6 +304,7 @@ pub fn attach_stream_usage_option(body: &mut Value) {
 /// the context meter. We leave cache fields unset here; Anthropic fills them
 /// via its own provider path.
 pub fn usage_from_chat_completion(usage: &Value) -> whycode_core::types::Usage {
+    super::usage_dump::dump_raw_usage("openai_compat", usage);
     whycode_core::types::Usage {
         input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
         output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
@@ -322,6 +323,7 @@ pub fn stream_usage_from_chunk(event: &Value) -> Option<whycode_core::types::Str
     if !usage.is_object() {
         return None;
     }
+    super::usage_dump::dump_raw_usage("openai_compat", usage);
     let input_tokens = usage
         .get("prompt_tokens")
         .and_then(|v| v.as_u64())
