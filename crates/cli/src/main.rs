@@ -419,6 +419,12 @@ pub enum MemoryCmd {
         #[arg(long, default_value = "8")]
         limit: usize,
     },
+    /// Semantic search over prior session turns
+    SessionSearch {
+        query: String,
+        #[arg(long, default_value = "8")]
+        limit: usize,
+    },
     /// Download MiniLM (if needed), verify checksums, run a probe embed
     /// (requires binary built with `--features onnx`)
     OnnxSmoke,
@@ -1982,6 +1988,29 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
             println!("{} Indexing codebase…", "⚡".bold());
             let n = svc.index_codebase(*max_files, *max_chunks)?;
             println!("{} Indexed {n} code chunks", "✓".green());
+        }
+        MemoryCmd::SessionSearch { query, limit } => {
+            let hits =
+                svc.search_sessions(query, *limit, config.memory.session_min_score.min(0.1))?;
+            if hits.is_empty() {
+                println!(
+                    "{} No session hits yet. They appear after turns are retained.",
+                    "ℹ".cyan()
+                );
+            } else {
+                for h in hits {
+                    let sid = &h.entry.session_id;
+                    println!(
+                        "  [{:.2}] {} turn {}",
+                        h.score,
+                        &sid[..8.min(sid.len())],
+                        h.entry.turn_index
+                    );
+                    for line in h.entry.text.lines().take(4) {
+                        println!("      {}", line.dimmed());
+                    }
+                }
+            }
         }
         MemoryCmd::CodeSearch { query, limit } => {
             let hits = svc.search_code(query, *limit, config.memory.code_min_score.min(0.1))?;
