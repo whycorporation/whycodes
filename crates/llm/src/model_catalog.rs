@@ -105,13 +105,16 @@ pub fn context_window_from_model_value(m: &Value) -> Option<u32> {
 
 fn as_u32(v: Option<&Value>) -> Option<u32> {
     let v = v?;
-    if let Some(n) = v.as_u64() {
-        return u32::try_from(n).ok();
+    if let Some(n) = v.as_u64()
+        && let Ok(n) = u32::try_from(n)
+    {
+        return Some(n);
     }
     if let Some(n) = v.as_i64()
         && n > 0
+        && let Ok(n) = u32::try_from(n)
     {
-        return u32::try_from(n).ok();
+        return Some(n);
     }
     if let Some(f) = v.as_f64()
         && f > 0.0
@@ -119,8 +122,10 @@ fn as_u32(v: Option<&Value>) -> Option<u32> {
     {
         return Some(f as u32);
     }
-    if let Some(s) = v.as_str() {
-        return s.parse().ok();
+    if let Some(s) = v.as_str()
+        && let Ok(n) = s.parse()
+    {
+        return Some(n);
     }
     None
 }
