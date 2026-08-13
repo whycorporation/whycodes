@@ -956,6 +956,9 @@ pub struct TuiConfig {
     /// Idle follow-up suggestions: `"off"` (default) or `"idle"`.
     #[serde(default = "default_prompt_suggestions")]
     pub prompt_suggestions: String,
+    /// Show the sidebar when the TUI opens.
+    #[serde(default)]
+    pub show_sidebar: bool,
 }
 
 impl Default for TuiConfig {
@@ -964,6 +967,7 @@ impl Default for TuiConfig {
             theme: None,
             key_bindings: None,
             prompt_suggestions: default_prompt_suggestions(),
+            show_sidebar: false,
         }
     }
 }
@@ -1391,6 +1395,9 @@ impl Config {
         }
         if other.tui.key_bindings.is_some() {
             merged.tui.key_bindings = other.tui.key_bindings.clone();
+        }
+        if other.tui.show_sidebar {
+            merged.tui.show_sidebar = true;
         }
 
         // General

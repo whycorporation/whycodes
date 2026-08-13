@@ -87,6 +87,20 @@ whycode auth login google           # Gemini
 Full CLI, TUI keys, slash commands, agents, tools and configuration:
 **[docs/guide.md](docs/guide.md)**.
 
+## Performance
+
+Idle TUI, Linux x86_64, 2026-08-13 (see [docs/benchmarks.md](docs/benchmarks.md)
+for method and machine):
+
+| | whycode |
+|---|---|
+| 1 session PSS | **6.7 MB** |
+| 10 sessions PSS | **26.5 MB** (~2.2 MB each extra) |
+| `--version` | **1.2 ms** |
+
+The TUI paints only when something changed. Idle target is **~0 redraws/s**,
+not a frames-per-second race.
+
 ## Documentation
 
 | Doc | What it is |

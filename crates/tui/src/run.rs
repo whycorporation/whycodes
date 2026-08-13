@@ -708,6 +708,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     // Both can block; doing them here keeps startup feel snappy.
                     rt.agent.load_mcp(&config).await;
                     maybe_session_auto_index(&project_dir, &config, &mut app);
+                    refresh_sidebar(&mut app, &config, &file_index);
                     if !app.toasts.is_empty() {
                         app.mark_dirty();
                     }
@@ -733,6 +734,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Stream events from rt.agent (coalesce text/thinking deltas) ──
             if drain_turn_events(&mut app, &mut rt.event_rx) {
+                if app.sidebar.visible {
+                    refresh_sidebar(&mut app, &config, &file_index);
+                }
                 app.mark_dirty();
             }
 
@@ -2946,7 +2950,95 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
                 app.mark_dirty();
             }
         }
+        TurnEvent::Panel(update) => {
+            apply_panel_update(app, update);
+        }
     }
+}
+
+pub(crate) fn apply_panel_update(app: &mut TuiApp, update: whycode_core::PanelUpdate) {
+    use whycode_core::PanelUpdate;
+    app.sidebar.preview = match update {
+        PanelUpdate::Clear => crate::app::SidebarPreview::None,
+        PanelUpdate::File { path, text } => crate::app::SidebarPreview::File { path, text },
+        PanelUpdate::Diff { path, unified } => crate::app::SidebarPreview::Diff { path, unified },
+        PanelUpdate::Mermaid { source } => crate::app::SidebarPreview::Mermaid { source },
+    };
+    app.sidebar.visible = true;
+    app.sidebar.active_tab = crate::app::SidebarTab::Preview;
+    let label = match &app.sidebar.preview {
+        crate::app::SidebarPreview::None => "panel cleared",
+        crate::app::SidebarPreview::File { path, .. } => path.as_str(),
+        crate::app::SidebarPreview::Diff { path, .. } => path.as_str(),
+        crate::app::SidebarPreview::Mermaid { .. } => "mermaid",
+    };
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        truncate_toast(&format!("panel · {label}"), 48),
+    );
+    app.mark_dirty();
+}
+
+/// Refresh sidebar lists from the workspace index, config, and todos.json.
+fn refresh_sidebar(
+    app: &mut TuiApp,
+    config: &whycode_config::Config,
+    file_index: &std::sync::Arc<whycode_index::WorkspaceIndex>,
+) {
+    const FILE_CAP: usize = 80;
+    let mut files: Vec<String> = file_index
+        .entries()
+        .into_iter()
+        .map(|e| {
+            if e.is_dir {
+                format!("{}/", e.rel)
+            } else {
+                e.rel.to_string()
+            }
+        })
+        .collect();
+    files.sort();
+    files.truncate(FILE_CAP);
+    app.sidebar.file_tree = files;
+
+    let mut mcp: Vec<String> = config
+        .mcp_servers
+        .keys()
+        .map(|name| format!(" {name}"))
+        .collect();
+    mcp.sort();
+    app.sidebar.mcp_status = mcp;
+
+    app.sidebar.todos = load_sidebar_todos(&app.project_dir);
+}
+
+fn load_sidebar_todos(project_dir: &std::path::Path) -> Vec<String> {
+    let path = project_dir.join(".whycode").join("todos.json");
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
+    let Some(items) = parsed.get("todos").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let content = item.get("content")?.as_str()?;
+            let status = item
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or("pending");
+            let mark = match status {
+                "completed" => "☑",
+                "cancelled" => "✗",
+                "in_progress" => "…",
+                _ => "☐",
+            };
+            Some(format!("{mark} {content}"))
+        })
+        .take(40)
+        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]

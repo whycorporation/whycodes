@@ -67,6 +67,8 @@ pub enum TurnEvent {
     },
     /// Queue a user prompt for the next free TUI turn (`schedule` / `/loop`).
     EnqueuePrompt { text: String },
+    /// Pin a file / diff / mermaid on the TUI side panel.
+    Panel(whycode_core::PanelUpdate),
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).

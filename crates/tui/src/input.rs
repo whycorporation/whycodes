@@ -260,6 +260,21 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         }
         Some(Action::ToggleSidebar) => {
             app.sidebar.visible = !app.sidebar.visible;
+            app.mark_dirty();
+            true
+        }
+        Some(Action::SidebarNextTab) => {
+            if app.sidebar.visible {
+                app.sidebar.active_tab = app.sidebar.active_tab.next();
+                app.mark_dirty();
+            }
+            true
+        }
+        Some(Action::SidebarPrevTab) => {
+            if app.sidebar.visible {
+                app.sidebar.active_tab = app.sidebar.active_tab.prev();
+                app.mark_dirty();
+            }
             true
         }
         Some(Action::OpenProviderDialog) => {
@@ -1454,6 +1469,7 @@ fn execute_command(app: &mut TuiApp, cmd: &str) {
         }
         Some(":sidebar") => {
             app.sidebar.visible = !app.sidebar.visible;
+            app.mark_dirty();
         }
         _ => {
             app.status_message = format!("Unknown command: {}", cmd);

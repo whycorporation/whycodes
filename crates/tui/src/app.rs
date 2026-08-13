@@ -432,6 +432,8 @@ pub struct SidebarState {
     pub mcp_status: Vec<String>,
     /// TODO items.
     pub todos: Vec<String>,
+    /// Agent-pinned preview (file / diff / mermaid).
+    pub preview: SidebarPreview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,6 +442,55 @@ pub enum SidebarTab {
     Diagnostics,
     Mcp,
     Todos,
+    Preview,
+}
+
+impl SidebarTab {
+    pub const ALL: [Self; 5] = [
+        Self::Files,
+        Self::Diagnostics,
+        Self::Mcp,
+        Self::Todos,
+        Self::Preview,
+    ];
+
+    pub fn next(self) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[(i + 1) % Self::ALL.len()]
+    }
+
+    pub fn prev(self) -> Self {
+        let i = Self::ALL.iter().position(|t| *t == self).unwrap_or(0);
+        Self::ALL[(i + Self::ALL.len() - 1) % Self::ALL.len()]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Files => "Files",
+            Self::Diagnostics => "Diag",
+            Self::Mcp => "MCP",
+            Self::Todos => "Todos",
+            Self::Preview => "View",
+        }
+    }
+}
+
+/// What the Preview tab shows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SidebarPreview {
+    #[default]
+    None,
+    File {
+        path: String,
+        text: String,
+    },
+    Diff {
+        path: String,
+        unified: String,
+    },
+    Mermaid {
+        source: String,
+    },
 }
 
 impl Default for SidebarState {
@@ -451,6 +502,7 @@ impl Default for SidebarState {
             diagnostics: 0,
             mcp_status: vec![],
             todos: vec![],
+            preview: SidebarPreview::None,
         }
     }
 }
@@ -1509,7 +1561,10 @@ impl TuiApp {
             file_suggest: crate::ui::file_suggest::FileSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
-            sidebar: SidebarState::default(),
+            sidebar: SidebarState {
+                visible: config.show_sidebar,
+                ..SidebarState::default()
+            },
             command: CommandState::default(),
             theme: config.theme,
             theme_selected: ThemeName::ALL

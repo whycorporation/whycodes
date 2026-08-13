@@ -1,6 +1,7 @@
 pub mod bg;
 pub mod code_mode;
 pub mod memory_tool;
+pub mod panel;
 pub mod plan;
 pub mod question;
 pub mod schedule;

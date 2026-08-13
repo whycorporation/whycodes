@@ -103,7 +103,8 @@ The default interface is a full-screen TUI. `--plain` is a line-based REPL.
 | `?` | Help / keybinding cheatsheet |
 | `:` | Command mode (`:theme`, `:q`, …) |
 | `Ctrl+P` / `Ctrl+M` | Provider setup / model selection |
-| `Ctrl+B` | Toggle sidebar |
+| `Ctrl+B` | Toggle sidebar (Files / Diag / MCP / Todos / View) |
+| `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 
 Input prefixes (TUI and `--plain`):
@@ -193,12 +194,19 @@ model answers instead of over-eager edits. Set
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` |
 | Web | `webfetch`, `websearch` |
-| Workflow | `task`, `swarm`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule` |
+| Workflow | `task`, `swarm`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel` |
 | Memory | `memory` |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search` |
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
 directories and binary files. MCP server tools bind as `{server}_{tool}`.
+
+`panel` pins a file, unified diff, or mermaid diagram on the TUI sidebar
+Preview tab (`action`: `show_file` / `show_diff` / `show_mermaid` / `clear`).
+It is not in the core tool profile — activate it with `tool_search` or set
+`session.tool_profile = "full"`. `Ctrl+B` toggles the sidebar; `[` / `]`
+cycle tabs from scrollback. Set `[tui] show_sidebar = true` to open it by
+default.
 
 ## Memory
 

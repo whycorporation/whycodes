@@ -936,6 +936,35 @@ fn test_sidebar_default() {
     assert_eq!(sidebar.diagnostics, 0);
 }
 
+#[test]
+fn sidebar_tabs_cycle() {
+    assert_eq!(SidebarTab::Files.next(), SidebarTab::Diagnostics);
+    assert_eq!(SidebarTab::Preview.next(), SidebarTab::Files);
+    assert_eq!(SidebarTab::Files.prev(), SidebarTab::Preview);
+}
+
+#[test]
+fn panel_event_opens_preview() {
+    let mut app = TuiApp::new(test_config());
+    assert!(!app.sidebar.visible);
+    crate::run::apply_panel_update(
+        &mut app,
+        whycode_core::PanelUpdate::File {
+            path: "src/main.rs".into(),
+            text: "fn main() {}".into(),
+        },
+    );
+    assert!(app.sidebar.visible);
+    assert_eq!(app.sidebar.active_tab, SidebarTab::Preview);
+    match &app.sidebar.preview {
+        crate::app::SidebarPreview::File { path, text } => {
+            assert_eq!(path, "src/main.rs");
+            assert!(text.contains("main"));
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
 // ── Provider Dialog Tests ───────────────────────────────────────────
 
 #[test]
