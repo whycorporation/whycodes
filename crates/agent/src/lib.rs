@@ -7,6 +7,7 @@ pub mod memory_retain;
 pub mod permission;
 pub mod question;
 pub mod routing;
+pub mod speculative_read;
 pub mod subagent;
 pub mod swarm;
 pub mod swarm_worktree;

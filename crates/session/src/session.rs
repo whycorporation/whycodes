@@ -22,31 +22,44 @@ const PRUNE_KEEP_RECENT_TOOLS: usize = 4;
 const MIN_KEEP_MESSAGES: usize = 4;
 
 /// Reserved heuristic tokens for the summary line prepended by compact.
-const SUMMARY_TOKEN_SLACK: usize = 64;
+/// Raised so the richer local summary (goals + paths) fits without thrashing.
+const SUMMARY_TOKEN_SLACK: usize = 256;
+
+/// Max chars of dropped-message transcript retained for optional LLM summary.
+const DROPPED_TRANSCRIPT_MAX_CHARS: usize = 12_000;
 
 /// Outcome of [`Session::compact`] for autocompact circuit breakers.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
 pub struct CompactOutcome {
     pub tokens_before: usize,
     pub tokens_after: usize,
     pub messages_before: usize,
     pub messages_after: usize,
+    /// Text of messages that were dropped (capped). Empty when nothing trimmed.
+    /// Used by the agent LLM-compact path so the summary covers *history*, not
+    /// the already-kept tail.
+    pub dropped_transcript: String,
 }
 
 impl CompactOutcome {
     /// True when compact dropped tokens or messages.
-    pub fn reduced(self) -> bool {
+    pub fn reduced(&self) -> bool {
         self.tokens_after < self.tokens_before || self.messages_after < self.messages_before
     }
 
     /// Still above the autocompact threshold after the pass.
-    pub fn still_over(self, threshold: usize) -> bool {
+    pub fn still_over(&self, threshold: usize) -> bool {
         threshold > 0 && self.tokens_after > threshold
     }
 
     /// Failed to relieve pressure: still over threshold and no reduction.
-    pub fn failed(self, threshold: usize) -> bool {
+    pub fn failed(&self, threshold: usize) -> bool {
         self.still_over(threshold) && !self.reduced()
+    }
+
+    /// True when at least one prefix message was removed (not just tool caps).
+    pub fn dropped_messages(&self) -> bool {
+        !self.dropped_transcript.is_empty()
     }
 }
 
@@ -192,15 +205,45 @@ fn summarize_trimmed(trimmed: &[Message]) -> String {
     let mut assistants = 0usize;
     let mut tools = 0usize;
     let mut other = 0usize;
+    let mut goals: Vec<String> = Vec::new();
+    let mut paths: Vec<String> = Vec::new();
+    let mut tool_names: Vec<String> = Vec::new();
+
     for m in trimmed {
         match m.role {
-            Role::User => users += 1,
-            Role::Assistant => assistants += 1,
-            Role::Tool => tools += 1,
+            Role::User => {
+                users += 1;
+                if goals.len() < 3
+                    && let Some(t) = m.content.as_text()
+                {
+                    let snippet = first_line_snippet(t, 120);
+                    if !snippet.is_empty()
+                        && !snippet.starts_with('[')
+                        && !goals.iter().any(|g| g == &snippet)
+                    {
+                        goals.push(snippet);
+                    }
+                }
+            }
+            Role::Assistant => {
+                assistants += 1;
+                collect_paths_from_message(m, &mut paths, 8);
+            }
+            Role::Tool => {
+                tools += 1;
+                if let Some(name) = m.name.as_deref()
+                    && tool_names.len() < 8
+                    && !tool_names.iter().any(|n| n == name)
+                {
+                    tool_names.push(name.to_string());
+                }
+                collect_paths_from_message(m, &mut paths, 8);
+            }
             Role::System => other += 1,
         }
     }
-    format!(
+
+    let mut out = format!(
         "[{n} earlier messages trimmed for context management \
          (user={users}, assistant={assistants}, tool={tools}{other_part})]",
         n = trimmed.len(),
@@ -209,7 +252,152 @@ fn summarize_trimmed(trimmed: &[Message]) -> String {
         } else {
             String::new()
         }
-    )
+    );
+    if !goals.is_empty() {
+        out.push_str("\nGoals: ");
+        out.push_str(&goals.join(" | "));
+    }
+    if !paths.is_empty() {
+        out.push_str("\nFiles: ");
+        out.push_str(&paths.join(", "));
+    }
+    if !tool_names.is_empty() {
+        out.push_str("\nTools used: ");
+        out.push_str(&tool_names.join(", "));
+    }
+    out
+}
+
+fn first_line_snippet(text: &str, max_chars: usize) -> String {
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if line.chars().count() <= max_chars {
+        return line.to_string();
+    }
+    let mut s: String = line.chars().take(max_chars.saturating_sub(1)).collect();
+    s.push('…');
+    s
+}
+
+/// Pull a few path-like tokens from message text / tool dumps for local summary.
+fn collect_paths_from_message(m: &Message, paths: &mut Vec<String>, max: usize) {
+    if paths.len() >= max {
+        return;
+    }
+    let text = match &m.content {
+        MessageContent::Text(t) => t.as_str(),
+        MessageContent::Blocks(blocks) => {
+            for b in blocks {
+                match b {
+                    ContentBlock::Text { text }
+                    | ContentBlock::ToolResult {
+                        content: text, ..
+                    } => push_paths_from_text(text, paths, max),
+                    ContentBlock::ToolUse { input, .. } => {
+                        if let Some(p) = input.get("path").and_then(|v| v.as_str()) {
+                            push_path(p, paths, max);
+                        }
+                    }
+                    _ => {}
+                }
+                if paths.len() >= max {
+                    return;
+                }
+            }
+            return;
+        }
+    };
+    push_paths_from_text(text, paths, max);
+}
+
+fn push_paths_from_text(text: &str, paths: &mut Vec<String>, max: usize) {
+    // Prefer header lines from the `read` tool: `# path/to/file`
+    for line in text.lines().take(40) {
+        if paths.len() >= max {
+            return;
+        }
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("# ") {
+            let candidate = rest.split_whitespace().next().unwrap_or("");
+            if looks_like_path(candidate) {
+                push_path(candidate, paths, max);
+            }
+        }
+    }
+    // Fallback: scan tokens with a path separator + extension-ish shape.
+    for token in text.split_whitespace().take(200) {
+        if paths.len() >= max {
+            return;
+        }
+        let tok = token.trim_matches(|c: char| {
+            matches!(c, ',' | ';' | ')' | '(' | '"' | '\'' | '`' | '[' | ']')
+        });
+        if looks_like_path(tok) {
+            push_path(tok, paths, max);
+        }
+    }
+}
+
+fn looks_like_path(s: &str) -> bool {
+    if s.len() < 3 || s.len() > 200 {
+        return false;
+    }
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return false;
+    }
+    let has_sep = s.contains('/') || s.contains('\\');
+    let has_dot = s.contains('.');
+    has_sep && has_dot && !s.contains("://")
+}
+
+fn push_path(path: &str, paths: &mut Vec<String>, max: usize) {
+    if paths.len() >= max || path.is_empty() {
+        return;
+    }
+    if paths.iter().any(|p| p == path) {
+        return;
+    }
+    paths.push(path.to_string());
+}
+
+/// Build a capped plain-text transcript from a message slice (for LLM compact).
+fn messages_transcript(messages: &[Message], max_chars: usize) -> String {
+    let mut out = String::new();
+    for m in messages {
+        let role = match m.role {
+            Role::User => "User",
+            Role::Assistant => "Assistant",
+            Role::Tool => "Tool",
+            Role::System => "System",
+        };
+        let body = match &m.content {
+            MessageContent::Text(t) => t.clone(),
+            MessageContent::Blocks(blocks) => blocks
+                .iter()
+                .filter_map(|b| match b {
+                    ContentBlock::Text { text } => Some(text.as_str()),
+                    ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
+                    ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        let piece = format!("{role}: {body}\n\n");
+        if out.len() + piece.len() > max_chars {
+            let remain = max_chars.saturating_sub(out.len());
+            if remain > 32 {
+                out.push_str(&piece.chars().take(remain).collect::<String>());
+                out.push_str("\n…");
+            }
+            break;
+        }
+        out.push_str(&piece);
+    }
+    out
 }
 
 /// A conversation session
@@ -709,37 +897,14 @@ impl Session {
     }
 
     /// Concatenate older messages for LLM summarization (capped).
+    ///
+    /// Prefer [`CompactOutcome::dropped_transcript`] from a just-run
+    /// [`Session::compact`] — that captures the *actual* dropped prefix.
+    /// This helper is a fallback when no drop has happened yet.
     pub fn transcript_for_compact_summary(&self, max_chars: usize) -> String {
-        let mut out = String::new();
         let keep_tail = MIN_KEEP_MESSAGES.min(self.messages.len());
         let end = self.messages.len().saturating_sub(keep_tail);
-        for m in &self.messages[..end] {
-            let role = match m.role {
-                Role::User => "User",
-                Role::Assistant => "Assistant",
-                Role::Tool => "Tool",
-                Role::System => "System",
-            };
-            let text = match &m.content {
-                MessageContent::Text(t) => t.clone(),
-                MessageContent::Blocks(b) => b
-                    .iter()
-                    .filter_map(|bl| match bl {
-                        ContentBlock::Text { text } => Some(text.as_str()),
-                        ContentBlock::ToolResult { content, .. } => Some(content.as_str()),
-                        ContentBlock::ToolUse { name, .. } => Some(name.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" "),
-            };
-            let line = format!("{role}: {}\n", text.chars().take(400).collect::<String>());
-            if out.len() + line.len() > max_chars {
-                break;
-            }
-            out.push_str(&line);
-        }
-        out
+        messages_transcript(&self.messages[..end], max_chars)
     }
 
     pub fn compact(&mut self, max_tokens: usize) -> CompactOutcome {
@@ -759,6 +924,7 @@ impl Session {
                 tokens_after: self.token_count_cached(),
                 messages_before,
                 messages_after: self.messages.len(),
+                dropped_transcript: String::new(),
             };
         }
 
@@ -786,10 +952,13 @@ impl Session {
                 tokens_after: self.token_count_cached(),
                 messages_before,
                 messages_after: self.messages.len(),
+                dropped_transcript: String::new(),
             };
         }
 
         let trimmed = &self.messages[..start];
+        let dropped_transcript =
+            messages_transcript(trimmed, DROPPED_TRANSCRIPT_MAX_CHARS);
         let summary = summarize_trimmed(trimmed);
         let mut new_messages = Vec::with_capacity(1 + self.messages.len() - start);
         new_messages.push(Message {
@@ -808,6 +977,7 @@ impl Session {
             tokens_after: self.token_count_cached(),
             messages_before,
             messages_after: self.messages.len(),
+            dropped_transcript,
         }
     }
 
@@ -1291,12 +1461,24 @@ mod tests {
         }
         assert_eq!(session.messages.len(), 10);
 
-        session.compact(200);
+        let outcome = session.compact(200);
 
         let summary_text = session.messages[0].content.as_text().unwrap();
         assert!(
             summary_text.contains("earlier messages trimmed"),
             "summary should mention trimmed messages: {summary_text}"
+        );
+        assert!(
+            summary_text.contains("Goals:"),
+            "local summary should include goal snippets: {summary_text}"
+        );
+        assert!(
+            outcome.dropped_messages(),
+            "dropped_transcript should be non-empty when messages were trimmed"
+        );
+        assert!(
+            outcome.dropped_transcript.contains("User:"),
+            "dropped transcript should include role-prefixed lines"
         );
         assert!(
             session.messages.len() >= 5,

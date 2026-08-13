@@ -1,6 +1,6 @@
 # Plan — Competitive latency research & whycode roadmap
 
-**Status:** P0+P1 done · P2 optional/deferred · **Priority:** P0 (core complete) · **Last review:** 2026-08-13  
+**Status:** P0+P1 done · P2 partial (LLM compact quality + speculative early `read` shipped) · **Priority:** P0 (core complete) · **Last review:** 2026-08-13  
 **Related:** [archive/plan-perf-hotpath.md](archive/plan-perf-hotpath.md), [archive/plan-perf-context-tui.md](archive/plan-perf-context-tui.md), [comparison.md](comparison.md), [FEATURES.md](FEATURES.md), [KNOWHOW.md](KNOWHOW.md)  
 **Primary peers for this plan:** **OpenCode** (anomalyco, local tree `/tmp/opencode-src` @ shallow tip), **jcode** (binary `v0.64.2` + public issues; no full source in-tree)
 
@@ -62,9 +62,7 @@ From `packages/llm/src/cache-policy.ts` (verbatim intent):
 - Protocols that ignore inline hints (OpenAI implicit, Gemini) skip the pass.
 - Rationale: during one user turn the agent does many assistant/tool round-trips; caching at the **user message** boundary makes every *intra-turn* API call a cache hit on the prefix.
 
-**Whycode gap vs OpenCode (critical):** we mark system + last tool only. We do **not** yet mark the **latest user message**. That is the highest-ROI OpenCode technique we still lack for multi-step turns.
-
-There is a stub `crates/llm/src/cache.rs` (`CacheConfig { system, messages }`) that is **not wired** into request building.
+**Whycode vs OpenCode (cache):** system + last tool + **latest user message** are marked when `session.prompt_cache = "auto"` (default). `crates/llm/src/cache.rs` (`CachePolicy::Auto`) is wired into Anthropic (and compatible) request building via `LlmRequest.use_prompt_cache`.
 
 ### OpenCode parallel tools — status nuance
 
@@ -203,12 +201,14 @@ compaction_threshold = 150000
 
 ### P2 — optional product scale
 
-1. LLM-summary compact agent — only if prune+drop insufficient  
-2. Speculative stream-arg early `read` (I/O before JSON closes)  
+1. LLM-summary compact agent — **improved** (local summary includes goals/paths; LLM uses *dropped* transcript; runs when messages were dropped, not only when still over budget)  
+2. Speculative stream-arg early `read` — **shipped** (`crates/agent/src/speculative_read.rs`; path closes mid-stream → I/O overlaps remaining tokens)  
 3. Long-lived daemon multi-session warm  
 4. Cross-session memory ([archive/plan-memory.md](archive/plan-memory.md))  
 5. Swarm — monorepo only (phase-7 still holds)  
 6. First-token race failover / semantic response cache
+
+Remaining P2 items are product-scale (daemon, swarm, semantic cache), not TTFT core.
 
 ---
 

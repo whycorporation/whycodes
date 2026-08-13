@@ -437,17 +437,28 @@ impl Agent {
     }
 
     /// Summarize older transcript with a small model (A2 LLM compact).
+    ///
+    /// Prefer `dropped_transcript` from a just-completed local compact so the
+    /// summary covers history that was actually removed, not the kept tail.
     async fn llm_compact_summary(
         &self,
         session: &Session,
         provider_name: &str,
         model: &str,
         api_key: &str,
+        dropped_transcript: Option<&str>,
     ) -> Option<String> {
-        let transcript = session.transcript_for_compact_summary(12_000);
-        if transcript.trim().is_empty() {
-            return None;
-        }
+        let owned;
+        let transcript = match dropped_transcript.map(str::trim).filter(|t| !t.is_empty()) {
+            Some(t) => t,
+            None => {
+                owned = session.transcript_for_compact_summary(12_000);
+                if owned.trim().is_empty() {
+                    return None;
+                }
+                owned.as_str()
+            }
+        };
         let (p_name, m_id) =
             crate::title::resolve_title_model(provider_name, model, self.model_fast.as_deref());
         let provider = self.provider_registry.get(&p_name)?;
@@ -910,25 +921,37 @@ impl Agent {
                 let before = session.token_count();
                 if before > self.compaction_threshold {
                     let mut outcome = session.compact(self.compaction_threshold);
-                    // A2: if still over and LLM compact enabled, summarize with fast model.
-                    if outcome.still_over(self.compaction_threshold)
-                        && self.compaction_llm
+                    // A2: LLM summary when messages were dropped (quality) or
+                    // still over budget (pressure). Prefer the dropped prefix
+                    // transcript so we do not re-summarize the kept tail.
+                    let want_llm = self.compaction_llm
                         && !api_key.is_empty()
-                        && let Some(summary) = self
-                            .llm_compact_summary(session, provider_name, model, api_key)
+                        && (outcome.dropped_messages()
+                            || outcome.still_over(self.compaction_threshold));
+                    if want_llm {
+                        let dropped = outcome.dropped_transcript.clone();
+                        if let Some(summary) = self
+                            .llm_compact_summary(
+                                session,
+                                provider_name,
+                                model,
+                                api_key,
+                                if dropped.is_empty() {
+                                    None
+                                } else {
+                                    Some(dropped.as_str())
+                                },
+                            )
                             .await
-                    {
-                        session.prepend_compact_summary(&summary);
-                        outcome = whycode_session::CompactOutcome {
-                            tokens_before: outcome.tokens_before,
-                            tokens_after: session.token_count(),
-                            messages_before: outcome.messages_before,
-                            messages_after: session.messages.len(),
-                        };
-                        emit(
-                            &events,
-                            TurnEvent::Status("Compacted context (LLM summary)…".into()),
-                        );
+                        {
+                            session.prepend_compact_summary(&summary);
+                            outcome.tokens_after = session.token_count();
+                            outcome.messages_after = session.messages.len();
+                            emit(
+                                &events,
+                                TurnEvent::Status("Compacted context (LLM summary)…".into()),
+                            );
+                        }
                     }
                     if outcome.reduced() {
                         emit(
@@ -1015,6 +1038,8 @@ impl Agent {
             let mut accumulated_text = String::new();
             let mut turn_usage = whycode_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
+            let mut speculative_reads: Vec<crate::speculative_read::SpeculativeRead> =
+                Vec::new();
             let step_t0 = Instant::now();
 
             // Professional transport: classify + full-jitter backoff + Retry-After.
@@ -1039,6 +1064,7 @@ impl Agent {
                 let event = tokio::select! {
                     biased;
                     _ = wait_until_cancelled(&cancel) => {
+                        crate::speculative_read::abort_all(&mut speculative_reads);
                         if !accumulated_text.is_empty() {
                             session.add_assistant_message(vec![ContentBlock::Text {
                                 text: accumulated_text.clone(),
@@ -1067,12 +1093,32 @@ impl Agent {
                         // Defer ToolStart until after argument fragments are
                         // merged — OpenAI streams send null/empty args first.
                         assembler.on_tool_use(id, name, input);
+                        // Complete objects (Anthropic non-streamed) can start I/O now.
+                        if let Some((cid, cname, buf)) = assembler.last_updated() {
+                            crate::speculative_read::maybe_start(
+                                &mut speculative_reads,
+                                &cid,
+                                &cname,
+                                &buf,
+                                &tool_ctx,
+                            );
+                        }
                     }
                     StreamEvent::ToolUseDelta {
                         id,
                         input_json_delta,
                     } => {
                         assembler.on_tool_use_delta(&id, &input_json_delta);
+                        // Path often closes mid-stream — start `read` I/O early.
+                        if let Some((cid, cname, buf)) = assembler.last_updated() {
+                            crate::speculative_read::maybe_start(
+                                &mut speculative_reads,
+                                &cid,
+                                &cname,
+                                &buf,
+                                &tool_ctx,
+                            );
+                        }
                     }
                     StreamEvent::Thinking { text } => {
                         if text.is_empty() {
@@ -1172,6 +1218,7 @@ impl Agent {
             }
 
             if tool_calls.is_empty() {
+                crate::speculative_read::abort_all(&mut speculative_reads);
                 whycode_core::logging::emit_sid(
                     "agent",
                     "info",
@@ -1197,6 +1244,7 @@ impl Agent {
             // Doom-loop: refuse identical tool+args repeated DOOM_LOOP_THRESHOLD times
             // (OpenCode processor.ts doom_loop permission pattern).
             let results = if would_doom_loop(&recent_tool_sigs, &tool_calls) {
+                crate::speculative_read::abort_all(&mut speculative_reads);
                 emit(
                     &events,
                     TurnEvent::Status("Doom loop: identical tool call repeated — refusing".into()),
@@ -1253,8 +1301,10 @@ impl Agent {
                         &events,
                         &cancel,
                         Some(&turn_intent),
+                        &mut speculative_reads,
                     )
                     .await?;
+                crate::speculative_read::abort_all(&mut speculative_reads);
                 let tool_batch_ms = tool_t0.elapsed().as_millis();
                 for tc in &tool_calls {
                     let sig = tool_call_signature(tc);
@@ -1355,6 +1405,9 @@ impl Agent {
     /// Results are returned in the **same order** as `tool_calls` (required by
     /// the messages API). Shell, mutators, and tools that need an interactive
     /// permission ask stay sequential so risk/UI semantics stay single-threaded.
+    ///
+    /// `speculative` holds early `read` jobs started while args were still
+    /// streaming; matching calls skip a second disk pass.
     #[allow(clippy::too_many_arguments)]
     async fn execute_tool_calls(
         &self,
@@ -1367,6 +1420,7 @@ impl Agent {
         events: &Option<EventSink>,
         cancel: &Option<CancelFlag>,
         turn_intent: Option<&crate::intent::IntentAssessment>,
+        speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
     ) -> whycode_core::Result<Vec<ToolResult>> {
         if tool_calls.is_empty() {
             return Ok(Vec::new());
@@ -1383,22 +1437,28 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = tokio::select! {
-                biased;
-                _ = wait_until_cancelled(cancel) => {
-                    emit(events, TurnEvent::Cancelled);
-                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+            let result = if let Some(early) =
+                self.take_speculative_read(tc, tool_ctx, speculative).await
+            {
+                early
+            } else {
+                tokio::select! {
+                    biased;
+                    _ = wait_until_cancelled(cancel) => {
+                        emit(events, TurnEvent::Cancelled);
+                        return Err(whycode_core::Error::Agent("Cancelled".into()));
+                    }
+                    r = self.execute_with_permission(
+                        tc,
+                        session,
+                        tool_ctx,
+                        provider_name,
+                        model,
+                        api_key,
+                        turn_intent,
+                        events.as_ref(),
+                    ) => r,
                 }
-                r = self.execute_with_permission(
-                    tc,
-                    session,
-                    tool_ctx,
-                    provider_name,
-                    model,
-                    api_key,
-                    turn_intent,
-                    events.as_ref(),
-                ) => r,
             };
             emit(
                 events,
@@ -1425,20 +1485,37 @@ impl Agent {
                     names.join(", ")
                 )),
             );
+            // Consume matching speculative reads first (I/O already overlapped
+            // the LLM stream). Remaining calls run in parallel as before.
+            let mut early: Vec<Option<ToolResult>> = Vec::with_capacity(tool_calls.len());
+            for tc in tool_calls {
+                early.push(
+                    self.take_speculative_read(tc, tool_ctx, speculative)
+                        .await,
+                );
+            }
             // ToolStart already emitted by the caller for every call.
             let futs: Vec<_> = tool_calls
                 .iter()
-                .map(|tc| {
-                    self.execute_with_permission(
-                        tc,
-                        session,
-                        tool_ctx,
-                        provider_name,
-                        model,
-                        api_key,
-                        turn_intent,
-                        events.as_ref(),
-                    )
+                .zip(early.into_iter())
+                .map(|(tc, pre)| {
+                    let this = self;
+                    async move {
+                        if let Some(r) = pre {
+                            return r;
+                        }
+                        this.execute_with_permission(
+                            tc,
+                            session,
+                            tool_ctx,
+                            provider_name,
+                            model,
+                            api_key,
+                            turn_intent,
+                            events.as_ref(),
+                        )
+                        .await
+                    }
                 })
                 .collect();
             let results = tokio::select! {
@@ -1473,22 +1550,28 @@ impl Agent {
                 events,
                 TurnEvent::Status(format!("Running tool `{}`…", tc.name)),
             );
-            let result = tokio::select! {
-                biased;
-                _ = wait_until_cancelled(cancel) => {
-                    emit(events, TurnEvent::Cancelled);
-                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+            let result = if let Some(early) =
+                self.take_speculative_read(tc, tool_ctx, speculative).await
+            {
+                early
+            } else {
+                tokio::select! {
+                    biased;
+                    _ = wait_until_cancelled(cancel) => {
+                        emit(events, TurnEvent::Cancelled);
+                        return Err(whycode_core::Error::Agent("Cancelled".into()));
+                    }
+                    r = self.execute_with_permission(
+                        tc,
+                        session,
+                        tool_ctx,
+                        provider_name,
+                        model,
+                        api_key,
+                        turn_intent,
+                        events.as_ref(),
+                    ) => r,
                 }
-                r = self.execute_with_permission(
-                    tc,
-                    session,
-                    tool_ctx,
-                    provider_name,
-                    model,
-                    api_key,
-                    turn_intent,
-                    events.as_ref(),
-                ) => r,
             };
             emit(
                 events,
@@ -1501,6 +1584,31 @@ impl Agent {
             results.push(result);
         }
         Ok(results)
+    }
+
+    /// Use a speculative early `read` if path/window still match the final call.
+    async fn take_speculative_read(
+        &self,
+        tc: &ToolCall,
+        tool_ctx: &ToolContext,
+        speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
+    ) -> Option<ToolResult> {
+        if tc.name != "read" || speculative.is_empty() {
+            return None;
+        }
+        let path = tc.arguments.get("path")?.as_str()?;
+        let (offset, limit) = crate::speculative_read::window_from_args(&tc.arguments);
+        let result = crate::speculative_read::take_matching(
+            speculative,
+            &tc.id,
+            path,
+            offset,
+            limit,
+            &tool_ctx.working_dir,
+        )
+        .await?;
+        tracing::debug!(id = %tc.id, path, "speculative early read hit");
+        Some(result)
     }
 
     /// Apply the shell risk gate, then allow/ask/deny, then execute (or spawn
