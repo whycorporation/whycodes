@@ -18,6 +18,7 @@ whycode-llm = { path = "../llm" }
 whycode-storage = { path = "../storage" }
 whycode-auth = { path = "../auth" }
 whycode-index = { path = "../index" }
+whycode-protocol = { path = "../protocol" }
 tower-http = { version = "0.5", features = ["cors"] }
 tracing.workspace = true
 anyhow.workspace = true

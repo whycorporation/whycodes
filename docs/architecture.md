@@ -22,7 +22,7 @@ Two rules keep the graph acyclic:
 | | `config` | Config load / merge / validate |
 | | `storage` | SQLite for sessions and memories |
 | | `format` | Markdown, highlighting, diffs, tables |
-| | `protocol` | CI / stream-json event envelopes |
+| | `protocol` | CI / stream-json envelopes **and** daemon protocol v1 (`SdkEvent`) |
 | | `schema` | Schema validation |
 | | `sandbox` | OS sandbox for shell commands (bubblewrap on Linux) |
 | | `lsp` | Language-server client |
@@ -37,8 +37,8 @@ Two rules keep the graph acyclic:
 | Orchestration | `agent` | Agent loop, subagents, swarm, `AGENTS.md` |
 | Applications | `cli` | The only binary (`whycode`) |
 | | `tui` | Full-screen terminal UI (ratatui) |
-| | `server` | Local HTTP API for session sharing |
-| | `sdk` | Library client for embedding |
+| | `server` | Local daemon (`whycode serve`): `/api/*` for TUI attach, `/v1/*` for the SDK |
+| | `sdk` | Thin HTTP client for protocol v1 (`connect` / `launch`). Does not embed the agent loop. |
 
 Package names use the `whycode-` prefix even when the directory is shorter
 (`crates/llm` → `-p whycode-llm`).

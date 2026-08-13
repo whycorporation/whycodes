@@ -4255,17 +4255,13 @@ dependencies = [
 name = "whycode-sdk"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "futures",
+ "reqwest",
  "serde",
  "serde_json",
+ "thiserror 2.0.18",
  "tokio",
- "whycode-agent",
- "whycode-config",
- "whycode-core",
- "whycode-llm",
- "whycode-session",
- "whycode-tools",
+ "whycode-protocol",
 ]
 
 [[package]]
@@ -4288,6 +4284,7 @@ dependencies = [
  "whycode-core",
  "whycode-index",
  "whycode-llm",
+ "whycode-protocol",
  "whycode-session",
  "whycode-storage",
  "whycode-tools",

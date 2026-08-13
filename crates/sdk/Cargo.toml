@@ -2,16 +2,18 @@
 name = "whycode-sdk"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin client for the whycode local daemon (protocol v1)"
 
 [dependencies]
-whycode-core = { path = "../core" }
-whycode-config = { path = "../config" }
-whycode-session = { path = "../session" }
-whycode-agent = { path = "../agent" }
-whycode-tools = { path = "../tools" }
-whycode-llm = { path = "../llm" }
+whycode-protocol = { path = "../protocol" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-anyhow.workspace = true
+reqwest.workspace = true
 futures.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

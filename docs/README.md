@@ -4,7 +4,7 @@ Start here, then pick the page you need.
 
 | Doc | Audience | What it is |
 |---|---|---|
-| [guide.md](guide.md) | Users | CLI, TUI, agents, tools, memory, configuration |
+| [guide.md](guide.md) | Users | CLI, TUI, agents, tools, memory, configuration, SDK |
 | [auth.md](auth.md) | Users | API keys, OAuth login, credential import |
 | [architecture.md](architecture.md) | Contributors | Crate map and one-way layering |
 | [roadmap.md](roadmap.md) | Contributors | Current focus and deferred work |
