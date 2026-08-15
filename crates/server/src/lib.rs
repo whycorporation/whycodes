@@ -142,3 +142,75 @@ pub fn create_router(state: AppState) -> Router {
         .layer(CorsLayer::permissive())
         .with_state(state)
 }
+
+/// Build a minimal, fully in-memory [`AppState`] for unit tests. Nothing here
+/// touches the user's config, database, or workspace.
+#[cfg(test)]
+pub(crate) fn test_state() -> AppState {
+    use whycode_core::types::{AgentInfo, AgentMode, PermissionSet};
+
+    AppState {
+        agent: Arc::new(Agent::new(AgentInfo {
+            name: "test".into(),
+            description: "test agent".into(),
+            mode: AgentMode::Primary,
+            permission: PermissionSet::default(),
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        })),
+        config: Arc::new(Config::default()),
+        project_dir: std::env::temp_dir(),
+        sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        max_turns: 5,
+        mcp_warm: false,
+        index_warm: false,
+        started_at: std::time::Instant::now(),
+        cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        perm: perm::PermHub::new(),
+        session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whycode_agent::events::new_cancel_flag;
+    use whycode_session::session::Session;
+
+    #[test]
+    fn session_round_trip_through_the_warm_map() {
+        let state = test_state();
+
+        let s1 = Session::new("/tmp".into(), "sys".into());
+        let id1 = s1.id.clone();
+        state.insert_session(s1);
+        assert!(state.get_session(&id1).is_some());
+        assert_eq!(state.list_session_ids(), vec![id1.clone()]);
+
+        let s2 = Session::new("/tmp".into(), "sys".into());
+        let id2 = s2.id.clone();
+        state.insert_session(s2);
+        let mut ids = state.list_session_ids();
+        ids.sort();
+        let mut want = vec![id1, id2];
+        want.sort();
+        assert_eq!(ids, want);
+
+        assert!(state.get_session("missing").is_none());
+    }
+
+    #[test]
+    fn cancel_flags_register_take_and_request() {
+        let state = test_state();
+        assert!(!state.request_cancel("s1"));
+        assert!(state.take_cancel("s1").is_none());
+
+        state.register_cancel("s1", new_cancel_flag());
+        assert!(state.request_cancel("s1"));
+        assert!(state.take_cancel("s1").is_some());
+        assert!(state.take_cancel("s1").is_none());
+        assert!(!state.request_cancel("s1"));
+    }
+}

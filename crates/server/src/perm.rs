@@ -185,6 +185,7 @@ impl PermHub {
     }
 }
 
+#[derive(Clone)]
 pub struct ServePrompter {
     pub hub: Arc<PermHub>,
 }
@@ -240,6 +241,7 @@ impl PermissionPrompter for ServePrompter {
     }
 }
 
+#[derive(Clone)]
 pub struct ServeQuestionPrompter {
     pub hub: Arc<PermHub>,
 }
@@ -298,5 +300,273 @@ impl QuestionPrompter for ServeQuestionPrompter {
                 Err(QuestionError::Timeout)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whycode_agent::events::TurnEvent;
+    use whycode_tools::question::{QuestionAnswer, QuestionOption, QuestionSpec};
+
+    fn scope(session_id: &str, auto_approve: bool, hub: Arc<PermHub>) -> RunScope {
+        RunScope {
+            session_id: session_id.into(),
+            auto_approve,
+            hub,
+        }
+    }
+
+    #[tokio::test]
+    async fn permission_ask_outside_a_run_scope_is_refused() {
+        let hub = PermHub::new();
+        let prompter = ServePrompter { hub };
+        assert!(!prompter.ask("bash", "do a thing").await);
+    }
+
+    #[tokio::test]
+    async fn permission_ask_with_auto_approve_returns_true_immediately() {
+        let hub = PermHub::new();
+        let prompter = ServePrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", true, hub);
+        let ok = RUN
+            .scope(s, async { prompter.ask("bash", "x").await })
+            .await;
+        assert!(ok);
+    }
+
+    #[tokio::test]
+    async fn allow_decision_unblocks_the_ask() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let prompter = ServePrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", false, Arc::clone(&hub));
+        let task = tokio::spawn(async move {
+            RUN.scope(s, async { prompter.ask("bash", "run ls").await })
+                .await
+        });
+        let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("timed out waiting for permission ask")
+            .expect("event channel closed");
+        let TurnEvent::PermissionAsk {
+            request_id,
+            tool_name,
+            detail,
+        } = ev
+        else {
+            panic!("expected PermissionAsk, got {ev:?}");
+        };
+        assert_eq!(tool_name, "bash");
+        assert_eq!(detail, "run ls");
+        hub.decide("s1", &request_id, PermissionDecision::Allow)
+            .unwrap();
+        assert!(task.await.expect("ask task panicked"));
+    }
+
+    #[tokio::test]
+    async fn deny_decision_unblocks_the_ask_with_false() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let prompter = ServePrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", false, Arc::clone(&hub));
+        let task = tokio::spawn(async move {
+            RUN.scope(s, async { prompter.ask("bash", "x").await })
+                .await
+        });
+        let ev = rx.recv().await.expect("no permission ask");
+        let TurnEvent::PermissionAsk { request_id, .. } = ev else {
+            panic!("expected PermissionAsk");
+        };
+        hub.decide("s1", &request_id, PermissionDecision::Deny)
+            .unwrap();
+        assert!(!task.await.expect("ask task panicked"));
+    }
+
+    #[tokio::test]
+    async fn allow_always_skips_future_asks() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let prompter = ServePrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", false, Arc::clone(&hub));
+        let prompter_for_task = prompter.clone();
+        let task = tokio::spawn(async move {
+            RUN.scope(s, async { prompter_for_task.ask("bash", "first").await })
+                .await
+        });
+        let ev = rx.recv().await.expect("no permission ask");
+        let TurnEvent::PermissionAsk { request_id, .. } = ev else {
+            panic!("expected PermissionAsk");
+        };
+        hub.decide("s1", &request_id, PermissionDecision::AllowAlways)
+            .unwrap();
+        assert!(task.await.expect("ask task panicked"));
+
+        // Second ask for the same tool auto-approves without a new event.
+        let s2 = scope("s1", false, Arc::clone(&hub));
+        let ok = RUN
+            .scope(s2, async { prompter.ask("bash", "second").await })
+            .await;
+        assert!(ok);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn deciding_an_unknown_request_is_an_error() {
+        let hub = PermHub::new();
+        let err = hub
+            .decide("s1", "perm-999", PermissionDecision::Allow)
+            .unwrap_err();
+        assert!(err.contains("unknown permission request"));
+    }
+
+    #[tokio::test]
+    async fn finish_run_resolves_pending_asks_as_denied() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let prompter = ServePrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", false, Arc::clone(&hub));
+        let task = tokio::spawn(async move {
+            RUN.scope(s, async { prompter.ask("bash", "x").await })
+                .await
+        });
+        let _ = rx.recv().await.expect("no permission ask");
+        hub.finish_run("s1");
+        assert!(!task.await.expect("ask task panicked"));
+        // A second finish for the same session is a no-op.
+        hub.finish_run("s1");
+    }
+
+    #[tokio::test]
+    async fn answer_question_resolves_the_ask() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let prompter = ServeQuestionPrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", false, Arc::clone(&hub));
+        let questions = vec![QuestionSpec {
+            prompt: "Pick a color".into(),
+            options: vec![QuestionOption {
+                label: "red".into(),
+                description: "the reddest".into(),
+                preview: None,
+            }],
+            multi_select: false,
+        }];
+        let task =
+            tokio::spawn(
+                async move { RUN.scope(s, async { prompter.ask(questions).await }).await },
+            );
+        let ev = rx.recv().await.expect("no question ask");
+        let TurnEvent::QuestionAsk {
+            request_id,
+            questions,
+        } = ev
+        else {
+            panic!("expected QuestionAsk");
+        };
+        assert_eq!(questions[0]["prompt"], "Pick a color");
+        assert_eq!(questions[0]["options"][0]["label"], "red");
+        hub.answer_question(
+            "s1",
+            &request_id,
+            Some(vec![QuestionAnswerWire {
+                selected: vec!["red".into()],
+                free_text: None,
+            }]),
+            false,
+        )
+        .unwrap();
+        let answers = task.await.expect("ask task panicked").unwrap();
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers[0].selected, vec!["red".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn cancelled_answer_maps_to_a_cancelled_error() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let prompter = ServeQuestionPrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", false, Arc::clone(&hub));
+        let task =
+            tokio::spawn(
+                async move { RUN.scope(s, async { prompter.ask(Vec::new()).await }).await },
+            );
+        let ev = rx.recv().await.expect("no question ask");
+        let TurnEvent::QuestionAsk { request_id, .. } = ev else {
+            panic!("expected QuestionAsk");
+        };
+        hub.answer_question("s1", &request_id, None, true).unwrap();
+        assert_eq!(
+            task.await.expect("ask task panicked").unwrap_err(),
+            QuestionError::Cancelled
+        );
+    }
+
+    #[tokio::test]
+    async fn answering_an_unknown_question_is_an_error() {
+        let hub = PermHub::new();
+        let err = hub.answer_question("s1", "q-999", None, false).unwrap_err();
+        assert!(err.contains("unknown question request"));
+    }
+
+    #[tokio::test]
+    async fn question_ask_with_auto_approve_short_circuits() {
+        let hub = PermHub::new();
+        let prompter = ServeQuestionPrompter {
+            hub: Arc::clone(&hub),
+        };
+        let s = scope("s1", true, Arc::clone(&hub));
+        let questions = vec![QuestionSpec {
+            prompt: "ok?".into(),
+            options: vec![QuestionOption {
+                label: "yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+        }];
+        let answers = RUN
+            .scope(s, async { prompter.ask(questions).await })
+            .await
+            .unwrap();
+        assert_eq!(answers.len(), 1);
+        // AutoAnswerPrompter selects the first option by default.
+        assert_eq!(
+            answers[0],
+            QuestionAnswer {
+                selected: vec!["yes".to_string()],
+                free_text: None,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn question_ask_outside_a_run_scope_is_disconnected() {
+        let hub = PermHub::new();
+        let prompter = ServeQuestionPrompter { hub };
+        assert_eq!(
+            prompter.ask(Vec::new()).await.unwrap_err(),
+            QuestionError::Disconnected
+        );
     }
 }

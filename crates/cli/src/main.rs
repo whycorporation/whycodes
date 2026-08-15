@@ -4271,3 +4271,178 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         truncated
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cli(command: Option<Commands>) -> Cli {
+        Cli {
+            command,
+            provider: None,
+            model: None,
+            agent_flag: None,
+            dir: None,
+            plain: false,
+            continue_session: false,
+            resume: None,
+            debug: false,
+            no_memory: false,
+        }
+    }
+
+    #[test]
+    fn splits_slash_commands() {
+        assert_eq!(split_slash_command("/exit"), ("/exit", ""));
+        assert_eq!(
+            split_slash_command("/rename new name"),
+            ("/rename", "new name")
+        );
+        assert_eq!(split_slash_command("  /help   arg  "), ("/help", "arg"));
+        assert_eq!(split_slash_command("  /q"), ("/q", ""));
+        assert_eq!(split_slash_command(""), ("", ""));
+    }
+
+    #[test]
+    fn provider_env_var_name() {
+        assert_eq!(provider_env_var("anthropic"), "ANTHROPIC_API_KEY");
+        assert_eq!(provider_env_var("openai"), "OPENAI_API_KEY");
+        assert_eq!(provider_env_var("Grok"), "GROK_API_KEY");
+    }
+
+    #[test]
+    fn missing_database_detection() {
+        let not_found = anyhow::anyhow!(std::io::Error::new(std::io::ErrorKind::NotFound, "gone"));
+        assert!(is_missing_database(&not_found));
+
+        let permission = anyhow::anyhow!(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "nope"
+        ));
+        assert!(!is_missing_database(&permission));
+
+        let other = anyhow::anyhow!("boom");
+        assert!(!is_missing_database(&other));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn resolves_provider_from_flag_then_default_model() {
+        let config = Config::default();
+        let c = cli(None);
+        assert_eq!(resolve_provider(&c, &config), "anthropic");
+
+        let mut flagged = cli(None);
+        flagged.provider = Some("openai".into());
+        assert_eq!(resolve_provider(&flagged, &config), "openai");
+
+        let mut config2 = Config::default();
+        config2.default_model = Some(ModelConfig {
+            model_id: "claude-sonnet-4-20250514".into(),
+            provider_id: "anthropic".into(),
+            max_tokens: None,
+            context_window: None,
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: None,
+            supports_images: None,
+        });
+        assert_eq!(resolve_provider(&cli(None), &config2), "anthropic");
+    }
+
+    #[test]
+    fn resolves_model_from_flag_or_default() {
+        let config = Config::default();
+        let c = cli(None);
+        assert_eq!(resolve_model(&c, &config), "claude-sonnet-4-20250514");
+
+        let mut flagged = cli(None);
+        flagged.model = Some("gpt-4o".into());
+        assert_eq!(resolve_model(&flagged, &config), "gpt-4o");
+    }
+
+    #[test]
+    fn resolves_agent_from_flag_or_config_default() {
+        let config = Config::default();
+        assert_eq!(config.default_agent, "build");
+        assert_eq!(resolve_agent(&cli(None), &config), "build");
+
+        let mut flagged = cli(None);
+        flagged.agent_flag = Some("plan".into());
+        assert_eq!(resolve_agent(&flagged, &config), "plan");
+    }
+
+    #[test]
+    fn resolves_dir_flag_but_dot_means_cwd() {
+        let dir = Cli {
+            dir: Some("src".into()),
+            ..cli(None)
+        };
+        assert_eq!(resolve_dir(&dir), PathBuf::from("src"));
+
+        let dot = Cli {
+            dir: Some(".".into()),
+            ..cli(None)
+        };
+        assert_eq!(resolve_dir(&dot), std::env::current_dir().unwrap());
+
+        assert_eq!(resolve_dir(&cli(None)), std::env::current_dir().unwrap());
+    }
+
+    #[test]
+    fn resume_flag_wins_over_continue() {
+        let c = cli(None);
+        assert_eq!(resolve_resume_want(&c), None);
+
+        let mut cont = cli(None);
+        cont.continue_session = true;
+        assert_eq!(
+            resolve_resume_want(&cont),
+            Some(whycode_tui::RESUME_LATEST.to_string())
+        );
+
+        let mut both = cli(None);
+        both.continue_session = true;
+        both.resume = Some("  abc123  ".into());
+        assert_eq!(resolve_resume_want(&both), Some("abc123".to_string()));
+
+        let blank = Cli {
+            resume: Some("   ".into()),
+            continue_session: false,
+            ..cli(None)
+        };
+        assert_eq!(resolve_resume_want(&blank), None);
+    }
+
+    #[test]
+    fn runtime_choice_per_command() {
+        assert!(command_needs_multi_thread(&cli(None)));
+        assert!(command_needs_multi_thread(&cli(Some(Commands::Run {
+            prompt: None,
+            max_turns: 25,
+            format: OutputFormat::Text,
+        }))));
+        assert!(command_needs_multi_thread(&cli(Some(Commands::Mcp {
+            cmd: McpCmd::List
+        }))));
+        assert!(!command_needs_multi_thread(&cli(Some(Commands::Session {
+            cmd: SessionCmd::List
+        }))));
+        assert!(!command_needs_multi_thread(&cli(Some(Commands::Config {
+            cmd: ConfigCmd::Show
+        }))));
+    }
+
+    #[test]
+    fn parses_output_formats() {
+        assert_eq!(parse_output_format("text"), Ok(OutputFormat::Text));
+        assert_eq!(parse_output_format("json"), Ok(OutputFormat::Json));
+        assert_eq!(
+            parse_output_format("stream-json"),
+            Ok(OutputFormat::StreamJson)
+        );
+        assert_eq!(parse_output_format("ndjson"), Ok(OutputFormat::StreamJson));
+        assert!(parse_output_format("bogus").is_err());
+    }
+}

@@ -108,6 +108,25 @@ jobs:
       - name: Run tests
         run: cargo test --workspace
 
+  coverage:
+    name: Coverage (line floor)
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+      # Ratchet: the workspace line coverage must stay above the floor.
+      # Raise the number as tests improve — current measured total is ~54%.
+      # `--skip tests::watcher_picks_up_changes`: notify-timing flake under
+      # instrumentation (see crates/index) — it still runs in the `test` job.
+      - name: Measure coverage
+        run: cargo llvm-cov --workspace --fail-under-lines 50 --summary-only -- --skip tests::watcher_picks_up_changes
+
   build:
     name: Build (linux)
     runs-on: self-hosted
