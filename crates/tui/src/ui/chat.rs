@@ -471,7 +471,9 @@ fn render_message(
             let selected =
                 app.selected_msg == Some(index) && app.focus == crate::app::FocusPane::Scrollback;
             let ts = if app.show_timestamps {
-                msg.created_at.map(crate::ui::timefmt::format_absolute)
+                Some(crate::ui::timefmt::format_absolute(
+                    msg.created_at.unwrap_or_else(chrono::Utc::now),
+                ))
             } else {
                 None
             };
@@ -573,11 +575,12 @@ fn render_message(
                 && msg.tool_calls.is_empty()
                 && msg.error.is_none();
             if !empty && !still_streaming {
-                let footer = turn_done_footer(msg, is_last, app);
+                let (left, clock) = turn_done_footer(msg, is_last, app);
+                let ts_style = Style::default().fg(palette.dim);
                 let mut epi = vec![meta_gutter()];
-                epi.push(Span::styled(footer, Style::default().fg(palette.dim)));
+                epi.push(Span::styled(left, ts_style));
                 lines.push(Line::from(""));
-                lines.push(Line::from(epi));
+                lines.push(line_with_right(epi, clock.as_deref(), ts_style, width));
             }
         }
         ChatRole::System => {
@@ -741,7 +744,11 @@ fn meta_gutter() -> Span<'static> {
 ///
 /// Matches pager `SessionEvent::TurnCompleted` wording — past tense, no agent
 /// badge, no `▣`. Cancelled turns are separate system messages.
-fn turn_done_footer(msg: &crate::app::ChatMessage, is_last: bool, app: &TuiApp) -> String {
+fn turn_done_footer(
+    msg: &crate::app::ChatMessage,
+    is_last: bool,
+    app: &TuiApp,
+) -> (String, Option<String>) {
     let mut s = match msg.duration_ms {
         Some(ms) => format!("Worked for {}", crate::app::format_elapsed_ms(ms)),
         None => "Done.".to_string(),
@@ -754,13 +761,14 @@ fn turn_done_footer(msg: &crate::app::ChatMessage, is_last: bool, app: &TuiApp) 
         s.push_str(" · ");
         s.push_str(&crate::app::format_usage_short(usage));
     }
-    if app.show_timestamps
-        && let Some(ts) = msg.created_at
-    {
-        s.push_str(" · ");
-        s.push_str(&crate::ui::timefmt::format_absolute(ts));
-    }
-    s
+    let clock = if app.show_timestamps {
+        Some(crate::ui::timefmt::format_absolute(
+            msg.created_at.unwrap_or_else(chrono::Utc::now),
+        ))
+    } else {
+        None
+    };
+    (s, clock)
 }
 
 /// Grok `prompt_arrow()`: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.
@@ -805,9 +813,20 @@ fn user_prompt_lines(
         .add_modifier(Modifier::DIM);
 
     let mut lines = Vec::new();
-    // vpad top (Grok PromptConfig.vpad = true). Timestamp sits here,
-    // right-aligned — same place Grok paints `/timestamps`.
-    lines.push(user_timestamp_pad(timestamp, width, band, palette));
+    // vpad top (Grok PromptConfig.vpad = true)
+    lines.push(band_pad_line(band_style));
+    let ts_style = Style::default().fg(palette.dim).bg(band);
+    let push_first = |lines: &mut Vec<Line<'static>>, prefix: &str, body: &str, body_st: Style| {
+        lines.push(line_with_right(
+            vec![
+                Span::styled(prefix.to_string(), prefix_style),
+                Span::styled(body.to_string(), body_st),
+            ],
+            timestamp,
+            ts_style,
+            width,
+        ));
+    };
 
     // Image attachment chips (file names from drag-drop / paste).
     if !image_labels.is_empty() {
@@ -816,12 +835,16 @@ fn user_prompt_lines(
             .map(|l| format!("🖼 {l}"))
             .collect::<Vec<_>>()
             .join("  ");
-        lines.push(Line::from(vec![
-            Span::styled(PROMPT_ARROW.to_string(), prefix_style),
-            Span::styled(chips, img_style),
-        ]));
+        push_first(&mut lines, PROMPT_ARROW, &chips, img_style);
     }
 
+    let ts_reserve = timestamp
+        .map(|t| UnicodeWidthStr::width(t).saturating_add(1))
+        .unwrap_or(0) as u16;
+    let first_w = width
+        .saturating_sub(PROMPT_ARROW_WIDTH)
+        .saturating_sub(ts_reserve)
+        .max(4);
     let content_w = width.saturating_sub(PROMPT_ARROW_WIDTH).max(4) as usize;
     // When we already showed image chips with the arrow, indent body lines.
     let text = content.trim_end_matches('\n');
@@ -836,24 +859,17 @@ fn user_prompt_lines(
 
     if text.is_empty() {
         if image_labels.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled(PROMPT_ARROW.to_string(), prefix_style),
-                Span::styled(" ".to_string(), body_style),
-            ]));
+            push_first(&mut lines, PROMPT_ARROW, " ", body_style);
         }
     } else {
         // Soft-wrap per logical line so explicit newlines stay as hard breaks
         // (same shape as Grok wrap_prompt_lines).
-        // If chips already used the ❯ line, body lines are indented continuations.
+        // First visual row is shorter so the clock fits on the right.
         let mut first_visual = image_labels.is_empty();
         for logical in text.split('\n') {
             if logical.is_empty() {
-                // Empty logical line: show arrow / indent only.
                 if first_visual {
-                    lines.push(Line::from(vec![Span::styled(
-                        PROMPT_ARROW.to_string(),
-                        prefix_style,
-                    )]));
+                    push_first(&mut lines, PROMPT_ARROW, "", body_style);
                     first_visual = false;
                 } else {
                     lines.push(Line::from(vec![Span::styled(
@@ -863,32 +879,41 @@ fn user_prompt_lines(
                 }
                 continue;
             }
+            if first_visual {
+                let head = crate::widgets::wrap::wrap_text(logical, first_w);
+                let Some(row) = head.first() else {
+                    continue;
+                };
+                let slice = logical[row.byte_range.0..row.byte_range.1].trim_end();
+                push_first(&mut lines, PROMPT_ARROW, slice, body_style);
+                first_visual = false;
+                let remain = logical[row.byte_range.1..].trim_start();
+                if remain.is_empty() {
+                    continue;
+                }
+                for row in crate::widgets::wrap::wrap_text(remain, content_w as u16) {
+                    let slice = remain[row.byte_range.0..row.byte_range.1].trim_end();
+                    lines.push(Line::from(vec![
+                        Span::styled("  ".to_string(), prefix_style),
+                        Span::styled(slice.to_string(), body_style),
+                    ]));
+                }
+                continue;
+            }
             let wrapped = crate::widgets::wrap::wrap_text(logical, content_w as u16);
             if wrapped.is_empty() {
                 continue;
             }
-            for (wrap_i, row) in wrapped.iter().enumerate() {
+            for row in wrapped {
                 let slice = logical[row.byte_range.0..row.byte_range.1].trim_end();
-                let is_block_first = first_visual && wrap_i == 0;
-                let prefix = if is_block_first {
-                    PROMPT_ARROW
-                } else {
-                    // Continuation indent = prefix width (Grok: "  ").
-                    "  "
-                };
                 lines.push(Line::from(vec![
-                    Span::styled(prefix.to_string(), prefix_style),
+                    Span::styled("  ".to_string(), prefix_style),
                     Span::styled(slice.to_string(), body_style),
                 ]));
-                first_visual = false;
             }
         }
         if first_visual {
-            // content was only newlines / empty after split edge case
-            lines.push(Line::from(vec![
-                Span::styled(PROMPT_ARROW.to_string(), prefix_style),
-                Span::styled(" ".to_string(), body_style),
-            ]));
+            push_first(&mut lines, PROMPT_ARROW, " ", body_style);
         }
     }
 
@@ -927,39 +952,31 @@ fn band_pad_line(band_style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".to_string(), band_style))
 }
 
-/// Top pad row of the user band, with an optional right-aligned clock.
-fn user_timestamp_pad(
-    timestamp: Option<&str>,
+/// Left content + optional right-aligned clock (Grok `/timestamps`).
+fn line_with_right(
+    mut left: Vec<Span<'static>>,
+    right: Option<&str>,
+    right_style: Style,
     width: u16,
-    band: Color,
-    palette: &ThemePalette,
 ) -> Line<'static> {
-    let band_style = Style::default().bg(band);
-    let Some(ts) = timestamp.filter(|s| !s.is_empty()) else {
-        return band_pad_line(band_style);
+    let Some(right) = right.filter(|s| !s.is_empty()) else {
+        return Line::from(left);
     };
-    let tw = UnicodeWidthStr::width(ts) as u16;
-    if tw + 1 >= width {
-        return Line::from(Span::styled(
-            ts.to_string(),
-            Style::default()
-                .fg(palette.dim)
-                .bg(band)
-                .add_modifier(Modifier::DIM),
-        ));
+    let left_w: usize = left
+        .iter()
+        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+        .sum();
+    let rw = UnicodeWidthStr::width(right);
+    if left_w + 1 + rw > width as usize {
+        return Line::from(left);
     }
-    let pad = width.saturating_sub(tw + 1) as usize;
-    Line::from(vec![
-        Span::styled(" ".repeat(pad), band_style),
-        Span::styled(
-            ts.to_string(),
-            Style::default()
-                .fg(palette.dim)
-                .bg(band)
-                .add_modifier(Modifier::DIM),
-        ),
-        Span::styled(" ".to_string(), band_style),
-    ])
+    let gap = (width as usize).saturating_sub(left_w).saturating_sub(rw);
+    if gap > 0 {
+        let pad_style = left.last().map(|s| s.style).unwrap_or_default();
+        left.push(Span::styled(" ".repeat(gap), pad_style));
+    }
+    left.push(Span::styled(right.to_string(), right_style));
+    Line::from(left)
 }
 
 #[derive(Clone, Copy)]
@@ -2676,6 +2693,42 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         app.append_to_last(" more");
         assert!(app.messages.last().unwrap().layout_cache.is_none());
+    }
+
+    #[test]
+    fn user_prompt_puts_clock_on_the_first_content_line() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let lines = super::user_prompt_lines("hello", &[], Some("14:32"), &palette, 40, false);
+        let first = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))
+            .expect("prompt row");
+        let text: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("hello"), "got {text:?}");
+        assert!(
+            text.contains("14:32"),
+            "clock must sit on the ❯ row, got {text:?}"
+        );
+        let hello_at = text.find("hello").unwrap();
+        let clock_at = text.find("14:32").unwrap();
+        assert!(
+            clock_at > hello_at,
+            "clock must be to the right of the text"
+        );
+    }
+
+    #[test]
+    fn right_align_keeps_clock_at_the_row_end() {
+        let line = super::line_with_right(
+            vec![Span::raw("❯ hi".to_string())],
+            Some("14:32"),
+            Style::default(),
+            20,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert_eq!(unicode_width::UnicodeWidthStr::width(text.as_str()), 20);
+        assert!(text.ends_with("14:32"), "got {text:?}");
     }
 }
 
