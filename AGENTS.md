@@ -74,7 +74,7 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 | `whycode-storage` | `crates/storage` | SQLite sessions + memories |
 | `whycode-index` | `crates/index` | Workspace file index: background `ignore`-walk → `nucleo` fuzzy + store; `notify` deltas. Powers TUI `@`-picker and glob/grep/list fast paths |
 | `whycode-protocol` | `crates/protocol` | CI envelopes + daemon protocol v1 (`SdkEvent`) |
-| `whycode-sdk` | `crates/sdk` | Thin HTTP client (`connect` / `launch`). Does **not** embed the agent |
+| `whycode-sdk` | `crates/sdk` | Thin HTTP client (`connect` / `launch`). TS twin: `sdk/typescript` |
 
 Package names use the `whycode-` prefix even when the directory is shorter (e.g. `crates/llm` → `-p whycode-llm`).
 
