@@ -551,6 +551,16 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "detail": detail,
             })
         }
+        TurnEvent::QuestionAsk {
+            request_id,
+            questions,
+        } => {
+            serde_json::json!({
+                "type": "question_request",
+                "request_id": request_id,
+                "questions": questions,
+            })
+        }
         TurnEvent::Panel(update) => match update {
             whycode_core::PanelUpdate::Clear => {
                 serde_json::json!({"type": "panel", "action": "clear"})

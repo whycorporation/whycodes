@@ -29,7 +29,8 @@
     "skill",
     "storage",
     "tools",
-    "tui"
+    "tui",
+    "sdk"
   ],
   "command-risk": [],
   "config": [

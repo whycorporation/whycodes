@@ -39,6 +39,7 @@ export const KNOWN_EVS = [
   "swarm_status",
   "background",
   "permission_request",
+  "question_request",
 ] as const;
 
 export type KnownEv = (typeof KNOWN_EVS)[number];
@@ -74,6 +75,25 @@ export type RunOptions = {
 
 export type PermissionDecision = "allow" | "allow_always" | "deny";
 
+export type HistoryMessage = {
+  role: string;
+  content: string;
+  tool_call_id?: string;
+  name?: string;
+};
+
+export type SessionHistory = {
+  id: string;
+  title: string;
+  messages: HistoryMessage[];
+};
+
+export type ModelInfo = { id: string; provider: string; default: boolean };
+
+export type ModelList = { models: ModelInfo[]; providers: string[] };
+
+export type QuestionAnswer = { selected: string[]; free_text?: string };
+
 export type StructuredAttempt = {
   text: string;
   ok: boolean;
@@ -90,6 +110,8 @@ export type LaunchOptions = {
   port?: number;
   binary?: string;
   startupTimeoutMs?: number;
+  inheritLogins?: boolean;
+  home?: string;
 };
 
 export type ToolCallSummary = {
@@ -140,6 +162,7 @@ export type SdkEvent =
   | { ev: "swarm_status"; active: number; total: number; message: string }
   | { ev: "background"; id: string; status: string; summary: string }
   | { ev: "permission_request"; request_id: string; tool_name: string; detail: string }
+  | { ev: "question_request"; request_id: string; questions: unknown }
   | { ev: "unknown"; raw: unknown };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -246,6 +269,12 @@ export function parseSdkEvent(value: unknown): SdkEvent {
         request_id: str(obj, "request_id"),
         tool_name: str(obj, "tool_name"),
         detail: str(obj, "detail"),
+      };
+    case "question_request":
+      return {
+        ev: "question_request",
+        request_id: str(obj, "request_id"),
+        questions: obj.questions ?? [],
       };
     default:
       return { ev: "unknown", raw: value };

@@ -1,18 +1,24 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
-import { delimiter } from "node:path";
+import { delimiter, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 import { SdkError } from "./error.js";
 import { iterateSse } from "./sse.js";
 import {
   PROTOCOL_MAJOR,
   type Handshake,
+  type HistoryMessage,
   type LaunchOptions,
+  type ModelList,
+  type QuestionAnswer,
   type PermissionDecision,
   type RunOptions,
   type SdkEvent,
+  type SessionHistory,
   type SessionInfo,
   type StructuredAttempt,
   type StructuredResult,
@@ -28,6 +34,7 @@ import {
 export class WhycodeClient {
   readonly baseUrl: string;
   #child: ChildProcess | undefined;
+  #ephemeralHome: string | undefined;
 
   private constructor(baseUrl: string, child?: ChildProcess) {
     this.baseUrl = baseUrl;
@@ -50,10 +57,32 @@ export class WhycodeClient {
     const startupTimeoutMs = opts.startupTimeoutMs ?? 15_000;
     const port = opts.port ?? (await ephemeralPort());
     const binary = resolveBinary(opts.binary);
+    const inheritLogins = opts.inheritLogins ?? true;
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    let ephemeralHome: string | undefined;
+    if (!inheritLogins || opts.home) {
+      const home = opts.home ?? (await mkdtemp(join(tmpdir(), "whycode-sdk-")));
+      if (!opts.home) ephemeralHome = home;
+      env.WHYCODE_HOME = home;
+      if (!inheritLogins) {
+        for (const key of [
+          "ANTHROPIC_API_KEY",
+          "OPENAI_API_KEY",
+          "OPENROUTER_API_KEY",
+          "XAI_API_KEY",
+          "GROQ_API_KEY",
+          "GOOGLE_API_KEY",
+          "DEEPSEEK_API_KEY",
+          "MISTRAL_API_KEY",
+        ]) {
+          delete env[key];
+        }
+      }
+    }
     const child = spawn(binary, ["serve", String(port)], {
       cwd: workingDir,
       stdio: ["ignore", "ignore", "pipe"],
-      env: process.env,
+      env,
     });
     const stderrChunks: Buffer[] = [];
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -62,6 +91,7 @@ export class WhycodeClient {
 
     const baseUrl = `http://127.0.0.1:${port}`;
     const client = new WhycodeClient(baseUrl, child);
+    client.#ephemeralHome = ephemeralHome;
     const deadline = Date.now() + startupTimeoutMs;
 
     try {
@@ -166,6 +196,96 @@ export class WhycodeClient {
       throw new SdkError("internal", "get session: invalid body");
     }
     return info;
+  }
+
+  async getHistory(sessionId: string, limit?: number): Promise<SessionHistory> {
+    const q = limit !== undefined ? `?limit=${limit}` : "";
+    const res = await this.#request(
+      "GET",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/messages${q}`,
+    );
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", `session ${sessionId} not found`);
+    }
+    if (!res.ok) throw SdkError.fromStatus(res.status, "history");
+    return (await res.json()) as SessionHistory;
+  }
+
+  async peek(sessionId: string, limit: number): Promise<HistoryMessage[]> {
+    return (await this.getHistory(sessionId, limit)).messages;
+  }
+
+  async listModels(): Promise<ModelList> {
+    const res = await this.#request("GET", "/v1/models");
+    if (!res.ok) throw SdkError.fromStatus(res.status, "list models");
+    return (await res.json()) as ModelList;
+  }
+
+  async setModel(sessionId: string, provider: string, model: string): Promise<void> {
+    const res = await this.#request("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/model`, {
+      provider,
+      model,
+    });
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", `session ${sessionId} not found`);
+    }
+    if (!res.ok) throw SdkError.fromStatus(res.status, "set model");
+  }
+
+  async renameSession(sessionId: string, title: string): Promise<SessionInfo> {
+    const res = await this.#request("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/rename`, {
+      title,
+    });
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", `session ${sessionId} not found`);
+    }
+    if (!res.ok) throw SdkError.fromStatus(res.status, "rename");
+    const info = parseSessionInfo(await res.json());
+    if (!info) throw new SdkError("internal", "rename: invalid body");
+    return info;
+  }
+
+  async rewind(sessionId: string, index: number): Promise<SessionHistory> {
+    const res = await this.#request("POST", `/v1/sessions/${encodeURIComponent(sessionId)}/rewind`, {
+      index,
+    });
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", `session ${sessionId} not found`);
+    }
+    if (!res.ok) throw SdkError.fromStatus(res.status, "rewind");
+    return (await res.json()) as SessionHistory;
+  }
+
+  async compact(sessionId: string, maxTokens?: number): Promise<SessionHistory> {
+    const body: { max_tokens?: number } = {};
+    if (maxTokens !== undefined) body.max_tokens = maxTokens;
+    const res = await this.#request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/compact`,
+      body,
+    );
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", `session ${sessionId} not found`);
+    }
+    if (!res.ok) throw SdkError.fromStatus(res.status, "compact");
+    return (await res.json()) as SessionHistory;
+  }
+
+  async respondToQuestion(
+    sessionId: string,
+    requestId: string,
+    answers?: QuestionAnswer[],
+    cancelled = false,
+  ): Promise<void> {
+    const res = await this.#request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/question`,
+      { request_id: requestId, answers, cancelled },
+    );
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", "unknown question request");
+    }
+    if (!res.ok) throw SdkError.fromStatus(res.status, "question");
   }
 
   /** Run one turn and collect the result. Use {@link runEvents} for a live UI.
@@ -360,6 +480,10 @@ export class WhycodeClient {
     ]);
     if (child.exitCode === null) {
       child.kill("SIGKILL");
+    }
+    if (this.#ephemeralHome) {
+      await rm(this.#ephemeralHome, { recursive: true, force: true });
+      this.#ephemeralHome = undefined;
     }
   }
 

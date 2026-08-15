@@ -33,6 +33,7 @@ test("error codes and known evs are non-empty", () => {
   assert.ok(ERROR_CODES.includes("structured_output_invalid"));
   assert.ok(KNOWN_EVS.includes("text_delta"));
   assert.ok(KNOWN_EVS.includes("permission_request"));
+  assert.ok(KNOWN_EVS.includes("question_request"));
 });
 
 test("extractJson and validateInstance", () => {

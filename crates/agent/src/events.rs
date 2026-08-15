@@ -87,6 +87,11 @@ pub enum TurnEvent {
         tool_name: String,
         detail: String,
     },
+    /// Daemon asked the SDK client to answer a `question` tool.
+    QuestionAsk {
+        request_id: String,
+        questions: serde_json::Value,
+    },
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).

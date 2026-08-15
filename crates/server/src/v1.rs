@@ -7,15 +7,17 @@ use std::time::Duration;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
 };
 use futures::stream::Stream;
+use serde::Deserialize;
 use whycode_agent::events::{TurnEvent, new_cancel_flag};
 use whycode_protocol::sdk::{
-    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, PermissionResponse, RunRequest,
-    SdkEvent, SessionInfo, SessionList,
+    CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelInfo,
+    ModelList, PROTOCOL_MAJOR, PermissionResponse, QuestionResponse, RenameRequest, RewindRequest,
+    RunRequest, SdkEvent, SessionHistory, SessionInfo, SessionList, SetModelRequest,
 };
 
 use crate::AppState;
@@ -152,7 +154,7 @@ pub async fn run(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    let (def_provider, def_model) = default_provider_model(&state.config);
+    let (def_provider, def_model) = session_or_default_model(&state, &session_id);
     let provider = req.provider.unwrap_or(def_provider);
     let model = req.model.unwrap_or(def_model);
     let api_key = resolve_api_key(&provider, &state.config)
@@ -268,6 +270,181 @@ pub async fn run(
     Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep))
 }
 
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    pub limit: Option<usize>,
+}
+
+fn session_or_default_model(state: &AppState, session_id: &str) -> (String, String) {
+    if let Ok(map) = state.session_route.lock()
+        && let Some((p, m)) = map.get(session_id)
+    {
+        return (p.clone(), m.clone());
+    }
+    default_provider_model(&state.config)
+}
+
+fn history_from_session(
+    s: &whycode_session::session::Session,
+    limit: Option<usize>,
+) -> SessionHistory {
+    let mut msgs: Vec<HistoryMessage> = s
+        .messages
+        .iter()
+        .map(|m| HistoryMessage {
+            role: format!("{:?}", m.role).to_lowercase(),
+            content: m.content.as_text().unwrap_or("").to_string(),
+            tool_call_id: m.tool_call_id.clone(),
+            name: m.name.clone(),
+        })
+        .collect();
+    if let Some(n) = limit
+        && n < msgs.len()
+    {
+        msgs = msgs.split_off(msgs.len() - n);
+    }
+    SessionHistory {
+        id: s.id.clone(),
+        title: s.title.clone(),
+        messages: msgs,
+    }
+}
+
+pub async fn history(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<HistoryQuery>,
+) -> Result<Json<SessionHistory>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let s = handle.lock().await;
+    Ok(Json(history_from_session(&s, q.limit)))
+}
+
+pub async fn list_models(State(state): State<AppState>) -> Json<ModelList> {
+    let default = state.config.default_model.clone();
+    let mut models: Vec<ModelInfo> = state
+        .config
+        .models
+        .values()
+        .map(|m| ModelInfo {
+            id: m.model_id.clone(),
+            provider: m.provider_id.clone(),
+            default: default
+                .as_ref()
+                .is_some_and(|d| d.model_id == m.model_id && d.provider_id == m.provider_id),
+        })
+        .collect();
+    if models.is_empty()
+        && let Some(dm) = &default
+    {
+        models.push(ModelInfo {
+            id: dm.model_id.clone(),
+            provider: dm.provider_id.clone(),
+            default: true,
+        });
+    }
+    let providers: Vec<String> = state.config.providers.keys().cloned().collect();
+    Json(ModelList { models, providers })
+}
+
+pub async fn set_model(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<SetModelRequest>,
+) -> Result<StatusCode, StatusCode> {
+    load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if req.provider.trim().is_empty() || req.model.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    if let Ok(mut map) = state.session_route.lock() {
+        map.insert(id, (req.provider, req.model));
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+pub async fn rename(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RenameRequest>,
+) -> Result<Json<SessionInfo>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut s = handle.lock().await;
+    s.title = req.title;
+    if let Some(db) = AppState::open_db()
+        && let Err(e) = s.save_to_db(&db)
+    {
+        tracing::warn!(error = %e, "v1: rename persist failed");
+    }
+    Ok(Json(SessionInfo {
+        id: s.id.clone(),
+        title: s.title.clone(),
+        project: s.project_path.display().to_string(),
+        messages: Some(s.messages.len()),
+        updated_at: Some(s.updated_at.to_rfc3339()),
+        source: Some("memory".into()),
+    }))
+}
+
+pub async fn rewind(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<RewindRequest>,
+) -> Result<Json<SessionHistory>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut s = handle.lock().await;
+    s.revert_to(req.index);
+    if let Some(db) = AppState::open_db()
+        && let Err(e) = s.save_to_db(&db)
+    {
+        tracing::warn!(error = %e, "v1: rewind persist failed");
+    }
+    Ok(Json(history_from_session(&s, None)))
+}
+
+pub async fn compact(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<CompactRequest>,
+) -> Result<Json<SessionHistory>, StatusCode> {
+    let handle = load_or_get_session(&state, &id)
+        .await
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let mut s = handle.lock().await;
+    let max = req.max_tokens.unwrap_or(150_000).max(1);
+    s.compact(max);
+    if let Some(db) = AppState::open_db()
+        && let Err(e) = s.save_to_db(&db)
+    {
+        tracing::warn!(error = %e, "v1: compact persist failed");
+    }
+    Ok(Json(history_from_session(&s, None)))
+}
+
+pub async fn question(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<QuestionResponse>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state
+        .perm
+        .answer_question(
+            &id,
+            &req.request_id,
+            req.answers,
+            req.cancelled.unwrap_or(false),
+        )
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| (StatusCode::NOT_FOUND, e))
+}
+
 pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
     Some(match ev {
         TurnEvent::TextDelta(text) => SdkEvent::TextDelta { text: text.clone() },
@@ -342,6 +519,13 @@ pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
             request_id: request_id.clone(),
             tool_name: tool_name.clone(),
             detail: detail.clone(),
+        },
+        TurnEvent::QuestionAsk {
+            request_id,
+            questions,
+        } => SdkEvent::QuestionRequest {
+            request_id: request_id.clone(),
+            questions: questions.clone(),
         },
         // TUI-only chrome — not part of the public v1 contract.
         TurnEvent::EnqueuePrompt { .. }

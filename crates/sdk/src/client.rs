@@ -7,10 +7,11 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use tokio::process::{Child, Command};
 use whycode_protocol::sdk::{
-    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, PermissionDecision,
-    PermissionResponse, RunRequest, SdkEvent, SessionInfo, SessionList, StructuredAttempt,
-    StructuredResult, ToolCallSummary, TurnResult, UsageSnapshot, extract_json, validate_instance,
-    validate_schema,
+    CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelList,
+    PROTOCOL_MAJOR, PermissionDecision, PermissionResponse, QuestionResponse, RenameRequest,
+    RewindRequest, RunRequest, SdkEvent, SessionHistory, SessionInfo, SessionList, SetModelRequest,
+    StructuredAttempt, StructuredResult, ToolCallSummary, TurnResult, UsageSnapshot, extract_json,
+    validate_instance, validate_schema,
 };
 
 use crate::SdkError;
@@ -24,6 +25,12 @@ pub struct LaunchOptions {
     /// `whycode` binary. Falls back to `$WHYCODE`, then PATH.
     pub binary: Option<PathBuf>,
     pub startup_timeout: Duration,
+    /// When true (default), the child uses the user's config/auth/home.
+    /// When false, a private `WHYCODE_HOME` is used and API-key env vars
+    /// are stripped so the instance cannot spend the user's quota.
+    pub inherit_logins: bool,
+    /// Explicit `WHYCODE_HOME`. Implies isolation even if `inherit_logins`.
+    pub home: Option<PathBuf>,
 }
 
 impl Default for LaunchOptions {
@@ -33,6 +40,8 @@ impl Default for LaunchOptions {
             port: None,
             binary: None,
             startup_timeout: Duration::from_secs(15),
+            inherit_logins: true,
+            home: None,
         }
     }
 }
@@ -53,6 +62,8 @@ pub struct WhycodeClient {
     base: String,
     http: reqwest::Client,
     child: Option<Child>,
+    /// Kept alive so an isolated temp home is not deleted while the daemon runs.
+    _home: Option<tempfile::TempDir>,
 }
 
 impl WhycodeClient {
@@ -64,6 +75,7 @@ impl WhycodeClient {
             base,
             http,
             child: None,
+            _home: None,
         };
         client.handshake().await?;
         Ok(client)
@@ -79,6 +91,23 @@ impl WhycodeClient {
             None => ephemeral_port()?,
         };
         let binary = resolve_binary(opts.binary.as_deref())?;
+        let isolated = !opts.inherit_logins || opts.home.is_some();
+        let (home_env, held_home) = if isolated {
+            if let Some(p) = opts.home.clone() {
+                std::fs::create_dir_all(&p).map_err(|e| {
+                    SdkError::with_source(ErrorCode::StartupFailed, "create WHYCODE_HOME", e)
+                })?;
+                (Some(p), None)
+            } else {
+                let tmp = tempfile::tempdir().map_err(|e| {
+                    SdkError::with_source(ErrorCode::StartupFailed, "temp WHYCODE_HOME", e)
+                })?;
+                let path = tmp.path().to_path_buf();
+                (Some(path), Some(tmp))
+            }
+        } else {
+            (None, None)
+        };
         let mut cmd = Command::new(&binary);
         cmd.arg("serve")
             .arg(port.to_string())
@@ -87,6 +116,23 @@ impl WhycodeClient {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(home) = &home_env {
+            cmd.env("WHYCODE_HOME", home);
+        }
+        if !opts.inherit_logins {
+            for key in [
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "OPENROUTER_API_KEY",
+                "XAI_API_KEY",
+                "GROQ_API_KEY",
+                "GOOGLE_API_KEY",
+                "DEEPSEEK_API_KEY",
+                "MISTRAL_API_KEY",
+            ] {
+                cmd.env_remove(key);
+            }
+        }
         let child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
                 ErrorCode::ServeNotFound,
@@ -101,6 +147,7 @@ impl WhycodeClient {
             base: base.clone(),
             http,
             child: Some(child),
+            _home: held_home,
         };
 
         let deadline = Instant::now() + opts.startup_timeout;
@@ -180,6 +227,154 @@ impl WhycodeClient {
             return Err(status_error(res.status(), "get session"));
         }
         Ok(res.json().await?)
+    }
+
+    /// Full transcript (`limit` keeps the last N messages).
+    pub async fn get_history(
+        &self,
+        session_id: &str,
+        limit: Option<usize>,
+    ) -> Result<SessionHistory, SdkError> {
+        let mut url = format!("{}/v1/sessions/{session_id}/messages", self.base);
+        if let Some(n) = limit {
+            url.push_str(&format!("?limit={n}"));
+        }
+        let res = self.http.get(&url).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                format!("session {session_id} not found"),
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "history"));
+        }
+        Ok(res.json().await?)
+    }
+
+    pub async fn peek(
+        &self,
+        session_id: &str,
+        limit: usize,
+    ) -> Result<Vec<HistoryMessage>, SdkError> {
+        Ok(self.get_history(session_id, Some(limit)).await?.messages)
+    }
+
+    pub async fn list_models(&self) -> Result<ModelList, SdkError> {
+        let url = format!("{}/v1/models", self.base);
+        let res = self.http.get(&url).send().await?;
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "list models"));
+        }
+        Ok(res.json().await?)
+    }
+
+    pub async fn set_model(
+        &self,
+        session_id: &str,
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<(), SdkError> {
+        let url = format!("{}/v1/sessions/{session_id}/model", self.base);
+        let req = SetModelRequest {
+            provider: provider.into(),
+            model: model.into(),
+        };
+        let res = self.http.post(&url).json(&req).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                format!("session {session_id} not found"),
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "set model"));
+        }
+        Ok(())
+    }
+
+    pub async fn rename_session(
+        &self,
+        session_id: &str,
+        title: impl Into<String>,
+    ) -> Result<SessionInfo, SdkError> {
+        let url = format!("{}/v1/sessions/{session_id}/rename", self.base);
+        let req = RenameRequest {
+            title: title.into(),
+        };
+        let res = self.http.post(&url).json(&req).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                format!("session {session_id} not found"),
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "rename"));
+        }
+        Ok(res.json().await?)
+    }
+
+    pub async fn rewind(&self, session_id: &str, index: usize) -> Result<SessionHistory, SdkError> {
+        let url = format!("{}/v1/sessions/{session_id}/rewind", self.base);
+        let req = RewindRequest { index };
+        let res = self.http.post(&url).json(&req).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                format!("session {session_id} not found"),
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "rewind"));
+        }
+        Ok(res.json().await?)
+    }
+
+    pub async fn compact(
+        &self,
+        session_id: &str,
+        max_tokens: Option<usize>,
+    ) -> Result<SessionHistory, SdkError> {
+        let url = format!("{}/v1/sessions/{session_id}/compact", self.base);
+        let req = CompactRequest { max_tokens };
+        let res = self.http.post(&url).json(&req).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                format!("session {session_id} not found"),
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "compact"));
+        }
+        Ok(res.json().await?)
+    }
+
+    pub async fn respond_to_question(
+        &self,
+        session_id: &str,
+        request_id: impl Into<String>,
+        answers: Option<Vec<whycode_protocol::sdk::QuestionAnswerWire>>,
+        cancelled: bool,
+    ) -> Result<(), SdkError> {
+        let url = format!("{}/v1/sessions/{session_id}/question", self.base);
+        let req = QuestionResponse {
+            request_id: request_id.into(),
+            answers,
+            cancelled: Some(cancelled),
+        };
+        let res = self.http.post(&url).json(&req).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                "unknown question request",
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "question"));
+        }
+        Ok(())
     }
 
     /// Run one turn and collect the result. Use [`Self::run_events`] for a live UI.
