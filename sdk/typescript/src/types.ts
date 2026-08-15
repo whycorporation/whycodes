@@ -13,6 +13,8 @@ export const ERROR_CODES = [
   "startup_timeout",
   "unsupported_version",
   "cancelled",
+  "structured_schema_invalid",
+  "structured_output_invalid",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -36,6 +38,7 @@ export const KNOWN_EVS = [
   "file_conflict",
   "swarm_status",
   "background",
+  "permission_request",
 ] as const;
 
 export type KnownEv = (typeof KNOWN_EVS)[number];
@@ -66,6 +69,20 @@ export type RunOptions = {
   provider?: string;
   model?: string;
   maxTurns?: number;
+  autoApprove?: boolean;
+};
+
+export type PermissionDecision = "allow" | "allow_always" | "deny";
+
+export type StructuredAttempt = {
+  text: string;
+  ok: boolean;
+  errors: string[];
+};
+
+export type StructuredResult = {
+  data: unknown;
+  attempts: StructuredAttempt[];
 };
 
 export type LaunchOptions = {
@@ -122,6 +139,7 @@ export type SdkEvent =
   | { ev: "file_conflict"; path: string; claimant: string; owner: string }
   | { ev: "swarm_status"; active: number; total: number; message: string }
   | { ev: "background"; id: string; status: string; summary: string }
+  | { ev: "permission_request"; request_id: string; tool_name: string; detail: string }
   | { ev: "unknown"; raw: unknown };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -222,8 +240,133 @@ export function parseSdkEvent(value: unknown): SdkEvent {
         status: str(obj, "status"),
         summary: str(obj, "summary"),
       };
+    case "permission_request":
+      return {
+        ev: "permission_request",
+        request_id: str(obj, "request_id"),
+        tool_name: str(obj, "tool_name"),
+        detail: str(obj, "detail"),
+      };
     default:
       return { ev: "unknown", raw: value };
+  }
+}
+
+export function extractJson(text: string): unknown {
+  const trimmed = text.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    /* try fence / slice */
+  }
+  const fence = trimmed.match(/```(?:json|JSON)?\s*\n?([\s\S]*?)```/);
+  if (fence?.[1]) {
+    try {
+      return JSON.parse(fence[1].trim());
+    } catch {
+      /* fall through */
+    }
+  }
+  const slice = firstJsonSlice(trimmed);
+  if (slice) {
+    try {
+      return JSON.parse(slice);
+    } catch {
+      /* fall through */
+    }
+  }
+  throw new Error("no JSON object or array in the model text");
+}
+
+function firstJsonSlice(text: string): string | undefined {
+  const start = text.search(/[{[]/);
+  if (start < 0) return undefined;
+  const open = text[start];
+  const close = open === "{" ? "}" : "]";
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (escape) escape = false;
+      else if (ch === "\\") escape = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === open) depth += 1;
+    else if (ch === close) {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+  return undefined;
+}
+
+export function validateSchema(schema: unknown): string | undefined {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+    return "schema must be a JSON object";
+  }
+  return undefined;
+}
+
+export function validateInstance(schema: unknown, value: unknown, path = "$"): string[] {
+  const errors: string[] = [];
+  validateAt(schema, value, path, errors);
+  return errors;
+}
+
+function validateAt(schema: unknown, value: unknown, path: string, errors: string[]): void {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+    return;
+  }
+  const s = schema as Record<string, unknown>;
+  if (typeof s.type === "string") {
+    const ok =
+      s.type === "object"
+        ? typeof value === "object" && value !== null && !Array.isArray(value)
+        : s.type === "array"
+          ? Array.isArray(value)
+          : s.type === "string"
+            ? typeof value === "string"
+            : s.type === "integer"
+              ? typeof value === "number" && Number.isInteger(value)
+              : s.type === "number"
+                ? typeof value === "number"
+                : s.type === "boolean"
+                  ? typeof value === "boolean"
+                  : s.type === "null"
+                    ? value === null
+                    : true;
+    if (!ok) {
+      errors.push(`${path}: expected ${s.type}`);
+      return;
+    }
+  }
+  if (Array.isArray(s.required) && typeof value === "object" && value !== null && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    for (const field of s.required) {
+      if (typeof field === "string" && !(field in obj)) {
+        errors.push(`${path}: missing required ${field}`);
+      }
+    }
+  }
+  if (
+    typeof s.properties === "object" &&
+    s.properties !== null &&
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value)
+  ) {
+    const props = s.properties as Record<string, unknown>;
+    const obj = value as Record<string, unknown>;
+    for (const [key, sub] of Object.entries(props)) {
+      if (key in obj) validateAt(sub, obj[key], `${path}.${key}`, errors);
+    }
+  }
+  if (s.items !== undefined && Array.isArray(value)) {
+    value.forEach((item, i) => validateAt(s.items, item, `${path}[${i}]`, errors));
   }
 }
 

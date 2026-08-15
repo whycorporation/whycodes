@@ -10,13 +10,19 @@ import {
   PROTOCOL_MAJOR,
   type Handshake,
   type LaunchOptions,
+  type PermissionDecision,
   type RunOptions,
   type SdkEvent,
   type SessionInfo,
+  type StructuredAttempt,
+  type StructuredResult,
   type TurnResult,
   type UsageSnapshot,
+  extractJson,
   parseHandshake,
   parseSessionInfo,
+  validateInstance,
+  validateSchema,
 } from "./types.js";
 
 export class WhycodeClient {
@@ -162,8 +168,18 @@ export class WhycodeClient {
     return info;
   }
 
-  /** Run one turn and collect the result. Use {@link runEvents} for a live UI. */
+  /** Run one turn and collect the result. Use {@link runEvents} for a live UI.
+   *  Defaults `autoApprove` to true so scripts do not hang on Ask. */
   async run(sessionId: string, message: string, opts: RunOptions = {}): Promise<TurnResult> {
+    const collected: RunOptions = { ...opts, autoApprove: opts.autoApprove ?? true };
+    return this.collectTurn(sessionId, message, collected);
+  }
+
+  private async collectTurn(
+    sessionId: string,
+    message: string,
+    opts: RunOptions,
+  ): Promise<TurnResult> {
     let text = "";
     const toolCalls: TurnResult["tool_calls"] = [];
     const toolNames = new Map<string, string>();
@@ -221,12 +237,17 @@ export class WhycodeClient {
     message: string,
     opts: RunOptions = {},
   ): AsyncGenerator<SdkEvent, void, void> {
-    const body: { message: string; provider?: string; model?: string; max_turns?: number } = {
-      message,
-    };
+    const body: {
+      message: string;
+      provider?: string;
+      model?: string;
+      max_turns?: number;
+      auto_approve?: boolean;
+    } = { message };
     if (opts.provider !== undefined) body.provider = opts.provider;
     if (opts.model !== undefined) body.model = opts.model;
     if (opts.maxTurns !== undefined) body.max_turns = opts.maxTurns;
+    if (opts.autoApprove !== undefined) body.auto_approve = opts.autoApprove;
 
     const res = await this.#request(
       "POST",
@@ -248,6 +269,66 @@ export class WhycodeClient {
         return;
       }
     }
+  }
+
+  async respondToPermission(
+    sessionId: string,
+    requestId: string,
+    decision: PermissionDecision,
+  ): Promise<void> {
+    const res = await this.#request(
+      "POST",
+      `/v1/sessions/${encodeURIComponent(sessionId)}/permission`,
+      { request_id: requestId, decision },
+    );
+    if (res.status === 404) {
+      throw new SdkError("unknown_session", "unknown permission request");
+    }
+    if (!res.ok) {
+      throw SdkError.fromStatus(res.status, "permission");
+    }
+  }
+
+  /** Retry turns until the reply is JSON that matches `schema`. */
+  async runStructured(
+    sessionId: string,
+    message: string,
+    schema: unknown,
+    opts: RunOptions = {},
+    maxRetries = 2,
+  ): Promise<StructuredResult> {
+    const schemaErr = validateSchema(schema);
+    if (schemaErr) {
+      throw new SdkError("structured_schema_invalid", schemaErr);
+    }
+    const schemaTxt = JSON.stringify(schema, null, 2);
+    let prompt = `${message}\n\nReply with a single JSON value that validates against this schema. No markdown, no commentary.\n${schemaTxt}`;
+    const attempts: StructuredAttempt[] = [];
+    for (let i = 0; i <= maxRetries; i++) {
+      const turn = await this.run(sessionId, prompt, opts);
+      try {
+        const data = extractJson(turn.text);
+        const errors = validateInstance(schema, data);
+        const ok = errors.length === 0;
+        attempts.push({ text: turn.text, ok, errors });
+        if (ok) {
+          return { data, attempts };
+        }
+        if (i === maxRetries) {
+          throw new SdkError("structured_output_invalid", errors.join("; "));
+        }
+        prompt = `Your previous reply was not valid JSON for the schema.\nErrors:\n- ${errors.join("\n- ")}\nReply again with only the JSON value.`;
+      } catch (err) {
+        if (err instanceof SdkError) throw err;
+        const e = err instanceof Error ? err.message : String(err);
+        attempts.push({ text: turn.text, ok: false, errors: [e] });
+        if (i === maxRetries) {
+          throw new SdkError("structured_output_invalid", e);
+        }
+        prompt = `Your previous reply was not parseable JSON (${e}). Reply again with only the JSON value matching the schema.`;
+      }
+    }
+    throw new SdkError("structured_output_invalid", "exhausted structured retries");
   }
 
   async cancel(sessionId: string): Promise<void> {

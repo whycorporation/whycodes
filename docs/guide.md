@@ -202,8 +202,11 @@ client.close().await?;
 ```
 
 Events on `/v1/sessions/:id/run` are tagged `ev` (`text_delta`, `tool_start`,
-`turn_done`, …). Unknown tags become `SdkEvent::Unknown` so older clients
-keep working. Branch on `SdkError.code`, not the message.
+`permission_request`, `turn_done`, …). Unknown tags become `Unknown`.
+`run()` auto-approves tool `Ask`s; `run_events()` does not — answer with
+`respond_to_permission` (`allow` / `allow_always` / `deny`).
+`run_structured` retries until the reply matches a JSON Schema subset
+(`type`, `required`, `properties`). Branch on `SdkError.code`.
 
 Same protocol from Node (zero runtime deps, Node 18+):
 

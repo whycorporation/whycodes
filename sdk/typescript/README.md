@@ -22,4 +22,8 @@ await client.close();
 
 `WhycodeClient.launch()` spawns a private `whycode serve` (inherits env / API keys). Branch on `SdkError.code`. Unknown `ev` values become `{ ev: "unknown" }`.
 
-Events: `text_delta`, `tool_start`, `tool_end`, `turn_done`, … — see `KNOWN_EVS`.
+`run()` auto-approves tool `Ask`s. `runEvents()` emits `permission_request`; answer with `respondToPermission(sessionId, requestId, "allow" | "allow_always" | "deny")`.
+
+`runStructured(sessionId, prompt, schema)` retries until the reply matches a JSON Schema subset (`type`, `required`, `properties`).
+
+Events: `text_delta`, `tool_start`, `permission_request`, `turn_done`, … — see `KNOWN_EVS`.

@@ -8,8 +8,10 @@ pub mod client;
 
 pub use client::{EventStream, LaunchOptions, RunOptions, WhycodeClient};
 pub use whycode_protocol::sdk::{
-    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, RunRequest, SdkEvent, SessionInfo,
-    SessionList, ToolCallSummary, TurnResult, UsageSnapshot,
+    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, PermissionDecision,
+    PermissionResponse, RunRequest, SdkEvent, SessionInfo, SessionList, StructuredAttempt,
+    StructuredResult, ToolCallSummary, TurnResult, UsageSnapshot, extract_json, validate_instance,
+    validate_schema,
 };
 
 /// SDK-level failure. Branch on [`SdkError::code`].

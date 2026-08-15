@@ -4,6 +4,7 @@
 //! alive across HTTP clients so reconnects skip cold startup. Sessions are
 //! held in-process and optionally persisted to the same SQLite DB as the TUI.
 
+pub mod perm;
 pub mod routes;
 pub mod v1;
 
@@ -43,6 +44,8 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// Per-session cancel flags for in-flight `/v1` runs.
     pub cancel_flags: Arc<std::sync::Mutex<HashMap<String, CancelFlag>>>,
+    /// Permission asks for `/v1` (and auto-approve wrapper for `/api`).
+    pub perm: Arc<perm::PermHub>,
 }
 
 impl AppState {
@@ -122,6 +125,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/sessions/:id", get(v1::get_session))
         .route("/v1/sessions/:id/run", post(v1::run))
         .route("/v1/sessions/:id/cancel", post(v1::cancel))
+        .route("/v1/sessions/:id/permission", post(v1::permission))
         // Single param route: id may be bare, `foo.json`, or `foo.md`
         // (axum rejects overlapping `/s/:id` + `/s/:id.json`).
         .route("/s/:id", get(routes::share_dispatch))
