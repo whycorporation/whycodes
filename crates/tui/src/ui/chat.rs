@@ -123,9 +123,22 @@ pub fn visible_range(total: usize, height: usize, scroll_offset: usize) -> (usiz
 }
 
 fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+    let recents: Vec<&crate::app::SessionEntry> = app
+        .session_list
+        .sessions
+        .iter()
+        .filter(|s| s.live.is_none())
+        .take(6)
+        .collect();
     let mut lines: Vec<Line> = Vec::new();
-    // Vertical centering via top spacers
-    let content_h = 4 + 1 + 2 + 2; // logo + gap + meta + hints
+    // Logo + meta + recent sessions (Grok welcome). Recents sit under the
+    // brand so an empty workspace still centers; a history list pushes up.
+    let recents_h = if recents.is_empty() {
+        0
+    } else {
+        2 + recents.len() as u16
+    };
+    let content_h = 4 + 1 + 2 + 2 + recents_h; // logo + gap + meta + hints + list
     let top = area.height.saturating_sub(content_h) / 2;
     for _ in 0..top {
         lines.push(Line::from(""));
@@ -176,9 +189,40 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         false,
     ));
     lines.push(Line::from(""));
-    // "Get started /connect" like footer welcome
-    let gs = "Get started  /connect".to_string();
-    lines.push(center_line(&gs, area.width, palette.fg, false));
+    if recents.is_empty() {
+        let gs = "Get started  /connect".to_string();
+        lines.push(center_line(&gs, area.width, palette.fg, false));
+    } else {
+        lines.push(center_line("recent", area.width, palette.dim, false));
+        let list_w = (area.width as usize).clamp(24, 72);
+        let left = area.width.saturating_sub(list_w as u16) / 2;
+        let pad = " ".repeat(left as usize);
+        for s in recents {
+            let when = s
+                .updated_at
+                .map(crate::ui::timefmt::format_relative)
+                .unwrap_or_default();
+            let time_w = UnicodeWidthStr::width(when.as_str());
+            let title_budget = list_w.saturating_sub(time_w.saturating_add(2));
+            let title = truncate_home_title(&s.title, title_budget);
+            let gap = list_w
+                .saturating_sub(UnicodeWidthStr::width(title.as_str()))
+                .saturating_sub(time_w);
+            lines.push(Line::from(vec![
+                Span::raw(pad.clone()),
+                Span::styled(title, Style::default().fg(palette.fg)),
+                Span::raw(" ".repeat(gap)),
+                Span::styled(when, Style::default().fg(palette.dim)),
+            ]));
+        }
+        lines.push(Line::from(""));
+        lines.push(center_line(
+            "/resume  ·  Enter to open",
+            area.width,
+            palette.dim,
+            false,
+        ));
+    }
 
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
@@ -426,9 +470,15 @@ fn render_message(
         ChatRole::User => {
             let selected =
                 app.selected_msg == Some(index) && app.focus == crate::app::FocusPane::Scrollback;
+            let ts = if app.show_timestamps {
+                msg.created_at.map(crate::ui::timefmt::format_absolute)
+            } else {
+                None
+            };
             lines.extend(user_prompt_lines(
                 &msg.content,
                 &msg.image_labels,
+                ts.as_deref(),
                 palette,
                 width,
                 selected,
@@ -704,6 +754,12 @@ fn turn_done_footer(msg: &crate::app::ChatMessage, is_last: bool, app: &TuiApp) 
         s.push_str(" · ");
         s.push_str(&crate::app::format_usage_short(usage));
     }
+    if app.show_timestamps
+        && let Some(ts) = msg.created_at
+    {
+        s.push_str(" · ");
+        s.push_str(&crate::ui::timefmt::format_absolute(ts));
+    }
     s
 }
 
@@ -729,6 +785,7 @@ const PROMPT_ARROW_WIDTH: u16 = 2;
 fn user_prompt_lines(
     content: &str,
     image_labels: &[String],
+    timestamp: Option<&str>,
     palette: &ThemePalette,
     width: u16,
     is_selected: bool,
@@ -748,8 +805,9 @@ fn user_prompt_lines(
         .add_modifier(Modifier::DIM);
 
     let mut lines = Vec::new();
-    // vpad top (Grok PromptConfig.vpad = true)
-    lines.push(band_pad_line(band_style));
+    // vpad top (Grok PromptConfig.vpad = true). Timestamp sits here,
+    // right-aligned — same place Grok paints `/timestamps`.
+    lines.push(user_timestamp_pad(timestamp, width, band, palette));
 
     // Image attachment chips (file names from drag-drop / paste).
     if !image_labels.is_empty() {
@@ -839,10 +897,69 @@ fn user_prompt_lines(
     lines
 }
 
+fn truncate_home_title(title: &str, budget: usize) -> String {
+    if budget == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(title) <= budget {
+        return title.to_string();
+    }
+    if budget <= 1 {
+        return "…".to_string();
+    }
+    let mut out = String::new();
+    let mut w = 0usize;
+    for ch in title.chars() {
+        let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+        if w + cw + 1 > budget {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out.push('…');
+    out
+}
+
 /// One empty elevated-band row (Grok prompt vertical pad).
 fn band_pad_line(band_style: Style) -> Line<'static> {
     // A single space carries the bg so SparseLines can full-width fill the row.
     Line::from(Span::styled(" ".to_string(), band_style))
+}
+
+/// Top pad row of the user band, with an optional right-aligned clock.
+fn user_timestamp_pad(
+    timestamp: Option<&str>,
+    width: u16,
+    band: Color,
+    palette: &ThemePalette,
+) -> Line<'static> {
+    let band_style = Style::default().bg(band);
+    let Some(ts) = timestamp.filter(|s| !s.is_empty()) else {
+        return band_pad_line(band_style);
+    };
+    let tw = UnicodeWidthStr::width(ts) as u16;
+    if tw + 1 >= width {
+        return Line::from(Span::styled(
+            ts.to_string(),
+            Style::default()
+                .fg(palette.dim)
+                .bg(band)
+                .add_modifier(Modifier::DIM),
+        ));
+    }
+    let pad = width.saturating_sub(tw + 1) as usize;
+    Line::from(vec![
+        Span::styled(" ".repeat(pad), band_style),
+        Span::styled(
+            ts.to_string(),
+            Style::default()
+                .fg(palette.dim)
+                .bg(band)
+                .add_modifier(Modifier::DIM),
+        ),
+        Span::styled(" ".to_string(), band_style),
+    ])
 }
 
 #[derive(Clone, Copy)]

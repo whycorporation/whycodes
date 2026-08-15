@@ -546,6 +546,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]);
         let msgs = convert_messages(&req);
         // system + assistant
@@ -563,12 +564,14 @@ mod tests {
                 content: MessageContent::Text("hi".into()),
                 tool_call_id: None,
                 name: None,
+                created_at: None,
             },
             Message {
                 role: Role::Assistant,
                 content: MessageContent::Blocks(vec![]),
                 tool_call_id: None,
                 name: None,
+                created_at: None,
             },
         ]);
         let msgs = convert_messages(&req);
@@ -583,6 +586,7 @@ mod tests {
             content: MessageContent::Text(String::new()),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]);
         let msgs = convert_messages(&req);
         assert_eq!(msgs.len(), 1); // system only
@@ -604,6 +608,7 @@ mod tests {
             ]),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]);
         let msgs = convert_messages(&req);
         let asst = &msgs[1];
@@ -634,6 +639,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]);
         let msgs = convert_messages(&req);
         let asst = &msgs[1];
@@ -648,6 +654,7 @@ mod tests {
             content: MessageContent::Text("ok".into()),
             tool_call_id: Some("c1".into()),
             name: None,
+            created_at: None,
         }]);
         let msgs = convert_messages(&req);
         assert_eq!(msgs[1]["role"], "tool");
@@ -684,6 +691,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]);
         // Default path: OpenAI JSON string
         let default_msgs = convert_messages(&req);

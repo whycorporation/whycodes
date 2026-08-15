@@ -1000,6 +1000,9 @@ pub struct TuiConfig {
     /// Show the sidebar when the TUI opens.
     #[serde(default)]
     pub show_sidebar: bool,
+    /// Show wall-clock timestamps on chat bubbles (Grok `/timestamps`).
+    #[serde(default = "default_show_timestamps")]
+    pub show_timestamps: bool,
 }
 
 impl Default for TuiConfig {
@@ -1009,12 +1012,17 @@ impl Default for TuiConfig {
             key_bindings: None,
             prompt_suggestions: default_prompt_suggestions(),
             show_sidebar: false,
+            show_timestamps: default_show_timestamps(),
         }
     }
 }
 
 fn default_prompt_suggestions() -> String {
     "off".into()
+}
+
+fn default_show_timestamps() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1435,6 +1443,9 @@ impl Config {
         }
         if other.tui.show_sidebar {
             merged.tui.show_sidebar = true;
+        }
+        if !other.tui.show_timestamps {
+            merged.tui.show_timestamps = false;
         }
 
         // General

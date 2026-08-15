@@ -261,6 +261,7 @@ async fn llm_extract_facts(
             content: MessageContent::Text(prompt),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]),
         tools: Vec::new(),
         max_tokens: Some(200),

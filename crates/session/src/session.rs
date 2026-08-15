@@ -608,7 +608,9 @@ impl Session {
             content: MessageContent::Text(content.to_string()),
             tool_call_id: None,
             name: None,
-        };
+            created_at: None,
+        }
+        .stamp();
         self.token_cache.push_msg(&msg);
         self.messages.push(msg);
         self.touch();
@@ -621,7 +623,9 @@ impl Session {
             content: MessageContent::Blocks(blocks),
             tool_call_id: None,
             name: None,
-        };
+            created_at: None,
+        }
+        .stamp();
         self.token_cache.push_msg(&msg);
         self.messages.push(msg);
         self.touch();
@@ -634,7 +638,9 @@ impl Session {
             content: MessageContent::Blocks(blocks),
             tool_call_id: None,
             name: None,
-        };
+            created_at: None,
+        }
+        .stamp();
         self.token_cache.push_msg(&msg);
         self.messages.push(msg);
         self.touch();
@@ -665,7 +671,9 @@ impl Session {
                 content,
                 tool_call_id: Some(result.tool_call_id),
                 name: None,
-            };
+                created_at: None,
+            }
+            .stamp();
             self.token_cache.push_msg(&msg);
             self.messages.push(msg);
         }
@@ -917,7 +925,9 @@ impl Session {
                 content: MessageContent::Text(body),
                 tool_call_id: None,
                 name: None,
-            },
+                created_at: None,
+            }
+            .stamp(),
         );
         self.token_cache.invalidate();
         self.touch();
@@ -987,12 +997,16 @@ impl Session {
         let dropped_transcript = messages_transcript(trimmed, DROPPED_TRANSCRIPT_MAX_CHARS);
         let summary = summarize_trimmed(trimmed);
         let mut new_messages = Vec::with_capacity(1 + self.messages.len() - start);
-        new_messages.push(Message {
-            role: Role::User,
-            content: MessageContent::Text(summary),
-            tool_call_id: None,
-            name: None,
-        });
+        new_messages.push(
+            Message {
+                role: Role::User,
+                content: MessageContent::Text(summary),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            }
+            .stamp(),
+        );
         new_messages.extend(self.messages[start..].iter().cloned());
         self.messages = new_messages;
         self.token_cache
@@ -1029,12 +1043,14 @@ impl Session {
                 .trim_matches('"')
                 .to_string();
             let msg_id = uuid::Uuid::new_v4().to_string();
+            let created = msg.created_at.unwrap_or_else(chrono::Utc::now).to_rfc3339();
             rows.push((
                 msg_id,
                 role_str,
                 msg_json,
                 msg.tool_call_id.clone(),
                 msg.name.clone(),
+                created,
             ));
         }
         db.replace_messages(&self.id, &rows)?;
@@ -1059,7 +1075,15 @@ impl Session {
         let message_rows = db.get_messages(id)?;
         let messages: Vec<whycode_core::types::Message> = message_rows
             .iter()
-            .map(|mr| serde_json::from_str(&mr.content))
+            .map(|mr| {
+                let mut msg: whycode_core::types::Message = serde_json::from_str(&mr.content)?;
+                if msg.created_at.is_none() {
+                    msg.created_at = chrono::DateTime::parse_from_rfc3339(&mr.created_at)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&chrono::Utc));
+                }
+                Ok::<_, anyhow::Error>(msg)
+            })
             .collect::<Result<_, _>>()?;
 
         let project_path = std::path::PathBuf::from(row.project_path);
@@ -1110,6 +1134,14 @@ mod persist_tests {
         assert_eq!(loaded.usage.cache_creation_input_tokens, Some(1));
         assert_eq!(loaded.usage.cache_read_input_tokens, Some(2));
         assert_eq!(loaded.messages.len(), 2);
+        assert!(
+            loaded.messages[0].created_at.is_some(),
+            "user message should keep its authored time"
+        );
+        assert_eq!(
+            loaded.messages[0].created_at,
+            session.messages[0].created_at
+        );
         assert_eq!(db.message_count(&session.id).unwrap(), 2);
     }
 

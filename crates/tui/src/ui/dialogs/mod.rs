@@ -78,7 +78,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
             let selected = app.session_list.selected;
             let info = render_select(
                 frame,
-                " Sessions  ·  Enter resume/switch  ·  Ctrl+W close live ",
+                " Resume  ·  Enter open  ·  type to filter  ·  Ctrl+W close live ",
                 &items,
                 selected,
                 "No sessions yet — they are recorded as you use whycode.",
@@ -194,31 +194,12 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     }
 }
 
-/// Session picker subtitle: local time · short id · message count.
+/// Session picker subtitle — Grok `/resume` row: relative clock + message count.
 fn session_list_detail(s: &crate::app::SessionEntry) -> String {
-    let short: String = s.id.chars().take(8).collect();
-    let tail = format!("{short} · {} messages", s.messages);
+    let msgs = format!("{} messages", s.messages);
     match s.updated_at {
-        Some(ts) => format!("{} · {tail}", format_session_when(ts, chrono::Local::now())),
-        None => tail,
-    }
-}
-
-/// Compact local wall-clock for the session picker.
-///
-/// Today → `14:32`. Same year → `14 Aug 14:32`. Older → `14 Aug 2025 14:32`.
-fn format_session_when(
-    ts: chrono::DateTime<chrono::Utc>,
-    now: chrono::DateTime<chrono::Local>,
-) -> String {
-    use chrono::Datelike;
-    let local = ts.with_timezone(&chrono::Local);
-    if local.date_naive() == now.date_naive() {
-        local.format("%H:%M").to_string()
-    } else if local.year() == now.year() {
-        local.format("%d %b %H:%M").to_string()
-    } else {
-        local.format("%d %b %Y %H:%M").to_string()
+        Some(ts) => format!("{} · {msgs}", crate::ui::timefmt::format_relative(ts)),
+        None => msgs,
     }
 }
 
@@ -233,35 +214,6 @@ pub fn render_help(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) 
 #[cfg(test)]
 mod session_when_tests {
     use super::*;
-    use chrono::TimeZone;
-
-    fn local(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<chrono::Local> {
-        chrono::Local
-            .with_ymd_and_hms(y, m, d, h, min, 0)
-            .single()
-            .expect("valid local datetime")
-    }
-
-    #[test]
-    fn today_is_clock_only() {
-        let now = local(2026, 8, 15, 16, 0);
-        let ts = local(2026, 8, 15, 14, 32).with_timezone(&chrono::Utc);
-        assert_eq!(format_session_when(ts, now), "14:32");
-    }
-
-    #[test]
-    fn same_year_includes_day_and_month() {
-        let now = local(2026, 8, 15, 16, 0);
-        let ts = local(2026, 3, 4, 9, 5).with_timezone(&chrono::Utc);
-        assert_eq!(format_session_when(ts, now), "04 Mar 09:05");
-    }
-
-    #[test]
-    fn older_year_includes_year() {
-        let now = local(2026, 8, 15, 16, 0);
-        let ts = local(2025, 3, 4, 9, 5).with_timezone(&chrono::Utc);
-        assert_eq!(format_session_when(ts, now), "04 Mar 2025 09:05");
-    }
 
     #[test]
     fn detail_omits_time_when_timestamp_is_missing() {
@@ -272,7 +224,7 @@ mod session_when_tests {
             updated_at: None,
             live: None,
         };
-        assert_eq!(session_list_detail(&entry), "abcdef12 · 12 messages");
+        assert_eq!(session_list_detail(&entry), "12 messages");
     }
 
     #[test]
@@ -286,12 +238,12 @@ mod session_when_tests {
         };
         let detail = session_list_detail(&entry);
         assert!(
-            detail.ends_with(" · abcdef12 · 12 messages"),
-            "detail {detail:?} should keep id and count after the time"
+            detail.ends_with(" · 12 messages"),
+            "detail {detail:?} should keep the count after the time"
         );
-        let prefix = detail
-            .strip_suffix(" · abcdef12 · 12 messages")
-            .expect("suffix");
-        assert!(!prefix.is_empty(), "time prefix should not be empty");
+        assert!(
+            detail.contains("just now") || detail.contains("m ago") || detail.contains("h ago"),
+            "detail {detail:?} should use a Grok-style relative clock"
+        );
     }
 }

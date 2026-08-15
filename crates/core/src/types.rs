@@ -21,6 +21,20 @@ pub struct Message {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Wall-clock time this message was authored. Omitted on older sessions.
+    /// Not sent to providers (`convert_messages` builds a fresh JSON object).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Message {
+    /// Stamp `created_at` if it is still empty (new user / assistant / tool rows).
+    pub fn stamp(mut self) -> Self {
+        if self.created_at.is_none() {
+            self.created_at = Some(chrono::Utc::now());
+        }
+        self
+    }
 }
 
 /// Content can be text or a list of content blocks
@@ -821,6 +835,7 @@ mod tests {
             content: MessageContent::Text("hello".to_string()),
             tool_call_id: None,
             name: None,
+            created_at: None,
         };
         let json = serde_json::to_string(&msg).expect("serialize");
         let deser: Message = serde_json::from_str(&json).expect("deserialize");
@@ -838,6 +853,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: Some("assistant".to_string()),
+            created_at: None,
         };
         let json = serde_json::to_string(&msg).expect("serialize");
         let deser: Message = serde_json::from_str(&json).expect("deserialize");
@@ -853,6 +869,7 @@ mod tests {
             content: MessageContent::Text("tool result".to_string()),
             tool_call_id: Some("call-1".to_string()),
             name: None,
+            created_at: None,
         };
         let json = serde_json::to_string(&msg).expect("serialize");
         let deser: Message = serde_json::from_str(&json).expect("deserialize");

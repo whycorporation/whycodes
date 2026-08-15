@@ -100,6 +100,7 @@ pub async fn generate_title(
             content: MessageContent::Text(body),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]),
         tools: Vec::new(),
         max_tokens: Some(48),
