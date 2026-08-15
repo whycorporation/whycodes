@@ -1649,4 +1649,244 @@ mod tests {
         assert!(text.contains("User: hello"));
         assert!(text.contains("Assistant: hi there"));
     }
+
+    #[test]
+    fn from_imported_uses_title_hint_or_first_user_text() {
+        let msgs = vec![
+            Message {
+                role: Role::User,
+                content: MessageContent::Text("please fix the login flow".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::Text("on it".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+        ];
+
+        let s = Session::from_imported(test_project_path(), msgs.clone(), Some("Imported chat"));
+        assert_eq!(s.title, "Imported chat");
+        assert_eq!(s.title_source, crate::title::TitleSource::Manual);
+        assert_eq!(s.messages.len(), 2);
+        assert_eq!(s.system_prompt, "");
+
+        let s = Session::from_imported(test_project_path(), msgs.clone(), None);
+        assert_eq!(s.title_source, crate::title::TitleSource::Heuristic);
+        assert!(s.title.to_ascii_lowercase().contains("login"));
+    }
+
+    #[test]
+    fn first_user_text_joins_blocks_and_skips_empty() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        assert_eq!(session.user_message_count(), 0);
+        assert_eq!(session.first_user_text(), None);
+        assert_eq!(session.first_assistant_snippet(10), None);
+
+        session.add_user_message_blocks(vec![
+            ContentBlock::Text {
+                text: "first line".into(),
+            },
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "grep".into(),
+                input: serde_json::json!({}),
+            },
+            ContentBlock::Text {
+                text: "second line".into(),
+            },
+        ]);
+        assert_eq!(session.user_message_count(), 1);
+        // `as_text` returns the first text block
+        assert_eq!(session.first_user_text().as_deref(), Some("first line"));
+
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "a longer assistant reply".into(),
+        }]);
+        assert_eq!(
+            session.first_assistant_snippet(7).as_deref(),
+            Some("a longe")
+        );
+        assert_eq!(
+            session.first_assistant_snippet(100).as_deref(),
+            Some("a longer assistant reply")
+        );
+    }
+
+    #[test]
+    fn first_user_text_skips_whitespace_only_first_message() {
+        // `first_user_text` inspects only the first user message; a
+        // whitespace-only first message yields None even when later messages
+        // carry real text (the caller retries on the next turn).
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("   ");
+        assert_eq!(session.first_user_text(), None);
+        session.add_user_message("real question");
+        assert_eq!(session.first_user_text(), None);
+    }
+
+    #[test]
+    fn truncate_large_tool_results_caps_bodies() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("go");
+        session.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "t1".into(),
+            content: "x".repeat(TOOL_RESULT_MAX_CHARS + 10_000),
+            is_error: false,
+        }]);
+        // assistant block carrying an oversized ToolResult
+        session.add_assistant_message(vec![ContentBlock::ToolResult {
+            tool_use_id: "t2".into(),
+            content: "y".repeat(TOOL_RESULT_MAX_CHARS + 10_000),
+            is_error: Some(false),
+        }]);
+
+        let modified = session.truncate_large_tool_results();
+        assert_eq!(modified, 2);
+        let tool_text = session.messages[1].content.as_text().unwrap();
+        assert!(tool_text.contains("characters truncated for context management"));
+        assert!(
+            tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 200,
+            "kept chars + notice suffix"
+        );
+
+        // running again keeps it capped (already-truncated text is under the
+        // cap except for the notice suffix, which is short)
+        session.truncate_large_tool_results();
+        let tool_text = session.messages[1].content.as_text().unwrap();
+        assert!(tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 200);
+    }
+
+    #[test]
+    fn prune_old_tool_results_keeps_recent_full() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("start");
+        for i in 0..6 {
+            session.add_tool_results(vec![whycode_core::types::ToolResult {
+                tool_call_id: format!("t{i}"),
+                content: "z".repeat(10_000),
+                is_error: false,
+            }]);
+        }
+        let pruned = session.prune_old_tool_results();
+        assert!(pruned > 0, "old tool results should be cut");
+        // recent kept at full size
+        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        assert!(
+            last.chars().count() > TOOL_RESULT_PRUNE_CHARS,
+            "recent kept full"
+        );
+
+        // no-op when few tools
+        let mut small = Session::new(test_project_path(), test_system_prompt());
+        small.add_user_message("start");
+        small.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "a".into(),
+            content: "small".into(),
+            is_error: false,
+        }]);
+        assert_eq!(small.prune_old_tool_results(), 0);
+    }
+
+    #[test]
+    fn prepend_compact_summary_inserts_or_replaces() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("first");
+        session.prepend_compact_summary("dropped a lot");
+        let first = session.messages[0].content.as_text().unwrap();
+        assert!(first.starts_with("[Compacted earlier conversation]"));
+        assert!(first.contains("dropped a lot"));
+
+        // empty summary is a no-op
+        session.prepend_compact_summary("   ");
+        assert_eq!(session.messages.len(), 2);
+
+        // replacing existing compact marker keeps a single stub
+        session.prepend_compact_summary("[Compacted earlier conversation]\nnewer stub");
+        assert_eq!(session.messages.len(), 2);
+        assert!(
+            session.messages[0]
+                .content
+                .as_text()
+                .unwrap()
+                .contains("newer stub")
+        );
+    }
+
+    #[test]
+    fn export_markdown_contains_roles_and_tools() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("hello");
+        session.add_assistant_message(vec![
+            ContentBlock::Text {
+                text: "reply".into(),
+            },
+            ContentBlock::ToolUse {
+                id: "t1".into(),
+                name: "grep".into(),
+                input: serde_json::json!({"pattern": "x"}),
+            },
+            ContentBlock::ToolResult {
+                tool_use_id: "t1".into(),
+                content: "found it".into(),
+                is_error: Some(false),
+            },
+            ContentBlock::Image {
+                source: whycode_core::types::ImageSource::Base64 {
+                    media_type: "image/png".into(),
+                    data: "aGk=".into(),
+                },
+            },
+        ]);
+        let md = session.export_markdown();
+        assert!(md.contains(&format!("# {}", session.title)));
+        assert!(md.contains("### User"));
+        assert!(md.contains("hello"));
+        assert!(md.contains("### Assistant"));
+        assert!(md.contains("```tool"));
+        assert!(md.contains("grep"));
+        assert!(md.contains("```result"));
+        assert!(md.contains("*[image]*"));
+    }
+
+    #[test]
+    fn undo_last_turn_removes_turn_and_is_idempotent() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("q1");
+        session.add_assistant_message(vec![ContentBlock::Text { text: "a1".into() }]);
+        session.add_user_message("q2");
+        session.add_assistant_message(vec![ContentBlock::Text { text: "a2".into() }]);
+        session.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "x".into(),
+            content: "r".into(),
+            is_error: false,
+        }]);
+        assert_eq!(session.messages.len(), 5);
+
+        let removed = session.undo_last_turn();
+        assert_eq!(removed, 3); // q2 + a2 + tool result
+        assert_eq!(session.messages.len(), 2);
+        assert_eq!(session.messages[0].content.as_text(), Some("q1"));
+
+        let removed = session.undo_last_turn();
+        assert_eq!(removed, 2);
+        assert!(session.messages.is_empty());
+        assert_eq!(session.undo_last_turn(), 0);
+    }
+
+    #[test]
+    fn set_messages_rebuilds_state() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("one");
+        session.set_messages(vec![]);
+        assert!(session.messages.is_empty());
+        assert_eq!(
+            session.token_count(),
+            estimate_tokens(&session.system_prompt)
+        );
+    }
 }

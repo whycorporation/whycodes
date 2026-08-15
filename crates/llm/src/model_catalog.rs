@@ -514,5 +514,142 @@ mod tests {
             Some(128_000)
         );
         assert_eq!(context_window_for_model_id(&json, "missing"), None);
+        // suffix match against the last path segment
+        assert_eq!(
+            context_window_for_model_id(&json, "kimi-k3-free"),
+            Some(128_000)
+        );
+        assert_eq!(context_window_for_model_id(&json, ""), None);
+    }
+
+    #[test]
+    fn context_window_from_string_and_float_values() {
+        let m = json!({"id": "x", "context_length": "96000"});
+        assert_eq!(context_window_from_model_value(&m), Some(96_000));
+        let m = json!({"id": "x", "max_tokens": 4096.5});
+        assert_eq!(context_window_from_model_value(&m), Some(4096));
+        let m = json!({"id": "x", "context_length": -5});
+        assert_eq!(context_window_from_model_value(&m), None);
+        let m = json!({"id": "x", "context_length": 0});
+        assert_eq!(context_window_from_model_value(&m), None);
+        let m = json!({"id": "x", "context_length": "not-a-number"});
+        assert_eq!(context_window_from_model_value(&m), None);
+    }
+
+    #[test]
+    fn context_window_from_architecture_nested() {
+        let m = json!({
+            "id": "x",
+            "architecture": { "context_length": 32_768 }
+        });
+        assert_eq!(context_window_from_model_value(&m), Some(32_768));
+        // top_provider wins over architecture when both present
+        let m = json!({
+            "id": "x",
+            "top_provider": { "context_length": 200_000 },
+            "architecture": { "context_length": 32_768 }
+        });
+        assert_eq!(context_window_from_model_value(&m), Some(200_000));
+    }
+
+    #[test]
+    fn parse_models_json_skips_empty_ids_and_handles_top_level_array() {
+        let json = json!([
+            { "id": "", "context_length": 1 },
+            { "id": "m1", "max_completion_tokens": 8_192 }
+        ]);
+        let cat = parse_models_json(&json, "u");
+        assert!(cat.context_windows.is_empty());
+        assert_eq!(cat.max_output_tokens.get("m1"), Some(&8_192));
+        assert_eq!(cat.source_url, "u");
+    }
+
+    #[test]
+    fn parse_models_json_empty_body() {
+        let cat = parse_models_json(&json!({}), "u");
+        assert!(cat.is_empty());
+        assert_eq!(cat.context_window("anything"), None);
+    }
+
+    #[test]
+    fn catalog_context_window_suffix_lookup() {
+        let mut cat = ModelCatalog::default();
+        cat.context_windows
+            .insert("trk/vendor/gpt-5".to_string(), 400_000);
+        // bare id resolves to the `…/gpt-5` entry
+        assert_eq!(cat.context_window("gpt-5"), Some(400_000));
+        assert_eq!(cat.context_window("vendor/gpt-5"), Some(400_000));
+        assert_eq!(cat.context_window("other"), None);
+    }
+
+    #[test]
+    fn catalog_is_stale_without_or_after_ttl() {
+        let cat = ModelCatalog::default();
+        assert!(
+            cat.is_stale(Duration::from_secs(60)),
+            "never fetched = stale"
+        );
+
+        let cat = ModelCatalog {
+            fetched_at: Some(Instant::now()),
+            ..Default::default()
+        };
+        assert!(!cat.is_stale(Duration::from_secs(60)));
+        assert!(cat.is_stale(Duration::from_millis(0)));
+    }
+
+    #[test]
+    fn base_url_from_provider_config_prefers_base_url() {
+        use whycode_core::types::ProviderConfig;
+        let pc = ProviderConfig {
+            name: "p".into(),
+            api_key: None,
+            api_base: Some("http://api.example/v1".into()),
+            base_url: Some("http://direct.example/v1".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        };
+        assert_eq!(
+            base_url_from_provider_config(&pc).as_deref(),
+            Some("http://direct.example/v1")
+        );
+        let pc = ProviderConfig {
+            base_url: None,
+            api_base: Some("  http://api.example/v1  ".into()),
+            ..pc
+        };
+        assert_eq!(
+            base_url_from_provider_config(&pc).as_deref(),
+            Some("http://api.example/v1"),
+            "api_base trimmed as fallback"
+        );
+        let pc = ProviderConfig {
+            base_url: Some("   ".into()),
+            api_base: None,
+            ..pc
+        };
+        assert_eq!(
+            base_url_from_provider_config(&pc),
+            None,
+            "blank url rejected"
+        );
+    }
+
+    #[test]
+    fn normalize_models_url_edge_cases() {
+        assert_eq!(
+            normalize_models_url("http://host/v1/chat/completions/"),
+            "http://host/v1/models"
+        );
+        assert_eq!(
+            normalize_models_url("http://host/v1/custom/path"),
+            "http://host/v1/custom/path/models"
+        );
+        assert_eq!(
+            normalize_models_url("  http://host/v1  "),
+            "http://host/v1/models"
+        );
     }
 }

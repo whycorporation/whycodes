@@ -780,4 +780,86 @@ mod tests {
         let path = resolve_debug_log_path(&dirs, &opts).unwrap();
         assert_eq!(path.as_deref(), Some(custom.as_path()));
     }
+
+    #[test]
+    fn resolve_debug_log_path_creates_stamped_file_and_latest_link() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let tmp = temp_data_dir();
+        let dirs = LogDirs::from_data_dir(tmp.path());
+        dirs.ensure().unwrap();
+        let opts = InitOptions {
+            data_dir: tmp.path().to_path_buf(),
+            log_level: None,
+            log_file: None,
+            debug: true,
+            with_stderr: false,
+        };
+        let path = resolve_debug_log_path(&dirs, &opts)
+            .unwrap()
+            .expect("debug log");
+        assert_eq!(path.parent(), Some(dirs.debug.as_path()));
+        assert!(
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.starts_with("whycode-")),
+            "stamped debug filename: {}",
+            path.display()
+        );
+        assert!(path.exists(), "debug log file should be touched");
+        assert!(
+            dirs.debug.join("latest.log").exists() || dirs.debug.join("latest.path").exists(),
+            "latest pointer should exist"
+        );
+        // No log_file and no debug → None
+        let opts = InitOptions {
+            data_dir: tmp.path().to_path_buf(),
+            log_level: None,
+            log_file: None,
+            debug: false,
+            with_stderr: false,
+        };
+        assert_eq!(resolve_debug_log_path(&dirs, &opts).unwrap(), None);
+    }
+
+    #[test]
+    fn build_env_filter_uses_rust_log_then_explicit() {
+        let _g = TEST_LOCK.lock().unwrap();
+        // RUST_LOG wins over the explicit level.
+        unsafe { std::env::set_var("RUST_LOG", "warn") };
+        let f = build_env_filter(Some("debug"));
+        unsafe { std::env::remove_var("RUST_LOG") };
+        let s = f.to_string();
+        assert!(s.contains("warn"), "RUST_LOG should win: {s}");
+
+        // No RUST_LOG → explicit level.
+        let f = build_env_filter(Some("trace"));
+        assert!(f.to_string().contains("trace"), "{}", f.to_string());
+
+        // Neither → info default.
+        let f = build_env_filter(None);
+        assert!(f.to_string().contains("info"), "{}", f.to_string());
+    }
+
+    #[test]
+    fn panic_cleanup_set_and_clear() {
+        let _g = TEST_LOCK.lock().unwrap();
+        clear_panic_cleanup();
+        assert!(
+            PANIC_CLEANUP.lock().unwrap().is_none(),
+            "cleared cleanup slot"
+        );
+        set_panic_cleanup(|| {});
+        assert!(PANIC_CLEANUP.lock().unwrap().is_some());
+        clear_panic_cleanup();
+        assert!(PANIC_CLEANUP.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn dirs_is_none_before_init() {
+        // Not holding the lock here: dirs() only reads STATE which is a
+        // OnceLock — safe to call concurrently, and init tests use the lock.
+        if !is_initialized() {
+            assert!(dirs().is_none());
+        }
+    }
 }
