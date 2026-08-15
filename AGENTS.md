@@ -66,7 +66,7 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 | `whycode-tui` | `crates/tui` | Terminal UI |
 | `whycode-agent` | `crates/agent` | Agent loop / tools orchestration |
 | `whycode-llm` | `crates/llm` | Providers (OpenAI-compat, Anthropic, …) |
-| `whycode-core` | `crates/core` | Leaf types, `Tool` trait, sandbox settings, errors, network, logging |
+| `whycode-core` | `crates/core` | Leaf types, `Tool` trait, sandbox, errors, `paths` (`WHYCODE_HOME`); depends on `index` only |
 | `whycode-config` | `crates/config` | Config load/merge/validate (depends on core only) |
 | `whycode-session` | `crates/session` | Conversation session |
 | `whycode-tools` | `crates/tools` | Built-in tools (`file/`, `git/`, `github/`, `web/`, `agent_tools/`) |

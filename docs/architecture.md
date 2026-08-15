@@ -1,6 +1,6 @@
 # Architecture
 
-The workspace is 23 crates with one-way layering:
+The workspace is 24 crates with one-way layering:
 **foundations → services → orchestration → applications**.
 
 Allowed internal edges are allowlisted in
@@ -9,8 +9,9 @@ and verified in CI.
 
 Two rules keep the graph acyclic:
 
-- `core` holds leaf types, the `Tool` trait, errors and logging, and depends
-  on **no** other workspace crate.
+- `core` holds leaf types, the `Tool` trait, errors, logging and
+  `paths` (`WHYCODE_HOME`). It depends on **`index` only** among workspace
+  crates (file-index types). It never depends on `config`.
 - `config` (user-config loading and policy) depends only on `core`. `core`
   never re-exports `config`.
 
@@ -28,6 +29,7 @@ Two rules keep the graph acyclic:
 | | `lsp` | Language-server client |
 | | `skill` | Skill registry |
 | | `function` | Function-tool helpers |
+| | `index` | Workspace file index (`ignore` walk, fuzzy, `notify`) |
 | Services | `llm` | LLM providers |
 | | `session` | Conversation state, compaction, undo/redo |
 | | `memory` | `MEMORY.md`, semantic recall, code index |
