@@ -4925,3 +4925,156 @@ fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config
     out.push_str(&format!("  total:     {}\n", usage.total()));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_toast_takes_first_line_and_trims() {
+        assert_eq!(truncate_toast("short", 20), "short");
+        assert_eq!(truncate_toast("first\nsecond", 20), "first");
+        assert_eq!(truncate_toast("  padded  ", 20), "padded");
+        let long = "x".repeat(100);
+        let out = truncate_toast(&long, 10);
+        assert_eq!(out.chars().count(), 10);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn rfc3339_parser_accepts_and_rejects() {
+        assert!(parse_session_rfc3339("2026-01-02T03:04:05Z").is_some());
+        assert!(parse_session_rfc3339("2026-01-02T03:04:05+02:00").is_some());
+        assert!(parse_session_rfc3339("not a date").is_none());
+        assert!(parse_session_rfc3339("").is_none());
+    }
+
+    #[test]
+    fn short_session_id_truncates_long_ids() {
+        assert_eq!(short_session_id("abc"), "abc");
+        assert_eq!(short_session_id("abcdefgh"), "abcdefgh");
+        assert_eq!(short_session_id("abcdefghijkl"), "abcdefgh…");
+    }
+
+    #[test]
+    fn turn_done_status_formats_cancel_and_usage() {
+        let app = TuiApp::new(TuiAppConfig::default());
+        let s = format_turn_done_status(&app, "build", "anthropic", "m", None, true);
+        assert_eq!(s, "Turn cancelled.");
+        let s = format_turn_done_status(&app, "build", "anthropic", "m", Some(4500), true);
+        assert_eq!(s, "Turn cancelled in 4.5s");
+
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        let s = format_turn_done_status(&app, "build", "anthropic", "m", None, false);
+        assert_eq!(s, "Done");
+
+        app.turn_usage = Some(whycode_core::types::Usage {
+            input_tokens: 1200,
+            output_tokens: 340,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: Some(500),
+        });
+        let s = format_turn_done_status(&app, "build", "anthropic", "m", Some(4200), false);
+        assert!(s.contains("Worked for 4.2s"), "{s}");
+        assert!(s.contains("in"), "{s}");
+        assert!(s.contains("out"), "{s}");
+        assert!(s.contains("cached"), "{s}");
+    }
+
+    #[test]
+    fn snapshot_cells_reads_every_symbol() {
+        use ratatui::buffer::Buffer;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
+        buf[(0, 0)].set_symbol("a");
+        buf[(1, 1)].set_symbol("b");
+        let rows = snapshot_cells(&buf);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0][0], "a");
+        assert_eq!(rows[1][1], "b");
+        assert_eq!(rows[0][1], " ");
+    }
+
+    #[test]
+    fn expand_at_files_inlines_existing_and_keeps_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("note.txt");
+        std::fs::write(&f, "hello world").unwrap();
+        let out = expand_at_files("read @note.txt now", dir.path());
+        assert!(out.contains("hello world"), "{out}");
+        assert!(out.contains("--- file: note.txt ---"), "{out}");
+        assert!(out.ends_with("now"), "{out}");
+
+        let out = expand_at_files("see @missing.txt", dir.path());
+        assert!(
+            out.contains("@missing.txt"),
+            "missing must stay literal: {out}"
+        );
+
+        // Absolute path works too.
+        let out = expand_at_files(&format!("@{} done", f.display()), dir.path());
+        assert!(out.contains("hello world"), "{out}");
+    }
+
+    #[test]
+    fn expand_at_files_truncates_huge_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("big.txt");
+        std::fs::write(&f, "x".repeat(AT_FILE_MAX_CHARS + 100)).unwrap();
+        let out = expand_at_files("@big.txt", dir.path());
+        assert!(out.contains("characters omitted"), "{out}");
+    }
+
+    #[test]
+    fn expand_at_files_bare_at_stays_literal() {
+        let out = expand_at_files("email me @ now", std::path::Path::new("/work"));
+        assert!(out.contains("@ now"), "{out}");
+    }
+
+    #[test]
+    fn memory_settings_for_sets_agent_bank() {
+        let config = Config::default();
+        let base = memory_settings(&config);
+        assert!(base.enabled);
+        assert!(base.agent_bank.is_none());
+        let scoped = memory_settings_for(&config, Some("worker".into()));
+        assert_eq!(scoped.agent_bank.as_deref(), Some("worker"));
+    }
+
+    #[test]
+    fn resolve_session_latest_and_prefix() {
+        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        // Empty db → latest is None.
+        assert!(
+            resolve_and_load_session(&db, RESUME_LATEST)
+                .unwrap()
+                .is_none()
+        );
+        assert!(resolve_and_load_session(&db, "nope").unwrap().is_none());
+
+        let mut s1 = Session::new(std::path::PathBuf::from("/work/proj"), "sys".into());
+        s1.add_user_message("first");
+        s1.save_to_db(&db).unwrap();
+        let id1 = s1.id.clone();
+
+        let mut s2 = Session::new(std::path::PathBuf::from("/work/proj"), "sys".into());
+        s2.add_user_message("second");
+        s2.save_to_db(&db).unwrap();
+
+        // Exact id.
+        let loaded = resolve_and_load_session(&db, &id1).unwrap().expect("exact");
+        assert_eq!(loaded.id, id1);
+
+        // Unique prefix (8 chars) matches.
+        let prefix: String = id1.chars().take(8).collect();
+        let loaded = resolve_and_load_session(&db, &prefix)
+            .unwrap()
+            .expect("prefix");
+        assert_eq!(loaded.id, id1);
+
+        // RESUME_LATEST → most recently updated (s2).
+        let latest = resolve_and_load_session(&db, RESUME_LATEST)
+            .unwrap()
+            .expect("latest");
+        assert_eq!(latest.id, s2.id);
+    }
+}
