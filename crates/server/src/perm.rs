@@ -12,7 +12,9 @@ use async_trait::async_trait;
 use tokio::sync::oneshot;
 use whycode_agent::events::{EventSink, TurnEvent};
 use whycode_agent::permission::PermissionPrompter;
-use whycode_protocol::sdk::PermissionDecision;
+use whycode_agent::question::{AutoAnswerPrompter, QuestionError, QuestionPrompter};
+use whycode_protocol::sdk::{PermissionDecision, QuestionAnswerWire};
+use whycode_tools::question::{QuestionAnswer, QuestionSpec};
 
 tokio::task_local! {
     pub static RUN: RunScope;
@@ -25,9 +27,12 @@ pub struct RunScope {
     pub hub: Arc<PermHub>,
 }
 
+type QuestionReply = oneshot::Sender<Result<Vec<QuestionAnswer>, QuestionError>>;
+
 pub struct PermHub {
     seq: AtomicU64,
     pending: Mutex<HashMap<(String, String), Pending>>,
+    pending_q: Mutex<HashMap<(String, String), QuestionReply>>,
     allow_always: Mutex<HashMap<String, HashSet<String>>>,
     events: Mutex<HashMap<String, EventSink>>,
 }
@@ -42,6 +47,7 @@ impl PermHub {
         Arc::new(Self {
             seq: AtomicU64::new(1),
             pending: Mutex::new(HashMap::new()),
+            pending_q: Mutex::new(HashMap::new()),
             allow_always: Mutex::new(HashMap::new()),
             events: Mutex::new(HashMap::new()),
         })
@@ -75,6 +81,55 @@ impl PermHub {
                 // Ask already returned.
             }
         }
+        let leftover_q: Vec<_> = match self.pending_q.lock() {
+            Ok(mut map) => {
+                let keys: Vec<_> = map
+                    .keys()
+                    .filter(|(sid, _)| sid == session_id)
+                    .cloned()
+                    .collect();
+                keys.into_iter().filter_map(|k| map.remove(&k)).collect()
+            }
+            Err(_poisoned) => Vec::new(),
+        };
+        for reply in leftover_q {
+            if let Err(_gone) = reply.send(Err(QuestionError::Disconnected)) {
+                // Ask already returned.
+            }
+        }
+    }
+
+    pub fn answer_question(
+        &self,
+        session_id: &str,
+        request_id: &str,
+        answers: Option<Vec<QuestionAnswerWire>>,
+        cancelled: bool,
+    ) -> Result<(), String> {
+        let tx = {
+            let mut map = self
+                .pending_q
+                .lock()
+                .map_err(|_| "question map poisoned".to_string())?;
+            map.remove(&(session_id.to_string(), request_id.to_string()))
+        };
+        let Some(tx) = tx else {
+            return Err(format!("unknown question request {request_id}"));
+        };
+        let payload = if cancelled {
+            Err(QuestionError::Cancelled)
+        } else {
+            let wires = answers.unwrap_or_default();
+            Ok(wires
+                .into_iter()
+                .map(|a| QuestionAnswer {
+                    selected: a.selected,
+                    free_text: a.free_text,
+                })
+                .collect())
+        };
+        tx.send(payload)
+            .map_err(|_| "question already timed out".to_string())
     }
 
     pub fn decide(
@@ -180,6 +235,67 @@ impl PermissionPrompter for ServePrompter {
                     map.remove(&(scope.session_id.clone(), request_id));
                 }
                 false
+            }
+        }
+    }
+}
+
+pub struct ServeQuestionPrompter {
+    pub hub: Arc<PermHub>,
+}
+
+#[async_trait]
+impl QuestionPrompter for ServeQuestionPrompter {
+    async fn ask(
+        &self,
+        questions: Vec<QuestionSpec>,
+    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
+        let scope = match RUN.try_with(Clone::clone) {
+            Ok(s) => s,
+            Err(_not_in_run) => return Err(QuestionError::Disconnected),
+        };
+        if scope.auto_approve {
+            return AutoAnswerPrompter.ask(questions).await;
+        }
+
+        let request_id = format!("q-{}", scope.hub.seq.fetch_add(1, Ordering::Relaxed));
+        let (tx, rx) = oneshot::channel();
+        if let Ok(mut map) = scope.hub.pending_q.lock() {
+            map.insert((scope.session_id.clone(), request_id.clone()), tx);
+        } else {
+            return Err(QuestionError::Disconnected);
+        }
+
+        let payload = serde_json::json!(
+            questions
+                .iter()
+                .map(|q| serde_json::json!({
+                    "prompt": q.prompt,
+                    "multi_select": q.multi_select,
+                    "options": q.options.iter().map(|o| serde_json::json!({
+                        "label": o.label,
+                        "description": o.description,
+                    })).collect::<Vec<_>>(),
+                }))
+                .collect::<Vec<_>>()
+        );
+
+        scope.hub.emit(
+            &scope.session_id,
+            TurnEvent::QuestionAsk {
+                request_id: request_id.clone(),
+                questions: payload,
+            },
+        );
+
+        match tokio::time::timeout(Duration::from_secs(300), rx).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(_dropped)) => Err(QuestionError::Disconnected),
+            Err(_timeout) => {
+                if let Ok(mut map) = scope.hub.pending_q.lock() {
+                    map.remove(&(scope.session_id.clone(), request_id));
+                }
+                Err(QuestionError::Timeout)
             }
         }
     }

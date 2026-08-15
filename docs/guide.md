@@ -203,10 +203,12 @@ client.close().await?;
 
 Events on `/v1/sessions/:id/run` are tagged `ev` (`text_delta`, `tool_start`,
 `permission_request`, `turn_done`, …). Unknown tags become `Unknown`.
-`run()` auto-approves tool `Ask`s; `run_events()` does not — answer with
-`respond_to_permission` (`allow` / `allow_always` / `deny`).
-`run_structured` retries until the reply matches a JSON Schema subset
-(`type`, `required`, `properties`). Branch on `SdkError.code`.
+`run()` auto-approves tool `Ask`s and `question`; `run_events()` does not —
+answer with `respond_to_permission` / `respond_to_question`.
+`launch({ inherit_logins: false })` uses a private `WHYCODE_HOME`.
+`get_history` / `peek`, `list_models` / `set_model`, `rename` / `rewind` /
+`compact` are on `/v1`. `run_structured` retries until the reply matches a
+JSON Schema subset. Branch on `SdkError.code`.
 
 Same protocol from Node (zero runtime deps, Node 18+):
 

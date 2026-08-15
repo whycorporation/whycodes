@@ -46,6 +46,8 @@ pub struct AppState {
     pub cancel_flags: Arc<std::sync::Mutex<HashMap<String, CancelFlag>>>,
     /// Permission asks for `/v1` (and auto-approve wrapper for `/api`).
     pub perm: Arc<perm::PermHub>,
+    /// Per-session (provider, model) override from `POST /v1/sessions/:id/model`.
+    pub session_route: Arc<std::sync::Mutex<HashMap<String, (String, String)>>>,
 }
 
 impl AppState {
@@ -126,6 +128,13 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/sessions/:id/run", post(v1::run))
         .route("/v1/sessions/:id/cancel", post(v1::cancel))
         .route("/v1/sessions/:id/permission", post(v1::permission))
+        .route("/v1/sessions/:id/question", post(v1::question))
+        .route("/v1/sessions/:id/messages", get(v1::history))
+        .route("/v1/sessions/:id/model", post(v1::set_model))
+        .route("/v1/sessions/:id/rename", post(v1::rename))
+        .route("/v1/sessions/:id/rewind", post(v1::rewind))
+        .route("/v1/sessions/:id/compact", post(v1::compact))
+        .route("/v1/models", get(v1::list_models))
         // Single param route: id may be bare, `foo.json`, or `foo.md`
         // (axum rejects overlapping `/s/:id` + `/s/:id.json`).
         .route("/s/:id", get(routes::share_dispatch))

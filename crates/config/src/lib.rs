@@ -13,6 +13,17 @@ use whycode_core::types::{
 };
 use whycode_core::{Error, Result};
 
+/// Isolated instance root (`WHYCODE_HOME`). When set, config is
+/// `$WHYCODE_HOME/config.toml` and session/auth data live in `$WHYCODE_HOME`.
+fn whycode_home_override() -> Option<PathBuf> {
+    let raw = std::env::var_os("WHYCODE_HOME")?;
+    if raw.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(raw))
+    }
+}
+
 // Re-export leaf sandbox types so callers that already import `whycode_config`
 // can resolve sandbox policy without a second crate path.
 pub use whycode_core::sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
@@ -1065,6 +1076,9 @@ impl Config {
 
     /// Get default config path
     pub fn default_path() -> Result<PathBuf> {
+        if let Some(home) = whycode_home_override() {
+            return Ok(home.join("config.toml"));
+        }
         let dirs = directories::ProjectDirs::from("com", "whycorporation", "whycode")
             .ok_or_else(|| Error::Config("Cannot find config directory".to_string()))?;
         Ok(dirs.config_dir().join("config.toml"))
@@ -1072,6 +1086,9 @@ impl Config {
 
     /// Get data directory for sessions, caches, etc.
     pub fn data_dir() -> Result<PathBuf> {
+        if let Some(home) = whycode_home_override() {
+            return Ok(home);
+        }
         let dirs = directories::ProjectDirs::from("com", "whycorporation", "whycode")
             .ok_or_else(|| Error::Config("Cannot find data directory".to_string()))?;
         Ok(dirs.data_local_dir().to_path_buf())
@@ -2145,6 +2162,22 @@ impl ToolsConfig {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn whycode_home_overrides_config_and_data_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // env is process-global; this test is the only mutator of WHYCODE_HOME.
+        let prev = std::env::var_os("WHYCODE_HOME");
+        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        let cfg = Config::default_path().expect("config path");
+        let data = Config::data_dir().expect("data dir");
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+        }
+        assert_eq!(cfg, dir.path().join("config.toml"));
+        assert_eq!(data, dir.path());
+    }
 
     fn make_provider(name: &str) -> ProviderConfig {
         ProviderConfig {

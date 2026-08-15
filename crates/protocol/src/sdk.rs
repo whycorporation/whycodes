@@ -138,6 +138,10 @@ pub enum SdkEvent {
         tool_name: String,
         detail: String,
     },
+    QuestionRequest {
+        request_id: String,
+        questions: serde_json::Value,
+    },
     /// Catch-all so a newer daemon does not break an older client.
     #[serde(other)]
     Unknown,
@@ -204,6 +208,78 @@ pub struct ToolCallSummary {
     pub id: String,
     pub name: String,
     pub is_error: bool,
+}
+
+/// One transcript line (`GET /v1/sessions/:id/messages`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HistoryMessage {
+    pub role: String,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionHistory {
+    pub id: String,
+    pub title: String,
+    pub messages: Vec<HistoryMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub provider: String,
+    #[serde(default)]
+    pub default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ModelList {
+    pub models: Vec<ModelInfo>,
+    #[serde(default)]
+    pub providers: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetModelRequest {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenameRequest {
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RewindRequest {
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CompactRequest {
+    #[serde(default)]
+    pub max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionAnswerWire {
+    #[serde(default)]
+    pub selected: Vec<String>,
+    #[serde(default)]
+    pub free_text: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QuestionResponse {
+    pub request_id: String,
+    #[serde(default)]
+    pub answers: Option<Vec<QuestionAnswerWire>>,
+    #[serde(default)]
+    pub cancelled: Option<bool>,
 }
 
 /// `POST /v1/sessions/:id/permission` body.

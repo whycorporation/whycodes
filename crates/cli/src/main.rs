@@ -2840,6 +2840,9 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         } => Some(CiEvent::Status {
             message: format!("permission_request id={request_id} tool={tool_name}"),
         }),
+        TurnEvent::QuestionAsk { request_id, .. } => Some(CiEvent::Status {
+            message: format!("question_request id={request_id}"),
+        }),
         TurnEvent::Panel(update) => Some(CiEvent::Status {
             message: match update {
                 whycode_core::PanelUpdate::Clear => "panel clear".into(),
@@ -3023,7 +3026,7 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
 async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use std::sync::Arc;
-    use whycode_agent::{AutoAnswerPrompter, PermissionPrompter, QuestionPrompter};
+    use whycode_agent::{PermissionPrompter, QuestionPrompter};
 
     let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!(
@@ -3065,7 +3068,9 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         .with_permission_prompter(Arc::new(whycode_server::perm::ServePrompter {
             hub: Arc::clone(&perm),
         }) as Arc<dyn PermissionPrompter>)
-        .with_question_prompter(Arc::new(AutoAnswerPrompter) as Arc<dyn QuestionPrompter>)
+        .with_question_prompter(Arc::new(whycode_server::perm::ServeQuestionPrompter {
+            hub: Arc::clone(&perm),
+        }) as Arc<dyn QuestionPrompter>)
         .with_file_index(file_index)
         .with_plugins(Some(&project_dir))
         .with_mcp(&config)
@@ -3082,6 +3087,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         started_at: std::time::Instant::now(),
         cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
         perm,
+        session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
     let router = whycode_server::create_router(state);
@@ -3095,6 +3101,13 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     println!("    POST /v1/sessions/:id/run    (SSE v1 event stream)");
     println!("    POST /v1/sessions/:id/cancel");
     println!("    POST /v1/sessions/:id/permission");
+    println!("    POST /v1/sessions/:id/question");
+    println!("    GET  /v1/sessions/:id/messages");
+    println!("    GET  /v1/models");
+    println!("    POST /v1/sessions/:id/model");
+    println!("    POST /v1/sessions/:id/rename");
+    println!("    POST /v1/sessions/:id/rewind");
+    println!("    POST /v1/sessions/:id/compact");
     println!("    GET  /api/health             (TUI attach, legacy)");
     println!("    GET  /api/tools");
     println!("    GET  /api/models");

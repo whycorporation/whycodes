@@ -20,7 +20,11 @@ console.log(turn.text);
 await client.close();
 ```
 
-`WhycodeClient.launch()` spawns a private `whycode serve` (inherits env / API keys). Branch on `SdkError.code`. Unknown `ev` values become `{ ev: "unknown" }`.
+`WhycodeClient.launch()` spawns a private `whycode serve`. Pass
+`inheritLogins: false` for a private `WHYCODE_HOME` (no user API keys).
+`getHistory` / `peek`, `listModels` / `setModel`, `renameSession` /
+`rewind` / `compact` are first-class. Branch on `SdkError.code`.
+Unknown `ev` values become `{ ev: "unknown" }`.
 
 `run()` auto-approves tool `Ask`s. `runEvents()` emits `permission_request`; answer with `respondToPermission(sessionId, requestId, "allow" | "allow_always" | "deny")`.
 
