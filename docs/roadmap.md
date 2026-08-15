@@ -3,11 +3,14 @@
 Current focus and standing decisions. Completed phase plans live under
 [archive/](archive/README.md) — do not treat them as open work.
 
-Last updated: **2026-08-14**.
+Last updated: **2026-08-15**.
 
 ## Now
 
 Nothing open. Later stays later.
+
+SDK protocol v1 (`whycode serve` `/v1/*`, Rust `whycode-sdk`,
+`sdk/typescript`) shipped. Not on the public npm registry yet.
 
 ## Later
 

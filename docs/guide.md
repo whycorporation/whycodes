@@ -351,9 +351,14 @@ mode = "primary"
 Layers, each overriding the one above:
 
 1. Built-in defaults
-2. Global `config.toml`
+2. Global `config.toml` (platform config dir, or `$WHYCODE_HOME/config.toml`)
 3. Project `.whycode/config.toml`
 4. `WHYCODE_*` environment variables
+
+`WHYCODE_HOME`, when set, is the instance root: config, sessions, auth,
+memory, skills and the browser profile all live under it. `whycode debug`
+prints the resolved paths. Isolated SDK `launch({ inherit_logins: false })`
+sets this automatically.
 
 Project instructions belong in `AGENTS.md` at the repository root (`/init`
 generates one). It is injected into the system prompt automatically.

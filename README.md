@@ -76,7 +76,7 @@ not a frames-per-second race.
 
 | Doc | What it is |
 |---|---|
-| [docs/guide.md](docs/guide.md) | Usage: CLI, TUI, agents, tools, config |
+| [docs/guide.md](docs/guide.md) | Usage: CLI, TUI, agents, tools, config, SDK |
 | [docs/auth.md](docs/auth.md) | API keys, OAuth, credential import |
 | [docs/architecture.md](docs/architecture.md) | Crate map and layering |
 | [docs/roadmap.md](docs/roadmap.md) | Current focus and deferred work |
