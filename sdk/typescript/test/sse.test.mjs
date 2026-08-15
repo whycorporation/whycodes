@@ -22,3 +22,16 @@ test("bad json becomes unknown", () => {
   const ev = decodeSsePayload("not-json");
   assert.equal(ev.ev, "unknown");
 });
+
+test("permission_request parses", () => {
+  const ev = parseSdkEvent({
+    ev: "permission_request",
+    request_id: "perm-1",
+    tool_name: "bash",
+    detail: "ls",
+  });
+  assert.equal(ev.ev, "permission_request");
+  if (ev.ev === "permission_request") {
+    assert.equal(ev.request_id, "perm-1");
+  }
+});

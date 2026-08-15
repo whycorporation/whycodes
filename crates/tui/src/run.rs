@@ -3109,6 +3109,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             );
             app.mark_dirty();
         }
+        TurnEvent::PermissionAsk { .. } => {}
         TurnEvent::FileStale {
             path,
             reader,

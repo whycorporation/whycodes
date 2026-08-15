@@ -38,6 +38,8 @@ pub enum ErrorCode {
     StartupTimeout,
     UnsupportedVersion,
     Cancelled,
+    StructuredSchemaInvalid,
+    StructuredOutputInvalid,
 }
 
 impl std::fmt::Display for ErrorCode {
@@ -60,6 +62,8 @@ impl ErrorCode {
             Self::StartupTimeout => "startup_timeout",
             Self::UnsupportedVersion => "unsupported_version",
             Self::Cancelled => "cancelled",
+            Self::StructuredSchemaInvalid => "structured_schema_invalid",
+            Self::StructuredOutputInvalid => "structured_output_invalid",
         }
     }
 }
@@ -129,6 +133,11 @@ pub enum SdkEvent {
         status: String,
         summary: String,
     },
+    PermissionRequest {
+        request_id: String,
+        tool_name: String,
+        detail: String,
+    },
     /// Catch-all so a newer daemon does not break an older client.
     #[serde(other)]
     Unknown,
@@ -174,6 +183,10 @@ pub struct RunRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub max_turns: Option<usize>,
+    /// When true, the daemon allows every `Ask` without emitting
+    /// [`SdkEvent::PermissionRequest`]. Default false.
+    #[serde(default)]
+    pub auto_approve: Option<bool>,
 }
 
 /// Collected turn (what `WhycodeClient::run` returns).
@@ -191,6 +204,162 @@ pub struct ToolCallSummary {
     pub id: String,
     pub name: String,
     pub is_error: bool,
+}
+
+/// `POST /v1/sessions/:id/permission` body.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PermissionResponse {
+    pub request_id: String,
+    pub decision: PermissionDecision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PermissionDecision {
+    Allow,
+    AllowAlways,
+    Deny,
+}
+
+/// One try inside [`crate::StructuredResult`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StructuredAttempt {
+    pub text: String,
+    pub ok: bool,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StructuredResult {
+    pub data: serde_json::Value,
+    pub attempts: Vec<StructuredAttempt>,
+}
+
+/// Pull the first JSON value out of model text (raw, fenced, or wrapped).
+pub fn extract_json(text: &str) -> Result<serde_json::Value, String> {
+    let trimmed = text.trim();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Ok(v);
+    }
+    if let Some(inner) = fenced_json(trimmed)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(inner)
+    {
+        return Ok(v);
+    }
+    if let Some(slice) = first_json_slice(trimmed)
+        && let Ok(v) = serde_json::from_str::<serde_json::Value>(slice)
+    {
+        return Ok(v);
+    }
+    Err("no JSON object or array in the model text".into())
+}
+
+fn fenced_json(text: &str) -> Option<&str> {
+    let start = text.find("```")?;
+    let after = &text[start + 3..];
+    let rest = after
+        .strip_prefix("json")
+        .or_else(|| after.strip_prefix("JSON"))
+        .unwrap_or(after);
+    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    let end = rest.find("```")?;
+    Some(rest[..end].trim())
+}
+
+fn first_json_slice(text: &str) -> Option<&str> {
+    let bytes = text.as_bytes();
+    let start = bytes.iter().position(|b| *b == b'{' || *b == b'[')?;
+    let open = bytes[start];
+    let close = if open == b'{' { b'}' } else { b']' };
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut escape = false;
+    for (i, b) in bytes.iter().enumerate().skip(start) {
+        if in_str {
+            if escape {
+                escape = false;
+            } else if *b == b'\\' {
+                escape = true;
+            } else if *b == b'"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match *b {
+            b'"' => in_str = true,
+            b if b == open => depth += 1,
+            b if b == close => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..=i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Subset of JSON Schema used by `run_structured`: `type`, `required`, `properties`.
+pub fn validate_schema(schema: &serde_json::Value) -> Result<(), String> {
+    if !schema.is_object() {
+        return Err("schema must be a JSON object".into());
+    }
+    Ok(())
+}
+
+pub fn validate_instance(schema: &serde_json::Value, value: &serde_json::Value) -> Vec<String> {
+    let mut errors = Vec::new();
+    validate_at(schema, value, "$", &mut errors);
+    errors
+}
+
+fn validate_at(
+    schema: &serde_json::Value,
+    value: &serde_json::Value,
+    path: &str,
+    errors: &mut Vec<String>,
+) {
+    if let Some(expected) = schema.get("type").and_then(|t| t.as_str()) {
+        let ok = match expected {
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            "string" => value.is_string(),
+            "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+            "number" => value.is_number(),
+            "boolean" => value.is_boolean(),
+            "null" => value.is_null(),
+            _ => true,
+        };
+        if !ok {
+            errors.push(format!("{path}: expected {expected}"));
+            return;
+        }
+    }
+    if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
+        for field in required {
+            if let Some(name) = field.as_str()
+                && value.get(name).is_none()
+            {
+                errors.push(format!("{path}: missing required {name}"));
+            }
+        }
+    }
+    if let (Some(props), Some(obj)) = (
+        schema.get("properties").and_then(|p| p.as_object()),
+        value.as_object(),
+    ) {
+        for (key, sub) in props {
+            if let Some(child) = obj.get(key) {
+                validate_at(sub, child, &format!("{path}.{key}"), errors);
+            }
+        }
+    }
+    if let (Some(item_schema), Some(arr)) = (schema.get("items"), value.as_array()) {
+        for (i, item) in arr.iter().enumerate() {
+            validate_at(item_schema, item, &format!("{path}[{i}]"), errors);
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -240,5 +409,26 @@ mod tests {
         };
         let v = serde_json::to_value(&h).unwrap();
         assert_eq!(v["protocol"], 1);
+    }
+
+    #[test]
+    fn extracts_fenced_and_wrapped_json() {
+        let v = extract_json("```json\n{\"a\":1}\n```").unwrap();
+        assert_eq!(v["a"], 1);
+        let v = extract_json("here you go {\"ok\":true} thanks").unwrap();
+        assert_eq!(v["ok"], true);
+    }
+
+    #[test]
+    fn validates_required_and_types() {
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "type": "string" }, "n": { "type": "integer" } }
+        });
+        assert!(validate_instance(&schema, &serde_json::json!({"name":"x","n":2})).is_empty());
+        let errs = validate_instance(&schema, &serde_json::json!({"n":"no"}));
+        assert!(errs.iter().any(|e| e.contains("missing required name")));
+        assert!(errs.iter().any(|e| e.contains("expected integer")));
     }
 }

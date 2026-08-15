@@ -7,8 +7,10 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use tokio::process::{Child, Command};
 use whycode_protocol::sdk::{
-    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, RunRequest, SdkEvent, SessionInfo,
-    SessionList, ToolCallSummary, TurnResult, UsageSnapshot,
+    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, PermissionDecision,
+    PermissionResponse, RunRequest, SdkEvent, SessionInfo, SessionList, StructuredAttempt,
+    StructuredResult, ToolCallSummary, TurnResult, UsageSnapshot, extract_json, validate_instance,
+    validate_schema,
 };
 
 use crate::SdkError;
@@ -41,6 +43,9 @@ pub struct RunOptions {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub max_turns: Option<usize>,
+    /// When `None`, [`WhycodeClient::run`] defaults to `true` (scripts) and
+    /// [`WhycodeClient::run_events`] defaults to `false` (interactive UIs).
+    pub auto_approve: Option<bool>,
 }
 
 /// Connection to a `whycode serve` process.
@@ -178,12 +183,17 @@ impl WhycodeClient {
     }
 
     /// Run one turn and collect the result. Use [`Self::run_events`] for a live UI.
+    ///
+    /// Defaults `auto_approve` to true so scripts do not hang on `Ask`.
     pub async fn run(
         &self,
         session_id: &str,
         message: impl Into<String>,
-        opts: RunOptions,
+        mut opts: RunOptions,
     ) -> Result<TurnResult, SdkError> {
+        if opts.auto_approve.is_none() {
+            opts.auto_approve = Some(true);
+        }
         let mut text = String::new();
         let mut tool_calls = Vec::new();
         let mut tool_names: Vec<(String, String)> = Vec::new();
@@ -256,6 +266,7 @@ impl WhycodeClient {
             provider: opts.provider,
             model: opts.model,
             max_turns: opts.max_turns,
+            auto_approve: opts.auto_approve,
         };
         let res = self.http.post(&url).json(&req).send().await?;
         if res.status() == reqwest::StatusCode::NOT_FOUND {
@@ -275,6 +286,102 @@ impl WhycodeClient {
             buf: String::new(),
             done: false,
         })
+    }
+
+    /// Answer a [`SdkEvent::PermissionRequest`].
+    pub async fn respond_to_permission(
+        &self,
+        session_id: &str,
+        request_id: impl Into<String>,
+        decision: PermissionDecision,
+    ) -> Result<(), SdkError> {
+        let url = format!("{}/v1/sessions/{session_id}/permission", self.base);
+        let req = PermissionResponse {
+            request_id: request_id.into(),
+            decision,
+        };
+        let res = self.http.post(&url).json(&req).send().await?;
+        if res.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(SdkError::new(
+                ErrorCode::UnknownSession,
+                "unknown permission request",
+            ));
+        }
+        if !res.status().is_success() {
+            return Err(status_error(res.status(), "permission"));
+        }
+        Ok(())
+    }
+
+    /// Run turns until the model returns JSON that matches `schema`.
+    ///
+    /// `max_retries` extra corrective turns after the first (default 2).
+    pub async fn run_structured(
+        &self,
+        session_id: &str,
+        message: impl Into<String>,
+        schema: serde_json::Value,
+        opts: RunOptions,
+        max_retries: Option<u32>,
+    ) -> Result<StructuredResult, SdkError> {
+        if let Err(e) = validate_schema(&schema) {
+            return Err(SdkError::new(ErrorCode::StructuredSchemaInvalid, e));
+        }
+        let retries = max_retries.unwrap_or(2);
+        let schema_txt =
+            serde_json::to_string_pretty(&schema).unwrap_or_else(|_| schema.to_string());
+        let mut prompt = format!(
+            "{}\n\nReply with a single JSON value that validates against this schema. \
+             No markdown, no commentary.\n{schema_txt}",
+            message.into()
+        );
+        let mut attempts = Vec::new();
+        for i in 0..=retries {
+            let turn = self.run(session_id, prompt.clone(), opts.clone()).await?;
+            match extract_json(&turn.text) {
+                Ok(data) => {
+                    let errors = validate_instance(&schema, &data);
+                    let ok = errors.is_empty();
+                    attempts.push(StructuredAttempt {
+                        text: turn.text.clone(),
+                        ok,
+                        errors: errors.clone(),
+                    });
+                    if ok {
+                        return Ok(StructuredResult { data, attempts });
+                    }
+                    if i == retries {
+                        return Err(SdkError::new(
+                            ErrorCode::StructuredOutputInvalid,
+                            errors.join("; "),
+                        ));
+                    }
+                    prompt = format!(
+                        "Your previous reply was not valid JSON for the schema.\nErrors:\n- {}\n\
+                         Reply again with only the JSON value.",
+                        errors.join("\n- ")
+                    );
+                }
+                Err(e) => {
+                    attempts.push(StructuredAttempt {
+                        text: turn.text.clone(),
+                        ok: false,
+                        errors: vec![e.clone()],
+                    });
+                    if i == retries {
+                        return Err(SdkError::new(ErrorCode::StructuredOutputInvalid, e));
+                    }
+                    prompt = format!(
+                        "Your previous reply was not parseable JSON ({e}). \
+                         Reply again with only the JSON value matching the schema."
+                    );
+                }
+            }
+        }
+        Err(SdkError::new(
+            ErrorCode::StructuredOutputInvalid,
+            "exhausted structured retries",
+        ))
     }
 
     /// Ask the daemon to cancel an in-flight run.

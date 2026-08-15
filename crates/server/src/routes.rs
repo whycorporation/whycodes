@@ -18,6 +18,7 @@ use whycode_agent::events::TurnEvent;
 use whycode_session::session::Session;
 
 use crate::AppState;
+use crate::perm::{RUN, RunScope};
 
 /// Resolve share file directories: project .whycode/shares + global data dir shares.
 fn share_search_dirs() -> Vec<PathBuf> {
@@ -343,25 +344,34 @@ pub async fn chat(
     let max_turns = req.max_turns.unwrap_or(state.max_turns).max(1);
     let agent = Arc::clone(&state.agent);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+    let scope = RunScope {
+        session_id: session_id.clone(),
+        auto_approve: true,
+        hub: Arc::clone(&state.perm),
+    };
 
     // Run the agent turn on a task so the SSE stream can forward events.
     let chat_task = tokio::spawn(async move {
-        let mut session = handle.lock().await;
-        session.add_user_message(&req.message);
-        let result = agent
-            .run_turn_with_events(
-                &mut session,
-                &provider,
-                &model,
-                &api_key,
-                max_turns,
-                Some(tx.clone()),
-                None,
-            )
+        let result = RUN
+            .scope(scope, async {
+                let mut session = handle.lock().await;
+                session.add_user_message(&req.message);
+                agent
+                    .run_turn_with_events(
+                        &mut session,
+                        &provider,
+                        &model,
+                        &api_key,
+                        max_turns,
+                        Some(tx.clone()),
+                        None,
+                    )
+                    .await
+            })
             .await;
         // Persist after the turn (best-effort).
         if let Some(db) = AppState::open_db()
-            && let Err(e) = session.save_to_db(&db)
+            && let Err(e) = handle.lock().await.save_to_db(&db)
         {
             tracing::warn!(error = %e, "serve: failed to save session after chat");
         }
@@ -527,6 +537,18 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "path": path,
                 "reader": reader,
                 "writer": writer,
+            })
+        }
+        TurnEvent::PermissionAsk {
+            request_id,
+            tool_name,
+            detail,
+        } => {
+            serde_json::json!({
+                "type": "permission_request",
+                "request_id": request_id,
+                "tool_name": tool_name,
+                "detail": detail,
             })
         }
         TurnEvent::Panel(update) => match update {

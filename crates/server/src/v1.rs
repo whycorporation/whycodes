@@ -14,11 +14,12 @@ use axum::{
 use futures::stream::Stream;
 use whycode_agent::events::{TurnEvent, new_cancel_flag};
 use whycode_protocol::sdk::{
-    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, RunRequest, SdkEvent, SessionInfo,
-    SessionList,
+    CreateSessionRequest, ErrorCode, Handshake, PROTOCOL_MAJOR, PermissionResponse, RunRequest,
+    SdkEvent, SessionInfo, SessionList,
 };
 
 use crate::AppState;
+use crate::perm::{RUN, RunScope};
 use crate::routes::{
     default_provider_model, load_or_get_session, resolve_api_key, system_prompt_for,
 };
@@ -125,6 +126,18 @@ pub async fn cancel(State(state): State<AppState>, Path(id): Path<String>) -> St
     }
 }
 
+pub async fn permission(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<PermissionResponse>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    state
+        .perm
+        .decide(&id, &req.request_id, req.decision)
+        .map(|()| StatusCode::NO_CONTENT)
+        .map_err(|e| (StatusCode::NOT_FOUND, e))
+}
+
 pub async fn run(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -171,34 +184,46 @@ pub async fn run(
     }
 
     let max_turns = req.max_turns.unwrap_or(state.max_turns).max(1);
+    let auto_approve = req.auto_approve.unwrap_or(false);
     let agent = Arc::clone(&state.agent);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let cancel = new_cancel_flag();
     state.register_cancel(&session_id, Arc::clone(&cancel));
+    state.perm.register_run(&session_id, tx.clone());
     let cancel_for_task = Arc::clone(&cancel);
     let sid = session_id.clone();
     let state_done = state.clone();
+    let scope = RunScope {
+        session_id: session_id.clone(),
+        auto_approve,
+        hub: Arc::clone(&state.perm),
+    };
 
     let run_task = tokio::spawn(async move {
-        let mut session = handle.lock().await;
-        session.add_user_message(&req.message);
-        let result = agent
-            .run_turn_with_events(
-                &mut session,
-                &provider,
-                &model,
-                &api_key,
-                max_turns,
-                Some(tx.clone()),
-                Some(cancel_for_task),
-            )
+        let result = RUN
+            .scope(scope, async {
+                let mut session = handle.lock().await;
+                session.add_user_message(&req.message);
+                agent
+                    .run_turn_with_events(
+                        &mut session,
+                        &provider,
+                        &model,
+                        &api_key,
+                        max_turns,
+                        Some(tx.clone()),
+                        Some(cancel_for_task),
+                    )
+                    .await
+            })
             .await;
         if let Some(db) = AppState::open_db()
-            && let Err(e) = session.save_to_db(&db)
+            && let Err(e) = handle.lock().await.save_to_db(&db)
         {
             tracing::warn!(error = %e, "v1: failed to save session after run");
         }
         state_done.take_cancel(&sid);
+        state_done.perm.finish_run(&sid);
         result
     });
 
@@ -308,6 +333,15 @@ pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
             id: id.clone(),
             status: status.clone(),
             summary: summary.clone(),
+        },
+        TurnEvent::PermissionAsk {
+            request_id,
+            tool_name,
+            detail,
+        } => SdkEvent::PermissionRequest {
+            request_id: request_id.clone(),
+            tool_name: tool_name.clone(),
+            detail: detail.clone(),
         },
         // TUI-only chrome — not part of the public v1 contract.
         TurnEvent::EnqueuePrompt { .. }

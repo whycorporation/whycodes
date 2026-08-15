@@ -2833,6 +2833,13 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         } => Some(CiEvent::Status {
             message: format!("file_stale path={path} reader={reader} writer={writer}"),
         }),
+        TurnEvent::PermissionAsk {
+            request_id,
+            tool_name,
+            ..
+        } => Some(CiEvent::Status {
+            message: format!("permission_request id={request_id} tool={tool_name}"),
+        }),
         TurnEvent::Panel(update) => Some(CiEvent::Status {
             message: match update {
                 whycode_core::PanelUpdate::Clear => "panel clear".into(),
@@ -3016,9 +3023,7 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
 async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use std::sync::Arc;
-    use whycode_agent::{
-        AutoAnswerPrompter, AutoApprovePrompter, PermissionPrompter, QuestionPrompter,
-    };
+    use whycode_agent::{AutoAnswerPrompter, PermissionPrompter, QuestionPrompter};
 
     let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!(
@@ -3051,11 +3056,15 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
             top_p: None,
         });
 
-    // Headless: auto-approve permissions / questions (no TUI channel).
+    // Permissions: `/v1` can prompt the SDK client; `/api` chat wraps
+    // auto-approve so TUI `connect` stays unattended.
+    let perm = whycode_server::perm::PermHub::new();
     let file_index = whycode_index::WorkspaceIndex::start(vec![project_dir.clone()]);
     let agent = Agent::new(agent_info)
         .with_config(&config)
-        .with_permission_prompter(Arc::new(AutoApprovePrompter) as Arc<dyn PermissionPrompter>)
+        .with_permission_prompter(Arc::new(whycode_server::perm::ServePrompter {
+            hub: Arc::clone(&perm),
+        }) as Arc<dyn PermissionPrompter>)
         .with_question_prompter(Arc::new(AutoAnswerPrompter) as Arc<dyn QuestionPrompter>)
         .with_file_index(file_index)
         .with_plugins(Some(&project_dir))
@@ -3072,6 +3081,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         index_warm: true,
         started_at: std::time::Instant::now(),
         cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        perm,
     };
 
     let router = whycode_server::create_router(state);
@@ -3084,6 +3094,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     println!("    GET  /v1/sessions/:id");
     println!("    POST /v1/sessions/:id/run    (SSE v1 event stream)");
     println!("    POST /v1/sessions/:id/cancel");
+    println!("    POST /v1/sessions/:id/permission");
     println!("    GET  /api/health             (TUI attach, legacy)");
     println!("    GET  /api/tools");
     println!("    GET  /api/models");

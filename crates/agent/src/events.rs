@@ -81,6 +81,12 @@ pub enum TurnEvent {
         reader: String,
         writer: String,
     },
+    /// Daemon asked the SDK client to allow or deny a tool (`Ask` policy).
+    PermissionAsk {
+        request_id: String,
+        tool_name: String,
+        detail: String,
+    },
 }
 
 /// Optional sink for turn events (TUI, logging, etc.).
