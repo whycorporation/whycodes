@@ -18,7 +18,6 @@ whycode-plugin = { path = "../plugin" }
 whycode-lsp = { path = "../lsp" }
 whycode-sandbox = { path = "../sandbox" }
 whycode-memory = { path = "../memory" }
-directories.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

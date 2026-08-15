@@ -13,17 +13,6 @@ use whycode_core::types::{
 };
 use whycode_core::{Error, Result};
 
-/// Isolated instance root (`WHYCODE_HOME`). When set, config is
-/// `$WHYCODE_HOME/config.toml` and session/auth data live in `$WHYCODE_HOME`.
-fn whycode_home_override() -> Option<PathBuf> {
-    let raw = std::env::var_os("WHYCODE_HOME")?;
-    if raw.is_empty() {
-        None
-    } else {
-        Some(PathBuf::from(raw))
-    }
-}
-
 // Re-export leaf sandbox types so callers that already import `whycode_config`
 // can resolve sandbox policy without a second crate path.
 pub use whycode_core::sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
@@ -1076,22 +1065,12 @@ impl Config {
 
     /// Get default config path
     pub fn default_path() -> Result<PathBuf> {
-        if let Some(home) = whycode_home_override() {
-            return Ok(home.join("config.toml"));
-        }
-        let dirs = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-            .ok_or_else(|| Error::Config("Cannot find config directory".to_string()))?;
-        Ok(dirs.config_dir().join("config.toml"))
+        Ok(whycode_core::paths::config_file())
     }
 
     /// Get data directory for sessions, caches, etc.
     pub fn data_dir() -> Result<PathBuf> {
-        if let Some(home) = whycode_home_override() {
-            return Ok(home);
-        }
-        let dirs = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-            .ok_or_else(|| Error::Config("Cannot find data directory".to_string()))?;
-        Ok(dirs.data_local_dir().to_path_buf())
+        Ok(whycode_core::paths::data_dir())
     }
 
     // ── Layered config loading ──────────────────────────────────────────

@@ -31,7 +31,6 @@ futures.workspace = true
 async-stream.workspace = true
 async-trait = "0.1"
 chrono.workspace = true
-directories.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

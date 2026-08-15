@@ -4,8 +4,11 @@ Thin TypeScript client for [`whycode serve`](../../docs/guide.md). Same protocol
 
 Requires Node 18+. Zero runtime dependencies.
 
+Not on the public npm registry yet. From a clone:
+
 ```bash
-npm install @whycorporation/whycode-sdk
+cd sdk/typescript && npm ci && npm run build
+# or npm pack / npm publish when the @whycorporation scope is ready
 # daemon
 whycode serve
 ```

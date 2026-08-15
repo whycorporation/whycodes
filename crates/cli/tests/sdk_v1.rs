@@ -115,10 +115,12 @@ async fn v1_session_models_and_errors_without_llm() {
 async fn launch_isolated_home_does_not_need_user_keys() {
     let bin = env!("CARGO_BIN_EXE_whycode");
     let work = tempfile::tempdir().expect("work");
+    let home = tempfile::tempdir().expect("home");
     let client = WhycodeClient::launch(LaunchOptions {
         working_dir: work.path().to_path_buf(),
         binary: Some(bin.into()),
         inherit_logins: false,
+        home: Some(home.path().to_path_buf()),
         startup_timeout: Duration::from_secs(20),
         ..Default::default()
     })
@@ -127,5 +129,14 @@ async fn launch_isolated_home_does_not_need_user_keys() {
 
     let hs = client.health().await.expect("health");
     assert_eq!(hs.protocol, 1);
+    let session = client
+        .create_session(Some(work.path().display().to_string()))
+        .await
+        .expect("create");
+    assert!(
+        home.path().join("whycode.db").exists(),
+        "isolated WHYCODE_HOME should hold the session db"
+    );
+    let _ = session;
     client.close().await.expect("close");
 }

@@ -3,6 +3,7 @@ pub mod file_claims;
 pub mod logging;
 pub mod network;
 pub mod panel;
+pub mod paths;
 pub mod sandbox;
 pub mod swarm_hub;
 pub mod tool;

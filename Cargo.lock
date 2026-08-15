@@ -3977,7 +3977,6 @@ dependencies = [
  "async-stream",
  "async-trait",
  "chrono",
- "directories",
  "futures",
  "serde",
  "serde_json",
@@ -4072,7 +4071,6 @@ name = "whycode-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "directories",
  "serde",
  "serde_json",
  "tempfile",
@@ -4089,6 +4087,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "directories",
  "serde",
  "serde_json",
  "tempfile",
@@ -4316,7 +4315,6 @@ name = "whycode-skill"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "directories",
  "glob",
  "serde",
  "serde_json",
@@ -4349,7 +4347,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
- "directories",
  "futures",
  "glob",
  "regex",

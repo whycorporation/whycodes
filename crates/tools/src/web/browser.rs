@@ -180,9 +180,7 @@ fn status() -> ToolResult {
 }
 
 fn user_data_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .map(|d| d.data_local_dir().join("browser-profile"))
-        .unwrap_or_else(|| PathBuf::from(".whycode-browser"))
+    whycode_core::paths::data_dir().join("browser-profile")
 }
 
 fn ensure_session() -> Result<u16, String> {
