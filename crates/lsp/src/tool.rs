@@ -278,3 +278,66 @@ impl Tool for LspTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whycode_core::tool::ToolContext;
+
+    #[test]
+    fn describes_itself() {
+        let tool = LspTool::new();
+        assert_eq!(tool.name(), "lsp");
+        assert!(tool.description().contains("diagnostics"));
+        let p = tool.parameters();
+        assert_eq!(p["properties"]["action"]["enum"][0], "diagnostics");
+        assert_eq!(p["properties"]["action"]["enum"][3], "references");
+        assert!(
+            p["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("file_path"))
+        );
+    }
+
+    #[tokio::test]
+    async fn requires_file_path() {
+        let tool = LspTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let result = tool.execute(json!({ "action": "diagnostics" }), &ctx).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("file_path"));
+    }
+
+    #[tokio::test]
+    async fn errors_when_the_extension_cannot_be_determined() {
+        let tool = LspTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let result = tool
+            .execute(
+                json!({ "action": "diagnostics", "file_path": "/tmp/README" }),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(result.content.contains("file extension"));
+    }
+
+    #[tokio::test]
+    async fn reports_missing_language_server_for_unknown_extension() {
+        let tool = LspTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let result = tool
+            .execute(
+                json!({ "action": "diagnostics", "file_path": "/tmp/x.zzz" }),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(
+            result
+                .content
+                .contains("No language server configured for '.zzz'")
+        );
+    }
+}

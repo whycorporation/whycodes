@@ -550,4 +550,99 @@ mod tests {
             .is_none()
         );
     }
+
+    #[test]
+    fn maps_every_wire_event() {
+        use whycode_core::PanelUpdate;
+
+        assert!(matches!(
+            from_turn_event(&TurnEvent::ToolStart {
+                id: "t1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({})
+            }),
+            Some(SdkEvent::ToolStart { name, .. }) if name == "bash"
+        ));
+        assert!(matches!(
+            from_turn_event(&TurnEvent::ToolEnd {
+                id: "t1".into(),
+                content: "ok".into(),
+                is_error: false
+            }),
+            Some(SdkEvent::ToolEnd { content, .. }) if content == "ok"
+        ));
+        assert!(matches!(
+            from_turn_event(&TurnEvent::Cancelled),
+            Some(SdkEvent::Cancelled)
+        ));
+        assert!(matches!(
+            from_turn_event(&TurnEvent::Status("busy".into())),
+            Some(SdkEvent::Status { message }) if message == "busy"
+        ));
+        assert!(matches!(
+            from_turn_event(&TurnEvent::PermissionAsk {
+                request_id: "perm-1".into(),
+                tool_name: "bash".into(),
+                detail: "run".into()
+            }),
+            Some(SdkEvent::PermissionRequest { tool_name, .. }) if tool_name == "bash"
+        ));
+        assert!(matches!(
+            from_turn_event(&TurnEvent::QuestionAsk {
+                request_id: "q-1".into(),
+                questions: serde_json::json!([])
+            }),
+            Some(SdkEvent::QuestionRequest { request_id, .. }) if request_id == "q-1"
+        ));
+
+        // TUI-only chrome is not part of the v1 contract.
+        assert!(from_turn_event(&TurnEvent::Panel(PanelUpdate::Clear)).is_none());
+        assert!(
+            from_turn_event(&TurnEvent::SwarmMessage {
+                from: "a".into(),
+                to: "b".into(),
+                text: "hi".into()
+            })
+            .is_none()
+        );
+        assert!(
+            from_turn_event(&TurnEvent::FileStale {
+                path: "p".into(),
+                reader: "r".into(),
+                writer: "w".into()
+            })
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn history_from_session_maps_roles_and_limits() {
+        let mut s = whycode_session::session::Session::new("/tmp".into(), "sys".into());
+        s.add_user_message("first");
+        s.add_user_message("second");
+
+        let full = history_from_session(&s, None);
+        assert_eq!(full.messages.len(), 2);
+        assert_eq!(full.messages[0].role, "user");
+        assert_eq!(full.messages[0].content, "first");
+
+        let limited = history_from_session(&s, Some(1));
+        assert_eq!(limited.messages.len(), 1);
+        assert_eq!(limited.messages[0].content, "second");
+    }
+
+    #[tokio::test]
+    async fn session_or_default_model_prefers_route_override() {
+        let state = crate::test_state();
+        let (p, m) = session_or_default_model(&state, "no-such-session");
+        let (dp, dm) = default_provider_model(&state.config);
+        assert_eq!((p, m), (dp, dm));
+
+        let state2 = crate::test_state();
+        if let Ok(mut map) = state2.session_route.lock() {
+            map.insert("s1".into(), ("openai".into(), "gpt-4o".into()));
+        }
+        let (p2, m2) = session_or_default_model(&state2, "s1");
+        assert_eq!((p2.as_str(), m2.as_str()), ("openai", "gpt-4o"));
+    }
 }

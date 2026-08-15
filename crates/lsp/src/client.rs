@@ -379,3 +379,54 @@ pub fn language_id_for_extension(ext: &str) -> &'static str {
 fn line_strip_prefix<'a>(prefix: &str, line: &'a str) -> Option<&'a str> {
     line.strip_prefix(prefix)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn known_extensions_resolve_to_a_language_server() {
+        assert_eq!(
+            language_server_for_extension("rs"),
+            Some(("rust-analyzer", vec![]))
+        );
+        assert_eq!(language_server_for_extension("py"), Some(("pylsp", vec![])));
+        assert_eq!(
+            language_server_for_extension("ts"),
+            Some(("typescript-language-server", vec!["--stdio"]))
+        );
+        assert_eq!(language_server_for_extension("go"), Some(("gopls", vec![])));
+        assert_eq!(
+            language_server_for_extension("cs"),
+            Some(("omnisharp", vec!["--languageserver"]))
+        );
+    }
+
+    #[test]
+    fn unknown_extensions_have_no_language_server() {
+        assert_eq!(language_server_for_extension("xyz"), None);
+        assert_eq!(language_server_for_extension(""), None);
+        assert_eq!(language_server_for_extension("exe"), None);
+    }
+
+    #[test]
+    fn extension_maps_to_language_id() {
+        assert_eq!(language_id_for_extension("rs"), "rust");
+        assert_eq!(language_id_for_extension("py"), "python");
+        assert_eq!(language_id_for_extension("tsx"), "typescriptreact");
+        assert_eq!(language_id_for_extension("h"), "c");
+        assert_eq!(language_id_for_extension("hpp"), "cpp");
+        assert_eq!(language_id_for_extension("md"), "markdown");
+        assert_eq!(language_id_for_extension("sh"), "shellscript");
+        assert_eq!(language_id_for_extension("zzz"), "plaintext");
+    }
+
+    #[test]
+    fn strips_content_length_prefix() {
+        assert_eq!(
+            line_strip_prefix("Content-Length: ", "Content-Length: 123"),
+            Some("123")
+        );
+        assert_eq!(line_strip_prefix("Content-Length: ", "foo"), None);
+    }
+}

@@ -684,3 +684,74 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use whycode_config::Config;
+    use whycode_core::types::{ModelConfig, ProviderConfig};
+
+    #[test]
+    fn html_escape_escapes_special_chars() {
+        assert_eq!(html_escape("a & b < c > d"), "a &amp; b &lt; c &gt; d");
+        assert_eq!(html_escape("plain"), "plain");
+        assert_eq!(html_escape(""), "");
+    }
+
+    fn model(provider: &str, id: &str) -> ModelConfig {
+        ModelConfig {
+            model_id: id.into(),
+            provider_id: provider.into(),
+            max_tokens: None,
+            context_window: None,
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: None,
+            supports_images: None,
+        }
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn default_model_wins_when_configured() {
+        let mut c = Config::default();
+        c.default_model = Some(model("openai", "gpt-4o"));
+        let (p, m) = default_provider_model(&c);
+        assert_eq!((p.as_str(), m.as_str()), ("openai", "gpt-4o"));
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn first_provider_is_the_fallback_without_a_default_model() {
+        let mut c = Config::default();
+        c.default_model = None;
+        c.providers.insert(
+            "groq".into(),
+            ProviderConfig {
+                name: "groq".into(),
+                api_key: None,
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: Vec::new(),
+                tool_arguments: None,
+                extra: HashMap::new(),
+            },
+        );
+        let (p, m) = default_provider_model(&c);
+        assert_eq!(p, "groq");
+        assert_eq!(m, "default");
+    }
+
+    #[test]
+    fn hardcoded_fallback_when_nothing_is_configured() {
+        let c = Config::default();
+        let (p, m) = default_provider_model(&c);
+        assert_eq!(
+            (p.as_str(), m.as_str()),
+            ("anthropic", "claude-sonnet-4-20250514")
+        );
+    }
+}

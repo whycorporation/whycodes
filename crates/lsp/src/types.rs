@@ -281,3 +281,173 @@ pub struct PublishDiagnosticsParams {
     pub uri: String,
     pub diagnostics: Vec<Diagnostic>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_roundtrip() {
+        let p = Position {
+            line: 3,
+            character: 7,
+        };
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["line"], 3);
+        assert_eq!(v["character"], 7);
+        let back: Position = serde_json::from_value(v).unwrap();
+        assert_eq!(back.line, 3);
+        assert_eq!(back.character, 7);
+    }
+
+    #[test]
+    fn diagnostic_roundtrip_with_optional_fields() {
+        let d = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 1,
+                    character: 2,
+                },
+            },
+            severity: Some(DiagnosticSeverity::Warning),
+            message: "careful".into(),
+            source: Some("rustc".into()),
+            code: Some(DiagnosticCode::String("E0308".into())),
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v["severity"], "warning");
+        assert_eq!(v["code"], "E0308");
+        let back: Diagnostic = serde_json::from_value(v).unwrap();
+        assert!(matches!(back.severity, Some(DiagnosticSeverity::Warning)));
+        assert!(matches!(
+            back.code,
+            Some(DiagnosticCode::String(ref s)) if s == "E0308"
+        ));
+    }
+
+    #[test]
+    fn diagnostic_omits_unset_optionals() {
+        let d = Diagnostic {
+            range: Range {
+                start: Position {
+                    line: 0,
+                    character: 0,
+                },
+                end: Position {
+                    line: 0,
+                    character: 1,
+                },
+            },
+            severity: None,
+            message: "x".into(),
+            source: None,
+            code: None,
+        };
+        let v = serde_json::to_value(&d).unwrap();
+        assert!(v.get("severity").is_none());
+        assert!(v.get("source").is_none());
+        assert!(v.get("code").is_none());
+    }
+
+    #[test]
+    fn numeric_diagnostic_code_roundtrips() {
+        let d = DiagnosticCode::Number(42);
+        let v = serde_json::to_value(&d).unwrap();
+        assert_eq!(v, 42);
+        let back: DiagnosticCode = serde_json::from_value(v).unwrap();
+        assert!(matches!(back, DiagnosticCode::Number(42)));
+    }
+
+    #[test]
+    fn severity_serde_uses_snake_case() {
+        assert_eq!(
+            serde_json::to_value(DiagnosticSeverity::Error).unwrap(),
+            "error"
+        );
+        assert_eq!(
+            serde_json::to_value(DiagnosticSeverity::Information).unwrap(),
+            "information"
+        );
+        let back: DiagnosticSeverity = serde_json::from_str(r#""hint""#).unwrap();
+        assert_eq!(back, DiagnosticSeverity::Hint);
+    }
+
+    #[test]
+    fn hover_contents_string_flattens_every_variant() {
+        let markup = HoverResult {
+            contents: HoverContents::MarkupContent(MarkupContent {
+                kind: "markdown".into(),
+                value: "**hi**".into(),
+            }),
+            range: None,
+        };
+        assert_eq!(markup.contents_string(), "**hi**");
+
+        let plain = HoverResult {
+            contents: HoverContents::String("plain".into()),
+            range: None,
+        };
+        assert_eq!(plain.contents_string(), "plain");
+
+        let arr = HoverResult {
+            contents: HoverContents::Array(vec![
+                MarkupContent {
+                    kind: "markdown".into(),
+                    value: "one".into(),
+                },
+                MarkupContent {
+                    kind: "markdown".into(),
+                    value: "two".into(),
+                },
+            ]),
+            range: None,
+        };
+        assert_eq!(arr.contents_string(), "one\ntwo");
+    }
+
+    #[test]
+    fn minimal_initialize_params_carries_the_workspace() {
+        let p = InitializeParams::minimal("/workspace");
+        assert_eq!(p.inner["rootUri"], "file:///workspace");
+        assert_eq!(p.inner["rootPath"], "/workspace");
+        assert_eq!(p.inner["workspaceFolders"][0]["name"], "workspace");
+        assert!(p.inner.get("processId").is_some());
+        assert!(p.inner["capabilities"]["textDocument"]["completion"].is_object());
+    }
+
+    #[test]
+    fn json_rpc_request_and_notification_shapes() {
+        let req = JsonRpcRequest::new(1, "initialize", serde_json::json!({}));
+        assert_eq!(req.jsonrpc, "2.0");
+        assert_eq!(req.id, 1);
+        assert_eq!(req.method, "initialize");
+        let notif = JsonRpcNotification::new("initialized", serde_json::json!({}));
+        assert_eq!(notif.jsonrpc, "2.0");
+        assert_eq!(notif.method, "initialized");
+        assert!(notif.params.is_some());
+        let v = serde_json::to_value(&notif).unwrap();
+        assert!(v.get("id").is_none(), "notifications have no id");
+    }
+
+    #[test]
+    fn incoming_message_detects_notifications_and_responses() {
+        let notif = IncomingMessage::from_line(
+            r#"{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{}}"#,
+        )
+        .unwrap();
+        assert!(matches!(notif, IncomingMessage::Notification(_)));
+
+        let resp = IncomingMessage::from_line(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#).unwrap();
+        assert!(matches!(resp, IncomingMessage::Response(_)));
+
+        // An id wins even if a method sneaks in — the server is answering us.
+        let weird = IncomingMessage::from_line(r#"{"jsonrpc":"2.0","id":2,"method":"x"}"#).unwrap();
+        assert!(matches!(weird, IncomingMessage::Response(_)));
+
+        assert!(IncomingMessage::from_line("not json").is_err());
+    }
+}
