@@ -38,7 +38,7 @@ Two rules keep the graph acyclic:
 | Applications | `cli` | The only binary (`whycode`) |
 | | `tui` | Full-screen terminal UI (ratatui) |
 | | `server` | Local daemon (`whycode serve`): `/api/*` for TUI attach, `/v1/*` for the SDK |
-| | `sdk` | Thin HTTP client for protocol v1 (`connect` / `launch`). Does not embed the agent loop. |
+| | `sdk` | Thin HTTP client for protocol v1 (`connect` / `launch`). TypeScript twin: `sdk/typescript`. |
 
 Package names use the `whycode-` prefix even when the directory is shorter
 (`crates/llm` → `-p whycode-llm`).

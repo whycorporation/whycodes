@@ -17,3 +17,7 @@ local/
 # Python bytecode from scripts/ (never commit)
 __pycache__/
 *.pyc
+
+# TypeScript SDK
+node_modules/
+sdk/typescript/dist/

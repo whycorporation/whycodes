@@ -24,7 +24,11 @@ cargo test --workspace
 python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
+python scripts/check_sdk_protocol.py   # Rust ↔ TypeScript protocol v1 tags
 ```
+
+TypeScript SDK (`sdk/typescript`): `npm ci && npm test` after changing
+`crates/protocol/src/sdk.rs` or the TS client.
 
 Notes:
 

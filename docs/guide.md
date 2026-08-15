@@ -205,6 +205,20 @@ Events on `/v1/sessions/:id/run` are tagged `ev` (`text_delta`, `tool_start`,
 `turn_done`, …). Unknown tags become `SdkEvent::Unknown` so older clients
 keep working. Branch on `SdkError.code`, not the message.
 
+Same protocol from Node (zero runtime deps, Node 18+):
+
+```ts
+import { WhycodeClient } from "@whycorporation/whycode-sdk";
+
+const client = await WhycodeClient.connect("127.0.0.1:3030");
+const session = await client.createSession();
+const turn = await client.run(session.id, "summarize this repo");
+console.log(turn.text);
+```
+
+Package source: `sdk/typescript`. `WhycodeClient.launch()` spawns a private
+`whycode serve`.
+
 `/api/*` remains for TUI attach (`whycode connect`). New integrations should
 use `/v1`.
 

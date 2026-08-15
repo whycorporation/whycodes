@@ -47,6 +47,8 @@ jobs:
         run: python scripts/check_dependency_boundaries.py
       - name: Bench ceilings (optional JSON)
         run: python scripts/check_bench_ceilings.py
+      - name: SDK protocol v1 (Rust ↔ TypeScript)
+        run: python scripts/check_sdk_protocol.py
 
       # The installers are the first thing a new user runs and are not covered
       # by cargo. A syntax error in them is invisible until someone pipes one
@@ -79,6 +81,22 @@ jobs:
             if ($failed) { exit 1 }
             Write-Host "installer syntax: ok"
           '
+
+  sdk-ts:
+    name: TypeScript SDK
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - name: Build and test
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm test
 
   test:
     name: Test (linux)
