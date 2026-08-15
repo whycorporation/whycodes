@@ -454,3 +454,81 @@ fn inject_subagent_memory(
         Some(query),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inject_memory_passthrough_when_disabled() {
+        let memory = whycode_memory::MemorySettings::disabled();
+        let out = inject_subagent_memory(
+            "base prompt",
+            std::path::Path::new("/work/proj"),
+            "worker",
+            "do the thing",
+            &memory,
+        );
+        assert_eq!(out, "base prompt");
+    }
+
+    #[test]
+    fn inject_memory_passthrough_when_env_off_switch() {
+        let prev = std::env::var_os("WHYCODE_NO_MEMORY");
+        unsafe { std::env::set_var("WHYCODE_NO_MEMORY", "1") };
+        let out = inject_subagent_memory(
+            "base prompt",
+            std::path::Path::new("/work/proj"),
+            "worker",
+            "do the thing",
+            &whycode_memory::MemorySettings::default(),
+        );
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_NO_MEMORY", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_NO_MEMORY") },
+        }
+        assert_eq!(out, "base prompt");
+    }
+
+    #[test]
+    fn runner_builders_set_state() {
+        let runner = SubagentRunner::new(
+            Arc::new(ProviderRegistry::default()),
+            Arc::new(ToolExecutor::new()),
+            make_info(),
+            std::path::PathBuf::from("/work/proj"),
+            SandboxSettings::off(),
+            NetworkPolicy::unrestricted(),
+        );
+        let idx = whycode_index::WorkspaceIndex::start(Vec::new());
+        let hub = whycode_core::SwarmHub::default();
+        let runner = runner
+            .with_file_index(Some(idx))
+            .with_panel(None)
+            .with_swarm_hub(Some(hub))
+            .with_memory(whycode_memory::MemorySettings::disabled())
+            .with_file_claims(
+                whycode_core::FileClaimRegistry::default(),
+                "worker-1",
+                "Worker One",
+            );
+        assert_eq!(runner.agent_id.as_deref(), Some("worker-1"));
+        assert_eq!(runner.agent_label.as_deref(), Some("Worker One"));
+        assert!(runner.file_claims.is_some());
+        assert!(runner.file_index.is_some());
+        assert!(!runner.memory.enabled);
+    }
+
+    fn make_info() -> AgentInfo {
+        AgentInfo {
+            name: "worker".into(),
+            description: "test worker".into(),
+            mode: whycode_core::types::AgentMode::Primary,
+            permission: PermissionSet::default(),
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        }
+    }
+}

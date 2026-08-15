@@ -275,6 +275,92 @@ mod tests {
     }
 
     #[test]
+    fn small_siblings_for_every_provider() {
+        let cases = [
+            ("xai", "grok-4", "grok-3-mini"),
+            ("groq", "llama-3.3-70b", "llama-3.1-8b-instant"),
+            ("mistral", "mistral-large", "mistral-small-latest"),
+            ("deepseek", "deepseek-reasoner", "deepseek-chat"),
+            (
+                "together",
+                "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+            ),
+        ];
+        for (provider, model, expect) in cases {
+            let (p, m) = resolve_title_model(provider, model, None);
+            assert_eq!(p, provider);
+            assert_eq!(m, expect, "{provider} should map to a small sibling");
+        }
+    }
+
+    #[test]
+    fn gemini_models_kept_as_is_because_mini_substring() {
+        // "gemini" contains "mini", so the already-small marker fires and the
+        // model is kept — Google models never get swapped (pre-existing quirk).
+        let (p, m) = resolve_title_model("google", "gemini-2.5-pro", None);
+        assert_eq!(p, "google");
+        assert_eq!(m, "gemini-2.5-pro");
+    }
+
+    #[test]
+    fn openrouter_small_sibling_tracks_family() {
+        let (_, m) = resolve_title_model("openrouter", "anthropic/claude-sonnet-4-5", None);
+        assert_eq!(m, "anthropic/claude-haiku-4.5");
+        let (_, m) = resolve_title_model("openrouter", "openai/gpt-5", None);
+        assert_eq!(m, "openai/gpt-4o-mini");
+        let (_, m) = resolve_title_model("openrouter", "mistralai/mistral-large", None);
+        assert_eq!(m, "openai/gpt-4o-mini");
+        // Gemini family is "already small" (mini substring) → kept.
+        let (_, m) = resolve_title_model("openrouter", "google/gemini-2.5-pro", None);
+        assert_eq!(m, "google/gemini-2.5-pro");
+    }
+
+    #[test]
+    fn ollama_keeps_local_model() {
+        let (p, m) = resolve_title_model("ollama", "qwen2.5-coder:7b", None);
+        assert_eq!(p, "ollama");
+        assert_eq!(m, "qwen2.5-coder:7b");
+    }
+
+    #[test]
+    fn unknown_provider_keeps_model() {
+        let (p, m) = resolve_title_model("myproxy", "custom-model", None);
+        assert_eq!(p, "myproxy");
+        assert_eq!(m, "custom-model");
+    }
+
+    #[test]
+    fn small_markers_detected() {
+        assert!(is_already_small("claude-haiku-4-5-20251001"));
+        assert!(is_already_small("gpt-4o-mini"));
+        assert!(is_already_small("llama-3.1-8b-instant"));
+        assert!(is_already_small("gemini-2.5-pro"), "gemini contains mini");
+        assert!(!is_already_small("claude-sonnet-4-5"));
+        // Marker match is case-sensitive on the raw string; callers lowercase.
+        assert!(!is_already_small("GPT-4O-MINI"));
+    }
+
+    #[test]
+    fn truncate_adds_ellipsis_and_respects_chars() {
+        assert_eq!(truncate("short", 100), "short");
+        let out = truncate("abcdefghij", 4);
+        assert_eq!(out, "abcd…");
+        assert_eq!(out.chars().count(), 5);
+    }
+
+    #[test]
+    fn apply_refine_result_handles_empty_and_valid() {
+        let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
+        session.add_user_message("fix auth");
+        let before = session.title.clone();
+        apply_refine_result(&mut session, "", "gpt-4o-mini");
+        assert_eq!(session.title, before, "empty title must not clobber");
+        apply_refine_result(&mut session, "Fix auth retries", "gpt-4o-mini");
+        assert_eq!(session.title, "Fix auth retries");
+    }
+
+    #[test]
     fn refine_gate_allows_legacy_default_multi_turn() {
         let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
         // Placeholder still Default after two user turns (pre-auto-title rows).

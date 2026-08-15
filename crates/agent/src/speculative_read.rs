@@ -272,4 +272,68 @@ mod tests {
         assert_eq!(o, 2);
         assert_eq!(l, 10);
     }
+
+    #[test]
+    fn window_clamped_to_hard_limit() {
+        let (_, _, l) = try_parse_read_args(r#"{"path": "a.rs", "limit": 99999}"#).unwrap();
+        assert_eq!(l, HARD_LIMIT);
+        let (_, _, l) = try_parse_read_args(r#"{"path": "a.rs", "limit": 0}"#).unwrap();
+        assert_eq!(l, 1);
+        let (_, o, _) = try_parse_read_args(r#"{"path": "a.rs", "offset": 0}"#).unwrap();
+        assert_eq!(o, 1, "offset floors at 1");
+    }
+
+    #[test]
+    fn unicode_escape_incomplete_waits() {
+        // `\u` escape unfinished → path still streaming.
+        assert!(try_parse_read_args(r#"{"path": "caf\u"#).is_none());
+    }
+
+    #[test]
+    fn trailing_backslash_waits_for_escape() {
+        assert!(try_parse_read_args(r#"{"path": "dir\"#).is_none());
+    }
+
+    #[test]
+    fn non_string_path_returns_none() {
+        assert!(try_parse_read_args(r#"{"path": 123}"#).is_none());
+    }
+
+    #[test]
+    fn window_from_args_matches_tool_semantics() {
+        let v = serde_json::json!({"path": "a.rs"});
+        assert_eq!(window_from_args(&v), (1, DEFAULT_LIMIT));
+        let v = serde_json::json!({"path": "a.rs", "offset": 5, "limit": 100});
+        assert_eq!(window_from_args(&v), (5, 100));
+        let v = serde_json::json!({"offset": 0, "limit": 0});
+        let (o, l) = window_from_args(&v);
+        assert_eq!(o, 1);
+        assert_eq!(l, 1);
+    }
+
+    #[test]
+    fn abort_all_drains_jobs() {
+        let mut jobs = Vec::new();
+        abort_all(&mut jobs);
+        assert!(jobs.is_empty());
+    }
+
+    #[test]
+    fn maybe_start_ignores_non_read_tools() {
+        let mut jobs = Vec::new();
+        let ctx = whycode_core::ToolContext {
+            working_dir: "/work/proj".into(),
+            session_id: None,
+            sandbox: whycode_core::SandboxSettings::off(),
+            network: whycode_core::NetworkPolicy::unrestricted(),
+            file_claims: None,
+            agent_id: None,
+            agent_label: None,
+            file_index: None,
+            panel: None,
+            swarm_hub: None,
+        };
+        maybe_start(&mut jobs, "tc-1", "grep", r#"{"pattern": "x"}"#, &ctx);
+        assert!(jobs.is_empty());
+    }
 }

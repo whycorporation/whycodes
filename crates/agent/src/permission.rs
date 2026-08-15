@@ -126,3 +126,73 @@ fn atty_stderr() -> bool {
     }
     true
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn channel_prompter_forwards_reply() {
+        let (prompter, mut rx) = ChannelPermissionPrompter::new();
+        let ask = tokio::spawn(async move { prompter.ask("bash", "echo hi").await });
+        let req = rx.recv().await.expect("permission request");
+        assert_eq!(req.tool_name, "bash");
+        assert_eq!(req.detail, "echo hi");
+        req.reply.send(true).unwrap();
+        assert!(ask.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn channel_prompter_denies_when_receiver_dropped() {
+        let (prompter, rx) = ChannelPermissionPrompter::new();
+        drop(rx);
+        assert!(!prompter.ask("bash", "x").await);
+    }
+
+    #[tokio::test]
+    async fn auto_prompters_agree_with_their_names() {
+        assert!(AutoApprovePrompter.ask("bash", "x").await);
+        assert!(!AutoDenyPrompter.ask("bash", "x").await);
+    }
+
+    #[tokio::test]
+    async fn default_prompter_respects_env() {
+        // Serialize env mutation: these vars are process-global.
+        let prev_approve = std::env::var_os("WHYCODE_AUTO_APPROVE");
+        let prev_deny = std::env::var_os("WHYCODE_AUTO_DENY");
+        let prev_ci = std::env::var_os("CI");
+
+        unsafe { std::env::set_var("WHYCODE_AUTO_APPROVE", "1") };
+        unsafe { std::env::remove_var("WHYCODE_AUTO_DENY") };
+        unsafe { std::env::remove_var("CI") };
+        let p = default_prompter();
+        assert!(p.ask("bash", "x").await, "AUTO_APPROVE=1 must allow");
+
+        unsafe { std::env::remove_var("WHYCODE_AUTO_APPROVE") };
+        unsafe { std::env::set_var("WHYCODE_AUTO_DENY", "true") };
+        unsafe { std::env::remove_var("CI") };
+        let p = default_prompter();
+        assert!(!p.ask("bash", "x").await, "AUTO_DENY=true must deny");
+
+        // CI (non-interactive) without explicit flags → deny for safety.
+        unsafe { std::env::remove_var("WHYCODE_AUTO_APPROVE") };
+        unsafe { std::env::remove_var("WHYCODE_AUTO_DENY") };
+        unsafe { std::env::set_var("CI", "1") };
+        let p = default_prompter();
+        assert!(!p.ask("bash", "x").await, "piped stdin must deny");
+
+        // Restore.
+        match prev_approve {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_AUTO_APPROVE", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_AUTO_APPROVE") },
+        }
+        match prev_deny {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_AUTO_DENY", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_AUTO_DENY") },
+        }
+        match prev_ci {
+            Some(v) => unsafe { std::env::set_var("CI", v) },
+            None => unsafe { std::env::remove_var("CI") },
+        }
+    }
+}
