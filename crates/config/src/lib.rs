@@ -2153,20 +2153,31 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    #[test]
-    fn whycode_home_overrides_config_and_data_paths() {
+    /// Serializes tests that mutate process-global env vars (WHYCODE_HOME,
+    /// WHYCODE_PROVIDER, …) so parallel test threads cannot interfere.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Run `f` with `WHYCODE_HOME` pointed at a fresh temp dir, then restore.
+    fn with_isolated_home(f: impl FnOnce(&std::path::Path)) {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().expect("tempdir");
-        // env is process-global; this test is the only mutator of WHYCODE_HOME.
         let prev = std::env::var_os("WHYCODE_HOME");
         unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
-        let cfg = Config::default_path().expect("config path");
-        let data = Config::data_dir().expect("data dir");
+        f(dir.path());
         match prev {
             Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
             None => unsafe { std::env::remove_var("WHYCODE_HOME") },
         }
-        assert_eq!(cfg, dir.path().join("config.toml"));
-        assert_eq!(data, dir.path());
+    }
+
+    #[test]
+    fn whycode_home_overrides_config_and_data_paths() {
+        with_isolated_home(|home| {
+            let cfg = Config::default_path().expect("config path");
+            let data = Config::data_dir().expect("data dir");
+            assert_eq!(cfg, home.join("config.toml"));
+            assert_eq!(data, home);
+        });
     }
 
     fn make_provider(name: &str) -> ProviderConfig {
@@ -2561,5 +2572,609 @@ mod tests {
             headers: None,
         };
         assert!(s.resolved_transport().is_err());
+    }
+
+    #[test]
+    fn mcp_stdio_type_requires_command() {
+        let s = McpServerConfig {
+            transport: Some(McpTransportKind::Stdio),
+            command: None,
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: Some("https://x".into()),
+            headers: None,
+        };
+        assert!(s.resolved_transport().is_err());
+        assert!(!s.is_remote());
+    }
+
+    #[test]
+    fn mcp_without_command_or_url_is_error() {
+        let s = McpServerConfig {
+            transport: None,
+            command: None,
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: None,
+            headers: None,
+        };
+        assert!(s.resolved_transport().is_err());
+        assert!(!s.is_remote());
+    }
+
+    // ── merge_with: remaining sub-config branches ───────────────────────
+
+    #[test]
+    fn merge_with_session_and_tui_fields() {
+        let base = Config::default();
+        let mut overlay = Config::default();
+        overlay.session.max_context_tokens = 123_456;
+        overlay.session.compaction_threshold = 99_999;
+        overlay.session.store_path = Some(PathBuf::from("/tmp/store"));
+        overlay.session.auto_title = false;
+        overlay.session.title_model = Some("claude-haiku".into());
+        overlay.session.tool_profile = "full".into();
+        overlay.session.prompt_cache = "none".into();
+        overlay.session.compaction_llm = "off".into();
+        overlay.session.model_fast = Some("flash".into());
+        overlay.session.model_race = "auto".into();
+        overlay.session.race_after_ms = 1500;
+        overlay.session.response_cache = "off".into();
+        overlay.session.intent_guidance = "off".into();
+        overlay.tui.theme = Some("dark".into());
+        overlay.tui.show_sidebar = true;
+        overlay.tui.show_timestamps = false;
+
+        let merged = base.merge_with(&overlay);
+        assert_eq!(merged.session.max_context_tokens, 123_456);
+        assert_eq!(merged.session.compaction_threshold, 99_999);
+        assert_eq!(
+            merged.session.store_path.as_deref(),
+            Some(Path::new("/tmp/store"))
+        );
+        assert!(!merged.session.auto_title);
+        assert_eq!(merged.session.title_model.as_deref(), Some("claude-haiku"));
+        assert_eq!(merged.session.tool_profile, "full");
+        assert_eq!(merged.session.prompt_cache, "none");
+        assert_eq!(merged.session.compaction_llm, "off");
+        assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
+        assert_eq!(merged.session.model_race, "auto");
+        assert_eq!(merged.session.race_after_ms, 1500);
+        assert_eq!(merged.session.response_cache, "off");
+        assert_eq!(merged.session.intent_guidance, "off");
+        assert_eq!(merged.tui.theme.as_deref(), Some("dark"));
+        assert!(merged.tui.show_sidebar);
+        assert!(!merged.tui.show_timestamps);
+    }
+
+    #[test]
+    fn merge_with_general_security_memory_swarm() {
+        let base = Config::default();
+        let mut overlay = Config::default();
+        overlay.general.project_path = Some(PathBuf::from("/proj"));
+        overlay.general.log_level = Some("debug".into());
+        overlay.security.bash_risk_threshold = "caution".into();
+        overlay.security.sandbox = "off".into();
+        overlay.security.sandbox_network = false;
+        overlay.security.sandbox_fallback = "deny".into();
+        overlay.security.network_allowlist = vec!["example.com".into()];
+        overlay.security.network_denylist = vec!["bad.example".into()];
+        overlay.memory.enabled = false;
+        overlay.memory.auto_inject = false;
+        overlay.memory.retain_llm_always = true;
+        overlay.memory.retain_every_n = 5;
+        overlay.memory.recall_min_score = 0.5;
+        overlay.memory.scope = "project".into();
+        overlay.memory.consolidate_max = 40;
+        overlay.swarm.enabled = false;
+        overlay.swarm.max_agents = 6;
+        overlay.swarm.worktrees = false;
+        overlay.swarm.isolation = Some("checkout".into());
+        overlay.automation.max_background_jobs = 3;
+
+        let merged = base.merge_with(&overlay);
+        assert_eq!(
+            merged.general.project_path.as_deref(),
+            Some(Path::new("/proj"))
+        );
+        assert_eq!(merged.general.log_level.as_deref(), Some("debug"));
+        assert_eq!(merged.security.bash_risk_threshold, "caution");
+        assert_eq!(merged.security.sandbox, "off");
+        assert!(!merged.security.sandbox_network);
+        assert_eq!(merged.security.sandbox_fallback, "deny");
+        assert_eq!(merged.security.network_allowlist, vec!["example.com"]);
+        assert_eq!(merged.security.network_denylist, vec!["bad.example"]);
+        assert!(!merged.memory.enabled);
+        assert!(!merged.memory.auto_inject);
+        assert!(merged.memory.retain_llm_always);
+        assert_eq!(merged.memory.retain_every_n, 5);
+        assert!((merged.memory.recall_min_score - 0.5).abs() < f32::EPSILON);
+        assert_eq!(merged.memory.scope, "project");
+        assert_eq!(merged.memory.consolidate_max, 40);
+        assert!(!merged.swarm.enabled);
+        assert_eq!(merged.swarm.max_agents, 6);
+        assert!(!merged.swarm.worktrees);
+        assert_eq!(merged.swarm.isolation.as_deref(), Some("checkout"));
+        assert_eq!(merged.automation.max_background_jobs, 3);
+    }
+
+    #[test]
+    fn merge_with_mcp_permission_commands() {
+        let base = Config::default();
+        let mut overlay = Config::default();
+        overlay.mcp_servers.insert(
+            "fs".into(),
+            McpServerConfig {
+                transport: None,
+                command: Some("npx".into()),
+                args: vec!["-y".into()],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        );
+        overlay
+            .permission
+            .insert("bash".into(), PermissionAction::Ask);
+        overlay.commands.insert(
+            "deploy".into(),
+            CustomCommandConfig {
+                template: "ship it".into(),
+                description: Some("deploy".into()),
+                agent: None,
+                model: None,
+                subtask: None,
+            },
+        );
+
+        let merged = base.merge_with(&overlay);
+        assert!(merged.mcp_servers.contains_key("fs"));
+        assert_eq!(merged.permission.get("bash"), Some(&PermissionAction::Ask));
+        assert_eq!(merged.commands["deploy"].template, "ship it");
+    }
+
+    #[test]
+    fn merge_with_tools_flags() {
+        // The merge only applies flags that differ from the derived `Default`
+        // (all tools off) — i.e. it can *enable* a tool and replace the
+        // disabled/custom lists, but cannot turn an already-true flag off.
+        let base = Config::default();
+        assert!(!base.tools.enable_read, "derived default is all-off");
+        let mut overlay = Config::default();
+        overlay.tools.enable_shell = true;
+        overlay.tools.disabled_tools = vec!["websearch".into()];
+        overlay.tools.question.timeout_secs = 60;
+
+        let merged = base.merge_with(&overlay);
+        assert!(merged.tools.enable_shell, "overlay true flag applied");
+        assert_eq!(merged.tools.disabled_tools, vec!["websearch"]);
+        assert_eq!(merged.tools.question.timeout_secs, 60);
+        // untouched flags keep the base value (off)
+        assert!(!merged.tools.enable_read);
+        assert!(!merged.tools.enable_grep);
+    }
+
+    // ── effective_permission ────────────────────────────────────────────
+
+    #[test]
+    fn effective_permission_merges_global_rules_agent_wins() {
+        let mut cfg = Config::default();
+        cfg.permission.insert("bash".into(), PermissionAction::Ask);
+        cfg.permission.insert("read".into(), PermissionAction::Deny);
+
+        let mut agent = PermissionSet::default();
+        agent.rules.insert("bash".into(), PermissionAction::Allow);
+
+        let out = cfg.effective_permission(&agent);
+        // global rule added where the agent had none
+        assert_eq!(out.rules.get("read"), Some(&PermissionAction::Deny));
+        // agent rule wins over global
+        assert_eq!(out.rules.get("bash"), Some(&PermissionAction::Allow));
+    }
+
+    // ── swarm use_worktrees ─────────────────────────────────────────────
+
+    #[test]
+    fn swarm_use_worktrees_respects_isolation() {
+        let s = SwarmConfig {
+            enabled: true,
+            max_agents: 4,
+            worktrees: true,
+            isolation: None,
+        };
+        assert!(s.use_worktrees());
+
+        let checkout = SwarmConfig {
+            isolation: Some("checkout".into()),
+            ..s.clone()
+        };
+        assert!(!checkout.use_worktrees());
+
+        let wt = SwarmConfig {
+            isolation: Some("worktree".into()),
+            ..s.clone()
+        };
+        assert!(wt.use_worktrees());
+
+        // case-insensitive + unknown falls back to `worktrees`
+        let caps = SwarmConfig {
+            isolation: Some("CHECKOUT".into()),
+            ..s.clone()
+        };
+        assert!(!caps.use_worktrees());
+        let unknown = SwarmConfig {
+            isolation: Some("bogus".into()),
+            ..s.clone()
+        };
+        assert!(unknown.use_worktrees());
+    }
+
+    // ── security helpers ────────────────────────────────────────────────
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn security_network_policy_and_sandbox_settings() {
+        let mut sec = SecurityConfig::default();
+        sec.network_allowlist = vec!["good.example".into()];
+        sec.network_denylist = vec!["evil.example".into()];
+        let np = sec.network_policy();
+        assert_eq!(np.allowlist, vec!["good.example"]);
+        assert_eq!(np.denylist, vec!["evil.example"]);
+
+        let ss = sec.sandbox_settings();
+        assert_eq!(ss.mode, SandboxMode::Workspace);
+        assert!(ss.network);
+        assert_eq!(ss.fallback, SandboxFallback::Allow);
+
+        let off = SecurityConfig {
+            sandbox: "off".into(),
+            sandbox_fallback: "deny".into(),
+            ..sec.clone()
+        };
+        let ss = off.sandbox_settings();
+        assert_eq!(ss.mode, SandboxMode::Off);
+        assert_eq!(ss.fallback, SandboxFallback::Deny);
+    }
+
+    // ── validate ────────────────────────────────────────────────────────
+
+    #[test]
+    fn validate_default_fails_missing_provider() {
+        let cfg = Config::default();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_provider_with_key_ok() {
+        let mut cfg = Config::default();
+        cfg.providers
+            .insert("openai".into(), make_provider("openai"));
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_default_model_without_provider_id_fails() {
+        let mut cfg = Config::default();
+        cfg.providers
+            .insert("openai".into(), make_provider("openai"));
+        let mut dm = make_model("openai", "gpt-4");
+        dm.provider_id = String::new();
+        cfg.default_model = Some(dm);
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("provider_id"), "{err}");
+    }
+
+    #[test]
+    fn validate_empty_model_id_fails() {
+        let mut cfg = Config::default();
+        cfg.providers
+            .insert("openai".into(), make_provider("openai"));
+        cfg.default_model = Some(make_model("openai", ""));
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("empty model_id"), "{err}");
+    }
+
+    #[test]
+    fn validate_unknown_default_agent_fails() {
+        let mut cfg = Config::default();
+        cfg.providers
+            .insert("openai".into(), make_provider("openai"));
+        cfg.default_agent = "ghost".into();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("'ghost'"), "{err}");
+    }
+
+    #[test]
+    fn validate_localhost_base_url_is_only_warning() {
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "local".into(),
+            ProviderConfig {
+                name: "local".into(),
+                api_key: Some("k".into()),
+                api_base: None,
+                base_url: Some("http://localhost:11434/v1".into()),
+                headers: None,
+                models: vec![],
+                tool_arguments: None,
+                extra: HashMap::new(),
+            },
+        );
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_bad_response_cache_fails() {
+        let mut cfg = Config::default();
+        cfg.session.response_cache = "sometimes".into();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("response_cache"), "{err}");
+    }
+
+    #[test]
+    fn validate_zero_context_tokens_fails() {
+        let mut cfg = Config::default();
+        cfg.session.max_context_tokens = 0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_long_race_after_ms_fails() {
+        let mut cfg = Config::default();
+        cfg.session.race_after_ms = 31_000;
+        assert!(cfg.validate().is_err());
+    }
+
+    // ── apply_env_overrides ─────────────────────────────────────────────
+
+    fn clear_env(names: &[&str]) -> Vec<Option<std::ffi::OsString>> {
+        names
+            .iter()
+            .map(|n| {
+                let prev = std::env::var_os(n);
+                unsafe { std::env::remove_var(n) };
+                prev
+            })
+            .collect()
+    }
+
+    fn restore_env(names: &[&str], prev: Vec<Option<std::ffi::OsString>>) {
+        for (n, v) in names.iter().zip(prev) {
+            match v {
+                Some(v) => unsafe { std::env::set_var(n, v) },
+                None => unsafe { std::env::remove_var(n) },
+            }
+        }
+    }
+
+    #[test]
+    fn apply_env_overrides_provider_and_model() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = [
+            "WHYCODE_PROVIDER",
+            "WHYCODE_MODEL",
+            "WHYCODE_MAX_TURNS",
+            "WHYCODE_LOG_LEVEL",
+            "WHYCODE_PROJECT_DIR",
+        ];
+        let prev = clear_env(&names);
+        unsafe {
+            std::env::set_var("WHYCODE_PROVIDER", "acme");
+            std::env::set_var("WHYCODE_MODEL", "acme-sonnet");
+            std::env::set_var("WHYCODE_MAX_TURNS", "42");
+            std::env::set_var("WHYCODE_LOG_LEVEL", "debug");
+            std::env::set_var("WHYCODE_PROJECT_DIR", "/work");
+        }
+        let mut cfg = Config::default();
+        cfg.apply_env_overrides();
+        restore_env(&names, prev);
+
+        let prov = cfg.providers.get("acme").expect("provider auto-created");
+        assert_eq!(prov.name, "acme");
+        let dm = cfg.default_model.expect("default model from env");
+        assert_eq!(dm.model_id, "acme-sonnet");
+        assert_eq!(dm.provider_id, "acme");
+        assert_eq!(cfg.session.max_context_tokens, 42);
+        assert_eq!(cfg.general.log_level.as_deref(), Some("debug"));
+        assert_eq!(
+            cfg.general.project_path.as_deref(),
+            Some(Path::new("/work"))
+        );
+    }
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn apply_env_overrides_model_without_provider() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = ["WHYCODE_PROVIDER", "WHYCODE_MODEL"];
+        let prev = clear_env(&names);
+        unsafe { std::env::set_var("WHYCODE_MODEL", "bare-model") };
+        let mut cfg = Config::default();
+        cfg.default_model = Some(make_model("openai", "old"));
+        cfg.apply_env_overrides();
+        restore_env(&names, prev);
+
+        assert!(cfg.providers.is_empty());
+        assert_eq!(cfg.default_model.as_ref().unwrap().model_id, "bare-model");
+    }
+
+    #[test]
+    fn apply_env_overrides_sandbox_and_memory() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let names = [
+            "WHYCODE_SANDBOX",
+            "WHYCODE_SANDBOX_NETWORK",
+            "WHYCODE_SANDBOX_FALLBACK",
+            "WHYCODE_NETWORK_ALLOWLIST",
+            "WHYCODE_NETWORK_DENYLIST",
+            "WHYCODE_NO_MEMORY",
+            "WHYCODE_MEMORY",
+            "WHYCODE_SWARM",
+            "WHYCODE_SWARM_MAX_AGENTS",
+            "WHYCODE_SWARM_WORKTREES",
+        ];
+        let prev = clear_env(&names);
+        unsafe {
+            std::env::set_var("WHYCODE_SANDBOX", "off");
+            std::env::set_var("WHYCODE_SANDBOX_NETWORK", "0");
+            std::env::set_var("WHYCODE_SANDBOX_FALLBACK", "deny");
+            std::env::set_var("WHYCODE_NETWORK_ALLOWLIST", "a.com, b.com");
+            std::env::set_var("WHYCODE_NETWORK_DENYLIST", "evil.com");
+            std::env::set_var("WHYCODE_NO_MEMORY", "1");
+            std::env::set_var("WHYCODE_SWARM", "0");
+            std::env::set_var("WHYCODE_SWARM_MAX_AGENTS", "12");
+            std::env::set_var("WHYCODE_SWARM_WORKTREES", "0");
+        }
+        let mut cfg = Config::default();
+        cfg.apply_env_overrides();
+        restore_env(&names, prev);
+
+        assert_eq!(cfg.security.sandbox, "off");
+        assert!(!cfg.security.sandbox_network);
+        assert_eq!(cfg.security.sandbox_fallback, "deny");
+        assert_eq!(cfg.security.network_allowlist, vec!["a.com", "b.com"]);
+        assert_eq!(cfg.security.network_denylist, vec!["evil.com"]);
+        assert!(!cfg.memory.enabled);
+        assert!(!cfg.swarm.enabled);
+        assert_eq!(cfg.swarm.max_agents, 8, "clamped to hard cap");
+        assert!(!cfg.swarm.worktrees);
+    }
+
+    // ── custom command markdown ─────────────────────────────────────────
+
+    #[test]
+    fn parse_command_markdown_plain_body() {
+        let cmd = parse_command_markdown("just a prompt").unwrap();
+        assert_eq!(cmd.template, "just a prompt");
+        assert!(cmd.description.is_none());
+        assert!(cmd.agent.is_none());
+        assert!(cmd.subtask.is_none());
+    }
+
+    #[test]
+    fn parse_command_markdown_with_frontmatter() {
+        let md = "---\ndescription: \"Fix it\"\nagent: plan\nmodel: sonnet\nsubtask: yes\n---\nDo the thing with $ARGUMENTS";
+        let cmd = parse_command_markdown(md).unwrap();
+        assert_eq!(cmd.template, "Do the thing with $ARGUMENTS");
+        assert_eq!(cmd.description.as_deref(), Some("Fix it"));
+        assert_eq!(cmd.agent.as_deref(), Some("plan"));
+        assert_eq!(cmd.model.as_deref(), Some("sonnet"));
+        assert_eq!(cmd.subtask, Some(true));
+    }
+
+    #[test]
+    fn render_expands_arguments_and_positionals() {
+        let cmd = CustomCommandConfig {
+            template: "$2 — $ARGUMENTS ($1)".into(),
+            description: None,
+            agent: None,
+            model: None,
+            subtask: None,
+        };
+        assert_eq!(cmd.render("alpha beta"), "beta — alpha beta (alpha)");
+    }
+
+    #[test]
+    fn load_command_files_loads_markdown_and_builtins() {
+        with_isolated_home(|home| {
+            let cmds = home.join("commands");
+            std::fs::create_dir_all(&cmds).unwrap();
+            std::fs::write(
+                cmds.join("review.md"),
+                "---\ndescription: my review\n---\nReview $ARGUMENTS",
+            )
+            .unwrap();
+            std::fs::write(cmds.join("notes.txt"), "ignored").unwrap();
+
+            let mut cfg = Config::default();
+            cfg.load_command_files(Path::new("/nonexistent-project"));
+            assert!(cfg.commands.contains_key("review"));
+            assert!(!cfg.commands.contains_key("notes"));
+            // built-ins added only for missing keys
+            assert!(cfg.commands.contains_key("commit"));
+            assert!(cfg.commands.contains_key("security-review"));
+        });
+    }
+
+    #[test]
+    fn builtin_prompt_commands_do_not_overwrite_user() {
+        let mut cfg = Config::default();
+        cfg.commands.insert(
+            "review".into(),
+            CustomCommandConfig {
+                template: "user wins".into(),
+                description: None,
+                agent: None,
+                model: None,
+                subtask: None,
+            },
+        );
+        cfg.ensure_builtin_prompt_commands();
+        assert_eq!(cfg.commands["review"].template, "user wins");
+        assert!(cfg.commands.contains_key("commit"));
+    }
+
+    // ── accessors ───────────────────────────────────────────────────────
+
+    #[test]
+    fn configured_context_window_from_model_and_default() {
+        let mut cfg = Config::default();
+        let mut m = make_model("openai", "gpt-4");
+        m.context_window = Some(128_000);
+        cfg.models.insert("gpt-4".into(), m.clone());
+        assert_eq!(
+            cfg.configured_context_window("openai", "gpt-4"),
+            Some(128_000)
+        );
+
+        // default_model fallback when model matches
+        let mut dm = make_model("openai", "gpt-5");
+        dm.context_window = Some(400_000);
+        cfg.default_model = Some(dm);
+        assert_eq!(
+            cfg.configured_context_window("openai", "gpt-5"),
+            Some(400_000)
+        );
+        // default_model applies when provider_id is empty too
+        let mut dm2 = make_model("", "gpt-6");
+        dm2.context_window = Some(300_000);
+        cfg.default_model = Some(dm2);
+        assert_eq!(
+            cfg.configured_context_window("anthropic", "gpt-6"),
+            Some(300_000)
+        );
+        // provider mismatch → None
+        assert_eq!(cfg.configured_context_window("other", "gpt-5"), None);
+    }
+
+    #[test]
+    fn get_command_config_returns_override() {
+        let mut cfg = Config::default();
+        cfg.command_configs.insert(
+            "run".into(),
+            CommandConfig {
+                model: None,
+                agent: Some("plan".into()),
+                max_turns: Some(5),
+            },
+        );
+        let cc = cfg.get_command_config("run").expect("command config");
+        assert_eq!(cc.agent.as_deref(), Some("plan"));
+        assert_eq!(cc.max_turns, Some(5));
+        assert!(cfg.get_command_config("nope").is_none());
+    }
+
+    #[test]
+    fn project_path_uses_configured_or_cwd() {
+        let cfg = Config::default();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        assert_eq!(cfg.project_path(), cwd);
+
+        let mut cfg2 = Config::default();
+        cfg2.general.project_path = Some(PathBuf::from("/p"));
+        assert_eq!(cfg2.project_path(), PathBuf::from("/p"));
     }
 }
