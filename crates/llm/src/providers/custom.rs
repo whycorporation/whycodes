@@ -362,6 +362,7 @@ mod tests {
             }]),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]);
         let body = p.build_body(&req, "any/model");
         let args = &body["messages"]

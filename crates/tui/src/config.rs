@@ -26,6 +26,8 @@ pub struct TuiAppConfig {
     pub show_sidebar: bool,
     /// Base scrollback limit.
     pub scrollback: usize,
+    /// Grok `/timestamps`: show wall-clock next to chat bubbles.
+    pub show_timestamps: bool,
 }
 
 impl Default for TuiAppConfig {
@@ -37,6 +39,7 @@ impl Default for TuiAppConfig {
             auto_scroll: true,
             show_sidebar: false,
             scrollback: 10_000,
+            show_timestamps: true,
         }
     }
 }
@@ -92,6 +95,7 @@ impl TuiAppConfig {
             c.key_bindings = kb.clone();
         }
         c.show_sidebar = cfg.show_sidebar;
+        c.show_timestamps = cfg.show_timestamps;
         c
     }
 }

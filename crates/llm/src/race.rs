@@ -427,6 +427,7 @@ mod tests {
                 content: MessageContent::Text("hi".into()),
                 tool_call_id: None,
                 name: None,
+                created_at: None,
             }]),
             tools: vec![],
             max_tokens: Some(8),

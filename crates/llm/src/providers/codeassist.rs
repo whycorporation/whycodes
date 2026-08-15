@@ -476,6 +476,7 @@ mod tests {
                     content: MessageContent::Text("run ls".to_string()),
                     tool_call_id: None,
                     name: None,
+                    created_at: None,
                 },
                 Message {
                     role: Role::Assistant,
@@ -486,6 +487,7 @@ mod tests {
                     }]),
                     tool_call_id: None,
                     name: None,
+                    created_at: None,
                 },
                 Message {
                     role: Role::User,
@@ -496,6 +498,7 @@ mod tests {
                     }]),
                     tool_call_id: None,
                     name: None,
+                    created_at: None,
                 },
             ]),
             tools: vec![ToolDefinition {

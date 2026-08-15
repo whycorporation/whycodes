@@ -381,11 +381,13 @@ mod tests {
                     content: MessageContent::Text("hi".to_string()),
                     tool_call_id: None,
                     name: None,
+                    created_at: None,
                 },
                 Message {
                     role: Role::Assistant,
                     tool_call_id: None,
                     name: None,
+                    created_at: None,
                     content: MessageContent::Blocks(vec![
                         ContentBlock::Text {
                             text: "let me check".to_string(),
@@ -401,6 +403,7 @@ mod tests {
                     role: Role::User,
                     tool_call_id: None,
                     name: None,
+                    created_at: None,
                     content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
                         tool_use_id: "call_1".to_string(),
                         content: "fn main() {}".to_string(),

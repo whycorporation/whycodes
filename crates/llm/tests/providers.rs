@@ -16,6 +16,7 @@ fn make_basic_request() -> LlmRequest {
             content: MessageContent::Text("Hello!".to_string()),
             tool_call_id: None,
             name: None,
+            created_at: None,
         }]),
         tools: vec![],
         max_tokens: Some(1024),

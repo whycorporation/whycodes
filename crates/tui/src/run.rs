@@ -432,6 +432,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let remote = opts.remote.clone();
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
+    // Welcome /resume list (Grok home) — cheap SQLite read, newest first.
+    if app.session_list.sessions.is_empty() {
+        app.session_list.sessions = load_session_entries();
+    }
     // Code RAG auto-index deferred past first paint (see loop below).
     let history = SessionHistory::new();
 
@@ -3926,6 +3930,19 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
             }
         }
+        "/timestamps" => {
+            ctx.app.show_timestamps = !ctx.app.show_timestamps;
+            ctx.app.config.show_timestamps = ctx.app.show_timestamps;
+            for msg in &mut ctx.app.messages {
+                msg.invalidate_layout();
+            }
+            ctx.app.status_message = if ctx.app.show_timestamps {
+                "Timestamps on".into()
+            } else {
+                "Timestamps off".into()
+            };
+            ctx.app.mark_dirty();
+        }
         "/sessions" => {
             ctx.app.session_list.sessions = load_session_entries();
             ctx.app.session_list.selected = 0;
@@ -4173,6 +4190,7 @@ fn maybe_spawn_prompt_suggestion(
                 content: MessageContent::Text(body),
                 tool_call_id: None,
                 name: None,
+                created_at: None,
             }]),
             tools: vec![],
             max_tokens: Some(40),

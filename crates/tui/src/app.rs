@@ -577,6 +577,8 @@ pub struct ChatMessage {
     pub duration_ms: Option<u128>,
     /// Image attachment labels shown on user bubbles (file names).
     pub image_labels: Vec<String>,
+    /// When this bubble was authored (Grok `/timestamps`).
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Cached display row count for `(width, busy_epilogue)` — see
     /// [`ChatMessage::invalidate_layout`].
     pub layout_cache: Option<(u16, bool, usize)>,
@@ -590,6 +592,22 @@ impl ChatMessage {
     pub fn invalidate_layout(&mut self) {
         self.layout_cache = None;
         self.line_cache = None;
+    }
+
+    fn blank(role: ChatRole, content: impl Into<String>) -> Self {
+        Self {
+            role,
+            content: content.into(),
+            blocks: vec![],
+            results_expanded: false,
+            tool_calls: vec![],
+            error: None,
+            duration_ms: None,
+            image_labels: vec![],
+            created_at: Some(chrono::Utc::now()),
+            layout_cache: None,
+            line_cache: None,
+        }
     }
 }
 
@@ -1130,6 +1148,8 @@ pub struct TuiApp {
     pub pending_login_provider: Option<String>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
     pub pending_session_id: Option<String>,
+    /// Grok `/timestamps`: dim clock next to user prompts and turn footers.
+    pub show_timestamps: bool,
     /// Dashboard: cursor row in the grouped live-session list.
     pub sessions_cursor: usize,
     /// Dashboard: switch target — index into the parked runtimes vec,
@@ -1324,6 +1344,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/resume",
         hint: "[id] Resume a session (picker if no id)",
+    },
+    SlashCommand {
+        name: "/timestamps",
+        hint: "Toggle message timestamps",
     },
     SlashCommand {
         name: "/continue",
@@ -1573,6 +1597,7 @@ impl TuiApp {
                 .iter()
                 .position(|t| *t == config.theme)
                 .unwrap_or(0),
+            show_timestamps: config.show_timestamps,
             config,
             pending_prompt: None,
             pending_auto_prompts: std::collections::VecDeque::new(),
@@ -2439,18 +2464,7 @@ impl TuiApp {
 
     /// Add a message to the chat view.
     pub fn add_message(&mut self, role: ChatRole, content: impl Into<String>) {
-        self.messages.push(ChatMessage {
-            role,
-            content: content.into(),
-            blocks: vec![],
-            results_expanded: false,
-            tool_calls: vec![],
-            error: None,
-            duration_ms: None,
-            image_labels: vec![],
-            layout_cache: None,
-            line_cache: None,
-        });
+        self.messages.push(ChatMessage::blank(role, content));
         self.mark_dirty();
     }
 
@@ -2459,18 +2473,9 @@ impl TuiApp {
         content: impl Into<String>,
         image_labels: Vec<String>,
     ) {
-        self.messages.push(ChatMessage {
-            role: ChatRole::User,
-            content: content.into(),
-            blocks: vec![],
-            results_expanded: false,
-            tool_calls: vec![],
-            error: None,
-            duration_ms: None,
-            image_labels,
-            layout_cache: None,
-            line_cache: None,
-        });
+        let mut msg = ChatMessage::blank(ChatRole::User, content);
+        msg.image_labels = image_labels;
+        self.messages.push(msg);
         self.mark_dirty();
     }
 
@@ -2519,18 +2524,8 @@ impl TuiApp {
             return;
         }
         // No assistant message yet — create one.
-        let msg = ChatMessage {
-            role: ChatRole::Assistant,
-            content: String::new(),
-            blocks: vec![ChatBlock::Thinking(ThinkingBlock::new(text))],
-            results_expanded: false,
-            tool_calls: vec![],
-            error: None,
-            duration_ms: None,
-            image_labels: vec![],
-            layout_cache: None,
-            line_cache: None,
-        };
+        let mut msg = ChatMessage::blank(ChatRole::Assistant, String::new());
+        msg.blocks = vec![ChatBlock::Thinking(ThinkingBlock::new(text))];
         self.messages.push(msg);
         self.mark_dirty();
     }
@@ -2561,22 +2556,13 @@ impl TuiApp {
             return;
         }
 
-        let msg = ChatMessage {
-            role: ChatRole::Assistant,
-            content: String::new(),
-            blocks: vec![ChatBlock::ToolUse {
-                id: id.clone(),
-                name: name.clone(),
-                input: arguments.clone(),
-            }],
-            results_expanded: false,
-            tool_calls: vec![tc],
-            error: None,
-            duration_ms: None,
-            image_labels: vec![],
-            layout_cache: None,
-            line_cache: None,
-        };
+        let mut msg = ChatMessage::blank(ChatRole::Assistant, String::new());
+        msg.blocks = vec![ChatBlock::ToolUse {
+            id: id.clone(),
+            name: name.clone(),
+            input: arguments.clone(),
+        }];
+        msg.tool_calls = vec![tc];
         self.messages.push(msg);
         self.mark_dirty();
     }
@@ -2727,35 +2713,17 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                     continue;
                 }
             }
-            out.push(ChatMessage {
-                role: ChatRole::Tool,
-                content,
-                blocks: vec![],
-                results_expanded: false,
-                tool_calls: vec![],
-                error: None,
-                duration_ms: None,
-                image_labels: vec![],
-                layout_cache: None,
-                line_cache: None,
-            });
+            let mut row = ChatMessage::blank(ChatRole::Tool, content);
+            row.created_at = msg.created_at;
+            out.push(row);
             continue;
         }
 
         match &msg.content {
             MessageContent::Text(t) => {
-                out.push(ChatMessage {
-                    role,
-                    content: t.clone(),
-                    blocks: vec![],
-                    results_expanded: false,
-                    tool_calls: vec![],
-                    error: None,
-                    duration_ms: None,
-                    image_labels: vec![],
-                    layout_cache: None,
-                    line_cache: None,
-                });
+                let mut row = ChatMessage::blank(role, t.clone());
+                row.created_at = msg.created_at;
+                out.push(row);
             }
             MessageContent::Blocks(blocks) => {
                 let mut content = String::new();
@@ -2821,18 +2789,12 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
 
                 // Assistant text often lives only in Text blocks; keep content for
                 // the bubble and blocks for tools/thinking layout.
-                out.push(ChatMessage {
-                    role,
-                    content,
-                    blocks: ui_blocks,
-                    results_expanded: false,
-                    tool_calls,
-                    error: None,
-                    duration_ms: None,
-                    image_labels,
-                    layout_cache: None,
-                    line_cache: None,
-                });
+                let mut row = ChatMessage::blank(role, content);
+                row.blocks = ui_blocks;
+                row.tool_calls = tool_calls;
+                row.image_labels = image_labels;
+                row.created_at = msg.created_at;
+                out.push(row);
             }
         }
     }

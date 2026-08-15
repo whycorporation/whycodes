@@ -152,12 +152,16 @@ fn parse_codex(raw: &str) -> anyhow::Result<Vec<Message>> {
             } else {
                 continue;
             };
-            out.push(Message {
-                role,
-                content: MessageContent::text(text),
-                tool_call_id: None,
-                name: None,
-            });
+            out.push(
+                Message {
+                    role,
+                    content: MessageContent::text(text),
+                    tool_call_id: None,
+                    name: None,
+                    created_at: None,
+                }
+                .stamp(),
+            );
         } else if let Some(m) = value_to_message(payload) {
             out.push(m);
         }
@@ -212,15 +216,19 @@ fn value_to_message(v: &serde_json::Value) -> Option<Message> {
     } else {
         MessageContent::text(content.to_string())
     };
-    Some(Message {
-        role,
-        content,
-        tool_call_id: v
-            .get("tool_call_id")
-            .and_then(|t| t.as_str())
-            .map(str::to_string),
-        name: v.get("name").and_then(|n| n.as_str()).map(str::to_string),
-    })
+    Some(
+        Message {
+            role,
+            content,
+            tool_call_id: v
+                .get("tool_call_id")
+                .and_then(|t| t.as_str())
+                .map(str::to_string),
+            name: v.get("name").and_then(|n| n.as_str()).map(str::to_string),
+            created_at: None,
+        }
+        .stamp(),
+    )
 }
 
 #[cfg(test)]

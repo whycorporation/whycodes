@@ -1132,6 +1132,10 @@ fn load_messages_from_session_restores_user_and_assistant() {
     assert_eq!(msgs.len(), 2, "tool result should fold into assistant");
     assert_eq!(msgs[0].role, ChatRole::User);
     assert_eq!(msgs[0].content, "hello");
+    assert!(
+        msgs[0].created_at.is_some(),
+        "resumed user bubble should keep the session timestamp"
+    );
     assert_eq!(msgs[1].role, ChatRole::Assistant);
     assert!(msgs[1].content.contains("hi there"));
     assert_eq!(msgs[1].tool_calls.len(), 1);

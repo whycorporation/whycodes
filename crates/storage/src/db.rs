@@ -11,8 +11,15 @@ pub struct Database {
 }
 
 /// Message tuple accepted by [`Database::replace_messages`]:
-/// (msg id, role, content json, tool_call_id, name).
-pub type MessageInsert = (String, String, String, Option<String>, Option<String>);
+/// (msg id, role, content json, tool_call_id, name, created_at rfc3339).
+pub type MessageInsert = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+);
 
 /// How long to wait for another process to release a database lock before
 /// giving up. Without this SQLite returns SQLITE_BUSY immediately, so two
@@ -222,12 +229,19 @@ impl Database {
             "DELETE FROM messages WHERE session_id = ?1",
             rusqlite::params![session_id],
         )?;
-        let now = chrono::Utc::now().to_rfc3339();
-        for (msg_id, role, content, tool_call_id, name) in messages {
+        for (msg_id, role, content, tool_call_id, name, created_at) in messages {
             tx.execute(
                 "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![msg_id, session_id, role, content, tool_call_id, name, now],
+                rusqlite::params![
+                    msg_id,
+                    session_id,
+                    role,
+                    content,
+                    tool_call_id,
+                    name,
+                    created_at
+                ],
             )?;
         }
         tx.commit()?;
