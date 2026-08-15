@@ -428,9 +428,7 @@ fn inject_subagent_memory(
         return system_prompt.to_string();
     }
 
-    let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .map(|d| d.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
+    let data_dir = whycode_core::paths::data_dir();
 
     let mut settings = parent_memory.clone();
     // Env can force main bank even if config has subagent_banks=true.

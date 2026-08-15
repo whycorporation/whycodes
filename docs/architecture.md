@@ -16,7 +16,7 @@ Two rules keep the graph acyclic:
 
 | Layer | Crate | Responsibility |
 |---|---|---|
-| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging |
+| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`WHYCODE_HOME`) |
 | | `command-risk` | Shell command risk classification (pure, no I/O) |
 | | `auth` | OAuth: PKCE / device code, token store |
 | | `config` | Config load / merge / validate |

@@ -156,9 +156,7 @@ impl PluginRegistry {
 
 /// Return the global user config directory for whycode.
 fn whycode_config_dir() -> anyhow::Result<PathBuf> {
-    let dirs = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .ok_or_else(|| anyhow::anyhow!("Cannot determine config directory"))?;
-    Ok(dirs.config_dir().to_path_buf())
+    Ok(whycode_core::paths::config_dir())
 }
 
 /// Return the global skills directory:  `$CONFIG_DIR/skills/`

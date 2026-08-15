@@ -23,9 +23,7 @@ impl MemoryTool {
 }
 
 fn data_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .map(|d| d.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
+    whycode_core::paths::data_dir()
 }
 
 fn service_for(ctx: &ToolContext) -> Result<MemoryService, String> {

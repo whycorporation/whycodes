@@ -114,9 +114,7 @@ pub fn spawn_post_turn_retain(
     let provider_name = provider_name.to_string();
     let model = model.to_string();
     let api_key = api_key.to_string();
-    let data_dir = directories::ProjectDirs::from("com", "whycorporation", "whycode")
-        .map(|d| d.data_local_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let data_dir = whycode_core::paths::data_dir();
 
     tokio::spawn(async move {
         let mut saved = Vec::new();
