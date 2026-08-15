@@ -479,6 +479,7 @@ fn dialog_open_wheel_does_not_scroll_chat() {
         id: "a".into(),
         title: "t".into(),
         messages: 1,
+        updated_at: None,
         live: None,
     }];
     app.session_list.selected = 0;

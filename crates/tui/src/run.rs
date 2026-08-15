@@ -2733,6 +2733,7 @@ fn refresh_picker_live_section(app: &mut TuiApp, rt: &SessionRuntime, runtimes: 
         id: rt.session.id.clone(),
         title: format!("{} (current)", rt.session.title),
         messages: rt.session.messages.len(),
+        updated_at: Some(rt.session.updated_at),
         live: Some(usize::MAX),
     });
     for (i, bg) in runtimes.iter().enumerate() {
@@ -2741,6 +2742,7 @@ fn refresh_picker_live_section(app: &mut TuiApp, rt: &SessionRuntime, runtimes: 
             id: bg.session.id.clone(),
             title: format!("{} {} {}", st.glyph(), bg.session.title, st.label()),
             messages: bg.session.messages.len(),
+            updated_at: Some(bg.session.updated_at),
             live: Some(i),
         });
     }
@@ -4337,6 +4339,12 @@ fn configured_models(config: &Config) -> Vec<(String, String)> {
     out
 }
 
+fn parse_session_rfc3339(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+}
+
 /// Stored sessions, newest first, for the session picker.
 ///
 /// A database that will not open is not worth interrupting the user for here —
@@ -4389,6 +4397,7 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
             messages,
             id: s.id,
             title,
+            updated_at: parse_session_rfc3339(&s.updated_at),
             live: None,
         });
     }
