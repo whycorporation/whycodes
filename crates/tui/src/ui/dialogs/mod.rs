@@ -67,13 +67,12 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 .sessions
                 .iter()
                 .map(|s| {
-                    let short: String = s.id.chars().take(8).collect();
                     let label = if s.live.is_some() {
                         format!("▸ {}", s.title)
                     } else {
                         s.title.clone()
                     };
-                    SelectItem::with_detail(label, format!("{short} · {} messages", s.messages))
+                    SelectItem::with_detail(label, session_list_detail(s))
                 })
                 .collect();
             let selected = app.session_list.selected;
@@ -195,10 +194,104 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     }
 }
 
+/// Session picker subtitle: local time · short id · message count.
+fn session_list_detail(s: &crate::app::SessionEntry) -> String {
+    let short: String = s.id.chars().take(8).collect();
+    let tail = format!("{short} · {} messages", s.messages);
+    match s.updated_at {
+        Some(ts) => format!("{} · {tail}", format_session_when(ts, chrono::Local::now())),
+        None => tail,
+    }
+}
+
+/// Compact local wall-clock for the session picker.
+///
+/// Today → `14:32`. Same year → `14 Aug 14:32`. Older → `14 Aug 2025 14:32`.
+fn format_session_when(
+    ts: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Local>,
+) -> String {
+    use chrono::Datelike;
+    let local = ts.with_timezone(&chrono::Local);
+    if local.date_naive() == now.date_naive() {
+        local.format("%H:%M").to_string()
+    } else if local.year() == now.year() {
+        local.format("%d %b %H:%M").to_string()
+    } else {
+        local.format("%d %b %Y %H:%M").to_string()
+    }
+}
+
 /// Standalone help overlay (not stack-based, triggered by `?` key).
 ///
 /// Clears and repaints modal hits so selection/copy match other popups.
 pub fn render_help(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     app.clear_dialog_hits();
     render_help_overlay(frame, app, palette);
+}
+
+#[cfg(test)]
+mod session_when_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn local(y: i32, m: u32, d: u32, h: u32, min: u32) -> chrono::DateTime<chrono::Local> {
+        chrono::Local
+            .with_ymd_and_hms(y, m, d, h, min, 0)
+            .single()
+            .expect("valid local datetime")
+    }
+
+    #[test]
+    fn today_is_clock_only() {
+        let now = local(2026, 8, 15, 16, 0);
+        let ts = local(2026, 8, 15, 14, 32).with_timezone(&chrono::Utc);
+        assert_eq!(format_session_when(ts, now), "14:32");
+    }
+
+    #[test]
+    fn same_year_includes_day_and_month() {
+        let now = local(2026, 8, 15, 16, 0);
+        let ts = local(2026, 3, 4, 9, 5).with_timezone(&chrono::Utc);
+        assert_eq!(format_session_when(ts, now), "04 Mar 09:05");
+    }
+
+    #[test]
+    fn older_year_includes_year() {
+        let now = local(2026, 8, 15, 16, 0);
+        let ts = local(2025, 3, 4, 9, 5).with_timezone(&chrono::Utc);
+        assert_eq!(format_session_when(ts, now), "04 Mar 2025 09:05");
+    }
+
+    #[test]
+    fn detail_omits_time_when_timestamp_is_missing() {
+        let entry = crate::app::SessionEntry {
+            id: "abcdef12-9999".into(),
+            title: "Fix webhook".into(),
+            messages: 12,
+            updated_at: None,
+            live: None,
+        };
+        assert_eq!(session_list_detail(&entry), "abcdef12 · 12 messages");
+    }
+
+    #[test]
+    fn detail_puts_time_next_to_the_message_count() {
+        let entry = crate::app::SessionEntry {
+            id: "abcdef12-9999".into(),
+            title: "Fix webhook".into(),
+            messages: 12,
+            updated_at: Some(chrono::Utc::now()),
+            live: None,
+        };
+        let detail = session_list_detail(&entry);
+        assert!(
+            detail.ends_with(" · abcdef12 · 12 messages"),
+            "detail {detail:?} should keep id and count after the time"
+        );
+        let prefix = detail
+            .strip_suffix(" · abcdef12 · 12 messages")
+            .expect("suffix");
+        assert!(!prefix.is_empty(), "time prefix should not be empty");
+    }
 }

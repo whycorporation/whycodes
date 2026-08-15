@@ -1223,6 +1223,8 @@ pub struct SessionEntry {
     pub id: String,
     pub title: String,
     pub messages: usize,
+    /// Last activity (`Session.updated_at`). Shown next to the message count.
+    pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Live (in-memory) session: parked runtime index, or `Some(usize::MAX)`
     /// for the currently active session. `None` = persisted-only row.
     pub live: Option<usize>,
