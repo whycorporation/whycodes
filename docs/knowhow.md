@@ -773,6 +773,31 @@ store has the file (walk) vs the fuzzy snapshot never published (tick).
 
 ---
 
+### 2026-08-17 — `format::highlight` stream-vs-batch tests flake under parallel load
+
+**Symptom:** `cargo test --workspace` fails
+`highlight::tests::stream_append_matches_batch` (and sometimes
+`stream_non_prefix_edit_rebuilds`) with token RGB mismatch. Isolated
+re-run is green. Colours look like Grok Night vs Grok Day on the same
+source.
+
+**JSONL / crash:** none.
+
+**Root cause:** `set_syntax_theme` is process-wide. The stream highlighter
+commits line colours under theme A; a sibling test
+(`switching_syntax_theme_recolours_rust`) flips the theme to Day; the
+batch `highlight_uncached` then paints theme B. The assertion compares
+the two.
+
+**Fix:** Those tests share a `lock_theme()` mutex and pin Grok Night
+before comparing stream vs batch.
+
+**Prevention:** Any new test that calls `set_syntax_theme` or compares
+stream colours to `highlight_uncached` must take the same lock. Do not
+"fix" by relaxing the colour assertion.
+
+---
+
 
 ### Template (copy for new entries)
 
