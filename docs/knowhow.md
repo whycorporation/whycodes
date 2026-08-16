@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-16 — Chat painted into the status header
+
+**Symptom:** Session transcript (user band / first visible line) sat flush on the `whycode` header row. Scrolling to the top made the elevated user band look like it had overflowed into the chrome / safe area.
+
+**Root cause:** Shell split was header · body · footer inside `inset_safe`. Body started on the next cell after the 1-row status bar. Session inset applied `SIDE_PAD` + `BOTTOM_PAD` but no top gap, so `SparseLines` wiped and stamped chat at `body.y` — the header’s neighbour.
+
+**Fix:** `layout::TOP_PAD` + `layout::below_header` on the body before home/session/sidebar paint. Header row and the `SAFE_TOP` terminal edge stay empty of chat. Paint tests lock the invariant (bottom-pinned and scrolled-to-top).
+
+**Prevention:** Any new shell region that draws above the prompt must go through `inset_safe` and `below_header`. Do not start a transcript wipe at `outer[1].y`.
+
+---
+
 ### 2026-08-13 — CI Budgets + Clippy keep failing feature pushes
 
 **Symptom:** GitHub: “Some checks were not successful — 2 failing (Budgets, Check & Lint), 1 queued, 1 in progress, 2 skipped.” Happened on `feat(serve)` and again on `feat(latency)` (race + response cache). Local `cargo test` was green.
