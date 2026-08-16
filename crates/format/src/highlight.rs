@@ -505,6 +505,15 @@ pub fn detect_language(path: &str) -> Option<&str> {
 mod tests {
     use super::*;
 
+    /// Serializes tests that read/write the process-wide syntax theme.
+    /// `set_syntax_theme` is global; a stream highlighter that committed
+    /// under Night will disagree with a batch highlight that ran after a
+    /// sibling test flipped the theme to Day.
+    fn lock_theme() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn highlights_known_languages_into_spans() {
         let lines = highlight_code_spans("let x = 1;", Some("rust"));
@@ -552,6 +561,8 @@ mod tests {
 
     #[test]
     fn a_cached_result_matches_an_uncached_one() {
+        let _theme = lock_theme();
+        set_syntax_theme(SyntaxTheme::GrokNight);
         let code = "fn main() { let x = 1; }";
         let first = highlight_code_spans(code, Some("rust"));
         let second = highlight_code_spans(code, Some("rust"));
@@ -631,6 +642,7 @@ mod tests {
 
     #[test]
     fn switching_syntax_theme_recolours_rust() {
+        let _theme = lock_theme();
         let code = "fn main() { let x = \"hi\"; }";
         set_syntax_theme(SyntaxTheme::GrokNight);
         let night = highlight_uncached(code, Some("rust"));
@@ -666,6 +678,8 @@ mod tests {
 
     #[test]
     fn stream_append_matches_batch() {
+        let _theme = lock_theme();
+        set_syntax_theme(SyntaxTheme::GrokNight);
         let full = "fn main() {\n    let x = 1;\n    println!(\"{x}\");\n}\n";
         let mut stream = OpenStreamHighlighter::new();
         for end in 1..=full.len() {
@@ -697,6 +711,8 @@ mod tests {
 
     #[test]
     fn stream_language_change_rebuilds() {
+        let _theme = lock_theme();
+        set_syntax_theme(SyntaxTheme::GrokNight);
         let mut stream = OpenStreamHighlighter::new();
         let body = "let x = 1;\n";
         let yamlish = stream.highlight(body, Some("yaml")).unwrap();
@@ -708,6 +724,8 @@ mod tests {
 
     #[test]
     fn stream_non_prefix_edit_rebuilds() {
+        let _theme = lock_theme();
+        set_syntax_theme(SyntaxTheme::GrokNight);
         let mut stream = OpenStreamHighlighter::new();
         let _ = stream.highlight("alpha: 1\n", Some("yaml")).unwrap();
         let b = "beta: 2\n";
@@ -717,6 +735,8 @@ mod tests {
 
     #[test]
     fn public_api_stream_growth_matches_batch() {
+        let _theme = lock_theme();
+        set_syntax_theme(SyntaxTheme::GrokNight);
         // Exercises the global stream via highlight_code_spans (what the TUI calls).
         let full = "key: value\nlist:\n  - a\n  - b\n";
         for end in 1..=full.len() {
@@ -732,6 +752,8 @@ mod tests {
 
     #[test]
     fn multi_line_comment_survives_incremental_growth() {
+        let _theme = lock_theme();
+        set_syntax_theme(SyntaxTheme::GrokNight);
         let full = "/* line one\n   line two */\nfn x() {}\n";
         let mut stream = OpenStreamHighlighter::new();
         // Grow line-by-line (the TUI streaming case).
