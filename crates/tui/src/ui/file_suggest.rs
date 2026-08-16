@@ -191,9 +191,21 @@ impl FileSuggestState {
         let Some(index) = &self.index else {
             return false;
         };
-        if !index.take_results_dirty() {
+        let dirty = index.take_results_dirty();
+        // nucleo only publishes a snapshot on `tick`. `matching()` is that
+        // tick. Waiting on the dirty flag alone can stall the picker empty
+        // until the next keystroke: `tick(0)` sets should_notify=false, a
+        // just-finished worker then skips notify, and the UI never ticks
+        // again. Seen as `picker_flow_over_real_index` under parallel CI.
+        let running = index.matching();
+        if !dirty && !self.results_pending {
             return false;
         }
+        if !dirty && running {
+            return false; // rematch in flight; keep the last non-empty list
+        }
+
+        let before = self.matches.clone();
         self.matches = index.read_matches(QUERY_LIMIT);
         Self::apply_boosts(self.frecency.as_ref(), &mut self.matches);
         if self.selected >= self.matches.len() {
@@ -202,7 +214,11 @@ impl FileSuggestState {
         if !index.matching() {
             self.results_pending = false;
         }
-        true
+        before.len() != self.matches.len()
+            || before
+                .iter()
+                .zip(self.matches.iter())
+                .any(|(a, b)| a.rel != b.rel || a.score != b.score || a.is_dir != b.is_dir)
     }
 
     /// True while fresh matches may still arrive — the run loop keeps a
@@ -546,20 +562,29 @@ mod tests {
             vec![tmp.path().to_path_buf()],
             whycode_index::IndexOptions {
                 watch: false,
+                threads: 1,
                 ..Default::default()
             },
         );
         assert!(idx.wait_ready(std::time::Duration::from_secs(10)));
+        // Store-backed: if this fails the walk ignored the fixture (not a
+        // fuzzy-poll flake).
+        assert!(
+            idx.entries().iter().any(|e| &*e.rel == "src/main.rs"),
+            "scan missed src/main.rs; status={:?} entries={:?}",
+            idx.status(),
+            idx.entries()
+                .iter()
+                .map(|e| e.rel.as_ref())
+                .collect::<Vec<_>>(),
+        );
 
         let mut st = FileSuggestState::default();
         st.set_index(idx);
 
         // Matching is async: poll (like the run loop does) until it lands.
-        // Generous deadline: the background index thread can lag under parallel
-        // CI load (this was a flaky 5s deadline). The predicate is still checked
-        // at the end, so a longer deadline only avoids false negatives.
         fn poll_until(st: &mut FileSuggestState, pred: impl Fn(&FileSuggestState) -> bool) -> bool {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             while std::time::Instant::now() < deadline {
                 if pred(st) {
                     return true;
@@ -575,10 +600,18 @@ mod tests {
         let mut cur = buf.len();
         st.refresh(&buf, cur);
         assert!(st.active);
-        assert!(poll_until(&mut st, |s| s
-            .matches
-            .iter()
-            .any(|m| m.rel == "src/main.rs")));
+        assert!(
+            poll_until(&mut st, |s| s
+                .matches
+                .iter()
+                .any(|m| m.rel == "src/main.rs")),
+            "picker never saw src/main.rs; matches={:?} status={:?}",
+            st.matches
+                .iter()
+                .map(|m| m.rel.as_str())
+                .collect::<Vec<_>>(),
+            st.scan_status(),
+        );
 
         // Accept the file → token replaced with @path + trailing space, closed.
         while !st.current().is_some_and(|m| m.rel == "src/main.rs") {

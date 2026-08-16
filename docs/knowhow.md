@@ -749,20 +749,27 @@ under test.
 
 ### 2026-08-16 — `tui::ui::file_suggest::picker_flow_over_real_index` flakes under parallel load
 
-**Symptom:** Full workspace or `cargo llvm-cov` runs occasionally fail
-`picker_flow_over_real_index` after ~5 s. Passes on re-run / isolation.
+**Symptom:** Full workspace `cargo test` on the self-hosted runner fails
+`picker_flow_over_real_index` after the poll deadline (5 s, then 30 s).
+421 other TUI tests pass. Isolated re-run is green.
 
-**Root cause:** The test polls the async index with a 5 s deadline; under
-parallel test or instrumentation load the background index thread can
-lag past it. Purely a timing false-negative.
+**Root cause:** Not scan lag. nucleo only publishes a snapshot on `tick`,
+and its worker calls `notify` only when `should_notify` is true. `tick`
+clears that flag at entry; `tick(0)` then often fails `try_lock` under
+load and relies on the worker to flip dirty. If the worker finishes in
+that window with `should_notify == false`, notify is skipped. The picker
+used to `return` from `poll_matches` unless dirty was already set, so
+it never ticked again and sat empty until the deadline.
 
-**Fix:** Raised the `poll_until` deadline to 30 s. The predicate is still
-checked at the end, so a longer deadline only removes false negatives
-(no semantic change; fast path is still ~0.02 s).
+**Fix:** `poll_matches` always `matching()`-nudges while a rematch is
+pending, and does a last-chance `read_matches` once the engine settles
+even if dirty stayed false. The test asserts the store actually contains
+`src/main.rs` after `wait_ready` so a walk/ignore miss is not mistaken
+for this race.
 
-**Prevention:** If this test fails again, treat it as timing until proven
-otherwise — do not suspect executor/config changes without an isolated
-re-run.
+**Prevention:** Do not "fix" this by raising the poll deadline again.
+If it fails, print `matches` + `scan_status` and check whether the
+store has the file (walk) vs the fuzzy snapshot never published (tick).
 
 ---
 
