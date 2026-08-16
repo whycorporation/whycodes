@@ -19,7 +19,11 @@ need "host" "$list"
 need "alacritty" "$list"
 need "konsole" "$list"
 
-dry="$(BIN=/tmp/whycode-fake DIR=/tmp/demo "$SCRIPT" --dry-run --no-build alacritty 2>&1)"
+# Dry-run must print argv even when the emulator is not on PATH (CI runners).
+dry="$(
+    PATH=/usr/bin:/bin
+    BIN=/tmp/whycode-fake DIR=/tmp/demo "$SCRIPT" --dry-run --no-build alacritty 2>&1
+)"
 need "alacritty -e /tmp/whycode-fake -d /tmp/demo" "$dry"
 need "launched=1" "$dry"
 

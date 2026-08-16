@@ -421,12 +421,19 @@ fn sanitize_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
 /// Scanner thread body: initial scan, then watcher-fed delta loop.
 fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
     full_scan(&shared);
+    if shared.cancel.load(Ordering::Relaxed) {
+        return;
+    }
 
+    // Arm notify *before* flipping Ready. `wait_ready` is the test/TUI
+    // signal that creates will be seen — if Ready precedes `watch()`, a
+    // write in that window is lost (CI: `watcher_picks_up_changes`).
     let _watcher = if shared.watch {
         watch::spawn(&shared.roots, shared.cmd_tx.clone())
     } else {
         None
     };
+    shared.state.store(STATE_READY, Ordering::Release);
 
     let mut pending: Vec<Change> = Vec::new();
     loop {
@@ -438,6 +445,9 @@ fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
             Ok(Command::Rescan) => {
                 pending.clear();
                 full_scan(&shared);
+                if !shared.cancel.load(Ordering::Relaxed) {
+                    shared.state.store(STATE_READY, Ordering::Release);
+                }
             }
             Ok(Command::Batch(cs)) => pending.extend(cs),
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -497,8 +507,6 @@ fn full_scan(shared: &Arc<Shared>) {
             break;
         }
     }
-
-    shared.state.store(STATE_READY, Ordering::Release);
 }
 
 /// Apply one debounced watcher batch: upserts push into nucleo; removals
@@ -636,20 +644,23 @@ mod tests {
         assert!(idx.wait_ready(Duration::from_secs(10)));
         let before = idx.len();
 
-        // Create → appears.
+        // Create → appears. `wait_ready` now means the watcher is armed, so
+        // this write cannot race the first `watch()`. Still poll: debounce
+        // is 250 ms and CI can starve the apply thread.
         fs::write(dir.path().join("src/new_file.rs"), "// new").unwrap();
-        // Generous window: under parallel test load (all crates at once) the
-        // inotify → 250 ms debounce → apply chain can be starved for seconds.
         let deadline = Instant::now() + Duration::from_secs(15);
-        while idx.len() < before + 1 && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        assert_eq!(idx.len(), before + 1, "create must be indexed");
-        assert!(
-            idx.query("new_file", 10)
+        let appeared = loop {
+            let hit = idx
+                .query("new_file", 10)
                 .iter()
-                .any(|m| m.rel == "src/new_file.rs")
-        );
+                .any(|m| m.rel == "src/new_file.rs");
+            if hit || Instant::now() >= deadline {
+                break hit;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(appeared, "create must be indexed");
+        assert_eq!(idx.len(), before + 1, "create adds one store entry");
 
         // Delete → disappears from the store (fuzzy engine rebuilds).
         fs::remove_file(dir.path().join("src/new_file.rs")).unwrap();

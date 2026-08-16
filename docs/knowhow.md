@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — CI Budgets + index watcher flake
+
+**Symptom:** `Budgets` red on `sh scripts/test_tui_term_matrix.sh` (no `ok`). `Test (linux)` red on `whycode-index::watcher_picks_up_changes` (`create must be indexed`, 5 vs 6).
+
+**Root cause:** `--dry-run` skipped hosts whose emulator was not on PATH, so CI (no Alacritty) never printed the argv the test locks. Index `wait_ready` flipped Ready at the end of `full_scan`, *then* `notify` was armed — a create in that window was lost.
+
+**Fix:** Dry-run prints argv even when the binary is missing. Scanner marks Ready only after `watch::spawn`. Test polls for the new path, not just `len()`.
+
+**Prevention:** Dry-run / `--list` paths must not require the real emulator. Never signal “ready for live updates” before the watcher is installed.
+
+---
+
 ### 2026-08-17 — Header–chat gap too tight; scroll still hitchy
 
 **Symptom:** Transcript sat almost flush under the `whycode` header (one blank row). Wheel/trackpad scroll was still not fluid after the previous drain-only fix.
