@@ -140,6 +140,16 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Code token colours come from Grok's tmTheme
+
+**Symptom:** Fenced Rust/JS looked like Tokyo Night even on the default dark UI. Grok Night uses a cooler grey/magenta palette (`#b2b2b2` fg, `#51597d` comments).
+
+**Fix:** Embed `grok-night.tmTheme` / `grok-day.tmTheme`. Default + most dark themes use Night; light themes use Day; Tokyo Night TUI keeps `tokyo-night.tmTheme`. `set_syntax_theme` clears highlight caches.
+
+**Prevention:** Assert Night vs Day produce different `fn main()` colours.
+
+---
+
 ### 2026-08-17 — Fenced code matches Grok (band + line numbers)
 
 **Symptom:** Assistant ` ``` ` blocks used `┌ rust` / `│` / `└` chrome. Next to Grok they looked like a broken box.

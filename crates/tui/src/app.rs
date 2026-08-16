@@ -1533,6 +1533,7 @@ impl TuiApp {
     }
 
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
+        config.theme.apply_syntax_theme();
         Self {
             running: true,
             mode: AppMode::Normal,
