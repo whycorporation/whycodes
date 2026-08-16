@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Header–chat gap too tight; scroll still hitchy
+
+**Symptom:** Transcript sat almost flush under the `whycode` header (one blank row). Wheel/trackpad scroll was still not fluid after the previous drain-only fix.
+
+**Root cause:** `TOP_PAD` was 1. Paint still cloned every visible `Line`/`Span`/`String`, wiped every cell then stamped (2× writes), and re-parsed the selected bubble. Wheel notches in a drained batch were applied one `handle_mouse` at a time instead of one offset change.
+
+**Fix:** `TOP_PAD = 2`. Paint cached rows by `Arc` reference; one-pass row fill (no area wipe); caret is paint-time only. Coalesce wheel events to a single `scroll_rows`. Skip `mark_dirty` when the offset does not change.
+
+**Prevention:** Do not clone transcript `Line`s on the scroll frame. Do not key or invalidate paint on selection — overlay the caret.
+
+---
+
 ### 2026-08-16 — Chat freeze on mouse-wheel scroll
 
 **Symptom:** Flicking the wheel / trackpad over a long transcript made the TUI hang for a second or more. Scrolling during a live turn was worst.

@@ -1749,6 +1749,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         return Err(e.into());
                     }
                 };
+                let mut batch = batch;
+                input::coalesce_chat_wheels(&mut app, &mut batch);
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
                 }
@@ -2273,17 +2275,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     result
 }
 
-/// Print the exit summary where the user will see it after alt-screen leave.
-///
-/// The TUI draws on `/dev/tty`; after restore, prefer that same device so the
-/// lines land in the real terminal scrollback even when stdout is captured.
-/// Fall back to stdout, then stderr.
 /// Read the event that woke `poll`, then drain anything already queued.
 ///
 /// Cap the batch so a stuck input flood cannot grow without bound before
 /// the next paint / turn-event drain.
 fn read_event_batch() -> io::Result<Vec<Event>> {
-    const MAX_BATCH: usize = 64;
+    const MAX_BATCH: usize = 256;
     let mut batch = Vec::with_capacity(8);
     batch.push(event::read()?);
     while batch.len() < MAX_BATCH {
@@ -2305,6 +2302,11 @@ fn event_forces_redraw(ev: &Event) -> bool {
     )
 }
 
+/// Print the exit summary where the user will see it after alt-screen leave.
+///
+/// The TUI draws on `/dev/tty`; after restore, prefer that same device so the
+/// lines land in the real terminal scrollback even when stdout is captured.
+/// Fall back to stdout, then stderr.
 fn print_session_summary(summary: &str) {
     #[cfg(unix)]
     {

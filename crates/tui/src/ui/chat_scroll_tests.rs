@@ -790,6 +790,65 @@ fn scroll_paints_reuse_closed_line_cache() {
 }
 
 #[test]
+fn coalesce_chat_wheels_sums_notches_into_one_scroll() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 20);
+    let total = session_line_count(&app, 40);
+    app.apply_chat_paint(
+        Rect {
+            x: 0,
+            y: 0,
+            width: 40,
+            height: 10,
+        },
+        None,
+        total,
+    );
+    let step = chat_wheel_step(&app);
+    let mut events = vec![
+        mouse(MouseEventKind::Moved, 4, 4),
+        mouse(MouseEventKind::ScrollUp, 4, 4),
+        mouse(MouseEventKind::ScrollUp, 4, 4),
+        mouse(MouseEventKind::ScrollUp, 4, 4),
+        mouse(MouseEventKind::Moved, 5, 5),
+        mouse(MouseEventKind::ScrollDown, 5, 5),
+    ];
+    input::coalesce_chat_wheels(&mut app, &mut events);
+    assert_eq!(app.scroll_offset, (step * 2) as usize);
+    assert_eq!(events.len(), 2, "only Moved events should remain");
+    assert!(
+        events
+            .iter()
+            .all(|e| matches!(e, Event::Mouse(m) if m.kind == MouseEventKind::Moved))
+    );
+}
+
+#[test]
+fn selected_scrollback_paint_reuses_line_cache() {
+    use crate::app::FocusPane;
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 8);
+    paint_session(&mut app, 40, 12);
+    let before: Vec<usize> = app
+        .messages
+        .iter()
+        .map(|m| m.line_cache.as_ref().map(|(_, _, l)| l.len()).unwrap_or(0))
+        .collect();
+    app.focus = FocusPane::Scrollback;
+    app.selected_msg = Some(0);
+    app.scroll_rows(3);
+    paint_session(&mut app, 40, 12);
+    for (i, msg) in app.messages.iter().enumerate() {
+        assert!(msg.line_cache.is_some(), "msg {i} lost line_cache");
+        assert_eq!(
+            msg.line_cache.as_ref().unwrap().2.len(),
+            before[i],
+            "selected paint must not rebuild msg {i}"
+        );
+    }
+}
+
+#[test]
 fn wheel_step_scales_with_viewport() {
     let mut app = TuiApp::new(cfg());
     app.chat_viewport_rows = 6;

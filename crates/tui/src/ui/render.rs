@@ -938,7 +938,6 @@ mod paint_tests {
 
         let safe_top = row_text(&buf, 0);
         let header = row_text(&buf, layout::SAFE_TOP);
-        let gap = row_text(&buf, layout::SAFE_TOP + 1);
 
         // Terminal edge (SAFE_TOP) is empty of chrome and of chat.
         assert!(
@@ -962,15 +961,18 @@ mod paint_tests {
             "user-prompt arrow spilled into the header: {header:?}"
         );
 
-        // TOP_PAD blank row between header and transcript.
-        assert!(
-            !gap.contains("SAFEAREA_TOP_MARKER"),
-            "chat spilled into the header gap: {gap:?}"
-        );
-        assert!(
-            !gap.contains('\u{276F}'),
-            "user-prompt arrow spilled into the header gap: {gap:?}"
-        );
+        // TOP_PAD blank rows between header and transcript.
+        for dy in 1..=layout::TOP_PAD {
+            let gap = row_text(&buf, layout::SAFE_TOP + dy);
+            assert!(
+                !gap.contains("SAFEAREA_TOP_MARKER"),
+                "chat spilled into header gap row {dy}: {gap:?}"
+            );
+            assert!(
+                !gap.contains('\u{276F}'),
+                "user-prompt arrow spilled into header gap row {dy}: {gap:?}"
+            );
+        }
 
         let chat = a.chat_area.expect("session publishes a chat hit rect");
         assert!(
@@ -1006,11 +1008,13 @@ mod paint_tests {
             "scrolled user band spilled into the header: {header:?}"
         );
 
-        let gap = row_text(&buf, layout::SAFE_TOP + 1);
-        assert!(
-            !gap.contains("SAFEAREA_TOP_MARKER"),
-            "scrolled chat spilled into the header gap: {gap:?}"
-        );
+        for dy in 1..=layout::TOP_PAD {
+            let gap = row_text(&buf, layout::SAFE_TOP + dy);
+            assert!(
+                !gap.contains("SAFEAREA_TOP_MARKER"),
+                "scrolled chat spilled into header gap row {dy}: {gap:?}"
+            );
+        }
 
         // Oldest user prompt is visible somewhere below the gap, not above it.
         let mut found = false;

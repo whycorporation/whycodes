@@ -816,6 +816,40 @@ pub fn chat_wheel_step(app: &TuiApp) -> isize {
     (h / 3).clamp(3, 12)
 }
 
+/// Fold queued chat-wheel events into a single `scroll_rows` and drop them
+/// from `events`.
+///
+/// A trackpad flick is dozens of `ScrollUp`/`ScrollDown` plus `Moved`.
+/// Handling each through `handle_mouse` is cheap; painting after each is not.
+/// The run loop drains first, then this collapse, then one paint.
+///
+/// Dialogs / Help keep their own wheel path — leave those events in the
+/// batch when a modal is open.
+pub fn coalesce_chat_wheels(app: &mut TuiApp, events: &mut Vec<Event>) {
+    if app.modal_is_open() {
+        return;
+    }
+    let step = chat_wheel_step(app);
+    let mut delta = 0isize;
+    events.retain(|ev| match ev {
+        Event::Mouse(m) => match m.kind {
+            MouseEventKind::ScrollUp => {
+                delta += step;
+                false
+            }
+            MouseEventKind::ScrollDown => {
+                delta -= step;
+                false
+            }
+            _ => true,
+        },
+        _ => true,
+    });
+    if delta != 0 {
+        app.scroll_rows(delta);
+    }
+}
+
 /// Grab offset within the chat scrollbar thumb (top-origin track math).
 fn chat_scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) -> u16 {
     use crate::ui::scrollbar::{scrollbar_metrics, thumb_top_for_offset};
