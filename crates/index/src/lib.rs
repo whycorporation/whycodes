@@ -747,10 +747,14 @@ mod tests {
         assert!(first_ms < 50.0, "query_now blocked {first_ms:.1}ms");
 
         // Dirty flag flips and results converge without another keystroke.
+        // Always nudge (`matching`) so a missed nucleo notify cannot stall
+        // the snapshot — same contract the TUI picker now uses.
         let deadline = Instant::now() + Duration::from_secs(5);
         let mut found = false;
         while Instant::now() < deadline {
-            if idx.take_results_dirty() {
+            let dirty = idx.take_results_dirty();
+            let running = idx.matching();
+            if dirty || !running {
                 let hits = idx.read_matches(10);
                 if hits.iter().any(|m| m.rel.ends_with("needle.rs")) {
                     found = true;
