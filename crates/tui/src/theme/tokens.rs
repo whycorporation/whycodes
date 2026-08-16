@@ -47,10 +47,12 @@ pub mod layout {
     /// Prompt max width: absolute cap, or fraction of terminal width.
     pub const PROMPT_MAX_WIDTH: u16 = 75;
     pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
-    /// Session main column horizontal padding.
-    pub const SIDE_PAD: u16 = 2;
+    /// Session main column horizontal padding (bubble left/right margin).
+    pub const SIDE_PAD: u16 = 4;
     /// Blank rows under the status header so chat does not sit flush on it.
     pub const TOP_PAD: u16 = 2;
+    /// Blank rows between the transcript and the turn-status / prompt.
+    pub const CHAT_GAP: u16 = 1;
     /// Gap under the prompt (bottom breathing room inside body).
     pub const BOTTOM_PAD: u16 = 1;
     /// Terminal edge insets (all four sides).
@@ -145,6 +147,8 @@ mod tests {
             assert!(layout::PROMPT_MAX_WIDTH > 0);
             assert!(layout::PROMPT_WIDTH_RATIO > 0.0 && layout::PROMPT_WIDTH_RATIO < 1.0);
             assert!(layout::SIDEBAR_WIDTH > layout::SIDE_PAD * 2);
+            assert!(layout::SIDE_PAD >= 4);
+            assert!(layout::CHAT_GAP >= 1);
         }
     }
 

@@ -101,8 +101,11 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
                 render_message(&app.messages[i], app, &palette, i, width)
             };
             let h = lines.len();
-            app.messages[i].layout_cache = Some((width, closed, h));
+            // Open (streaming) bubbles grow every token — never cache height
+            // or a missed invalidate leaves the viewport parked on the first
+            // few lines while the real answer is below the fold.
             if closed {
+                app.messages[i].layout_cache = Some((width, closed, h));
                 app.messages[i].line_cache = Some((width, closed, Arc::new(lines)));
             }
             h
@@ -533,9 +536,9 @@ fn paint_chat_row(
                 if cell.symbol().is_empty() {
                     cell.set_symbol(" ");
                 }
-                let mut st = cell.style();
-                st.bg = Some(band);
-                cell.set_style(st);
+                // Only the background — `set_style` can drop RGB token
+                // colours on some ratatui versions when reconstructed.
+                cell.set_bg(band);
             }
         }
     }
@@ -592,11 +595,12 @@ fn render_message(
             ));
         }
         ChatRole::Assistant => {
-            // Chronological layout: stream thinking first, emit `content` before
-            // the first non-thinking block (or at the end if only thinking/text).
-            // That way "Thought for Xs" sits above the answer, not below it.
-            // Content width for Mermaid compaction: leave room for SIDE_PAD and
-            // the diagram gutter ("│ ").
+            // Turn order (Grok-style, latest answer at the bottom):
+            //   thinking → tools → written answer
+            // Live text accumulates in `msg.content` and used to be dumped
+            // *before* the first tool, so the growing reply sat above the
+            // cards and auto-scroll (stick-to-bottom) showed tools, not the
+            // answer. Content width for Mermaid: SIDE_PAD + "│ " gutter.
             //
             // Clock on the first answer line, same as the user ❯ row.
             let ts = message_clock(msg);
@@ -611,39 +615,25 @@ fn render_message(
                 }
             };
             let md_width = (width as usize).saturating_sub(4).max(20);
-            let mut content_emitted = msg.content.is_empty();
-            let emit_content = |lines: &mut Vec<Line<'static>>| {
-                if !msg.content.is_empty() {
-                    let start = lines.len();
-                    lines.extend(super::markdown::render_with_width(
-                        &msg.content,
-                        palette,
-                        Some(md_width),
-                    ));
-                    stamp(&mut lines[start..]);
+            let emit_markdown = |lines: &mut Vec<Line<'static>>, text: &str| {
+                if text.is_empty() {
+                    return;
                 }
+                let start = lines.len();
+                lines.extend(super::markdown::render_with_width(
+                    text,
+                    palette,
+                    Some(md_width),
+                ));
+                stamp(&mut lines[start..]);
             };
+
             for block in &msg.blocks {
                 match block {
-                    ChatBlock::Text(t) if msg.content.is_empty() => {
-                        let start = lines.len();
-                        lines.extend(super::markdown::render_with_width(
-                            t,
-                            palette,
-                            Some(md_width),
-                        ));
-                        stamp(&mut lines[start..]);
-                        content_emitted = true;
-                    }
-                    ChatBlock::Text(_) => {}
                     ChatBlock::Thinking(t) => {
                         lines.extend(thinking_lines(t, palette, width, app.spinner_frame));
                     }
                     ChatBlock::ToolUse { id, name, input } => {
-                        if !content_emitted {
-                            emit_content(&mut lines);
-                            content_emitted = true;
-                        }
                         // Prefer the live tool_calls result when this id already finished.
                         let (result, is_error) = msg
                             .tool_calls
@@ -664,22 +654,22 @@ fn render_message(
                             },
                         ));
                     }
-                    ChatBlock::ToolResult { .. } => {
-                        // Painted with the matching ToolUse / tool_calls entry.
+                    ChatBlock::Text(t) if msg.content.is_empty() => {
+                        // Restore path: no live `content` tail, paint Text in place.
+                        emit_markdown(&mut lines, t);
+                    }
+                    ChatBlock::Text(_) | ChatBlock::ToolResult { .. } => {
+                        // Live `content` is emitted after every tool. ToolResult
+                        // is painted with the matching ToolUse / tool_calls entry.
                     }
                 }
-            }
-            if !content_emitted {
-                emit_content(&mut lines);
             }
             for tc in &msg.tool_calls {
                 let dup = msg
                     .blocks
                     .iter()
                     .any(|b| matches!(b, ChatBlock::ToolUse { id, .. } if id == &tc.id));
-                if dup {
-                    // Already painted as ToolUse (+ result).
-                } else {
+                if !dup {
                     lines.extend(tool_block(
                         &tc.name,
                         &tc.arguments,
@@ -694,6 +684,8 @@ fn render_message(
                     ));
                 }
             }
+            // Written answer last — always nearest the prompt / stop row.
+            emit_markdown(&mut lines, &msg.content);
             // Turn footer: past tense, muted duration ("Worked for 12s").
             // Provider/model live under the prompt meta row once.
             let is_last = index + 1 == app.messages.len();
@@ -3336,6 +3328,37 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         assert!(
             clock_at > hello_at,
             "clock must be to the right of the text"
+        );
+    }
+
+    #[test]
+    fn assistant_answer_renders_after_tools() {
+        use crate::app::{ChatRole, TuiApp};
+        use crate::config::TuiAppConfig;
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "look");
+        app.add_message(ChatRole::Assistant, "AFTER_TOOLS_ANSWER");
+        app.add_tool_call(
+            "t1".into(),
+            "read".into(),
+            serde_json::json!({ "path": "a.rs" }),
+        );
+        app.add_tool_result("t1", "ok", false);
+        let palette = app.config.palette();
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        let tool_at = texts
+            .iter()
+            .position(|t| t.contains('◆') || t.contains("Read"));
+        let answer_at = texts.iter().position(|t| t.contains("AFTER_TOOLS_ANSWER"));
+        assert!(tool_at.is_some(), "tool card missing: {texts:?}");
+        assert!(answer_at.is_some(), "answer missing: {texts:?}");
+        assert!(
+            tool_at.unwrap() < answer_at.unwrap(),
+            "answer must sit below tools, got {texts:?}"
         );
     }
 

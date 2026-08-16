@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Answer sat above tools; chat flush on [stop]
+
+**Symptom:** During a tool-using turn the written reply stayed at the top of the bubble (tools looked fine). The last transcript line sat on the `[stop]` row. Bubbles had almost no left/right margin. Fenced code often looked uncoloured.
+
+**Root cause:** `render_message` dumped all of `msg.content` *before* the first `ToolUse`, so auto-scroll (offset 0) showed the tool cards and left the growing answer above the fold. Session split was chat · turn · prompt with no gap; `SIDE_PAD` was 2. Code-band wash used `set_style` on a reconstructed `Style` (can drop RGB token colours). Untagged fences never guessed a grammar.
+
+**Fix:** Paint thinking → tools → answer. `CHAT_GAP` blank row between chat and stop/prompt. `SIDE_PAD = 4`. Band wash uses `Cell::set_bg`. Untagged fences try `find_syntax_by_first_line`. Do not cache height on the live streaming bubble.
+
+**Prevention:** Assert `◆` / Read appears above `AFTER_TOOLS_ANSWER`. Full-shell paint: `stop.y >= chat.bottom + CHAT_GAP`. Tagged rust fence paint has ≥2 distinct RGB token colours.
+
+---
+
 ### 2026-08-17 — Code token colours come from Grok's tmTheme
 
 **Symptom:** Fenced Rust/JS looked like Tokyo Night even on the default dark UI. Grok Night uses a cooler grey/magenta palette (`#b2b2b2` fg, `#51597d` comments).
