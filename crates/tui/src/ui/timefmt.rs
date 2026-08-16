@@ -1,6 +1,6 @@
 //! Grok Build clock labels for chat bubbles and the session picker.
 //!
-//! Chat (`/timestamps`): `August 15, 14:32`
+//! Chat clocks (always on): `August 15, 14:32`
 //! History / welcome: `just now`, `5m ago`, `3h ago`, then the same absolute.
 
 use chrono::{Datelike, Timelike};
