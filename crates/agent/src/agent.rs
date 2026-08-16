@@ -3377,8 +3377,9 @@ pub fn memory_settings_from_config(
 
 #[cfg(test)]
 mod permission_detail_tests {
-    use super::{format_permission_detail, format_shell_risk_detail};
+    use super::*;
     use serde_json::json;
+    use whycode_core::types::PermissionSet;
 
     #[test]
     fn single_command_is_plain_string() {
@@ -3400,5 +3401,214 @@ mod permission_detail_tests {
         assert!(d.contains("Command:"), "{d}");
         assert!(d.contains("rm -rf /tmp/x"), "{d}");
         assert!(d.contains("Risk: destructive delete"), "{d}");
+    }
+
+    #[test]
+    fn empty_args_is_labeled() {
+        assert_eq!(format_permission_detail(&json!({})), "(no arguments)");
+    }
+
+    #[test]
+    fn scalars_fall_back_to_pretty_json() {
+        let d = format_permission_detail(&json!("plain string"));
+        assert_eq!(d, "\"plain string\"");
+        assert!(d.starts_with('\"'));
+    }
+
+    #[test]
+    fn nested_objects_are_labeled_with_indented_lines() {
+        let d = format_permission_detail(&json!({"patch": {"file": "a.rs", "edits": 2}}));
+        assert!(d.contains("patch:"), "{d}");
+        assert!(d.contains("\"file\": \"a.rs\""), "{d}");
+    }
+
+    #[test]
+    fn multiline_strings_are_indented() {
+        let d = format_permission_detail(&json!({"content": "line1\nline2\nline3"}));
+        assert!(d.contains("content:"), "{d}");
+        assert!(d.contains("  line1"), "{d}");
+        assert!(d.contains("  line2"), "{d}");
+        assert!(d.contains("  line3"), "{d}");
+    }
+
+    #[test]
+    fn null_bool_number_values_are_labeled() {
+        let d = format_permission_detail(&json!({"a": null, "b": true, "c": 42}));
+        assert!(d.contains("a: null"), "{d}");
+        assert!(d.contains("b: true"), "{d}");
+        assert!(d.contains("c: 42"), "{d}");
+    }
+
+    #[test]
+    fn truncate_permission_detail_caps_long_text() {
+        let long = "x".repeat(PERMISSION_DETAIL_MAX + 10);
+        let t = truncate_permission_detail(&long);
+        assert_eq!(t.chars().count(), PERMISSION_DETAIL_MAX + 1); // ellipsis appended
+        assert!(t.ends_with('…'));
+        assert!(t.chars().take(PERMISSION_DETAIL_MAX).all(|c| c == 'x'));
+        let short = "short".to_string();
+        assert_eq!(truncate_permission_detail(&short), "short");
+    }
+
+    #[test]
+    fn worktree_names_are_validated() {
+        assert!(is_safe_worktree_name("feat-auth"));
+        assert!(is_safe_worktree_name("branch_2"));
+        assert!(is_safe_worktree_name("A1-b_c"));
+        assert!(!is_safe_worktree_name(""));
+        assert!(!is_safe_worktree_name("   "));
+        assert!(!is_safe_worktree_name("a/b"));
+        assert!(!is_safe_worktree_name(".."));
+        assert!(!is_safe_worktree_name("with space"));
+        assert!(!is_safe_worktree_name(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn file_tool_path_extracts_and_normalizes() {
+        let tc = |name: &str, args: serde_json::Value| ToolCall {
+            id: "1".into(),
+            name: name.into(),
+            arguments: args,
+        };
+        assert_eq!(
+            file_tool_path(&tc("read", json!({"path": "src/main.rs"}))),
+            Some("src/main.rs".into())
+        );
+        // backslashes normalized to forward slashes
+        assert_eq!(
+            file_tool_path(&tc("edit", json!({"path": "src\\mod.rs"}))),
+            Some("src/mod.rs".into())
+        );
+        // path trimmed
+        assert_eq!(
+            file_tool_path(&tc("write", json!({"path": "  a.rs  "}))),
+            Some("a.rs".into())
+        );
+        // apply_patch may use path
+        assert_eq!(
+            file_tool_path(&tc("apply_patch", json!({"path": "x.rs"}))),
+            Some("x.rs".into())
+        );
+        // missing / empty / non-string path
+        assert_eq!(file_tool_path(&tc("read", json!({}))), None);
+        assert_eq!(file_tool_path(&tc("read", json!({"path": ""}))), None);
+        assert_eq!(file_tool_path(&tc("read", json!({"path": 42}))), None);
+        // unknown tool name
+        assert_eq!(file_tool_path(&tc("bash", json!({"path": "x"}))), None);
+    }
+
+    #[test]
+    fn parallel_safety_respects_serial_list() {
+        assert!(is_parallel_safe_tool("read", &PermissionSet::default()));
+        assert!(is_parallel_safe_tool("grep", &PermissionSet::default()));
+        assert!(is_parallel_safe_tool("glob", &PermissionSet::default()));
+        for name in SERIAL_TOOLS {
+            assert!(
+                !is_parallel_safe_tool(name, &PermissionSet::default()),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn tool_signatures_and_doom_loop() {
+        let tc = |name: &str, args: serde_json::Value| ToolCall {
+            id: "1".into(),
+            name: name.into(),
+            arguments: args,
+        };
+        let a = tc("read", json!({"path": "x.rs"}));
+        let b = tc("read", json!({"path": "y.rs"}));
+        assert_eq!(tool_call_signature(&a), "read|{\"path\":\"x.rs\"}");
+        assert_ne!(tool_call_signature(&a), tool_call_signature(&b));
+
+        let mut recent = VecDeque::new();
+        // nothing recent → not a doom loop yet
+        assert!(!would_doom_loop(&recent, std::slice::from_ref(&a)));
+        // mixed batch is never a doom loop
+        assert!(!would_doom_loop(&recent, &[a.clone(), b.clone()]));
+        // empty calls → false
+        assert!(!would_doom_loop(&recent, &[]));
+
+        // push two identical signatures, then a third call trips the threshold
+        recent.push_back(tool_call_signature(&a));
+        recent.push_back(tool_call_signature(&a));
+        assert!(would_doom_loop(&recent, std::slice::from_ref(&a)));
+        // batch of identical calls counts as the same signature repeated
+        assert!(would_doom_loop(&recent, &[a.clone(), a.clone()]));
+        // an intervening different signature resets the run
+        let mut recent2 = VecDeque::new();
+        recent2.push_back(tool_call_signature(&a));
+        recent2.push_back(tool_call_signature(&b));
+        assert!(!would_doom_loop(&recent2, std::slice::from_ref(&a)));
+    }
+
+    #[test]
+    fn system_prompt_for_known_and_unknown_agents() {
+        for name in ["build", "plan", "ask", "explore", "general", "scout"] {
+            let p = Agent::system_prompt_for(name);
+            assert!(!p.is_empty(), "{name}");
+            assert!(!p.contains("Today's date:"), "{name}");
+        }
+        assert_eq!(
+            Agent::system_prompt_for("does-not-exist"),
+            DEFAULT_SYSTEM_PROMPT
+        );
+    }
+
+    #[test]
+    fn runtime_context_is_idempotent_and_append_only() {
+        let base = "You are an agent.";
+        let once = Agent::with_runtime_context(base);
+        assert!(once.contains("Today's date:"));
+        assert!(once.starts_with(base));
+        // second application does not duplicate the block
+        assert_eq!(Agent::with_runtime_context(&once), once);
+        // already-present marker is left untouched
+        let already = "Prompt with Today's date: 2026-01-01.";
+        assert_eq!(Agent::with_runtime_context(already), already);
+    }
+
+    #[test]
+    fn agents_md_is_appended_and_candidates_are_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        // no AGENTS.md → prompt unchanged (plus runtime context)
+        let bare = Agent::with_agents_md("base", dir.path());
+        assert!(bare.starts_with("base"));
+        assert!(!bare.contains("Project Instructions"));
+
+        // AGENTS.md at project root is picked up
+        std::fs::write(dir.path().join("AGENTS.md"), "  \nProject rules here\n  ").unwrap();
+        let with = Agent::with_agents_md("base", dir.path());
+        assert!(with.contains("Project Instructions (AGENTS.md)"), "{with}");
+        assert!(with.contains("Project rules here"), "{with}");
+
+        // lowercase agents.md also works when AGENTS.md absent
+        let dir2 = tempfile::tempdir().unwrap();
+        std::fs::write(dir2.path().join("agents.md"), "lowercase rules").unwrap();
+        let with2 = Agent::with_agents_md("base", dir2.path());
+        assert!(with2.contains("lowercase rules"), "{with2}");
+
+        // .whycode/AGENTS.md is the fallback candidate
+        let dir3 = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir3.path().join(".whycode")).unwrap();
+        std::fs::write(dir3.path().join(".whycode/AGENTS.md"), "nested rules").unwrap();
+        let with3 = Agent::with_agents_md("base", dir3.path());
+        assert!(with3.contains("nested rules"), "{with3}");
+    }
+
+    #[test]
+    fn memory_settings_map_from_config() {
+        let config = whycode_config::Config::default();
+        let m = memory_settings_from_config(&config);
+        assert_eq!(m.enabled, config.memory.enabled);
+        assert_eq!(m.auto_inject, config.memory.auto_inject);
+        assert_eq!(m.auto_retain, config.memory.auto_retain);
+        assert_eq!(m.retain_every_n, config.memory.retain_every_n);
+        assert_eq!(
+            m.scope,
+            whycode_memory::MemoryScope::parse(&config.memory.scope)
+        );
+        assert_eq!(m.agent_bank, None);
     }
 }

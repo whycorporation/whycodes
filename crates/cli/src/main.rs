@@ -4445,4 +4445,286 @@ mod tests {
         assert_eq!(parse_output_format("ndjson"), Ok(OutputFormat::StreamJson));
         assert!(parse_output_format("bogus").is_err());
     }
+
+    #[test]
+    fn truncate_str_short_and_long() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+        assert_eq!(truncate_str("hello world", 8), "hello...");
+        assert_eq!(truncate_str("", 3), "");
+        // exact boundary stays untouched
+        assert_eq!(truncate_str("abcdef", 6), "abcdef");
+        // multibyte chars are counted as chars, not bytes: keeps max_len - 3
+        let t = truncate_str("héllo wörld", 6);
+        assert_eq!(t, "hél...");
+    }
+
+    #[test]
+    fn expand_user_input_inlines_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.txt"), "hello file").unwrap();
+        let out = expand_user_input("read @note.txt please", dir.path());
+        assert!(out.contains("--- file: note.txt ---"), "{out}");
+        assert!(out.contains("hello file"), "{out}");
+        assert!(out.contains("--- end file ---"), "{out}");
+        // the surrounding text survives
+        assert!(out.starts_with("read "), "{out}");
+        assert!(out.ends_with(" please"), "{out}");
+    }
+
+    #[test]
+    fn expand_user_input_keeps_missing_files_literal() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = expand_user_input("see @nope.txt now", dir.path());
+        assert_eq!(out, "see @nope.txt now");
+    }
+
+    #[test]
+    fn expand_user_input_truncates_huge_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = "x".repeat(AT_FILE_MAX_CHARS + 50);
+        std::fs::write(dir.path().join("big.txt"), &big).unwrap();
+        let out = expand_user_input("@big.txt", dir.path());
+        assert!(
+            out.contains("characters omitted"),
+            "{} chars",
+            out.chars().count()
+        );
+        // the file body is capped: fewer 'x' chars than the source file holds
+        assert!(
+            out.matches('x').count() < big.matches('x').count(),
+            "file body must be truncated"
+        );
+    }
+
+    #[test]
+    fn expand_user_input_bare_at_and_multiple() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "A").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "B").unwrap();
+        // bare @ stays literal
+        assert_eq!(expand_user_input("just @", dir.path()), "just @");
+        // two files in one prompt
+        let out = expand_user_input("@a.txt and @b.txt", dir.path());
+        assert!(out.contains("--- file: a.txt ---"), "{out}");
+        assert!(out.contains("--- file: b.txt ---"), "{out}");
+        // absolute path is used as-is
+        let abs = dir.path().join("a.txt");
+        let out = expand_user_input(&format!("@{} hi", abs.display()), dir.path());
+        assert!(out.contains("--- file:"), "{out}");
+        assert!(out.contains("A"), "{out}");
+    }
+
+    #[test]
+    fn turn_event_to_ci_maps_all_variants() {
+        use whycode_agent::events::TurnEvent as TE;
+
+        assert_eq!(
+            turn_event_to_ci(TE::TextDelta("hi".into())),
+            Some(CiEvent::TextDelta { text: "hi".into() })
+        );
+        assert_eq!(
+            turn_event_to_ci(TE::ThinkingDelta("think".into())),
+            Some(CiEvent::ThinkingDelta {
+                text: "think".into()
+            })
+        );
+        assert_eq!(
+            turn_event_to_ci(TE::Status("busy".into())),
+            Some(CiEvent::Status {
+                message: "busy".into()
+            })
+        );
+        assert_eq!(turn_event_to_ci(TE::Cancelled), Some(CiEvent::Cancelled));
+
+        let tool_start = turn_event_to_ci(TE::ToolStart {
+            id: "t1".into(),
+            name: "read".into(),
+            input: serde_json::json!({}),
+        });
+        assert_eq!(
+            tool_start,
+            Some(CiEvent::ToolStart {
+                id: "t1".into(),
+                name: "read".into(),
+                input: serde_json::json!({})
+            })
+        );
+
+        let usage = turn_event_to_ci(TE::Usage(whycode_core::types::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_creation_input_tokens: Some(30),
+            cache_read_input_tokens: None,
+        }));
+        assert_eq!(
+            usage,
+            Some(CiEvent::Usage {
+                input_tokens: 10,
+                output_tokens: 20,
+                cache_creation_input_tokens: Some(30),
+                cache_read_input_tokens: None
+            })
+        );
+
+        // intent surfaces as a status line
+        let intent = turn_event_to_ci(TE::Intent {
+            kind: "question".into(),
+            confidence: 0.9,
+            badge: "Q".into(),
+            notice_kind: "info".into(),
+            notice: "ask first".into(),
+        });
+        assert_eq!(
+            intent,
+            Some(CiEvent::Status {
+                message: "intent:question conf=0.90 badge=Q [info] ask first".into()
+            })
+        );
+
+        // panel updates collapse to status lines
+        let panel = turn_event_to_ci(TE::Panel(whycode_core::PanelUpdate::File {
+            path: "x.rs".into(),
+            text: "...".into(),
+        }));
+        assert_eq!(
+            panel,
+            Some(CiEvent::Status {
+                message: "panel file=x.rs".into()
+            })
+        );
+
+        // swarm / background / permission notifications surface as status
+        let swarm = turn_event_to_ci(TE::SwarmStatus {
+            active: 1,
+            total: 2,
+            message: "".into(),
+        });
+        assert_eq!(
+            swarm,
+            Some(CiEvent::Status {
+                message: "swarm active=1 total=2".into()
+            })
+        );
+        let bg = turn_event_to_ci(TE::Background {
+            id: "b1".into(),
+            status: "done".into(),
+            summary: "ok".into(),
+        });
+        assert_eq!(
+            bg,
+            Some(CiEvent::Status {
+                message: "bg b1 done: ok".into()
+            })
+        );
+        let perm = turn_event_to_ci(TE::PermissionAsk {
+            request_id: "r1".into(),
+            tool_name: "write".into(),
+            detail: "d".into(),
+        });
+        assert_eq!(
+            perm,
+            Some(CiEvent::Status {
+                message: "permission_request id=r1 tool=write".into()
+            })
+        );
+    }
+
+    #[test]
+    fn get_and_set_config_value_roundtrip() {
+        let mut config = Config::default();
+        assert_eq!(
+            get_config_value(&config, "default_agent"),
+            Some("build".into())
+        );
+        assert_eq!(get_config_value(&config, "bogus"), None);
+
+        set_config_value(&mut config, "default_agent", "plan").unwrap();
+        assert_eq!(config.default_agent, "plan");
+        set_config_value(&mut config, "project_path", "/tmp/proj").unwrap();
+        assert_eq!(
+            config.general.project_path.as_deref(),
+            Some(std::path::Path::new("/tmp/proj"))
+        );
+        set_config_value(&mut config, "log_level", "debug").unwrap();
+        assert_eq!(config.general.log_level.as_deref(), Some("debug"));
+        assert!(set_config_value(&mut config, "bogus", "x").is_err());
+    }
+
+    #[test]
+    fn auth_expiry_labels() {
+        use whycode_auth::token::ProviderAuth;
+        let auth = |token: whycode_auth::token::OAuthToken| ProviderAuth {
+            method: "oauth".into(),
+            token,
+        };
+
+        // no expiry
+        let none = auth(whycode_auth::token::OAuthToken {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: None,
+            extra: Default::default(),
+        });
+        assert_eq!(auth_expiry_label(&none), "no expiry");
+
+        // future expiry → "expires <at>"
+        let future = chrono::Utc::now() + chrono::Duration::days(30);
+        let tok = whycode_auth::token::OAuthToken {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: Some(future),
+            extra: Default::default(),
+        };
+        let label = auth_expiry_label(&auth(tok));
+        assert!(label.starts_with("expires "), "{label}");
+        assert!(!label.contains("expired"), "{label}");
+
+        // past expiry → "expired <at> (refreshes...)"
+        let past = chrono::Utc::now() - chrono::Duration::days(1);
+        let tok = whycode_auth::token::OAuthToken {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: Some(past),
+            extra: Default::default(),
+        };
+        let label = auth_expiry_label(&auth(tok));
+        assert!(label.starts_with("expired "), "{label}");
+        assert!(label.contains("refreshes on next use"), "{label}");
+
+        // derived expiry wins over access-token expiry
+        let tok = whycode_auth::token::OAuthToken {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: Some(future),
+            extra: serde_json::json!({ "derived_expires_at": "2030-01-01T00:00:00Z" })
+                .as_object()
+                .unwrap()
+                .clone(),
+        };
+        let label = auth_expiry_label(&auth(tok));
+        assert_eq!(label, "derived API token expires 2030-01-01T00:00:00Z");
+
+        // legacy copilot key still resolves
+        let tok = whycode_auth::token::OAuthToken {
+            access_token: "a".into(),
+            refresh_token: None,
+            expires_at: None,
+            extra: serde_json::json!({ "copilot_expires_at": "2031-01-01T00:00:00Z" })
+                .as_object()
+                .unwrap()
+                .clone(),
+        };
+        let label = auth_expiry_label(&auth(tok));
+        assert_eq!(label, "derived API token expires 2031-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn memory_settings_for_sets_agent_bank() {
+        let config = Config::default();
+        let base = memory_settings_for(&config, None);
+        assert_eq!(base.agent_bank, None);
+        let with_bank = memory_settings_for(&config, Some("build".into()));
+        assert_eq!(with_bank.agent_bank.as_deref(), Some("build"));
+        assert_eq!(base.enabled, with_bank.enabled);
+    }
 }
