@@ -918,8 +918,10 @@ fn user_prompt_lines(
         push_first(&mut lines, PROMPT_ARROW, &chips, img_style);
     }
 
+    // Gap before the clock + 1-col gutter so a scrollbar / band edge
+    // cannot eat the last digit when you scroll up into history.
     let ts_reserve = timestamp
-        .map(|t| UnicodeWidthStr::width(t).saturating_add(1))
+        .map(|t| UnicodeWidthStr::width(t).saturating_add(2))
         .unwrap_or(0) as u16;
     let first_w = width
         .saturating_sub(PROMPT_ARROW_WIDTH)
@@ -1033,6 +1035,11 @@ fn band_pad_line(band_style: Style) -> Line<'static> {
 }
 
 /// Left content + optional right-aligned clock (Grok `/timestamps`).
+///
+/// The last column is left empty so a transcript scrollbar cannot paint
+/// over the clock. If the left side is still too wide, it is truncated —
+/// the clock is never dropped (the first, often longest, user bubble
+/// used to lose it).
 fn line_with_right(
     mut left: Vec<Span<'static>>,
     right: Option<&str>,
@@ -1042,21 +1049,68 @@ fn line_with_right(
     let Some(right) = right.filter(|s| !s.is_empty()) else {
         return Line::from(left);
     };
+    let rw = UnicodeWidthStr::width(right);
+    // 1-col gap before the clock, 1-col gutter after it.
+    let align_w = (width as usize).saturating_sub(1);
+    let max_left = align_w.saturating_sub(rw.saturating_add(1));
+    truncate_spans_to(&mut left, max_left);
     let left_w: usize = left
         .iter()
         .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
         .sum();
-    let rw = UnicodeWidthStr::width(right);
-    if left_w + 1 + rw > width as usize {
-        return Line::from(left);
-    }
-    let gap = (width as usize).saturating_sub(left_w).saturating_sub(rw);
+    let gap = align_w.saturating_sub(left_w).saturating_sub(rw);
     if gap > 0 {
         let pad_style = left.last().map(|s| s.style).unwrap_or_default();
         left.push(Span::styled(" ".repeat(gap), pad_style));
     }
     left.push(Span::styled(right.to_string(), right_style));
     Line::from(left)
+}
+
+/// Hard-cut `spans` so their display width is at most `max_w`.
+fn truncate_spans_to(spans: &mut Vec<Span<'static>>, max_w: usize) {
+    if max_w == 0 {
+        spans.clear();
+        return;
+    }
+    let mut used = 0usize;
+    let mut i = 0usize;
+    while i < spans.len() {
+        let w = UnicodeWidthStr::width(spans[i].content.as_ref());
+        if used + w <= max_w {
+            used += w;
+            i += 1;
+            continue;
+        }
+        let remain = max_w.saturating_sub(used);
+        let style = spans[i].style;
+        let cut = cut_to_width(spans[i].content.as_ref(), remain);
+        spans.truncate(i);
+        if !cut.is_empty() {
+            spans.push(Span::styled(cut, style));
+        }
+        return;
+    }
+}
+
+fn cut_to_width(s: &str, max_w: usize) -> String {
+    if max_w == 0 {
+        return String::new();
+    }
+    if UnicodeWidthStr::width(s) <= max_w {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut w = 0usize;
+    for ch in s.chars() {
+        let cw = UnicodeWidthStr::width(ch.to_string().as_str());
+        if w + cw > max_w {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out
 }
 
 #[derive(Clone, Copy)]
@@ -2829,6 +2883,57 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
     }
 
     #[test]
+    fn first_user_bubble_keeps_clock_on_the_right() {
+        use crate::app::{ChatRole, TuiApp};
+        use crate::config::TuiAppConfig;
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        assert!(
+            app.show_timestamps,
+            "clocks are on by default (Grok /timestamps)"
+        );
+        app.add_message(ChatRole::User, "hello from history");
+        let palette = app.config.palette();
+        let lines = super::render_message(&app.messages[0], &app, &palette, 0, 80);
+        let row = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))
+            .expect("first bubble ❯ row");
+        let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("hello from history"), "got {text:?}");
+        let hello_at = text.find("hello").expect("prompt text");
+        let colon = text.rfind(':').expect("HH:MM clock");
+        assert!(
+            colon > hello_at,
+            "clock must sit to the right, got {text:?}"
+        );
+        let trimmed = text.trim_end();
+        assert!(
+            trimmed.bytes().last().is_some_and(|b| b.is_ascii_digit()),
+            "clock should end in minutes, got {text:?}"
+        );
+    }
+
+    #[test]
+    fn long_first_prompt_still_keeps_the_clock() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let prompt = "please look at the first message bubble in chat history \
+and tell me if the clock should be on the right side of it like grok does \
+with a full date stamp August style";
+        let lines =
+            super::user_prompt_lines(prompt, &[], Some("August 17, 14:32"), &palette, 72, false);
+        let first = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))
+            .expect("prompt row");
+        let text: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("14:32"),
+            "long first bubble must keep the clock, got {text:?}"
+        );
+    }
+
+    #[test]
     fn right_align_keeps_clock_at_the_row_end() {
         let line = super::line_with_right(
             vec![Span::raw("❯ hi".to_string())],
@@ -2837,8 +2942,28 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             20,
         );
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert_eq!(unicode_width::UnicodeWidthStr::width(text.as_str()), 20);
+        // Last column is a gutter (scrollbar); clock sits just left of it.
+        assert_eq!(unicode_width::UnicodeWidthStr::width(text.as_str()), 19);
         assert!(text.ends_with("14:32"), "got {text:?}");
+    }
+
+    #[test]
+    fn right_align_never_drops_the_clock() {
+        let line = super::line_with_right(
+            vec![Span::raw(format!("❯ {}", "x".repeat(40)))],
+            Some("14:32"),
+            Style::default(),
+            20,
+        );
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            text.contains("14:32"),
+            "clock must survive an oversized left side, got {text:?}"
+        );
+        assert!(
+            unicode_width::UnicodeWidthStr::width(text.as_str()) <= 20,
+            "row must still fit, got {text:?}"
+        );
     }
 }
 
