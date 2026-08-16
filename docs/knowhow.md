@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Thinking / tool chrome must follow Grok pager defaults
+
+**Symptom:** Reply clocks matched; thinking still said `Thinking · 1.4s` and tools used lowercase `read · path` / `(l expand)`.
+
+**Root cause:** Grok live thinking is `Thinking...` with the timer on the right. Finished is `Thought for Xs` + `›`. Tools use gerunds while open (`Reading`) and labels when done (`Read`), with `◆` and `›`.
+
+**Fix:** Paint that header/tool chrome. Do not invent a mid-dot timer or `(l expand)`.
+
+**Prevention:** Unit-test the live thinking header and the `◆ Read` / `◆ Run` verbs.
+
+---
+
 ### 2026-08-17 — Agent replies must carry the same clock as Grok
 
 **Symptom:** User ❯ bands had `August 17, 14:32` on the right; the answer body did not. Grok settings copy is "clock time next to user messages and agent".

@@ -139,23 +139,20 @@ fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<
         Line::from(out)
     };
 
+    let elapsed = t.format_elapsed();
     let mut header_spans: Vec<Span<'static>> = if t.is_running() {
-        let elapsed = t.format_elapsed();
-        if elapsed.is_empty() || elapsed == "0.0s" {
-            vec![Span::styled("Thinking…".to_string(), label)]
-        } else {
-            vec![
-                Span::styled("Thinking".to_string(), label),
-                Span::styled(format!(" · {elapsed}"), detail),
-            ]
-        }
+        vec![Span::styled("Thinking...".to_string(), label)]
     } else {
         vec![
             Span::styled("Thought".to_string(), label),
-            Span::styled(format!(" for {}", t.format_elapsed()), detail),
+            Span::styled(format!(" for {elapsed}"), detail),
         ]
     };
-    if !t.is_running() && t.collapsed {
+    if t.is_running() {
+        if !elapsed.is_empty() && elapsed != "0.0s" {
+            header_spans.push(Span::styled(format!("  {elapsed}"), detail));
+        }
+    } else if t.collapsed {
         header_spans.push(Span::styled(" ›".to_string(), detail));
     }
     lines.push(rail_prefix(header_spans));
