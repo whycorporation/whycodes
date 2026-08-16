@@ -140,6 +140,21 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-16 — Chat freeze on mouse-wheel scroll
+
+**Symptom:** Flicking the wheel / trackpad over a long transcript made the TUI hang for a second or more. Scrolling during a live turn was worst.
+
+**Root cause:** Two stacked costs.
+
+1. The event loop read **one** crossterm event per `terminal.draw`. A trackpad flick is dozens of `ScrollUp`/`ScrollDown` events; each frame re-laid and stamped the chat.
+2. Line/layout caches were keyed by `(width, app.is_busy())`. Starting or ending a turn flipped `busy` and evicted **every** finished bubble. The next scroll re-parsed all markdown. Paint also `clone()`d each visible message's full `line_cache` before slicing.
+
+**Fix:** Drain up to 64 queued events before the next paint (mouse-move alone does not `mark_dirty`). Cache key is `(width, message_is_closed)` so a new turn does not evict history. Copy only the viewport slice of a cached bubble.
+
+**Prevention:** Never key a per-message paint cache on a global busy flag. Wheel/trackpad input must be drained, not painted 1:1.
+
+---
+
 ### 2026-08-16 — Chat painted into the status header
 
 **Symptom:** Session transcript (user band / first visible line) sat flush on the `whycode` header row. Scrolling to the top made the elevated user band look like it had overflowed into the chrome / safe area.
