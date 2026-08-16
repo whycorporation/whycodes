@@ -674,6 +674,7 @@ re-run.
 |------|------|
 | Event loop | `crates/tui/src/run.rs` |
 | Keys / mouse | `crates/tui/src/input.rs` |
+| Manual emulator matrix | `docs/tui-term-matrix.md`, `scripts/tui_term_matrix.sh` |
 | Context meter footer | `crates/tui/src/ui/status.rs` |
 | Model catalog / context_length | `crates/llm/src/model_catalog.rs`, `capabilities.rs` |
 | Logging / JSONL / crash | `crates/core/src/logging.rs` |

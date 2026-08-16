@@ -9,6 +9,7 @@ Start here, then pick the page you need.
 | [architecture.md](architecture.md) | Contributors | Crate map and one-way layering |
 | [roadmap.md](roadmap.md) | Contributors | Current focus and deferred work |
 | [knowhow.md](knowhow.md) | Contributors | Bugs that are easy to reintroduce |
+| [tui-term-matrix.md](tui-term-matrix.md) | Contributors | Manual TUI pass on Alacritty / Kitty / VTE |
 | [benchmarks.md](benchmarks.md) | Contributors | How to measure startup, RSS, idle draws |
 | [budgets.md](budgets.md) | Contributors | CI quality budgets (panic, swallow, edges) |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributors | Setup and required checks |

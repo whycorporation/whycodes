@@ -96,6 +96,9 @@ permission allow rules in config when you want tighter control.
 
 The default interface is a full-screen TUI. `--plain` is a line-based REPL.
 
+Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
+[tui-term-matrix.md](tui-term-matrix.md).
+
 | Key | Action |
 |---|---|
 | `Tab` | Focus prompt ↔ scrollback |
