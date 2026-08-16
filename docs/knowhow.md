@@ -140,6 +140,16 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Fenced code matches Grok (band + line numbers)
+
+**Symptom:** Assistant ` ``` ` blocks used `┌ rust` / `│` / `└` chrome. Next to Grok they looked like a broken box.
+
+**Fix:** Elevated `status_bar_bg` band, dim language chip, right-aligned line numbers, syntax highlight on the band. No box drawing. Diff fences keep add/remove wash on the same layout.
+
+**Prevention:** `fenced_code_is_banded_labelled_and_numbered` forbids `┌└`.
+
+---
+
 ### 2026-08-17 — Thinking / Run left rail matches Grok status pulse
 
 **Symptom:** Thinking had a faint wave; Run had no left ┃. Grok paints a full-height accent whose color follows the block (purple thinking, green run, red error) and a 2-row hot band walks down the column while the work is live.

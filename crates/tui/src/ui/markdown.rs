@@ -249,55 +249,74 @@ fn wrap_prose(spans: Vec<Span<'static>>, max_width: Option<usize>) -> Vec<Line<'
     }
 }
 
+/// Grok fenced code: elevated `bg_light` band, dim language chip, numbered
+/// gutter. No box-drawing `┌│└` chrome.
 fn render_code(
     language: Option<&str>,
     lines: &[String],
-    closed: bool,
+    _closed: bool,
     palette: &ThemePalette,
     max_width: Option<usize>,
 ) -> Vec<Line<'static>> {
-    let gutter = Style::default().fg(palette.dim);
-    let mut out = Vec::with_capacity(lines.len() + 2);
+    let band = palette.status_bar_bg;
+    let gutter = Style::default().fg(palette.dim).bg(band);
+    let mut out = Vec::with_capacity(lines.len() + 3);
+    out.push(code_band_pad(band));
 
-    // Quiet language label (Grok-like; no heavy box chrome noise).
-    out.push(Line::from(vec![
-        Span::styled("┌ ".to_string(), gutter),
-        Span::styled(language.unwrap_or("code").to_string(), gutter),
-    ]));
+    if let Some(lang) = language.map(str::trim).filter(|s| !s.is_empty()) {
+        out.push(Line::from(vec![
+            Span::styled(format!(" {lang} "), gutter),
+            Span::styled(" ".to_string(), Style::default().bg(band)),
+        ]));
+    }
 
-    let body_w = max_width.map(|w| w.saturating_sub(2).max(8));
-    let highlighted = highlight_code_spans(&lines.join("\n"), language);
-    for spans in highlighted.iter() {
+    let n = lines.len().max(1);
+    let nw = n.to_string().len().max(2);
+    let gutter_w = nw + 2; // " 1 "
+    let body_w = max_width.map(|w| w.saturating_sub(gutter_w).max(8));
+    let source: Vec<String> = lines.iter().map(|l| l.replace('\t', "    ")).collect();
+    let highlighted = highlight_code_spans(&source.join("\n"), language);
+
+    for (i, spans) in highlighted.iter().enumerate() {
         let mut code_spans: Vec<Span<'static>> = spans
             .iter()
             .map(|((r, g, b), text)| {
                 Span::styled(
                     text.trim_end_matches('\n').to_string(),
-                    Style::default().fg(Color::Rgb(*r, *g, *b)),
+                    Style::default().fg(Color::Rgb(*r, *g, *b)).bg(band),
                 )
             })
             .collect();
         if code_spans.is_empty() {
-            code_spans.push(Span::raw(""));
+            code_spans.push(Span::styled(" ".to_string(), Style::default().bg(band)));
         }
-        // Hard-split only if a single code line still exceeds the pane.
         let rows = match body_w {
             Some(w) => wrap_spans(code_spans, w as u16),
             None => vec![Line::from(code_spans)],
         };
-        for row in rows {
-            let mut line = vec![Span::styled("│ ".to_string(), gutter)];
-            line.extend(row.spans);
+        let no = format!(" {:>w$} ", i + 1, w = nw);
+        let hang = " ".repeat(gutter_w);
+        for (j, row) in rows.into_iter().enumerate() {
+            let mut line = if j == 0 {
+                vec![Span::styled(no.clone(), gutter)]
+            } else {
+                vec![Span::styled(hang.clone(), Style::default().bg(band))]
+            };
+            for mut s in row.spans {
+                s.style.bg = Some(band);
+                line.push(s);
+            }
+            line.push(Span::styled(" ".to_string(), Style::default().bg(band)));
             out.push(Line::from(line));
         }
     }
 
-    // While streaming, the closing fence has not arrived. Leave the block open
-    // rather than drawing a bottom edge that will move on the next frame.
-    if closed {
-        out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
-    }
+    out.push(code_band_pad(band));
     out
+}
+
+fn code_band_pad(band: Color) -> Line<'static> {
+    Line::from(Span::styled(" ".to_string(), Style::default().bg(band)))
 }
 
 /// Fenced `diff` / `patch` blocks: theme add/remove/hunk colours + soft wash
@@ -305,58 +324,69 @@ fn render_code(
 fn render_diff_code(
     language: Option<&str>,
     lines: &[String],
-    closed: bool,
+    _closed: bool,
     palette: &ThemePalette,
     max_width: Option<usize>,
 ) -> Vec<Line<'static>> {
-    let gutter = Style::default().fg(palette.dim);
-    let mut out = Vec::with_capacity(lines.len() + 2);
+    let band = palette.status_bar_bg;
+    let gutter = Style::default().fg(palette.dim).bg(band);
+    let mut out = Vec::with_capacity(lines.len() + 3);
+    out.push(code_band_pad(band));
+    let lang = language.unwrap_or("diff");
     out.push(Line::from(vec![
-        Span::styled("┌ ".to_string(), gutter),
-        Span::styled(language.unwrap_or("diff").to_string(), gutter),
+        Span::styled(format!(" {lang} "), gutter),
+        Span::styled(" ".to_string(), Style::default().bg(band)),
     ]));
 
     let add_bg = palette.diff_line_bg(palette.diff_add);
     let rem_bg = palette.diff_line_bg(palette.diff_remove);
-    let body_w = max_width.map(|w| w.saturating_sub(2).max(8));
+    let n = lines.len().max(1);
+    let nw = n.to_string().len().max(2);
+    let gutter_w = nw + 2;
+    let body_w = max_width.map(|w| w.saturating_sub(gutter_w).max(8));
 
-    for raw in lines {
+    for (i, raw) in lines.iter().enumerate() {
         let parts = whycode_format::diff::parse_diff_line(raw);
-        let (fg, bg, bold) = if raw.starts_with("+++") || raw.starts_with("---") {
-            (palette.fg, None, false)
+        let (fg, row_bg, bold) = if raw.starts_with("+++") || raw.starts_with("---") {
+            (palette.fg, band, false)
         } else if raw.starts_with("@@") || raw.starts_with("diff --git") {
-            (palette.diff_hunk, None, false)
+            (palette.diff_hunk, band, false)
         } else if parts.marker == Some('+') {
-            (palette.diff_add, Some(add_bg), true)
+            (palette.diff_add, add_bg, true)
         } else if parts.marker == Some('-') {
-            (palette.diff_remove, Some(rem_bg), true)
+            (palette.diff_remove, rem_bg, true)
         } else {
-            (palette.dim, None, false)
+            (palette.dim, band, false)
         };
 
-        let mut style = Style::default().fg(fg);
-        if let Some(b) = bg {
-            style = style.bg(b);
-        }
+        let mut style = Style::default().fg(fg).bg(row_bg);
         if bold {
             style = style.add_modifier(Modifier::BOLD);
         }
-        // Paint whole line (incl. left line numbers) in green/red.
-        let body = Span::styled(raw.clone(), style);
+        let body = Span::styled(raw.replace('\t', "    "), style);
         let rows = match body_w {
             Some(w) => wrap_spans(vec![body], w as u16),
             None => vec![Line::from(body)],
         };
-        for row in rows {
-            let mut line = vec![Span::styled("│ ".to_string(), gutter)];
-            line.extend(row.spans);
+        let no = format!(" {:>w$} ", i + 1, w = nw);
+        let hang = " ".repeat(gutter_w);
+        let gstyle = Style::default().fg(palette.dim).bg(row_bg);
+        for (j, row) in rows.into_iter().enumerate() {
+            let mut line = if j == 0 {
+                vec![Span::styled(no.clone(), gstyle)]
+            } else {
+                vec![Span::styled(hang.clone(), Style::default().bg(row_bg))]
+            };
+            for mut s in row.spans {
+                s.style.bg = Some(row_bg);
+                line.push(s);
+            }
+            line.push(Span::styled(" ".to_string(), Style::default().bg(row_bg)));
             out.push(Line::from(line));
         }
     }
 
-    if closed {
-        out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
-    }
+    out.push(code_band_pad(band));
     out
 }
 
@@ -371,7 +401,6 @@ fn render_mermaid_block(
     palette: &ThemePalette,
     max_width: Option<usize>,
 ) -> Vec<Line<'static>> {
-    let gutter = Style::default().fg(palette.dim);
     let source = lines.join("\n");
 
     if !closed {
@@ -380,40 +409,46 @@ fn render_mermaid_block(
         return render_code(Some("mermaid"), lines, false, palette, max_width);
     }
 
+    let band = palette.status_bar_bg;
+    let label = Style::default().fg(palette.dim).bg(band);
     match render_mermaid(&source, max_width) {
         Ok(diagram) => {
-            let mut out = Vec::with_capacity(diagram.len() + 2);
+            let mut out = Vec::with_capacity(diagram.len() + 3);
+            out.push(code_band_pad(band));
             out.push(Line::from(vec![
-                Span::styled("┌ ".to_string(), gutter),
-                Span::styled("mermaid".to_string(), gutter),
+                Span::styled(" mermaid ".to_string(), label),
+                Span::styled(" ".to_string(), Style::default().bg(band)),
             ]));
-            let body = Style::default().fg(palette.fg);
+            let body = Style::default().fg(palette.fg).bg(band);
             for line in diagram.iter() {
                 out.push(Line::from(vec![
-                    Span::styled("│ ".to_string(), gutter),
+                    Span::styled(" ".to_string(), body),
                     Span::styled(line.clone(), body),
+                    Span::styled(" ".to_string(), Style::default().bg(band)),
                 ]));
             }
-            out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
+            out.push(code_band_pad(band));
             out
         }
         Err(err) => {
-            let mut out = Vec::with_capacity(lines.len() + 2);
+            let mut out = Vec::with_capacity(lines.len() + 3);
+            out.push(code_band_pad(band));
             out.push(Line::from(vec![
-                Span::styled("┌ ".to_string(), gutter),
                 Span::styled(
-                    format!("mermaid (render failed: {err})"),
-                    Style::default().fg(palette.warning),
+                    format!(" mermaid (render failed: {err}) "),
+                    Style::default().fg(palette.warning).bg(band),
                 ),
+                Span::styled(" ".to_string(), Style::default().bg(band)),
             ]));
-            let body = Style::default().fg(palette.fg);
+            let body = Style::default().fg(palette.fg).bg(band);
             for line in lines {
                 out.push(Line::from(vec![
-                    Span::styled("│ ".to_string(), gutter),
+                    Span::styled(" ".to_string(), body),
                     Span::styled(line.clone(), body),
+                    Span::styled(" ".to_string(), Style::default().bg(band)),
                 ]));
             }
-            out.push(Line::from(vec![Span::styled("└".to_string(), gutter)]));
+            out.push(code_band_pad(band));
             out
         }
     }
@@ -528,11 +563,26 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_is_framed_and_labelled() {
+    fn fenced_code_is_banded_labelled_and_numbered() {
         let out = rendered("```rust\nlet x = 1;\n```");
-        assert!(out[0].contains("rust"), "{:?}", out);
-        assert!(out.iter().any(|l| l.contains("let x = 1;")), "{:?}", out);
-        assert!(out.last().unwrap().contains('└'), "{:?}", out);
+        let joined = out.join("\n");
+        assert!(joined.contains("rust"), "{out:?}");
+        assert!(joined.contains("let x = 1;"), "{out:?}");
+        assert!(
+            joined.contains('1'),
+            "Grok code blocks number lines, got {out:?}"
+        );
+        assert!(
+            !joined.contains('┌') && !joined.contains('└'),
+            "no box chrome: {out:?}"
+        );
+        let lines = render("```rust\nlet x = 1;\n```", &palette());
+        let banded = lines.iter().any(|l| {
+            l.spans
+                .iter()
+                .any(|s| s.style.bg == Some(palette().status_bar_bg))
+        });
+        assert!(banded, "code block sits on the elevated band");
     }
 
     #[test]
@@ -593,8 +643,11 @@ mod tests {
     #[test]
     fn an_untagged_fence_still_renders_as_a_block() {
         let out = rendered("```\nplain\n```");
-        assert!(out[0].contains("code"), "{:?}", out);
-        assert!(out.iter().any(|l| l.contains("plain")));
+        assert!(out.iter().any(|l| l.contains("plain")), "{out:?}");
+        assert!(
+            !out.iter().any(|l| l.trim() == "code"),
+            "untagged fences have no fake language chip: {out:?}"
+        );
     }
 
     #[test]
@@ -603,8 +656,8 @@ mod tests {
         let out = rendered("```rust\nlet x = 1;");
         assert!(out.iter().any(|l| l.contains("let x = 1;")), "{:?}", out);
         assert!(
-            !out.last().unwrap().contains('└'),
-            "an open block should not be closed: {:?}",
+            !out.iter().any(|l| l.contains('┌') || l.contains('└')),
+            "Grok code blocks have no box edges: {:?}",
             out
         );
     }
@@ -616,7 +669,10 @@ mod tests {
         assert!(joined.contains("mermaid"), "{joined}");
         assert!(joined.contains("Build"), "{joined}");
         assert!(joined.contains("Deploy"), "{joined}");
-        assert!(out.last().unwrap().contains('└'), "{joined}");
+        assert!(
+            !joined.contains('┌') && !joined.contains('└'),
+            "mermaid uses the same band, not a box: {joined}"
+        );
         // With the `mermaid` feature, source keywords become a diagram.
         // Without it, the ship binary keeps source lines readable.
         #[cfg(feature = "mermaid")]
@@ -630,8 +686,8 @@ mod tests {
         assert!(joined.contains("mermaid"), "{joined}");
         // Still open: no bottom edge yet.
         assert!(
-            !out.last().unwrap().contains('└'),
-            "open mermaid fence should stay open: {joined}"
+            !joined.contains('┌') && !joined.contains('└'),
+            "open mermaid fence should stay a band, not a box: {joined}"
         );
     }
 
