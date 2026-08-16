@@ -140,6 +140,16 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Thinking / Run left rail matches Grok status pulse
+
+**Symptom:** Thinking had a faint wave; Run had no left ┃. Grok paints a full-height accent whose color follows the block (purple thinking, green run, red error) and a 2-row hot band walks down the column while the work is live.
+
+**Fix:** Shared `accent_rail_style`. Thinking header always has ┃. Execute header + body share a status-colored ┃ that pulses while `result` is `None`.
+
+**Prevention:** Unit-test running Run rails differ across spinner frames, and failed Run uses `palette.error`.
+
+---
+
 ### 2026-08-17 — Sticky user header, waving thought rail, collapsed tools
 
 **Symptom:** Long tool dumps filled the transcript. Scrolling past a prompt lost which turn you were in. Live thinking rails sat still.
