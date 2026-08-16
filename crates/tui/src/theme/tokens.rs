@@ -49,6 +49,8 @@ pub mod layout {
     pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
     /// Session main column horizontal padding.
     pub const SIDE_PAD: u16 = 2;
+    /// Gap under the status header so chat never paints into that row.
+    pub const TOP_PAD: u16 = 1;
     /// Gap under the prompt (bottom breathing room inside body).
     pub const BOTTOM_PAD: u16 = 1;
     /// Terminal edge insets (all four sides).
@@ -72,6 +74,17 @@ pub mod layout {
             y: area.y.saturating_add(SAFE_TOP),
             width: area.width.saturating_sub(h_pad),
             height: area.height.saturating_sub(v_pad),
+        }
+    }
+
+    /// Drop `TOP_PAD` from the top of the body so home/session/sidebar
+    /// never paint into the status header sitting on the row above.
+    pub fn below_header(body: Rect) -> Rect {
+        Rect {
+            x: body.x,
+            y: body.y.saturating_add(TOP_PAD),
+            width: body.width,
+            height: body.height.saturating_sub(TOP_PAD),
         }
     }
 }
@@ -105,6 +118,23 @@ mod tests {
         assert_eq!(inset.height, 0);
         assert_eq!(inset.x, 1);
         assert_eq!(inset.y, 1);
+    }
+
+    #[test]
+    fn below_header_leaves_a_row_under_the_status_bar() {
+        let body = Rect::new(1, 2, 80, 20);
+        let inset = layout::below_header(body);
+        assert_eq!(inset.x, body.x);
+        assert_eq!(inset.y, body.y + layout::TOP_PAD);
+        assert_eq!(inset.width, body.width);
+        assert_eq!(inset.height, body.height - layout::TOP_PAD);
+    }
+
+    #[test]
+    fn below_header_saturates_on_tiny_body() {
+        let inset = layout::below_header(Rect::new(0, 0, 10, 0));
+        assert_eq!(inset.height, 0);
+        assert_eq!(inset.y, layout::TOP_PAD);
     }
 
     #[test]

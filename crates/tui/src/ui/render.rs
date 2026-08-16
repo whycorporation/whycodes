@@ -167,7 +167,9 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         .split(area);
 
     status::render(frame, outer[0], app, palette);
-    let body = outer[1];
+    // One blank row under the header so the transcript / home logo / sidebar
+    // cannot paint into that chrome (safe-area + header stay empty of chat).
+    let body = layout::below_header(outer[1]);
     status::render_footer(frame, outer[2], app, palette);
 
     if app.messages.is_empty() {
@@ -886,5 +888,138 @@ mod paint_tests {
                 .contains(Modifier::REVERSED),
             "no selection → nothing reversed"
         );
+    }
+
+    fn row_text(buf: &ratatui::buffer::Buffer, y: u16) -> String {
+        let area = buf.area();
+        let mut out = String::new();
+        for x in area.x..area.x.saturating_add(area.width) {
+            if let Some(cell) = buf.cell((x, y)) {
+                out.push_str(cell.symbol());
+            }
+        }
+        out
+    }
+
+    fn session_with_overflow() -> TuiApp {
+        let mut a = app();
+        a.provider_name = "anthropic".into();
+        a.model_name = "claude".into();
+        a.project_label = "whycode".into();
+        // Unique markers so we can see which row they land on.
+        a.add_message(
+            crate::app::ChatRole::User,
+            "SAFEAREA_TOP_MARKER unique user prompt",
+        );
+        a.add_message(
+            crate::app::ChatRole::Assistant,
+            "SAFEAREA_ASSIST unique assistant reply that wraps a bit more text",
+        );
+        for i in 0..12 {
+            a.add_message(crate::app::ChatRole::User, format!("later user turn {i}"));
+            a.add_message(
+                crate::app::ChatRole::Assistant,
+                format!("later assistant turn {i} filler words for height"),
+            );
+        }
+        a
+    }
+
+    fn paint_full_shell(app: &mut TuiApp, w: u16, h: u16) -> (ratatui::buffer::Buffer, String) {
+        paint(w, h, |f| {
+            crate::ui::render(f, app);
+        })
+    }
+
+    #[test]
+    fn session_chat_stays_below_header_and_safe_area() {
+        let mut a = session_with_overflow();
+        let (buf, _text) = paint_full_shell(&mut a, 100, 24);
+
+        let safe_top = row_text(&buf, 0);
+        let header = row_text(&buf, layout::SAFE_TOP);
+        let gap = row_text(&buf, layout::SAFE_TOP + 1);
+
+        // Terminal edge (SAFE_TOP) is empty of chrome and of chat.
+        assert!(
+            !safe_top.contains("why"),
+            "safe-area row must not hold the header: {safe_top:?}"
+        );
+        assert!(
+            !safe_top.contains("SAFEAREA_TOP_MARKER"),
+            "safe-area row must not hold chat: {safe_top:?}"
+        );
+
+        // Status header sits on the first inset row and is not overwritten.
+        assert!(header.contains("why"), "header brand missing: {header:?}");
+        assert!(header.contains("code"), "header brand missing: {header:?}");
+        assert!(
+            !header.contains("SAFEAREA_TOP_MARKER"),
+            "chat spilled into the header: {header:?}"
+        );
+        assert!(
+            !header.contains('\u{276F}'),
+            "user-prompt arrow spilled into the header: {header:?}"
+        );
+
+        // TOP_PAD blank row between header and transcript.
+        assert!(
+            !gap.contains("SAFEAREA_TOP_MARKER"),
+            "chat spilled into the header gap: {gap:?}"
+        );
+        assert!(
+            !gap.contains('\u{276F}'),
+            "user-prompt arrow spilled into the header gap: {gap:?}"
+        );
+
+        let chat = a.chat_area.expect("session publishes a chat hit rect");
+        assert!(
+            chat.y >= layout::SAFE_TOP + 1 + layout::TOP_PAD,
+            "chat.y={chat:?} must sit below header + TOP_PAD"
+        );
+        assert!(
+            chat.y > layout::SAFE_TOP,
+            "chat must not overlap the header row"
+        );
+    }
+
+    #[test]
+    fn session_scrolled_to_top_still_clears_header() {
+        let mut a = session_with_overflow();
+        // First paint publishes viewport metrics; then pin to oldest lines.
+        let (_buf, _) = paint_full_shell(&mut a, 100, 24);
+        a.scroll_offset = usize::MAX;
+        a.clamp_chat_scroll();
+        let (buf, _) = paint_full_shell(&mut a, 100, 24);
+
+        let header = row_text(&buf, layout::SAFE_TOP);
+        assert!(
+            header.contains("why"),
+            "header lost after scroll: {header:?}"
+        );
+        assert!(
+            !header.contains("SAFEAREA_TOP_MARKER"),
+            "scrolled chat spilled into the header: {header:?}"
+        );
+        assert!(
+            !header.contains('\u{276F}'),
+            "scrolled user band spilled into the header: {header:?}"
+        );
+
+        let gap = row_text(&buf, layout::SAFE_TOP + 1);
+        assert!(
+            !gap.contains("SAFEAREA_TOP_MARKER"),
+            "scrolled chat spilled into the header gap: {gap:?}"
+        );
+
+        // Oldest user prompt is visible somewhere below the gap, not above it.
+        let mut found = false;
+        for y in (layout::SAFE_TOP + 1 + layout::TOP_PAD)..buf.area().height {
+            if row_text(&buf, y).contains("SAFEAREA_TOP_MARKER") {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "expected oldest user prompt in the chat body");
     }
 }
