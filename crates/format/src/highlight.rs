@@ -3,7 +3,8 @@
 //! Stack mirrors Grok's markdown renderer:
 //! - **syntect** — TextMate grammars and themes (defaults pack unless
 //!   `extended-syntax` enables two-face / bat's ~250+ languages)
-//! - **Tokyo Night** — embedded `.tmTheme` for terminal code blocks
+//! - **Grok Night / Grok Day / Tokyo Night** — same `.tmTheme` files Grok
+//!   picks from the active TUI theme (`set_syntax_theme`)
 //! - **Open-stream cache** — resumable `ParseState` / `HighlightState` so a
 //!   growing fenced block is highlighted O(new lines) per frame, not O(N²)
 //!
@@ -12,6 +13,7 @@
 
 use std::io::Cursor;
 use std::path::Path;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use syntect::easy::HighlightLines;
@@ -48,14 +50,76 @@ pub fn syntax_set() -> &'static SyntaxSet {
     })
 }
 
-/// Tokyo Night theme, embedded at compile time.
-pub fn theme() -> &'static Theme {
+/// Which Grok syntax theme paints fenced code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum SyntaxTheme {
+    /// Default Grok Night (dark UIs).
+    GrokNight = 0,
+    /// Grok Day (light UIs).
+    GrokDay = 1,
+    /// Tokyo Night (only when the TUI theme is Tokyo Night).
+    TokyoNight = 2,
+}
+
+impl SyntaxTheme {
+    fn from_id(id: u8) -> Self {
+        match id {
+            1 => Self::GrokDay,
+            2 => Self::TokyoNight,
+            _ => Self::GrokNight,
+        }
+    }
+}
+
+static ACTIVE_SYNTAX_THEME: AtomicU8 = AtomicU8::new(SyntaxTheme::GrokNight as u8);
+
+/// Active syntax theme (Grok Night unless the TUI selected another).
+pub fn syntax_theme() -> SyntaxTheme {
+    SyntaxTheme::from_id(ACTIVE_SYNTAX_THEME.load(Ordering::Relaxed))
+}
+
+/// Switch the syntax theme. Clears highlight caches so the next paint remaps.
+pub fn set_syntax_theme(kind: SyntaxTheme) {
+    let prev = ACTIVE_SYNTAX_THEME.swap(kind as u8, Ordering::Relaxed);
+    if prev == kind as u8 {
+        return;
+    }
+    if let Ok(mut cache) = closed_cache().lock() {
+        cache.clear();
+    }
+    if let Ok(mut stream) = open_stream().lock() {
+        *stream = OpenStreamHighlighter::new();
+    }
+}
+
+fn load_embedded_theme(bytes: &'static [u8]) -> Theme {
+    let mut cursor = Cursor::new(bytes);
+    ThemeSet::load_from_reader(&mut cursor).expect("embedded tmTheme must parse")
+}
+
+fn grok_night_theme() -> &'static Theme {
     static THEME: OnceLock<Theme> = OnceLock::new();
-    THEME.get_or_init(|| {
-        let bytes = include_bytes!("../assets/tokyo-night.tmTheme");
-        let mut cursor = Cursor::new(bytes.as_slice());
-        ThemeSet::load_from_reader(&mut cursor).expect("tokyo-night.tmTheme must parse")
-    })
+    THEME.get_or_init(|| load_embedded_theme(include_bytes!("../assets/grok-night.tmTheme")))
+}
+
+fn grok_day_theme() -> &'static Theme {
+    static THEME: OnceLock<Theme> = OnceLock::new();
+    THEME.get_or_init(|| load_embedded_theme(include_bytes!("../assets/grok-day.tmTheme")))
+}
+
+fn tokyo_night_theme() -> &'static Theme {
+    static THEME: OnceLock<Theme> = OnceLock::new();
+    THEME.get_or_init(|| load_embedded_theme(include_bytes!("../assets/tokyo-night.tmTheme")))
+}
+
+/// Active TextMate theme (Grok Night by default — same as Grok Build).
+pub fn theme() -> &'static Theme {
+    match syntax_theme() {
+        SyntaxTheme::GrokNight => grok_night_theme(),
+        SyntaxTheme::GrokDay => grok_day_theme(),
+        SyntaxTheme::TokyoNight => tokyo_night_theme(),
+    }
 }
 
 /// Resolve a language token or extension to a syntax definition.
@@ -174,11 +238,12 @@ fn cache_key(code: &str, language: Option<&str>) -> u64 {
     let mut hasher = rustc_hash::FxHasher::default();
     code.hash(&mut hasher);
     language.hash(&mut hasher);
-    // Bump if theme or grammar source changes.
+    (syntax_theme() as u8).hash(&mut hasher);
+    // Bump if grammar pack changes.
     #[cfg(feature = "extended-syntax")]
-    "tokyo-night-two-face-v1".hash(&mut hasher);
+    "two-face-v1".hash(&mut hasher);
     #[cfg(not(feature = "extended-syntax"))]
-    "tokyo-night-syntect-defaults-v1".hash(&mut hasher);
+    "syntect-defaults-v1".hash(&mut hasher);
     hasher.finish()
 }
 
@@ -545,16 +610,36 @@ mod tests {
 
     #[test]
     fn theme_loads() {
-        let t = theme();
+        let t = grok_night_theme();
+        let name = t.name.as_deref().unwrap_or("").to_ascii_lowercase();
         assert!(
-            t.name
-                .as_deref()
-                .unwrap_or("")
-                .to_ascii_lowercase()
-                .contains("tokyo")
-                || t.settings.foreground.is_some()
-                || t.settings.background.is_some(),
-            "theme should load with name or colours"
+            name.contains("grok") || t.settings.foreground.is_some(),
+            "Grok Night should load, got {name:?}"
+        );
+    }
+
+    #[test]
+    fn grok_night_and_day_are_distinct() {
+        let night = grok_night_theme();
+        let day = grok_day_theme();
+        assert_ne!(
+            night.settings.foreground.map(|c| (c.r, c.g, c.b)),
+            day.settings.foreground.map(|c| (c.r, c.g, c.b)),
+            "Grok Night and Day must not share the same default fg"
+        );
+    }
+
+    #[test]
+    fn switching_syntax_theme_recolours_rust() {
+        let code = "fn main() { let x = \"hi\"; }";
+        set_syntax_theme(SyntaxTheme::GrokNight);
+        let night = highlight_uncached(code, Some("rust"));
+        set_syntax_theme(SyntaxTheme::GrokDay);
+        let day = highlight_uncached(code, Some("rust"));
+        set_syntax_theme(SyntaxTheme::GrokNight);
+        assert_ne!(
+            night, day,
+            "Grok Night vs Day must produce different token colours"
         );
     }
 

@@ -1456,6 +1456,10 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.config.theme = t;
                 // Drop file-override so the built-in palette is visible immediately.
                 app.config.theme_override = None;
+                t.apply_syntax_theme();
+                for msg in &mut app.messages {
+                    msg.invalidate_layout();
+                }
                 app.status_message = format!("Theme → {}", t.name());
                 app.toasts.push(
                     crate::toast::ToastKind::Success,

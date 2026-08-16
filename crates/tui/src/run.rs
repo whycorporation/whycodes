@@ -4124,6 +4124,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.config.theme = t;
                 ctx.app.config.theme_override = None;
                 ctx.app.theme_selected = ThemeName::ALL.iter().position(|x| *x == t).unwrap_or(0);
+                t.apply_syntax_theme();
+                for msg in &mut ctx.app.messages {
+                    msg.invalidate_layout();
+                }
                 ctx.app.status_message = format!("Theme → {}", t.name());
                 ctx.app.toasts.push(
                     crate::toast::ToastKind::Success,

@@ -126,6 +126,24 @@ fn test_all_themes_produce_palette() {
 }
 
 #[test]
+fn syntax_theme_follows_grok_mapping() {
+    use whycode_format::highlight::SyntaxTheme;
+    assert_eq!(
+        ThemeName::DefaultDark.syntax_theme(),
+        SyntaxTheme::GrokNight
+    );
+    assert_eq!(ThemeName::DefaultLight.syntax_theme(), SyntaxTheme::GrokDay);
+    assert_eq!(
+        ThemeName::TokyoNight.syntax_theme(),
+        SyntaxTheme::TokyoNight
+    );
+    assert_eq!(
+        ThemeName::RosePineMoon.syntax_theme(),
+        SyntaxTheme::GrokNight
+    );
+}
+
+#[test]
 fn test_theme_name_round_trips_through_from_str() {
     for theme in ThemeName::ALL {
         assert_eq!(

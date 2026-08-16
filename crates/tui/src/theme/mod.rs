@@ -129,6 +129,31 @@ impl ThemeName {
             Self::MaterialPalenight => "material_palenight",
         }
     }
+
+    /// Grok syntax tmTheme for this TUI theme.
+    ///
+    /// Matches Grok Build: Night for dark UIs, Day for light, Tokyo Night
+    /// only when the TUI theme is Tokyo Night.
+    pub fn syntax_theme(self) -> whycode_format::highlight::SyntaxTheme {
+        use whycode_format::highlight::SyntaxTheme;
+        match self {
+            Self::TokyoNight | Self::TokyoNightStorm => SyntaxTheme::TokyoNight,
+            Self::DefaultLight
+            | Self::SolarizedLight
+            | Self::CatppuccinLatte
+            | Self::TokyoNightLight
+            | Self::RosePineDawn
+            | Self::AyuLight
+            | Self::GithubLight
+            | Self::VscodeLight => SyntaxTheme::GrokDay,
+            _ => SyntaxTheme::GrokNight,
+        }
+    }
+
+    /// Point the highlighter at this theme and drop cached token colours.
+    pub fn apply_syntax_theme(self) {
+        whycode_format::highlight::set_syntax_theme(self.syntax_theme());
+    }
 }
 
 impl FromStr for ThemeName {
