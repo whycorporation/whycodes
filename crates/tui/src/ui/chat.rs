@@ -733,32 +733,33 @@ fn thinking_lines(
     let rail_cols: u16 = if show_rail { 2 } else { 0 };
     let content_w = width.saturating_sub(rail_cols);
 
-    // Header: Grok always labels reasoning as "Thinking" while live, and
-    // "Thought for Xs" when finished. Live timer matches the busy strip
-    // (`thinking 1.4s`) so the user sees that thinking is actually happening.
+    // Grok: live is `Thinking...` with the timer on the right (`1.4s`).
+    // Finished is `Thought for 1.4s`; folded rows get `›` on the right.
+    let elapsed = t.format_elapsed();
     let header_spans: Vec<Span<'static>> = if t.is_running() {
-        let elapsed = t.format_elapsed();
-        if elapsed.is_empty() || elapsed == "0.0s" {
-            vec![Span::styled("Thinking…".to_string(), label_style)]
-        } else {
-            vec![
-                Span::styled("Thinking".to_string(), label_style),
-                Span::styled(format!(" · {elapsed}"), detail_style),
-            ]
-        }
+        vec![Span::styled("Thinking...".to_string(), label_style)]
     } else {
         vec![
             Span::styled("Thought".to_string(), label_style),
-            Span::styled(format!(" for {}", t.format_elapsed()), detail_style),
+            Span::styled(format!(" for {elapsed}"), detail_style),
         ]
     };
-
-    // Grok `expandable_indicator_char`: › on the right of a folded header.
+    let right = if t.is_running() {
+        if elapsed.is_empty() || elapsed == "0.0s" {
+            None
+        } else {
+            Some(elapsed)
+        }
+    } else if t.collapsed {
+        Some(EXPAND_INDICATOR.to_string())
+    } else {
+        None
+    };
     let header_line = accent_line(header_spans, show_rail, rail_style);
-    if !t.is_running() && t.collapsed {
+    if let Some(ref right) = right {
         lines.push(line_with_right(
             header_line.spans,
-            Some(EXPAND_INDICATOR),
+            Some(right.as_str()),
             detail_style,
             width,
         ));
@@ -797,10 +798,7 @@ fn thinking_lines(
     }
     if t.is_truncated_expanded() {
         lines.push(accent_line(
-            vec![Span::styled(
-                "… expanded view truncated for speed  ·  (e collapse)".to_string(),
-                body_style,
-            )],
+            vec![Span::styled("…".to_string(), body_style)],
             true,
             rail_style,
         ));
@@ -1338,17 +1336,44 @@ fn tool_display_name(name: &str) -> &str {
     }
 }
 
-/// Quiet Grok-style tool chrome: muted name · summary, heavy ┃ body when open.
+/// Grok tool header verb: gerund while the call is open, label when done.
+fn tool_header_verb(name: &str, running: bool) -> String {
+    match (tool_display_name(name), running) {
+        ("read", true) => "Reading".into(),
+        ("read", false) => "Read".into(),
+        ("run", true) => "Running".into(),
+        ("run", false) => "Run".into(),
+        ("grep", true) => "Searching".into(),
+        ("grep", false) => "Grep".into(),
+        ("list" | "list_dir", true) => "Listing".into(),
+        ("list" | "list_dir", false) => "Listed".into(),
+        ("edit" | "write" | "apply_patch", true) => "Editing".into(),
+        ("edit" | "write" | "apply_patch", false) => "Edited".into(),
+        ("web_fetch" | "webfetch" | "fetch", true) => "Fetching".into(),
+        ("web_fetch" | "webfetch" | "fetch", false) => "Fetched".into(),
+        ("web_search", true) => "Searching".into(),
+        ("web_search", false) => "Searched".into(),
+        (_, true) => "Calling".into(),
+        (other, false) => {
+            let mut chars = other.chars();
+            match chars.next() {
+                None => "Called".into(),
+                Some(first) => format!("{}{}", first.to_uppercase(), chars.as_str()),
+            }
+        }
+    }
+}
+
+/// Quiet Grok-style tool chrome: `◆ Read  path`, heavy ┃ body when open.
 ///
-/// Matches Grok pager tool cards interleaved with thinking:
 /// ```text
-/// Thinking…
+/// Thinking...                                          1.4s
 /// ┃ …
-///   read · path/to/file.rs
+///   ◆ Read  path/to/file.rs
 ///   ┃     1|code
-///   run · cargo test
+///   ◆ Run  cargo test
 ///   ┃ ok
-/// Thought for 2.1s
+/// Thought for 2.1s                                      ›
 /// ```
 fn tool_block(
     name: &str,
@@ -1360,7 +1385,8 @@ fn tool_block(
     width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let display = tool_display_name(name);
+    let running = result.is_none();
+    let display = tool_header_verb(name, running);
     let name_style = if is_error {
         Style::default().fg(palette.error)
     } else {
@@ -1380,10 +1406,11 @@ fn tool_block(
         Span::styled(display.to_string(), name_style),
     ];
     if !summary.is_empty() {
-        header.push(Span::styled(" · ".to_string(), detail));
+        header.push(Span::styled("  ".to_string(), detail));
         header.push(Span::styled(summary, summary_style));
     }
 
+    let mut foldable = false;
     if let Some(r) = result {
         if is_error {
             header.push(Span::styled("  ✕".to_string(), name_style));
@@ -1472,15 +1499,17 @@ fn tool_block(
                 TOOL_RESULT_PREVIEW
             };
             if n > limit {
-                header.push(Span::styled("  (l expand)".to_string(), detail));
+                foldable = true;
             }
         }
-    } else {
-        // Still running — quiet live marker (Grok in-flight tool).
-        header.push(Span::styled("  …".to_string(), detail));
     }
 
-    lines.push(Line::from(header));
+    let header_line = if foldable {
+        line_with_right(header, Some(EXPAND_INDICATOR), detail, width)
+    } else {
+        Line::from(header)
+    };
+    lines.push(header_line);
 
     // Always show a short body when a result exists; `l` expands the budget.
     if let Some(r) = result {
@@ -1714,7 +1743,7 @@ fn tool_result_plain(
             meta_gutter(),
             Span::styled("┃ ".to_string(), rail),
             Span::styled(
-                format!("… {} more lines  ·  (l expand)", total - budget),
+                "…".to_string(),
                 Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
             ),
         ]));
@@ -1831,7 +1860,7 @@ fn tool_result_diff(
             meta_gutter(),
             Span::styled("┃ ".to_string(), Style::default().fg(palette.dim)),
             Span::styled(
-                format!("… {} more lines  ·  (l expand)", total - budget),
+                "…".to_string(),
                 Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
             ),
         ]));
@@ -2075,7 +2104,7 @@ fn tool_result_code(
             meta_gutter(),
             Span::styled("┃ ".to_string(), rail),
             Span::styled(
-                format!("… {} more lines  ·  (l expand)", total - budget),
+                "…".to_string(),
                 Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
             ),
         ]));
@@ -2257,7 +2286,7 @@ fn tool_result_grep(
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), rail),
-            Span::styled("… more matches  ·  (l expand)".to_string(), meta_style),
+            Span::styled("…".to_string(), meta_style),
         ]));
     }
 
@@ -2761,7 +2790,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
-        assert!(header.contains("grep"), "got {header}");
+        assert!(header.contains("Grep"), "got {header}");
         assert!(header.contains("foo"), "got {header}");
         assert!(header.contains("2"), "got {header}");
         assert!(header.contains("match"), "got {header}");
@@ -2789,7 +2818,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
-        assert!(header.contains("run"), "got {header}");
+        assert!(header.contains("Run"), "got {header}");
         assert!(!header.contains("bash"), "got {header}");
         assert!(header.contains("cargo test"), "got {header}");
     }
@@ -2955,6 +2984,28 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         assert!(
             foot.contains(':'),
             "Worked for line also carries the clock, got {foot:?}"
+        );
+    }
+
+    #[test]
+    fn live_thinking_puts_elapsed_on_the_right() {
+        use crate::app::ThinkingBlock;
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let t = ThinkingBlock::new("one\ntwo\nthree");
+        let lines = super::thinking_lines(&t, &palette, 60);
+        let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            header.contains("Thinking..."),
+            "Grok live header is Thinking..., got {header:?}"
+        );
+        assert!(
+            !header.contains('·'),
+            "elapsed sits on the right, not after a mid-dot: {header:?}"
+        );
+        assert!(
+            header.contains('s') || header.contains("Thinking..."),
+            "got {header:?}"
         );
     }
 
