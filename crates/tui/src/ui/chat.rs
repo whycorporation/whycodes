@@ -655,10 +655,13 @@ fn render_message(
                             name,
                             input,
                             result,
-                            is_error,
-                            palette,
-                            msg.results_expanded,
-                            width,
+                            ToolPaint {
+                                is_error,
+                                palette,
+                                expanded: msg.results_expanded,
+                                width,
+                                spin: app.spinner_frame,
+                            },
                         ));
                     }
                     ChatBlock::ToolResult { .. } => {
@@ -681,10 +684,13 @@ fn render_message(
                         &tc.name,
                         &tc.arguments,
                         tc.result.as_deref(),
-                        tc.is_error,
-                        palette,
-                        msg.results_expanded,
-                        width,
+                        ToolPaint {
+                            is_error: tc.is_error,
+                            palette,
+                            expanded: msg.results_expanded,
+                            width,
+                            spin: app.spinner_frame,
+                        },
                     ));
                 }
             }
@@ -757,14 +763,23 @@ fn thinking_lines(
     // Body de-emphasis via dim on primary fg (Grok uses bg_blend; dim is the
     // portable stand-in so reasoning still looks like monospaced stream text).
     let body_style = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
-    // Grok thinking accent = gray_dim; live rail waves while the block runs.
+    // Grok: ┃ on the left of Thinking / Thought. Live = thinking-color
+    // vertical pulse; finished = dim static.
     let live_rail = t.is_running();
-    let rail_at = |row: usize| thinking_rail_style(palette, spin, row, live_rail);
-    // Full-height accent only while body is visible (Grok: no accent collapsed).
-    let show_rail = t.show_body();
-    // Accent col (1) + pad (1) — matches Grok HorizontalLayout::ACCENT + pad.
-    let rail_cols: u16 = if show_rail { 2 } else { 0 };
-    let content_w = width.saturating_sub(rail_cols);
+    let rail = AccentRail {
+        hot: if live_rail {
+            palette.thinking
+        } else {
+            palette.dim
+        },
+        rest: palette.dim,
+        spin,
+        animate: live_rail,
+    };
+    let rail_at = |row: usize| rail.style(row);
+    // Header always has the accent; body only while open (live tail / expand).
+    let show_body = t.show_body();
+    let content_w = width.saturating_sub(2);
 
     // Grok: live is `Thinking...` with the timer on the right (`1.4s`).
     // Finished is `Thought for 1.4s`; folded rows get `›` on the right.
@@ -789,7 +804,7 @@ fn thinking_lines(
         None
     };
     let mut rail_row = 0usize;
-    let header_line = accent_line(header_spans, show_rail, rail_at(rail_row));
+    let header_line = accent_line(header_spans, true, rail_at(rail_row));
     rail_row += 1;
     if let Some(ref right) = right {
         lines.push(line_with_right(
@@ -802,7 +817,7 @@ fn thinking_lines(
         lines.push(header_line);
     }
 
-    if !show_rail {
+    if !show_body {
         return lines;
     }
 
@@ -843,18 +858,38 @@ fn thinking_lines(
     lines
 }
 
-/// Grok `blocks.thinking.animate`: a bright band walks the ┃ while live.
-fn thinking_rail_style(palette: &ThemePalette, spin: usize, row: usize, live: bool) -> Style {
-    if !live {
-        return Style::default().fg(palette.dim);
+/// Grok accent column: status color, a 2-row hot band walking down while live.
+#[derive(Clone, Copy)]
+struct AccentRail {
+    hot: Color,
+    rest: Color,
+    spin: usize,
+    animate: bool,
+}
+
+impl AccentRail {
+    fn style(self, row: usize) -> Style {
+        if !self.animate {
+            return Style::default().fg(self.hot);
+        }
+        let period = 4;
+        let head = self.spin % period;
+        let dist = (row + period - head) % period;
+        let fg = match dist {
+            0 | 1 => self.hot,
+            _ => self.rest,
+        };
+        Style::default().fg(fg)
     }
-    let phase = (row + spin) % 5;
-    let fg = match phase {
-        0 => palette.thinking,
-        1 => palette.fg,
-        _ => palette.dim,
-    };
-    Style::default().fg(fg)
+}
+
+/// Shared paint knobs for a tool card (keeps `tool_block` under clippy's arg cap).
+struct ToolPaint<'a> {
+    is_error: bool,
+    palette: &'a ThemePalette,
+    expanded: bool,
+    width: u16,
+    spin: usize,
 }
 
 /// One scrollback row with optional Grok-style left accent column.
@@ -1459,27 +1494,32 @@ fn tool_header_verb(name: &str, running: bool) -> String {
 
 /// Quiet Grok-style tool chrome: `◆ Read  path`, heavy ┃ body when open.
 ///
+/// Execute (`Run`) keeps a status-colored ┃ on the header (and body when
+/// open). The rail pulses down the column while the command is running.
+///
 /// ```text
-/// Thinking...                                          1.4s
+/// ┃ Thinking...                                          1.4s
 /// ┃ …
 ///   ◆ Read  path/to/file.rs
-///   ┃     1|code
-///   ◆ Run  cargo test
-///   ┃ ok
-/// Thought for 2.1s                                      ›
+/// ┃ ◆ Run  cargo test
+/// ┃ ok
+/// ┃ Thought for 2.1s                                      ›
 /// ```
 fn tool_block(
     name: &str,
     input: &serde_json::Value,
     result: Option<&str>,
-    is_error: bool,
-    palette: &ThemePalette,
-    expanded: bool,
-    width: u16,
+    paint: ToolPaint<'_>,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let running = result.is_none();
+    let execute = is_execute_tool(name);
     let display = tool_header_verb(name, running);
+    let is_error = paint.is_error;
+    let palette = paint.palette;
+    let expanded = paint.expanded;
+    let width = paint.width;
+    let spin = paint.spin;
     let name_style = if is_error {
         Style::default().fg(palette.error)
     } else {
@@ -1492,12 +1532,25 @@ fn tool_block(
     };
     let detail = Style::default().fg(palette.dim);
     let summary = tool_summary(name, input);
+    let rail = AccentRail {
+        hot: if is_error {
+            palette.error
+        } else {
+            palette.success
+        },
+        rest: palette.dim,
+        spin,
+        animate: running,
+    };
 
-    let mut header = vec![
-        meta_gutter(),
-        Span::styled(TOOL_BULLET.to_string(), name_style),
-        Span::styled(display.to_string(), name_style),
-    ];
+    let mut header = Vec::new();
+    header.push(meta_gutter());
+    if execute {
+        header.push(Span::styled(ACCENT_RAIL.to_string(), rail.style(0)));
+        header.push(Span::raw(" "));
+    }
+    header.push(Span::styled(TOOL_BULLET.to_string(), name_style));
+    header.push(Span::styled(display.to_string(), name_style));
     if !summary.is_empty() {
         header.push(Span::styled("  ".to_string(), detail));
         header.push(Span::styled(summary, summary_style));
@@ -1611,14 +1664,7 @@ fn tool_block(
     // Grok muted_collapsed: header only until the user expands (`l`).
     if expanded && let Some(r) = result {
         if is_execute_tool(name) {
-            lines.extend(tool_result_head_tail(
-                r,
-                is_error,
-                palette,
-                width,
-                EXECUTE_FIRST_LINES,
-                EXECUTE_LAST_LINES,
-            ));
+            lines.extend(tool_result_head_tail(r, is_error, palette, width, rail));
         } else {
             let hint = tool_out_hint(name, input, r);
             lines.extend(tool_result(r, is_error, palette, true, hint, width));
@@ -1827,39 +1873,49 @@ fn tool_result_head_tail(
     is_error: bool,
     palette: &ThemePalette,
     width: u16,
-    head: usize,
-    tail: usize,
+    rail: AccentRail,
 ) -> Vec<Line<'static>> {
+    let head = EXECUTE_FIRST_LINES;
+    let tail = EXECUTE_LAST_LINES;
     let color = if is_error { palette.error } else { palette.dim };
     let style = Style::default().fg(color);
-    let rail = Style::default().fg(palette.dim);
     let text_w = width.saturating_sub(4).max(8) as usize;
     let all: Vec<&str> = content.lines().collect();
     let total = all.len();
-    if total <= head.saturating_add(tail) {
-        return tool_result_plain(content, is_error, palette, true, width);
-    }
     let mut lines = Vec::new();
-    let push = |lines: &mut Vec<Line<'static>>, text: &str| {
+    let mut row = 1usize; // header already used row 0
+    let push = |lines: &mut Vec<Line<'static>>, text: &str, row: usize| {
         lines.push(Line::from(vec![
             meta_gutter(),
-            Span::styled("┃ ".to_string(), rail),
+            Span::styled(ACCENT_RAIL.to_string(), rail.style(row)),
+            Span::raw(" "),
             Span::styled(hard_truncate_line(text, text_w), style),
         ]));
     };
+    if total <= head.saturating_add(tail) {
+        for line in &all {
+            push(&mut lines, line, row);
+            row += 1;
+        }
+        return lines;
+    }
     for line in all.iter().take(head) {
-        push(&mut lines, line);
+        push(&mut lines, line, row);
+        row += 1;
     }
     lines.push(Line::from(vec![
         meta_gutter(),
-        Span::styled("┃ ".to_string(), rail),
+        Span::styled(ACCENT_RAIL.to_string(), rail.style(row)),
+        Span::raw(" "),
         Span::styled(
             "…".to_string(),
             Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
         ),
     ]));
+    row += 1;
     for line in all.iter().skip(total - tail) {
-        push(&mut lines, line);
+        push(&mut lines, line, row);
+        row += 1;
     }
     lines
 }
@@ -2681,9 +2737,9 @@ fn empty_dash(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        SparseLines, ToolOutHint, hard_truncate_line, message_row_layout_mut, parse_grep_hit,
-        prettify_tool_result, split_read_line, tool_block, tool_display_name, tool_result,
-        tool_summary,
+        SparseLines, ToolOutHint, ToolPaint, hard_truncate_line, message_row_layout_mut,
+        parse_grep_hit, prettify_tool_result, split_read_line, tool_block, tool_display_name,
+        tool_result, tool_summary,
     };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
@@ -2941,10 +2997,13 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             "grep",
             &json!({"pattern": "foo"}),
             Some(body),
-            false,
-            &palette,
-            false,
-            100,
+            ToolPaint {
+                is_error: false,
+                palette: &palette,
+                expanded: false,
+                width: 100,
+                spin: 0,
+            },
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
@@ -2969,12 +3028,19 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             "bash",
             &json!({"command": "cargo test -p whycode-tui"}),
             Some("ok\n"),
-            false,
-            &palette,
-            false,
-            100,
+            ToolPaint {
+                is_error: false,
+                palette: &palette,
+                expanded: false,
+                width: 100,
+                spin: 0,
+            },
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            header.contains('┃'),
+            "Run keeps a left accent, got {header}"
+        );
         assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
         assert!(header.contains("Run"), "got {header}");
         assert!(!header.contains("bash"), "got {header}");
@@ -2993,10 +3059,13 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             "bash",
             &json!({"command": "cargo test"}),
             Some(&body),
-            false,
-            &palette,
-            false,
-            80,
+            ToolPaint {
+                is_error: false,
+                palette: &palette,
+                expanded: false,
+                width: 80,
+                spin: 0,
+            },
         );
         assert_eq!(
             lines.len(),
@@ -3024,10 +3093,13 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             "bash",
             &json!({"command": "seq"}),
             Some(&body),
-            false,
-            &palette,
-            true,
-            80,
+            ToolPaint {
+                is_error: false,
+                palette: &palette,
+                expanded: true,
+                width: 80,
+                spin: 0,
+            },
         );
         let text: String = lines
             .iter()
@@ -3084,6 +3156,59 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             rail_fg(&b),
             "live thinking rail must wave across frames"
         );
+    }
+
+    #[test]
+    fn running_execute_rail_pulses_and_uses_success() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let paint = |spin| ToolPaint {
+            is_error: false,
+            palette: &palette,
+            expanded: false,
+            width: 60,
+            spin,
+        };
+        let a = tool_block("bash", &json!({"command": "sleep 1"}), None, paint(0));
+        let b = tool_block("bash", &json!({"command": "sleep 1"}), None, paint(2));
+        let rail = |lines: &[ratatui::text::Line]| {
+            lines[0]
+                .spans
+                .iter()
+                .find(|s| s.content.as_ref() == "┃")
+                .and_then(|s| s.style.fg)
+        };
+        let fa = rail(&a).expect("running Run paints a rail");
+        let fb = rail(&b).expect("running Run paints a rail");
+        assert!(
+            fa == palette.success || fa == palette.dim,
+            "run rail is success or dim rest, got {fa:?}"
+        );
+        assert_ne!(fa, fb, "running Run rail must blink across frames");
+    }
+
+    #[test]
+    fn failed_execute_rail_is_error_red() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let lines = tool_block(
+            "bash",
+            &json!({"command": "false"}),
+            Some("exit 1"),
+            ToolPaint {
+                is_error: true,
+                palette: &palette,
+                expanded: false,
+                width: 60,
+                spin: 0,
+            },
+        );
+        let fg = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "┃")
+            .and_then(|s| s.style.fg);
+        assert_eq!(fg, Some(palette.error), "failed Run rail is error red");
     }
 
     #[test]
@@ -3283,6 +3408,10 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let lines = super::thinking_lines(&t, &palette, 60, 0);
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains("Thought"), "got {header:?}");
+        assert!(
+            header.contains('┃'),
+            "thinking keeps a left accent, got {header:?}"
+        );
         assert!(
             header.contains('›'),
             "folded thinking must show Grok ›, got {header:?}"
