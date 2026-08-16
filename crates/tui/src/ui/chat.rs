@@ -46,21 +46,23 @@ pub fn session_line_count_mut(app: &mut TuiApp, width: u16) -> usize {
 /// Used for selection → viewport sync (Grok scrollback entry selection).
 pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
     let palette = app.config.palette();
-    let busy = app.is_busy();
     let mut starts = Vec::with_capacity(app.messages.len());
     let mut total = 0;
     for (i, msg) in app.messages.iter().enumerate() {
         starts.push(total);
-        if let Some((w, b, h)) = msg.layout_cache
+        // Key is (width, closed) — not global `is_busy()`. A new turn must
+        // not evict every finished bubble's height (that froze scroll).
+        let closed = message_is_closed(app, i);
+        if let Some((w, c, h)) = msg.layout_cache
             && w == width
-            && b == busy
+            && c == closed
         {
             total += h;
             continue;
         }
-        if let Some((w, b, ref lines)) = msg.line_cache
+        if let Some((w, c, ref lines)) = msg.line_cache
             && w == width
-            && b == busy
+            && c == closed
         {
             total += lines.len();
             continue;
@@ -72,23 +74,23 @@ pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
 
 /// Like [`message_row_layout`] but writes height / line caches on miss.
 pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usize) {
-    let busy = app.is_busy();
     let n = app.messages.len();
     let mut starts = Vec::with_capacity(n);
     let mut total = 0;
     for i in 0..n {
         starts.push(total);
-        let h = if let Some((w, b, h)) = app.messages[i].layout_cache
+        let closed = message_is_closed(app, i);
+        let h = if let Some((w, c, h)) = app.messages[i].layout_cache
             && w == width
-            && b == busy
+            && c == closed
         {
             h
-        } else if let Some((w, b, ref lines)) = app.messages[i].line_cache
+        } else if let Some((w, c, ref lines)) = app.messages[i].line_cache
             && w == width
-            && b == busy
+            && c == closed
         {
             let h = lines.len();
-            app.messages[i].layout_cache = Some((width, busy, h));
+            app.messages[i].layout_cache = Some((width, closed, h));
             h
         } else {
             let lines = {
@@ -96,9 +98,9 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
                 render_message(&app.messages[i], app, &palette, i, width)
             };
             let h = lines.len();
-            app.messages[i].layout_cache = Some((width, busy, h));
-            if message_is_closed(app, i) {
-                app.messages[i].line_cache = Some((width, busy, lines));
+            app.messages[i].layout_cache = Some((width, closed, h));
+            if closed {
+                app.messages[i].line_cache = Some((width, closed, lines));
             }
             h
         };
@@ -247,7 +249,6 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 
     let mut lines: Vec<Line> = Vec::with_capacity(height.saturating_add(8));
     let n = app.messages.len();
-    let busy = app.is_busy();
     for i in 0..n {
         let msg_start = starts[i];
         let msg_end = if i + 1 < n { starts[i + 1] } else { total };
@@ -258,24 +259,30 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 
         let selected =
             app.selected_msg == Some(i) && app.focus == crate::app::FocusPane::Scrollback;
+        let closed = message_is_closed(app, i);
+        let slice_from = view_start.saturating_sub(msg_start);
+        let slice_to_excl = view_end.saturating_sub(msg_start);
 
-        // Closed messages: reuse cached lines (no markdown re-parse per paint).
-        // Selection mutates the first content row (caret / user highlight), so
-        // only the unselected path may serve the cache.
-        let mut msg_lines = if !selected
-            && let Some((w, b, ref cached)) = app.messages[i].line_cache
+        // Closed + unselected: copy only the visible slice. Cloning a
+        // thousands-of-rows tool/markdown bubble on every wheel tick is what
+        // made scroll hitch even after the line cache existed.
+        if !selected
+            && let Some((w, c, ref cached)) = app.messages[i].line_cache
             && w == content_width
-            && b == busy
+            && c == closed
         {
-            cached.clone()
-        } else {
-            let rendered = render_message(&app.messages[i], app, palette, i, content_width);
-            if !selected && message_is_closed(app, i) {
-                app.messages[i].line_cache = Some((content_width, busy, rendered.clone()));
-                app.messages[i].layout_cache = Some((content_width, busy, rendered.len()));
+            let to = slice_to_excl.min(cached.len());
+            if slice_from < to {
+                lines.extend(cached[slice_from..to].iter().cloned());
             }
-            rendered
-        };
+            continue;
+        }
+
+        let mut msg_lines = render_message(&app.messages[i], app, palette, i, content_width);
+        if !selected && closed {
+            app.messages[i].line_cache = Some((content_width, closed, msg_lines.clone()));
+            app.messages[i].layout_cache = Some((content_width, closed, msg_lines.len()));
+        }
         if selected {
             // Grok: selected entry gets a left caret on its first content row.
             let caret = Span::styled(
@@ -291,9 +298,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             }
         }
 
-        // Slice the bubble to the viewport (partial top/bottom visibility).
-        let slice_from = view_start.saturating_sub(msg_start);
-        let slice_to = (view_end.saturating_sub(msg_start)).min(msg_lines.len());
+        let slice_to = slice_to_excl.min(msg_lines.len());
         if slice_from < slice_to {
             lines.extend(msg_lines.drain(slice_from..slice_to));
         }
@@ -2693,6 +2698,36 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         app.append_to_last(" more");
         assert!(app.messages.last().unwrap().layout_cache.is_none());
+    }
+
+    #[test]
+    fn closed_message_cache_survives_agent_busy_flip() {
+        use crate::app::AgentState;
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "hello");
+        app.add_message(ChatRole::Assistant, "# hi\n\n```rs\nfn main() {}\n```");
+        let width = 80u16;
+        let _ = message_row_layout_mut(&mut app, width);
+        assert!(
+            app.messages[0].line_cache.is_some(),
+            "user bubble must cache after first layout"
+        );
+        let user_lines = app.messages[0].line_cache.as_ref().unwrap().2.len();
+        assert!(
+            app.messages[1].line_cache.is_some(),
+            "idle assistant must cache before the busy flip"
+        );
+
+        app.current_agent_state = AgentState::Generating;
+        let _ = message_row_layout_mut(&mut app, width);
+        assert!(
+            app.messages[0].line_cache.is_some(),
+            "finished user bubble must keep its cache when a turn starts"
+        );
+        assert_eq!(
+            app.messages[0].line_cache.as_ref().unwrap().2.len(),
+            user_lines
+        );
     }
 
     #[test]

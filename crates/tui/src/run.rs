@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -686,7 +686,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let mut first_frame = true;
     let result = async {
-        loop {
+        'main: loop {
             // ── Drain background sessions into their own view snapshots ──
             // Events on inactive runtimes never touch `app`; they update the
             // runtime's snapshot + state and set `unread` so the dashboard
@@ -1732,9 +1732,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
             };
             if has_ev {
-                app.mark_dirty();
-                let ev = match event::read() {
-                    Ok(ev) => ev,
+                // Drain the whole pending queue before the next paint. A
+                // trackpad flick is dozens of wheel events; handling one per
+                // draw made the chat look frozen (each frame re-laid the
+                // transcript). Moves alone do not force a redraw — hover
+                // chrome still calls mark_dirty when the hit set changes.
+                let batch = match read_event_batch() {
+                    Ok(b) => b,
                     Err(e) => {
                         whycode_core::logging::emit(
                             "whycode_tui",
@@ -1745,366 +1749,296 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         return Err(e.into());
                     }
                 };
-
-                // Permission dialog keys handled specially
-                if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. }))
-                    && let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                {
-                    match key.code {
-                        KeyCode::Char('y')
-                        | KeyCode::Char('Y')
-                        | KeyCode::Char('a')
-                        | KeyCode::Char('A')
-                        | KeyCode::Enter => {
-                            if let Some(req) = rt.pending_perm_queue.pop_front() {
-                                let _ = req.reply.send(true);
-                            }
-                            app.dialogs.pop();
-                            app.mode = AppMode::Normal;
-                            app.key_context = KeymapContext::Normal;
-                            if let Some(next) = rt.pending_perm_queue.front() {
-                                app.ask_permission(next.tool_name.clone(), next.detail.clone());
-                                app.status_message = format!(
-                                    "Allowed — {} more permission(s)…",
-                                    rt.pending_perm_queue.len()
-                                );
-                            } else {
-                                app.current_agent_state = AgentState::Generating;
-                                app.status_message = "Allowed — continuing…".into();
-                            }
-                            continue;
-                        }
-                        KeyCode::Char('n')
-                        | KeyCode::Char('N')
-                        | KeyCode::Char('d')
-                        | KeyCode::Char('D')
-                        | KeyCode::Esc => {
-                            if let Some(req) = rt.pending_perm_queue.pop_front() {
-                                let _ = req.reply.send(false);
-                            }
-                            app.dialogs.pop();
-                            app.mode = AppMode::Normal;
-                            app.key_context = KeymapContext::Normal;
-                            if let Some(next) = rt.pending_perm_queue.front() {
-                                app.ask_permission(next.tool_name.clone(), next.detail.clone());
-                                app.status_message = format!(
-                                    "Denied — {} more permission(s)…",
-                                    rt.pending_perm_queue.len()
-                                );
-                            } else {
-                                app.current_agent_state = AgentState::Generating;
-                                app.status_message = "Denied tool".into();
-                            }
-                            continue;
-                        }
-                        _ => {}
-                    }
+                if batch.iter().any(event_forces_redraw) {
+                    app.mark_dirty();
                 }
 
-                // Questionnaire dialog (Grok-style `question` tool)
-                if matches!(app.dialogs.active(), Some(DialogKind::Question(_)))
-                    && let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                {
-                    let handled = handle_question_key(
-                        &mut app,
-                        key.code,
-                        &mut rt.pending_question_queue,
-                        &rt.pending_perm_queue,
-                    );
-                    if handled {
-                        app.mark_dirty();
-                        continue;
+                for ev in batch {
+                    // Permission dialog keys handled specially
+                    if matches!(app.dialogs.active(), Some(DialogKind::Permission { .. }))
+                        && let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                    {
+                        match key.code {
+                            KeyCode::Char('y')
+                            | KeyCode::Char('Y')
+                            | KeyCode::Char('a')
+                            | KeyCode::Char('A')
+                            | KeyCode::Enter => {
+                                if let Some(req) = rt.pending_perm_queue.pop_front() {
+                                    let _ = req.reply.send(true);
+                                }
+                                app.dialogs.pop();
+                                app.mode = AppMode::Normal;
+                                app.key_context = KeymapContext::Normal;
+                                if let Some(next) = rt.pending_perm_queue.front() {
+                                    app.ask_permission(next.tool_name.clone(), next.detail.clone());
+                                    app.status_message = format!(
+                                        "Allowed — {} more permission(s)…",
+                                        rt.pending_perm_queue.len()
+                                    );
+                                } else {
+                                    app.current_agent_state = AgentState::Generating;
+                                    app.status_message = "Allowed — continuing…".into();
+                                }
+                                continue;
+                            }
+                            KeyCode::Char('n')
+                            | KeyCode::Char('N')
+                            | KeyCode::Char('d')
+                            | KeyCode::Char('D')
+                            | KeyCode::Esc => {
+                                if let Some(req) = rt.pending_perm_queue.pop_front() {
+                                    let _ = req.reply.send(false);
+                                }
+                                app.dialogs.pop();
+                                app.mode = AppMode::Normal;
+                                app.key_context = KeymapContext::Normal;
+                                if let Some(next) = rt.pending_perm_queue.front() {
+                                    app.ask_permission(next.tool_name.clone(), next.detail.clone());
+                                    app.status_message = format!(
+                                        "Denied — {} more permission(s)…",
+                                        rt.pending_perm_queue.len()
+                                    );
+                                } else {
+                                    app.current_agent_state = AgentState::Generating;
+                                    app.status_message = "Denied tool".into();
+                                }
+                                continue;
+                            }
+                            _ => {}
+                        }
                     }
-                }
 
-                // Mouse single-select may finish the questionnaire from input.rs
-                if let Some(answers) = app.pending_question_answers.take() {
-                    if let Some(req) = rt.pending_question_queue.pop_front() {
-                        let _ = req.reply.send(Ok(answers));
-                    }
-                    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
-                        app.mode = AppMode::Normal;
-                        app.key_context = KeymapContext::Normal;
-                        resume_after_question(
+                    // Questionnaire dialog (Grok-style `question` tool)
+                    if matches!(app.dialogs.active(), Some(DialogKind::Question(_)))
+                        && let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                    {
+                        let handled = handle_question_key(
                             &mut app,
-                            &rt.pending_question_queue,
+                            key.code,
+                            &mut rt.pending_question_queue,
                             &rt.pending_perm_queue,
                         );
+                        if handled {
+                            app.mark_dirty();
+                            continue;
+                        }
                     }
-                }
 
-                // [✗] / Esc may dismiss Question via input.rs — complete oneshot
-                if app.question_dismissed {
-                    app.question_dismissed = false;
-                    if let Some(req) = rt.pending_question_queue.pop_front() {
-                        let _ = req.reply.send(Err(QuestionError::Cancelled));
+                    // Mouse single-select may finish the questionnaire from input.rs
+                    if let Some(answers) = app.pending_question_answers.take() {
+                        if let Some(req) = rt.pending_question_queue.pop_front() {
+                            let _ = req.reply.send(Ok(answers));
+                        }
+                        if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+                            app.mode = AppMode::Normal;
+                            app.key_context = KeymapContext::Normal;
+                            resume_after_question(
+                                &mut app,
+                                &rt.pending_question_queue,
+                                &rt.pending_perm_queue,
+                            );
+                        }
                     }
-                    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
-                        resume_after_question(
+
+                    // [✗] / Esc may dismiss Question via input.rs — complete oneshot
+                    if app.question_dismissed {
+                        app.question_dismissed = false;
+                        if let Some(req) = rt.pending_question_queue.pop_front() {
+                            let _ = req.reply.send(Err(QuestionError::Cancelled));
+                        }
+                        if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+                            resume_after_question(
+                                &mut app,
+                                &rt.pending_question_queue,
+                                &rt.pending_perm_queue,
+                            );
+                        }
+                    }
+
+                    // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
+                    if let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('t')
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && app.mode == AppMode::Normal
+                        && !rt.agent_busy
+                    {
+                        cycle_agent(
                             &mut app,
-                            &rt.pending_question_queue,
-                            &rt.pending_perm_queue,
-                        );
-                    }
-                }
-
-                // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
-                if let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                    && key.code == KeyCode::Char('t')
-                    && key
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                    && app.mode == AppMode::Normal
-                    && !rt.agent_busy
-                {
-                    cycle_agent(
-                        &mut app,
-                        &mut rt.agent,
-                        &mut rt.session,
-                        &config,
-                        &project_dir,
-                        Arc::clone(&rt.perm_prompter),
-                        Arc::clone(&rt.question_prompter),
-                        &rt.event_tx,
-                    )
-                    .await;
-                    continue;
-                }
-
-                // ── S2: multi-session keys ────────────────────────────
-                // Ctrl+N: park the active session and open a fresh one.
-                if let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                    && key.code == KeyCode::Char('n')
-                    && key
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                    && app.mode == AppMode::Normal
-                {
-                    if runtimes.len() + 1 >= MAX_LIVE_SESSIONS {
-                        app.toasts.push(
-                            crate::toast::ToastKind::Warning,
-                            format!("Session limit ({MAX_LIVE_SESSIONS}) — close one first"),
-                        );
-                        continue;
-                    }
-                    app.save_view(&mut rt.view);
-                    let parked = std::mem::replace(
-                        &mut rt,
-                        spawn_new_session_runtime(
-                            &app.agent_name,
+                            &mut rt.agent,
+                            &mut rt.session,
                             &config,
                             &project_dir,
-                            &file_index,
-                            session_claims.clone(),
-                        )
-                        .await,
-                    );
-                    runtimes.push(parked);
-                    mru.push(runtimes.len() - 1);
-                    app.restore_view(&rt.view);
-                    app.focus = FocusPane::Prompt;
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        format!("New session ({} live)", runtimes.len() + 1),
-                    );
-                    continue;
-                }
-
-                // Ctrl+PageDown/PageUp: cycle sessions in creation order.
-                if let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                    && matches!(key.code, KeyCode::PageDown | KeyCode::PageUp)
-                    && key
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                    && app.mode == AppMode::Normal
-                    && !runtimes.is_empty()
-                {
-                    let idx = if key.code == KeyCode::PageDown {
-                        0
-                    } else {
-                        runtimes.len() - 1
-                    };
-                    switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
-                    mru.retain(|&i| i != idx);
-                    mru.push(idx);
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        format!(
-                            "Session · {} ({} live)",
-                            rt.session.title,
-                            runtimes.len() + 1
-                        ),
-                    );
-                    continue;
-                }
-
-                // Ctrl+O: live-session dashboard (grouped, peek, attach).
-                if let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                    && key.code == KeyCode::Char('o')
-                    && key
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                    && app.mode == AppMode::Normal
-                {
-                    open_sessions_dashboard(&mut app, &rt, &runtimes);
-                    continue;
-                }
-
-                // Ctrl+Tab: MRU switch to the most recently parked session.
-                if let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                    && key.code == KeyCode::Tab
-                    && key
-                        .modifiers
-                        .contains(crossterm::event::KeyModifiers::CONTROL)
-                    && app.mode == AppMode::Normal
-                    && !runtimes.is_empty()
-                {
-                    let idx = mru.pop().unwrap_or(runtimes.len() - 1);
-                    let idx = idx.min(runtimes.len() - 1);
-                    switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
-                    mru.retain(|&i| i != idx);
-                    mru.push(idx);
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        format!(
-                            "Session · {} ({} live)",
-                            rt.session.title,
-                            runtimes.len() + 1
-                        ),
-                    );
-                    continue;
-                }
-
-                // Slash commands on Enter
-                if let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                    && key.code == KeyCode::Enter
-                    && app.mode == AppMode::Normal
-                    && !rt.agent_busy
-                {
-                    let mut text = app.input_buffer.trim().to_string();
-                    if app.slash_suggest.active
-                        && let Some(cmd) = app.slash_suggest.current()
-                    {
-                        text = cmd.name.to_string();
-                    }
-                    if text.starts_with('/') {
-                        app.input_buffer.clear();
-                        app.input_cursor = 0;
-                        app.pending_pastes.clear();
-                        app.slash_suggest.dismiss();
-                        handle_slash(
-                            &text,
-                            &mut SlashContext {
-                                app: &mut app,
-                                session: &mut rt.session,
-                                history: &mut rt.history,
-                                agent: &mut rt.agent,
-                                config: &config,
-                                project_dir: &project_dir,
-                                provider: &mut provider,
-                                model: &mut model,
-                                api_key: &mut api_key,
-                                perm_prompter: Arc::clone(&rt.perm_prompter),
-                                question_prompter: Arc::clone(&rt.question_prompter),
-                                auth_tx: auth_tx.clone(),
-                            },
+                            Arc::clone(&rt.perm_prompter),
+                            Arc::clone(&rt.question_prompter),
+                            &rt.event_tx,
                         )
                         .await;
                         continue;
                     }
-                }
 
-                // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
-                // and focus still work so the user can queue thoughts.
-                if rt.agent_busy
-                    && let Event::Key(key) = &ev
-                    && key.kind == KeyEventKind::Press
-                {
-                    match key.code {
-                        KeyCode::Esc => {
-                            // First Esc: cooperative cancel. Second: force-stop now.
-                            if cancel_requested_at.is_some() {
-                                force_stop_turn(
-                                    &mut app,
-                                    &mut rt.agent,
-                                    &mut rt.session,
-                                    &mut rt.agent_busy,
-                                    &mut rt.cancel_flag,
-                                    &mut cancel_requested_at,
-                                    &mut rt.turn_join,
-                                    &mut rt.session_backup,
-                                    &mut rt.pending_question_queue,
-                                    &mut rt.pending_perm_queue,
-                                    &mut rt.done_rx,
-                                    &config,
-                                    &project_dir,
-                                    &provider,
-                                    &model,
-                                    rt.event_tx.clone(),
-                                    Arc::clone(&rt.perm_prompter),
-                                    Arc::clone(&rt.question_prompter),
-                                    &file_index,
-                                );
-                            } else {
-                                begin_cancel(
-                                    &mut app,
-                                    &rt.cancel_flag,
-                                    &mut cancel_requested_at,
-                                    &mut rt.pending_question_queue,
-                                    &mut rt.pending_perm_queue,
-                                );
-                            }
-                            app.esc_armed_at = None;
+                    // ── S2: multi-session keys ────────────────────────────
+                    // Ctrl+N: park the active session and open a fresh one.
+                    if let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('n')
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && app.mode == AppMode::Normal
+                    {
+                        if runtimes.len() + 1 >= MAX_LIVE_SESSIONS {
+                            app.toasts.push(
+                                crate::toast::ToastKind::Warning,
+                                format!("Session limit ({MAX_LIVE_SESSIONS}) — close one first"),
+                            );
                             continue;
                         }
-                        KeyCode::Char('q')
-                            if key
-                                .modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                        app.save_view(&mut rt.view);
+                        let parked = std::mem::replace(
+                            &mut rt,
+                            spawn_new_session_runtime(
+                                &app.agent_name,
+                                &config,
+                                &project_dir,
+                                &file_index,
+                                session_claims.clone(),
+                            )
+                            .await,
+                        );
+                        runtimes.push(parked);
+                        mru.push(runtimes.len() - 1);
+                        app.restore_view(&rt.view);
+                        app.focus = FocusPane::Prompt;
+                        app.toasts.push(
+                            crate::toast::ToastKind::Info,
+                            format!("New session ({} live)", runtimes.len() + 1),
+                        );
+                        continue;
+                    }
+
+                    // Ctrl+PageDown/PageUp: cycle sessions in creation order.
+                    if let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                        && matches!(key.code, KeyCode::PageDown | KeyCode::PageUp)
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && app.mode == AppMode::Normal
+                        && !runtimes.is_empty()
+                    {
+                        let idx = if key.code == KeyCode::PageDown {
+                            0
+                        } else {
+                            runtimes.len() - 1
+                        };
+                        switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
+                        mru.retain(|&i| i != idx);
+                        mru.push(idx);
+                        app.toasts.push(
+                            crate::toast::ToastKind::Info,
+                            format!(
+                                "Session · {} ({} live)",
+                                rt.session.title,
+                                runtimes.len() + 1
+                            ),
+                        );
+                        continue;
+                    }
+
+                    // Ctrl+O: live-session dashboard (grouped, peek, attach).
+                    if let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('o')
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && app.mode == AppMode::Normal
+                    {
+                        open_sessions_dashboard(&mut app, &rt, &runtimes);
+                        continue;
+                    }
+
+                    // Ctrl+Tab: MRU switch to the most recently parked session.
+                    if let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Tab
+                        && key
+                            .modifiers
+                            .contains(crossterm::event::KeyModifiers::CONTROL)
+                        && app.mode == AppMode::Normal
+                        && !runtimes.is_empty()
+                    {
+                        let idx = mru.pop().unwrap_or(runtimes.len() - 1);
+                        let idx = idx.min(runtimes.len() - 1);
+                        switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
+                        mru.retain(|&i| i != idx);
+                        mru.push(idx);
+                        app.toasts.push(
+                            crate::toast::ToastKind::Info,
+                            format!(
+                                "Session · {} ({} live)",
+                                rt.session.title,
+                                runtimes.len() + 1
+                            ),
+                        );
+                        continue;
+                    }
+
+                    // Slash commands on Enter
+                    if let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Enter
+                        && app.mode == AppMode::Normal
+                        && !rt.agent_busy
+                    {
+                        let mut text = app.input_buffer.trim().to_string();
+                        if app.slash_suggest.active
+                            && let Some(cmd) = app.slash_suggest.current()
                         {
-                            // Quit: always force-stop so we never hang on exit.
-                            if rt.agent_busy {
-                                force_stop_turn(
-                                    &mut app,
-                                    &mut rt.agent,
-                                    &mut rt.session,
-                                    &mut rt.agent_busy,
-                                    &mut rt.cancel_flag,
-                                    &mut cancel_requested_at,
-                                    &mut rt.turn_join,
-                                    &mut rt.session_backup,
-                                    &mut rt.pending_question_queue,
-                                    &mut rt.pending_perm_queue,
-                                    &mut rt.done_rx,
-                                    &config,
-                                    &project_dir,
-                                    &provider,
-                                    &model,
-                                    rt.event_tx.clone(),
-                                    Arc::clone(&rt.perm_prompter),
-                                    Arc::clone(&rt.question_prompter),
-                                    &file_index,
-                                );
-                            }
-                            app.running = false;
+                            text = cmd.name.to_string();
+                        }
+                        if text.starts_with('/') {
+                            app.input_buffer.clear();
+                            app.input_cursor = 0;
+                            app.pending_pastes.clear();
+                            app.slash_suggest.dismiss();
+                            handle_slash(
+                                &text,
+                                &mut SlashContext {
+                                    app: &mut app,
+                                    session: &mut rt.session,
+                                    history: &mut rt.history,
+                                    agent: &mut rt.agent,
+                                    config: &config,
+                                    project_dir: &project_dir,
+                                    provider: &mut provider,
+                                    model: &mut model,
+                                    api_key: &mut api_key,
+                                    perm_prompter: Arc::clone(&rt.perm_prompter),
+                                    question_prompter: Arc::clone(&rt.question_prompter),
+                                    auth_tx: auth_tx.clone(),
+                                },
+                            )
+                            .await;
                             continue;
                         }
-                        KeyCode::Char('c')
-                            if key
-                                .modifiers
-                                .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                        {
-                            // Grok: Ctrl+C clears draft first; second cancels.
-                            // Empty draft + already cancelling → force-stop.
-                            if app.input_buffer.is_empty() {
+                    }
+
+                    // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
+                    // and focus still work so the user can queue thoughts.
+                    if rt.agent_busy
+                        && let Event::Key(key) = &ev
+                        && key.kind == KeyEventKind::Press
+                    {
+                        match key.code {
+                            KeyCode::Esc => {
+                                // First Esc: cooperative cancel. Second: force-stop now.
                                 if cancel_requested_at.is_some() {
                                     force_stop_turn(
                                         &mut app,
@@ -2136,40 +2070,115 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                         &mut rt.pending_perm_queue,
                                     );
                                 }
-                            } else {
-                                app.clear_prompt_draft();
+                                app.esc_armed_at = None;
+                                continue;
+                            }
+                            KeyCode::Char('q')
+                                if key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                            {
+                                // Quit: always force-stop so we never hang on exit.
+                                if rt.agent_busy {
+                                    force_stop_turn(
+                                        &mut app,
+                                        &mut rt.agent,
+                                        &mut rt.session,
+                                        &mut rt.agent_busy,
+                                        &mut rt.cancel_flag,
+                                        &mut cancel_requested_at,
+                                        &mut rt.turn_join,
+                                        &mut rt.session_backup,
+                                        &mut rt.pending_question_queue,
+                                        &mut rt.pending_perm_queue,
+                                        &mut rt.done_rx,
+                                        &config,
+                                        &project_dir,
+                                        &provider,
+                                        &model,
+                                        rt.event_tx.clone(),
+                                        Arc::clone(&rt.perm_prompter),
+                                        Arc::clone(&rt.question_prompter),
+                                        &file_index,
+                                    );
+                                }
+                                app.running = false;
+                                continue;
+                            }
+                            KeyCode::Char('c')
+                                if key
+                                    .modifiers
+                                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+                            {
+                                // Grok: Ctrl+C clears draft first; second cancels.
+                                // Empty draft + already cancelling → force-stop.
+                                if app.input_buffer.is_empty() {
+                                    if cancel_requested_at.is_some() {
+                                        force_stop_turn(
+                                            &mut app,
+                                            &mut rt.agent,
+                                            &mut rt.session,
+                                            &mut rt.agent_busy,
+                                            &mut rt.cancel_flag,
+                                            &mut cancel_requested_at,
+                                            &mut rt.turn_join,
+                                            &mut rt.session_backup,
+                                            &mut rt.pending_question_queue,
+                                            &mut rt.pending_perm_queue,
+                                            &mut rt.done_rx,
+                                            &config,
+                                            &project_dir,
+                                            &provider,
+                                            &model,
+                                            rt.event_tx.clone(),
+                                            Arc::clone(&rt.perm_prompter),
+                                            Arc::clone(&rt.question_prompter),
+                                            &file_index,
+                                        );
+                                    } else {
+                                        begin_cancel(
+                                            &mut app,
+                                            &rt.cancel_flag,
+                                            &mut cancel_requested_at,
+                                            &mut rt.pending_question_queue,
+                                            &mut rt.pending_perm_queue,
+                                        );
+                                    }
+                                } else {
+                                    app.clear_prompt_draft();
+                                    app.toasts.push(
+                                        crate::toast::ToastKind::Info,
+                                        "Draft cleared — Ctrl+C again to cancel",
+                                    );
+                                }
+                                continue;
+                            }
+                            KeyCode::Enter => {
+                                // Block submit while generating; keep draft.
                                 app.toasts.push(
                                     crate::toast::ToastKind::Info,
-                                    "Draft cleared — Ctrl+C again to cancel",
+                                    "Wait for turn or Esc to cancel",
                                 );
+                                continue;
                             }
-                            continue;
-                        }
-                        KeyCode::Enter => {
-                            // Block submit while generating; keep draft.
-                            app.toasts.push(
-                                crate::toast::ToastKind::Info,
-                                "Wait for turn or Esc to cancel",
-                            );
-                            continue;
-                        }
-                        _ => {
-                            // Typing, scroll, focus toggle — all allowed mid-turn.
-                            let _ = input::handle_event(&mut app, ev);
-                            continue;
+                            _ => {
+                                // Typing, scroll, focus toggle — all allowed mid-turn.
+                                let _ = input::handle_event(&mut app, ev);
+                                continue;
+                            }
                         }
                     }
-                }
 
-                if !input::handle_event(&mut app, ev) {
-                    whycode_core::logging::emit(
-                        "whycode_tui",
-                        "info",
-                        "tui.exit",
-                        Some(serde_json::json!({ "reason": "handle_event=false" })),
-                    );
-                    break;
-                }
+                    if !input::handle_event(&mut app, ev) {
+                        whycode_core::logging::emit(
+                            "whycode_tui",
+                            "info",
+                            "tui.exit",
+                            Some(serde_json::json!({ "reason": "handle_event=false" })),
+                        );
+                        break 'main;
+                    }
+                } // for ev in batch
             }
 
             if !app.running {
@@ -2269,6 +2278,33 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 /// The TUI draws on `/dev/tty`; after restore, prefer that same device so the
 /// lines land in the real terminal scrollback even when stdout is captured.
 /// Fall back to stdout, then stderr.
+/// Read the event that woke `poll`, then drain anything already queued.
+///
+/// Cap the batch so a stuck input flood cannot grow without bound before
+/// the next paint / turn-event drain.
+fn read_event_batch() -> io::Result<Vec<Event>> {
+    const MAX_BATCH: usize = 64;
+    let mut batch = Vec::with_capacity(8);
+    batch.push(event::read()?);
+    while batch.len() < MAX_BATCH {
+        match event::poll(Duration::ZERO) {
+            Ok(true) => batch.push(event::read()?),
+            Ok(false) => break,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(batch)
+}
+
+/// Mouse motion is tracked for hover; it must not by itself schedule a
+/// full chat paint (handle_mouse marks dirty only when chrome hover changes).
+fn event_forces_redraw(ev: &Event) -> bool {
+    !matches!(
+        ev,
+        Event::Mouse(m) if m.kind == MouseEventKind::Moved
+    )
+}
+
 fn print_session_summary(summary: &str) {
     #[cfg(unix)]
     {
@@ -4939,6 +4975,27 @@ mod tests {
         let out = truncate_toast(&long, 10);
         assert_eq!(out.chars().count(), 10);
         assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn mouse_move_does_not_force_redraw_other_events_do() {
+        let moved = Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: 1,
+            row: 1,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        let wheel = Event::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 1,
+            row: 1,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        });
+        let key = Event::Key(crossterm::event::KeyEvent::from(KeyCode::Char('a')));
+        assert!(!event_forces_redraw(&moved));
+        assert!(event_forces_redraw(&wheel));
+        assert!(event_forces_redraw(&key));
+        assert!(event_forces_redraw(&Event::Resize(80, 24)));
     }
 
     #[test]

@@ -750,6 +750,46 @@ fn paint_home_clears_chat_hits() {
 }
 
 #[test]
+fn scroll_paints_reuse_closed_line_cache() {
+    use crate::app::AgentState;
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 12);
+    paint_session(&mut app, 40, 12);
+    assert!(
+        app.messages
+            .iter()
+            .all(|m| m.line_cache.is_some() && m.layout_cache.is_some()),
+        "first paint must fill closed-message caches"
+    );
+    let before: Vec<usize> = app
+        .messages
+        .iter()
+        .map(|m| m.line_cache.as_ref().map(|(_, _, l)| l.len()).unwrap_or(0))
+        .collect();
+
+    app.current_agent_state = AgentState::Generating;
+    app.scroll_rows(4);
+    paint_session(&mut app, 40, 12);
+    app.scroll_rows(-3);
+    paint_session(&mut app, 40, 12);
+
+    for (i, msg) in app.messages.iter().enumerate() {
+        let last = i + 1 == app.messages.len();
+        if last {
+            // Live tail while busy: height may remasure, but earlier
+            // bubbles must keep the same cached line count.
+            continue;
+        }
+        assert!(msg.line_cache.is_some(), "msg {i} lost line_cache");
+        assert_eq!(
+            msg.line_cache.as_ref().unwrap().2.len(),
+            before[i],
+            "msg {i} cache rebuilt during scroll"
+        );
+    }
+}
+
+#[test]
 fn wheel_step_scales_with_viewport() {
     let mut app = TuiApp::new(cfg());
     app.chat_viewport_rows = 6;

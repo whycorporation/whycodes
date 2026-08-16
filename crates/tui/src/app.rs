@@ -579,11 +579,12 @@ pub struct ChatMessage {
     pub image_labels: Vec<String>,
     /// When this bubble was authored (Grok `/timestamps`).
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
-    /// Cached display row count for `(width, busy_epilogue)` — see
-    /// [`ChatMessage::invalidate_layout`].
+    /// Cached display row count for `(width, closed)` — see
+    /// [`ChatMessage::invalidate_layout`]. `closed` is per-message
+    /// (finished vs live tail), not the global agent-busy flag.
     pub layout_cache: Option<(u16, bool, usize)>,
-    /// Cached painted lines for closed messages at `(width, busy)`.
-    /// Avoids re-parsing markdown on every spinner frame for finished bubbles.
+    /// Cached painted lines for closed messages at `(width, closed)`.
+    /// Avoids re-parsing markdown on every spinner / scroll frame.
     pub line_cache: Option<(u16, bool, Vec<ratatui::text::Line<'static>>)>,
 }
 
@@ -2464,6 +2465,10 @@ impl TuiApp {
 
     /// Add a message to the chat view.
     pub fn add_message(&mut self, role: ChatRole, content: impl Into<String>) {
+        // Previous last assistant loses the `is_last` token footer.
+        if let Some(last) = self.messages.last_mut() {
+            last.invalidate_layout();
+        }
         self.messages.push(ChatMessage::blank(role, content));
         self.mark_dirty();
     }
@@ -2473,6 +2478,9 @@ impl TuiApp {
         content: impl Into<String>,
         image_labels: Vec<String>,
     ) {
+        if let Some(last) = self.messages.last_mut() {
+            last.invalidate_layout();
+        }
         let mut msg = ChatMessage::blank(ChatRole::User, content);
         msg.image_labels = image_labels;
         self.messages.push(msg);
