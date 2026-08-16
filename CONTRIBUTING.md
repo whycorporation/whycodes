@@ -50,7 +50,9 @@ Notes:
   `crates/config`. `core` never depends on `config`.
 - Behaviour changes to the TUI event loop, mouse handling or terminal setup
   should read [`docs/knowhow.md`](docs/knowhow.md) first, and extend it when
-  they fix a non-obvious bug.
+  they fix a non-obvious bug. After those edits, run the manual host pass in
+  [`docs/tui-term-matrix.md`](docs/tui-term-matrix.md)
+  (`scripts/tui_term_matrix.sh`) on at least Alacritty and one VTE terminal.
 - Platform-specific behaviour needs a `#[cfg]` branch, not a Unix-only
   assumption: tagged releases build for Linux, Windows and macOS.
 - Agent-facing repo rules are in [AGENTS.md](AGENTS.md); they apply to human

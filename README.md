@@ -81,6 +81,7 @@ not a frames-per-second race.
 | [docs/architecture.md](docs/architecture.md) | Crate map and layering |
 | [docs/roadmap.md](docs/roadmap.md) | Current focus and deferred work |
 | [docs/knowhow.md](docs/knowhow.md) | Hard-won bugs (TUI, tty, silent exits) |
+| [docs/tui-term-matrix.md](docs/tui-term-matrix.md) | Manual TUI pass on Alacritty / Kitty / VTE |
 | [docs/benchmarks.md](docs/benchmarks.md) | How to measure startup, RSS, idle draws |
 | [docs/budgets.md](docs/budgets.md) | CI quality budgets |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup and required checks |
