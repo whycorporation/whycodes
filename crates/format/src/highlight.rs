@@ -151,12 +151,24 @@ fn find_syntax<'a>(
         })
 }
 
+/// Token lookup, then shebang / first-line guess for untagged fences.
+fn find_syntax_for<'a>(
+    ps: &'a SyntaxSet,
+    language: Option<&str>,
+    code: &str,
+) -> Option<&'a syntect::parsing::SyntaxReference> {
+    find_syntax(ps, language).or_else(|| {
+        let first = code.lines().find(|l| !l.trim().is_empty())?;
+        ps.find_syntax_by_first_line(first)
+    })
+}
+
 /// Highlight source code with ANSI terminal escape sequences.
 ///
 /// Unknown languages return the code unchanged (no fences added).
 pub fn highlight_code(code: &str, language: &str) -> String {
     let ps = syntax_set();
-    let Some(syntax) = find_syntax(ps, Some(language)) else {
+    let Some(syntax) = find_syntax_for(ps, Some(language), code) else {
         return code.to_string();
     };
 
@@ -193,7 +205,7 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Arc<Vec<Vec<C
 
     // Known languages go through the open-stream highlighter so a growing
     // fence pays O(new lines) instead of re-tokenising the whole body.
-    if find_syntax(syntax_set(), language).is_some()
+    if find_syntax_for(syntax_set(), language, code).is_some()
         && let Ok(mut stream) = open_stream().lock()
         && let Some(lines) = stream.highlight(code, language)
     {
@@ -250,7 +262,7 @@ fn cache_key(code: &str, language: Option<&str>) -> u64 {
 fn highlight_uncached(code: &str, language: Option<&str>) -> Vec<Vec<CodeSpan>> {
     let ps = syntax_set();
 
-    let Some(syntax) = find_syntax(ps, language) else {
+    let Some(syntax) = find_syntax_for(ps, language, code) else {
         return plain_lines(code);
     };
 
@@ -339,7 +351,7 @@ impl OpenStreamHighlighter {
     /// should fall back to plain text).
     fn highlight(&mut self, code: &str, language: Option<&str>) -> Option<Vec<Vec<CodeSpan>>> {
         let ps = syntax_set();
-        let syntax = find_syntax(ps, language)?;
+        let syntax = find_syntax_for(ps, language, code)?;
 
         let lang_key = language.map(|s| s.to_string());
         let needs_rebuild = self.language != lang_key || !code.starts_with(&self.committed_source);

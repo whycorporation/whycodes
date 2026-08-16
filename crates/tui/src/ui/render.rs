@@ -198,6 +198,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(3),
+            Constraint::Length(layout::CHAT_GAP),
             Constraint::Length(turn_h),
             Constraint::Length(prompt_h),
         ])
@@ -208,11 +209,11 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
 
     chat::render(frame, chunks[0], app, palette);
     if turn_h > 0 {
-        render_turn_status(frame, chunks[1], app, palette);
+        render_turn_status(frame, chunks[2], app, palette);
     }
-    prompt::render(frame, chunks[2], app, palette);
-    slash_suggest::render(frame, chunks[2], app, palette);
-    file_suggest::render(frame, chunks[2], app, palette);
+    prompt::render(frame, chunks[3], app, palette);
+    slash_suggest::render(frame, chunks[3], app, palette);
+    file_suggest::render(frame, chunks[3], app, palette);
 }
 
 /// session: optional sidebar + padded main column
@@ -245,9 +246,10 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(3),           // scroll messages
-            Constraint::Length(turn_h),   // Grok turn status (busy only)
-            Constraint::Length(prompt_h), // boxed prompt (╭ text ╰ meta) + hint
+            Constraint::Min(3),                   // scroll messages
+            Constraint::Length(layout::CHAT_GAP), // safezone above stop / prompt
+            Constraint::Length(turn_h),           // Grok turn status (busy only)
+            Constraint::Length(prompt_h),         // boxed prompt (╭ text ╰ meta) + hint
         ])
         .split(inset);
 
@@ -256,11 +258,11 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
 
     chat::render(frame, chunks[0], app, palette);
     if turn_h > 0 {
-        render_turn_status(frame, chunks[1], app, palette);
+        render_turn_status(frame, chunks[2], app, palette);
     }
-    prompt::render(frame, chunks[2], app, palette);
-    slash_suggest::render(frame, chunks[2], app, palette);
-    file_suggest::render(frame, chunks[2], app, palette);
+    prompt::render(frame, chunks[3], app, palette);
+    slash_suggest::render(frame, chunks[3], app, palette);
+    file_suggest::render(frame, chunks[3], app, palette);
 }
 
 fn turn_status_height(app: &mut TuiApp) -> u16 {
@@ -613,6 +615,7 @@ mod paint_tests {
     use crate::config::TuiAppConfig;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
 
     fn app() -> TuiApp {
         TuiApp::new(TuiAppConfig::default())
@@ -1077,6 +1080,78 @@ mod paint_tests {
         assert!(
             clock_at > marker_at,
             "clock must sit to the right of the reply, got {row:?}"
+        );
+    }
+
+    #[test]
+    fn fenced_rust_keeps_token_colours_on_the_shell() {
+        let mut a = app();
+        a.add_message(crate::app::ChatRole::User, "show code");
+        a.add_message(
+            crate::app::ChatRole::Assistant,
+            "```rust\nfn main() { let x = \"hi\"; }\n```",
+        );
+        let (buf, _) = paint_full_shell(&mut a, 100, 24);
+        let mut fgs = std::collections::BTreeSet::new();
+        for y in 0..buf.area().height {
+            let row = row_text(&buf, y);
+            if !row.contains("fn") && !row.contains("let") && !row.contains("hi") {
+                continue;
+            }
+            for x in 0..buf.area().width {
+                if let Some(cell) = buf.cell((x, y)) {
+                    let sym = cell.symbol();
+                    if matches!(sym, "f" | "n" | "l" | "e" | "t" | "h" | "i" | "\"")
+                        && let Some(Color::Rgb(r, g, b)) = cell.style().fg
+                    {
+                        fgs.insert((r, g, b));
+                    }
+                }
+            }
+        }
+        assert!(
+            fgs.len() >= 2,
+            "painted rust fence must keep token colours, got {fgs:?}"
+        );
+    }
+
+    #[test]
+    fn session_leaves_gap_between_chat_and_stop() {
+        let mut a = session_with_overflow();
+        a.current_agent_state = AgentState::Generating;
+        let (buf, _) = paint_full_shell(&mut a, 100, 24);
+
+        let chat = a.chat_area.expect("session publishes a chat hit rect");
+        let stop = a.turn_stop_hit.rect.expect("busy turn must publish [stop]");
+        assert!(
+            stop.y
+                >= chat
+                    .y
+                    .saturating_add(chat.height)
+                    .saturating_add(layout::CHAT_GAP),
+            "chat.bottom={} stop.y={} CHAT_GAP={}",
+            chat.y.saturating_add(chat.height),
+            stop.y,
+            layout::CHAT_GAP
+        );
+        // The reserved gap row is empty of transcript glyphs.
+        let gap_y = chat.y.saturating_add(chat.height);
+        let gap = row_text(&buf, gap_y);
+        assert!(
+            !gap.contains('\u{276F}') && !gap.contains("[stop]"),
+            "safezone row must be empty of chat/stop: {gap:?}"
+        );
+    }
+
+    #[test]
+    fn session_chat_has_side_margin() {
+        let mut a = session_with_overflow();
+        let (_buf, _) = paint_full_shell(&mut a, 100, 24);
+        let chat = a.chat_area.expect("session publishes a chat hit rect");
+        let expected_x = layout::SAFE_LEFT + layout::SIDE_PAD;
+        assert_eq!(
+            chat.x, expected_x,
+            "bubble column must sit SIDE_PAD inside the safe area"
         );
     }
 

@@ -563,6 +563,26 @@ mod tests {
     }
 
     #[test]
+    fn fenced_rust_uses_more_than_one_token_colour() {
+        let lines = render("```rust\nfn main() { let x = \"hi\"; }\n```", &palette());
+        let mut fgs = std::collections::BTreeSet::new();
+        for line in &lines {
+            for s in &line.spans {
+                let t = s.content.as_ref();
+                if (t.contains("fn") || t.contains("let") || t.contains("hi") || t.contains("main"))
+                    && let Some(Color::Rgb(r, g, b)) = s.style.fg
+                {
+                    fgs.insert((r, g, b));
+                }
+            }
+        }
+        assert!(
+            fgs.len() >= 2,
+            "rust tokens must not share one grey: {fgs:?}"
+        );
+    }
+
+    #[test]
     fn fenced_code_is_banded_labelled_and_numbered() {
         let out = rendered("```rust\nlet x = 1;\n```");
         let joined = out.join("\n");
