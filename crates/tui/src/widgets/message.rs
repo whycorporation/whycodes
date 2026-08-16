@@ -156,7 +156,7 @@ fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<
         ]
     };
     if !t.is_running() && t.collapsed {
-        header_spans.push(Span::styled("  (e expand)".to_string(), detail));
+        header_spans.push(Span::styled(" ›".to_string(), detail));
     }
     lines.push(rail_prefix(header_spans));
     if show_rail {
@@ -329,7 +329,7 @@ mod tests {
         let lines = thinking_widget_lines(&t, &p);
         let all: Vec<String> = lines.iter().map(line_text).collect();
         assert!(all[0].contains("Thought for"), "{all:?}");
-        assert!(all[0].contains("(e expand)"), "{all:?}");
+        assert!(all[0].contains('›'), "{all:?}");
         assert_eq!(all.len(), 1, "no body when collapsed: {all:?}");
     }
 
@@ -342,7 +342,7 @@ mod tests {
         let lines = thinking_widget_lines(&t, &p);
         let all: Vec<String> = lines.iter().map(line_text).collect();
         assert!(all[0].contains("Thought for"), "{all:?}");
-        assert!(!all[0].contains("(e expand)"), "expanded: {all:?}");
+        assert!(!all[0].contains('›'), "expanded: {all:?}");
         assert!(all.iter().any(|l| l.contains("line a")), "{all:?}");
         assert!(all.iter().any(|l| l.contains("line b")), "{all:?}");
     }

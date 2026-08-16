@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Agent replies must carry the same clock as Grok
+
+**Symptom:** User ❯ bands had `August 17, 14:32` on the right; the answer body did not. Grok settings copy is "clock time next to user messages and agent".
+
+**Root cause:** `/timestamps` only stamped the user band and the `Worked for` footer. Agent markdown was unstamped. Tools also lacked Grok's `◆` bullet and folded thinking used `(e expand)` instead of `›`.
+
+**Fix:** Stamp the first answer line with `line_with_right`. Tool headers start with `◆ `. Folded thinking puts `›` on the right of the header.
+
+**Prevention:** Paint-test an assistant reply through the full shell; the marker row must contain `HH:MM` to the right of the text.
+
+---
+
 ### 2026-08-17 — First user bubble missing its clock
 
 **Symptom:** Scrolling to the first prompt in chat history showed no time on the right of the ❯ band. Later short follow-ups had the clock.
