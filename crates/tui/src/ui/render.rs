@@ -490,6 +490,8 @@ fn truncate_mid(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{AgentState, TuiApp};
+    use crate::config::TuiAppConfig;
 
     #[test]
     fn strip_status_chrome_drops_cancel_and_spinner() {
@@ -514,6 +516,375 @@ mod tests {
         assert_eq!(
             turn_status_detail("Running tool `read`…", "generating 3s"),
             "tool: read"
+        );
+    }
+
+    #[test]
+    fn turn_status_detail_handles_generating_variants_and_empty() {
+        // All "generating…" spellings collapse to nothing.
+        assert_eq!(turn_status_detail("Generating", "generating 1.2s"), "");
+        assert_eq!(turn_status_detail("Generating...", "generating"), "");
+        assert_eq!(turn_status_detail("Generating… 3 steps", "generating"), "");
+        // Empty / chrome-only status → no detail.
+        assert_eq!(turn_status_detail("", "generating"), "");
+        assert_eq!(turn_status_detail("  [Esc cancel]  ", "generating"), "");
+    }
+
+    #[test]
+    fn turn_status_detail_dedupes_label_head() {
+        // "thinking · thinking…" style double is dropped.
+        assert_eq!(turn_status_detail("thinking…", "thinking 1.4s"), "");
+        assert_eq!(turn_status_detail("thinking", "thinking 1.4s"), "");
+        // A longer detail that merely starts with the label survives.
+        assert_eq!(
+            turn_status_detail("thinking about next step", "thinking 1.4s"),
+            "thinking about next step"
+        );
+    }
+
+    #[test]
+    fn turn_status_detail_cleans_tool_names() {
+        // Tool name keeps only safe identifier chars.
+        assert_eq!(
+            turn_status_detail("Running tool `git status`…", "generating 3s"),
+            "tool: gitstatus"
+        );
+        assert_eq!(
+            turn_status_detail("Running tool `read`…", "generating 3s"),
+            "tool: read"
+        );
+        // Backtick content with nothing usable → original text kept.
+        assert_eq!(
+            turn_status_detail("Running tool ``…", "generating 3s"),
+            "Running tool ``…"
+        );
+    }
+
+    #[test]
+    fn turn_status_detail_truncates_mid() {
+        let long = "a".repeat(100);
+        let detail = turn_status_detail(&long, "generating");
+        assert!(detail.ends_with('…'), "{detail}");
+        assert_eq!(detail.chars().count(), 40, "{detail}");
+    }
+
+    #[test]
+    fn strip_status_chrome_extra_cases() {
+        // Multiple leading spinners + noise + separators.
+        assert_eq!(
+            strip_status_chrome("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏⠋⠋  hello · world  ·"),
+            "hello · world"
+        );
+        assert_eq!(strip_status_chrome("  plain text  "), "plain text");
+        assert_eq!(strip_status_chrome("Esc cancel · ready"), "ready");
+        assert_eq!(strip_status_chrome(""), "");
+    }
+
+    #[test]
+    fn truncate_mid_keeps_short_and_ellipsizes_long() {
+        assert_eq!(truncate_mid("short", 40), "short");
+        assert_eq!(truncate_mid("", 5), "");
+        assert_eq!(truncate_mid("abcdef", 3), "ab…");
+        assert_eq!(truncate_mid("abcdef", 6), "abcdef");
+        // Multibyte chars counted, not bytes (keep = max - 1).
+        assert_eq!(truncate_mid("çok uzun bir başlık", 5), "çok …");
+    }
+
+    #[test]
+    fn turn_status_height_tracks_busy_and_clears_stop_hit() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.turn_stop_hit.set_rect(Some(Rect::new(10, 10, 6, 1)));
+        assert_eq!(turn_status_height(&mut app), 0);
+        assert!(app.turn_stop_hit.rect.is_none(), "idle clears the stop hit");
+
+        app.current_agent_state = AgentState::Generating;
+        assert_eq!(turn_status_height(&mut app), 1);
+        app.current_agent_state = AgentState::Thinking;
+        assert_eq!(turn_status_height(&mut app), 1);
+    }
+}
+
+#[cfg(test)]
+mod paint_tests {
+    use super::*;
+    use crate::app::{ChatBlock, ThinkingBlock, TuiApp};
+    use crate::config::TuiAppConfig;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn app() -> TuiApp {
+        TuiApp::new(TuiAppConfig::default())
+    }
+
+    fn paint<F>(width: u16, height: u16, f: F) -> (ratatui::buffer::Buffer, String)
+    where
+        F: FnOnce(&mut ratatui::Frame),
+    {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(f).expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let area = buf.area();
+        let mut out = String::new();
+        for y in area.y..area.y.saturating_add(area.height) {
+            for x in area.x..area.x.saturating_add(area.width) {
+                if let Some(cell) = buf.cell((x, y)) {
+                    out.push_str(cell.symbol());
+                }
+            }
+            out.push('\n');
+        }
+        (buf, out)
+    }
+
+    #[test]
+    fn turn_status_generating_shows_spinner_label_tokens_and_stop() {
+        let mut a = app();
+        a.current_agent_state = AgentState::Generating;
+        a.spinner_frame = 2;
+        a.status_message = "Running tool `read`…".into();
+        a.turn_usage = Some(whycode_core::types::Usage {
+            input_tokens: 1_200,
+            output_tokens: 80,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        });
+        let palette = a.config.palette();
+        let (buf, text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        assert!(text.contains("generating"), "{text}");
+        assert!(text.contains("tool: read"), "{text}");
+        assert!(text.contains("⇣1.3k"), "tokens shown: {text}");
+        assert!(text.contains("[stop]"), "{text}");
+        // [stop] right-aligned with its hit rect recorded.
+        let rect = a.turn_stop_hit.rect.expect("stop hit rect");
+        assert_eq!(rect.y, 0);
+        assert_eq!(rect.x + rect.width, 100, "stop sits at the right edge");
+        // Spinner glyph painted.
+        let _ = buf;
+    }
+
+    #[test]
+    fn turn_status_thinking_uses_running_block_elapsed() {
+        let mut a = app();
+        let mut tb = ThinkingBlock::new("reasoning");
+        tb.collapsed = false;
+        a.messages.push(chat_message_with_thinking(tb));
+        a.current_agent_state = AgentState::Thinking;
+        a.spinner_frame = 4;
+        let palette = a.config.palette();
+        let (_buf, text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        assert!(text.contains("thinking"), "{text}");
+        assert!(text.contains("0.0s") || text.contains("thinking"), "{text}");
+    }
+
+    #[test]
+    fn turn_status_waiting_and_error_labels() {
+        let palette = app().config.palette();
+
+        let mut a = app();
+        a.current_agent_state = AgentState::WaitingForPermission;
+        let (_buf, text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        assert!(text.contains("waiting for permission"), "{text}");
+
+        let mut a = app();
+        a.current_agent_state = AgentState::WaitingForQuestion;
+        let (_buf, text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        assert!(text.contains("waiting for answer"), "{text}");
+
+        let mut a = app();
+        a.current_agent_state = AgentState::Error("boom".into());
+        let (_buf, text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        assert!(text.contains("error"), "{text}");
+
+        let mut a = app();
+        a.current_agent_state = AgentState::Idle;
+        let (_buf, text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        assert!(text.contains("ready"), "{text}");
+    }
+
+    #[test]
+    fn turn_status_truncates_long_detail_and_stops() {
+        let mut a = app();
+        a.current_agent_state = AgentState::Generating;
+        a.status_message = format!("long status {}", "x".repeat(120));
+        let palette = a.config.palette();
+        let (_buf, text) = paint(60, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        // Detail truncated to fit the left budget, [stop] still visible.
+        assert!(text.contains("…"), "{text}");
+        assert!(text.contains("[stop]"), "{text}");
+    }
+
+    #[test]
+    fn turn_status_hovered_stop_underlines() {
+        let mut a = app();
+        a.current_agent_state = AgentState::Generating;
+        a.turn_stop_hit.hovered = true;
+        let palette = a.config.palette();
+        let (buf, _text) = paint(100, 1, |f| {
+            render_turn_status(f, f.area(), &mut a, &palette);
+        });
+        // Find the [stop] cell and check it is underlined when hovered.
+        let found = (0..100u16).any(|x| {
+            let cell = buf.cell((x, 0)).unwrap();
+            cell.symbol() == "[" && cell.style().add_modifier.contains(Modifier::UNDERLINED)
+        });
+        assert!(found, "hovered stop must be underlined");
+    }
+
+    fn chat_message_with_thinking(tb: ThinkingBlock) -> crate::app::ChatMessage {
+        crate::app::ChatMessage {
+            role: crate::app::ChatRole::Assistant,
+            content: String::new(),
+            blocks: vec![ChatBlock::Thinking(tb)],
+            results_expanded: false,
+            tool_calls: vec![],
+            error: None,
+            duration_ms: None,
+            image_labels: vec![],
+            created_at: None,
+            layout_cache: None,
+            line_cache: None,
+        }
+    }
+
+    #[test]
+    fn paint_selection_reverses_selected_cells() {
+        let mut a = app();
+        // Selection across the first five columns of row 0.
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 0,
+            anchor_y: 0,
+            focus_x: 4,
+            focus_y: 0,
+            dragging: true,
+        });
+        let (buf, _) = paint(20, 3, |f| {
+            // Paint some text first, then apply the selection.
+            f.render_widget(
+                ratatui::widgets::Paragraph::new("hello world"),
+                Rect::new(0, 0, 20, 3),
+            );
+            paint_selection(f, &a);
+        });
+        for x in 0..=4u16 {
+            assert!(
+                buf.cell((x, 0))
+                    .unwrap()
+                    .style()
+                    .add_modifier
+                    .contains(Modifier::REVERSED),
+                "col {x} must be reversed"
+            );
+        }
+        // Outside the selection → untouched.
+        assert!(
+            !buf.cell((6, 0))
+                .unwrap()
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "col 6 outside selection"
+        );
+    }
+
+    #[test]
+    fn paint_selection_multi_row_and_clip() {
+        let mut a = app();
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 0,
+            anchor_y: 0,
+            focus_x: 3,
+            focus_y: 1,
+            dragging: true,
+        });
+        // Modal clip covers only row 0..0 (row 1 excluded from selection).
+        a.dialog_modal_hit = Some(Rect::new(0, 0, 20, 1));
+        let (buf, _) = paint(20, 3, |f| {
+            f.render_widget(
+                ratatui::widgets::Paragraph::new("abcd\nefgh"),
+                Rect::new(0, 0, 20, 3),
+            );
+            paint_selection(f, &a);
+        });
+        assert!(
+            buf.cell((1, 0))
+                .unwrap()
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "row 0 inside clip"
+        );
+        assert!(
+            !buf.cell((1, 1))
+                .unwrap()
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "row 1 clipped out"
+        );
+    }
+
+    #[test]
+    fn paint_selection_uses_screen_cells_when_available() {
+        let mut a = app();
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 0,
+            anchor_y: 0,
+            focus_x: 2,
+            focus_y: 0,
+            dragging: true,
+        });
+        // Non-empty snapshot → clipboard paint_ranges_clipped path.
+        a.screen_cells = vec![vec!["a".into(), "b".into(), "c".into(), "d".into()]];
+        let (buf, _) = paint(20, 3, |f| {
+            f.render_widget(
+                ratatui::widgets::Paragraph::new("hello world"),
+                Rect::new(0, 0, 20, 3),
+            );
+            paint_selection(f, &a);
+        });
+        assert!(
+            buf.cell((0, 0))
+                .unwrap()
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "screen-cells path paints selection"
+        );
+    }
+
+    #[test]
+    fn paint_selection_none_is_noop() {
+        let mut a = app();
+        a.mouse_sel = None;
+        let (buf, _) = paint(20, 3, |f| {
+            f.render_widget(
+                ratatui::widgets::Paragraph::new("hello"),
+                Rect::new(0, 0, 20, 3),
+            );
+            paint_selection(f, &a);
+        });
+        assert!(
+            !buf.cell((1, 0))
+                .unwrap()
+                .style()
+                .add_modifier
+                .contains(Modifier::REVERSED),
+            "no selection → nothing reversed"
         );
     }
 }
