@@ -147,7 +147,9 @@ for name in $hosts; do
     raw="${spec#*	}"
     argv="$(expand_argv "$raw")"
 
-    if ! have "$exe"; then
+    # --dry-run prints the command even when the emulator is missing so CI
+    # can lock argv without installing Alacritty / VTE on the runner.
+    if [ "$dry_run" -eq 0 ] && ! have "$exe"; then
         say "skip  $name  ($exe not on PATH)"
         skipped=$((skipped + 1))
         continue
