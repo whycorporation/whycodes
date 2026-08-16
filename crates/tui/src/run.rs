@@ -5077,4 +5077,272 @@ mod tests {
             .expect("latest");
         assert_eq!(latest.id, s2.id);
     }
+
+    #[test]
+    fn apply_panel_update_sets_preview_and_toast() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        apply_panel_update(
+            &mut app,
+            whycode_core::PanelUpdate::File {
+                path: "a.rs".into(),
+                text: "fn main() {}".into(),
+            },
+        );
+        assert!(app.sidebar.visible);
+        assert_eq!(app.sidebar.active_tab, crate::app::SidebarTab::Preview);
+        assert!(matches!(
+            &app.sidebar.preview,
+            crate::app::SidebarPreview::File { path, text }
+                if path == "a.rs" && text == "fn main() {}"
+        ));
+
+        apply_panel_update(
+            &mut app,
+            whycode_core::PanelUpdate::Diff {
+                path: "b.rs".into(),
+                unified: "-a\n+b".into(),
+            },
+        );
+        assert!(matches!(
+            &app.sidebar.preview,
+            crate::app::SidebarPreview::Diff { path, unified }
+                if path == "b.rs" && unified == "-a\n+b"
+        ));
+
+        apply_panel_update(
+            &mut app,
+            whycode_core::PanelUpdate::Mermaid {
+                source: "graph TD".into(),
+            },
+        );
+        assert!(matches!(
+            &app.sidebar.preview,
+            crate::app::SidebarPreview::Mermaid { source } if source == "graph TD"
+        ));
+
+        apply_panel_update(&mut app, whycode_core::PanelUpdate::Clear);
+        assert!(matches!(
+            app.sidebar.preview,
+            crate::app::SidebarPreview::None
+        ));
+    }
+
+    #[test]
+    fn cost_report_handles_empty_and_filled_usage() {
+        let mut session = Session::new(PathBuf::from("/work/proj"), "sys".into());
+        session.add_user_message("hello");
+        let app = TuiApp::new(TuiAppConfig::default());
+
+        // No provider usage yet → estimated line.
+        let out = cost_report(&session, &app);
+        assert!(out.contains("estimated"), "{out}");
+        assert!(out.contains("last turn: (none yet)"), "{out}");
+
+        session.usage = whycode_core::types::Usage {
+            input_tokens: 1200,
+            output_tokens: 300,
+            cache_creation_input_tokens: Some(500),
+            cache_read_input_tokens: Some(9000),
+        };
+        let out = cost_report(&session, &app);
+        assert!(out.contains("1.2k in / 300 out"), "{out}");
+        assert!(out.contains("cache write: 500"), "{out}");
+        assert!(out.contains("cache read:  9k"), "{out}");
+        assert!(out.contains("total 11k"), "{out}"); // includes cache tokens
+    }
+
+    #[test]
+    fn cost_report_includes_last_turn_usage() {
+        let session = Session::new(PathBuf::from("/work/proj"), "sys".into());
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.turn_usage = Some(whycode_core::types::Usage {
+            input_tokens: 100,
+            output_tokens: 50,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        });
+        let out = cost_report(&session, &app);
+        assert!(out.contains("last turn: 100 in / 50 out"), "{out}");
+    }
+
+    #[test]
+    fn context_report_lists_roles_and_tool_sizes() {
+        let mut session = Session::new(PathBuf::from("/work/proj"), "sys".into());
+        session.add_user_message("do it");
+        session.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "tc1".into(),
+            content: "short result".into(),
+            is_error: false,
+        }]);
+        let app = TuiApp::new(TuiAppConfig::default());
+        let config = Config::default();
+        let agent = Agent::new(whycode_core::types::AgentInfo {
+            name: "build".into(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        });
+        let out = context_report(&session, &app, &config, &agent);
+        assert!(out.contains("Context"), "{out}");
+        assert!(out.contains("messages:  2"), "{out}");
+        assert!(out.contains("user: 1"), "{out}");
+        assert!(out.contains("tool: 1"), "{out}");
+        assert!(out.contains("largest tool results"), "{out}");
+        assert!(out.contains("profile="), "{out}");
+        assert!(out.contains("memory:    enabled="), "{out}");
+        assert!(out.contains("cwd:"), "{out}");
+    }
+
+    #[test]
+    fn load_sidebar_todos_missing_and_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        // No todos.json → empty.
+        assert!(load_sidebar_todos(dir.path()).is_empty());
+
+        let whycode = dir.path().join(".whycode");
+        std::fs::create_dir_all(&whycode).unwrap();
+        std::fs::write(
+            whycode.join("todos.json"),
+            r#"{"todos": [
+                {"content": "finish task", "status": "pending"},
+                {"content": "done item", "status": "completed"},
+                {"content": "working now", "status": "in_progress"},
+                {"content": "skipped", "status": "cancelled"},
+                {"content": "no status"}
+            ]}"#,
+        )
+        .unwrap();
+        let todos = load_sidebar_todos(dir.path());
+        assert_eq!(todos.len(), 5);
+        assert_eq!(todos[0], "☐ finish task");
+        assert_eq!(todos[1], "☑ done item");
+        assert_eq!(todos[2], "… working now");
+        assert_eq!(todos[3], "✗ skipped");
+        assert_eq!(todos[4], "☐ no status");
+    }
+
+    #[test]
+    fn load_sidebar_todos_invalid_json_and_wrong_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let whycode = dir.path().join(".whycode");
+        std::fs::create_dir_all(&whycode).unwrap();
+        std::fs::write(whycode.join("todos.json"), "not json {{{").unwrap();
+        assert!(load_sidebar_todos(dir.path()).is_empty());
+        std::fs::write(whycode.join("todos.json"), r#"{"other": 1}"#).unwrap();
+        assert!(load_sidebar_todos(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn configured_models_from_providers_and_oauth() {
+        use std::sync::OnceLock;
+        static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+        let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
+        // Isolate WHYCODE_HOME so TokenStore reads a temp dir, not user keys.
+        let prev = std::env::var_os("WHYCODE_HOME");
+        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+
+        let mut config = Config::default();
+        config.providers.insert(
+            "acme".into(),
+            whycode_core::types::ProviderConfig {
+                name: "acme".into(),
+                api_key: None,
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: vec!["acme-1".into(), "acme-2".into()],
+                tool_arguments: None,
+                extra: Default::default(),
+            },
+        );
+        let out = configured_models(&config);
+        assert!(out.contains(&("acme".to_string(), "acme-1".to_string())));
+        assert!(out.contains(&("acme".to_string(), "acme-2".to_string())));
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+        }
+    }
+
+    #[test]
+    fn format_token_count_scales() {
+        assert_eq!(format_token_count(0), "0");
+        assert_eq!(format_token_count(999), "999");
+        assert_eq!(format_token_count(1000), "1k");
+        assert_eq!(format_token_count(1200), "1.2k");
+        assert_eq!(format_token_count(200_000), "200k");
+        assert_eq!(format_token_count(1_000_000), "1M");
+        assert_eq!(format_token_count(1_200_000), "1.2M");
+        // Sub-million stays in the k branch.
+        assert_eq!(format_token_count(999_500), "999.5k");
+    }
+
+    #[test]
+    fn session_details_reports_usage_and_flags() {
+        let mut session = Session::new(PathBuf::from("/work/proj"), "sys".into());
+        session.add_user_message("hi");
+        let app = TuiApp::new(TuiAppConfig::default());
+        let config = Config::default();
+
+        // No usage yet → estimated line.
+        let out = session_details(&session, "build", &app, &config);
+        assert!(out.contains("title:"), "{out}");
+        assert!(out.contains("agent:     build"), "{out}");
+        assert!(out.contains("messages:  1"), "{out}");
+        assert!(out.contains("estimated"), "{out}");
+        assert!(out.contains("prompt_cache:"), "{out}");
+        assert!(out.contains("model_race:"), "{out}");
+        assert!(out.contains("swarm:"), "{out}");
+
+        // With usage → input/output/cache lines.
+        session.usage = whycode_core::types::Usage {
+            input_tokens: 10,
+            output_tokens: 20,
+            cache_creation_input_tokens: Some(5),
+            cache_read_input_tokens: Some(7),
+        };
+        let out = session_details(&session, "build", &app, &config);
+        assert!(out.contains("input:     10"), "{out}");
+        assert!(out.contains("output:    20"), "{out}");
+        assert!(out.contains("cache write: 5"), "{out}");
+        assert!(out.contains("cache read:  7"), "{out}");
+        assert!(out.contains("total:     42"), "{out}");
+        assert!(!out.contains("estimated"), "{out}");
+    }
+
+    #[test]
+    fn doctor_report_lists_checks() {
+        let session = Session::new(PathBuf::from("/work/proj"), "sys".into());
+        let app = TuiApp::new(TuiAppConfig::default());
+        let config = Config::default();
+        let agent = Agent::new(whycode_core::types::AgentInfo {
+            name: "build".into(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let out = doctor_report(&session, &app, &config, &agent, dir.path());
+        assert!(out.contains("Doctor"), "{out}");
+        assert!(out.contains("provider:"), "{out}");
+        assert!(out.contains("model:"), "{out}");
+        assert!(out.contains("agent:        build"), "{out}");
+        assert!(out.contains("api_key:"), "{out}");
+        assert!(out.contains("git_repo:     no"), "{out}");
+        assert!(out.contains("bash_risk:"), "{out}");
+        assert!(out.contains("sandbox:"), "{out}");
+        assert!(out.contains("background:"), "{out}");
+        assert!(out.contains("swarm:"), "{out}");
+        assert!(out.contains("context:"), "{out}");
+        assert!(out.contains("status:"), "{out}");
+    }
 }
