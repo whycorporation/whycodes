@@ -10,6 +10,10 @@ mod provider;
 mod question;
 mod select;
 
+#[cfg(test)]
+#[path = "render_tests.rs"]
+mod render_tests;
+
 pub use alert::*;
 pub use base::*;
 pub use confirm::*;
