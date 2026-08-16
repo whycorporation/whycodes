@@ -2541,7 +2541,7 @@ impl TuiApp {
             id: id.clone(),
             name: name.clone(),
             arguments: arguments.clone(),
-            collapsed: false,
+            collapsed: true,
             result: None,
             is_error: false,
         };

@@ -112,6 +112,20 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
     (starts, total)
 }
 
+/// Last user prompt whose first row sits above the viewport (Grok sticky header).
+fn last_scrolled_past_user(app: &TuiApp, starts: &[usize], view_start: usize) -> Option<usize> {
+    let mut last = None;
+    for (i, start) in starts.iter().enumerate() {
+        if *start >= view_start {
+            break;
+        }
+        if matches!(app.messages.get(i).map(|m| &m.role), Some(ChatRole::User)) {
+            last = Some(i);
+        }
+    }
+    last
+}
+
 /// Visible `[start, end)` range for bottom-anchored scroll.
 ///
 /// `scroll_offset` is rows up from the newest line (`0` = stick to bottom).
@@ -334,6 +348,23 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     while y < end_y {
         paint_chat_row(buf, y, &row, None, false);
         y = y.saturating_add(1);
+    }
+
+    // Grok sticky_headers: pin the last user prompt scrolled past the top.
+    if pad == 0
+        && let Some(idx) = last_scrolled_past_user(app, &starts, view_start)
+    {
+        let selected =
+            app.selected_msg == Some(idx) && app.focus == crate::app::FocusPane::Scrollback;
+        let sticky = sticky_user_lines(&app.messages[idx], palette, content_width, selected);
+        let mut sy = area.y;
+        for line in &sticky {
+            if sy >= end_y {
+                break;
+            }
+            paint_chat_row(buf, sy, &row, Some(line), false);
+            sy = sy.saturating_add(1);
+        }
     }
 
     let scrollbar_hit = if needs_bar {
@@ -606,7 +637,7 @@ fn render_message(
                     }
                     ChatBlock::Text(_) => {}
                     ChatBlock::Thinking(t) => {
-                        lines.extend(thinking_lines(t, palette, width));
+                        lines.extend(thinking_lines(t, palette, width, app.spinner_frame));
                     }
                     ChatBlock::ToolUse { id, name, input } => {
                         if !content_emitted {
@@ -715,6 +746,7 @@ fn thinking_lines(
     t: &crate::app::ThinkingBlock,
     palette: &ThemePalette,
     width: u16,
+    spin: usize,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     // Grok default: muted bold label, muted detail — never purple italic.
@@ -725,8 +757,9 @@ fn thinking_lines(
     // Body de-emphasis via dim on primary fg (Grok uses bg_blend; dim is the
     // portable stand-in so reasoning still looks like monospaced stream text).
     let body_style = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
-    // Grok thinking accent = gray_dim; soft quiet rail, not purple.
-    let rail_style = Style::default().fg(palette.dim);
+    // Grok thinking accent = gray_dim; live rail waves while the block runs.
+    let live_rail = t.is_running();
+    let rail_at = |row: usize| thinking_rail_style(palette, spin, row, live_rail);
     // Full-height accent only while body is visible (Grok: no accent collapsed).
     let show_rail = t.show_body();
     // Accent col (1) + pad (1) — matches Grok HorizontalLayout::ACCENT + pad.
@@ -755,7 +788,9 @@ fn thinking_lines(
     } else {
         None
     };
-    let header_line = accent_line(header_spans, show_rail, rail_style);
+    let mut rail_row = 0usize;
+    let header_line = accent_line(header_spans, show_rail, rail_at(rail_row));
+    rail_row += 1;
     if let Some(ref right) = right {
         lines.push(line_with_right(
             header_line.spans,
@@ -777,8 +812,9 @@ fn thinking_lines(
         lines.push(accent_line(
             vec![Span::styled("…".to_string(), body_style)],
             true,
-            rail_style,
+            rail_at(rail_row),
         ));
+        rail_row += 1;
     }
     let wrap_w = content_w.max(8);
     for line in body {
@@ -792,18 +828,33 @@ fn thinking_lines(
             lines.push(accent_line(
                 vec![Span::styled(slice, body_style)],
                 true,
-                rail_style,
+                rail_at(rail_row),
             ));
+            rail_row += 1;
         }
     }
     if t.is_truncated_expanded() {
         lines.push(accent_line(
             vec![Span::styled("…".to_string(), body_style)],
             true,
-            rail_style,
+            rail_at(rail_row),
         ));
     }
     lines
+}
+
+/// Grok `blocks.thinking.animate`: a bright band walks the ┃ while live.
+fn thinking_rail_style(palette: &ThemePalette, spin: usize, row: usize, live: bool) -> Style {
+    if !live {
+        return Style::default().fg(palette.dim);
+    }
+    let phase = (row + spin) % 5;
+    let fg = match phase {
+        0 => palette.thinking,
+        1 => palette.fg,
+        _ => palette.dim,
+    };
+    Style::default().fg(fg)
 }
 
 /// One scrollback row with optional Grok-style left accent column.
@@ -887,6 +938,48 @@ fn message_clock(msg: &crate::app::ChatMessage) -> String {
 /// Always 2 columns wide.
 const PROMPT_ARROW: &str = "\u{276F} ";
 const PROMPT_ARROW_WIDTH: u16 = 2;
+
+/// Compact sticky header: band pad + first ❯ line (Grok `min_lines = 2`).
+fn sticky_user_lines(
+    msg: &crate::app::ChatMessage,
+    palette: &ThemePalette,
+    width: u16,
+    is_selected: bool,
+) -> Vec<Line<'static>> {
+    let ts = message_clock(msg);
+    let band = if is_selected {
+        palette.input_bg
+    } else {
+        palette.status_bar_bg
+    };
+    let band_style = Style::default().bg(band);
+    let prefix_style = Style::default().fg(palette.user_msg).bg(band);
+    let body_style = Style::default().fg(palette.fg).bg(band);
+    let ts_style = Style::default().fg(palette.dim).bg(band);
+    let first = msg.content.lines().next().unwrap_or("").trim();
+    let ts_reserve = UnicodeWidthStr::width(ts.as_str()).saturating_add(2) as u16;
+    let first_w = width
+        .saturating_sub(PROMPT_ARROW_WIDTH)
+        .saturating_sub(ts_reserve)
+        .max(4);
+    let slice = if first.is_empty() {
+        " ".to_string()
+    } else {
+        hard_truncate_line(first, first_w as usize)
+    };
+    vec![
+        band_pad_line(band_style),
+        line_with_right(
+            vec![
+                Span::styled(PROMPT_ARROW.to_string(), prefix_style),
+                Span::styled(slice, body_style),
+            ],
+            Some(ts.as_str()),
+            ts_style,
+            width,
+        ),
+    ]
+}
 
 /// Grok-style user prompt block.
 ///
@@ -1504,6 +1597,10 @@ fn tool_block(
         }
     }
 
+    if result.is_some_and(|r| !r.trim().is_empty()) && !expanded {
+        foldable = true;
+    }
+
     let header_line = if foldable {
         line_with_right(header, Some(EXPAND_INDICATOR), detail, width)
     } else {
@@ -1511,12 +1608,27 @@ fn tool_block(
     };
     lines.push(header_line);
 
-    // Always show a short body when a result exists; `l` expands the budget.
-    if let Some(r) = result {
-        let hint = tool_out_hint(name, input, r);
-        lines.extend(tool_result(r, is_error, palette, expanded, hint, width));
+    // Grok muted_collapsed: header only until the user expands (`l`).
+    if expanded && let Some(r) = result {
+        if is_execute_tool(name) {
+            lines.extend(tool_result_head_tail(
+                r,
+                is_error,
+                palette,
+                width,
+                EXECUTE_FIRST_LINES,
+                EXECUTE_LAST_LINES,
+            ));
+        } else {
+            let hint = tool_out_hint(name, input, r);
+            lines.extend(tool_result(r, is_error, palette, true, hint, width));
+        }
     }
     lines
+}
+
+fn is_execute_tool(name: &str) -> bool {
+    matches!(name, "bash" | "shell" | "run_terminal_command" | "run")
 }
 
 /// Pull `(N match…)` / hit-line count from a grep tool body for the header chip.
@@ -1542,10 +1654,13 @@ fn grep_match_count(content: &str) -> Option<usize> {
     if n > 0 { Some(n) } else { None }
 }
 
-/// Collapsed = short preview; expanded (`l`) = long tail.
+/// Collapsed = header only; expanded (`l`) = body.
+/// Grok execute truncated mode: first 2 + last 3.
 const TOOL_RESULT_PREVIEW: usize = 12;
 const TOOL_RESULT_DIFF_PREVIEW: usize = 20;
 const TOOL_RESULT_EXPANDED: usize = 120;
+const EXECUTE_FIRST_LINES: usize = 2;
+const EXECUTE_LAST_LINES: usize = 3;
 
 fn tool_result(
     content: &str,
@@ -1704,6 +1819,49 @@ fn hard_truncate_line(line: &str, max_cols: usize) -> String {
             .take(max_cols.saturating_sub(1))
             .collect::<String>()
     )
+}
+
+/// Grok execute truncated body: first `head` lines, `…`, last `tail` lines.
+fn tool_result_head_tail(
+    content: &str,
+    is_error: bool,
+    palette: &ThemePalette,
+    width: u16,
+    head: usize,
+    tail: usize,
+) -> Vec<Line<'static>> {
+    let color = if is_error { palette.error } else { palette.dim };
+    let style = Style::default().fg(color);
+    let rail = Style::default().fg(palette.dim);
+    let text_w = width.saturating_sub(4).max(8) as usize;
+    let all: Vec<&str> = content.lines().collect();
+    let total = all.len();
+    if total <= head.saturating_add(tail) {
+        return tool_result_plain(content, is_error, palette, true, width);
+    }
+    let mut lines = Vec::new();
+    let push = |lines: &mut Vec<Line<'static>>, text: &str| {
+        lines.push(Line::from(vec![
+            meta_gutter(),
+            Span::styled("┃ ".to_string(), rail),
+            Span::styled(hard_truncate_line(text, text_w), style),
+        ]));
+    };
+    for line in all.iter().take(head) {
+        push(&mut lines, line);
+    }
+    lines.push(Line::from(vec![
+        meta_gutter(),
+        Span::styled("┃ ".to_string(), rail),
+        Span::styled(
+            "…".to_string(),
+            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+        ),
+    ]));
+    for line in all.iter().skip(total - tail) {
+        push(&mut lines, line);
+    }
+    lines
 }
 
 fn tool_result_plain(
@@ -2824,6 +2982,111 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
     }
 
     #[test]
+    fn collapsed_tool_is_header_only() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let body = (0..20)
+            .map(|i| format!("line {i} of noisy tool output"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = tool_block(
+            "bash",
+            &json!({"command": "cargo test"}),
+            Some(&body),
+            false,
+            &palette,
+            false,
+            80,
+        );
+        assert_eq!(
+            lines.len(),
+            1,
+            "Grok collapsed tool is a one-liner: {lines:?}"
+        );
+        let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(header.contains('◆'), "{header}");
+        assert!(header.contains('›'), "folded tool shows ›, got {header}");
+        assert!(
+            !header.contains("line 5"),
+            "body must not leak into the header: {header}"
+        );
+    }
+
+    #[test]
+    fn execute_expanded_keeps_head_and_tail() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let body = (0..10)
+            .map(|i| format!("exec-line-{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = tool_block(
+            "bash",
+            &json!({"command": "seq"}),
+            Some(&body),
+            false,
+            &palette,
+            true,
+            80,
+        );
+        let text: String = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .map(|s| s.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("exec-line-0"), "{text}");
+        assert!(text.contains("exec-line-1"), "{text}");
+        assert!(text.contains("exec-line-9"), "{text}");
+        assert!(text.contains('…'), "{text}");
+        assert!(
+            !text.contains("exec-line-4"),
+            "middle dump must stay hidden: {text}"
+        );
+    }
+
+    #[test]
+    fn last_scrolled_past_user_picks_the_latest_above_the_view() {
+        use crate::app::{ChatRole, TuiApp};
+        use crate::config::TuiAppConfig;
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "first");
+        app.add_message(ChatRole::Assistant, "a");
+        app.add_message(ChatRole::User, "second");
+        app.add_message(ChatRole::Assistant, "b");
+        let starts = vec![0, 5, 10, 20];
+        assert_eq!(super::last_scrolled_past_user(&app, &starts, 12), Some(2));
+        assert_eq!(super::last_scrolled_past_user(&app, &starts, 5), Some(0));
+        assert_eq!(super::last_scrolled_past_user(&app, &starts, 0), None);
+    }
+
+    #[test]
+    fn live_thinking_rail_moves_with_the_spinner() {
+        use crate::app::ThinkingBlock;
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let t = ThinkingBlock::new("one\ntwo\nthree\nfour");
+        let a = super::thinking_lines(&t, &palette, 40, 0);
+        let b = super::thinking_lines(&t, &palette, 40, 3);
+        let rail_fg = |lines: &[ratatui::text::Line]| {
+            lines
+                .iter()
+                .filter_map(|l| {
+                    l.spans
+                        .iter()
+                        .find(|s| s.content.as_ref() == "┃")
+                        .and_then(|s| s.style.fg)
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_ne!(
+            rail_fg(&a),
+            rail_fg(&b),
+            "live thinking rail must wave across frames"
+        );
+    }
+
+    #[test]
     fn sparse_lines_full_width_diff_band() {
         // Grok paints the whole row green/red — not only the text width.
         let area = Rect::new(0, 0, 20, 1);
@@ -2993,7 +3256,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         use crate::theme::ThemeName;
         let palette = ThemeName::DefaultDark.palette();
         let t = ThinkingBlock::new("one\ntwo\nthree");
-        let lines = super::thinking_lines(&t, &palette, 60);
+        let lines = super::thinking_lines(&t, &palette, 60, 0);
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
             header.contains("Thinking..."),
@@ -3017,7 +3280,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let mut t = ThinkingBlock::new("secret plan");
         t.finish();
         t.collapsed = true;
-        let lines = super::thinking_lines(&t, &palette, 60);
+        let lines = super::thinking_lines(&t, &palette, 60, 0);
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(header.contains("Thought"), "got {header:?}");
         assert!(

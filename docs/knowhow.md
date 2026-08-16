@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Sticky user header, waving thought rail, collapsed tools
+
+**Symptom:** Long tool dumps filled the transcript. Scrolling past a prompt lost which turn you were in. Live thinking rails sat still.
+
+**Root cause:** Tools always painted a 12-line preview. No `sticky_headers`. Thinking `┃` used a static dim color.
+
+**Fix:** Pin the last scrolled-past user ❯ band at the chat top. Wave the live thinking rail with `spinner_frame`. Collapsed tools are header-only (`›` to open). Shell bodies use Grok `first 2 + last 3`.
+
+**Prevention:** Paint-test overflow sticky headers. Collapsed `tool_block` must be one line. Execute expand must hide the middle dump.
+
+---
+
 ### 2026-08-17 — Thinking / tool chrome must follow Grok pager defaults
 
 **Symptom:** Reply clocks matched; thinking still said `Thinking · 1.4s` and tools used lowercase `read · path` / `(l expand)`.

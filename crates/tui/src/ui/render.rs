@@ -1079,4 +1079,24 @@ mod paint_tests {
             "clock must sit to the right of the reply, got {row:?}"
         );
     }
+
+    #[test]
+    fn overflow_session_pins_a_user_prompt_at_the_chat_top() {
+        let mut a = session_with_overflow();
+        let (buf, _) = paint_full_shell(&mut a, 100, 24);
+        let chat = a.chat_area.expect("session publishes a chat hit rect");
+        let mut top = String::new();
+        for dy in 0..3u16 {
+            top.push_str(&row_text(&buf, chat.y + dy));
+        }
+        assert!(
+            top.contains('\u{276F}'),
+            "sticky header must be a user ❯ band: {top:?}"
+        );
+        // Absolute clock on the pinned prompt (same as a live user bubble).
+        assert!(
+            top.contains(':'),
+            "sticky header must keep the clock: {top:?}"
+        );
+    }
 }
