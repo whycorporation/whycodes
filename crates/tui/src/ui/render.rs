@@ -1030,7 +1030,6 @@ mod paint_tests {
     #[test]
     fn first_user_bubble_shows_clock_on_the_right() {
         let mut a = app();
-        a.show_timestamps = true;
         a.add_message(crate::app::ChatRole::User, "FIRST_BUBBLE_MARKER hello");
         let (buf, _) = paint_full_shell(&mut a, 100, 24);
         let mut found = None;
@@ -1057,7 +1056,6 @@ mod paint_tests {
     #[test]
     fn assistant_reply_shows_clock_on_the_right() {
         let mut a = app();
-        a.show_timestamps = true;
         a.add_message(crate::app::ChatRole::User, "ask");
         a.add_message(
             crate::app::ChatRole::Assistant,

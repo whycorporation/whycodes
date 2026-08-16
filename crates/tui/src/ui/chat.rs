@@ -550,17 +550,11 @@ fn render_message(
         ChatRole::User => {
             let selected =
                 app.selected_msg == Some(index) && app.focus == crate::app::FocusPane::Scrollback;
-            let ts = if app.show_timestamps {
-                Some(crate::ui::timefmt::format_absolute(
-                    msg.created_at.unwrap_or_else(chrono::Utc::now),
-                ))
-            } else {
-                None
-            };
+            let ts = message_clock(msg);
             lines.extend(user_prompt_lines(
                 &msg.content,
                 &msg.image_labels,
-                ts.as_deref(),
+                Some(&ts),
                 palette,
                 width,
                 selected,
@@ -573,22 +567,15 @@ fn render_message(
             // Content width for Mermaid compaction: leave room for SIDE_PAD and
             // the diagram gutter ("│ ").
             //
-            // Grok `/timestamps`: "clock time next to user messages and agent"
-            // — right-aligned on the first answer line, same as the user ❯ row.
-            let ts = if app.show_timestamps {
-                Some(crate::ui::timefmt::format_absolute(
-                    msg.created_at.unwrap_or_else(chrono::Utc::now),
-                ))
-            } else {
-                None
-            };
+            // Clock on the first answer line, same as the user ❯ row.
+            let ts = message_clock(msg);
             let ts_style = Style::default().fg(palette.dim);
             let stamped = std::cell::Cell::new(false);
             let stamp = |chunk: &mut [Line<'static>]| {
                 if stamped.get() {
                     return;
                 }
-                if stamp_first_content_line(chunk, ts.as_deref(), ts_style, width) {
+                if stamp_first_content_line(chunk, Some(&ts), ts_style, width) {
                     stamped.set(true);
                 }
             };
@@ -891,14 +878,11 @@ fn turn_done_footer(
         s.push_str(" · ");
         s.push_str(&crate::app::format_usage_short(usage));
     }
-    let clock = if app.show_timestamps {
-        Some(crate::ui::timefmt::format_absolute(
-            msg.created_at.unwrap_or_else(chrono::Utc::now),
-        ))
-    } else {
-        None
-    };
-    (s, clock)
+    (s, Some(message_clock(msg)))
+}
+
+fn message_clock(msg: &crate::app::ChatMessage) -> String {
+    crate::ui::timefmt::format_absolute(msg.created_at.unwrap_or_else(chrono::Utc::now))
 }
 
 /// Grok `prompt_arrow()`: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.
@@ -1084,7 +1068,7 @@ fn band_pad_line(band_style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".to_string(), band_style))
 }
 
-/// Left content + optional right-aligned clock (Grok `/timestamps`).
+/// Left content + right-aligned clock (`August 17, 14:32`).
 ///
 /// The last column is left empty so a transcript scrollbar cannot paint
 /// over the clock. If the left side is still too wide, it is truncated —
@@ -3000,10 +2984,6 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         use crate::app::{ChatRole, TuiApp};
         use crate::config::TuiAppConfig;
         let mut app = TuiApp::new(TuiAppConfig::default());
-        assert!(
-            app.show_timestamps,
-            "clocks are on by default (Grok /timestamps)"
-        );
         app.add_message(ChatRole::User, "hello from history");
         let palette = app.config.palette();
         let lines = super::render_message(&app.messages[0], &app, &palette, 0, 80);

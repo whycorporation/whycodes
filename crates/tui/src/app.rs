@@ -577,7 +577,7 @@ pub struct ChatMessage {
     pub duration_ms: Option<u128>,
     /// Image attachment labels shown on user bubbles (file names).
     pub image_labels: Vec<String>,
-    /// When this bubble was authored (Grok `/timestamps`).
+    /// When this bubble was authored (always painted on the right).
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Cached display row count for `(width, closed)` — see
     /// [`ChatMessage::invalidate_layout`]. `closed` is per-message
@@ -1149,8 +1149,6 @@ pub struct TuiApp {
     pub pending_login_provider: Option<String>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
     pub pending_session_id: Option<String>,
-    /// Grok `/timestamps`: dim clock next to user prompts and turn footers.
-    pub show_timestamps: bool,
     /// Dashboard: cursor row in the grouped live-session list.
     pub sessions_cursor: usize,
     /// Dashboard: switch target — index into the parked runtimes vec,
@@ -1345,10 +1343,6 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/resume",
         hint: "[id] Resume a session (picker if no id)",
-    },
-    SlashCommand {
-        name: "/timestamps",
-        hint: "Toggle message timestamps",
     },
     SlashCommand {
         name: "/continue",
@@ -1598,7 +1592,6 @@ impl TuiApp {
                 .iter()
                 .position(|t| *t == config.theme)
                 .unwrap_or(0),
-            show_timestamps: config.show_timestamps,
             config,
             pending_prompt: None,
             pending_auto_prompts: std::collections::VecDeque::new(),

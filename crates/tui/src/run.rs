@@ -3968,19 +3968,6 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 );
             }
         }
-        "/timestamps" => {
-            ctx.app.show_timestamps = !ctx.app.show_timestamps;
-            ctx.app.config.show_timestamps = ctx.app.show_timestamps;
-            for msg in &mut ctx.app.messages {
-                msg.invalidate_layout();
-            }
-            ctx.app.status_message = if ctx.app.show_timestamps {
-                "Timestamps on".into()
-            } else {
-                "Timestamps off".into()
-            };
-            ctx.app.mark_dirty();
-        }
         "/sessions" => {
             ctx.app.session_list.sessions = load_session_entries();
             ctx.app.session_list.selected = 0;

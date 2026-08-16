@@ -99,7 +99,6 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         row("/help", "This screen"),
         row("/connect", "Provider help"),
         row("/login", "Sign in (OAuth)"),
-        row("/timestamps", "Toggle message clocks"),
         row("/resume", "Session history"),
         row(":theme", "Change theme"),
         row(":q", "Quit"),
