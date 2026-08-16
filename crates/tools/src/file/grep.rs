@@ -355,3 +355,192 @@ fn clip_line(line: &str, max_chars: usize) -> String {
         format!("{t}…")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
+        let p = dir.path().join(name);
+        fs::write(&p, content).unwrap();
+        p
+    }
+
+    #[test]
+    fn clip_line_short_and_long() {
+        assert_eq!(clip_line("short", 10), "short");
+        assert_eq!(clip_line("short", 5), "short");
+        let clipped = clip_line("abcdefghij", 4);
+        assert_eq!(clipped, "abcd…");
+        // Multibyte chars count as chars
+        let clipped = clip_line("türkçe uzun satır", 4);
+        assert_eq!(clipped, "türk…");
+    }
+
+    #[test]
+    fn search_single_file_matches() {
+        let dir = TempDir::new().unwrap();
+        let f = write(&dir, "a.txt", "hello world\nfoo bar\nhello again\n");
+        let out = GrepTool::search("hello", &f, None, false, 0, 50, "/", None).unwrap();
+        assert!(out.contains("a.txt:1:hello world"));
+        assert!(out.contains("a.txt:3:hello again"));
+        assert!(out.contains("(2 matches in 1 file"));
+    }
+
+    #[test]
+    fn search_single_file_no_matches() {
+        let dir = TempDir::new().unwrap();
+        let f = write(&dir, "a.txt", "hello\n");
+        let out = GrepTool::search("zzz", &f, None, false, 0, 50, "/", None).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn search_directory_recursive() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src/deep")).unwrap();
+        write(&dir, "src/main.rs", "fn main() { println!(\"hi\"); }\n");
+        write(&dir, "src/deep/mod.rs", "// helper\nfn helper() {}\n");
+        write(&dir, "README.md", "no match here\n");
+
+        let out = GrepTool::search("fn ", dir.path(), None, false, 0, 50, "/", None).unwrap();
+        assert!(out.contains("src/main.rs:1"));
+        assert!(out.contains("src/deep/mod.rs:2"));
+        assert!(!out.contains("README.md"));
+    }
+
+    #[test]
+    fn search_case_insensitive() {
+        let dir = TempDir::new().unwrap();
+        let f = write(&dir, "a.txt", "Hello World\n");
+        let out = GrepTool::search("hello", &f, None, true, 0, 50, "/", None).unwrap();
+        assert!(out.contains("a.txt:1"));
+    }
+
+    #[test]
+    fn search_include_glob_filters() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "keep.rs", "fn keep() {}\n");
+        write(&dir, "skip.py", "fn keep() {}\n");
+
+        let out =
+            GrepTool::search("keep", dir.path(), Some("*.rs"), false, 0, 50, "/", None).unwrap();
+        assert!(out.contains("keep.rs"));
+        assert!(!out.contains("skip.py"));
+    }
+
+    #[test]
+    fn search_context_lines() {
+        let dir = TempDir::new().unwrap();
+        let f = write(&dir, "a.txt", "before\nmatch\nafter\n");
+        let out = GrepTool::search("match", &f, None, false, 1, 50, "/", None).unwrap();
+        assert!(out.contains("a.txt:1-before"));
+        assert!(out.contains("a.txt:2:match"));
+        assert!(out.contains("a.txt:3-after"));
+        assert!(out.contains("--"));
+    }
+
+    #[test]
+    fn search_max_results_truncates_in_directory() {
+        let dir = TempDir::new().unwrap();
+        for i in 0..10 {
+            write(&dir, &format!("f{i}.txt"), "match here\n");
+        }
+        let out = GrepTool::search("match", dir.path(), None, false, 0, 3, "/", None).unwrap();
+        assert!(out.contains("[truncated at 3 matches"));
+    }
+
+    #[test]
+    fn search_single_file_respects_max_results_without_notice() {
+        // Single-file searches stop at max_results but do not append the
+        // truncation notice (only directory walks set the flag).
+        let dir = TempDir::new().unwrap();
+        let mut content = String::new();
+        for i in 0..10 {
+            content.push_str(&format!("line {i} match\n"));
+        }
+        let f = write(&dir, "a.txt", &content);
+        let out = GrepTool::search("match", &f, None, false, 0, 3, "/", None).unwrap();
+        assert!(!out.contains("[truncated"));
+        assert!(out.contains("(3 matches in 1 file"));
+    }
+
+    #[test]
+    fn search_skips_binary_files() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "bin.dat", "text\x00with nul\n");
+        let out = GrepTool::search("nul", dir.path(), None, false, 0, 50, "/", None).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn search_path_not_found() {
+        let err = GrepTool::search(
+            "x",
+            Path::new("/nonexistent-xyz"),
+            None,
+            false,
+            0,
+            50,
+            "/",
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("path not found"));
+    }
+
+    #[test]
+    fn search_invalid_regex() {
+        let dir = TempDir::new().unwrap();
+        let f = write(&dir, "a.txt", "x");
+        let err = GrepTool::search("([", &f, None, false, 0, 50, "/", None).unwrap_err();
+        assert!(err.contains("invalid regex"));
+    }
+
+    #[test]
+    fn search_invalid_glob() {
+        let dir = TempDir::new().unwrap();
+        let f = write(&dir, "a.txt", "x");
+        let err = GrepTool::search("x", &f, Some("["), false, 0, 50, "/", None).unwrap_err();
+        assert!(err.contains("invalid glob"));
+    }
+
+    #[test]
+    fn search_skips_heavy_dirs() {
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("target/debug")).unwrap();
+        write(&dir, "target/debug/foo.rs", "match me\n");
+        write(&dir, "keep.rs", "match me\n");
+        let out = GrepTool::search("match", dir.path(), None, false, 0, 50, "/", None).unwrap();
+        assert!(out.contains("keep.rs"));
+        assert!(!out.contains("foo.rs"));
+    }
+
+    #[test]
+    fn search_large_file_skipped() {
+        let dir = TempDir::new().unwrap();
+        let big = vec![b'a'; (MAX_GREP_FILE_BYTES + 1) as usize];
+        let f = write(&dir, "big.txt", "");
+        fs::write(&f, big).unwrap();
+        let out = GrepTool::search("a", &f, None, false, 0, 50, "/", None).unwrap();
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn search_context_includes_markers_only_between() {
+        let dir = TempDir::new().unwrap();
+        // Two matches with context should not end with a lone `--` at EOF boundary
+        let f = write(&dir, "a.txt", "x\n\n\n");
+        let out = GrepTool::search("x", &f, None, false, 1, 50, "/", None).unwrap();
+        assert!(out.contains("a.txt:1:x"));
+    }
+
+    #[tokio::test]
+    async fn execute_missing_pattern_is_error() {
+        let ctx = ToolContext::new("/");
+        let result = GrepTool::new().execute(serde_json::json!({}), &ctx).await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Missing required parameter"));
+    }
+}
