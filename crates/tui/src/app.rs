@@ -584,8 +584,8 @@ pub struct ChatMessage {
     /// (finished vs live tail), not the global agent-busy flag.
     pub layout_cache: Option<(u16, bool, usize)>,
     /// Cached painted lines for closed messages at `(width, closed)`.
-    /// Avoids re-parsing markdown on every spinner / scroll frame.
-    pub line_cache: Option<(u16, bool, Vec<ratatui::text::Line<'static>>)>,
+    /// `Arc` so a scroll frame can paint by reference (no per-row String clone).
+    pub line_cache: Option<(u16, bool, std::sync::Arc<Vec<ratatui::text::Line<'static>>>)>,
 }
 
 impl ChatMessage {
@@ -2322,6 +2322,7 @@ impl TuiApp {
     /// before the first session paint.
     pub fn scroll_rows(&mut self, delta: isize) {
         let (_total, _height, max_off) = self.chat_scroll_metrics();
+        let prev = self.scroll_offset;
         if delta > 0 {
             self.scroll_offset = (self.scroll_offset + delta as usize).min(max_off);
         } else {
@@ -2331,7 +2332,9 @@ impl TuiApp {
         // At bottom (offset 0) always follow the stream — including the no-op
         // case where content already fits the viewport (max_off == 0).
         self.auto_scroll = self.scroll_offset == 0;
-        self.mark_dirty();
+        if self.scroll_offset != prev {
+            self.mark_dirty();
+        }
     }
 
     pub fn scroll_page(&mut self, up: bool) {

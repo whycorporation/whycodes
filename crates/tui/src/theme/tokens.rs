@@ -49,8 +49,8 @@ pub mod layout {
     pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
     /// Session main column horizontal padding.
     pub const SIDE_PAD: u16 = 2;
-    /// Gap under the status header so chat never paints into that row.
-    pub const TOP_PAD: u16 = 1;
+    /// Blank rows under the status header so chat does not sit flush on it.
+    pub const TOP_PAD: u16 = 2;
     /// Gap under the prompt (bottom breathing room inside body).
     pub const BOTTOM_PAD: u16 = 1;
     /// Terminal edge insets (all four sides).

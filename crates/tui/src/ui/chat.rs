@@ -7,14 +7,17 @@ use crate::theme::ThemePalette;
 use crate::tokens::{HOME_LOGO_CODE, HOME_LOGO_WHY, layout};
 use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
+#[cfg(test)]
+use ratatui::widgets::Widget;
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Widget},
+    widgets::Paragraph,
 };
+use std::sync::Arc;
 use unicode_width::UnicodeWidthStr;
 use whycode_format::diff::{looks_like_diff, parse_diff_line};
 use whycode_format::highlight::{detect_language, highlight_code_spans};
@@ -100,7 +103,7 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
             let h = lines.len();
             app.messages[i].layout_cache = Some((width, closed, h));
             if closed {
-                app.messages[i].line_cache = Some((width, closed, lines));
+                app.messages[i].line_cache = Some((width, closed, Arc::new(lines)));
             }
             h
         };
@@ -247,12 +250,28 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     let (view_start, view_end) = visible_range(total, height, app.scroll_offset);
     let needs_bar = total > height && area.width > 1;
 
-    let mut lines: Vec<Line> = Vec::with_capacity(height.saturating_add(8));
+    // Pin messages to the bottom: empty rows sit above the transcript.
+    let visible = view_end.saturating_sub(view_start).min(height);
+    let pad = height.saturating_sub(visible);
+    let buf = frame.buffer_mut();
+    let row = ChatRowPaint {
+        x: area.x,
+        width: area.width,
+        bg: palette.bg,
+        caret_style: Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD),
+    };
+    let mut y = area.y;
+    for _ in 0..pad {
+        paint_chat_row(buf, y, &row, None, false);
+        y = y.saturating_add(1);
+    }
+
     let n = app.messages.len();
     for i in 0..n {
         let msg_start = starts[i];
         let msg_end = if i + 1 < n { starts[i + 1] } else { total };
-        // Skip bubbles wholly above or below the viewport.
         if msg_end <= view_start || msg_start >= view_end {
             continue;
         }
@@ -263,69 +282,59 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         let slice_from = view_start.saturating_sub(msg_start);
         let slice_to_excl = view_end.saturating_sub(msg_start);
 
-        // Closed + unselected: copy only the visible slice. Cloning a
-        // thousands-of-rows tool/markdown bubble on every wheel tick is what
-        // made scroll hitch even after the line cache existed.
-        if !selected
-            && let Some((w, c, ref cached)) = app.messages[i].line_cache
-            && w == content_width
-            && c == closed
-        {
-            let to = slice_to_excl.min(cached.len());
-            if slice_from < to {
-                lines.extend(cached[slice_from..to].iter().cloned());
-            }
+        // Cheap Arc clone so we can paint by reference without holding
+        // `app.messages` borrowed across a possible cache fill.
+        let cached = app.messages[i]
+            .line_cache
+            .as_ref()
+            .and_then(|(w, c, lines)| {
+                if *w == content_width && *c == closed {
+                    Some(Arc::clone(lines))
+                } else {
+                    None
+                }
+            });
+
+        if let Some(ref lines) = cached {
+            y = paint_message_slice(
+                buf,
+                y,
+                &row,
+                lines.as_slice(),
+                slice_from,
+                slice_to_excl,
+                selected,
+            );
             continue;
         }
 
-        let mut msg_lines = render_message(&app.messages[i], app, palette, i, content_width);
-        if !selected && closed {
-            app.messages[i].line_cache = Some((content_width, closed, msg_lines.clone()));
-            app.messages[i].layout_cache = Some((content_width, closed, msg_lines.len()));
-        }
-        if selected {
-            // Grok: selected entry gets a left caret on its first content row.
-            let caret = Span::styled(
-                "▌".to_string(),
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD),
+        let rendered = render_message(&app.messages[i], app, palette, i, content_width);
+        if closed {
+            let arc = Arc::new(rendered);
+            let h = arc.len();
+            app.messages[i].line_cache = Some((content_width, closed, Arc::clone(&arc)));
+            app.messages[i].layout_cache = Some((content_width, closed, h));
+            y = paint_message_slice(
+                buf,
+                y,
+                &row,
+                arc.as_slice(),
+                slice_from,
+                slice_to_excl,
+                selected,
             );
-            if let Some(line) = msg_lines.iter_mut().find(|l| !l.spans.is_empty()) {
-                let mut spans = vec![caret];
-                spans.append(&mut line.spans);
-                line.spans = spans;
-            }
-        }
-
-        let slice_to = slice_to_excl.min(msg_lines.len());
-        if slice_from < slice_to {
-            lines.extend(msg_lines.drain(slice_from..slice_to));
+        } else {
+            y = paint_message_slice(buf, y, &row, &rendered, slice_from, slice_to_excl, selected);
         }
     }
 
-    // Pin messages to the bottom (chat-style). Empty space sits above the
-    // transcript so a downward drag from a bubble doesn't vacuum up a page of
-    // blank rows into the clipboard.
-    if lines.len() < height {
-        let pad = height - lines.len();
-        let mut padded = Vec::with_capacity(height);
-        padded.resize_with(pad, || Line::from(""));
-        padded.append(&mut lines);
-        lines = padded;
+    // If layout undershot (stale height), blank any leftover rows so scroll
+    // cannot leave ghost glyphs from the previous frame.
+    let end_y = area.y.saturating_add(area.height);
+    while y < end_y {
+        paint_chat_row(buf, y, &row, None, false);
+        y = y.saturating_add(1);
     }
-
-    // Clear-then-paint: ratatui diffs against the previous buffer, so a sparse
-    // writer that only touches non-empty cells leaves *ghost glyphs* after
-    // scroll (old rows still visible / garbled). Wipe the viewport first, then
-    // stamp content. Clipboard trims trailing pad spaces on copy.
-    frame.render_widget(
-        SparseLines {
-            lines,
-            bg: palette.bg,
-        },
-        area,
-    );
 
     let scrollbar_hit = if needs_bar {
         // Use our proportional painter — not ratatui::Scrollbar. Ratatui's
@@ -365,71 +374,137 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     app.apply_chat_paint(area, scrollbar_hit, total);
 }
 
-/// Paint chat lines after wiping the viewport.
+/// Paint chat lines, filling every row so previous-frame glyphs cannot linger.
 ///
-/// History: a pure sparse writer (only non-empty spans) left previous-frame
-/// glyphs in place after scroll — the transcript looked frozen or garbled
-/// because shorter/empty rows never overwrote the old cells. We now blank the
-/// area to `bg` first, then stamp content. Trailing spaces are still pad for
-/// the clipboard path (`text_from_cells` trims them).
+/// History: a pure sparse writer (only non-empty spans) left ghost cells after
+/// scroll. Production paint now writes rows directly; this widget remains for
+/// unit tests that stamp a buffer without a full session.
+#[cfg(test)]
 struct SparseLines {
     lines: Vec<Line<'static>>,
     bg: ratatui::style::Color,
 }
 
+#[cfg(test)]
 impl Widget for SparseLines {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let clear = Style::default().fg(self.bg).bg(self.bg);
-        // Full wipe — every cell becomes a space with the chat background so
-        // scroll/resize cannot leave ghost characters from the last frame.
-        for y in area.y..area.y.saturating_add(area.height) {
-            for x in area.x..area.x.saturating_add(area.width) {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_symbol(" ");
-                    cell.set_style(clear);
-                }
-            }
+        let row = ChatRowPaint {
+            x: area.x,
+            width: area.width,
+            bg: self.bg,
+            caret_style: Style::default(),
+        };
+        for r in 0..area.height {
+            let line = self.lines.get(r as usize);
+            paint_chat_row(buf, area.y + r, &row, line, false);
         }
+    }
+}
 
-        let max = self.lines.len().min(area.height as usize);
-        for (row, line) in self.lines.iter().take(max).enumerate() {
-            let y = area.y + row as u16;
-            let mut x = area.x;
-            let end = area.x.saturating_add(area.width);
-            let mut band_bg: Option<ratatui::style::Color> = None;
-            for span in &line.spans {
-                if let Some(bg) = span.style.bg {
-                    band_bg = Some(bg);
-                }
-                if x >= end {
-                    break;
-                }
-                let text = span.content.as_ref();
-                if text.is_empty() {
-                    continue;
-                }
-                let remaining = end - x;
-                buf.set_stringn(x, y, text, remaining as usize, span.style);
-                let w = text.width().min(remaining as usize) as u16;
-                x = x.saturating_add(w);
+struct ChatRowPaint {
+    x: u16,
+    width: u16,
+    bg: Color,
+    caret_style: Style,
+}
+
+fn line_has_content(line: &Line<'_>) -> bool {
+    line.spans.iter().any(|s| !s.content.is_empty())
+}
+
+/// Stamp `lines[from..to]` at `y`. Returns the next free row.
+fn paint_message_slice(
+    buf: &mut Buffer,
+    mut y: u16,
+    row: &ChatRowPaint,
+    lines: &[Line<'static>],
+    from: usize,
+    to_excl: usize,
+    selected: bool,
+) -> u16 {
+    let to = to_excl.min(lines.len());
+    if from >= to {
+        return y;
+    }
+    let caret_at = if selected {
+        lines.iter().position(line_has_content)
+    } else {
+        None
+    };
+    for (i, line) in lines[from..to].iter().enumerate() {
+        let abs = from + i;
+        paint_chat_row(buf, y, row, Some(line), caret_at == Some(abs));
+        y = y.saturating_add(1);
+    }
+    y
+}
+
+/// Write one transcript row. Trailing cells are filled so a shorter line
+/// after scroll cannot leave leftover glyphs. Band backgrounds (user prompt,
+/// diff add/remove) wash the full width.
+fn paint_chat_row(
+    buf: &mut Buffer,
+    y: u16,
+    row: &ChatRowPaint,
+    line: Option<&Line<'_>>,
+    caret: bool,
+) {
+    if row.width == 0 {
+        return;
+    }
+    let x0 = row.x;
+    let end = x0.saturating_add(row.width);
+    let clear = Style::default().fg(row.bg).bg(row.bg);
+    let mut x = x0;
+    let mut band_bg: Option<Color> = None;
+
+    if caret {
+        let remaining = end.saturating_sub(x);
+        if remaining > 0 {
+            buf.set_stringn(x, y, "▌", remaining as usize, row.caret_style);
+            x = x.saturating_add(1);
+        }
+    }
+
+    if let Some(line) = line {
+        for span in &line.spans {
+            if let Some(span_bg) = span.style.bg {
+                band_bg = Some(span_bg);
             }
-            // Full-width elevated band (Grok user prompt + diff add/remove rows).
-            // Walk the entire row — not just trailing cells after content — so
-            // meta gutters / empty left pad share the green/red wash.
-            if let Some(bg) = band_bg {
-                for cx in area.x..end {
-                    if let Some(cell) = buf.cell_mut((cx, y)) {
-                        if cell.symbol().is_empty() {
-                            cell.set_symbol(" ");
-                        }
-                        let mut st = cell.style();
-                        st.bg = Some(bg);
-                        cell.set_style(st);
-                    }
+            if x >= end {
+                break;
+            }
+            let text = span.content.as_ref();
+            if text.is_empty() {
+                continue;
+            }
+            let remaining = end - x;
+            buf.set_stringn(x, y, text, remaining as usize, span.style);
+            let w = text.width().min(remaining as usize) as u16;
+            x = x.saturating_add(w);
+        }
+    }
+
+    while x < end {
+        if let Some(cell) = buf.cell_mut((x, y)) {
+            cell.set_symbol(" ");
+            cell.set_style(clear);
+        }
+        x = x.saturating_add(1);
+    }
+
+    if let Some(band) = band_bg {
+        for cx in x0..end {
+            if let Some(cell) = buf.cell_mut((cx, y)) {
+                if cell.symbol().is_empty() {
+                    cell.set_symbol(" ");
                 }
+                let mut st = cell.style();
+                st.bg = Some(band);
+                cell.set_style(st);
             }
         }
     }
