@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — First user bubble missing its clock
+
+**Symptom:** Scrolling to the first prompt in chat history showed no time on the right of the ❯ band. Later short follow-ups had the clock.
+
+**Root cause:** `line_with_right` dropped the clock when left + `August 17, 14:32` did not fit. The first user prompt is often the longest line. A transcript scrollbar also painted over the last column, eating the minutes.
+
+**Fix:** Never drop the clock — truncate the left side instead. Leave a 1-col gutter so the scrollbar cannot cover it.
+
+**Prevention:** Paint-test the first user bubble through the full shell. A too-wide left side must still keep `HH:MM`.
+
+---
+
 ### 2026-08-17 — CI Budgets + index watcher flake
 
 **Symptom:** `Budgets` red on `sh scripts/test_tui_term_matrix.sh` (no `ok`). `Test (linux)` red on `whycode-index::watcher_picks_up_changes` (`create must be indexed`, 5 vs 6).

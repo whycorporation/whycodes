@@ -1026,4 +1026,31 @@ mod paint_tests {
         }
         assert!(found, "expected oldest user prompt in the chat body");
     }
+
+    #[test]
+    fn first_user_bubble_shows_clock_on_the_right() {
+        let mut a = app();
+        a.show_timestamps = true;
+        a.add_message(crate::app::ChatRole::User, "FIRST_BUBBLE_MARKER hello");
+        let (buf, _) = paint_full_shell(&mut a, 100, 24);
+        let mut found = None;
+        for y in 0..buf.area().height {
+            let row = row_text(&buf, y);
+            if row.contains("FIRST_BUBBLE_MARKER") {
+                found = Some(row);
+                break;
+            }
+        }
+        let row = found.expect("first user bubble should be painted");
+        assert!(
+            row.contains('\u{276F}'),
+            "first bubble must be the ❯ prompt row: {row:?}"
+        );
+        let marker_at = row.find("FIRST_BUBBLE_MARKER").expect("marker");
+        let clock_at = row.rfind(':').expect("HH:MM clock on the first bubble");
+        assert!(
+            clock_at > marker_at,
+            "clock must sit to the right of the first bubble, got {row:?}"
+        );
+    }
 }
