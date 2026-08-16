@@ -572,25 +572,49 @@ fn render_message(
             // That way "Thought for Xs" sits above the answer, not below it.
             // Content width for Mermaid compaction: leave room for SIDE_PAD and
             // the diagram gutter ("│ ").
+            //
+            // Grok `/timestamps`: "clock time next to user messages and agent"
+            // — right-aligned on the first answer line, same as the user ❯ row.
+            let ts = if app.show_timestamps {
+                Some(crate::ui::timefmt::format_absolute(
+                    msg.created_at.unwrap_or_else(chrono::Utc::now),
+                ))
+            } else {
+                None
+            };
+            let ts_style = Style::default().fg(palette.dim);
+            let stamped = std::cell::Cell::new(false);
+            let stamp = |chunk: &mut [Line<'static>]| {
+                if stamped.get() {
+                    return;
+                }
+                if stamp_first_content_line(chunk, ts.as_deref(), ts_style, width) {
+                    stamped.set(true);
+                }
+            };
             let md_width = (width as usize).saturating_sub(4).max(20);
             let mut content_emitted = msg.content.is_empty();
             let emit_content = |lines: &mut Vec<Line<'static>>| {
                 if !msg.content.is_empty() {
+                    let start = lines.len();
                     lines.extend(super::markdown::render_with_width(
                         &msg.content,
                         palette,
                         Some(md_width),
                     ));
+                    stamp(&mut lines[start..]);
                 }
             };
             for block in &msg.blocks {
                 match block {
                     ChatBlock::Text(t) if msg.content.is_empty() => {
+                        let start = lines.len();
                         lines.extend(super::markdown::render_with_width(
                             t,
                             palette,
                             Some(md_width),
                         ));
+                        stamp(&mut lines[start..]);
                         content_emitted = true;
                     }
                     ChatBlock::Text(_) => {}
@@ -725,7 +749,7 @@ fn thinking_lines(
     // Header: Grok always labels reasoning as "Thinking" while live, and
     // "Thought for Xs" when finished. Live timer matches the busy strip
     // (`thinking 1.4s`) so the user sees that thinking is actually happening.
-    let mut header_spans: Vec<Span<'static>> = if t.is_running() {
+    let header_spans: Vec<Span<'static>> = if t.is_running() {
         let elapsed = t.format_elapsed();
         if elapsed.is_empty() || elapsed == "0.0s" {
             vec![Span::styled("Thinking…".to_string(), label_style)]
@@ -742,19 +766,18 @@ fn thinking_lines(
         ]
     };
 
-    // Expand affordance only when collapsed and finished (something to open).
+    // Grok `expandable_indicator_char`: › on the right of a folded header.
+    let header_line = accent_line(header_spans, show_rail, rail_style);
     if !t.is_running() && t.collapsed {
-        let hint = "  (e expand)";
-        let used: usize = header_spans
-            .iter()
-            .map(|s| s.content.as_ref().chars().count())
-            .sum();
-        if used + hint.chars().count() < content_w as usize {
-            header_spans.push(Span::styled(hint.to_string(), detail_style));
-        }
+        lines.push(line_with_right(
+            header_line.spans,
+            Some(EXPAND_INDICATOR),
+            detail_style,
+            width,
+        ));
+    } else {
+        lines.push(header_line);
     }
-
-    lines.push(accent_line(header_spans, show_rail, rail_style));
 
     if !show_rail {
         return lines;
@@ -818,6 +841,33 @@ fn accent_line(content: Vec<Span<'static>>, show_rail: bool, rail_style: Style) 
 /// Shared left gutter for tools / epilogue (one level under free-flow body).
 fn meta_gutter() -> Span<'static> {
     Span::raw(" ".repeat(layout::ASSISTANT_PAD as usize))
+}
+
+/// Grok `scrollback.display.expandable_indicator_char` (folded thinking / tools).
+const EXPAND_INDICATOR: &str = "›";
+
+/// Grok `scrollback.blocks.tool.bullet = "diamond"`.
+const TOOL_BULLET: &str = "◆ ";
+
+/// Put `clock` on the first non-empty line. Returns whether it landed.
+fn stamp_first_content_line(
+    lines: &mut [Line<'static>],
+    clock: Option<&str>,
+    style: Style,
+    width: u16,
+) -> bool {
+    let Some(clock) = clock.filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    for line in lines.iter_mut() {
+        if !line_has_content(line) {
+            continue;
+        }
+        let left = std::mem::take(&mut line.spans);
+        *line = line_with_right(left, Some(clock), style, width);
+        return true;
+    }
+    false
 }
 
 /// Grok session event: `Worked for 12s` (+ optional token usage on last turn).
@@ -1340,7 +1390,11 @@ fn tool_block(
     let detail = Style::default().fg(palette.dim);
     let summary = tool_summary(name, input);
 
-    let mut header = vec![meta_gutter(), Span::styled(display.to_string(), name_style)];
+    let mut header = vec![
+        meta_gutter(),
+        Span::styled(TOOL_BULLET.to_string(), name_style),
+        Span::styled(display.to_string(), name_style),
+    ];
     if !summary.is_empty() {
         header.push(Span::styled(" · ".to_string(), detail));
         header.push(Span::styled(summary, summary_style));
@@ -2722,6 +2776,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             100,
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
         assert!(header.contains("grep"), "got {header}");
         assert!(header.contains("foo"), "got {header}");
         assert!(header.contains("2"), "got {header}");
@@ -2749,6 +2804,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             100,
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
         assert!(header.contains("run"), "got {header}");
         assert!(!header.contains("bash"), "got {header}");
         assert!(header.contains("cargo test"), "got {header}");
@@ -2879,6 +2935,63 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         assert!(
             clock_at > hello_at,
             "clock must be to the right of the text"
+        );
+    }
+
+    #[test]
+    fn assistant_reply_puts_clock_on_the_first_content_line() {
+        use crate::app::{ChatRole, TuiApp};
+        use crate::config::TuiAppConfig;
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "hi");
+        app.add_message(ChatRole::Assistant, "hello from the agent");
+        app.messages[1].duration_ms = Some(1200);
+        let palette = app.config.palette();
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80);
+        let answer = lines
+            .iter()
+            .find(|l| {
+                l.spans
+                    .iter()
+                    .any(|s| s.content.contains("hello from the agent"))
+            })
+            .expect("assistant body");
+        let text: String = answer.spans.iter().map(|s| s.content.as_ref()).collect();
+        let hello_at = text.find("hello").expect("answer text");
+        let colon = text.rfind(':').expect("HH:MM clock on the reply");
+        assert!(
+            colon > hello_at,
+            "Grok puts the clock on the right of the agent line, got {text:?}"
+        );
+        let footer = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains("Worked for")))
+            .expect("turn footer");
+        let foot: String = footer.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            foot.contains(':'),
+            "Worked for line also carries the clock, got {foot:?}"
+        );
+    }
+
+    #[test]
+    fn collapsed_thinking_uses_grok_expand_indicator() {
+        use crate::app::ThinkingBlock;
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let mut t = ThinkingBlock::new("secret plan");
+        t.finish();
+        t.collapsed = true;
+        let lines = super::thinking_lines(&t, &palette, 60);
+        let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(header.contains("Thought"), "got {header:?}");
+        assert!(
+            header.contains('›'),
+            "folded thinking must show Grok ›, got {header:?}"
+        );
+        assert!(
+            !header.contains("(e expand)"),
+            "legacy hint must not remain, got {header:?}"
         );
     }
 

@@ -1053,4 +1053,32 @@ mod paint_tests {
             "clock must sit to the right of the first bubble, got {row:?}"
         );
     }
+
+    #[test]
+    fn assistant_reply_shows_clock_on_the_right() {
+        let mut a = app();
+        a.show_timestamps = true;
+        a.add_message(crate::app::ChatRole::User, "ask");
+        a.add_message(
+            crate::app::ChatRole::Assistant,
+            "AGENT_REPLY_MARKER the answer",
+        );
+        a.messages.last_mut().unwrap().duration_ms = Some(2100);
+        let (buf, _) = paint_full_shell(&mut a, 100, 24);
+        let mut found = None;
+        for y in 0..buf.area().height {
+            let row = row_text(&buf, y);
+            if row.contains("AGENT_REPLY_MARKER") {
+                found = Some(row);
+                break;
+            }
+        }
+        let row = found.expect("agent reply should be painted");
+        let marker_at = row.find("AGENT_REPLY_MARKER").expect("marker");
+        let clock_at = row.rfind(':').expect("HH:MM clock on the agent reply");
+        assert!(
+            clock_at > marker_at,
+            "clock must sit to the right of the reply, got {row:?}"
+        );
+    }
 }
