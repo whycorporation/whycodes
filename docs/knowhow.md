@@ -597,6 +597,27 @@ full snapshots and the Anthropic sibling shape.
 
 ---
 
+### 2026-08-16 — `index::tests::watcher_picks_up_changes` flakes under instrumentation / parallel load
+
+**Symptom:** Full workspace or `cargo llvm-cov` runs occasionally fail
+`tests::watcher_picks_up_changes` with `create must be indexed` (5 vs 6
+files). The test polls with a 15 s deadline, so this is not a slow machine.
+
+**Root cause:** notify-watcher timing under a heavily loaded instrumented
+build: the create delta can be delivered after the final settle poll.
+Pre-existing — unrelated to coverage-gating work; passes in isolation and
+in a second full run.
+
+**Fix:** The CI coverage job runs it with `-- --skip tests::watcher_picks_up_changes`;
+the normal `test` job still runs it. Do not try to make the coverage job
+reliable by editing the test's deadline — it is genuinely racy.
+
+**Prevention:** When a full `cargo test --workspace` or `llvm-cov` run
+reports this failure, re-run in isolation before suspecting the change
+under test.
+
+---
+
 
 ### Template (copy for new entries)
 
