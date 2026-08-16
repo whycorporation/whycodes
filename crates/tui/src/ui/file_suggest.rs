@@ -555,8 +555,11 @@ mod tests {
         st.set_index(idx);
 
         // Matching is async: poll (like the run loop does) until it lands.
+        // Generous deadline: the background index thread can lag under parallel
+        // CI load (this was a flaky 5s deadline). The predicate is still checked
+        // at the end, so a longer deadline only avoids false negatives.
         fn poll_until(st: &mut FileSuggestState, pred: impl Fn(&FileSuggestState) -> bool) -> bool {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
             while std::time::Instant::now() < deadline {
                 if pred(st) {
                     return true;

@@ -618,6 +618,25 @@ under test.
 
 ---
 
+### 2026-08-16 — `tui::ui::file_suggest::picker_flow_over_real_index` flakes under parallel load
+
+**Symptom:** Full workspace or `cargo llvm-cov` runs occasionally fail
+`picker_flow_over_real_index` after ~5 s. Passes on re-run / isolation.
+
+**Root cause:** The test polls the async index with a 5 s deadline; under
+parallel test or instrumentation load the background index thread can
+lag past it. Purely a timing false-negative.
+
+**Fix:** Raised the `poll_until` deadline to 30 s. The predicate is still
+checked at the end, so a longer deadline only removes false negatives
+(no semantic change; fast path is still ~0.02 s).
+
+**Prevention:** If this test fails again, treat it as timing until proven
+otherwise — do not suspect executor/config changes without an isolated
+re-run.
+
+---
+
 
 ### Template (copy for new entries)
 
