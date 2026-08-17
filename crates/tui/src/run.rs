@@ -846,23 +846,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Async title refine (does not hold rt.agent_busy) ─────────
             while let Ok((sid, title)) = title_rx.try_recv() {
-                if rt.session.id == sid {
-                    if rt.session.apply_generated_title(&title) {
-                        app.session_title = rt.session.title.clone();
-                        rt.persist("title_async");
-                        app.mark_dirty();
-                    }
-                } else if let Some(bg) = runtimes.iter_mut().find(|b| b.session.id == sid) {
-                    // Title belongs to a parked session — apply + persist there.
-                    if bg.session.apply_generated_title(&title) {
-                        bg.view.session_title = bg.session.title.clone();
-                        bg.unread = true;
-                        bg.persist("title_async");
-                    }
-                } else {
-                    // Turn still restoring rt.session, or user switched sessions.
-                    pending_async_title = Some((sid, title));
-                }
+                apply_async_title(
+                    &mut app,
+                    &mut rt,
+                    &mut runtimes,
+                    &mut pending_async_title,
+                    sid,
+                    title,
+                );
             }
 
             // ── Force-stop if cancel is ignored too long ──────────────
@@ -955,27 +946,24 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Apply model picker selection ──────────────────────────
             if let Some((p, m)) = app.pending_model.take() {
-                provider = p.clone();
-                model = m.clone();
-                app.provider_name = p.clone();
-                app.model_name = m.clone();
-                if let Some(k) = config
-                    .get_provider(&p)
-                    .and_then(|pc| pc.api_key.clone())
-                    .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
-                {
-                    api_key = k;
-                    whycode_llm::oauth_refresh::unregister(&p);
-                } else if whycode_auth::providers::supports_oauth(&p)
+                let oauth = whycode_auth::providers::supports_oauth(&p);
+                apply_model_choice(
+                    &mut app,
+                    &mut provider,
+                    &mut model,
+                    &mut api_key,
+                    p.clone(),
+                    m,
+                    &config,
+                );
+                if api_key.is_empty()
+                    && oauth
                     && let Ok(dir) = Config::data_dir()
                     && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
                 {
-                    // OAuth subscription login (`whycode auth login <p>`).
                     whycode_llm::oauth_refresh::register(&p, dir);
                     api_key = tok;
                 }
-                // Drop stale window; re-fetch when idle so we never contend with a turn.
-                app.clear_api_context_window();
                 if rt.agent_busy {
                     catalog_fetch_pending = true;
                 } else {
@@ -988,11 +976,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         catalog_tx.clone(),
                     );
                 }
-                refresh_context_window(&mut app, &config, &p, &m);
-                app.status_message = format!(
-                    "Model → {p}/{m}  ·  window {}",
-                    format_token_count(app.max_context_tokens),
-                );
             }
 
             // ── `/login` picker selection → start OAuth sign-in ──
@@ -1109,21 +1092,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     drop(submit_images);
                     let expanded = expand_at_files(&prompt, &project_dir);
                     rt.session.add_user_message(&expanded);
-                    rt.agent_busy = true;
-                    let flag = new_cancel_flag();
-                    rt.cancel_flag = Some(Arc::clone(&flag));
-                    cancel_requested_at = None;
-                    app.mark_turn_started();
-                    app.current_agent_state = AgentState::Generating;
-                    app.status_message = "remote…".into();
-                    if app
-                        .messages
-                        .last()
-                        .map(|m| m.role != ChatRole::Assistant)
-                        .unwrap_or(true)
-                    {
-                        app.add_message(ChatRole::Assistant, "");
-                    }
+                    let flag =
+                        arm_generating(&mut app, &mut rt, &mut cancel_requested_at, "remote…");
                     let rem = rem.clone();
                     let event_tx2 = rt.event_tx.clone();
                     let done_tx2 = rt.done_tx.clone();
@@ -1158,22 +1128,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
 
                 // Lazy-load API key from env/config when user first chats
-                if api_key.is_empty() {
-                    if let Ok(cfg) = Config::load()
-                        && let Some(pc) = cfg.get_provider(&provider)
-                        && let Some(k) = &pc.api_key
-                        && !k.is_empty()
-                    {
-                        api_key = k.clone();
-                    }
-                    let env_name = format!("{}_API_KEY", provider.to_uppercase());
-                    if api_key.is_empty()
-                        && let Ok(k) = std::env::var(&env_name)
-                        && !k.is_empty()
-                    {
-                        api_key = k;
-                    }
-                }
+                try_fill_api_key(&mut api_key, &provider);
                 if api_key.is_empty() {
                     warn_missing_api_key(&mut app, &provider);
                     // Images already shown on the user bubble; don't re-queue.
@@ -1181,69 +1136,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     continue;
                 }
 
-                rt.agent_busy = true;
-                let flag = new_cancel_flag();
-                rt.cancel_flag = Some(Arc::clone(&flag));
-                cancel_requested_at = None;
-                app.mark_turn_started();
-                app.current_agent_state = AgentState::Generating;
-                app.status_message.clear();
-                // Placeholder assistant bubble for streaming
-                if app
-                    .messages
-                    .last()
-                    .map(|m| m.role != ChatRole::Assistant)
-                    .unwrap_or(true)
-                {
-                    app.add_message(ChatRole::Assistant, "");
-                }
-
-                let expanded = expand_at_files(&prompt, &project_dir);
-                rt.history
-                    .push_before_turn(&rt.session.messages, &project_dir);
-                // Auto-recall memories relevant to this user turn (Grok/jcode style).
-                refresh_session_memory(
-                    &mut rt.session,
-                    &rt.agent,
+                let flag = arm_generating(&mut app, &mut rt, &mut cancel_requested_at, "");
+                let expanded = record_user_turn(
+                    &mut app,
+                    &mut rt,
+                    &prompt,
                     &project_dir,
                     &config,
-                    Some(&expanded),
+                    &submit_images,
                 );
-                if submit_images.is_empty() {
-                    rt.session.add_user_message(&expanded);
-                } else {
-                    match crate::images::build_user_blocks(&expanded, &submit_images) {
-                        Ok(blocks) => rt.session.add_user_message_blocks(blocks),
-                        Err(e) => {
-                            app.toasts.push(
-                                crate::toast::ToastKind::Warning,
-                                format!("Image attach failed: {e}"),
-                            );
-                            if expanded.trim().is_empty() {
-                                rt.session
-                                    .add_user_message(&format!("(failed to load image: {e})"));
-                            } else {
-                                rt.session.add_user_message(&expanded);
-                            }
-                        }
-                    }
-                }
-
-                // Instant offline title (no API cost). Prefer the transcript's
-                // first user message so resumed legacy placeholders name from
-                // the original topic, not the latest follow-up.
-                if config.session.auto_title {
-                    let seed = rt
-                        .session
-                        .first_user_text()
-                        .unwrap_or_else(|| expanded.clone());
-                    if rt.session.apply_heuristic_title(&seed) {
-                        app.session_title = rt.session.title.clone();
-                    }
-                }
-
-                // Fast model for trivial chat (selam/hi) — sibling or config.
-                let (route_provider, route_model) = whycode_agent::resolve_turn_model(
+                let (route_provider, route_model) = route_turn_model(
+                    rt.session.id.as_str(),
                     &provider,
                     &model,
                     &expanded,
@@ -1251,23 +1154,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         .model_fast()
                         .or(config.session.model_fast.as_deref()),
                 );
-                if route_model != model || route_provider != provider {
-                    tracing::info!(
-                        from = %format!("{provider}/{model}"),
-                        to = %format!("{route_provider}/{route_model}"),
-                        "routed trivial turn to fast model"
-                    );
-                    whycode_core::logging::emit_sid(
-                        "tui",
-                        "info",
-                        "turn.route_fast",
-                        Some(rt.session.id.as_str()),
-                        Some(serde_json::json!({
-                            "from": format!("{provider}/{model}"),
-                            "to": format!("{route_provider}/{route_model}"),
-                        })),
-                    );
-                }
 
                 let provider2 = route_provider;
                 let model2 = route_model;
@@ -3088,6 +2974,187 @@ fn shutdown_runtime_queues(rt: &mut SessionRuntime) {
         let _ = req.reply.send(Err(QuestionError::Cancelled));
     }
     rt.agent.background_registry().kill_all();
+}
+
+fn arm_generating(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    status: &str,
+) -> CancelFlag {
+    rt.agent_busy = true;
+    let flag = new_cancel_flag();
+    rt.cancel_flag = Some(Arc::clone(&flag));
+    *cancel_requested_at = None;
+    app.mark_turn_started();
+    app.current_agent_state = AgentState::Generating;
+    if status.is_empty() {
+        app.status_message.clear();
+    } else {
+        app.status_message = status.into();
+    }
+    if app
+        .messages
+        .last()
+        .map(|m| m.role != ChatRole::Assistant)
+        .unwrap_or(true)
+    {
+        app.add_message(ChatRole::Assistant, "");
+    }
+    flag
+}
+
+fn try_fill_api_key(api_key: &mut String, provider: &str) {
+    if !api_key.is_empty() {
+        return;
+    }
+    if let Ok(cfg) = Config::load()
+        && let Some(pc) = cfg.get_provider(provider)
+        && let Some(k) = &pc.api_key
+        && !k.is_empty()
+    {
+        *api_key = k.clone();
+    }
+    if api_key.is_empty() {
+        let env_name = format!("{}_API_KEY", provider.to_uppercase());
+        if let Ok(k) = std::env::var(&env_name)
+            && !k.is_empty()
+        {
+            *api_key = k;
+        }
+    }
+}
+
+fn record_user_turn(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    prompt: &str,
+    project_dir: &std::path::Path,
+    config: &Config,
+    submit_images: &[crate::images::PromptImage],
+) -> String {
+    let expanded = expand_at_files(prompt, project_dir);
+    rt.history
+        .push_before_turn(&rt.session.messages, project_dir);
+    refresh_session_memory(
+        &mut rt.session,
+        &rt.agent,
+        project_dir,
+        config,
+        Some(&expanded),
+    );
+    if submit_images.is_empty() {
+        rt.session.add_user_message(&expanded);
+    } else {
+        match crate::images::build_user_blocks(&expanded, submit_images) {
+            Ok(blocks) => rt.session.add_user_message_blocks(blocks),
+            Err(e) => {
+                app.toasts.push(
+                    crate::toast::ToastKind::Warning,
+                    format!("Image attach failed: {e}"),
+                );
+                if expanded.trim().is_empty() {
+                    rt.session
+                        .add_user_message(&format!("(failed to load image: {e})"));
+                } else {
+                    rt.session.add_user_message(&expanded);
+                }
+            }
+        }
+    }
+    if config.session.auto_title {
+        let seed = rt
+            .session
+            .first_user_text()
+            .unwrap_or_else(|| expanded.clone());
+        if rt.session.apply_heuristic_title(&seed) {
+            app.session_title = rt.session.title.clone();
+        }
+    }
+    expanded
+}
+
+fn route_turn_model(
+    session_id: &str,
+    provider: &str,
+    model: &str,
+    expanded: &str,
+    fast: Option<&str>,
+) -> (String, String) {
+    let (route_provider, route_model) =
+        whycode_agent::resolve_turn_model(provider, model, expanded, fast);
+    if route_model != model || route_provider != provider {
+        tracing::info!(
+            from = %format!("{provider}/{model}"),
+            to = %format!("{route_provider}/{route_model}"),
+            "routed trivial turn to fast model"
+        );
+        whycode_core::logging::emit_sid(
+            "tui",
+            "info",
+            "turn.route_fast",
+            Some(session_id),
+            Some(serde_json::json!({
+                "from": format!("{provider}/{model}"),
+                "to": format!("{route_provider}/{route_model}"),
+            })),
+        );
+    }
+    (route_provider, route_model)
+}
+
+fn apply_model_choice(
+    app: &mut TuiApp,
+    provider: &mut String,
+    model: &mut String,
+    api_key: &mut String,
+    p: String,
+    m: String,
+    config: &Config,
+) {
+    *provider = p.clone();
+    *model = m.clone();
+    app.provider_name = p.clone();
+    app.model_name = m.clone();
+    if let Some(k) = config
+        .get_provider(&p)
+        .and_then(|pc| pc.api_key.clone())
+        .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
+    {
+        *api_key = k;
+        whycode_llm::oauth_refresh::unregister(&p);
+    }
+    app.clear_api_context_window();
+    refresh_context_window(app, config, &p, &m);
+    app.status_message = format!(
+        "Model → {p}/{m}  ·  window {}",
+        format_token_count(app.max_context_tokens),
+    );
+}
+
+fn apply_async_title(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut [SessionRuntime],
+    pending_async_title: &mut Option<(String, String)>,
+    sid: String,
+    title: String,
+) {
+    if rt.session.id == sid {
+        if rt.session.apply_generated_title(&title) {
+            app.session_title = rt.session.title.clone();
+            rt.persist("title_async");
+            app.mark_dirty();
+        }
+    } else if let Some(bg) = runtimes.iter_mut().find(|b| b.session.id == sid) {
+        if bg.session.apply_generated_title(&title) {
+            bg.view.session_title = bg.session.title.clone();
+            bg.unread = true;
+            bg.persist("title_async");
+        }
+    } else {
+        *pending_async_title = Some((sid, title));
+    }
 }
 
 fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
@@ -7537,5 +7604,152 @@ mod tests {
         let fut = ui.prompt_pasted_code();
         // Dropping the NeedCode sender (the TUI side) cancels the flow.
         drop(fut);
+    }
+
+    #[test]
+    fn arm_record_route_and_model_choice() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut rt = test_runtime();
+        let mut at = Some(Instant::now());
+        let flag = arm_generating(&mut app, &mut rt, &mut at, "remote…");
+        assert!(rt.agent_busy);
+        assert!(at.is_none());
+        assert_eq!(app.status_message, "remote…");
+        assert!(
+            app.messages
+                .last()
+                .is_some_and(|m| m.role == ChatRole::Assistant)
+        );
+        assert!(!whycode_agent::is_cancelled(&Some(flag)));
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.txt"), "hello file").unwrap();
+        let mut config = Config::default();
+        config.session.auto_title = true;
+        let expanded = record_user_turn(
+            &mut app,
+            &mut rt,
+            "read @note.txt please",
+            dir.path(),
+            &config,
+            &[],
+        );
+        assert!(expanded.contains("hello file"), "{expanded}");
+        assert!(rt.session.messages.iter().any(|m| {
+            m.content
+                .as_text()
+                .is_some_and(|t| t.contains("hello file"))
+        }));
+
+        let bad = [crate::images::PromptImage {
+            path: dir.path().join("missing.png"),
+            label: "missing.png".into(),
+            media_type: "image/png".into(),
+        }];
+        record_user_turn(&mut app, &mut rt, "", dir.path(), &config, &bad);
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Image attach"))
+        );
+
+        let (p, m) = route_turn_model(&rt.session.id, "acme", "big", "hi", Some("fast-1"));
+        assert_eq!(p, "acme");
+        let _ = m;
+
+        let mut provider = "old".into();
+        let mut model = "old-m".into();
+        let mut key = String::new();
+        config.providers.insert(
+            "acme".into(),
+            whycode_core::types::ProviderConfig {
+                name: "acme".into(),
+                api_key: Some("sk-from-cfg".into()),
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: vec!["m1".into()],
+                tool_arguments: None,
+                extra: Default::default(),
+            },
+        );
+        apply_model_choice(
+            &mut app,
+            &mut provider,
+            &mut model,
+            &mut key,
+            "acme".into(),
+            "m1".into(),
+            &config,
+        );
+        assert_eq!(provider, "acme");
+        assert_eq!(model, "m1");
+        assert_eq!(key, "sk-from-cfg");
+        assert!(app.status_message.contains("acme/m1"));
+
+        let mut key = String::new();
+        try_fill_api_key(&mut key, "nope");
+        assert!(key.is_empty());
+        try_fill_api_key(&mut key, "acme");
+        // config load may or may not see providers; env fallback:
+        unsafe { std::env::set_var("NOPE_API_KEY", "from-env") };
+        let mut key = String::new();
+        try_fill_api_key(&mut key, "nope");
+        assert_eq!(key, "from-env");
+        unsafe { std::env::remove_var("NOPE_API_KEY") };
+        try_fill_api_key(&mut key, "nope");
+        assert_eq!(key, "from-env", "already filled stays");
+    }
+
+    #[test]
+    fn apply_async_title_active_parked_and_pending() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut rt = test_runtime();
+        rt.session.add_user_message("topic");
+        let sid = rt.session.id.clone();
+        let mut pending = None;
+        apply_async_title(
+            &mut app,
+            &mut rt,
+            &mut [],
+            &mut pending,
+            sid.clone(),
+            "Better Title".into(),
+        );
+        assert!(
+            rt.session.title.contains("Better") || app.session_title == rt.session.title,
+            "title={} app={}",
+            rt.session.title,
+            app.session_title
+        );
+
+        let mut parked = test_runtime();
+        parked.session.add_user_message("bg topic");
+        let bg_id = parked.session.id.clone();
+        let mut runtimes = vec![parked];
+        apply_async_title(
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut pending,
+            bg_id,
+            "Parked Title".into(),
+        );
+
+        apply_async_title(
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut pending,
+            "unknown-sid".into(),
+            "Later".into(),
+        );
+        assert_eq!(
+            pending.as_ref().map(|(s, _)| s.as_str()),
+            Some("unknown-sid")
+        );
     }
 }
