@@ -834,16 +834,14 @@ not a safe default: a container without user namespaces would then
 *find* the binary and fail later on real `bwrap` exec.
 
 **Fix:** Prepare-only tests drive `prepare_bwrap_bin(Some(stub))` and do
-not need a real binary. `prepare()` asserts Bubblewrap only when the
-binary is present. Live `run()` isolation tests live in
-`crates/sandbox/tests/live.rs` (not `src/lib.rs`) so a skip does not
-leave in-crate test bodies as missed lines under the 100% floor.
-`prepare_with(..., true)` still covers the `prepare_bwrap` wrapper
-without exec.
+not need a real binary. Live `run()` isolation tests live in
+`crates/sandbox/tests/live.rs`. Unit tests live in `src/tests.rs`; the
+100% crate floor ignores that file so a missing `bwrap` cannot leave
+host-only assertion arms as missed lines.
 
-**Prevention:** Never `assert!(backend_available())` in unit tests. Keep
-live sandbox exec in `tests/` so llvm-cov `-p whycode-sandbox` does not
-count skipped bodies. Arg construction stays on `prepare_bwrap_bin`.
+**Prevention:** Keep host-dependent sandbox tests out of production
+`.rs` files counted by `--fail-under-lines 100`. CI ignores
+`tests.rs` on those crates and prints `--show-missing-lines`.
 
 ---
 
