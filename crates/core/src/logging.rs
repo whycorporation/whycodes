@@ -862,4 +862,85 @@ mod tests {
             assert!(dirs().is_none());
         }
     }
+
+    #[test]
+    fn emit_sid_init_options_visitor_and_string_panic() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let _ = InitOptions::default();
+        emit_sid("test", "info", "pre-init", Some("sid"), None);
+
+        let tmp = temp_data_dir();
+        let _ = init(InitOptions {
+            data_dir: tmp.path().to_path_buf(),
+            log_level: Some("debug".into()),
+            log_file: Some(tmp.path().join("nested/human.log")),
+            debug: false,
+            with_stderr: true,
+        });
+        let _ = init(InitOptions {
+            data_dir: tmp.path().to_path_buf(),
+            log_level: None,
+            log_file: None,
+            debug: true,
+            with_stderr: false,
+        });
+        emit_sid(
+            "test",
+            "info",
+            "post-init-sid",
+            Some("ses"),
+            Some(json!({"n": 1})),
+        );
+        emit("test", "info", "post-init", None);
+        if is_initialized() {
+            assert!(dirs().is_some());
+        }
+        tracing::info!(
+            sid = "s1",
+            extra = "x",
+            n = 3_i64,
+            u = 4_u64,
+            ok = true,
+            "visitor"
+        );
+        tracing::debug!(?tmp, "debug-field");
+
+        let prev = std::env::var_os("WHYCODE_LOG_LEVEL");
+        unsafe { std::env::remove_var("RUST_LOG") };
+        unsafe { std::env::set_var("WHYCODE_LOG_LEVEL", "error") };
+        let f = build_env_filter(None);
+        assert!(f.to_string().contains("error"), "{}", f.to_string());
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_LOG_LEVEL", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_LOG_LEVEL") },
+        }
+
+        let tmp2 = temp_data_dir();
+        let dirs = LogDirs::from_data_dir(tmp2.path());
+        dirs.ensure().unwrap();
+        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let captured2 = Arc::clone(&captured);
+        let dirs2 = dirs.clone();
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let body = format_crash_report(info);
+            let _ = write_crash_report(&dirs2, info);
+            *captured2.lock().unwrap() = Some(body);
+        }));
+        assert!(
+            std::panic::catch_unwind(|| {
+                panic!("{}", String::from("owned-panic"));
+            })
+            .is_err()
+        );
+        assert!(
+            std::panic::catch_unwind(|| {
+                std::panic::panic_any(9u32);
+            })
+            .is_err()
+        );
+        std::panic::set_hook(previous);
+        let body = captured.lock().unwrap().clone().unwrap_or_default();
+        assert!(body.contains("owned-panic") || body.contains("whycode crash"));
+    }
 }

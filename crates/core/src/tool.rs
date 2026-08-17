@@ -149,3 +149,90 @@ pub trait Tool: Send + Sync {
         permissions.is_tool_allowed(self.name())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file_claims::FileClaimRegistry;
+    use std::path::Path;
+
+    struct DummyTool;
+
+    #[async_trait]
+    impl Tool for DummyTool {
+        fn name(&self) -> &str {
+            "read"
+        }
+        fn description(&self) -> &str {
+            "read a file"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+            ToolResult {
+                tool_call_id: "1".into(),
+                content: "ok".into(),
+                is_error: false,
+            }
+        }
+    }
+
+    #[test]
+    fn context_constructors_and_debug() {
+        let ctx = ToolContext::new("/tmp/proj");
+        assert_eq!(ctx.working_dir, "/tmp/proj");
+        assert!(ctx.sandbox.network);
+        let dbg = format!("{ctx:?}");
+        assert!(dbg.contains("working_dir"));
+        assert!(dbg.contains("/tmp/proj"));
+
+        let uns = ToolContext::unsandboxed("/work");
+        assert_eq!(uns.sandbox.mode, crate::SandboxMode::Off);
+        assert!(uns.check_file_write(Path::new("a.rs")).is_ok());
+        assert!(uns.check_file_read(Path::new("a.rs")).is_none());
+    }
+
+    #[test]
+    fn file_claim_gates() {
+        let reg = FileClaimRegistry::new();
+        let p = Path::new("/tmp/whycode_tool_claim.rs");
+        assert_eq!(
+            reg.try_claim("w0", "alpha", p),
+            crate::file_claims::ClaimResult::Acquired
+        );
+
+        let mut ctx = ToolContext::new(".");
+        ctx.file_claims = Some(reg.clone());
+        assert!(ctx.check_file_write(p).is_ok());
+        assert!(ctx.check_file_read(p).is_none());
+
+        ctx.agent_id = Some("w1".into());
+        ctx.agent_label = Some("beta".into());
+        let err = ctx.check_file_write(p).unwrap_err();
+        assert!(err.contains("File conflict"), "{err}");
+        assert!(ctx.check_file_read(p).is_some());
+
+        ctx.agent_id = Some("w0".into());
+        assert!(ctx.check_file_write(p).is_ok());
+    }
+
+    #[tokio::test]
+    async fn dummy_tool_definition_and_permission() {
+        let t = DummyTool;
+        let def = t.definition();
+        assert_eq!(def.name, "read");
+        assert_eq!(def.description, "read a file");
+        let out = t
+            .execute(serde_json::json!({}), &ToolContext::new("."))
+            .await;
+        assert!(!out.is_error);
+        let allow = PermissionSet {
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            ..Default::default()
+        };
+        assert!(t.is_allowed(&allow));
+    }
+}

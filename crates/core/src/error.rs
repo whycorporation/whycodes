@@ -137,4 +137,27 @@ mod tests {
         // Debug output should include the variant name
         assert!(debug.contains("Config"));
     }
+
+    #[test]
+    fn clone_preserves_every_variant() {
+        let cases = [
+            Error::Config("c".into()),
+            Error::Io(std::io::Error::other("io")),
+            Error::from(serde_json::from_str::<u8>("x").unwrap_err()),
+            Error::Llm("l".into()),
+            Error::Tool("t".into()),
+            Error::Session("s".into()),
+            Error::Agent("a".into()),
+            Error::Provider("p".into()),
+            Error::Http("h".into()),
+            Error::Other("o".into()),
+        ];
+        for err in cases {
+            let cloned = err.clone();
+            assert_eq!(
+                std::mem::discriminant(&err),
+                std::mem::discriminant(&cloned)
+            );
+        }
+    }
 }

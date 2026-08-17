@@ -52,6 +52,7 @@ mod tests {
     #[test]
     fn home_override_wins() {
         let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("WHYCODE_HOME", "/tmp/whycode-prev-home") };
         let prev = std::env::var_os("WHYCODE_HOME");
         unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
         let data = data_dir();
@@ -62,5 +63,23 @@ mod tests {
         }
         assert_eq!(data, dir.path());
         assert_eq!(cfg, dir.path().join("config.toml"));
+    }
+
+    #[test]
+    fn empty_home_env_is_ignored() {
+        unsafe { std::env::set_var("WHYCODE_HOME", "/tmp/whycode-prev-home") };
+        let prev = std::env::var_os("WHYCODE_HOME");
+        unsafe { std::env::set_var("WHYCODE_HOME", "") };
+        assert!(whycode_home().is_none());
+        let data = data_dir();
+        let cfg = config_dir();
+        let file = config_file();
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+        }
+        assert!(!data.as_os_str().is_empty());
+        assert!(!cfg.as_os_str().is_empty());
+        assert_eq!(file, cfg.join("config.toml"));
     }
 }

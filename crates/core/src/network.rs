@@ -188,11 +188,9 @@ pub fn host_matches_pattern(host: &str, pattern: &str) -> bool {
         return true;
     }
     if let Some(suffix) = pattern.strip_prefix("*.") {
-        if suffix.is_empty() {
-            return false;
-        }
         // Subdomains only: `a.suffix` matches; `suffix` does not.
-        host.len() > suffix.len()
+        !suffix.is_empty()
+            && host.len() > suffix.len()
             && host.ends_with(suffix)
             && host.as_bytes().get(host.len() - suffix.len() - 1) == Some(&b'.')
     } else {
@@ -312,5 +310,30 @@ mod tests {
             parse_domain_list("github.com, crates.io *.npmjs.org"),
             vec!["github.com", "crates.io", "*.npmjs.org"]
         );
+    }
+
+    #[test]
+    fn restricted_ensure_url_and_edge_hosts() {
+        let p = NetworkPolicy {
+            allowlist: vec!["ok.com".into()],
+            denylist: vec!["bad.com".into()],
+        };
+        assert!(p.is_restricted());
+        assert!(p.ensure_url_allowed("https://ok.com/x").is_ok());
+        let err = p.ensure_url_allowed("https://bad.com/x").unwrap_err();
+        assert!(err.contains("Denied patterns"), "{err}");
+        assert!(err.contains("Allowed patterns"), "{err}");
+        assert!(!p.is_host_allowed(""));
+        assert_eq!(normalize_host("[::1]"), "::1");
+        assert!(host_from_url("").is_err());
+        assert!(host_from_url("https://").is_err());
+        assert!(host_from_url("https:///path").is_err());
+        assert!(host_from_url("http://[no-close").is_err());
+        assert!(!host_matches_pattern("", "x"));
+        assert!(!host_matches_pattern("x", ""));
+        // `*.` normalizes to `*` (trailing dots stripped) and then matches all.
+        assert!(host_matches_pattern("a.b", "*."));
+        assert!(p.check_url("https://ok.com").is_ok());
+        assert!(host_from_url("http://.").is_err());
     }
 }

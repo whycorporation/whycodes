@@ -20,3 +20,29 @@ pub enum PanelUpdate {
 
 /// Callback the host (agent loop) installs so `panel` can reach the TUI.
 pub type PanelSink = Arc<dyn Fn(PanelUpdate) + Send + Sync>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panel_update_variants_debug_eq() {
+        let a = PanelUpdate::File {
+            path: "a.rs".into(),
+            text: "x".into(),
+        };
+        let b = PanelUpdate::Diff {
+            path: "a.rs".into(),
+            unified: "d".into(),
+        };
+        let c = PanelUpdate::Mermaid {
+            source: "graph TD".into(),
+        };
+        let d = PanelUpdate::Clear;
+        assert_ne!(a, b);
+        assert_eq!(d, PanelUpdate::Clear);
+        let _ = format!("{a:?}{b:?}{c:?}{d:?}");
+        let sink: PanelSink = Arc::new(|_| {});
+        sink(PanelUpdate::Clear);
+    }
+}

@@ -108,3 +108,80 @@ impl SandboxSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_mode_parses_and_displays() {
+        assert_eq!("off".parse::<SandboxMode>().unwrap(), SandboxMode::Off);
+        assert_eq!("none".parse::<SandboxMode>().unwrap(), SandboxMode::Off);
+        assert_eq!("false".parse::<SandboxMode>().unwrap(), SandboxMode::Off);
+        assert_eq!("0".parse::<SandboxMode>().unwrap(), SandboxMode::Off);
+        assert_eq!(
+            "workspace".parse::<SandboxMode>().unwrap(),
+            SandboxMode::Workspace
+        );
+        assert_eq!("on".parse::<SandboxMode>().unwrap(), SandboxMode::Workspace);
+        assert_eq!(
+            "true".parse::<SandboxMode>().unwrap(),
+            SandboxMode::Workspace
+        );
+        assert_eq!("1".parse::<SandboxMode>().unwrap(), SandboxMode::Workspace);
+        assert!("nope".parse::<SandboxMode>().is_err());
+        assert_eq!(SandboxMode::Off.as_str(), "off");
+        assert_eq!(SandboxMode::Workspace.as_str(), "workspace");
+        assert_eq!(SandboxMode::default(), SandboxMode::Workspace);
+    }
+
+    #[test]
+    fn sandbox_fallback_parses() {
+        assert_eq!(
+            "allow".parse::<SandboxFallback>().unwrap(),
+            SandboxFallback::Allow
+        );
+        assert_eq!(
+            "warn".parse::<SandboxFallback>().unwrap(),
+            SandboxFallback::Allow
+        );
+        assert_eq!(
+            "host".parse::<SandboxFallback>().unwrap(),
+            SandboxFallback::Allow
+        );
+        assert_eq!(
+            "deny".parse::<SandboxFallback>().unwrap(),
+            SandboxFallback::Deny
+        );
+        assert_eq!(
+            "error".parse::<SandboxFallback>().unwrap(),
+            SandboxFallback::Deny
+        );
+        assert_eq!(
+            "strict".parse::<SandboxFallback>().unwrap(),
+            SandboxFallback::Deny
+        );
+        assert!("maybe".parse::<SandboxFallback>().is_err());
+        assert_eq!(SandboxFallback::default(), SandboxFallback::Allow);
+    }
+
+    #[test]
+    fn settings_off_default_and_from_raw() {
+        let d = SandboxSettings::default();
+        assert_eq!(d.mode, SandboxMode::Workspace);
+        assert!(d.network);
+        assert_eq!(d.fallback, SandboxFallback::Allow);
+
+        let off = SandboxSettings::off();
+        assert_eq!(off.mode, SandboxMode::Off);
+
+        let ok = SandboxSettings::from_raw("off", false, "deny");
+        assert_eq!(ok.mode, SandboxMode::Off);
+        assert!(!ok.network);
+        assert_eq!(ok.fallback, SandboxFallback::Deny);
+
+        let bad = SandboxSettings::from_raw("??? ", true, "???");
+        assert_eq!(bad.mode, SandboxMode::Workspace);
+        assert_eq!(bad.fallback, SandboxFallback::Allow);
+    }
+}

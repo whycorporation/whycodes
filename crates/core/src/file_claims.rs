@@ -146,10 +146,7 @@ impl FileClaimRegistry {
     /// Try to claim `path` for `agent_id`. Same agent re-claim is a no-op success.
     pub fn try_claim(&self, agent_id: &str, agent_label: &str, path: &Path) -> ClaimResult {
         let key = Self::claim_key(path);
-        let mut map = match self.inner.claims.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut map = recover_lock(self.inner.claims.lock());
         match map.get(&key) {
             Some(c) if c.owner_id == agent_id => {
                 self.record_write(&key, agent_id, agent_label);
@@ -184,10 +181,7 @@ impl FileClaimRegistry {
     }
 
     fn record_write(&self, key: &str, agent_id: &str, agent_label: &str) {
-        let mut writes = match self.inner.last_write.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut writes = recover_lock(self.inner.last_write.lock());
         let generation = writes
             .get(key)
             .map(|w| w.generation)
@@ -216,10 +210,7 @@ impl FileClaimRegistry {
     /// path, return a stale event (and notify the listener).
     pub fn note_read(&self, agent_id: &str, path: &Path) -> Option<FileStaleEvent> {
         let key = Self::claim_key(path);
-        let writes = match self.inner.last_write.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let writes = recover_lock(self.inner.last_write.lock());
         let write = writes.get(&key)?;
         if write.owner_id == agent_id {
             return None;
@@ -229,10 +220,7 @@ impl FileClaimRegistry {
         let writer_label = write.owner_label.clone();
         drop(writes);
 
-        let mut seen = match self.inner.last_seen.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut seen = recover_lock(self.inner.last_seen.lock());
         let last = seen.get(&(agent_id.to_string(), key.clone())).copied();
         seen.insert((agent_id.to_string(), key.clone()), generation);
         if last == Some(generation) {
@@ -262,28 +250,18 @@ impl FileClaimRegistry {
 
     /// Drop every claim held by `agent_id` (worker finished).
     pub fn release_agent(&self, agent_id: &str) {
-        let mut map = match self.inner.claims.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut map = recover_lock(self.inner.claims.lock());
         map.retain(|_, c| c.owner_id != agent_id);
     }
 
     /// Clear all claims (swarm session end).
     pub fn clear(&self) {
-        if let Ok(mut map) = self.inner.claims.lock() {
-            map.clear();
-        } else if let Err(p) = self.inner.claims.lock() {
-            p.into_inner().clear();
-        }
+        recover_lock(self.inner.claims.lock()).clear();
     }
 
     /// Snapshot of current claims (path → owner label), sorted by path.
     pub fn snapshot(&self) -> Vec<(String, String)> {
-        let map = match self.inner.claims.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let map = recover_lock(self.inner.claims.lock());
         let mut rows: Vec<_> = map
             .iter()
             .map(|(p, c)| (p.clone(), c.owner_label.clone()))
@@ -298,6 +276,13 @@ impl FileClaimRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+}
+
+fn recover_lock<T>(res: std::sync::LockResult<T>) -> T {
+    match res {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
     }
 }
 
@@ -354,5 +339,53 @@ mod tests {
         let ev = reg.note_read("w1", p).expect("stale");
         assert_eq!(ev.writer_id, "w0");
         assert!(reg.note_read("w1", p).is_none());
+    }
+
+    #[test]
+    fn claim_key_debug_snapshot_clear_and_stale_listener() {
+        let reg = FileClaimRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        let _ = format!("{reg:?}");
+
+        let rel = Path::new("/no/such/whycode/dir/foo/../bar.rs");
+        let key = FileClaimRegistry::claim_key(rel);
+        assert!(key.contains("bar.rs"), "{key}");
+        let cur = FileClaimRegistry::claim_key(Path::new("./."));
+        assert!(!cur.is_empty());
+
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits2 = Arc::clone(&hits);
+        reg.set_stale_listener(Some(Arc::new(move |_| {
+            hits2.fetch_add(1, Ordering::SeqCst);
+        })));
+        let p = Path::new("/tmp/whycode_claim_snap.rs");
+        assert_eq!(reg.try_claim("w0", "lab", p), ClaimResult::Acquired);
+        assert_eq!(reg.len(), 1);
+        let snap = reg.snapshot();
+        assert_eq!(snap.len(), 1);
+        assert_eq!(snap[0].1, "lab");
+        assert!(reg.note_read("w0", p).is_none());
+        let ev = reg.note_read("w2", p);
+        assert!(ev.is_some());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        reg.clear();
+        assert!(reg.is_empty());
+        reg.set_stale_listener(None);
+        reg.set_listener(None);
+    }
+
+    #[test]
+    fn recover_lock_ok_and_poisoned() {
+        let m = std::sync::Mutex::new(7);
+        assert_eq!(*recover_lock(m.lock()), 7);
+        let m = Arc::new(std::sync::Mutex::new(3));
+        let m2 = Arc::clone(&m);
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert_eq!(*recover_lock(m.lock()), 3);
     }
 }
