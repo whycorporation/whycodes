@@ -174,6 +174,9 @@ pub(crate) fn test_state() -> AppState {
 }
 
 #[cfg(test)]
+mod http_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use whycode_agent::events::new_cancel_flag;

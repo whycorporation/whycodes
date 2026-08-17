@@ -229,3 +229,285 @@ fn test_auth_login_rejects_unknown_provider_without_network() {
         "stderr should name the supported set: {err}"
     );
 }
+
+/// Isolated `WHYCODE_HOME` so config/session/memory commands never touch
+/// the developer's real store.
+fn run_home(home: &std::path::Path, args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(args)
+        .env("WHYCODE_HOME", home)
+        .env("HOME", home)
+        .current_dir(home)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to spawn `whycode {}`: {e}", args.join(" ")))
+}
+
+#[test]
+fn test_acp_and_web_are_offline_stubs() {
+    let home = tempfile::tempdir().unwrap();
+    let acp = run_home(home.path(), &["acp"]);
+    assert_ok(&["acp"], &acp);
+    let s = String::from_utf8_lossy(&acp.stdout);
+    assert!(s.contains("not yet implemented"), "{s}");
+
+    let web = run_home(home.path(), &["web"]);
+    assert_ok(&["web"], &web);
+    let s = String::from_utf8_lossy(&web.stdout);
+    assert!(s.contains("whycode serve"), "{s}");
+}
+
+#[test]
+fn test_config_get_path_and_set() {
+    let home = tempfile::tempdir().unwrap();
+    let path = run_home(home.path(), &["config", "path"]);
+    assert_ok(&["config", "path"], &path);
+    let p = String::from_utf8_lossy(&path.stdout);
+    assert!(p.contains("config.toml"), "{p}");
+
+    let get = run_home(home.path(), &["config", "get", "default_agent"]);
+    assert_ok(&["config", "get", "default_agent"], &get);
+    assert!(
+        String::from_utf8_lossy(&get.stdout).contains("build"),
+        "{}",
+        String::from_utf8_lossy(&get.stdout)
+    );
+
+    let missing = run_home(home.path(), &["config", "get", "nope"]);
+    assert_ok(&["config", "get", "nope"], &missing);
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("not found")
+            || String::from_utf8_lossy(&missing.stdout).contains("not found")
+    );
+
+    let set = run_home(home.path(), &["config", "set", "default_agent", "plan"]);
+    assert_ok(&["config", "set", "default_agent", "plan"], &set);
+    let get2 = run_home(home.path(), &["config", "get", "default_agent"]);
+    assert!(
+        String::from_utf8_lossy(&get2.stdout).contains("plan"),
+        "{}",
+        String::from_utf8_lossy(&get2.stdout)
+    );
+}
+
+#[test]
+fn test_mcp_add_list_remove_and_validation() {
+    let home = tempfile::tempdir().unwrap();
+    let empty = run_home(home.path(), &["mcp", "list"]);
+    assert_ok(&["mcp", "list"], &empty);
+    assert!(
+        String::from_utf8_lossy(&empty.stdout).contains("No MCP servers"),
+        "{}",
+        String::from_utf8_lossy(&empty.stdout)
+    );
+
+    let add = run_home(
+        home.path(),
+        &["mcp", "add", "demo", "--url", "https://example.com/mcp"],
+    );
+    assert_ok(&["mcp", "add", "demo"], &add);
+
+    let listed = run_home(home.path(), &["mcp", "list"]);
+    let s = String::from_utf8_lossy(&listed.stdout);
+    assert!(s.contains("demo"), "{s}");
+    assert!(s.contains("example.com"), "{s}");
+
+    let both = run_home(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "bad",
+            "npx",
+            "--url",
+            "https://example.com/mcp",
+        ],
+    );
+    assert!(!both.status.success());
+
+    let bad_type = run_home(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "badtype",
+            "--url",
+            "https://example.com/mcp",
+            "--type",
+            "ftp",
+        ],
+    );
+    assert!(!bad_type.status.success());
+
+    let bad_header = run_home(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "hdr",
+            "--url",
+            "https://example.com/mcp",
+            "--header",
+            "NotAHeader",
+        ],
+    );
+    assert!(!bad_header.status.success());
+
+    let neither = run_home(home.path(), &["mcp", "add", "empty"]);
+    assert!(!neither.status.success());
+
+    let rm = run_home(home.path(), &["mcp", "remove", "demo"]);
+    assert_ok(&["mcp", "remove", "demo"], &rm);
+    let missing = run_home(home.path(), &["mcp", "remove", "demo"]);
+    assert_ok(&["mcp", "remove", "demo"], &missing);
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("not found")
+            || String::from_utf8_lossy(&missing.stdout).contains("not found")
+    );
+}
+
+#[test]
+fn test_model_provider_agent_plugins_offline() {
+    let home = tempfile::tempdir().unwrap();
+
+    let models = run_home(home.path(), &["model", "list"]);
+    assert_ok(&["model", "list"], &models);
+
+    let def = run_home(home.path(), &["model", "default", "openai", "gpt-4o"]);
+    assert_ok(&["model", "default"], &def);
+
+    let providers = run_home(home.path(), &["provider", "list"]);
+    assert_ok(&["provider", "list"], &providers);
+
+    let add = run_home(
+        home.path(),
+        &[
+            "provider",
+            "add",
+            "local",
+            "--api-key",
+            "sk-test",
+            "--base-url",
+            "http://127.0.0.1:9/v1",
+        ],
+    );
+    assert_ok(&["provider", "add", "local"], &add);
+    let listed = run_home(home.path(), &["provider", "list"]);
+    assert!(
+        String::from_utf8_lossy(&listed.stdout).contains("local"),
+        "{}",
+        String::from_utf8_lossy(&listed.stdout)
+    );
+    let rm = run_home(home.path(), &["provider", "remove", "local"]);
+    assert_ok(&["provider", "remove", "local"], &rm);
+    let rm_missing = run_home(home.path(), &["provider", "remove", "local"]);
+    assert_ok(&["provider", "remove", "local"], &rm_missing);
+
+    let agents = run_home(home.path(), &["agent"]);
+    assert_ok(&["agent"], &agents);
+    let one = run_home(home.path(), &["agent", "build"]);
+    assert_ok(&["agent", "build"], &one);
+    let missing = run_home(home.path(), &["agent", "no-such-agent"]);
+    assert_ok(&["agent", "no-such-agent"], &missing);
+    assert!(
+        String::from_utf8_lossy(&missing.stderr).contains("not found")
+            || String::from_utf8_lossy(&missing.stdout).contains("Available")
+    );
+
+    let plugins = run_home(home.path(), &["plugins"]);
+    assert_ok(&["plugins"], &plugins);
+    assert!(
+        String::from_utf8_lossy(&plugins.stdout).contains("plugin"),
+        "{}",
+        String::from_utf8_lossy(&plugins.stdout)
+    );
+}
+
+#[test]
+fn test_session_view_delete_missing_and_memory_roundtrip() {
+    let home = tempfile::tempdir().unwrap();
+
+    let view = run_home(home.path(), &["session", "view", "nope"]);
+    assert_ok(&["session", "view", "nope"], &view);
+    assert!(
+        String::from_utf8_lossy(&view.stderr).contains("not found")
+            || String::from_utf8_lossy(&view.stdout).contains("not found")
+    );
+    let del = run_home(home.path(), &["session", "delete", "nope"]);
+    assert_ok(&["session", "delete", "nope"], &del);
+
+    let path = run_home(home.path(), &["memory", "path"]);
+    assert_ok(&["memory", "path"], &path);
+
+    let list = run_home(home.path(), &["memory", "list"]);
+    assert_ok(&["memory", "list"], &list);
+    assert!(
+        String::from_utf8_lossy(&list.stdout).contains("No memories"),
+        "{}",
+        String::from_utf8_lossy(&list.stdout)
+    );
+
+    let add = run_home(
+        home.path(),
+        &["memory", "add", "always run cargo test after edits"],
+    );
+    assert_ok(&["memory", "add"], &add);
+
+    let search = run_home(home.path(), &["memory", "search", "cargo test"]);
+    assert_ok(&["memory", "search"], &search);
+
+    let export = run_home(home.path(), &["memory", "export"]);
+    assert_ok(&["memory", "export"], &export);
+    assert!(
+        String::from_utf8_lossy(&export.stdout).contains("always run cargo"),
+        "{}",
+        String::from_utf8_lossy(&export.stdout)
+    );
+
+    let del_mem = run_home(home.path(), &["memory", "delete", "zzzzzzzz"]);
+    assert_ok(&["memory", "delete"], &del_mem);
+
+    let clear = run_home(home.path(), &["memory", "clear"]);
+    assert_ok(&["memory", "clear"], &clear);
+}
+
+#[test]
+fn test_pr_and_github_degrade_without_gh() {
+    let home = tempfile::tempdir().unwrap();
+    // PATH without `gh` so we hit the fallback print, not a real GitHub call.
+    // Empty PATH so we never invoke a real `gh`.
+    let empty_path = home.path();
+    let o = Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(["pr", "--title", "t", "--base", "main"])
+        .env("WHYCODE_HOME", home.path())
+        .env("HOME", home.path())
+        .env("PATH", empty_path)
+        .current_dir(home.path())
+        .output()
+        .expect("pr");
+    assert_ok(&["pr"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("pull request") || s.contains("GitHub CLI") || s.contains("gh pr"),
+        "{s}"
+    );
+
+    let gh = Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(["github", "pr", "list"])
+        .env("WHYCODE_HOME", home.path())
+        .env("HOME", home.path())
+        .env("PATH", empty_path)
+        .current_dir(home.path())
+        .output()
+        .expect("github pr");
+    assert_ok(&["github", "pr", "list"], &gh);
+
+    let view = Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(["github", "pr", "view", "1"])
+        .env("WHYCODE_HOME", home.path())
+        .env("HOME", home.path())
+        .env("PATH", empty_path)
+        .current_dir(home.path())
+        .output()
+        .expect("github view");
+    assert_ok(&["github", "pr", "view"], &view);
+}

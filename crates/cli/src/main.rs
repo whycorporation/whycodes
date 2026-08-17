@@ -4751,4 +4751,14 @@ mod tests {
         assert_eq!(with_bank.agent_bank.as_deref(), Some("build"));
         assert_eq!(base.enabled, with_bank.enabled);
     }
+
+    #[test]
+    fn headless_setup_error_is_always_err() {
+        let err = emit_headless_setup_error(OutputFormat::Text, "missing key").unwrap_err();
+        assert!(err.to_string().contains("missing key"));
+        let err = emit_headless_setup_error(OutputFormat::Json, "empty prompt").unwrap_err();
+        assert!(err.to_string().contains("empty prompt"));
+        let err = emit_headless_setup_error(OutputFormat::StreamJson, "nope").unwrap_err();
+        assert!(err.to_string().contains("nope"));
+    }
 }

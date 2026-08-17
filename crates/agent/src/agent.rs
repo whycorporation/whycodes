@@ -3705,4 +3705,194 @@ mod permission_detail_tests {
         );
         assert_eq!(m.agent_bank, None);
     }
+
+    fn test_agent() -> Agent {
+        Agent::new(whycode_core::types::AgentInfo {
+            name: "build".into(),
+            description: "t".into(),
+            mode: whycode_core::types::AgentMode::Primary,
+            permission: PermissionSet {
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                ..Default::default()
+            },
+            model: None,
+            system_prompt: Some("sys".into()),
+            temperature: None,
+            top_p: None,
+        })
+    }
+
+    fn tc(name: &str, args: serde_json::Value) -> ToolCall {
+        ToolCall {
+            id: "t1".into(),
+            name: name.into(),
+            arguments: args,
+        }
+    }
+
+    #[test]
+    fn race_partner_off_auto_and_unknown() {
+        let mut a = test_agent();
+        a.model_race = "off".into();
+        assert!(a.race_partner("anthropic", "claude").is_none());
+        a.model_race = "none".into();
+        assert!(a.race_partner("anthropic", "claude").is_none());
+        a.model_race = "auto".into();
+        // Default registry has anthropic; auto may pick a sibling or none
+        // if resolve returns the same pair.
+        let _ = a.race_partner("anthropic", "claude-sonnet-4-20250514");
+        a.model_race = "openai/gpt-4o".into();
+        let partner = a.race_partner("anthropic", "claude");
+        assert!(
+            partner
+                .as_ref()
+                .is_some_and(|(p, m)| p == "openai" && m.contains("gpt")),
+            "{partner:?}"
+        );
+        a.model_race = "not-a-provider/x".into();
+        assert!(a.race_partner("anthropic", "claude").is_none());
+    }
+
+    #[test]
+    fn tool_context_uses_session_cwd_and_strips_network() {
+        let mut a = test_agent();
+        a.info.permission.allow_network = false;
+        let session = whycode_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let ctx = a.tool_context(&session);
+        assert_eq!(ctx.working_dir, "/tmp/proj");
+        assert!(!ctx.sandbox.network);
+        assert_eq!(ctx.session_id.as_deref(), Some(session.id.as_str()));
+
+        if let Ok(mut g) = a.cwd_override.lock() {
+            *g = Some(std::path::PathBuf::from("/tmp/wt"));
+        }
+        let ctx2 = a.tool_context(&session);
+        assert_eq!(ctx2.working_dir, "/tmp/wt");
+    }
+
+    #[test]
+    fn execute_bg_tool_list_read_kill_and_unknown() {
+        let a = test_agent();
+        let list = a.execute_bg_tool(&tc("bg", json!({"action": "list"})));
+        assert!(!list.is_error);
+        assert!(list.content.contains("No background jobs"), "{list:?}");
+
+        let read = a.execute_bg_tool(&tc("bg", json!({"action": "read"})));
+        assert!(read.is_error);
+        assert!(read.content.contains("requires `id`"), "{read:?}");
+
+        let kill = a.execute_bg_tool(&tc("bg", json!({"action": "kill"})));
+        assert!(kill.is_error);
+
+        let missing = a.execute_bg_tool(&tc("bg", json!({"action": "read", "id": "nope"})));
+        assert!(missing.is_error);
+
+        let unk = a.execute_bg_tool(&tc("bg", json!({"action": "explode"})));
+        assert!(unk.is_error);
+        assert!(unk.content.contains("unknown bg action"), "{unk:?}");
+    }
+
+    #[test]
+    fn execute_tool_search_list_select_and_query() {
+        let a = test_agent();
+        let listed = a.execute_tool_search(&tc("tool_search", json!({"action": "list"})));
+        assert!(!listed.is_error);
+        assert!(listed.content.contains("Deferred catalogue"), "{listed:?}");
+
+        let empty = a.execute_tool_search(&tc("tool_search", json!({})));
+        assert!(empty.is_error);
+        assert!(empty.content.contains("requires `query`"), "{empty:?}");
+
+        let sel_empty = a.execute_tool_search(&tc("tool_search", json!({"action": "select"})));
+        assert!(sel_empty.is_error);
+
+        let sel = a.execute_tool_search(&tc(
+            "tool_search",
+            json!({"action": "select", "query": "github_pr,nope"}),
+        ));
+        assert!(sel.content.contains("github_pr") || sel.content.contains("Unknown"));
+        assert!(
+            a.activated_tools_snapshot()
+                .iter()
+                .any(|n| n.contains("github") || n.contains("pr"))
+                || sel.content.contains("Unknown")
+        );
+
+        let hits = a.execute_tool_search(&tc(
+            "tool_search",
+            json!({"query": "github", "max_results": 3}),
+        ));
+        assert!(!hits.is_error);
+        assert!(
+            hits.content.contains("Matches") || hits.content.contains("No deferred"),
+            "{hits:?}"
+        );
+
+        let none = a.execute_tool_search(&tc(
+            "tool_search",
+            json!({"query": "zzzz-no-such-tool-xyz"}),
+        ));
+        assert!(!none.is_error);
+        assert!(none.content.contains("No deferred"), "{none:?}");
+    }
+
+    #[test]
+    fn execute_worktree_tool_validation_and_list() {
+        let a = test_agent();
+        let dir = tempfile::tempdir().unwrap();
+        let session =
+            whycode_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+
+        let unk = a.execute_worktree_tool(&tc("worktree", json!({"action": "nope"})), &session);
+        assert!(unk.is_error);
+        assert!(unk.content.contains("unknown worktree"), "{unk:?}");
+
+        let bad_create = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "create", "name": "a/b"})),
+            &session,
+        );
+        assert!(bad_create.is_error);
+
+        let not_git = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "create", "name": "ok"})),
+            &session,
+        );
+        assert!(not_git.is_error);
+        assert!(not_git.content.contains("not a git"), "{not_git:?}");
+
+        let listed = a.execute_worktree_tool(&tc("worktree", json!({"action": "list"})), &session);
+        assert!(!listed.is_error);
+        assert!(listed.content.contains("Worktrees"), "{listed:?}");
+
+        let enter = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "enter", "name": "missing"})),
+            &session,
+        );
+        assert!(enter.is_error);
+
+        let exit = a.execute_worktree_tool(&tc("worktree", json!({"action": "exit"})), &session);
+        assert!(!exit.is_error);
+        assert!(exit.content.contains("No worktree cwd"), "{exit:?}");
+
+        let rm = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "remove", "name": "??"})),
+            &session,
+        );
+        assert!(rm.is_error);
+    }
+
+    #[test]
+    fn builder_chain_sets_profile_and_fast_model() {
+        let mut config = whycode_config::Config::default();
+        config.session.model_fast = Some("haiku".into());
+        let a = test_agent()
+            .with_tool_profile(whycode_tools::ToolProfile::Full)
+            .with_config(&config);
+        assert_eq!(a.model_fast(), Some("haiku"));
+        assert!(a.activated_tools_snapshot().is_empty());
+        assert!(a.cwd_override_path().is_none());
+        assert!(a.session_claims().is_none());
+    }
 }
