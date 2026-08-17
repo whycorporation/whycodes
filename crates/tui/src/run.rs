@@ -746,20 +746,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Dashboard / picker: rebuild only when rows actually change.
             // Unconditional mark_dirty here used to lock the idle poll at
             // 40 ms (~25 fps full paints) for as long as the dialog stayed open.
-            if matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
-                let cursor = app.sessions_cursor;
-                let changed = refresh_sessions_rows(&mut app, &rt, &runtimes);
-                let clamped = cursor.min(app.sessions_rows.len().saturating_sub(1));
-                if changed || clamped != app.sessions_cursor {
-                    app.sessions_cursor = clamped;
-                    app.mark_dirty();
-                }
-            }
-            if matches!(app.dialogs.active(), Some(DialogKind::SessionList))
-                && refresh_picker_live_section(&mut app, &rt, &runtimes)
-            {
-                app.mark_dirty();
-            }
+            refresh_live_session_ui(&mut app, &rt, &runtimes);
 
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
@@ -839,13 +826,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 app.mark_dirty();
             }
 
-            // Spinner while generating (generic status only)
-            if (rt.agent_busy || app.running_subagent_count() > 0)
-                && !matches!(
-                    app.current_agent_state,
-                    AgentState::WaitingForPermission | AgentState::WaitingForQuestion
-                )
-            {
+            if should_tick_spinner(&app, rt.agent_busy) {
                 tick_spinner(&mut app, &mut spinner_frame);
             }
 
@@ -874,34 +855,29 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Cooperative cancel covers stream/tools via select!. This is the
             // hard backstop for spawn_blocking shells / wedged HTTP that never
             // yield: abort the join handle and restore rt.agent/rt.session.
-            if rt.agent_busy
-                && let Some(since) = cancel_requested_at
-            {
-                let force = since.elapsed() >= CANCEL_FORCE_AFTER || app.pending_cancel; // second [stop] while cancelling
-                if force {
-                    app.pending_cancel = false;
-                    force_stop_turn(
-                        &mut app,
-                        &mut rt.agent,
-                        &mut rt.session,
-                        &mut rt.agent_busy,
-                        &mut rt.cancel_flag,
-                        &mut cancel_requested_at,
-                        &mut rt.turn_join,
-                        &mut rt.session_backup,
-                        &mut rt.pending_question_queue,
-                        &mut rt.pending_perm_queue,
-                        &mut rt.done_rx,
-                        &config,
-                        &project_dir,
-                        &provider,
-                        &model,
-                        rt.event_tx.clone(),
-                        Arc::clone(&rt.perm_prompter),
-                        Arc::clone(&rt.question_prompter),
-                        &file_index,
-                    );
-                }
+            if should_force_stop(rt.agent_busy, cancel_requested_at, app.pending_cancel) {
+                app.pending_cancel = false;
+                force_stop_turn(
+                    &mut app,
+                    &mut rt.agent,
+                    &mut rt.session,
+                    &mut rt.agent_busy,
+                    &mut rt.cancel_flag,
+                    &mut cancel_requested_at,
+                    &mut rt.turn_join,
+                    &mut rt.session_backup,
+                    &mut rt.pending_question_queue,
+                    &mut rt.pending_perm_queue,
+                    &mut rt.done_rx,
+                    &config,
+                    &project_dir,
+                    &provider,
+                    &model,
+                    rt.event_tx.clone(),
+                    Arc::clone(&rt.perm_prompter),
+                    Arc::clone(&rt.question_prompter),
+                    &file_index,
+                );
             }
 
             // ── Turn finished ─────────────────────────────────────────
@@ -3181,6 +3157,42 @@ enum BusyCtrlC {
     ClearedDraft,
     BeginCancel,
     ForceStop,
+}
+
+fn refresh_live_session_ui(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+    if matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
+        let cursor = app.sessions_cursor;
+        let changed = refresh_sessions_rows(app, rt, runtimes);
+        let clamped = cursor.min(app.sessions_rows.len().saturating_sub(1));
+        if changed || clamped != app.sessions_cursor {
+            app.sessions_cursor = clamped;
+            app.mark_dirty();
+        }
+    }
+    if matches!(app.dialogs.active(), Some(DialogKind::SessionList))
+        && refresh_picker_live_section(app, rt, runtimes)
+    {
+        app.mark_dirty();
+    }
+}
+
+fn should_tick_spinner(app: &TuiApp, agent_busy: bool) -> bool {
+    (agent_busy || app.running_subagent_count() > 0)
+        && !matches!(
+            app.current_agent_state,
+            AgentState::WaitingForPermission | AgentState::WaitingForQuestion
+        )
+}
+
+fn should_force_stop(
+    agent_busy: bool,
+    cancel_requested_at: Option<Instant>,
+    pending_cancel: bool,
+) -> bool {
+    agent_busy
+        && cancel_requested_at
+            .map(|since| since.elapsed() >= CANCEL_FORCE_AFTER || pending_cancel)
+            .unwrap_or(false)
 }
 
 fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
@@ -8105,6 +8117,29 @@ mod tests {
         apply_dashboard_switch(&mut app, &mut rt, &mut runtimes, &mut mru, 9);
         apply_dashboard_switch(&mut app, &mut rt, &mut runtimes, &mut mru, 0);
         assert_eq!(mru, vec![0]);
+
+        assert!(!should_tick_spinner(&app, false));
+        assert!(should_tick_spinner(&app, true));
+        app.current_agent_state = AgentState::WaitingForPermission;
+        assert!(!should_tick_spinner(&app, true));
+        app.current_agent_state = AgentState::Idle;
+        assert!(!should_force_stop(false, Some(Instant::now()), true));
+        assert!(!should_force_stop(true, None, true));
+        assert!(should_force_stop(true, Some(Instant::now()), true));
+        assert!(!should_force_stop(true, Some(Instant::now()), false));
+
+        crate::input::open_dialog(&mut app, DialogKind::Sessions);
+        let rt = test_runtime();
+        refresh_live_session_ui(&mut app, &rt, &[]);
+        assert!(!app.sessions_rows.is_empty());
+        crate::input::open_dialog(&mut app, DialogKind::SessionList);
+        refresh_live_session_ui(&mut app, &rt, &[]);
+        assert!(
+            app.session_list
+                .sessions
+                .iter()
+                .any(|e| e.live == Some(usize::MAX))
+        );
     }
 
     #[tokio::test]
