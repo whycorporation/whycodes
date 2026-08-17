@@ -75,6 +75,20 @@ pub enum TurnEvent {
         to: String,
         text: String,
     },
+    /// Subagent lifecycle for the parent TUI (Grok-style strip / tasks pane).
+    Subagent {
+        id: String,
+        /// `explore` / `general` / swarm worker type.
+        kind: String,
+        description: String,
+        /// `running` | `completed` | `failed` | `cancelled`
+        status: String,
+        /// Live activity suffix (`Thinking`, `Running: cargo test`).
+        activity: String,
+        elapsed_ms: u64,
+        /// Child transcript (filled when the child finishes).
+        output: String,
+    },
     /// A reader opened a file another agent wrote.
     FileStale {
         path: String,

@@ -443,15 +443,17 @@ pub enum SidebarTab {
     Mcp,
     Todos,
     Preview,
+    Agents,
 }
 
 impl SidebarTab {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Files,
         Self::Diagnostics,
         Self::Mcp,
         Self::Todos,
         Self::Preview,
+        Self::Agents,
     ];
 
     pub fn next(self) -> Self {
@@ -471,6 +473,7 @@ impl SidebarTab {
             Self::Mcp => "MCP",
             Self::Todos => "Todos",
             Self::Preview => "View",
+            Self::Agents => "Agents",
         }
     }
 }
@@ -657,6 +660,98 @@ pub enum ChatBlock {
         content: String,
         is_error: bool,
     },
+    /// Compact Grok-style subagent lifecycle row in the parent scrollback.
+    Subagent {
+        id: String,
+        kind: String,
+        description: String,
+        status: String,
+        activity: String,
+        elapsed_ms: u64,
+    },
+}
+
+/// Payload for [`TuiApp::upsert_subagent`].
+#[derive(Debug, Clone)]
+pub struct SubagentUpdate {
+    pub id: String,
+    pub kind: String,
+    pub description: String,
+    pub status: String,
+    pub activity: String,
+    pub elapsed_ms: u64,
+    pub output: String,
+}
+
+/// One child session shown in the top strip / tasks pane / framed view.
+#[derive(Debug, Clone)]
+pub struct SubagentUi {
+    pub id: String,
+    pub kind: String,
+    pub description: String,
+    /// `running` | `completed` | `failed` | `cancelled`
+    pub status: String,
+    pub activity: String,
+    pub started_at: Instant,
+    pub elapsed_ms: u64,
+    pub output: String,
+}
+
+impl SubagentUi {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    pub fn bullet(&self, spin: usize) -> &'static str {
+        if self.is_running() {
+            const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            FRAMES[spin % FRAMES.len()]
+        } else if self.status == "completed" {
+            "✓"
+        } else {
+            "✗"
+        }
+    }
+
+    pub fn headline(&self) -> String {
+        let desc = truncate_mid(&self.description, 48);
+        let head = format!("Subagent {}: \"{desc}\" ({})", self.verb(), self.kind);
+        if self.is_running() && !self.activity.is_empty() {
+            format!("{head} — {}", self.activity)
+        } else if !self.is_running() && self.elapsed_ms > 0 {
+            format!("{head} in {:.1}s", self.elapsed_ms as f64 / 1000.0)
+        } else {
+            head
+        }
+    }
+
+    fn verb(&self) -> &'static str {
+        match self.status.as_str() {
+            "running" => "running",
+            "completed" => "completed",
+            "failed" => "failed",
+            "cancelled" => "cancelled",
+            _ => "started",
+        }
+    }
+}
+
+fn truncate_mid(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        return s.to_string();
+    }
+    let keep = max.saturating_sub(1) / 2;
+    let start: String = s.chars().take(keep).collect();
+    let end: String = s
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect();
+    format!("{start}…{end}")
 }
 
 /// One reasoning segment with lifecycle (Grok-style Thought for Xs).
@@ -1207,6 +1302,12 @@ pub struct TuiApp {
     pub turn_usage: Option<whycode_core::types::Usage>,
     /// Mouse `[stop]` (or future UI) requested cancel — run loop consumes this.
     pub pending_cancel: bool,
+    /// Live + finished child sessions (Grok tasks pane / top strip).
+    pub subagents: Vec<SubagentUi>,
+    /// When set, the framed child transcript overlays the parent session.
+    pub open_subagent: Option<String>,
+    /// Last-paint hit boxes for the top subagent strip (click to open).
+    pub subagent_strip_hit: Vec<(Rect, String)>,
 }
 
 /// Drag selection over the terminal grid (absolute cell coordinates).
@@ -1628,7 +1729,116 @@ impl TuiApp {
             turn_started_at: None,
             turn_usage: None,
             pending_cancel: false,
+            subagents: Vec::new(),
+            open_subagent: None,
+            subagent_strip_hit: Vec::new(),
         }
+    }
+
+    /// Insert or update a child session and its scrollback lifecycle block.
+    pub fn upsert_subagent(&mut self, update: SubagentUpdate) {
+        let SubagentUpdate {
+            id,
+            kind,
+            description,
+            status,
+            activity,
+            elapsed_ms,
+            output,
+        } = update;
+        if let Some(row) = self.subagents.iter_mut().find(|s| s.id == id) {
+            row.kind = kind.clone();
+            row.description = description.clone();
+            row.status = status.clone();
+            row.activity = activity.clone();
+            row.elapsed_ms = elapsed_ms;
+            if !output.is_empty() {
+                row.output = output;
+            }
+        } else {
+            self.subagents.push(SubagentUi {
+                id: id.clone(),
+                kind: kind.clone(),
+                description: description.clone(),
+                status: status.clone(),
+                activity: activity.clone(),
+                started_at: Instant::now(),
+                elapsed_ms,
+                output,
+            });
+        }
+
+        let mut found = false;
+        for msg in self.messages.iter_mut().rev() {
+            for block in &mut msg.blocks {
+                if let ChatBlock::Subagent {
+                    id: bid,
+                    kind: k,
+                    description: d,
+                    status: st,
+                    activity: act,
+                    elapsed_ms: el,
+                } = block
+                    && *bid == id
+                {
+                    *k = kind.clone();
+                    *d = description.clone();
+                    *st = status.clone();
+                    *act = activity.clone();
+                    *el = elapsed_ms;
+                    msg.invalidate_layout();
+                    found = true;
+                    break;
+                }
+            }
+            if found {
+                break;
+            }
+        }
+        if !found {
+            let mut msg = ChatMessage::blank(ChatRole::System, String::new());
+            msg.blocks.push(ChatBlock::Subagent {
+                id,
+                kind,
+                description,
+                status,
+                activity,
+                elapsed_ms,
+            });
+            self.messages.push(msg);
+        }
+        self.mark_dirty();
+    }
+
+    pub fn running_subagent_count(&self) -> usize {
+        self.subagents.iter().filter(|s| s.is_running()).count()
+    }
+
+    pub fn has_subagent_strip(&self) -> bool {
+        !self.subagents.is_empty()
+    }
+
+    pub fn open_subagent_view(&mut self, id: &str) {
+        if self.subagents.iter().any(|s| s.id == id) {
+            self.open_subagent = Some(id.to_string());
+            self.mark_dirty();
+        }
+    }
+
+    pub fn close_subagent_view(&mut self) {
+        if self.open_subagent.take().is_some() {
+            self.mark_dirty();
+        }
+    }
+
+    pub fn toggle_tasks_pane(&mut self) {
+        if self.sidebar.visible && self.sidebar.active_tab == SidebarTab::Agents {
+            self.sidebar.visible = false;
+        } else {
+            self.sidebar.visible = true;
+            self.sidebar.active_tab = SidebarTab::Agents;
+        }
+        self.mark_dirty();
     }
 
     /// Refresh `git_branch` from the working tree (cheap; call on start / idle).
@@ -2253,6 +2463,14 @@ impl TuiApp {
                 ChatBlock::ToolResult { content, .. } => {
                     text.push('\n');
                     text.push_str(content);
+                }
+                ChatBlock::Subagent {
+                    kind,
+                    description,
+                    status,
+                    ..
+                } => {
+                    text.push_str(&format!("\n\n[subagent {status} {kind}] {description}"));
                 }
                 _ => {}
             }

@@ -531,7 +531,8 @@ pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
         TurnEvent::EnqueuePrompt { .. }
         | TurnEvent::Panel(_)
         | TurnEvent::SwarmMessage { .. }
-        | TurnEvent::FileStale { .. } => return None,
+        | TurnEvent::FileStale { .. }
+        | TurnEvent::Subagent { .. } => return None,
     })
 }
 

@@ -64,7 +64,16 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         SidebarTab::Mcp => render_mcp(frame, inner, app, palette),
         SidebarTab::Todos => render_todos(frame, inner, app, palette),
         SidebarTab::Preview => render_preview(frame, inner, app, palette),
+        SidebarTab::Agents => render_agents(frame, inner, app, palette),
     }
+}
+
+fn render_agents(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+    let lines = super::subagents::agent_lines(app, palette);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 fn render_files(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
@@ -260,6 +269,26 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    #[test]
+    fn agents_tab_lists_subagents() {
+        let mut app = TuiApp::new(cfg());
+        app.sidebar.active_tab = SidebarTab::Agents;
+        app.upsert_subagent(crate::app::SubagentUpdate {
+            id: "t1".into(),
+            kind: "explore".into(),
+            description: "look around".into(),
+            status: "running".into(),
+            activity: "Thinking".into(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        let palette = app.config.palette();
+        let text = paint(60, 12, |f| render(f, f.area(), &app, &palette));
+        assert!(text.contains("Agents"), "{text}");
+        assert!(text.contains("explore"), "{text}");
+        assert!(text.contains("look around"), "{text}");
     }
 
     #[test]

@@ -1968,7 +1968,7 @@ impl Agent {
         }
 
         let result = if tc.name == "task" {
-            self.execute_task_tool(tc, session, provider_name, model, api_key)
+            self.execute_task_tool(tc, session, provider_name, model, api_key, events)
                 .await
         } else if tc.name == "swarm" {
             self.execute_swarm_tool(tc, session, provider_name, model, api_key, events)
@@ -2960,6 +2960,19 @@ impl Agent {
                 }
 
                 let t0 = Instant::now();
+                if let Some(ref tx) = events_tx
+                    && let Err(e) = tx.send(TurnEvent::Subagent {
+                        id: worker_id.clone(),
+                        kind: spec.subagent_type.clone(),
+                        description: spec.goal.clone(),
+                        status: "running".into(),
+                        activity: "Thinking".into(),
+                        elapsed_ms: 0,
+                        output: String::new(),
+                    })
+                {
+                    tracing::debug!(error = %e, "subagent running event dropped");
+                }
                 let result = runner.run(task, &pn, &m, &ak).await;
                 let secs = t0.elapsed().as_secs_f64();
                 claims.release_agent(&worker_id);
@@ -2972,6 +2985,19 @@ impl Agent {
                         whycode_core::types::Usage::default(),
                     ),
                 };
+                if let Some(ref tx) = events_tx
+                    && let Err(e) = tx.send(TurnEvent::Subagent {
+                        id: worker_id.clone(),
+                        kind: spec.subagent_type.clone(),
+                        description: spec.goal.clone(),
+                        status: if success { "completed" } else { "failed" }.into(),
+                        activity: String::new(),
+                        elapsed_ms: (secs * 1000.0) as u64,
+                        output: body.clone(),
+                    })
+                {
+                    tracing::debug!(error = %e, "subagent finished event dropped");
+                }
 
                 (
                     worker_id,
@@ -3091,6 +3117,7 @@ impl Agent {
         provider_name: &str,
         model: &str,
         api_key: &str,
+        events: Option<&EventSink>,
     ) -> whycode_core::types::ToolResult {
         use whycode_core::types::{AgentMode, PermissionSet, ToolResult};
 
@@ -3194,6 +3221,21 @@ impl Agent {
         .with_file_index(self.file_index.clone())
         .with_panel(self.panel_sink());
 
+        let child_id = format!("task-{}", call.id);
+        let started = std::time::Instant::now();
+        emit(
+            &events.cloned(),
+            TurnEvent::Subagent {
+                id: child_id.clone(),
+                kind: subagent_type.to_string(),
+                description: goal.clone(),
+                status: "running".into(),
+                activity: "Thinking".into(),
+                elapsed_ms: 0,
+                output: String::new(),
+            },
+        );
+
         match runner.run(task, provider_name, model, api_key).await {
             Ok(result) => {
                 if !result.usage.is_empty()
@@ -3209,6 +3251,23 @@ impl Agent {
                         result.usage.input_tokens, result.usage.output_tokens
                     )
                 };
+                let status = if result.success {
+                    "completed"
+                } else {
+                    "failed"
+                };
+                emit(
+                    &events.cloned(),
+                    TurnEvent::Subagent {
+                        id: child_id,
+                        kind: subagent_type.to_string(),
+                        description: goal.clone(),
+                        status: status.into(),
+                        activity: String::new(),
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        output: result.output.clone(),
+                    },
+                );
                 ToolResult {
                     tool_call_id: call.id.clone(),
                     content: if result.success {
@@ -3227,11 +3286,25 @@ impl Agent {
                     is_error: !result.success,
                 }
             }
-            Err(e) => ToolResult {
-                tool_call_id: call.id.clone(),
-                content: format!("Failed to run subagent: {}", e),
-                is_error: true,
-            },
+            Err(e) => {
+                emit(
+                    &events.cloned(),
+                    TurnEvent::Subagent {
+                        id: child_id,
+                        kind: subagent_type.to_string(),
+                        description: goal.clone(),
+                        status: "failed".into(),
+                        activity: String::new(),
+                        elapsed_ms: started.elapsed().as_millis() as u64,
+                        output: e.to_string(),
+                    },
+                );
+                ToolResult {
+                    tool_call_id: call.id.clone(),
+                    content: format!("Failed to run subagent: {}", e),
+                    is_error: true,
+                }
+            }
         }
     }
 

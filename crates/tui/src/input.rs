@@ -87,6 +87,16 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
 
     let ctx = app.key_context;
 
+    if app.open_subagent.is_some()
+        && matches!(key.code, KeyCode::Char('q') | KeyCode::Esc)
+        && !key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        app.close_subagent_view();
+        return true;
+    }
+
     // If dialog mode, route to dialog handler first.
     if ctx == KeymapContext::Dialog {
         return handle_dialog_key(app, &key);
@@ -205,6 +215,10 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             app.toggle_focus();
             true
         }
+        Some(Action::FocusPrompt) if selected_subagent_id(app).is_some() => {
+            open_selected_subagent(app);
+            true
+        }
         Some(Action::FocusPrompt) => {
             app.focus_prompt();
             true
@@ -261,6 +275,14 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         Some(Action::ToggleSidebar) => {
             app.sidebar.visible = !app.sidebar.visible;
             app.mark_dirty();
+            true
+        }
+        Some(Action::ToggleTasksPane) => {
+            app.toggle_tasks_pane();
+            true
+        }
+        Some(Action::OpenSubagent) => {
+            open_selected_subagent(app);
             true
         }
         Some(Action::SidebarNextTab) => {
@@ -407,7 +429,31 @@ fn is_bare_slash_draft(buf: &str) -> bool {
 ///
 /// Cancel-while-busy is owned by the run loop (has the CancelFlag); here we
 /// only handle idle clear / mode exit. Slash + help still steal Esc.
+fn selected_subagent_id(app: &TuiApp) -> Option<String> {
+    let idx = app.selected_msg?;
+    let msg = app.messages.get(idx)?;
+    for block in &msg.blocks {
+        if let crate::app::ChatBlock::Subagent { id, .. } = block {
+            return Some(id.clone());
+        }
+    }
+    None
+}
+
+fn open_selected_subagent(app: &mut TuiApp) {
+    if let Some(id) = selected_subagent_id(app) {
+        app.open_subagent_view(&id);
+    } else if let Some(row) = app.subagents.last() {
+        let id = row.id.clone();
+        app.open_subagent_view(&id);
+    }
+}
+
 fn handle_escape(app: &mut TuiApp) {
+    if app.open_subagent.is_some() {
+        app.close_subagent_view();
+        return;
+    }
     // 0. Steal: an in-flight OAuth paste-code login is cancelled first.
     if app.auth_code_sink.take().is_some() {
         app.status_message = "sign-in cancelled".into();
@@ -672,6 +718,21 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            if let Some(id) = app
+                .subagent_strip_hit
+                .iter()
+                .find(|(r, _)| {
+                    mouse.column >= r.x
+                        && mouse.column < r.x.saturating_add(r.width)
+                        && mouse.row >= r.y
+                        && mouse.row < r.y.saturating_add(r.height)
+                })
+                .map(|(_, id)| id.clone())
+            {
+                app.open_subagent_view(&id);
+                app.mouse_sel = None;
+                return true;
+            }
             // Turn-status [stop] → cancel current agent turn.
             if app.turn_stop_hit.contains(mouse.column, mouse.row) && app.is_busy() {
                 app.pending_cancel = true;
