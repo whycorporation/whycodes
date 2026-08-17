@@ -684,6 +684,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let bench = crate::bench::config_from_env();
 
     let mut first_frame = true;
+    // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
+    let mut last_user_input = Instant::now();
+    let mut idle_trim_armed = true;
     let result = async {
         'main: loop {
             // ── Drain background sessions into their own view snapshots ──
@@ -723,10 +726,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 app.mark_dirty();
             }
 
-            // Animation paths that do not arrive as terminal events still need
-            // periodic paints (spinner, toast stack). Idle with a clean flag
-            // skips the draw entirely → 0 idle redraws/s.
-            let animate = rt.agent_busy || !app.toasts.is_empty();
+            // Animation = glyphs that change every frame (spinner / stream).
+            // Static toasts are *not* animation — jcode measured ~180 wasted
+            // full frames per notice when they pulled the loop to 40 ms.
+            let animate = rt.agent_busy || app.running_subagent_count() > 0;
             if app.needs_redraw || animate || first_frame {
                 let completed = match terminal.draw(|f| render::render(f, &mut app)) {
                     Ok(c) => c,
@@ -915,6 +918,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 };
                 let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
                 app.mark_dirty();
+                // jcode: drop glibc arena pages after the turn's transients die.
+                crate::heap::release_retained_heap("turn_done");
                 match outcome {
                     TurnOutcome::Ok {
                         text,
@@ -1707,24 +1712,29 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Input ─────────────────────────────────────────────────
-            // How long to wait for a keystroke before looping again.
-            //
             // Paint is gated by `needs_redraw` / animation — poll timeout no
-            // longer implies a full redraw. Short timeout while the rt.agent is
-            // busy or toasts are live so spinner / stream / expiry stay snappy;
-            // long timeout when idle so we do not spin the CPU.
+            // longer implies a full redraw. Cadence policy lives in
+            // `redraw_schedule` (jcode: toasts ≠ animation; 30s → 5s deep idle).
             let awaiting_matches = app.file_suggest.awaiting_matches();
-            let idle =
-                !rt.agent_busy && app.toasts.is_empty() && !app.needs_redraw && !awaiting_matches;
-            let poll_for = if awaiting_matches {
-                // Fuzzy workers are mid-rematch: stay near frame cadence so
-                // results land within ~1 frame of being published.
-                Duration::from_millis(16)
-            } else if idle {
-                Duration::from_millis(500)
-            } else {
-                Duration::from_millis(40)
-            };
+            let poll_for =
+                crate::redraw_schedule::poll_interval(&crate::redraw_schedule::RedrawNeed {
+                    agent_busy: rt.agent_busy,
+                    running_subagents: app.running_subagent_count() > 0,
+                    awaiting_matches,
+                    needs_redraw: app.needs_redraw,
+                    toasts_visible: !app.toasts.is_empty(),
+                    since_user_input: last_user_input.elapsed(),
+                });
+            if !rt.agent_busy
+                && last_user_input.elapsed() >= crate::heap::IDLE_TRIM_AFTER
+                && idle_trim_armed
+            {
+                crate::heap::release_retained_heap_debounced(
+                    "client_idle",
+                    crate::heap::IDLE_TRIM_AFTER,
+                );
+                idle_trim_armed = false;
+            }
 
             let has_ev = match event::poll(poll_for) {
                 Ok(v) => v,
@@ -1757,6 +1767,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 };
                 let mut batch = batch;
+                if batch
+                    .iter()
+                    .any(crate::redraw_schedule::event_is_user_interaction)
+                {
+                    last_user_input = Instant::now();
+                    idle_trim_armed = true;
+                }
                 input::coalesce_chat_wheels(&mut app, &mut batch);
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
