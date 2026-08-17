@@ -242,6 +242,7 @@ fn build_inner_request(request: &LlmRequest) -> Value {
                             }));
                         }
                         ContentBlock::Image { .. } => {}
+                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
                     }
                 }
             }

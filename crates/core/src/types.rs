@@ -85,6 +85,36 @@ pub enum ContentBlock {
         content: String,
         is_error: Option<bool>,
     },
+    /// Anthropic / Grok extended thinking. `signature` must be echoed on the
+    /// next turn or the API rejects the history (prompt-cache + interleaved).
+    #[serde(rename = "thinking")]
+    Thinking {
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    /// Opaque redacted thought (`redacted_thinking`). Echo `data` verbatim.
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking {
+        data: String,
+    },
+}
+
+impl ContentBlock {
+    pub fn is_thinking(&self) -> bool {
+        matches!(self, Self::Thinking { .. } | Self::RedactedThinking { .. })
+    }
+}
+
+/// Drop trailing thinking / redacted blocks.
+///
+/// Anthropic: an assistant message must not *end* with thinking.
+pub fn strip_trailing_thinking(blocks: &[ContentBlock]) -> Vec<ContentBlock> {
+    let mut out = blocks.to_vec();
+    while out.last().is_some_and(ContentBlock::is_thinking) {
+        out.pop();
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -133,6 +163,14 @@ pub enum StreamEvent {
     },
     ThinkingDelta {
         text: String,
+    },
+    /// Anthropic `signature_delta` — attach to the open thinking block.
+    ThinkingSignature {
+        signature: String,
+    },
+    /// Anthropic `redacted_thinking` content block.
+    RedactedThinking {
+        data: String,
     },
     MessageStart {
         message: Box<Message>,
@@ -860,6 +898,43 @@ mod tests {
         assert_eq!(deser.role, Role::Assistant);
         assert_eq!(deser.content.as_text(), Some("assistant reply"));
         assert_eq!(deser.name.as_deref(), Some("assistant"));
+    }
+
+    #[test]
+    fn thinking_block_roundtrips_signature() {
+        let b = ContentBlock::Thinking {
+            text: "plan".into(),
+            signature: Some("sig-abc".into()),
+        };
+        let v = serde_json::to_value(&b).unwrap();
+        assert_eq!(v["type"], "thinking");
+        assert_eq!(v["signature"], "sig-abc");
+        let back: ContentBlock = serde_json::from_value(v).unwrap();
+        match back {
+            ContentBlock::Thinking { text, signature } => {
+                assert_eq!(text, "plan");
+                assert_eq!(signature.as_deref(), Some("sig-abc"));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn strip_trailing_thinking_keeps_text_and_tools() {
+        let blocks = vec![
+            ContentBlock::Thinking {
+                text: "a".into(),
+                signature: Some("s".into()),
+            },
+            ContentBlock::Text { text: "hi".into() },
+            ContentBlock::Thinking {
+                text: "orphan".into(),
+                signature: None,
+            },
+        ];
+        let out = strip_trailing_thinking(&blocks);
+        assert_eq!(out.len(), 2);
+        assert!(matches!(out[1], ContentBlock::Text { .. }));
     }
 
     #[test]

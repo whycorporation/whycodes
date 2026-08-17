@@ -88,6 +88,7 @@ fn convert_blocks_message(
     let mut text_parts: Vec<String> = Vec::new();
     let mut image_parts: Vec<Value> = Vec::new();
     let mut tool_calls: Vec<Value> = Vec::new();
+    let mut thinking_parts: Vec<String> = Vec::new();
     // ToolResult inside blocks is rare (usually a Tool-role message); keep as
     // text so the model still sees the payload rather than dropping it.
     let mut extra_text: Vec<String> = Vec::new();
@@ -119,6 +120,14 @@ fn convert_blocks_message(
             } => {
                 extra_text.push(format!("[tool_result {tool_use_id}] {content}"));
             }
+            // Replay as `reasoning_content` (DeepSeek / Grok). Never dump
+            // thoughts into visible `content`.
+            ContentBlock::Thinking { text, .. } => {
+                if !text.is_empty() {
+                    thinking_parts.push(text.clone());
+                }
+            }
+            ContentBlock::RedactedThinking { .. } => {}
         }
     }
 
@@ -130,6 +139,7 @@ fn convert_blocks_message(
         && text.is_empty()
         && tool_calls.is_empty()
         && image_parts.is_empty()
+        && thinking_parts.is_empty()
     {
         return None;
     }
@@ -146,6 +156,7 @@ fn convert_blocks_message(
         Value::Array(parts)
     };
 
+    let empty_string_content = matches!(&content, Value::String(s) if s.is_empty());
     let mut obj = serde_json::json!({
         "role": role_str,
         "content": content,
@@ -154,7 +165,14 @@ fn convert_blocks_message(
     if !tool_calls.is_empty() {
         obj["tool_calls"] = Value::Array(tool_calls);
         // OpenAI allows null content when the turn is tool-calls only.
-        if matches!(content, Value::String(ref s) if s.is_empty()) {
+        if empty_string_content {
+            obj["content"] = Value::Null;
+        }
+    }
+
+    if !thinking_parts.is_empty() {
+        obj["reasoning_content"] = Value::String(thinking_parts.join(""));
+        if empty_string_content {
             obj["content"] = Value::Null;
         }
     }
@@ -208,6 +226,45 @@ pub fn encode_tool_arguments(input: &Value, format: ToolArgumentsFormat) -> Valu
         ToolArgumentsFormat::JsonString => Value::String(obj.to_string()),
         ToolArgumentsFormat::Object => obj,
     }
+}
+
+/// Pull thinking + text + tool_use blocks from a chat-completions `message`.
+pub fn content_blocks_from_chat_message(message: &Value) -> Vec<ContentBlock> {
+    let mut content = Vec::new();
+    for key in ["reasoning_content", "reasoning", "thinking"] {
+        let text = match message.get(key) {
+            Some(Value::String(s)) => s.as_str(),
+            Some(Value::Object(map)) => map.get("content").and_then(|v| v.as_str()).unwrap_or(""),
+            _ => "",
+        };
+        if !text.trim().is_empty() {
+            content.push(ContentBlock::Thinking {
+                text: text.to_string(),
+                signature: None,
+            });
+            break;
+        }
+    }
+    if let Some(text) = message
+        .get("content")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        content.push(ContentBlock::Text {
+            text: text.to_string(),
+        });
+    }
+    if let Some(tool_calls) = message.get("tool_calls").and_then(|v| v.as_array()) {
+        for tc in tool_calls {
+            let func = &tc["function"];
+            content.push(ContentBlock::ToolUse {
+                id: tc["id"].as_str().unwrap_or("").to_string(),
+                name: func["name"].as_str().unwrap_or("").to_string(),
+                input: parse_tool_arguments(&func["arguments"]),
+            });
+        }
+    }
+    content
 }
 
 /// Parse OpenAI-style `function.arguments` into a JSON object.
@@ -535,6 +592,64 @@ mod tests {
             thinking: None,
             use_prompt_cache: true,
         }
+    }
+
+    #[test]
+    fn thinking_blocks_replay_as_reasoning_content() {
+        let req = req_with(vec![Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    text: "plan first".into(),
+                    signature: Some("sig".into()),
+                },
+                ContentBlock::Text {
+                    text: "done".into(),
+                },
+            ]),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }]);
+        let msgs = convert_messages(&req);
+        assert_eq!(msgs[1]["content"].as_str().unwrap(), "done");
+        assert_eq!(msgs[1]["reasoning_content"].as_str().unwrap(), "plan first");
+    }
+
+    #[test]
+    fn thinking_only_assistant_is_kept() {
+        let req = req_with(vec![Message {
+            role: Role::Assistant,
+            content: MessageContent::Blocks(vec![ContentBlock::Thinking {
+                text: "hidden".into(),
+                signature: None,
+            }]),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }]);
+        let msgs = convert_messages(&req);
+        assert_eq!(msgs.len(), 2);
+        assert!(msgs[1]["content"].is_null());
+        assert_eq!(msgs[1]["reasoning_content"].as_str().unwrap(), "hidden");
+    }
+
+    #[test]
+    fn content_blocks_from_chat_message_reads_reasoning() {
+        let message = serde_json::json!({
+            "role": "assistant",
+            "reasoning_content": "think",
+            "content": "hi",
+            "tool_calls": [{
+                "id": "c1",
+                "type": "function",
+                "function": { "name": "read", "arguments": "{\"path\":\"a\"}" }
+            }]
+        });
+        let blocks = content_blocks_from_chat_message(&message);
+        assert!(matches!(&blocks[0], ContentBlock::Thinking { text, .. } if text == "think"));
+        assert!(matches!(&blocks[1], ContentBlock::Text { text } if text == "hi"));
+        assert!(matches!(&blocks[2], ContentBlock::ToolUse { name, .. } if name == "read"));
     }
 
     #[test]

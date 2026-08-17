@@ -38,6 +38,42 @@ fn usage_from_message_delta(event: &Value) -> Option<(u64, u64)> {
     }
 }
 
+fn content_block_to_anthropic(b: &ContentBlock) -> Value {
+    match b {
+        ContentBlock::Text { text } => serde_json::json!({"type": "text", "text": text}),
+        ContentBlock::Image { source } => match source {
+            whycode_core::types::ImageSource::Base64 { media_type, data } => serde_json::json!({
+                "type": "image",
+                "source": {"type": "base64", "media_type": media_type, "data": data}
+            }),
+            _ => serde_json::json!({"type": "text", "text": "[image]"}),
+        },
+        ContentBlock::ToolUse { id, name, input } => {
+            serde_json::json!({"type": "tool_use", "id": id, "name": name, "input": input})
+        }
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+        } => serde_json::json!({
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": content,
+            "is_error": is_error.unwrap_or(false)
+        }),
+        ContentBlock::Thinking { text, signature } => {
+            let mut v = serde_json::json!({"type": "thinking", "thinking": text});
+            if let Some(sig) = signature.as_ref().filter(|s| !s.is_empty()) {
+                v["signature"] = Value::String(sig.clone());
+            }
+            v
+        }
+        ContentBlock::RedactedThinking { data } => {
+            serde_json::json!({"type": "redacted_thinking", "data": data})
+        }
+    }
+}
+
 pub struct AnthropicProvider {
     name: String,
 }
@@ -90,9 +126,7 @@ impl AnthropicProvider {
             body["top_p"] = Value::Number(serde_json::Number::from_f64(top_p as f64).unwrap());
         }
 
-        if request.thinking.is_some() {
-            body["thinking"] = serde_json::json!({"type": "enabled", "budget_tokens": 4000});
-        }
+        crate::thinking::ThinkingConfig::apply_anthropic(&mut body, request.thinking.as_ref());
 
         // OpenCode-parity: last tool + system + latest user message.
         if request.use_prompt_cache {
@@ -108,7 +142,7 @@ impl AnthropicProvider {
     fn convert_messages(&self, messages: &[Message]) -> Vec<Value> {
         messages
             .iter()
-            .map(|m| {
+            .filter_map(|m| {
                 let role = match m.role {
                     whycode_core::types::Role::Assistant => "assistant",
                     whycode_core::types::Role::User => "user",
@@ -116,44 +150,23 @@ impl AnthropicProvider {
                     whycode_core::types::Role::Tool => "user",
                 };
 
-                let content = match &m.content {
+                let content: Vec<Value> = match &m.content {
                     whycode_core::types::MessageContent::Text(text) => {
                         vec![serde_json::json!({"type": "text", "text": text})]
                     }
-                    whycode_core::types::MessageContent::Blocks(blocks) => blocks
-                        .iter()
-                        .map(|b| match b {
-                            ContentBlock::Text { text } => {
-                                serde_json::json!({"type": "text", "text": text})
-                            }
-                            ContentBlock::Image { source } => match source {
-                                whycode_core::types::ImageSource::Base64 {
-                                    media_type,
-                                    data,
-                                } => serde_json::json!({
-                                    "type": "image",
-                                    "source": {"type": "base64", "media_type": media_type, "data": data}
-                                }),
-                                _ => serde_json::json!({"type": "text", "text": "[image]"}),
-                            },
-                            ContentBlock::ToolUse { id, name, input } => serde_json::json!({
-                                "type": "tool_use", "id": id, "name": name, "input": input
-                            }),
-                            ContentBlock::ToolResult {
-                                tool_use_id,
-                                content,
-                                is_error,
-                            } => serde_json::json!({
-                                "type": "tool_result",
-                                "tool_use_id": tool_use_id,
-                                "content": content,
-                                "is_error": is_error.unwrap_or(false)
-                            }),
-                        })
-                        .collect(),
+                    whycode_core::types::MessageContent::Blocks(blocks) => {
+                        let wire = if m.role == whycode_core::types::Role::Assistant {
+                            whycode_core::types::strip_trailing_thinking(blocks)
+                        } else {
+                            blocks.clone()
+                        };
+                        wire.iter().map(content_block_to_anthropic).collect()
+                    }
                 };
-
-                serde_json::json!({"role": role, "content": content})
+                if content.is_empty() {
+                    return None;
+                }
+                Some(serde_json::json!({"role": role, "content": content}))
             })
             .collect()
     }
@@ -226,6 +239,13 @@ impl LlmProvider for AnthropicProvider {
                                 id: b["id"].as_str().unwrap_or("").to_string(),
                                 name: b["name"].as_str().unwrap_or("").to_string(),
                                 input: b["input"].clone(),
+                            },
+                            "thinking" => ContentBlock::Thinking {
+                                text: b["thinking"].as_str().unwrap_or("").to_string(),
+                                signature: b["signature"].as_str().map(str::to_string),
+                            },
+                            "redacted_thinking" => ContentBlock::RedactedThinking {
+                                data: b["data"].as_str().unwrap_or("").to_string(),
                             },
                             _ => ContentBlock::Text {
                                 text: "[unknown block]".to_string(),
@@ -350,9 +370,25 @@ impl LlmProvider for AnthropicProvider {
                                                 });
                                             }
                                             Some("thinking") => {
-                                                if let Some(thinking) = block["thinking"].as_str() {
+                                                if let Some(thinking) = block["thinking"].as_str()
+                                                    && !thinking.is_empty()
+                                                {
                                                     yield Ok(StreamEvent::Thinking {
                                                         text: thinking.to_string(),
+                                                    });
+                                                }
+                                                if let Some(sig) = block["signature"].as_str()
+                                                    && !sig.is_empty()
+                                                {
+                                                    yield Ok(StreamEvent::ThinkingSignature {
+                                                        signature: sig.to_string(),
+                                                    });
+                                                }
+                                            }
+                                            Some("redacted_thinking") => {
+                                                if let Some(data) = block["data"].as_str() {
+                                                    yield Ok(StreamEvent::RedactedThinking {
+                                                        data: data.to_string(),
                                                     });
                                                 }
                                             }
@@ -381,6 +417,15 @@ impl LlmProvider for AnthropicProvider {
                                                 if let Some(thinking) = delta["thinking"].as_str() {
                                                     yield Ok(StreamEvent::ThinkingDelta {
                                                         text: thinking.to_string(),
+                                                    });
+                                                }
+                                            }
+                                            Some("signature_delta") => {
+                                                if let Some(sig) = delta["signature"].as_str()
+                                                    && !sig.is_empty()
+                                                {
+                                                    yield Ok(StreamEvent::ThinkingSignature {
+                                                        signature: sig.to_string(),
                                                     });
                                                 }
                                             }

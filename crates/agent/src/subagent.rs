@@ -307,6 +307,8 @@ impl SubagentRunner {
                     StreamEvent::ThinkingDelta { text } => {
                         tracing::debug!("Subagent thinking: {}", text);
                     }
+                    StreamEvent::ThinkingSignature { .. } => {}
+                    StreamEvent::RedactedThinking { .. } => {}
                     StreamEvent::MessageStop => break,
                     // Per-step snapshot fold; added into total_usage after
                     // the stream so multi-step workers still sum.

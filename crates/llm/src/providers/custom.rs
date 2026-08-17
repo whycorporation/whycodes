@@ -6,9 +6,7 @@ use futures::stream::Stream;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::pin::Pin;
-use whycode_core::types::{
-    ContentBlock, LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat,
-};
+use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat};
 
 use crate::provider::LlmProvider;
 
@@ -102,6 +100,8 @@ impl CustomProvider {
             body["top_p"] = Value::Number(serde_json::Number::from_f64(top_p as f64).unwrap());
         }
 
+        crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
+
         body
     }
 
@@ -188,24 +188,7 @@ impl LlmProvider for CustomProvider {
 
         let choice = &json["choices"][0];
         let msg = &choice["message"];
-        let mut content: Vec<ContentBlock> = Vec::new();
-        if let Some(text) = msg["content"].as_str()
-            && !text.is_empty()
-        {
-            content.push(ContentBlock::Text {
-                text: text.to_string(),
-            });
-        }
-        if let Some(tcs) = msg["tool_calls"].as_array() {
-            for tc in tcs {
-                let f = &tc["function"];
-                content.push(ContentBlock::ToolUse {
-                    id: tc["id"].as_str().unwrap_or("").to_string(),
-                    name: f["name"].as_str().unwrap_or("").to_string(),
-                    input: crate::openai_compat::parse_tool_arguments(&f["arguments"]),
-                });
-            }
-        }
+        let content = crate::openai_compat::content_blocks_from_chat_message(msg);
 
         let usage = &json["usage"];
         Ok(LlmResponse {
