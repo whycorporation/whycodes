@@ -956,9 +956,12 @@ fn test_sidebar_default() {
 
 #[test]
 fn sidebar_tabs_cycle() {
-    assert_eq!(SidebarTab::Files.next(), SidebarTab::Diagnostics);
-    assert_eq!(SidebarTab::Preview.next(), SidebarTab::Files);
-    assert_eq!(SidebarTab::Files.prev(), SidebarTab::Preview);
+    let all = SidebarTab::ALL;
+    assert!(all.len() >= 2);
+    for (i, tab) in all.iter().copied().enumerate() {
+        assert_eq!(tab.next(), all[(i + 1) % all.len()]);
+        assert_eq!(tab.prev(), all[(i + all.len() - 1) % all.len()]);
+    }
 }
 
 #[test]
