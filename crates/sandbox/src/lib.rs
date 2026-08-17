@@ -73,10 +73,33 @@ mod tests {
         assert_eq!(prepared.program, "bash");
     }
 
+    /// Program name stored on `PreparedCommand`. Need not exist — prepare
+    /// never execs it.
+    fn stub_bwrap() -> &'static std::path::Path {
+        std::path::Path::new("/usr/bin/bwrap")
+    }
+
+    #[test]
+    fn prepare_bwrap_bin_unshare_net_when_network_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let prepared =
+            crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "echo hi", dir.path(), false)
+                .expect("prepare");
+        assert_eq!(prepared.backend, Backend::Bubblewrap);
+        assert_eq!(prepared.program, stub_bwrap().to_string_lossy());
+        assert!(
+            prepared.args.iter().any(|a| a == "--unshare-net"),
+            "network=false must pass --unshare-net: {:?}",
+            prepared.args
+        );
+    }
+
     #[test]
     #[cfg(target_os = "linux")]
     fn workspace_prefers_bwrap_when_present() {
-        assert!(backend_available(), "bwrap is required for this test");
+        if !backend_available() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let req = SandboxRequest {
             command: "echo hi".into(),
@@ -99,7 +122,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn workspace_rw_project_and_blocks_home_write() {
-        assert!(backend_available(), "bwrap is required for this test");
+        if !backend_available() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let settings = SandboxSettings {
             mode: SandboxMode::Workspace,
@@ -137,7 +162,9 @@ mod tests {
     #[test]
     #[cfg(target_os = "linux")]
     fn network_off_blocks_tcp() {
-        assert!(backend_available(), "bwrap is required for this test");
+        if !backend_available() {
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let out = run(&SandboxRequest {
             command: "python3 -c \"import socket;s=socket.socket();s.settimeout(1);s.connect(('1.1.1.1',80))\"".into(),
@@ -301,9 +328,10 @@ mod tests {
 
     #[test]
     fn prepare_bwrap_skips_missing_cwd_and_optional_binds() {
-        assert!(backend_available(), "bwrap is required for this test");
         let missing = tempfile::tempdir().unwrap().path().join("not-created");
-        let prepared = crate::bwrap::prepare_bwrap("echo hi", &missing, true).expect("prepare");
+        let prepared =
+            crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "echo hi", &missing, true)
+                .expect("prepare");
         assert_eq!(prepared.backend, Backend::Bubblewrap);
         assert!(!prepared.args.iter().any(|a| a == "--unshare-net"));
         assert!(
@@ -317,7 +345,6 @@ mod tests {
     #[test]
     fn prepare_bwrap_binds_ssh_agent_and_home_cache() {
         let _lock = env_lock();
-        assert!(backend_available(), "bwrap is required for this test");
         let home = tempfile::tempdir().unwrap();
         let cargo = home.path().join(".cargo");
         std::fs::create_dir_all(&cargo).unwrap();
@@ -331,7 +358,8 @@ mod tests {
         unsafe { std::env::set_var("HOME", home.path()) };
         unsafe { std::env::set_var("SSH_AUTH_SOCK", &sock) };
         let dir = tempfile::tempdir().unwrap();
-        let prepared = crate::bwrap::prepare_bwrap("true", dir.path(), false);
+        let prepared =
+            crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "true", dir.path(), false);
         restore_os("HOME", prev_home);
         restore_os("SSH_AUTH_SOCK", prev_sock);
         let prepared = prepared.expect("prepare");
@@ -367,7 +395,31 @@ mod tests {
             },
         };
         let got = prepare(&req).expect("prepare");
-        assert_eq!(got.backend, Backend::Bubblewrap);
+        if backend_available() {
+            assert_eq!(got.backend, Backend::Bubblewrap);
+        } else {
+            assert_eq!(got.backend, Backend::Host);
+            assert!(got.warning.is_some());
+        }
+    }
+
+    #[test]
+    fn prepare_with_forced_bwrap_hits_prepare_bwrap() {
+        let req = SandboxRequest {
+            command: "true".into(),
+            working_dir: PathBuf::from("/tmp"),
+            settings: SandboxSettings {
+                mode: SandboxMode::Workspace,
+                network: true,
+                fallback: SandboxFallback::Allow,
+            },
+        };
+        let got = prepare_with(&req, true);
+        if backend_available() {
+            assert_eq!(got.expect("prepare").backend, Backend::Bubblewrap);
+        } else {
+            assert!(matches!(got, Err(SandboxError::Unavailable(_))));
+        }
     }
 
     #[test]
@@ -430,13 +482,13 @@ mod tests {
     #[test]
     fn prepare_bwrap_without_home_and_root_auth_sock() {
         let _lock = env_lock();
-        assert!(backend_available(), "bwrap is required for this test");
         let prev_home = std::env::var_os("HOME");
         let prev_sock = std::env::var_os("SSH_AUTH_SOCK");
         unsafe { std::env::remove_var("HOME") };
         unsafe { std::env::set_var("SSH_AUTH_SOCK", "/") };
         let dir = tempfile::tempdir().unwrap();
-        let prepared = crate::bwrap::prepare_bwrap("true", dir.path(), true);
+        let prepared =
+            crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "true", dir.path(), true);
         restore_os("HOME", prev_home);
         restore_os("SSH_AUTH_SOCK", prev_sock);
         prepared.expect("prepare without HOME");
@@ -446,7 +498,8 @@ mod tests {
         unsafe { std::env::set_var("HOME", tempfile::tempdir().unwrap().path()) };
         unsafe { std::env::set_var("SSH_AUTH_SOCK", "/no/such/whycode-ssh-dir/agent.sock") };
         let dir = tempfile::tempdir().unwrap();
-        let prepared = crate::bwrap::prepare_bwrap("true", dir.path(), true);
+        let prepared =
+            crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "true", dir.path(), true);
         restore_os("HOME", prev_home);
         restore_os("SSH_AUTH_SOCK", prev_sock);
         prepared.expect("prepare with missing ssh parent");

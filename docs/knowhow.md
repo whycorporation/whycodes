@@ -810,6 +810,34 @@ stream colours to `highlight_uncached` must take the same lock. Do not
 
 ---
 
+### 2026-08-17 — sandbox tests panic when the runner has no `bwrap`
+
+**Symptom:** CI `Test (linux)` and `Coverage (line floor)` fail in
+`whycode-sandbox`: `bwrap is required for this test`, or
+`prepare_delegates_to_prepare_with_real_availability` asserts
+`Bubblewrap` while the host backend is `Host`.
+
+**JSONL / crash:** none.
+
+**Root cause:** The 100% coverage lift assumed the self-hosted runner has
+bubblewrap. It does not (`backend_available()` is false). Tests used
+`assert!(backend_available())` instead of skipping, and one test
+hard-coded `Backend::Bubblewrap`. Installing `bwrap` on the runner is
+not a safe default: a container without user namespaces would then
+*find* the binary and fail later on real `bwrap` exec.
+
+**Fix:** Prepare-only tests drive `prepare_bwrap_bin(Some(stub))` and do
+not need a real binary. `prepare()` asserts Bubblewrap only when the
+binary is present. Live `run()` isolation tests return early when
+`bwrap` is missing. `prepare_with(..., true)` still covers the
+`prepare_bwrap` wrapper without exec.
+
+**Prevention:** Never `assert!(backend_available())` in unit tests. Gate
+live sandbox exec on the probe; keep arg-construction coverage on
+`prepare_bwrap_bin`.
+
+---
+
 
 ### Template (copy for new entries)
 
