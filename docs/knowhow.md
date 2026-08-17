@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — jcode: toasts are not animation; deep idle + malloc_trim
+
+**Symptom:** A visible toast (or any static chrome) kept the loop at 40 ms full paints. jcode measured the same class of bug at ~180 frames per 3s notice and 0.22 CPU cores on decorative 60 fps.
+
+**Root cause:** `animate = agent_busy || !toasts.is_empty()`. Toasts are event-driven text; they already `mark_dirty` on push/prune.
+
+**Fix:** `redraw_schedule` — only spinner/stream/subagents animate. Idle 500 ms; 30s without a real key/click/paste → 5s deep idle. Mouse *move* does not reset the clock. Linux `malloc_trim(0)` after each turn and once per 60s idle (jcode `idle_heap_release`).
+
+**Prevention:** A visible toast must poll at idle, not animation cadence. Assert in `redraw_schedule` tests.
+
+---
+
 ### 2026-08-17 — Port Grok paint-window + markdown checkpoints + packed cells
 
 **Symptom:** Long transcripts walked every message each frame. Streaming a reply re-parsed the whole bubble (O(N²)). Mouse-select allocated one `String` per cell.
