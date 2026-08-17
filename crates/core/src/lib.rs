@@ -19,3 +19,6 @@ pub use panel::{PanelSink, PanelUpdate};
 pub use sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 pub use swarm_hub::{SwarmHub, SwarmMessage, SwarmMessageListener};
 pub use tool::{Tool, ToolContext};
+
+#[cfg(test)]
+mod tests;
