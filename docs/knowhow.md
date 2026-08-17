@@ -828,13 +828,15 @@ not a safe default: a container without user namespaces would then
 
 **Fix:** Prepare-only tests drive `prepare_bwrap_bin(Some(stub))` and do
 not need a real binary. `prepare()` asserts Bubblewrap only when the
-binary is present. Live `run()` isolation tests return early when
-`bwrap` is missing. `prepare_with(..., true)` still covers the
-`prepare_bwrap` wrapper without exec.
+binary is present. Live `run()` isolation tests live in
+`crates/sandbox/tests/live.rs` (not `src/lib.rs`) so a skip does not
+leave in-crate test bodies as missed lines under the 100% floor.
+`prepare_with(..., true)` still covers the `prepare_bwrap` wrapper
+without exec.
 
-**Prevention:** Never `assert!(backend_available())` in unit tests. Gate
-live sandbox exec on the probe; keep arg-construction coverage on
-`prepare_bwrap_bin`.
+**Prevention:** Never `assert!(backend_available())` in unit tests. Keep
+live sandbox exec in `tests/` so llvm-cov `-p whycode-sandbox` does not
+count skipped bodies. Arg construction stays on `prepare_bwrap_bin`.
 
 ---
 
