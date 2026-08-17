@@ -705,6 +705,82 @@ fn early_print_version_from_prints_and_returns() {
     assert!(!early_print_version_from(["config"]));
 }
 
+#[test]
+fn key_from_env_config_and_missing_message() {
+    let config = Config::default();
+    assert_eq!(
+        key_from_env_and_config("anthropic", &config, |_| None),
+        None
+    );
+    assert_eq!(
+        key_from_env_and_config("anthropic", &config, |k| {
+            (k == "ANTHROPIC_API_KEY").then(|| "sk-env".into())
+        }),
+        Some("sk-env".into())
+    );
+    assert_eq!(
+        key_from_env_and_config("anthropic", &config, |k| {
+            (k == "ANTHROPIC_API_KEY").then(|| "".into())
+        }),
+        None
+    );
+
+    let mut with_key = Config::default();
+    with_key.providers.insert(
+        "grok".into(),
+        ProviderConfig {
+            name: "grok".into(),
+            api_key: Some("cfg-key".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    assert_eq!(
+        key_from_env_and_config("grok", &with_key, |_| None),
+        Some("cfg-key".into())
+    );
+    assert_eq!(
+        key_from_env_and_config("openai", &config, |k| {
+            (k == "OPENAI_API_KEY").then(|| "".into())
+        }),
+        Some("".into())
+    );
+
+    let anthropic = missing_api_key_message("anthropic");
+    assert!(anthropic.contains("ANTHROPIC_API_KEY"), "{anthropic}");
+    assert!(anthropic.contains("auth login"), "{anthropic}");
+    let custom = missing_api_key_message("acme");
+    assert!(custom.contains("ACME_API_KEY"), "{custom}");
+    assert!(!custom.contains("auth login"), "{custom}");
+}
+
+#[test]
+fn agent_info_for_known_and_fallback() {
+    let config = Config::default();
+    let known = agent_info_for(&cli(None), &config);
+    assert_eq!(known.name, "build");
+    let mut flagged = cli(None);
+    flagged.agent_flag = Some("does-not-exist".into());
+    let fallback = agent_info_for(&flagged, &config);
+    assert_eq!(fallback.name, "build");
+    assert_eq!(fallback.description, "Default build agent");
+}
+
+#[test]
+fn strip_agents_fence_and_cancel_message() {
+    assert_eq!(strip_agents_fence("```markdown\nHi\n```"), "Hi");
+    assert_eq!(strip_agents_fence("```md\nHi\n```"), "Hi");
+    assert_eq!(strip_agents_fence("```\nHi\n```"), "Hi");
+    assert_eq!(strip_agents_fence("  already clean  "), "already clean");
+    assert!(is_cancel_message("Cancelled by user"));
+    assert!(is_cancel_message("request cancel"));
+    assert!(!is_cancel_message("timeout"));
+}
+
 #[cfg(feature = "self-update")]
 mod upgrade_helpers {
     use crate::upgrade::*;
@@ -877,5 +953,58 @@ mod upgrade_helpers {
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
         assert!(!dir.path().join(".whycode.new").exists());
         assert!(!dir.path().join(".whycode.old").exists());
+    }
+
+    #[test]
+    fn decide_upgrade_up_to_date_mismatch_and_install() {
+        let name = "whycode.tar.gz";
+        let tar_bytes = {
+            let mut raw = Vec::new();
+            {
+                let mut b = tar::Builder::new(&mut raw);
+                let mut h = tar::Header::new_gnu();
+                h.set_size(3);
+                h.set_cksum();
+                b.append_data(&mut h, "whycode", &b"bin"[..]).unwrap();
+                b.finish().unwrap();
+            }
+            let mut gz = Vec::new();
+            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            enc.write_all(&raw).unwrap();
+            enc.finish().unwrap();
+            gz
+        };
+        let digest = digest_of(&tar_bytes);
+        let sums = format!("{digest}  {name}\n");
+        assert_eq!(
+            decide_upgrade("1.0.0", "1.0.0", &sums, name, &tar_bytes).unwrap(),
+            UpgradeDecision::UpToDate
+        );
+        assert!(decide_upgrade("0.1.0", "0.2.0", "nope", name, &tar_bytes).is_err());
+        assert!(
+            decide_upgrade(
+                "0.1.0",
+                "0.2.0",
+                "deadbeef  whycode.tar.gz\n",
+                name,
+                &tar_bytes
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("checksum mismatch")
+        );
+        match decide_upgrade("0.1.0", "0.2.0", &sums, name, &tar_bytes).unwrap() {
+            UpgradeDecision::Install(b) => assert_eq!(b, b"bin"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            format_upgrade_outcome("0.1.0", Ok(Some("0.2.0".into()))),
+            "Upgraded 0.1.0 → 0.2.0"
+        );
+        assert_eq!(
+            format_upgrade_outcome("0.1.0", Ok(None)),
+            "Already on the latest release."
+        );
+        assert!(format_upgrade_outcome("0.1.0", Err("offline".into())).contains("offline"));
     }
 }

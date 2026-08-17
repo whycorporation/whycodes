@@ -755,24 +755,7 @@ fn resolve_dir(cli: &Cli) -> PathBuf {
 /// is near expiry. Env and config win so a stored subscription login never
 /// overrides an explicit key.
 async fn get_api_key(provider: &str, config: &Config) -> Option<String> {
-    let env_var = provider_env_var(provider);
-    if let Ok(key) = std::env::var(&env_var)
-        && !key.is_empty()
-    {
-        whycode_llm::oauth_refresh::unregister(provider);
-        return Some(key);
-    }
-    if let Some(pc) = config.get_provider(provider)
-        && let Some(key) = &pc.api_key
-        && !key.is_empty()
-    {
-        whycode_llm::oauth_refresh::unregister(provider);
-        return Some(key.clone());
-    }
-    // Fallback to generic env vars
-    if provider == "openai"
-        && let Ok(key) = std::env::var("OPENAI_API_KEY")
-    {
+    if let Some(key) = key_from_env_and_config(provider, config, |k| std::env::var(k).ok()) {
         whycode_llm::oauth_refresh::unregister(provider);
         return Some(key);
     }
@@ -786,6 +769,44 @@ async fn get_api_key(provider: &str, config: &Config) -> Option<String> {
         return Some(token);
     }
     None
+}
+
+pub(crate) fn key_from_env_and_config(
+    provider: &str,
+    config: &Config,
+    env: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let env_var = provider_env_var(provider);
+    if let Some(key) = env(&env_var).filter(|k| !k.is_empty()) {
+        return Some(key);
+    }
+    if let Some(pc) = config.get_provider(provider)
+        && let Some(key) = &pc.api_key
+        && !key.is_empty()
+    {
+        return Some(key.clone());
+    }
+    // openai: empty OPENAI_API_KEY still wins over a missing config key.
+    if provider == "openai"
+        && let Some(key) = env("OPENAI_API_KEY")
+    {
+        return Some(key);
+    }
+    None
+}
+
+pub(crate) fn missing_api_key_message(provider: &str) -> String {
+    let oauth_hint = if whycode_auth::providers::supports_oauth(provider) {
+        format!(" Or log in with your subscription: `whycode auth login {provider}`.")
+    } else {
+        String::new()
+    };
+    format!(
+        "No API key for provider '{}'. Set {} env var.{}",
+        provider,
+        provider_env_var(provider),
+        oauth_hint
+    )
 }
 
 fn provider_env_var(provider: &str) -> String {
@@ -2266,14 +2287,7 @@ async fn run_init_agents_md(
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let content = content
-        .trim()
-        .trim_start_matches("```markdown")
-        .trim_start_matches("```md")
-        .trim_start_matches("```")
-        .trim_end_matches("```")
-        .trim()
-        .to_string();
+    let content = strip_agents_fence(&content);
 
     if content.is_empty() {
         anyhow::bail!("Model returned empty AGENTS.md");
@@ -2305,18 +2319,7 @@ async fn cmd_generate(
     let api_key = match get_api_key(&provider, &config).await {
         Some(k) => k,
         None => {
-            let oauth_hint = if whycode_auth::providers::supports_oauth(&provider) {
-                format!(" Or log in with your subscription: `whycode auth login {provider}`.")
-            } else {
-                String::new()
-            };
-            let msg = format!(
-                "No API key for provider '{}'. Set {} env var.{}",
-                provider,
-                provider_env_var(&provider),
-                oauth_hint
-            );
-            return emit_headless_setup_error(format, &msg);
+            return emit_headless_setup_error(format, &missing_api_key_message(&provider));
         }
     };
 
@@ -2751,7 +2754,7 @@ async fn run_headless_turn(
                     Err(anyhow::anyhow!("{}", msg))
                 }
                 OutputFormat::StreamJson => {
-                    if msg.to_ascii_lowercase().contains("cancel") {
+                    if is_cancel_message(&msg) {
                         let _ = CiEvent::Cancelled.emit_stdout();
                     } else {
                         let _ = CiEvent::Error {
@@ -2765,6 +2768,20 @@ async fn run_headless_turn(
             }
         }
     }
+}
+
+pub(crate) fn is_cancel_message(msg: &str) -> bool {
+    msg.to_ascii_lowercase().contains("cancel")
+}
+
+pub(crate) fn strip_agents_fence(raw: &str) -> String {
+    raw.trim()
+        .trim_start_matches("```markdown")
+        .trim_start_matches("```md")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim()
+        .to_string()
 }
 
 /// Map an agent turn event onto a CI wire event (skips Cancelled mid-stream).
@@ -4255,15 +4272,27 @@ async fn cmd_upgrade() -> anyhow::Result<()> {
 
     match upgrade::run().await {
         Ok(Some(version)) => {
-            println!("  {} Upgraded {current} → {}", "✓".green(), version.cyan());
+            println!(
+                "  {} {}",
+                "✓".green(),
+                upgrade::format_upgrade_outcome(current, Ok(Some(version)))
+            );
         }
         Ok(None) => {
-            println!("  {} Already on the latest release.", "✓".green());
+            println!(
+                "  {} {}",
+                "✓".green(),
+                upgrade::format_upgrade_outcome(current, Ok(None))
+            );
         }
         Err(e) => {
             // Not fatal: a machine with no network, or a platform with no
             // published binary, should still be told how to proceed.
-            println!("  {} {e}", "!".yellow());
+            println!(
+                "  {} {}",
+                "!".yellow(),
+                upgrade::format_upgrade_outcome(current, Err(e.to_string()))
+            );
             println!();
             println!("  Build from source instead:");
             println!(

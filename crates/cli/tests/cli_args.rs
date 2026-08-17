@@ -683,6 +683,37 @@ fn test_plain_repl_slash_commands_without_api_key() {
 }
 
 #[test]
+fn test_generate_without_key_and_empty_prompt() {
+    let home = tempfile::tempdir().unwrap();
+    let missing = run_home(home.path(), &["generate", "hello", "--format", "json"]);
+    assert!(!missing.status.success());
+    let err = format!(
+        "{}{}",
+        String::from_utf8_lossy(&missing.stderr),
+        String::from_utf8_lossy(&missing.stdout)
+    );
+    assert!(
+        err.contains("API key") || err.contains("ANTHROPIC_API_KEY"),
+        "{err}"
+    );
+
+    let empty = run_home(home.path(), &["generate", "", "--format", "text"]);
+    assert!(!empty.status.success());
+    let err = format!(
+        "{}{}",
+        String::from_utf8_lossy(&empty.stderr),
+        String::from_utf8_lossy(&empty.stdout)
+    );
+    assert!(
+        err.contains("empty prompt") || err.contains("API key"),
+        "{err}"
+    );
+
+    let structured_run = run_home(home.path(), &["run", "hi", "--format", "stream-json"]);
+    assert!(!structured_run.status.success());
+}
+
+#[test]
 fn test_plain_repl_shell_bang_and_exit_aliases() {
     let home = tempfile::tempdir().unwrap();
     let o = run_plain(home.path(), "!\n!printf hi\n/quit\n");

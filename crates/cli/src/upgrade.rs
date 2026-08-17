@@ -292,23 +292,51 @@ pub async fn run() -> Result<Option<String>> {
     let body = latest_release_json(&client).await?;
     let version = release_version(&body)?;
     let archive_name = target_archive()?.to_string();
-
-    if !is_newer(&version, current) {
-        return Ok(None);
-    }
-
     let archive = download_asset(&client, &body, &archive_name).await?;
     let sums_bytes = download_asset(&client, &body, "SHA256SUMS").await?;
     let sums = String::from_utf8(sums_bytes).context("SHA256SUMS is not valid UTF-8")?;
 
-    let expected = expected_digest(&sums, &archive_name)
-        .with_context(|| format!("{archive_name} is not listed in SHA256SUMS"))?;
-    let actual = digest_of(&archive);
-    if expected != actual {
-        bail!("{}", checksum_mismatch(&archive_name, &expected, &actual));
+    match decide_upgrade(current, &version, &sums, &archive_name, &archive)? {
+        UpgradeDecision::UpToDate => Ok(None),
+        UpgradeDecision::Install(binary) => {
+            replace_binary(&current_binary()?, &binary)?;
+            Ok(Some(version))
+        }
     }
+}
 
-    let binary = extract(&archive, &archive_name)?;
-    replace_binary(&current_binary()?, &binary)?;
-    Ok(Some(version))
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UpgradeDecision {
+    UpToDate,
+    Install(Vec<u8>),
+}
+
+pub(crate) fn decide_upgrade(
+    current: &str,
+    version: &str,
+    sums: &str,
+    archive_name: &str,
+    archive: &[u8],
+) -> Result<UpgradeDecision> {
+    if !is_newer(version, current) {
+        return Ok(UpgradeDecision::UpToDate);
+    }
+    let expected = expected_digest(sums, archive_name)
+        .with_context(|| format!("{archive_name} is not listed in SHA256SUMS"))?;
+    let actual = digest_of(archive);
+    if expected != actual {
+        bail!("{}", checksum_mismatch(archive_name, &expected, &actual));
+    }
+    Ok(UpgradeDecision::Install(extract(archive, archive_name)?))
+}
+
+pub(crate) fn format_upgrade_outcome(
+    current: &str,
+    result: Result<Option<String>, String>,
+) -> String {
+    match result {
+        Ok(Some(version)) => format!("Upgraded {current} → {version}"),
+        Ok(None) => "Already on the latest release.".into(),
+        Err(e) => e,
+    }
 }
