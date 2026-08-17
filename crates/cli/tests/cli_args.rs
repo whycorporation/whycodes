@@ -510,4 +510,101 @@ fn test_pr_and_github_degrade_without_gh() {
         .output()
         .expect("github view");
     assert_ok(&["github", "pr", "view"], &view);
+
+    let issue = Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(["github", "issue", "2"])
+        .env("WHYCODE_HOME", home.path())
+        .env("HOME", home.path())
+        .env("PATH", empty_path)
+        .current_dir(home.path())
+        .output()
+        .expect("github issue");
+    assert_ok(&["github", "issue"], &issue);
+}
+
+#[test]
+fn test_session_import_share_rename_and_memory_files() {
+    let home = tempfile::tempdir().unwrap();
+    let transcript = home.path().join("chat.json");
+    std::fs::write(
+        &transcript,
+        r#"{"messages":[{"role":"user","content":"imported hello"}]}"#,
+    )
+    .unwrap();
+    let imp = run_home(
+        home.path(),
+        &["session", "import", transcript.to_str().unwrap()],
+    );
+    assert_ok(&["session", "import"], &imp);
+    let out = String::from_utf8_lossy(&imp.stdout);
+    assert!(out.contains("Imported"), "{out}");
+    let id = out
+        .lines()
+        .find_map(|l| l.split("session ").nth(1))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .expect("session id")
+        .to_string();
+
+    let share = run_home(home.path(), &["session", "share", &id]);
+    assert_ok(&["session", "share"], &share);
+    assert!(
+        String::from_utf8_lossy(&share.stdout).contains("exported")
+            || home
+                .path()
+                .join("shares")
+                .join(format!("{id}.json"))
+                .exists()
+    );
+    let share_miss = run_home(home.path(), &["session", "share", "nope"]);
+    assert_ok(&["session", "share", "nope"], &share_miss);
+
+    let rename = run_home(home.path(), &["session", "rename", &id, "new title"]);
+    assert_ok(&["session", "rename"], &rename);
+    let rename_miss = run_home(home.path(), &["session", "rename", "nope", "x"]);
+    assert_ok(&["session", "rename", "nope"], &rename_miss);
+
+    let view = run_home(home.path(), &["session", "view", &id]);
+    assert_ok(&["session", "view"], &view);
+
+    let exp_path = home.path().join("mem.json");
+    let _ = run_home(
+        home.path(),
+        &["memory", "add", "exportable fact about rustfmt"],
+    );
+    let exp = run_home(
+        home.path(),
+        &["memory", "export", "-o", exp_path.to_str().unwrap()],
+    );
+    assert_ok(&["memory", "export", "-o"], &exp);
+    assert!(exp_path.exists());
+    let imp_mem = run_home(
+        home.path(),
+        &["memory", "import", exp_path.to_str().unwrap()],
+    );
+    assert_ok(&["memory", "import"], &imp_mem);
+
+    let code = run_home(home.path(), &["memory", "code-search", "fn main"]);
+    assert_ok(&["memory", "code-search"], &code);
+    let sess = run_home(home.path(), &["memory", "session-search", "hello"]);
+    assert_ok(&["memory", "session-search"], &sess);
+
+    let onnx = run_home(home.path(), &["memory", "onnx-smoke"]);
+    assert!(!onnx.status.success());
+
+    let add_stdio = run_home(
+        home.path(),
+        &["mcp", "add", "echoer", "echo", "--args", "hi"],
+    );
+    assert_ok(&["mcp", "add", "echoer"], &add_stdio);
+
+    let def_miss = run_home(home.path(), &["provider", "default", "nope"]);
+    assert_ok(&["provider", "default", "nope"], &def_miss);
+    let add_p = run_home(
+        home.path(),
+        &["provider", "add", "local", "--base-url", "http://127.0.0.1"],
+    );
+    assert_ok(&["provider", "add"], &add_p);
+    let def = run_home(home.path(), &["provider", "default", "local"]);
+    assert_ok(&["provider", "default", "local"], &def);
 }

@@ -495,3 +495,69 @@ async fn scripted_fail_open_surfaces_provider_error() {
     let err = agent.run_turn(&mut session, "script", "m", "k", 2).await;
     assert!(err.is_err(), "expected provider error, got {err:?}");
 }
+
+#[tokio::test]
+async fn scripted_tool_then_exhausted_turns() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "secret note").unwrap();
+    let agent = scripted_agent([whycode_llm::ScriptedStep::ToolCall {
+        id: "c1".into(),
+        name: "read".into(),
+        input: serde_json::json!({"path": "note.txt"}),
+    }]);
+    let mut session =
+        whycode_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("please read note.txt and summarize it");
+    let err = agent
+        .run_turn(&mut session, "script", "m", "k", 1)
+        .await
+        .expect_err("max turns after tool");
+    assert!(
+        err.to_string().to_lowercase().contains("turn")
+            || err.to_string().to_lowercase().contains("exceed"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_cancel_before_llm() {
+    let agent = scripted_agent([whycode_llm::ScriptedStep::Text("never".into())]);
+    let mut session = scripted_session("please explain the retry loop");
+    let cancel = crate::events::new_cancel_flag();
+    crate::events::request_cancel(&cancel);
+    let err = agent
+        .run_turn_with_events(&mut session, "script", "m", "k", 4, None, Some(cancel))
+        .await
+        .expect_err("cancelled");
+    assert!(err.to_string().to_lowercase().contains("cancel"), "{err}");
+}
+
+#[tokio::test]
+async fn scripted_thinking_and_text_emits_events() {
+    let agent = scripted_agent([
+        whycode_llm::ScriptedStep::Thinking("plan".into()),
+        whycode_llm::ScriptedStep::Text("answer".into()),
+        whycode_llm::ScriptedStep::Usage {
+            input_tokens: 3,
+            output_tokens: 4,
+        },
+    ]);
+    let mut session = scripted_session("please summarize crates/agent");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(&mut session, "script", "m", "k", 4, Some(tx), None)
+        .await
+        .expect("turn");
+    assert!(out.contains("answer"), "{out}");
+    let mut saw_intent = false;
+    let mut saw_status = false;
+    while let Ok(ev) = rx.try_recv() {
+        match ev {
+            crate::events::TurnEvent::Intent { .. } => saw_intent = true,
+            crate::events::TurnEvent::Status(_) => saw_status = true,
+            _ => {}
+        }
+    }
+    assert!(saw_intent, "intent event");
+    assert!(saw_status, "status event");
+}

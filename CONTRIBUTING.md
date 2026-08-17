@@ -37,7 +37,7 @@ Notes:
 - The budget scripts are ratchets: counts may only go down. If your change
   legitimately needs a new panic site or a swallowed error, the budget file
   change is reviewed as part of the PR.
-- CI also runs `cargo llvm-cov` and fails the workspace below 77% line
+- CI also runs `cargo llvm-cov` and fails the workspace below 78% line
   coverage (eight crates are locked at 100%). See
   [docs/coverage.md](docs/coverage.md).
 - Internal crate edges are allowlisted in

@@ -3895,4 +3895,27 @@ mod permission_detail_tests {
         assert!(a.cwd_override_path().is_none());
         assert!(a.session_claims().is_none());
     }
+
+    #[test]
+    fn title_refine_target_needs_user_and_key() {
+        let a = test_agent();
+        let empty = whycode_session::session::Session::new("/tmp".into(), "sys".into());
+        assert!(
+            a.title_refine_target(&empty, "anthropic", "claude", "k", None)
+                .is_none()
+        );
+
+        let mut s = whycode_session::session::Session::new("/tmp".into(), "sys".into());
+        s.add_user_message("please explain the retry loop in crates/llm");
+        assert!(
+            a.title_refine_target(&s, "anthropic", "claude", "", None)
+                .is_none()
+        );
+        let hit = a.title_refine_target(&s, "anthropic", "claude", "sk-test", None);
+        assert!(hit.is_some(), "{hit:?}");
+        let (p, _, key, user, _) = hit.unwrap();
+        assert_eq!(p, "anthropic");
+        assert_eq!(key, "sk-test");
+        assert!(user.contains("retry"));
+    }
 }
