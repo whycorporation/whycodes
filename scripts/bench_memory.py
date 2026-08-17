@@ -467,7 +467,8 @@ def main() -> int:
             print("  pip install psutil")
             return 0
 
-    binary = args.binary or default_binary()
+    # Sessions launch with cwd=project; a relative binary path would miss.
+    binary = (args.binary or default_binary()).resolve()
     profile = "release" if "release" in str(binary) else "debug"
 
     results: dict = {

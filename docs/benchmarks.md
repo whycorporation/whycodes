@@ -131,6 +131,46 @@ noisier on this laptop under load; still far under the loose CI ceiling
 Higher than the 08-04 row: workspace file index + later TUI/session chrome are
 on the path now. Still a lower bound (idle, no agent turn).
 
+### Re-measure, 2026-08-17 (Linux x86_64, release, HEAD `cd4961f`)
+
+Same machine as 2026-08-13 (Intel Core i5-4200H @ 2.80 GHz, CachyOS). Release
+binary **14.9 MB** (unstripped size on disk). Recorded JSON:
+[`bench-results.json`](bench-results.json).
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.8 ms** | 7.0 ms | **0.6 MB** |
+| `--help` | **2.0 ms** | 3.6 ms | — |
+| `config show` | **2.9 ms** | 3.5 ms | **5.5 MB** |
+| `session list` | — | — | **9.7 MB** |
+| binary size | **14.9 MB** | — | — |
+
+Startup medians stay in the 1–3 ms band. Version p95 (7.0 ms) is one noisy
+sample on a loaded laptop; the other 19 runs sit near the median.
+
+**Multi-session PSS** (idle TUI, 2 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **11.8 MB** | was 6.7 MB on 2026-08-13 |
+| 10 | **33.0 MB** | was 26.5 MB |
+| per added session | **~2.4 MB** | was ~2.2 MB |
+
+Higher than 08-13 after later TUI work (paint window, packed cells, thinking
+restore, draw recovery). Incremental cost per extra session is almost
+unchanged.
+
+**First frame / idle** (`bench_first_frame.py`, same 0×0 PTY caveat as 08-13):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **2024 ms** median | 0.0/s | 0×0 PTY + ~2 s keyboard-enhancement timeout |
+| Harness `--idle-ms 3000` (10 runs) | **2023 ms** median | **0.0/s** | was ~16.6/s on 2026-08-13 |
+
+Idle redraws hitting **zero** on the harness is the dirty-draw + jcode cadence
+work landing: toasts no longer keep the short poll alive, and a settled
+session does not paint. Do not quote the ~2 s first-frame number as TTFF.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -369,7 +409,11 @@ provider key, no user input), 2 s settle after spawn, 3 runs, median:
 
 **2026-08-13 re-measure** (same method, 5 runs, after workspace index + later
 TUI chrome): **6.7 MB** (1) / **26.5 MB** (10) / **~2.2 MB** per added
-session. See the process-level table above.
+session.
+
+**2026-08-17 re-measure** (HEAD `cd4961f`, 5 runs, 2 s settle): **11.8 MB**
+(1) / **33.0 MB** (10) / **~2.4 MB** per added session. See the process-level
+table above.
 
 Method matches the shape jcode publishes: N live interactive processes, PSS
 from `smaps_rollup`, not RSS. These are idle sessions (prompt drawn, no
