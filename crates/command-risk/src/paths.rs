@@ -395,5 +395,64 @@ mod tests {
         assert!(!looks_like_path("--force"));
         assert!(looks_like_path("build"));
         assert!(looks_like_path("/tmp"));
+        assert!(!looks_like_path(""));
+    }
+
+    #[test]
+    fn expand_without_home_and_windows_forms() {
+        assert_eq!(expand("~", None), "~");
+        assert_eq!(expand("~/x", None), "~/x");
+        assert_eq!(
+            expand("~\\Documents", Some(&home())),
+            "/home/user/Documents"
+        );
+        assert_eq!(expand("%USERPROFILE%/x", Some(&home())), "/home/user/x");
+        assert_eq!(expand("$env:USERPROFILE/x", Some(&home())), "/home/user/x");
+        let home_slash = PathBuf::from("/home/user/");
+        assert_eq!(expand("~/x", Some(&home_slash)), "/home/user/x");
+    }
+
+    #[test]
+    fn dollar_that_is_not_a_variable_name() {
+        assert!(!has_unresolved_variable("$!"));
+        assert!(!has_unresolved_variable("$/tmp"));
+        assert!(!has_unresolved_variable("$"));
+        assert!(!has_unresolved_variable("%"));
+        assert!(has_unresolved_variable("$_FOO"));
+    }
+
+    #[test]
+    fn classify_without_home_and_dot_components() {
+        assert_eq!(
+            classify("notes.txt", &project(), None),
+            PathScope::InProject
+        );
+        assert_eq!(
+            classify("/work/proj/foo/./bar", &project(), Some(&home())),
+            PathScope::InProject
+        );
+        assert_eq!(
+            classify("foo/./bar", &project(), Some(&home())),
+            PathScope::InProject
+        );
+        assert_eq!(
+            classify(r"C:\Program Files (x86)", &project(), Some(&home())),
+            PathScope::Catastrophic
+        );
+        assert_eq!(
+            classify(r"C:\ProgramData", &project(), Some(&home())),
+            PathScope::Catastrophic
+        );
+        assert_eq!(
+            normalize(Path::new("foo/./bar"), &project()),
+            PathBuf::from("/work/proj/foo/bar")
+        );
+        // `.` is only a CurDir component when it is the first piece of a
+        // relative path — Path::components() otherwise drops it.
+        assert_eq!(
+            normalize(Path::new("bar"), Path::new(".")),
+            PathBuf::from("bar")
+        );
+        assert_eq!(classify("file", Path::new("."), None), PathScope::Outside);
     }
 }

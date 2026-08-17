@@ -74,10 +74,52 @@ mod tests {
     fn test_deserialize_text_delta() {
         let json = r#"{"type":"text_delta","text":"hi"}"#;
         let msg: ServerMessage = serde_json::from_str(json).unwrap();
-        if let ServerMessage::TextDelta { text } = msg {
-            assert_eq!(text, "hi");
-        } else {
-            panic!("wrong variant");
+        assert!(matches!(msg, ServerMessage::TextDelta { text } if text == "hi"));
+    }
+
+    #[test]
+    fn client_and_server_variants_roundtrip() {
+        let clients = [
+            ClientMessage::Chat {
+                content: "hi".into(),
+            },
+            ClientMessage::CreateSession {
+                project: Some("p".into()),
+            },
+            ClientMessage::ListSessions,
+            ClientMessage::GetTools,
+            ClientMessage::GetModels,
+        ];
+        for msg in clients {
+            let json = serde_json::to_string(&msg).unwrap();
+            let _: ClientMessage = serde_json::from_str(&json).unwrap();
+        }
+
+        let servers = [
+            ServerMessage::TextDelta { text: "t".into() },
+            ServerMessage::ToolUse {
+                id: "1".into(),
+                name: "n".into(),
+                input: serde_json::json!({}),
+            },
+            ServerMessage::ToolResult {
+                id: "1".into(),
+                content: "c".into(),
+                is_error: false,
+            },
+            ServerMessage::Thinking { text: "th".into() },
+            ServerMessage::Usage {
+                input_tokens: 1,
+                output_tokens: 2,
+            },
+            ServerMessage::Done,
+            ServerMessage::Error {
+                message: "e".into(),
+            },
+        ];
+        for msg in servers {
+            let json = serde_json::to_string(&msg).unwrap();
+            let _: ServerMessage = serde_json::from_str(&json).unwrap();
         }
     }
 

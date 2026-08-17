@@ -607,11 +607,7 @@ mod tests {
             let _ = std::fs::remove_file(path.with_extension(suffix));
         }
 
-        assert!(
-            opened.is_ok(),
-            "open failed while another connection held a write transaction: {:?}",
-            opened.err()
-        );
+        opened.expect("open failed while another connection held a write transaction");
     }
 
     #[test]
@@ -778,5 +774,277 @@ mod tests {
     fn test_nonexistent_session() {
         let db = test_db();
         assert!(db.get_session("no").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_open_file_roundtrip_and_bad_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("whycode.db");
+        let path_str = path.to_str().unwrap();
+        let db = Database::open(path_str).unwrap();
+        db.create_session("s1", "File", "/proj").unwrap();
+        drop(db);
+
+        let db = Database::open(path_str).unwrap();
+        assert_eq!(db.get_session("s1").unwrap().unwrap().title, "File");
+
+        assert!(Database::open(tmp.path().to_str().unwrap()).is_err());
+        assert!(Database::open("/no/such/whycode-storage-dir/db.sqlite").is_err());
+    }
+
+    #[test]
+    fn test_replace_messages_and_counts() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        db.insert_message("old", "s1", "user", "stale", None, None)
+            .unwrap();
+        db.insert_message("tool1", "s1", "tool", "out", Some("call-1"), Some("bash"))
+            .unwrap();
+
+        let created = "2020-01-01T00:00:00+00:00".to_string();
+        db.replace_messages(
+            "s1",
+            &[
+                (
+                    "m1".into(),
+                    "user".into(),
+                    "hello".into(),
+                    None,
+                    None,
+                    created.clone(),
+                ),
+                (
+                    "m2".into(),
+                    "tool".into(),
+                    "done".into(),
+                    Some("tc1".into()),
+                    Some("grep".into()),
+                    created,
+                ),
+            ],
+        )
+        .unwrap();
+
+        let msgs = db.get_messages("s1").unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].id, "m1");
+        assert_eq!(msgs[1].tool_call_id.as_deref(), Some("tc1"));
+        assert_eq!(msgs[1].name.as_deref(), Some("grep"));
+
+        let counts = db.message_counts_by_session().unwrap();
+        assert_eq!(counts.get("s1"), Some(&2));
+
+        db.replace_messages("s1", &[]).unwrap();
+        assert!(db.get_messages("s1").unwrap().is_empty());
+        assert!(db.message_counts_by_session().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_replace_messages_duplicate_id_fails() {
+        let db = test_db();
+        db.create_session("s1", "Test", "/tmp").unwrap();
+        let created = "2020-01-01T00:00:00+00:00".to_string();
+        let err = db.replace_messages(
+            "s1",
+            &[
+                (
+                    "m1".into(),
+                    "user".into(),
+                    "a".into(),
+                    None,
+                    None,
+                    created.clone(),
+                ),
+                ("m1".into(), "user".into(), "b".into(), None, None, created),
+            ],
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn test_insert_message_foreign_key() {
+        let db = test_db();
+        assert!(
+            db.insert_message("m1", "missing", "user", "hi", None, None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_usage_totals_empty_database() {
+        let db = test_db();
+        let t = db.usage_totals().unwrap();
+        assert_eq!(t.session_count, 0);
+        assert_eq!(t.message_count, 0);
+        assert!(t.usage.is_empty());
+    }
+
+    #[test]
+    fn test_memories_crud() {
+        let db = test_db();
+        let emb = [1_u8, 2, 3, 4];
+        db.insert_memory("mem1", "proj", "note", &emb, Some("s1"))
+            .unwrap();
+        db.insert_memory("mem2", "proj", "other", &emb, None)
+            .unwrap();
+        db.insert_memory("mem3", "elsewhere", "x", &emb, None)
+            .unwrap();
+
+        let got = db.get_memory("mem1").unwrap().unwrap();
+        assert_eq!(got.project_key, "proj");
+        assert_eq!(got.text, "note");
+        assert_eq!(got.embedding, emb);
+        assert_eq!(got.source_session.as_deref(), Some("s1"));
+        assert!(got.last_recalled_at.is_none());
+        assert_eq!(got.recall_count, 0);
+        assert!(db.get_memory("missing").unwrap().is_none());
+
+        let listed = db.list_memories("proj", 1).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(db.count_memories("proj").unwrap(), 2);
+
+        db.touch_memory_recall("mem1").unwrap();
+        let got = db.get_memory("mem1").unwrap().unwrap();
+        assert_eq!(got.recall_count, 1);
+        assert!(got.last_recalled_at.is_some());
+
+        assert!(db.delete_memory("mem2").unwrap());
+        assert!(!db.delete_memory("mem2").unwrap());
+        assert_eq!(db.count_memories("proj").unwrap(), 1);
+        assert_eq!(db.clear_memories("proj").unwrap(), 1);
+        assert_eq!(db.count_memories("proj").unwrap(), 0);
+        assert!(db.list_memories("proj", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_code_chunks() {
+        let db = test_db();
+        let emb = [9_u8, 8, 7];
+        db.insert_code_chunk("c1", "proj", "src/a.rs", 1, 10, "fn a() {}", &emb)
+            .unwrap();
+        db.insert_code_chunk("c2", "proj", "src/b.rs", 2, 4, "fn b() {}", &emb)
+            .unwrap();
+        db.insert_code_chunk("c3", "other", "x.rs", 1, 1, "x", &emb)
+            .unwrap();
+
+        let rows = db.list_code_chunks("proj", 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].path, "src/a.rs");
+        assert_eq!(rows[0].start_line, 1);
+        assert_eq!(rows[0].end_line, 10);
+        assert_eq!(rows[0].text, "fn a() {}");
+        assert_eq!(rows[0].embedding, emb);
+        assert_eq!(db.list_code_chunks("proj", 1).unwrap().len(), 1);
+        assert_eq!(db.clear_code_chunks("proj").unwrap(), 2);
+        assert!(db.list_code_chunks("proj", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_session_chunks() {
+        let db = test_db();
+        let emb = [4_u8, 5];
+        db.insert_session_chunk("sc1", "proj", "s1", 0, "turn0", &emb)
+            .unwrap();
+        db.insert_session_chunk("sc2", "proj", "s1", 1, "turn1", &emb)
+            .unwrap();
+        db.insert_session_chunk("sc3", "other", "s2", 0, "x", &emb)
+            .unwrap();
+
+        let rows = db.list_session_chunks("proj", 10).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|r| r.project_key == "proj"));
+        assert!(rows.iter().any(|r| r.turn_index == 0 && r.text == "turn0"));
+        assert_eq!(rows.iter().find(|r| r.id == "sc1").unwrap().embedding, emb);
+        assert_eq!(db.list_session_chunks("proj", 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_list_chunk_query_map_errors_when_database_is_locked() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("locked.db");
+        let path_str = path.to_str().unwrap();
+        let db = Database::open(path_str).unwrap();
+        let emb = [1_u8];
+        db.insert_code_chunk("c1", "proj", "a.rs", 1, 2, "t", &emb)
+            .unwrap();
+        db.insert_session_chunk("sc1", "proj", "s1", 0, "t", &emb)
+            .unwrap();
+
+        // WAL readers do not block; roll back to a journal mode where an
+        // exclusive lock makes SELECT return SQLITE_BUSY immediately.
+        db.conn
+            .execute_batch("PRAGMA journal_mode=DELETE;")
+            .unwrap();
+        db.conn
+            .busy_timeout(std::time::Duration::from_millis(0))
+            .unwrap();
+
+        let blocker = Connection::open(path_str).unwrap();
+        blocker
+            .busy_timeout(std::time::Duration::from_millis(0))
+            .unwrap();
+        blocker.execute_batch("BEGIN EXCLUSIVE;").unwrap();
+
+        assert!(db.list_code_chunks("proj", 10).is_err());
+        assert!(db.list_session_chunks("proj", 10).is_err());
+
+        blocker.execute_batch("ROLLBACK;").unwrap();
+    }
+
+    #[test]
+    fn test_sql_error_paths_after_dropping_schema() {
+        let db = test_db();
+        db.conn
+            .execute_batch(
+                "
+                DROP TABLE IF EXISTS session_chunks;
+                DROP TABLE IF EXISTS code_chunks;
+                DROP TABLE IF EXISTS memories;
+                DROP TABLE IF EXISTS messages;
+                DROP TABLE IF EXISTS sessions;
+                DROP TABLE IF EXISTS state;
+                ",
+            )
+            .unwrap();
+
+        let usage = Usage::default();
+        let now = "2020-01-01T00:00:00+00:00";
+        assert!(db.upsert_session("s", "t", "/p", now, now, &usage).is_err());
+        assert!(db.create_session("s", "t", "/p").is_err());
+        assert!(db.get_session("s").is_err());
+        assert!(db.list_sessions().is_err());
+        assert!(db.usage_totals().is_err());
+        assert!(db.update_title("s", "t").is_err());
+        assert!(db.delete_session("s").is_err());
+        assert!(
+            db.insert_message("m", "s", "user", "hi", None, None)
+                .is_err()
+        );
+        assert!(db.delete_messages("s").is_err());
+        assert!(db.replace_messages("s", &[]).is_err());
+        assert!(db.message_counts_by_session().is_err());
+        assert!(db.get_messages("s").is_err());
+        assert!(db.message_count("s").is_err());
+        assert!(db.get_state("k").is_err());
+        assert!(db.set_state("k", "v").is_err());
+        assert!(db.delete_state("k").is_err());
+        assert!(db.insert_memory("id", "pk", "t", &[], None).is_err());
+        assert!(db.get_memory("id").is_err());
+        assert!(db.list_memories("pk", 10).is_err());
+        assert!(db.delete_memory("id").is_err());
+        assert!(db.clear_memories("pk").is_err());
+        assert!(db.touch_memory_recall("id").is_err());
+        assert!(db.count_memories("pk").is_err());
+        assert!(
+            db.insert_code_chunk("id", "pk", "p.rs", 1, 2, "t", &[])
+                .is_err()
+        );
+        assert!(db.list_code_chunks("pk", 10).is_err());
+        assert!(db.clear_code_chunks("pk").is_err());
+        assert!(
+            db.insert_session_chunk("id", "pk", "s", 0, "t", &[])
+                .is_err()
+        );
+        assert!(db.list_session_chunks("pk", 10).is_err());
     }
 }

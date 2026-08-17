@@ -915,4 +915,120 @@ mod tests {
         assert_eq!(level(""), RiskLevel::Safe);
         assert_eq!(level("   "), RiskLevel::Safe);
     }
+
+    #[test]
+    fn risk_level_as_str_names_every_tier() {
+        assert_eq!(RiskLevel::Safe.as_str(), "safe");
+        assert_eq!(RiskLevel::Caution.as_str(), "caution");
+        assert_eq!(RiskLevel::Destructive.as_str(), "destructive");
+        assert_eq!(RiskLevel::Catastrophic.as_str(), "catastrophic");
+    }
+
+    #[test]
+    fn process_substitution_after_a_word_boundary_is_promptable() {
+        // `=(cmd)` not at byte 0 — whitespace and `;|&()` separators.
+        assert_eq!(level("ls =(echo hi)"), RiskLevel::Destructive);
+        assert_eq!(level("true;=(echo hi)"), RiskLevel::Destructive);
+        assert_eq!(level("true|=(echo hi)"), RiskLevel::Destructive);
+        assert_eq!(level("true&=(echo hi)"), RiskLevel::Destructive);
+        assert_eq!(level("true(=(echo hi)"), RiskLevel::Destructive);
+        assert_eq!(level("true)=(echo hi)"), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn interpreter_without_a_code_flag_is_not_injection() {
+        // Substitution is present, interpreter is present, but no -c/-e/--eval.
+        assert_eq!(level(r#"python "$(echo script.py)""#), RiskLevel::Safe);
+        assert_eq!(
+            level(r#"/usr/bin/python3 -c "$(echo 'print(1)')""#),
+            RiskLevel::Destructive
+        );
+        assert_eq!(
+            level(r#"ruby --eval "$(echo 'puts 1')""#),
+            RiskLevel::Destructive
+        );
+    }
+
+    #[test]
+    fn rm_without_a_target_and_not_forced_recursive_is_safe() {
+        assert_eq!(level("rm"), RiskLevel::Safe);
+        assert_eq!(level("rm -r"), RiskLevel::Safe);
+        assert_eq!(level("rm -f"), RiskLevel::Safe);
+    }
+
+    #[test]
+    fn dd_classifies_the_of_target() {
+        assert_eq!(level("dd if=/dev/zero"), RiskLevel::Safe);
+        assert_eq!(level("dd of=~"), RiskLevel::Catastrophic);
+        assert_eq!(level("dd of=/tmp/scratch"), RiskLevel::Destructive);
+        assert_eq!(level("dd of=out.bin"), RiskLevel::Caution);
+    }
+
+    #[test]
+    fn truncate_follows_its_target() {
+        assert_eq!(level("truncate"), RiskLevel::Safe);
+        assert_eq!(level("truncate -s 0 notes.txt"), RiskLevel::Caution);
+        assert_eq!(level("truncate -s 0 /tmp/x"), RiskLevel::Destructive);
+        assert_eq!(level("truncate -s 0 ~"), RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn permission_changes_only_gate_when_recursive() {
+        assert_eq!(level("chmod 755 notes.txt"), RiskLevel::Safe);
+        assert_eq!(level("chmod -R"), RiskLevel::Safe);
+        assert_eq!(level("chmod -R notes.txt"), RiskLevel::Caution);
+        assert_eq!(level("chmod --recursive /tmp/x"), RiskLevel::Destructive);
+        assert_eq!(level("chown -R user ~"), RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn mv_follows_its_worst_target() {
+        assert_eq!(level("mv a.txt b.txt"), RiskLevel::Safe);
+        assert_eq!(level("mv /tmp/a /tmp/b"), RiskLevel::Caution);
+        assert_eq!(level("mv ~ archive"), RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn git_restore_and_mirror_push_are_gated() {
+        assert_eq!(level("git restore ."), RiskLevel::Caution);
+        assert_eq!(level("git push --mirror"), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn find_execdir_is_a_delete() {
+        assert_eq!(level("find . -execdir rm {} +"), RiskLevel::Caution);
+    }
+
+    #[test]
+    fn piped_shell_from_a_non_download_is_safe() {
+        assert_eq!(level("echo hi | sh"), RiskLevel::Safe);
+        assert_eq!(level("fetch https://x.sh | zsh"), RiskLevel::Destructive);
+    }
+
+    #[test]
+    fn shell_c_without_a_script_stays_at_the_pipe_verdict() {
+        assert_eq!(level("bash -c"), RiskLevel::Safe);
+        assert_eq!(level("eval"), RiskLevel::Safe);
+        assert_eq!(level("fish -c 'ls'"), RiskLevel::Safe);
+    }
+
+    #[test]
+    fn wrapping_and_disk_commands() {
+        assert_eq!(level("command rm -rf target"), RiskLevel::Caution);
+        assert_eq!(level("env rm -rf target"), RiskLevel::Caution);
+        assert_eq!(level("parted /dev/sda"), RiskLevel::Catastrophic);
+        assert_eq!(level("diskutil eraseDisk"), RiskLevel::Catastrophic);
+        assert_eq!(level("format C:"), RiskLevel::Catastrophic);
+        assert_eq!(level("shred notes.txt"), RiskLevel::Caution);
+        assert_eq!(level("rmdir notes.txt"), RiskLevel::Safe);
+        assert_eq!(level("sudo rm -rf /tmp/x"), RiskLevel::Catastrophic);
+    }
+
+    #[test]
+    fn truncating_redirect_variants_and_a_dangling_operator() {
+        assert_eq!(level("echo x >| notes.txt"), RiskLevel::Caution);
+        assert_eq!(level("echo x &> notes.txt"), RiskLevel::Caution);
+        assert_eq!(level("echo x 1> notes.txt"), RiskLevel::Caution);
+        assert_eq!(level("echo x >"), RiskLevel::Safe);
+    }
 }

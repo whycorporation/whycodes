@@ -184,20 +184,45 @@ impl ResultMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
 
     #[test]
     fn output_format_parse() {
         assert_eq!(OutputFormat::parse("text"), Some(OutputFormat::Text));
+        assert_eq!(OutputFormat::parse("plain"), Some(OutputFormat::Text));
         assert_eq!(OutputFormat::parse("JSON"), Some(OutputFormat::Json));
         assert_eq!(
             OutputFormat::parse("stream-json"),
             Some(OutputFormat::StreamJson)
         );
         assert_eq!(
+            OutputFormat::parse("stream_json"),
+            Some(OutputFormat::StreamJson)
+        );
+        assert_eq!(
             OutputFormat::parse("ndjson"),
             Some(OutputFormat::StreamJson)
         );
+        assert_eq!(OutputFormat::parse("jsonl"), Some(OutputFormat::StreamJson));
+        assert_eq!(OutputFormat::parse("  Text  "), Some(OutputFormat::Text));
         assert_eq!(OutputFormat::parse("nope"), None);
+    }
+
+    #[test]
+    fn output_format_as_str_display_from_str_and_structured() {
+        assert_eq!(OutputFormat::default(), OutputFormat::Text);
+        assert_eq!(OutputFormat::Text.as_str(), "text");
+        assert_eq!(OutputFormat::Json.as_str(), "json");
+        assert_eq!(OutputFormat::StreamJson.as_str(), "stream-json");
+        assert_eq!(OutputFormat::Text.to_string(), "text");
+        assert_eq!(OutputFormat::Json.to_string(), "json");
+        assert_eq!(OutputFormat::StreamJson.to_string(), "stream-json");
+        assert!(!OutputFormat::Text.is_structured());
+        assert!(OutputFormat::Json.is_structured());
+        assert!(OutputFormat::StreamJson.is_structured());
+        assert_eq!("json".parse::<OutputFormat>().unwrap(), OutputFormat::Json);
+        let err = "nope".parse::<OutputFormat>().unwrap_err();
+        assert!(err.contains("invalid output format 'nope'"));
     }
 
     #[test]
@@ -266,18 +291,74 @@ mod tests {
             usage: Usage::default(),
             duration_ms: 1,
         };
-        match meta.err("boom") {
+        let ev = meta.err("boom");
+        assert!(matches!(
+            ev,
             CiEvent::Result {
-                is_error,
-                error,
-                result,
+                is_error: true,
+                ref error,
+                ref result,
                 ..
-            } => {
-                assert!(is_error);
-                assert_eq!(error.as_deref(), Some("boom"));
-                assert!(result.is_empty());
+            } if error.as_deref() == Some("boom") && result.is_empty()
+        ));
+    }
+
+    #[test]
+    fn result_meta_ok_builds_success() {
+        let meta = ResultMeta {
+            session_id: "s".into(),
+            provider: "p".into(),
+            model: "m".into(),
+            agent: "a".into(),
+            usage: Usage::default(),
+            duration_ms: 7,
+        };
+        let ev = meta.ok("done");
+        assert!(matches!(
+            ev,
+            CiEvent::Result {
+                is_error: false,
+                ref result,
+                error: None,
+                duration_ms: 7,
+                ..
+            } if result == "done"
+        ));
+    }
+
+    #[test]
+    fn emit_stdout_and_write_line_errors() {
+        CiEvent::Cancelled.emit_stdout().unwrap();
+
+        struct FailWriter;
+        impl std::io::Write for FailWriter {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("nope"))
             }
-            other => panic!("expected Result, got {other:?}"),
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
+        let mut fail = FailWriter;
+        fail.flush().unwrap();
+        let err = CiEvent::Cancelled.write_line(&mut fail).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::Other);
+
+        struct FailAfterJson;
+        impl std::io::Write for FailAfterJson {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                if buf == b"\n" {
+                    Err(std::io::Error::other("nl"))
+                } else {
+                    Ok(buf.len())
+                }
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut after = FailAfterJson;
+        after.flush().unwrap();
+        assert!(CiEvent::Cancelled.write_line(&mut after).is_err());
     }
 }

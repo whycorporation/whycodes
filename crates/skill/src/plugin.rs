@@ -133,11 +133,10 @@ mod tests {
     async fn plugin_execute_echo() {
         // Plugin commands are written in the host shell's syntax, so the
         // variable reference differs between cmd.exe and sh.
-        let command = if cfg!(windows) {
-            "echo hello %PLUGIN_ARG_NAME%"
-        } else {
-            "echo hello $PLUGIN_ARG_NAME"
-        };
+        #[cfg(windows)]
+        let command = "echo hello %PLUGIN_ARG_NAME%";
+        #[cfg(not(windows))]
+        let command = "echo hello $PLUGIN_ARG_NAME";
         let config = PluginConfig {
             name: "echo".into(),
             command: command.into(),
@@ -172,5 +171,101 @@ mod tests {
             .execute(&HashMap::new(), &PluginContext::default())
             .await;
         assert!(result.is_error);
+    }
+
+    #[test]
+    fn accessors_expose_config() {
+        let params = serde_json::json!({"type": "object"});
+        let plugin = Plugin::new(PluginConfig {
+            name: "n".into(),
+            command: "true".into(),
+            description: "desc".into(),
+            parameters: Some(params.clone()),
+            working_dir: Some("/tmp".into()),
+        });
+        assert_eq!(plugin.name(), "n");
+        assert_eq!(plugin.description(), "desc");
+        assert_eq!(plugin.parameters(), Some(&params));
+    }
+
+    #[tokio::test]
+    async fn execute_uses_working_dir_and_workspace_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = PluginConfig {
+            name: "cwd".into(),
+            command: "pwd; echo ws=$PLUGIN_WORKSPACE".into(),
+            description: "d".into(),
+            parameters: None,
+            working_dir: Some(dir.path().display().to_string()),
+        };
+        let plugin = Plugin::new(config);
+        let ctx = PluginContext {
+            workspace_path: Some(dir.path().display().to_string()),
+        };
+        let result = plugin.execute(&HashMap::new(), &ctx).await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(
+            result.content.contains(&dir.path().display().to_string()),
+            "{}",
+            result.content
+        );
+        assert!(result.content.contains("ws="), "{}", result.content);
+    }
+
+    #[tokio::test]
+    async fn execute_failure_prefers_stderr_then_stdout() {
+        let stderr_cfg = PluginConfig {
+            name: "se".into(),
+            command: "echo out; echo err >&2; exit 1".into(),
+            description: "d".into(),
+            parameters: None,
+            working_dir: None,
+        };
+        let stderr_result = Plugin::new(stderr_cfg)
+            .execute(&HashMap::new(), &PluginContext::default())
+            .await;
+        assert!(stderr_result.is_error);
+        assert!(
+            stderr_result.content.contains("err"),
+            "{}",
+            stderr_result.content
+        );
+
+        let stdout_cfg = PluginConfig {
+            name: "so".into(),
+            command: "echo only-out; exit 1".into(),
+            description: "d".into(),
+            parameters: None,
+            working_dir: None,
+        };
+        let stdout_result = Plugin::new(stdout_cfg)
+            .execute(&HashMap::new(), &PluginContext::default())
+            .await;
+        assert!(stdout_result.is_error);
+        assert!(
+            stdout_result.content.contains("only-out"),
+            "{}",
+            stdout_result.content
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_spawn_error() {
+        let config = PluginConfig {
+            name: "gone".into(),
+            command: "true".into(),
+            description: "d".into(),
+            parameters: None,
+            working_dir: Some("/no/such/plugin-cwd-whycode".into()),
+        };
+        let result = Plugin::new(config)
+            .execute(&HashMap::new(), &PluginContext::default())
+            .await;
+        assert!(result.is_error);
+        assert!(
+            result.content.contains("Failed to execute plugin"),
+            "{}",
+            result.content
+        );
     }
 }

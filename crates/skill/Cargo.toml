@@ -10,7 +10,6 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 whycode-core = { path = "../core" }
-glob.workspace = true
 toml.workspace = true
 anyhow.workspace = true
 tracing.workspace = true

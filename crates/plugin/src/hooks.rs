@@ -179,24 +179,34 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
     };
 
     match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => HookRunResult {
+        Ok(result) => hook_result_from_wait(result),
+        Err(_elapsed) => hook_timeout_result(hook.timeout_secs),
+    }
+}
+
+fn hook_result_from_wait(result: Result<std::process::Output, std::io::Error>) -> HookRunResult {
+    match result {
+        Ok(output) => HookRunResult {
             exit_code: output.status.code().unwrap_or(-1),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
             timed_out: false,
         },
-        Ok(Err(e)) => HookRunResult {
+        Err(e) => HookRunResult {
             exit_code: -1,
             stdout: String::new(),
             stderr: format!("hook wait failed: {e}"),
             timed_out: false,
         },
-        Err(_elapsed) => HookRunResult {
-            exit_code: -1,
-            stdout: String::new(),
-            stderr: format!("hook timed out after {}s", hook.timeout_secs.max(1)),
-            timed_out: true,
-        },
+    }
+}
+
+fn hook_timeout_result(timeout_secs: u64) -> HookRunResult {
+    HookRunResult {
+        exit_code: -1,
+        stdout: String::new(),
+        stderr: format!("hook timed out after {}s", timeout_secs.max(1)),
+        timed_out: true,
     }
 }
 
@@ -272,9 +282,10 @@ pub async fn run_post_hooks(hooks: &[HookConfig], ctx: &HookContext) {
         );
         let result = run_hook(hook, ctx).await;
         if !result.success() {
+            let detail = format_failure(hook, &result);
             tracing::warn!(
                 tool = %ctx.tool_name,
-                detail = %format_failure(hook, &result),
+                %detail,
                 "post_tool hook failed"
             );
         }
@@ -361,12 +372,8 @@ mod tests {
             timeout_secs: 5,
         }];
         let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
-        match run_pre_hooks(&hooks, &ctx).await {
-            PreHookDecision::Block { reason } => {
-                assert!(reason.contains("blocked"), "{reason}");
-            }
-            PreHookDecision::Allow => panic!("expected block"),
-        }
+        let decision = run_pre_hooks(&hooks, &ctx).await;
+        assert!(format!("{decision:?}").contains("blocked"));
     }
 
     #[tokio::test]
@@ -379,10 +386,10 @@ mod tests {
             timeout_secs: 5,
         }];
         let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
-        match run_pre_hooks(&hooks, &ctx).await {
-            PreHookDecision::Allow => {}
-            PreHookDecision::Block { reason } => panic!("should not block: {reason}"),
-        }
+        assert!(matches!(
+            run_pre_hooks(&hooks, &ctx).await,
+            PreHookDecision::Allow
+        ));
     }
 
     #[tokio::test]
@@ -395,10 +402,10 @@ mod tests {
             timeout_secs: 5,
         }];
         let ctx = HookContext::pre("bash", "id1", "{}", None, work_dir());
-        match run_pre_hooks(&hooks, &ctx).await {
-            PreHookDecision::Allow => {}
-            PreHookDecision::Block { reason } => panic!("should allow: {reason}"),
-        }
+        assert!(matches!(
+            run_pre_hooks(&hooks, &ctx).await,
+            PreHookDecision::Allow
+        ));
     }
 
     #[tokio::test]
@@ -425,5 +432,177 @@ mod tests {
     #[test]
     fn truncate_output_short_unchanged() {
         assert_eq!(truncate_output("hi"), "hi");
+    }
+
+    #[test]
+    fn tool_matches_empty_and_inner_stars() {
+        assert!(tool_matches("", "bash"));
+        assert!(tool_matches("   ", "anything"));
+        assert!(!tool_matches("foo*bar*", "foobar"));
+        assert!(!tool_matches("*foo*bar", "foobar"));
+        assert!(!tool_matches("exact", "other"));
+    }
+
+    fn hook(
+        event: HookEvent,
+        tool_match: &str,
+        command: &str,
+        block_on_failure: bool,
+        timeout_secs: u64,
+    ) -> HookConfig {
+        HookConfig {
+            event,
+            tool_match: tool_match.into(),
+            command: command.into(),
+            block_on_failure,
+            timeout_secs,
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_hooks_allow_when_none_match_or_command_blank() {
+        let hooks = vec![
+            hook(HookEvent::PostTool, "*", "true", false, 5),
+            hook(HookEvent::PreTool, "bash", "   ", true, 5),
+        ];
+        let ctx = HookContext::pre("bash", "id", "{}", None, work_dir());
+        assert!(matches!(
+            run_pre_hooks(&hooks, &ctx).await,
+            PreHookDecision::Allow
+        ));
+        let ctx_other = HookContext::pre("write", "id", "{}", None, work_dir());
+        assert!(matches!(
+            run_pre_hooks(&hooks, &ctx_other).await,
+            PreHookDecision::Allow
+        ));
+    }
+
+    #[tokio::test]
+    async fn post_hooks_skip_empty_and_log_failure() {
+        let hooks = vec![
+            hook(HookEvent::PreTool, "*", "true", false, 5),
+            hook(HookEvent::PostTool, "read", "   ", false, 5),
+            hook(
+                HookEvent::PostTool,
+                "read",
+                "echo out; echo err >&2; exit 1",
+                false,
+                5,
+            ),
+        ];
+        let ctx = HookContext::post(
+            "read",
+            "id1",
+            "{}",
+            Some("sess".into()),
+            work_dir(),
+            true,
+            "tool-output",
+        );
+        run_post_hooks(&hooks, &ctx).await;
+
+        let no_match = HookContext::post("write", "id2", "{}", None, work_dir(), false, "ok");
+        run_post_hooks(&hooks, &no_match).await;
+    }
+
+    #[tokio::test]
+    async fn run_hook_spawn_failure() {
+        let cfg = hook(HookEvent::PreTool, "*", "true", false, 5);
+        let ctx = HookContext::pre(
+            "bash",
+            "id",
+            "{}",
+            None,
+            "/this/path/does/not/exist/whycode-plugin-hooks",
+        );
+        let result = run_hook(&cfg, &ctx).await;
+        assert!(!result.success());
+        assert!(result.stderr.contains("failed to spawn hook"), "{result:?}");
+        assert_eq!(result.exit_code, -1);
+        assert!(!result.timed_out);
+    }
+
+    #[tokio::test]
+    async fn run_hook_times_out() {
+        let cfg = hook(HookEvent::PreTool, "*", "sleep 8", true, 0);
+        let ctx = HookContext::pre("bash", "id", "{}", None, work_dir());
+        let result = run_hook(&cfg, &ctx).await;
+        assert!(result.timed_out);
+        assert!(!result.success());
+        assert!(result.stderr.contains("timed out"), "{result:?}");
+    }
+
+    #[test]
+    fn hook_wait_and_timeout_helpers() {
+        let wait_err = hook_result_from_wait(Err(std::io::Error::other("pipe broke")));
+        assert_eq!(wait_err.exit_code, -1);
+        assert!(wait_err.stderr.contains("hook wait failed"));
+        assert!(!wait_err.success());
+
+        let timed = hook_timeout_result(0);
+        assert!(timed.timed_out);
+        assert!(timed.stderr.contains("timed out after 1s"));
+        assert!(!timed.success());
+    }
+
+    #[test]
+    fn format_failure_covers_timeout_stderr_and_stdout() {
+        let cfg = hook(HookEvent::PreTool, "*", "x", true, 3);
+        let timed = HookRunResult {
+            exit_code: -1,
+            stdout: String::new(),
+            stderr: String::new(),
+            timed_out: true,
+        };
+        assert_eq!(format_failure(&cfg, &timed), "timed out after 3s");
+
+        let with_err = HookRunResult {
+            exit_code: 2,
+            stdout: "ignored".into(),
+            stderr: "boom-stderr".into(),
+            timed_out: false,
+        };
+        let err_msg = format_failure(&cfg, &with_err);
+        assert!(err_msg.contains("exit 2"));
+        assert!(err_msg.contains("boom-stderr"));
+
+        let long_err = "e".repeat(250);
+        let long = HookRunResult {
+            exit_code: 1,
+            stdout: String::new(),
+            stderr: long_err,
+            timed_out: false,
+        };
+        assert!(format_failure(&cfg, &long).contains("exit 1"));
+
+        let with_out = HookRunResult {
+            exit_code: 4,
+            stdout: "only-stdout".into(),
+            stderr: "   ".into(),
+            timed_out: false,
+        };
+        let out_msg = format_failure(&cfg, &with_out);
+        assert!(out_msg.contains("exit 4"));
+        assert!(out_msg.contains("only-stdout"));
+
+        let long_out = "o".repeat(250);
+        let long_stdout = HookRunResult {
+            exit_code: 7,
+            stdout: long_out,
+            stderr: String::new(),
+            timed_out: false,
+        };
+        assert!(format_failure(&cfg, &long_stdout).contains("exit 7"));
+    }
+
+    #[test]
+    fn truncate_output_long_is_cut() {
+        let s = "é".repeat(OUTPUT_ENV_MAX + 4);
+        let out = truncate_output(&s);
+        assert!(out.ends_with("\n…[truncated]"));
+        assert_eq!(
+            out.chars().count(),
+            OUTPUT_ENV_MAX + "\n…[truncated]".chars().count()
+        );
     }
 }

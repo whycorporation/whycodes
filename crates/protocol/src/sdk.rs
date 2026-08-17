@@ -507,4 +507,134 @@ mod tests {
         assert!(errs.iter().any(|e| e.contains("missing required name")));
         assert!(errs.iter().any(|e| e.contains("expected integer")));
     }
+
+    #[test]
+    fn error_code_as_str_and_display_cover_all() {
+        let cases = [
+            (ErrorCode::Disconnected, "disconnected"),
+            (ErrorCode::Timeout, "timeout"),
+            (ErrorCode::UnknownSession, "unknown_session"),
+            (ErrorCode::InvalidRequest, "invalid_request"),
+            (ErrorCode::Auth, "auth"),
+            (ErrorCode::Internal, "internal"),
+            (ErrorCode::ServeNotFound, "serve_not_found"),
+            (ErrorCode::StartupFailed, "startup_failed"),
+            (ErrorCode::StartupTimeout, "startup_timeout"),
+            (ErrorCode::UnsupportedVersion, "unsupported_version"),
+            (ErrorCode::Cancelled, "cancelled"),
+            (
+                ErrorCode::StructuredSchemaInvalid,
+                "structured_schema_invalid",
+            ),
+            (
+                ErrorCode::StructuredOutputInvalid,
+                "structured_output_invalid",
+            ),
+        ];
+        for (code, expected) in cases {
+            assert_eq!(code.as_str(), expected);
+            assert_eq!(code.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn extract_json_raw_fenced_escapes_and_errors() {
+        let raw = extract_json(r#"{"a":1}"#).unwrap();
+        assert_eq!(raw["a"], 1);
+
+        let upper = extract_json("```JSON\n[1]\n```").unwrap();
+        assert_eq!(upper, serde_json::json!([1]));
+
+        let bare_fence = extract_json("```\n{\"x\":2}\n```").unwrap();
+        assert_eq!(bare_fence["x"], 2);
+
+        let no_nl = extract_json("```json{\"z\":3}```").unwrap();
+        assert_eq!(no_nl["z"], 3);
+
+        let arr = extract_json("prefix [true, false] suffix").unwrap();
+        assert_eq!(arr, serde_json::json!([true, false]));
+
+        let nested = extract_json(r#"see {"a":{"b":1}} done"#).unwrap();
+        assert_eq!(nested["a"]["b"], 1);
+
+        let escaped = extract_json(r#"wrap {"s":"a\"b\\c"} end"#).unwrap();
+        assert_eq!(escaped["s"], "a\"b\\c");
+
+        assert!(extract_json("no json here").is_err());
+        assert!(extract_json("{unclosed").is_err());
+        assert!(extract_json("```json\nnot json\n```").is_err());
+        assert!(extract_json("```json\n{\"a\":1}").is_ok());
+    }
+
+    #[test]
+    fn validate_schema_and_instance_type_matrix() {
+        assert!(validate_schema(&serde_json::json!({})).is_ok());
+        assert!(validate_schema(&serde_json::json!([])).is_err());
+        assert!(validate_schema(&serde_json::json!("nope")).is_err());
+
+        assert!(
+            validate_instance(
+                &serde_json::json!({"type": "array"}),
+                &serde_json::json!([1])
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_instance(
+                &serde_json::json!({"type": "number"}),
+                &serde_json::json!(1.5)
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_instance(
+                &serde_json::json!({"type": "boolean"}),
+                &serde_json::json!(true)
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_instance(
+                &serde_json::json!({"type": "null"}),
+                &serde_json::json!(null)
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_instance(
+                &serde_json::json!({"type": "integer"}),
+                &serde_json::json!(u64::MAX)
+            )
+            .is_empty()
+        );
+        assert!(
+            validate_instance(
+                &serde_json::json!({"type": "mystery"}),
+                &serde_json::json!("anything")
+            )
+            .is_empty()
+        );
+
+        let type_errs = validate_instance(
+            &serde_json::json!({"type": "array"}),
+            &serde_json::json!({"no": "arr"}),
+        );
+        assert!(type_errs.iter().any(|e| e.contains("expected array")));
+
+        let items_schema = serde_json::json!({
+            "type": "array",
+            "items": { "type": "string" }
+        });
+        assert!(validate_instance(&items_schema, &serde_json::json!(["a", "b"])).is_empty());
+        let item_errs = validate_instance(&items_schema, &serde_json::json!([1]));
+        assert!(item_errs.iter().any(|e| e.contains("expected string")));
+
+        let required_non_str = serde_json::json!({ "required": [1, "need"] });
+        let req_errs = validate_instance(&required_non_str, &serde_json::json!({}));
+        assert!(req_errs.iter().any(|e| e.contains("missing required need")));
+        assert_eq!(req_errs.len(), 1);
+
+        let no_type = serde_json::json!({ "required": ["x"] });
+        assert!(validate_instance(&no_type, &serde_json::json!({"x": 1})).is_empty());
+    }
 }

@@ -8,11 +8,20 @@ use super::policy::{Backend, PreparedCommand, SandboxError};
 static BWRAP: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 pub fn bwrap_path() -> Option<&'static Path> {
-    BWRAP.get_or_init(which_bwrap).as_deref()
+    BWRAP.get_or_init(find_bwrap).as_deref()
 }
 
-fn which_bwrap() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os("PATH") {
+/// Search `PATH` then well-known locations. Split out of [`bwrap_path`] so
+/// tests can exercise every branch without the process-wide `OnceLock`.
+pub(crate) fn find_bwrap() -> Option<PathBuf> {
+    find_bwrap_in(std::env::var_os("PATH"), &["/usr/bin/bwrap", "/bin/bwrap"])
+}
+
+pub(crate) fn find_bwrap_in(
+    path_var: Option<std::ffi::OsString>,
+    fallbacks: &[&str],
+) -> Option<PathBuf> {
+    if let Some(path) = path_var {
         for dir in std::env::split_paths(&path) {
             let candidate = dir.join("bwrap");
             if candidate.is_file() {
@@ -20,7 +29,7 @@ fn which_bwrap() -> Option<PathBuf> {
             }
         }
     }
-    for p in ["/usr/bin/bwrap", "/bin/bwrap"] {
+    for p in fallbacks {
         let pb = PathBuf::from(p);
         if pb.is_file() {
             return Some(pb);
@@ -47,8 +56,16 @@ pub fn prepare_bwrap(
     working_dir: &Path,
     network: bool,
 ) -> Result<PreparedCommand, SandboxError> {
-    let bwrap =
-        bwrap_path().ok_or_else(|| SandboxError::Unavailable("bwrap not found on PATH".into()))?;
+    prepare_bwrap_bin(bwrap_path(), command, working_dir, network)
+}
+
+pub(crate) fn prepare_bwrap_bin(
+    bwrap: Option<&Path>,
+    command: &str,
+    working_dir: &Path,
+    network: bool,
+) -> Result<PreparedCommand, SandboxError> {
+    let bwrap = bwrap.ok_or_else(|| SandboxError::Unavailable("bwrap not found on PATH".into()))?;
 
     let cwd = working_dir.to_path_buf();
     let cwd_str = cwd.to_string_lossy().into_owned();

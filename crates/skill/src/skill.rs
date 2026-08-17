@@ -195,4 +195,36 @@ mod tests {
         assert!(skill.file_patterns.is_empty());
         assert_eq!(skill.prompt, "Just a prompt.");
     }
+
+    #[test]
+    fn missing_file_is_error() {
+        assert!(Skill::from_file(std::path::Path::new("/no/such/skill.md")).is_err());
+    }
+
+    #[test]
+    fn missing_frontmatter_markers_is_error() {
+        let (_dir, path) = write_temp("just a body with no markers\n");
+        assert!(Skill::from_file(&path).is_err());
+    }
+
+    #[test]
+    fn comments_blank_lines_and_orphan_list_items() {
+        let parsed = parse_frontmatter(
+            "# comment\n\n- orphan\nnot a pair\nname: demo\ntools_allowed:\n  - read\n# mid\n  - write\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.get("name").map(String::as_str), Some("demo"));
+        assert_eq!(
+            parsed.get("tools_allowed").map(String::as_str),
+            Some("read\nwrite")
+        );
+    }
+
+    #[test]
+    fn empty_list_value_and_empty_string_list() {
+        assert!(parse_string_list(None).is_empty());
+        assert!(parse_string_list(Some(&String::new())).is_empty());
+        let parsed = parse_frontmatter("name: x\ntools_allowed:\n").unwrap();
+        assert!(parse_string_list(parsed.get("tools_allowed")).is_empty());
+    }
 }

@@ -87,4 +87,73 @@ mod tests {
         let tool = make_tool(vec![], json!({"a": {"type": "string"}}));
         assert!(validate_tool_params(&tool, &json!({"a": "ok", "b": "extra"})).is_ok());
     }
+
+    #[test]
+    fn no_schema_constraints_accepts_anything() {
+        let tool = ToolDefinition {
+            name: "bare".into(),
+            description: "no schema".into(),
+            parameters: json!({}),
+        };
+        assert!(validate_tool_params(&tool, &json!({"x": 1})).is_ok());
+    }
+
+    #[test]
+    fn required_non_string_entries_are_ignored() {
+        let tool = ToolDefinition {
+            name: "t".into(),
+            description: "t".into(),
+            parameters: json!({
+                "required": [1, "name"],
+                "properties": {"name": {"type": "string"}}
+            }),
+        };
+        assert!(validate_tool_params(&tool, &json!({})).is_err());
+        assert!(validate_tool_params(&tool, &json!({"name": "ok"})).is_ok());
+    }
+
+    #[test]
+    fn property_without_type_is_not_checked() {
+        let tool = make_tool(vec![], json!({"flag": {}}));
+        assert!(validate_tool_params(&tool, &json!({"flag": "anything"})).is_ok());
+    }
+
+    #[test]
+    fn unknown_json_type_does_not_mismatch() {
+        let tool = make_tool(vec![], json!({"x": {"type": "null"}}));
+        assert!(validate_tool_params(&tool, &json!({"x": 1})).is_ok());
+    }
+
+    #[test]
+    fn boolean_array_object_and_number_types() {
+        let tool = make_tool(
+            vec![],
+            json!({
+                "ok": {"type": "boolean"},
+                "items": {"type": "array"},
+                "meta": {"type": "object"},
+                "n": {"type": "number"}
+            }),
+        );
+        assert!(
+            validate_tool_params(
+                &tool,
+                &json!({"ok": true, "items": [1], "meta": {"a": 1}, "n": 1.5})
+            )
+            .is_ok()
+        );
+        assert!(validate_tool_params(&tool, &json!({"ok": "no"})).is_err());
+        assert!(validate_tool_params(&tool, &json!({"items": {}})).is_err());
+        assert!(validate_tool_params(&tool, &json!({"meta": []})).is_err());
+        assert!(validate_tool_params(&tool, &json!({"n": "1"})).is_err());
+    }
+
+    #[test]
+    fn missing_property_value_skips_type_check() {
+        let tool = make_tool(
+            vec![],
+            json!({"a": {"type": "string"}, "b": {"type": "boolean"}}),
+        );
+        assert!(validate_tool_params(&tool, &json!({"a": "only-a"})).is_ok());
+    }
 }

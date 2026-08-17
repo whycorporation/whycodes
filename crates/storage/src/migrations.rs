@@ -161,10 +161,8 @@ mod tests {
 
         // Idempotent.
         run_migrations(&conn).unwrap();
-        assert!(
-            column_exists(&conn, "memories", "embedding").unwrap_or(false)
-                || table_exists(&conn, "memories").unwrap()
-        );
+        assert!(column_exists(&conn, "memories", "embedding").unwrap());
+        assert!(table_exists(&conn, "memories").unwrap());
     }
 
     fn table_exists(conn: &Connection, table: &str) -> Result<bool, rusqlite::Error> {
@@ -195,5 +193,95 @@ mod tests {
         assert!(rows.next().unwrap().is_some());
         // Idempotent on legacy DBs that already had messages without the index.
         run_migrations(&conn).unwrap();
+    }
+
+    #[test]
+    fn run_migrations_fails_when_first_batch_cannot_write() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA query_only=ON;").unwrap();
+        assert!(run_migrations(&conn).is_err());
+    }
+
+    #[test]
+    fn run_migrations_fails_adding_input_tokens_on_a_view() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE VIEW sessions AS
+                SELECT 'x' AS id, 't' AS title, 'c' AS created_at,
+                       'u' AS updated_at, 'p' AS project_path;
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                tool_call_id TEXT, name TEXT, created_at TEXT
+            );
+            CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT);
+            ",
+        )
+        .unwrap();
+        assert!(run_migrations(&conn).is_err());
+    }
+
+    #[test]
+    fn run_migrations_fails_adding_output_tokens_at_column_limit() {
+        let conn = Connection::open_in_memory().unwrap();
+        let mut cols = vec![
+            "id TEXT PRIMARY KEY".to_string(),
+            "title TEXT".to_string(),
+            "created_at TEXT".to_string(),
+            "updated_at TEXT".to_string(),
+            "project_path TEXT".to_string(),
+            "input_tokens INTEGER NOT NULL DEFAULT 0".to_string(),
+        ];
+        for i in cols.len()..2000 {
+            cols.push(format!("pad_{i} INTEGER"));
+        }
+        conn.execute(&format!("CREATE TABLE sessions ({})", cols.join(",")), [])
+            .unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                tool_call_id TEXT, name TEXT, created_at TEXT
+            );
+            CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT);
+            ",
+        )
+        .unwrap();
+        assert!(run_migrations(&conn).is_err());
+    }
+
+    #[test]
+    fn run_migrations_fails_when_memory_index_cannot_be_created() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, title TEXT, created_at TEXT,
+                updated_at TEXT, project_path TEXT
+            );
+            CREATE TABLE messages (
+                id TEXT PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
+                tool_call_id TEXT, name TEXT, created_at TEXT
+            );
+            CREATE TABLE state (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE memories (id TEXT PRIMARY KEY);
+            ",
+        )
+        .unwrap();
+        assert!(run_migrations(&conn).is_err());
+    }
+
+    #[test]
+    fn ensure_column_treats_duplicate_name_as_already_migrated() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (col INTEGER)").unwrap();
+        // pragma_table_info is case-sensitive; SQLite column names are not.
+        ensure_column(&conn, "t", "COL", "INTEGER").unwrap();
+    }
+
+    #[test]
+    fn ensure_column_propagates_alter_errors() {
+        let conn = Connection::open_in_memory().unwrap();
+        assert!(ensure_column(&conn, "missing", "col", "INTEGER").is_err());
     }
 }

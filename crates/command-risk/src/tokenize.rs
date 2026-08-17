@@ -451,4 +451,101 @@ mod tests {
         assert!(tokenize("").segments.is_empty());
         assert!(tokenize("   ").segments.is_empty());
     }
+
+    #[test]
+    fn unbalanced_backtick_and_substitutions_are_malformed() {
+        assert!(tokenize("rm -rf `unclosed").malformed);
+        assert!(tokenize("rm -rf $(unclosed").malformed);
+        assert!(tokenize("diff <(unclosed").malformed);
+        assert!(tokenize("cmd >(unclosed").malformed);
+        assert!(tokenize("=(unclosed").malformed);
+    }
+
+    #[test]
+    fn nested_parens_and_double_quote_escapes() {
+        let t = tokenize("rm -rf $(echo $(cat list))");
+        assert!(t.segments[0].has_dynamic());
+        assert!(!t.malformed);
+        assert_eq!(
+            words(r#"echo "foo\"bar""#),
+            vec![vec!["echo", r#"foo\"bar"#]]
+        );
+        assert_eq!(
+            words(r#"echo "a <(x) >(y) =(z)""#),
+            vec![vec!["echo", "a <(x) >(y) =(z)"]]
+        );
+        assert!(tokenize(r#"echo "a <(x)""#).segments[0].has_dynamic());
+    }
+
+    #[test]
+    fn process_sub_equals_only_at_word_start() {
+        // After a letter this is an assignment, not Zsh process substitution.
+        let t = tokenize("FOO=(bar) ls");
+        assert!(t.segments.iter().all(|s| !s.has_dynamic()));
+        assert_eq!(t.segments.last().and_then(Segment::command), Some("ls"));
+        // After whitespace / separators it is process substitution.
+        assert!(tokenize("ls =(echo hi)").segments[0].has_dynamic());
+        assert!(
+            tokenize("true; =(echo hi)")
+                .segments
+                .iter()
+                .any(|s| s.has_dynamic())
+        );
+        assert!(
+            tokenize("a|=(echo hi)")
+                .segments
+                .iter()
+                .any(|s| s.has_dynamic())
+        );
+        assert!(
+            tokenize("a&=(echo hi)")
+                .segments
+                .iter()
+                .any(|s| s.has_dynamic())
+        );
+        assert!(
+            tokenize("(=(echo hi)")
+                .segments
+                .iter()
+                .any(|s| s.has_dynamic())
+        );
+        assert!(
+            tokenize("true)=(echo hi)")
+                .segments
+                .iter()
+                .any(|s| s.has_dynamic())
+        );
+    }
+
+    #[test]
+    fn command_skips_command_env_and_keywords() {
+        assert_eq!(tokenize("command rm x").segments[0].command(), Some("rm"));
+        assert_eq!(tokenize("env rm x").segments[0].command(), Some("rm"));
+        assert_eq!(tokenize("FOO_BAR=1 rm x").segments[0].command(), Some("rm"));
+        assert_eq!(tokenize("then rm x").segments[0].command(), Some("rm"));
+        let only_assign = tokenize("FOO=1");
+        assert_eq!(only_assign.segments[0].command(), None);
+        assert_eq!(only_assign.segments[0].args().count(), 0);
+        let with_args = tokenize("FOO_BAR=1 rm x y");
+        let args: Vec<&str> = with_args.segments[0]
+            .args()
+            .map(|w| w.text.as_str())
+            .collect();
+        assert_eq!(args, vec!["x", "y"]);
+    }
+
+    #[test]
+    fn redirect_helpers_and_background_separator() {
+        assert!(is_redirect("2>"));
+        assert!(is_truncating_redirect(">|"));
+        assert!(is_truncating_redirect("&>"));
+        assert!(is_truncating_redirect("2>"));
+        assert!(is_truncating_redirect("1>"));
+        assert!(!is_truncating_redirect(">>"));
+        assert_eq!(words("a & b"), vec![vec!["a"], vec!["b"]]);
+        assert_eq!(
+            words("echo hi >| out"),
+            vec![vec!["echo", "hi", ">|", "out"]]
+        );
+    }
 }
