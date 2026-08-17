@@ -783,7 +783,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Spinner while generating (generic status only)
-            if rt.agent_busy
+            if (rt.agent_busy || app.running_subagent_count() > 0)
                 && !matches!(
                     app.current_agent_state,
                     AgentState::WaitingForPermission | AgentState::WaitingForQuestion
@@ -3145,6 +3145,25 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         }
         TurnEvent::Panel(update) => {
             apply_panel_update(app, update);
+        }
+        TurnEvent::Subagent {
+            id,
+            kind,
+            description,
+            status,
+            activity,
+            elapsed_ms,
+            output,
+        } => {
+            app.upsert_subagent(crate::app::SubagentUpdate {
+                id,
+                kind,
+                description,
+                status,
+                activity,
+                elapsed_ms,
+                output,
+            });
         }
         TurnEvent::SwarmMessage { from, to, text } => {
             app.toasts.push(

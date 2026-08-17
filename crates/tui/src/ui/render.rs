@@ -22,6 +22,7 @@ use super::prompt;
 use super::sidebar;
 use super::slash_suggest;
 use super::status;
+use super::subagents;
 use super::toast;
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -172,10 +173,38 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let body = layout::below_header(outer[1]);
     status::render_footer(frame, outer[2], app, palette);
 
+    let strip_h = subagents::strip_height(app);
+    let (strip, body) = if strip_h > 0 {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(strip_h), Constraint::Min(3)])
+            .split(body);
+        (Some(chunks[0]), chunks[1])
+    } else {
+        (None, body)
+    };
+    if let Some(area) = strip {
+        subagents::render_strip(frame, area, app, palette);
+    }
+
     if app.messages.is_empty() {
         render_home(frame, body, app, palette);
     } else {
         render_session(frame, body, app, palette);
+    }
+
+    if app.open_subagent.is_some() {
+        let frame_area = inset_centered(outer[1], 4, 2);
+        subagents::render_frame(frame, frame_area, app, palette);
+    }
+}
+
+fn inset_centered(area: Rect, pad_x: u16, pad_y: u16) -> Rect {
+    Rect {
+        x: area.x.saturating_add(pad_x),
+        y: area.y.saturating_add(pad_y),
+        width: area.width.saturating_sub(pad_x.saturating_mul(2)),
+        height: area.height.saturating_sub(pad_y.saturating_mul(2)),
     }
 }
 

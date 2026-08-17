@@ -83,6 +83,17 @@ impl MessageWidget {
                         Style::default().fg(palette.tool_msg),
                     )));
                 }
+                ChatBlock::Subagent {
+                    kind,
+                    description,
+                    status,
+                    ..
+                } => {
+                    lines.push(Line::from(Span::styled(
+                        format!("  ◆ Subagent {status} ({kind}): {description}"),
+                        Style::default().fg(palette.accent),
+                    )));
+                }
                 ChatBlock::ToolResult {
                     id: _,
                     content,

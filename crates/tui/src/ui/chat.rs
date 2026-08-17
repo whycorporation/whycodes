@@ -662,6 +662,41 @@ fn render_message(
                         // Live `content` is emitted after every tool. ToolResult
                         // is painted with the matching ToolUse / tool_calls entry.
                     }
+                    ChatBlock::Subagent {
+                        kind,
+                        description,
+                        status,
+                        activity,
+                        elapsed_ms,
+                        ..
+                    } => {
+                        let bullet = if status == "running" {
+                            crate::ui::subagents::SPIN
+                                [app.spinner_frame % crate::ui::subagents::SPIN.len()]
+                        } else if status == "completed" {
+                            "✓"
+                        } else {
+                            "✗"
+                        };
+                        let mut line =
+                            format!("{bullet} Subagent {status}: \"{description}\" ({kind})");
+                        if status == "running" && !activity.is_empty() {
+                            line.push_str(" — ");
+                            line.push_str(activity);
+                        } else if *elapsed_ms > 0 && status != "running" {
+                            line.push_str(&format!(" in {:.1}s", *elapsed_ms as f64 / 1000.0));
+                        }
+                        lines.push(Line::from(Span::styled(
+                            line,
+                            Style::default().fg(if status == "failed" {
+                                palette.error
+                            } else if status == "completed" {
+                                palette.success
+                            } else {
+                                palette.accent
+                            }),
+                        )));
+                    }
                 }
             }
             for tc in &msg.tool_calls {

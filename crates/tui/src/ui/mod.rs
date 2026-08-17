@@ -15,6 +15,7 @@ pub mod sidebar;
 pub mod slash_suggest;
 pub mod status;
 pub mod status_bar;
+pub mod subagents;
 pub mod timefmt;
 pub mod toast;
 

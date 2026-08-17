@@ -2851,6 +2851,15 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
                 whycode_core::PanelUpdate::Mermaid { .. } => "panel mermaid".into(),
             },
         }),
+        TurnEvent::Subagent {
+            id,
+            kind,
+            description,
+            status,
+            ..
+        } => Some(CiEvent::Status {
+            message: format!("subagent {id} {status} ({kind}): {description}"),
+        }),
     }
 }
 
@@ -4625,6 +4634,21 @@ mod tests {
             perm,
             Some(CiEvent::Status {
                 message: "permission_request id=r1 tool=write".into()
+            })
+        );
+        let child = turn_event_to_ci(TE::Subagent {
+            id: "task-1".into(),
+            kind: "explore".into(),
+            description: "scan".into(),
+            status: "running".into(),
+            activity: "Thinking".into(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        assert_eq!(
+            child,
+            Some(CiEvent::Status {
+                message: "subagent task-1 running (explore): scan".into()
             })
         );
     }

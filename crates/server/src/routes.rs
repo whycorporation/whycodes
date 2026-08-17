@@ -561,6 +561,25 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "questions": questions,
             })
         }
+        TurnEvent::Subagent {
+            id,
+            kind,
+            description,
+            status,
+            activity,
+            elapsed_ms,
+            ..
+        } => {
+            serde_json::json!({
+                "type": "subagent",
+                "id": id,
+                "kind": kind,
+                "description": description,
+                "status": status,
+                "activity": activity,
+                "elapsed_ms": elapsed_ms,
+            })
+        }
         TurnEvent::Panel(update) => match update {
             whycode_core::PanelUpdate::Clear => {
                 serde_json::json!({"type": "panel", "action": "clear"})

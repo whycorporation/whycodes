@@ -34,6 +34,10 @@ pub enum Action {
     ToggleSidebar,
     SidebarNextTab,
     SidebarPrevTab,
+    /// Ctrl+G — Grok tasks pane (subagents + background).
+    ToggleTasksPane,
+    /// Open the framed child transcript (Enter on a subagent row).
+    OpenSubagent,
     OpenProviderDialog,
     OpenModelDialog,
     DialogConfirm,
@@ -157,6 +161,7 @@ impl Keymap {
                     }
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
+                    (true, KeyCode::Char('g')) => return Some(Action::ToggleTasksPane),
                     // Sidebar tabs: [ / ] in scrollback (prompt still types them).
                     (false, KeyCode::Char(']')) if focus == FocusPane::Scrollback => {
                         return Some(Action::SidebarNextTab);
@@ -310,6 +315,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Ctrl+P", "Provider setup", KeymapContext::Normal),
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),
+        KeyBinding::new("Ctrl+G", "Tasks pane (subagents)", KeymapContext::Normal),
         KeyBinding::new("[ / ]", "Sidebar tabs (scrollback)", KeymapContext::Normal),
         KeyBinding::new("Ctrl+A", "Toggle auto scroll", KeymapContext::Normal),
         KeyBinding::new("Ctrl+L", "Clear session", KeymapContext::Normal),
@@ -541,6 +547,14 @@ mod tests {
                 &ctrl(KeyCode::Char('b'))
             ),
             Some(Action::ToggleSidebar)
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Prompt,
+                &ctrl(KeyCode::Char('g'))
+            ),
+            Some(Action::ToggleTasksPane)
         );
         assert_eq!(
             k.resolve(
