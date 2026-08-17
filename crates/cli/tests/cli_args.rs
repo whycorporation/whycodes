@@ -608,3 +608,85 @@ fn test_session_import_share_rename_and_memory_files() {
     let def = run_home(home.path(), &["provider", "default", "local"]);
     assert_ok(&["provider", "default", "local"], &def);
 }
+
+fn run_plain(home: &std::path::Path, stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_whycode"))
+        .args(["--plain", "--no-memory"])
+        .env("WHYCODE_HOME", home)
+        .env("HOME", home)
+        .env("WHYCODE_PLAIN", "1")
+        .current_dir(home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn whycode --plain");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin.as_bytes())
+        .expect("write stdin");
+    child.wait_with_output().expect("wait --plain")
+}
+
+#[test]
+fn test_plain_repl_slash_commands_without_api_key() {
+    let home = tempfile::tempdir().unwrap();
+    let o = run_plain(
+        home.path(),
+        "\n\
+         /help\n\
+         /info\n\
+         /rename\n\
+         /rename testhome\n\
+         /undo\n\
+         /redo\n\
+         /new\n\
+         /share\n\
+         /compact\n\
+         /diff\n\
+         /cost\n\
+         /context\n\
+         /doctor\n\
+         /sessions\n\
+         /resume\n\
+         /continue\n\
+         /models\n\
+         /models gpt-test\n\
+         /agent\n\
+         /agent nope\n\
+         /agent plan\n\
+         /connect\n\
+         /login\n\
+         /login nope\n\
+         /thinking\n\
+         /themes\n\
+         /tools\n\
+         /remember\n\
+         /remember keep this\n\
+         /q\n",
+    );
+    assert_ok(&["--plain"], &o);
+    let s = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(s.contains("Slash commands") || s.contains("/help"), "{s}");
+    assert!(
+        s.contains("Interactive mode") || s.contains("Whycode"),
+        "{s}"
+    );
+}
+
+#[test]
+fn test_plain_repl_shell_bang_and_exit_aliases() {
+    let home = tempfile::tempdir().unwrap();
+    let o = run_plain(home.path(), "!\n!printf hi\n/quit\n");
+    assert_ok(&["--plain bang"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(s.contains("Usage: !") || s.contains("hi"), "{s}");
+}

@@ -96,7 +96,7 @@ below **78%**. Method and how to re-measure:
 | auth | 64.9% |
 | lsp | 64.1% |
 | agent | 60.1% |
-| cli | 43.6% |
+| cli | 54.9% |
 
 ## Documentation
 
