@@ -81,8 +81,7 @@ below **78%**. Method and how to re-measure:
 
 | Crate | Lines |
 |---|---|
-| function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config | **100%** |
-| format | 89.9% |
+| function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format | **100%** |
 | tui | 85.9% |
 | index | 90.6% |
 | session | 85.1% |

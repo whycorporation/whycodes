@@ -32,14 +32,13 @@ pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Arc<Vec<
     }
 
     let result = render_uncached(source, max_width).map(Arc::new);
-    if let Ok(mut c) = cache().lock() {
-        if c.len() >= CACHE_ENTRIES
-            && let Some(old) = c.keys().next().copied()
-        {
-            c.remove(&old);
-        }
-        c.insert(key, result.clone());
+    let mut c = crate::highlight::recover_lock(cache().lock());
+    if c.len() >= CACHE_ENTRIES
+        && let Some(old) = c.keys().next().copied()
+    {
+        c.remove(&old);
     }
+    c.insert(key, result.clone());
     result
 }
 
@@ -97,64 +96,5 @@ fn render_uncached(source: &str, max_width: Option<usize>) -> Result<Vec<String>
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recognises_mermaid_fence_tags() {
-        assert!(is_mermaid_language(Some("mermaid")));
-        assert!(is_mermaid_language(Some("Mermaid")));
-        assert!(is_mermaid_language(Some("mmd")));
-        assert!(!is_mermaid_language(Some("rust")));
-        assert!(!is_mermaid_language(None));
-    }
-
-    #[test]
-    fn renders_a_simple_flowchart() {
-        let lines = render_mermaid("graph LR; A[Build] --> B[Deploy]", None).unwrap();
-        let joined = lines.join("\n");
-        assert!(joined.contains("Build"), "{joined}");
-        assert!(joined.contains("Deploy"), "{joined}");
-        #[cfg(feature = "mermaid")]
-        assert!(!joined.contains("graph LR"), "{joined}");
-        #[cfg(not(feature = "mermaid"))]
-        assert!(joined.contains("graph LR"), "{joined}");
-    }
-
-    #[test]
-    fn renders_sequence_diagrams() {
-        let src = "sequenceDiagram\n    Alice->>Bob: Hello\n    Bob-->>Alice: Hi";
-        let lines = render_mermaid(src, None).unwrap();
-        let joined = lines.join("\n");
-        assert!(joined.contains("Alice"), "{joined}");
-        assert!(joined.contains("Bob"), "{joined}");
-    }
-
-    #[test]
-    fn empty_source_is_an_error() {
-        assert!(render_mermaid("   \n  ", None).is_err());
-    }
-
-    #[test]
-    #[cfg(feature = "mermaid")]
-    fn unsupported_or_garbage_falls_to_err() {
-        // Completely blank after comments, or unknown type — either way Err.
-        let result = render_mermaid("this is not mermaid at all", None);
-        assert!(result.is_err(), "{result:?}");
-    }
-
-    #[test]
-    #[cfg(not(feature = "mermaid"))]
-    fn source_fallback_keeps_garbage_readable() {
-        let lines = render_mermaid("this is not mermaid at all", None).unwrap();
-        assert_eq!(lines.join("\n"), "this is not mermaid at all");
-    }
-
-    #[test]
-    fn closed_cache_returns_identical_lines() {
-        let src = "graph TD; A --> B";
-        let a = render_mermaid(src, Some(80)).unwrap();
-        let b = render_mermaid(src, Some(80)).unwrap();
-        assert_eq!(a, b);
-    }
-}
+#[path = "mermaid_tests.rs"]
+mod tests;

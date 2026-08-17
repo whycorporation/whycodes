@@ -38,7 +38,7 @@ Notes:
   legitimately needs a new panic site or a swallowed error, the budget file
   change is reviewed as part of the PR.
 - CI also runs `cargo llvm-cov` and fails the workspace below 78% line
-  coverage (ten crates are locked at 100%). See
+  coverage (eleven crates are locked at 100%). See
   [docs/coverage.md](docs/coverage.md).
 - Internal crate edges are allowlisted in
   `scripts/dependency_boundaries.json`. Adding an edge is a deliberate
