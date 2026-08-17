@@ -33,8 +33,12 @@ fn share_search_dirs() -> Vec<PathBuf> {
 }
 
 fn find_share_file(id: &str, ext: &str) -> Option<PathBuf> {
+    find_share_file_in(&share_search_dirs(), id, ext)
+}
+
+fn find_share_file_in(dirs: &[PathBuf], id: &str, ext: &str) -> Option<PathBuf> {
     let id = id.trim_end_matches(".json").trim_end_matches(".md");
-    for dir in share_search_dirs() {
+    for dir in dirs {
         let p = dir.join(format!("{id}.{ext}"));
         if p.exists() {
             return Some(p);
@@ -772,5 +776,20 @@ mod tests {
             (p.as_str(), m.as_str()),
             ("anthropic", "claude-sonnet-4-20250514")
         );
+    }
+
+    #[test]
+    fn find_share_file_in_strips_ext_and_picks_first_hit() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("abc.md"), "# hi").unwrap();
+        std::fs::write(b.join("abc.md"), "# later").unwrap();
+
+        let hit = find_share_file_in(&[a.clone(), b.clone()], "abc.json", "md").unwrap();
+        assert_eq!(hit, a.join("abc.md"));
+        assert!(find_share_file_in(&[a, b], "missing", "json").is_none());
     }
 }

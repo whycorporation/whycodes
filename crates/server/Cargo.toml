@@ -26,3 +26,7 @@ futures.workspace = true
 async-stream.workspace = true
 async-trait = "0.1"
 chrono.workspace = true
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tempfile = { workspace = true }
