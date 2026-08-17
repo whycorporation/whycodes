@@ -10,7 +10,7 @@ use crate::theme::ThemePalette;
 use crate::tokens::layout;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
@@ -28,6 +28,16 @@ use super::toast;
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 pub fn render(frame: &mut Frame, app: &mut TuiApp) {
+    // jcode: a panic inside a widget must not tear down the alt-screen.
+    // Recover with a fallback frame and keep the loop alive.
+    if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        render_inner(frame, app);
+    })) {
+        paint_recovered_frame(frame, &payload);
+    }
+}
+
+fn render_inner(frame: &mut Frame, app: &mut TuiApp) {
     // Via the config rather than `app.theme`, so a palette loaded from a JSON
     // theme file takes precedence over the built-in of the same name.
     let palette = app.config.palette();
@@ -68,6 +78,46 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp) {
         &palette,
     );
     paint_selection(frame, app);
+}
+
+fn paint_recovered_frame(frame: &mut Frame, payload: &(dyn std::any::Any + Send)) {
+    let msg = panic_message(payload);
+    whycode_core::logging::emit(
+        "whycode_tui",
+        "error",
+        "tui.draw_panic_recovered",
+        Some(serde_json::json!({ "error": msg })),
+    );
+    let area = frame.area();
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    frame.render_widget(
+        Block::default().style(Style::default().bg(Color::Black)),
+        area,
+    );
+    let lines = vec![
+        Line::from(Span::styled(
+            "rendering error recovered",
+            Style::default().fg(Color::Red),
+        )),
+        Line::from(Span::styled(
+            "continuing — next event will retry the full frame",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from(Span::styled(msg, Style::default().fg(Color::Gray))),
+    ];
+    frame.render_widget(Paragraph::new(Text::from(lines)), area);
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(s) = payload.downcast_ref::<&str>() {
+        (*s).to_string()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "unknown panic".into()
+    }
 }
 
 /// Reverse-video a **linear** selection (Grok / native terminal shape).
@@ -669,6 +719,16 @@ mod paint_tests {
             out.push('\n');
         }
         (buf, out)
+    }
+
+    #[test]
+    fn recovered_frame_paints_the_banner() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new("boom");
+        let (_, text) = paint(40, 4, |f| {
+            paint_recovered_frame(f, payload.as_ref());
+        });
+        assert!(text.contains("rendering error recovered"), "{text:?}");
+        assert!(text.contains("boom"), "{text:?}");
     }
 
     #[test]

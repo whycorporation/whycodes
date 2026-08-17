@@ -3079,15 +3079,20 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
     out
 }
 
+/// How long we will wait on `git` before giving up (Grok/jcode: a wedged
+/// index.lock must not freeze the TUI).
+const GIT_BRANCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// Resolve the current branch name for `dir`, if it is a git work tree.
 fn resolve_git_branch(dir: &std::path::Path) -> Option<String> {
     use std::process::Command;
 
-    let out = Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(dir)
-        .output()
-        .ok()?;
+    let out = git_output_timeout(
+        Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(dir),
+        GIT_BRANCH_TIMEOUT,
+    )?;
     if !out.status.success() {
         return None;
     }
@@ -3097,11 +3102,12 @@ fn resolve_git_branch(dir: &std::path::Path) -> Option<String> {
     }
     // Detached HEAD → short SHA is more useful than the literal "HEAD".
     if name == "HEAD" {
-        let sha = Command::new("git")
-            .args(["rev-parse", "--short", "HEAD"])
-            .current_dir(dir)
-            .output()
-            .ok()?;
+        let sha = git_output_timeout(
+            Command::new("git")
+                .args(["rev-parse", "--short", "HEAD"])
+                .current_dir(dir),
+            GIT_BRANCH_TIMEOUT,
+        )?;
         if sha.status.success() {
             let s = String::from_utf8_lossy(&sha.stdout).trim().to_string();
             if !s.is_empty() {
@@ -3110,4 +3116,46 @@ fn resolve_git_branch(dir: &std::path::Path) -> Option<String> {
         }
     }
     Some(name)
+}
+
+/// `Command::output` with a wall-clock cap. On timeout the child is killed.
+pub(crate) fn git_output_timeout(
+    cmd: &mut std::process::Command,
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    use std::process::Stdio;
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+    let mut child = cmd.spawn().ok()?;
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                if let Some(mut s) = child.stdout.take()
+                    && let Err(e) = std::io::Read::read_to_end(&mut s, &mut stdout)
+                {
+                    tracing::debug!(error = %e, "git stdout read after exit");
+                }
+                return Some(std::process::Output {
+                    status,
+                    stdout,
+                    stderr: Vec::new(),
+                });
+            }
+            Ok(None) if start.elapsed() >= timeout => {
+                if let Err(e) = child.kill() {
+                    tracing::debug!(error = %e, "git timeout kill");
+                }
+                if let Err(e) = child.wait() {
+                    tracing::debug!(error = %e, "git timeout wait");
+                }
+                return None;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(5)),
+            Err(e) => {
+                tracing::debug!(error = %e, "git try_wait");
+                return None;
+            }
+        }
+    }
 }
