@@ -51,7 +51,7 @@ comfortably above it, raise `--fail-under-lines` in
 ## Last measurement
 
 Linux x86_64, 2026-08-17 (`cargo llvm-cov --workspace`, flags above).
-Workspace line coverage **79.47%**.
+Workspace line coverage **81.30%**.
 
 Line coverage is the number CI gates on. Function and region rates are
 informational.

@@ -914,6 +914,68 @@ async fn headless_turn_with_scripted_provider() {
 }
 
 #[test]
+fn generate_prompt_helpers() {
+    assert!(all_prompts_empty(&["".into(), "".into()]));
+    assert!(!all_prompts_empty(&["".into(), "x".into()]));
+    assert!(!should_fan_out(&["one".into()]));
+    assert!(should_fan_out(&["a".into(), "b".into()]));
+}
+
+#[tokio::test]
+async fn cmd_generate_single_and_parallel_unknown_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let prev_home = std::env::var_os("WHYCODE_HOME");
+    let prev_key = std::env::var_os("SCRIPT_API_KEY");
+    unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+    unsafe { std::env::set_var("SCRIPT_API_KEY", "k") };
+    let mut c = cli(None);
+    c.provider = Some("script".into());
+    c.dir = Some(dir.path().display().to_string());
+    c.no_memory = true;
+    let single = cmd_generate(&c, &["hello".into()], 1, 1, OutputFormat::Text).await;
+    let parallel = cmd_generate(
+        &c,
+        &["a".into(), "b".into(), "".into()],
+        1,
+        2,
+        OutputFormat::Json,
+    )
+    .await;
+    match prev_home {
+        Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+    }
+    match prev_key {
+        Some(v) => unsafe { std::env::set_var("SCRIPT_API_KEY", v) },
+        None => unsafe { std::env::remove_var("SCRIPT_API_KEY") },
+    }
+    assert!(single.is_err(), "{single:?}");
+    assert!(parallel.is_err(), "{parallel:?}");
+}
+
+#[tokio::test]
+async fn run_one_parallel_turn_unknown_provider_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let info = agent_info_for(&cli(None), &config);
+    let failed = run_one_parallel_turn(
+        "hi",
+        &config,
+        info,
+        "script",
+        "m",
+        "build",
+        "k",
+        1,
+        OutputFormat::Text,
+        dir.path(),
+        false,
+    )
+    .await;
+    assert!(failed);
+}
+
+#[test]
 fn strip_agents_fence_and_cancel_message() {
     assert_eq!(strip_agents_fence("```markdown\nHi\n```"), "Hi");
     assert_eq!(strip_agents_fence("```md\nHi\n```"), "Hi");
@@ -1149,6 +1211,29 @@ mod upgrade_helpers {
             "Already on the latest release."
         );
         assert!(format_upgrade_outcome("0.1.0", Err("offline".into())).contains("offline"));
+    }
+
+    #[test]
+    fn current_binary_and_asset_url() {
+        let p = current_binary().unwrap();
+        assert!(p.is_absolute() || p.file_name().is_some());
+        assert!(release_asset_url(42).ends_with("/assets/42"));
+    }
+
+    #[tokio::test]
+    async fn download_bytes_ok_and_404() {
+        let url = serve_http(200, "blob").await;
+        let client = reqwest::Client::new();
+        assert_eq!(
+            download_bytes(&client, &url, "x.bin").await.unwrap(),
+            b"blob"
+        );
+        let url = serve_http(404, "no").await;
+        let err = download_bytes(&client, &url, "x.bin")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("404"), "{err}");
     }
 
     async fn serve_http(status: u16, body: &'static str) -> String {
