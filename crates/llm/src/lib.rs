@@ -12,6 +12,7 @@ pub mod race;
 pub mod rate_limit;
 pub mod response_cache;
 pub mod retry;
+pub mod scripted;
 pub mod thinking;
 pub mod token_counter;
 pub mod transport;
@@ -37,6 +38,7 @@ pub use provider::{LlmProvider, ProviderRegistry};
 pub use race::{RaceOutcome, StreamTarget, stream_raced};
 pub use response_cache::{CachedText, ResponseCache, text_only_response};
 pub use retry::{RetryPolicy, execute_with_policy, retry_with_backoff};
+pub use scripted::{ScriptedProvider, ScriptedStep};
 pub use transport::{
     LlmTransport, StreamTurn, StreamTurnOpts, default_transport, format_turn_error,
     user_facing_error,
