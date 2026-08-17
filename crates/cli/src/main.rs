@@ -2298,7 +2298,7 @@ async fn run_init_agents_md(
 }
 
 /// `generate` — Non-interactive code generation (supports `--format` for CI).
-async fn cmd_generate(
+pub(crate) async fn cmd_generate(
     cli: &Cli,
     prompts: &[String],
     max_turns: usize,
@@ -2323,14 +2323,14 @@ async fn cmd_generate(
         }
     };
 
-    if prompts.iter().all(|p| p.is_empty()) {
+    if all_prompts_empty(prompts) {
         return emit_headless_setup_error(format, "empty prompt");
     }
 
     // S5: parallel fan-out. Each prompt gets its own Agent + Session; a
     // semaphore caps concurrency at `jobs`. Per-prompt failures never abort
     // siblings; the process exits non-zero if any prompt failed.
-    if prompts.len() > 1 {
+    if should_fan_out(prompts) {
         let mut agent_info = agent_info_for(cli, &config);
         agent_info.permission = config.effective_permission(&agent_info.permission);
         return run_generate_parallel(
@@ -2407,6 +2407,14 @@ async fn cmd_generate(
     .await
 }
 
+pub(crate) fn all_prompts_empty(prompts: &[String]) -> bool {
+    prompts.iter().all(|p| p.is_empty())
+}
+
+pub(crate) fn should_fan_out(prompts: &[String]) -> bool {
+    prompts.len() > 1
+}
+
 /// S5: run N prompts concurrently, each with its own Agent + Session.
 ///
 /// A semaphore caps in-flight turns at `jobs`. Every prompt always gets a
@@ -2414,7 +2422,7 @@ async fn cmd_generate(
 /// text or an error line for text. One prompt's failure never aborts the
 /// others; the process returns Err if any prompt failed.
 #[allow(clippy::too_many_arguments)]
-async fn run_generate_parallel(
+pub(crate) async fn run_generate_parallel(
     prompts: &[String],
     config: &Config,
     agent_info: AgentInfo,
@@ -2505,7 +2513,7 @@ pub(crate) fn fold_parallel_joins(
 /// One prompt inside the parallel fan-out. Returns whether it failed.
 /// Stdout writes are serialized inside (CiEvent locks stdout per line).
 #[allow(clippy::too_many_arguments)]
-async fn run_one_parallel_turn(
+pub(crate) async fn run_one_parallel_turn(
     prompt: &str,
     config: &Config,
     agent_info: AgentInfo,

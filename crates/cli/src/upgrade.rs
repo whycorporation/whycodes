@@ -171,9 +171,20 @@ async fn download_asset(
     name: &str,
 ) -> Result<Vec<u8>> {
     let id = find_asset_id(release, name)?;
-    let url = format!("https://api.github.com/repos/{REPO}/releases/assets/{id}");
+    download_bytes(client, &release_asset_url(id), name).await
+}
+
+pub(crate) fn release_asset_url(id: u64) -> String {
+    format!("https://api.github.com/repos/{REPO}/releases/assets/{id}")
+}
+
+pub(crate) async fn download_bytes(
+    client: &reqwest::Client,
+    url: &str,
+    name: &str,
+) -> Result<Vec<u8>> {
     let mut req = client
-        .get(&url)
+        .get(url)
         .header("User-Agent", USER_AGENT)
         .header("Accept", "application/octet-stream");
     if let Some(token) = github_token() {
@@ -277,7 +288,7 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 /// Where the running executable lives.
-fn current_binary() -> Result<PathBuf> {
+pub(crate) fn current_binary() -> Result<PathBuf> {
     std::env::current_exe().context("could not determine the path of the running binary")
 }
 
