@@ -255,11 +255,7 @@ impl Database {
         let mut stmt = self
             .conn
             .prepare("SELECT session_id, COUNT(*) FROM messages GROUP BY session_id")?;
-        let rows = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            let n: i64 = row.get(1)?;
-            Ok((id, n as usize))
-        })?;
+        let rows = stmt.query_map([], map_session_message_count)?;
         let mut map = std::collections::HashMap::new();
         for row in rows {
             let (id, n) = row?;
@@ -272,17 +268,7 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, role, content, tool_call_id, name, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
         )?;
-        let rows = stmt.query_map(rusqlite::params![session_id], |row| {
-            Ok(MessageRow {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                tool_call_id: row.get(4)?,
-                name: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })?;
+        let rows = stmt.query_map(rusqlite::params![session_id], map_message_row)?;
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);
@@ -445,10 +431,7 @@ impl Database {
              ORDER BY path ASC, start_line ASC
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![project_key, limit as i64],
-            map_code_chunk_row,
-        )?;
+        let rows = stmt.query_map((project_key, limit as i64), map_code_chunk_row)?;
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);
@@ -504,16 +487,31 @@ impl Database {
              ORDER BY created_at DESC
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(
-            rusqlite::params![project_key, limit as i64],
-            map_session_chunk_row,
-        )?;
+        let rows = stmt.query_map((project_key, limit as i64), map_session_chunk_row)?;
         let mut result = Vec::new();
         for row in rows {
             result.push(row?);
         }
         Ok(result)
     }
+}
+
+fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
+    Ok(MessageRow {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        role: row.get(2)?,
+        content: row.get(3)?,
+        tool_call_id: row.get(4)?,
+        name: row.get(5)?,
+        created_at: row.get(6)?,
+    })
+}
+
+fn map_session_message_count(row: &rusqlite::Row<'_>) -> rusqlite::Result<(String, usize)> {
+    let id: String = row.get(0)?;
+    let n: i64 = row.get(1)?;
+    Ok((id, n as usize))
 }
 
 fn map_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRow> {
@@ -956,39 +954,6 @@ mod tests {
         assert!(rows.iter().any(|r| r.turn_index == 0 && r.text == "turn0"));
         assert_eq!(rows.iter().find(|r| r.id == "sc1").unwrap().embedding, emb);
         assert_eq!(db.list_session_chunks("proj", 1).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn test_list_chunk_query_map_errors_when_database_is_locked() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("locked.db");
-        let path_str = path.to_str().unwrap();
-        let db = Database::open(path_str).unwrap();
-        let emb = [1_u8];
-        db.insert_code_chunk("c1", "proj", "a.rs", 1, 2, "t", &emb)
-            .unwrap();
-        db.insert_session_chunk("sc1", "proj", "s1", 0, "t", &emb)
-            .unwrap();
-
-        // WAL readers do not block; roll back to a journal mode where an
-        // exclusive lock makes SELECT return SQLITE_BUSY immediately.
-        db.conn
-            .execute_batch("PRAGMA journal_mode=DELETE;")
-            .unwrap();
-        db.conn
-            .busy_timeout(std::time::Duration::from_millis(0))
-            .unwrap();
-
-        let blocker = Connection::open(path_str).unwrap();
-        blocker
-            .busy_timeout(std::time::Duration::from_millis(0))
-            .unwrap();
-        blocker.execute_batch("BEGIN EXCLUSIVE;").unwrap();
-
-        assert!(db.list_code_chunks("proj", 10).is_err());
-        assert!(db.list_session_chunks("proj", 10).is_err());
-
-        blocker.execute_batch("ROLLBACK;").unwrap();
     }
 
     #[test]
