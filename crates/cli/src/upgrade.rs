@@ -22,7 +22,11 @@ const USER_AGENT: &str = concat!("whycode/", env!("CARGO_PKG_VERSION"));
 /// Must match the `matrix.target` values in `.github/workflows/release.yml`;
 /// the installers derive the same names from `uname`.
 pub fn target_archive() -> Result<&'static str> {
-    Ok(match (std::env::consts::OS, std::env::consts::ARCH) {
+    archive_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+pub(crate) fn archive_for(os: &str, arch: &str) -> Result<&'static str> {
+    Ok(match (os, arch) {
         ("linux", "x86_64") => "whycode-x86_64-unknown-linux-gnu.tar.gz",
         ("macos", "aarch64") => "whycode-aarch64-apple-darwin.tar.gz",
         ("macos", "x86_64") => "whycode-x86_64-apple-darwin.tar.gz",
@@ -72,7 +76,7 @@ pub fn expected_digest(sums: &str, name: &str) -> Option<String> {
     })
 }
 
-fn digest_of(bytes: &[u8]) -> String {
+pub(crate) fn digest_of(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
@@ -82,15 +86,61 @@ fn digest_of(bytes: &[u8]) -> String {
 ///
 /// Public repos work without it. Private release assets only download via the
 /// GitHub API when authenticated — browser download URLs return 404.
-fn github_token() -> Option<String> {
+pub(crate) fn github_token() -> Option<String> {
+    token_from_env(|k| std::env::var(k).ok())
+}
+
+pub(crate) fn token_from_env(get: impl Fn(&str) -> Option<String>) -> Option<String> {
     for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Ok(v) = std::env::var(key)
+        if let Some(v) = get(key)
             && !v.is_empty()
         {
             return Some(v);
         }
     }
     None
+}
+
+pub(crate) fn status_hint(status: u16, has_token: bool) -> &'static str {
+    if status == 404 && !has_token {
+        " (private repo? set GITHUB_TOKEN or GH_TOKEN, or publish the repository)"
+    } else {
+        ""
+    }
+}
+
+pub(crate) fn asset_download_hint(status: u16, has_token: bool) -> &'static str {
+    if status == 404 && !has_token {
+        " (private repo? set GITHUB_TOKEN or GH_TOKEN)"
+    } else {
+        ""
+    }
+}
+
+pub(crate) fn find_asset_id(release: &serde_json::Value, name: &str) -> Result<u64> {
+    let assets = release["assets"]
+        .as_array()
+        .context("release has no assets array")?;
+    let asset = assets
+        .iter()
+        .find(|a| a["name"].as_str() == Some(name))
+        .with_context(|| format!("release has no asset named {name}"))?;
+    asset["id"]
+        .as_u64()
+        .with_context(|| format!("asset {name} has no id"))
+}
+
+pub(crate) fn release_version(body: &serde_json::Value) -> Result<String> {
+    let tag = body["tag_name"]
+        .as_str()
+        .context("release has no tag_name")?;
+    Ok(tag.trim_start_matches('v').to_string())
+}
+
+pub(crate) fn checksum_mismatch(name: &str, expected: &str, actual: &str) -> String {
+    format!(
+        "checksum mismatch for {name}\n  expected {expected}\n  actual   {actual}\nNothing was installed."
+    )
 }
 
 async fn get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
@@ -104,11 +154,7 @@ async fn get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
         .with_context(|| format!("requesting {url}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let hint = if status.as_u16() == 404 && github_token().is_none() {
-            " (private repo? set GITHUB_TOKEN or GH_TOKEN, or publish the repository)"
-        } else {
-            ""
-        };
+        let hint = status_hint(status.as_u16(), github_token().is_some());
         bail!("{url} returned {status}{hint}");
     }
     Ok(response)
@@ -124,16 +170,7 @@ async fn download_asset(
     release: &serde_json::Value,
     name: &str,
 ) -> Result<Vec<u8>> {
-    let assets = release["assets"]
-        .as_array()
-        .context("release has no assets array")?;
-    let asset = assets
-        .iter()
-        .find(|a| a["name"].as_str() == Some(name))
-        .with_context(|| format!("release has no asset named {name}"))?;
-    let id = asset["id"]
-        .as_u64()
-        .with_context(|| format!("asset {name} has no id"))?;
+    let id = find_asset_id(release, name)?;
     let url = format!("https://api.github.com/repos/{REPO}/releases/assets/{id}");
     let mut req = client
         .get(&url)
@@ -148,11 +185,7 @@ async fn download_asset(
         .with_context(|| format!("downloading asset {name}"))?;
     if !response.status().is_success() {
         let status = response.status();
-        let hint = if status.as_u16() == 404 && github_token().is_none() {
-            " (private repo? set GITHUB_TOKEN or GH_TOKEN)"
-        } else {
-            ""
-        };
+        let hint = asset_download_hint(status.as_u16(), github_token().is_some());
         bail!("asset {name} returned {status}{hint}");
     }
     Ok(response
@@ -173,7 +206,7 @@ async fn latest_release_json(client: &reqwest::Client) -> Result<serde_json::Val
 }
 
 /// Extract the `whycode` executable from a downloaded archive.
-fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
+pub(crate) fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
     if name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
             .context("the downloaded archive is not a valid zip")?;
@@ -257,11 +290,7 @@ pub async fn run() -> Result<Option<String>> {
         .context("building HTTP client")?;
 
     let body = latest_release_json(&client).await?;
-    let tag = body["tag_name"]
-        .as_str()
-        .context("release has no tag_name")?
-        .to_string();
-    let version = tag.trim_start_matches('v').to_string();
+    let version = release_version(&body)?;
     let archive_name = target_archive()?.to_string();
 
     if !is_newer(&version, current) {
@@ -276,123 +305,10 @@ pub async fn run() -> Result<Option<String>> {
         .with_context(|| format!("{archive_name} is not listed in SHA256SUMS"))?;
     let actual = digest_of(&archive);
     if expected != actual {
-        bail!(
-            "checksum mismatch for {archive_name}\n  expected {expected}\n  actual   {actual}\nNothing was installed."
-        );
+        bail!("{}", checksum_mismatch(&archive_name, &expected, &actual));
     }
 
     let binary = extract(&archive, &archive_name)?;
     replace_binary(&current_binary()?, &binary)?;
     Ok(Some(version))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn newer_versions_compare_greater() {
-        assert!(is_newer("0.1.1", "0.1.0"));
-        assert!(is_newer("0.2.0", "0.1.9"));
-        assert!(is_newer("1.0.0", "0.9.9"));
-        assert!(is_newer("v0.1.1", "0.1.0"));
-    }
-
-    #[test]
-    fn the_same_or_older_versions_do_not() {
-        assert!(!is_newer("0.1.0", "0.1.0"));
-        assert!(!is_newer("0.1.0", "0.1.1"));
-        assert!(!is_newer("0.9.9", "1.0.0"));
-    }
-
-    #[test]
-    fn shorter_versions_pad_with_zeros() {
-        assert!(!is_newer("1.0", "1.0.0"));
-        assert!(is_newer("1.0.1", "1.0"));
-    }
-
-    #[test]
-    fn an_unparseable_version_never_triggers_a_download() {
-        assert!(!is_newer("nightly", "0.1.0"));
-        assert!(!is_newer("", "0.1.0"));
-        assert!(!is_newer("0.1.x", "0.1.0"));
-    }
-
-    #[test]
-    fn prerelease_suffixes_compare_on_the_numeric_part() {
-        assert!(is_newer("0.2.0-rc1", "0.1.0"));
-        assert!(!is_newer("0.1.0-rc1", "0.1.0"));
-    }
-
-    #[test]
-    fn finds_a_digest_in_sha256sums_format() {
-        let sums = "\
-abc123  whycode-x86_64-unknown-linux-gnu.tar.gz
-def456  whycode-x86_64-pc-windows-msvc.zip
-";
-        assert_eq!(
-            expected_digest(sums, "whycode-x86_64-pc-windows-msvc.zip"),
-            Some("def456".to_string())
-        );
-        assert_eq!(expected_digest(sums, "not-listed.tar.gz"), None);
-    }
-
-    #[test]
-    fn handles_the_binary_marker_sha256sum_writes() {
-        assert_eq!(
-            expected_digest("abc123 *whycode.tar.gz", "whycode.tar.gz"),
-            Some("abc123".to_string())
-        );
-    }
-
-    #[test]
-    fn digests_are_lowercase_hex() {
-        assert_eq!(
-            digest_of(b""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
-
-    #[test]
-    fn every_supported_platform_has_an_archive_name() {
-        // The build this test runs in is by definition a supported platform.
-        let name = target_archive().expect("this platform should be supported");
-        assert!(name.starts_with("whycode-"));
-        assert!(name.ends_with(".tar.gz") || name.ends_with(".zip"));
-    }
-
-    #[test]
-    fn replacing_a_binary_is_atomic_from_the_readers_point_of_view() {
-        let dir = std::env::temp_dir().join(format!("whycode-upgrade-{}", stamp()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("whycode");
-        std::fs::write(&target, b"old").unwrap();
-
-        replace_binary(&target, b"new").unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"new");
-        // No staging or displaced files left behind.
-        assert!(!dir.join(".whycode.new").exists());
-        assert!(!dir.join(".whycode.old").exists());
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn replacing_works_when_nothing_is_installed_yet() {
-        let dir = std::env::temp_dir().join(format!("whycode-upgrade-{}", stamp()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let target = dir.join("whycode");
-
-        replace_binary(&target, b"fresh").unwrap();
-        assert_eq!(std::fs::read(&target).unwrap(), b"fresh");
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    fn stamp() -> u128 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or_default()
-    }
 }
