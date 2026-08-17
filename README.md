@@ -73,6 +73,20 @@ Idle TUI, Linux x86_64, 2026-08-17, HEAD `cd4961f` (see
 The TUI paints only when something changed. Idle target is **0 redraws/s**,
 not a frames-per-second race.
 
+## Coverage
+
+Workspace line coverage, Linux x86_64, 2026-08-17, HEAD `a6d27ef`
+(`cargo llvm-cov --workspace`, same flags as the CI coverage job):
+
+| | whycode |
+|---|---|
+| Line coverage | **75.91%** |
+| CI floor | 66% |
+
+CI fails the workspace run below 66%. Eight crates
+(`function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`,
+`command-risk`, `storage`) are gated at 100%.
+
 ## Documentation
 
 | Doc | What it is |
