@@ -75,17 +75,29 @@ not a frames-per-second race.
 
 ## Coverage
 
-Workspace line coverage, Linux x86_64, 2026-08-17, HEAD `a6d27ef`
-(`cargo llvm-cov --workspace`, same flags as the CI coverage job):
+Workspace line coverage **76.63%** (Linux x86_64, 2026-08-17). CI fails
+below **75%**. Method and how to re-measure:
+[docs/coverage.md](docs/coverage.md).
 
-| | whycode |
+| Crate | Lines |
 |---|---|
-| Line coverage | **75.91%** |
-| CI floor | 66% |
-
-CI fails the workspace run below 66%. Eight crates
-(`function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`,
-`command-risk`, `storage`) are gated at 100%.
+| function, schema, skill, sandbox, protocol, plugin, command-risk, storage | **100%** |
+| config | 90.4% |
+| format | 89.9% |
+| tui | 85.9% |
+| index | 85.4% |
+| session | 84.6% |
+| core | 80.4% |
+| tools | 77.6% |
+| memory | 77.4% |
+| llm | 75.8% |
+| mcp | 73.5% |
+| auth | 64.5% |
+| lsp | 58.0% |
+| sdk | 57.1% |
+| agent | 50.1% |
+| server | 42.4% |
+| cli | 28.7% |
 
 ## Documentation
 
@@ -98,6 +110,7 @@ CI fails the workspace run below 66%. Eight crates
 | [docs/knowhow.md](docs/knowhow.md) | Hard-won bugs (TUI, tty, silent exits) |
 | [docs/tui-term-matrix.md](docs/tui-term-matrix.md) | Manual TUI pass on Alacritty / Kitty / VTE |
 | [docs/benchmarks.md](docs/benchmarks.md) | How to measure startup, RSS, idle draws |
+| [docs/coverage.md](docs/coverage.md) | How to measure line coverage |
 | [docs/budgets.md](docs/budgets.md) | CI quality budgets |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup and required checks |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |

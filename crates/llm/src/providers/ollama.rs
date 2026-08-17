@@ -21,7 +21,7 @@ impl OllamaProvider {
         }
     }
 
-    fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
+    pub(crate) fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
         let messages = self.convert_messages(request);
         let mut body = serde_json::json!({
             "model": model,

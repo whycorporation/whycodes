@@ -20,14 +20,14 @@ impl GoogleProvider {
         }
     }
 
-    fn build_url(&self, model: &str, api_key: &str) -> String {
+    pub(crate) fn build_url(&self, model: &str, api_key: &str) -> String {
         format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:{}?key={}",
             model, "streamGenerateContent?alt=sse", api_key
         )
     }
 
-    fn build_complete_url(&self, model: &str, api_key: &str) -> String {
+    pub(crate) fn build_complete_url(&self, model: &str, api_key: &str) -> String {
         format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             model, api_key
@@ -187,7 +187,7 @@ impl LlmProvider for GoogleProvider {
 }
 
 impl GoogleProvider {
-    fn build_body(&self, request: &LlmRequest) -> Value {
+    pub(crate) fn build_body(&self, request: &LlmRequest) -> Value {
         let mut contents: Vec<Value> = Vec::new();
 
         // System instruction
