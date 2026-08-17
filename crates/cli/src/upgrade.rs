@@ -143,7 +143,7 @@ pub(crate) fn checksum_mismatch(name: &str, expected: &str, actual: &str) -> Str
     )
 }
 
-async fn get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
+pub(crate) async fn get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
     let mut req = client.get(url).header("User-Agent", USER_AGENT);
     if let Some(token) = github_token() {
         req = req.header("Authorization", format!("Bearer {token}"));

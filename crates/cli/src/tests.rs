@@ -770,6 +770,149 @@ fn agent_info_for_known_and_fallback() {
     assert_eq!(fallback.description, "Default build agent");
 }
 
+fn dummy_meta() -> ResultMeta {
+    ResultMeta {
+        session_id: "s".into(),
+        provider: "p".into(),
+        model: "m".into(),
+        agent: "a".into(),
+        usage: whycode_core::types::Usage::default(),
+        duration_ms: 1,
+    }
+}
+
+#[test]
+fn emit_turn_and_parallel_outcomes() {
+    assert!(emit_turn_outcome(OutputFormat::Text, Ok("hi".into()), dummy_meta()).is_ok());
+    assert!(emit_turn_outcome(OutputFormat::Text, Ok(String::new()), dummy_meta()).is_ok());
+    assert!(emit_turn_outcome(OutputFormat::Json, Ok("j".into()), dummy_meta()).is_ok());
+    assert!(emit_turn_outcome(OutputFormat::StreamJson, Ok("s".into()), dummy_meta()).is_ok());
+    assert!(emit_turn_outcome(OutputFormat::Text, Err("boom".into()), dummy_meta()).is_err());
+    assert!(emit_turn_outcome(OutputFormat::Json, Err("jerr".into()), dummy_meta()).is_err());
+    assert!(
+        emit_turn_outcome(
+            OutputFormat::StreamJson,
+            Err("cancelled".into()),
+            dummy_meta()
+        )
+        .is_err()
+    );
+    assert!(
+        emit_turn_outcome(
+            OutputFormat::StreamJson,
+            Err("offline".into()),
+            dummy_meta()
+        )
+        .is_err()
+    );
+
+    let wrap = |ev: CiEvent| ev;
+    assert!(!emit_parallel_outcome(
+        OutputFormat::Text,
+        Ok("p".into()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(!emit_parallel_outcome(
+        OutputFormat::Text,
+        Ok(String::new()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(!emit_parallel_outcome(
+        OutputFormat::Json,
+        Ok("p".into()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(!emit_parallel_outcome(
+        OutputFormat::StreamJson,
+        Ok("p".into()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(emit_parallel_outcome(
+        OutputFormat::Text,
+        Err("x".into()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(emit_parallel_outcome(
+        OutputFormat::Json,
+        Err("x".into()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(emit_parallel_outcome(
+        OutputFormat::StreamJson,
+        Err("cancel now".into()),
+        dummy_meta(),
+        &wrap
+    ));
+    assert!(emit_parallel_outcome(
+        OutputFormat::StreamJson,
+        Err("fail".into()),
+        dummy_meta(),
+        &wrap
+    ));
+}
+
+#[test]
+fn fold_parallel_joins_ok_fail_and_panic() {
+    assert!(fold_parallel_joins([Ok(false), Ok(false)], false).is_ok());
+    assert!(fold_parallel_joins([Ok(false), Ok(true)], false).is_err());
+    assert!(fold_parallel_joins([Err("worker panicked: boom".into())], false).is_err());
+    assert!(fold_parallel_joins([Err("worker panicked: boom".into())], true).is_err());
+}
+
+#[tokio::test]
+async fn headless_turn_with_scripted_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut registry = whycode_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycode_llm::ScriptedProvider::text("hello")));
+    let agent =
+        Agent::new(agent_info_for(&cli(None), &Config::default())).with_provider_registry(registry);
+    let mut session =
+        whycode_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("hi");
+    run_headless_turn(
+        &agent,
+        &mut session,
+        "script",
+        "m",
+        "k",
+        "build",
+        4,
+        OutputFormat::Text,
+    )
+    .await
+    .unwrap();
+
+    let mut registry = whycode_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycode_llm::ScriptedProvider::new([
+        whycode_llm::ScriptedStep::FailOpen("cancelled by test".into()),
+    ])));
+    let agent =
+        Agent::new(agent_info_for(&cli(None), &Config::default())).with_provider_registry(registry);
+    let mut session =
+        whycode_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("please fail");
+    assert!(
+        run_headless_turn(
+            &agent,
+            &mut session,
+            "script",
+            "m",
+            "k",
+            "build",
+            4,
+            OutputFormat::StreamJson,
+        )
+        .await
+        .is_err()
+    );
+}
+
 #[test]
 fn strip_agents_fence_and_cancel_message() {
     assert_eq!(strip_agents_fence("```markdown\nHi\n```"), "Hi");
@@ -1006,5 +1149,34 @@ mod upgrade_helpers {
             "Already on the latest release."
         );
         assert!(format_upgrade_outcome("0.1.0", Err("offline".into())).contains("offline"));
+    }
+
+    async fn serve_http(status: u16, body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let resp = format!(
+                "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn get_local_ok_and_404() {
+        let url = serve_http(200, "{\"ok\":true}").await;
+        let client = reqwest::Client::new();
+        let resp = get(&client, &url).await.unwrap();
+        assert!(resp.status().is_success());
+
+        let url = serve_http(404, "missing").await;
+        let err = get(&client, &url).await.unwrap_err().to_string();
+        assert!(err.contains("404"), "{err}");
     }
 }

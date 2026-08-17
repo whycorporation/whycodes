@@ -2466,14 +2466,27 @@ async fn run_generate_parallel(
         }));
     }
 
-    let mut any_failed = false;
+    let mut outcomes = Vec::new();
     for h in handles {
-        match h.await {
+        outcomes.push(match h.await {
+            Ok(failed) => Ok(failed),
+            Err(e) => Err(format!("worker panicked: {e}")),
+        });
+    }
+    fold_parallel_joins(outcomes, structured)
+}
+
+pub(crate) fn fold_parallel_joins(
+    outcomes: impl IntoIterator<Item = Result<bool, String>>,
+    structured: bool,
+) -> anyhow::Result<()> {
+    let mut any_failed = false;
+    for outcome in outcomes {
+        match outcome {
             Ok(false) => {}
             Ok(true) => any_failed = true,
-            Err(e) => {
+            Err(msg) => {
                 any_failed = true;
-                let msg = format!("worker panicked: {e}");
                 if structured {
                     let _ = CiEvent::Error { message: msg }.emit_stdout();
                 } else {
@@ -2482,7 +2495,6 @@ async fn run_generate_parallel(
             }
         }
     }
-
     if any_failed {
         Err(anyhow::anyhow!("one or more prompts failed"))
     } else {
@@ -2596,7 +2608,16 @@ async fn run_one_parallel_turn(
         duration_ms: started.elapsed().as_millis() as u64,
     };
 
-    match turn_result {
+    emit_parallel_outcome(format, turn_result.map_err(|e| e.to_string()), meta, &wrap)
+}
+
+pub(crate) fn emit_parallel_outcome(
+    format: OutputFormat,
+    result: Result<String, String>,
+    meta: ResultMeta,
+    wrap: &impl Fn(CiEvent) -> CiEvent,
+) -> bool {
+    match result {
         Ok(response) => {
             match format {
                 OutputFormat::Text => {
@@ -2613,8 +2634,7 @@ async fn run_one_parallel_turn(
             }
             false
         }
-        Err(e) => {
-            let msg = e.to_string();
+        Err(msg) => {
             match format {
                 OutputFormat::Text => {
                     eprintln!("{} {}", "Error:".red().bold(), msg);
@@ -2623,7 +2643,7 @@ async fn run_one_parallel_turn(
                     let _ = meta.err(&msg).emit_stdout();
                 }
                 OutputFormat::StreamJson => {
-                    if msg.to_ascii_lowercase().contains("cancel") {
+                    if is_cancel_message(&msg) {
                         let _ = wrap(CiEvent::Cancelled).emit_stdout();
                     } else {
                         let _ = wrap(CiEvent::Error {
@@ -2663,7 +2683,7 @@ fn emit_headless_setup_error(format: OutputFormat, message: &str) -> anyhow::Res
 
 /// Run one agent turn and write stdout according to `format`.
 #[allow(clippy::too_many_arguments)]
-async fn run_headless_turn(
+pub(crate) async fn run_headless_turn(
     agent: &Agent,
     session: &mut whycode_session::session::Session,
     provider: &str,
@@ -2729,29 +2749,36 @@ async fn run_headless_turn(
         duration_ms,
     };
 
-    match turn_result {
-        Ok(response) => match format {
-            OutputFormat::Text => {
-                if !response.is_empty() {
-                    println!("{response}");
+    emit_turn_outcome(format, turn_result.map_err(|e| e.to_string()), meta)
+        .map_err(|m| anyhow::anyhow!("{}", m))
+}
+
+pub(crate) fn emit_turn_outcome(
+    format: OutputFormat,
+    result: Result<String, String>,
+    meta: ResultMeta,
+) -> Result<(), String> {
+    match result {
+        Ok(response) => {
+            match format {
+                OutputFormat::Text => {
+                    if !response.is_empty() {
+                        println!("{response}");
+                    }
                 }
-                Ok(())
+                OutputFormat::Json | OutputFormat::StreamJson => {
+                    let _ = meta.ok(response).emit_stdout();
+                }
             }
-            OutputFormat::Json | OutputFormat::StreamJson => {
-                let _ = meta.ok(response).emit_stdout();
-                Ok(())
-            }
-        },
-        Err(e) => {
-            let msg = e.to_string();
+            Ok(())
+        }
+        Err(msg) => {
             match format {
                 OutputFormat::Text => {
                     eprintln!("{} {}", "Error:".red().bold(), msg);
-                    Err(anyhow::anyhow!("{}", msg))
                 }
                 OutputFormat::Json => {
                     let _ = meta.err(&msg).emit_stdout();
-                    Err(anyhow::anyhow!("{}", msg))
                 }
                 OutputFormat::StreamJson => {
                     if is_cancel_message(&msg) {
@@ -2763,9 +2790,9 @@ async fn run_headless_turn(
                         .emit_stdout();
                     }
                     let _ = meta.err(&msg).emit_stdout();
-                    Err(anyhow::anyhow!("{}", msg))
                 }
             }
+            Err(msg)
         }
     }
 }
