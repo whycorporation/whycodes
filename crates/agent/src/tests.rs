@@ -447,3 +447,51 @@ fn core_tool_profile_shrinks_definitions() {
     assert!(!core.iter().any(|d| d.name == "webfetch"));
     assert!(full.iter().any(|d| d.name == "webfetch"));
 }
+
+fn scripted_agent(steps: impl IntoIterator<Item = whycode_llm::ScriptedStep>) -> Agent {
+    let mut registry = whycode_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycode_llm::ScriptedProvider::new(steps)));
+    Agent::new(make_test_agent_info("build")).with_provider_registry(registry)
+}
+
+fn scripted_session(user: &str) -> whycode_session::session::Session {
+    let mut session = whycode_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".into(),
+    );
+    session.add_user_message(user);
+    session
+}
+
+#[tokio::test]
+async fn scripted_text_turn_returns_assistant_text() {
+    let agent = scripted_agent([whycode_llm::ScriptedStep::Text("hello from script".into())]);
+    let mut session = scripted_session("please say hello");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", 4)
+        .await
+        .expect("turn");
+    assert!(out.contains("hello from script"), "got: {out}");
+}
+
+#[tokio::test]
+async fn scripted_unknown_provider_errors() {
+    let agent = scripted_agent([whycode_llm::ScriptedStep::Text("x".into())]);
+    let mut session = scripted_session("hi there friend");
+    let err = agent
+        .run_turn(&mut session, "no-such-provider", "m", "k", 2)
+        .await
+        .expect_err("unknown provider");
+    assert!(
+        err.to_string().to_lowercase().contains("provider") || err.to_string().contains("no-such"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_fail_open_surfaces_provider_error() {
+    let agent = scripted_agent([whycode_llm::ScriptedStep::FailOpen("boom".into())]);
+    let mut session = scripted_session("please explain rust");
+    let err = agent.run_turn(&mut session, "script", "m", "k", 2).await;
+    assert!(err.is_err(), "expected provider error, got {err:?}");
+}
