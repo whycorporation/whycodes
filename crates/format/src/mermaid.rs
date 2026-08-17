@@ -33,8 +33,10 @@ pub fn render_mermaid(source: &str, max_width: Option<usize>) -> Result<Arc<Vec<
 
     let result = render_uncached(source, max_width).map(Arc::new);
     if let Ok(mut c) = cache().lock() {
-        if c.len() >= CACHE_ENTRIES {
-            c.clear();
+        if c.len() >= CACHE_ENTRIES
+            && let Some(old) = c.keys().next().copied()
+        {
+            c.remove(&old);
         }
         c.insert(key, result.clone());
     }

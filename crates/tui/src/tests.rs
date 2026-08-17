@@ -1776,3 +1776,20 @@ fn user_message_preserves_newlines_in_panel() {
     let rows = crate::ui::chat::session_line_count(&app, 80);
     assert!(rows >= 3, "expected at least 3 rows, got {rows}");
 }
+
+#[test]
+fn adopt_yield_view_moves_transcript_without_clone() {
+    let mut app = TuiApp::from_config(test_config());
+    app.add_message(ChatRole::Assistant, String::from("body"));
+    let ptr = app.messages.as_ptr();
+    let mut view = crate::session_runtime::ViewSnapshot::default();
+    app.yield_view(&mut view);
+    assert!(app.messages.is_empty());
+    assert_eq!(view.messages.as_ptr(), ptr);
+    assert_eq!(view.messages[0].content, "body");
+
+    app.adopt_view(&mut view);
+    assert!(view.messages.is_empty());
+    assert_eq!(app.messages.as_ptr(), ptr);
+    assert_eq!(app.messages[0].content, "body");
+}
