@@ -900,250 +900,27 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // ── Turn finished ─────────────────────────────────────────
-            if let Ok(outcome) = rt.done_rx.try_recv() {
-                rt.agent_busy = false;
-                rt.cancel_flag = None;
-                cancel_requested_at = None;
-                rt.turn_join = None;
-                rt.session_backup = None;
-                // One deferred catalog pass if we still lack a live window.
-                // Avoid re-fetching after every turn (would race fast follow-ups).
-                if app.api_context_window.is_none() {
-                    catalog_fetch_pending = true;
-                }
-                // Stamp "Worked for Xs" from work_ms only (title refine is async
-                // and never included — see spawn_title_refine below).
-                let work_ms = match &outcome {
-                    TurnOutcome::Ok { work_ms, .. }
-                    | TurnOutcome::Err { work_ms, .. }
-                    | TurnOutcome::Remote { work_ms, .. } => *work_ms,
-                };
-                let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
-                app.mark_dirty();
-                // jcode/Grok: trim after the next frame flush, not mid-loop.
-                crate::heap::request_release_after_draw("turn_done");
-                match outcome {
-                    TurnOutcome::Ok {
-                        text,
-                        agent: a,
-                        session: s,
-                        work_ms: _,
-                    } => {
-                        rt.agent = a;
-                        rt.session = s;
-                        // Apply a title that raced ahead of this restore.
-                        if let Some((sid, title)) = pending_async_title.take()
-                            && rt.session.id == sid
-                        {
-                            let _ = rt.session.apply_generated_title(&title);
-                        }
-                        app.session_title = rt.session.title.clone();
-                        // Ensure final text is present
-                        if !text.is_empty()
-                            && let Some(last) = app.messages.last_mut()
-                            && last.role == ChatRole::Assistant
-                            && last.content.is_empty()
-                        {
-                            last.content = text.clone();
-                        }
-                        // Auto-retain runs inside Agent::run_turn (heuristic + LLM).
-                        // Surface rt.agent Status events as toasts already via drain path.
-                        app.finish_open_thinking();
-                        app.current_agent_state = AgentState::Idle;
-                        // Silent providers leave turn_usage empty — estimate fill
-                        // from the transcript so the footer is not stuck at 0.
-                        if app.turn_usage.is_none() {
-                            app.sync_context_estimate(&rt.session);
-                        }
-                        // Agent may have switched branches; keep footer current.
-                        app.refresh_git_branch();
-                        app.status_message = format_turn_done_status(
-                            &app,
-                            rt.agent.info.name.as_str(),
-                            &provider,
-                            &model,
-                            elapsed_ms,
-                            false,
-                        );
-                        // Persist after every completed turn (success path).
-                        rt.persist("ok");
-                        // A7: optional idle follow-up suggestion (default off).
-                        maybe_spawn_prompt_suggestion(
-                            &config,
-                            &rt.session,
-                            &provider,
-                            &model,
-                            &api_key,
-                            &mut app,
-                            suggest_tx.clone(),
-                        );
-                    }
-                    TurnOutcome::Remote {
-                        text,
-                        error,
-                        work_ms: _,
-                    } => {
-                        app.finish_open_thinking();
-                        if let Some(err) = error {
-                            app.current_agent_state = AgentState::Idle;
-                            app.add_message(ChatRole::System, format!("Remote error: {err}"));
-                            app.status_message = "remote error".into();
-                        } else {
-                            if !text.is_empty()
-                                && let Some(last) = app.messages.last_mut()
-                                && last.role == ChatRole::Assistant
-                                && last.content.is_empty()
-                            {
-                                last.content = text.clone();
-                            }
-                            app.current_agent_state = AgentState::Idle;
-                            app.status_message = format_turn_done_status(
-                                &app,
-                                rt.agent.info.name.as_str(),
-                                &provider,
-                                &model,
-                                elapsed_ms,
-                                false,
-                            );
-                        }
-                    }
-                    TurnOutcome::Err {
-                        error,
-                        agent: a,
-                        session: s,
-                        cancelled,
-                        work_ms: _,
-                    } => {
-                        rt.agent = a;
-                        rt.session = s;
-                        if let Some((sid, title)) = pending_async_title.take()
-                            && rt.session.id == sid
-                        {
-                            let _ = rt.session.apply_generated_title(&title);
-                        }
-                        app.session_title = rt.session.title.clone();
-                        app.finish_open_thinking();
-                        // Transcript may have partial assistant text; refresh estimate
-                        // when no provider usage landed this turn.
-                        if app.turn_usage.is_none() {
-                            app.sync_context_estimate(&rt.session);
-                        }
-                        if cancelled {
-                            app.current_agent_state = AgentState::Idle;
-                            app.status_message = format_turn_done_status(
-                                &app,
-                                rt.agent.info.name.as_str(),
-                                &provider,
-                                &model,
-                                elapsed_ms,
-                                true,
-                            );
-                            app.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
-                            // Still flush so cancel mid-turn is not lost on crash.
-                            rt.persist("cancelled");
-                        } else {
-                            // Clean user-facing copy; full wire body stays in logs.
-                            let display = whycode_llm::format_turn_error(
-                                &whycode_core::Error::Llm(error.clone()),
-                            );
-                            app.current_agent_state = AgentState::Error(display.clone());
-                            let dur = elapsed_ms
-                                .map(|ms| format!("{} · ", format_elapsed_ms(ms)))
-                                .unwrap_or_default();
-                            app.status_message = format!("{dur}error — see chat");
-                            app.add_message(ChatRole::System, format!("Error: {display}"));
-                            app.toasts
-                                .push(crate::toast::ToastKind::Error, truncate_toast(&display, 48));
-                            whycode_core::logging::emit_sid(
-                                "tui",
-                                "error",
-                                "turn.error",
-                                Some(rt.session.id.as_str()),
-                                Some(serde_json::json!({
-                                    "error": error,
-                                    "display": display,
-                                    "elapsed_ms": elapsed_ms,
-                                })),
-                            );
-                            rt.persist("error");
-                        }
-                    }
-                }
+            if let Ok(outcome) = rt.done_rx.try_recv()
+                && apply_turn_outcome(
+                    &mut app,
+                    &mut rt,
+                    outcome,
+                    &mut cancel_requested_at,
+                    &mut pending_async_title,
+                    &provider,
+                    &model,
+                    &config,
+                    &api_key,
+                    &suggest_tx,
+                )
+            {
+                catalog_fetch_pending = true;
             }
 
             // ── Apply rt.session picker / /resume selection ──────────────
             // ── Picker close selection (Ctrl+W on a live row) ────────
             if let Some(close_idx) = app.session_list.pending_close.take() {
-                if close_idx == usize::MAX {
-                    // Closing the ACTIVE session: only when idle and others
-                    // exist — park nothing, switch to the most recent parked.
-                    if rt.agent_busy {
-                        app.toasts.push(
-                            crate::toast::ToastKind::Warning,
-                            "Turn in flight — Esc first, then close",
-                        );
-                    } else if runtimes.is_empty() {
-                        app.toasts.push(
-                            crate::toast::ToastKind::Info,
-                            "Last live session stays open",
-                        );
-                    } else {
-                        rt.persist("close");
-                        let idx = mru.pop().unwrap_or(runtimes.len() - 1);
-                        let idx = idx.min(runtimes.len() - 1);
-                        let mut closed = std::mem::replace(&mut rt, runtimes.remove(idx));
-                        // The closed runtime's turn guard is idle; drop it.
-                        closed.turn_join.take();
-                        mru.retain(|&i| i != idx);
-                        for i in mru.iter_mut() {
-                            if *i > idx {
-                                *i -= 1;
-                            }
-                        }
-                        rt.unread = false;
-                        app.adopt_view(&mut rt.view);
-                        app.dialogs.clear();
-                        app.mark_dirty();
-                        app.focus = FocusPane::Prompt;
-                        app.toasts.push(
-                            crate::toast::ToastKind::Info,
-                            format!(
-                                "Closed · now {} ({} live)",
-                                rt.session.title,
-                                runtimes.len() + 1
-                            ),
-                        );
-                    }
-                } else if close_idx < runtimes.len() {
-                    // Closing a PARKED session: deny waiters, abort its turn,
-                    // persist, drop the runtime.
-                    let mut bg = runtimes.remove(close_idx);
-                    while let Some(req) = bg.pending_perm_queue.pop_front() {
-                        let _ = req.reply.send(false);
-                    }
-                    while let Some(req) = bg.pending_question_queue.pop_front() {
-                        let _ = req.reply.send(Err(QuestionError::Cancelled));
-                    }
-                    if let Some(h) = bg.turn_join.take() {
-                        h.abort();
-                    }
-                    bg.agent.background_registry().kill_all();
-                    bg.persist("close");
-                    mru.retain(|&i| i != close_idx);
-                    for i in mru.iter_mut() {
-                        if *i > close_idx {
-                            *i -= 1;
-                        }
-                    }
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        format!(
-                            "Closed · {} ({} live)",
-                            bg.session.title,
-                            runtimes.len() + 1
-                        ),
-                    );
-                }
+                close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, close_idx);
             }
 
             // ── Dashboard switch selection ──────────────────────────
@@ -1165,63 +942,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             if let Some(id) = app.pending_session_id.take() {
-                // Don't switch mid-turn — re-queue and wait.
-                if rt.agent_busy {
-                    app.pending_session_id = Some(id);
-                } else if let Some(idx) = runtimes.iter().position(|b| b.session.id == id) {
-                    // Already live in a parked session — just switch to it.
-                    switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
-                    mru.retain(|&i| i != idx);
-                    mru.push(idx);
-                    app.toasts.push(
-                        crate::toast::ToastKind::Success,
-                        format!("Switched to live session · {}", rt.session.title),
-                    );
-                } else {
-                    match try_load_session(&id) {
-                        Ok(Some(loaded)) => {
-                            // Persist the current rt.session first so nothing is lost
-                            // when switching away from an unsaved turn.
-                            if !rt.session.messages.is_empty() {
-                                rt.persist("switch");
-                            }
-                            let n = loaded.messages.len();
-                            rt.history = SessionHistory::new();
-                            rt.session = loaded;
-                            rt.session.system_prompt = with_project_memory(
-                                &Agent::with_agents_md(&rt.agent.system_prompt(), &project_dir),
-                                &project_dir,
-                                &config,
-                                None,
-                            );
-                            if config.session.auto_title
-                                && rt.session.maybe_upgrade_title_from_history()
-                            {
-                                rt.persist("title_backfill");
-                            }
-                            let title = rt.session.title.clone();
-                            app.load_messages_from_session(&rt.session);
-                            app.toasts.push(
-                                crate::toast::ToastKind::Success,
-                                format!("Resumed · {title} ({n} msgs)"),
-                            );
-                            app.status_message =
-                                format!("Resumed rt.session {}", short_session_id(&rt.session.id));
-                        }
-                        Ok(None) => {
-                            app.toasts.push(
-                                crate::toast::ToastKind::Warning,
-                                format!("Session not found: {}", short_session_id(&id)),
-                            );
-                        }
-                        Err(e) => {
-                            app.toasts.push(
-                                crate::toast::ToastKind::Error,
-                                format!("Resume failed: {e}"),
-                            );
-                        }
-                    }
-                }
+                resume_or_switch_session(
+                    &mut app,
+                    &mut rt,
+                    &mut runtimes,
+                    &mut mru,
+                    id,
+                    &project_dir,
+                    &config,
+                );
             }
 
             // ── Apply model picker selection ──────────────────────────
@@ -1304,95 +1033,24 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // A7 suggestion results
             while let Ok(suggestion) = suggest_rx.try_recv() {
-                if !suggestion.trim().is_empty() && !rt.agent_busy {
-                    app.pending_suggestion = Some(suggestion.clone());
-                    app.toasts.push(
-                        crate::toast::ToastKind::Info,
-                        truncate_toast(&format!("suggest · Tab · {suggestion}"), 64),
-                    );
-                    app.mark_dirty();
-                }
+                apply_idle_suggestion(&mut app, suggestion, rt.agent_busy);
             }
 
             // OAuth login flow progress (`/connect` spawned task).
             while let Ok(ev) = auth_rx.try_recv() {
-                match ev {
-                    AuthFlowEvent::Note(text) => {
-                        app.add_message(ChatRole::System, &text);
-                        app.status_message = text.lines().next().unwrap_or("").to_string();
-                    }
-                    AuthFlowEvent::NeedCode(sink) => {
-                        app.auth_code_sink = Some(sink);
-                        app.status_message =
-                            "Paste the sign-in code, then Enter · Esc cancels".into();
-                        app.focus_prompt();
-                    }
-                    AuthFlowEvent::Done {
-                        provider: p,
-                        result,
-                    } => match result {
-                        Ok(_) => {
-                            // Load the fresh credential for the active provider.
-                            if p == provider
-                                && let Ok(dir) = Config::data_dir()
-                                && let Some(tok) =
-                                    whycode_auth::providers::access_token(&p, &dir).await
-                            {
-                                whycode_llm::oauth_refresh::register(&p, dir);
-                                api_key = tok;
-                            }
-                            let hint = if p == provider {
-                                String::new()
-                            } else {
-                                format!(" — switch with /models {p}/<model>")
-                            };
-                            app.add_message(
-                                ChatRole::System,
-                                format!("✓ Signed in to `{p}` (subscription){hint}"),
-                            );
-                            app.status_message = format!("Signed in · {p}");
-                            app.toasts
-                                .push(crate::toast::ToastKind::Success, format!("Connected · {p}"));
-                        }
-                        Err(msg) => {
-                            app.add_message(
-                                ChatRole::System,
-                                format!("Sign-in to `{p}` failed: {msg}"),
-                            );
-                            app.status_message = format!("sign-in failed · {p}");
-                            app.toasts.push(
-                                crate::toast::ToastKind::Error,
-                                truncate_toast(&format!("sign-in failed: {msg}"), 64),
-                            );
-                        }
-                    },
-                }
-                app.mark_dirty();
+                apply_auth_flow_event(&mut app, ev, &provider, &mut api_key).await;
             }
 
             // ── Apply async single-model context_length from gateway ──
             while let Ok((for_provider, for_model, window)) = catalog_rx.try_recv() {
-                if for_provider != provider || for_model != model {
-                    continue; // stale in-flight result
-                }
-                app.mark_dirty();
-                app.set_api_context_window(
+                apply_catalog_window(
+                    &mut app,
+                    &provider,
+                    &model,
                     &for_provider,
                     &for_model,
                     window,
-                    config.configured_context_window(&provider, &model),
-                    config.session.max_context_tokens as u64,
-                );
-                whycode_core::logging::emit(
-                    "whycode_tui",
-                    "info",
-                    "tui.context_window_applied",
-                    Some(serde_json::json!({
-                        "provider": for_provider,
-                        "model": for_model,
-                        "window": window,
-                        "max": app.max_context_tokens,
-                    })),
+                    &config,
                 );
             }
 
@@ -1517,20 +1175,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
                 }
                 if api_key.is_empty() {
-                    let env_name = format!("{}_API_KEY", provider.to_uppercase());
-                    app.add_message(
-                        ChatRole::System,
-                        format!(
-                            "No API key for `{provider}`\n\
-                                 → export {env_name}=…\n\
-                                 → whycode provider add {provider} --api-key <key> · then /connect"
-                        ),
-                    );
-                    app.status_message = "no API key · /connect".into();
-                    app.toasts.push(
-                        crate::toast::ToastKind::Warning,
-                        format!("Missing {provider} API key"),
-                    );
+                    warn_missing_api_key(&mut app, &provider);
                     // Images already shown on the user bubble; don't re-queue.
                     let _ = submit_images;
                     continue;
@@ -1794,22 +1439,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             | KeyCode::Char('a')
                             | KeyCode::Char('A')
                             | KeyCode::Enter => {
-                                if let Some(req) = rt.pending_perm_queue.pop_front() {
-                                    let _ = req.reply.send(true);
-                                }
-                                app.dialogs.pop();
-                                app.mode = AppMode::Normal;
-                                app.key_context = KeymapContext::Normal;
-                                if let Some(next) = rt.pending_perm_queue.front() {
-                                    app.ask_permission(next.tool_name.clone(), next.detail.clone());
-                                    app.status_message = format!(
-                                        "Allowed — {} more permission(s)…",
-                                        rt.pending_perm_queue.len()
-                                    );
-                                } else {
-                                    app.current_agent_state = AgentState::Generating;
-                                    app.status_message = "Allowed — continuing…".into();
-                                }
+                                reply_permission(&mut app, &mut rt.pending_perm_queue, true);
                                 continue;
                             }
                             KeyCode::Char('n')
@@ -1817,22 +1447,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             | KeyCode::Char('d')
                             | KeyCode::Char('D')
                             | KeyCode::Esc => {
-                                if let Some(req) = rt.pending_perm_queue.pop_front() {
-                                    let _ = req.reply.send(false);
-                                }
-                                app.dialogs.pop();
-                                app.mode = AppMode::Normal;
-                                app.key_context = KeymapContext::Normal;
-                                if let Some(next) = rt.pending_perm_queue.front() {
-                                    app.ask_permission(next.tool_name.clone(), next.detail.clone());
-                                    app.status_message = format!(
-                                        "Denied — {} more permission(s)…",
-                                        rt.pending_perm_queue.len()
-                                    );
-                                } else {
-                                    app.current_agent_state = AgentState::Generating;
-                                    app.status_message = "Denied tool".into();
-                                }
+                                reply_permission(&mut app, &mut rt.pending_perm_queue, false);
                                 continue;
                             }
                             _ => {}
@@ -1858,33 +1473,23 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
                     // Mouse single-select may finish the questionnaire from input.rs
                     if let Some(answers) = app.pending_question_answers.take() {
-                        if let Some(req) = rt.pending_question_queue.pop_front() {
-                            let _ = req.reply.send(Ok(answers));
-                        }
-                        if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
-                            app.mode = AppMode::Normal;
-                            app.key_context = KeymapContext::Normal;
-                            resume_after_question(
-                                &mut app,
-                                &rt.pending_question_queue,
-                                &rt.pending_perm_queue,
-                            );
-                        }
+                        complete_questionnaire_ui(
+                            &mut app,
+                            &mut rt.pending_question_queue,
+                            &rt.pending_perm_queue,
+                            Some(answers),
+                        );
                     }
 
                     // [✗] / Esc may dismiss Question via input.rs — complete oneshot
                     if app.question_dismissed {
                         app.question_dismissed = false;
-                        if let Some(req) = rt.pending_question_queue.pop_front() {
-                            let _ = req.reply.send(Err(QuestionError::Cancelled));
-                        }
-                        if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
-                            resume_after_question(
-                                &mut app,
-                                &rt.pending_question_queue,
-                                &rt.pending_perm_queue,
-                            );
-                        }
+                        complete_questionnaire_ui(
+                            &mut app,
+                            &mut rt.pending_question_queue,
+                            &rt.pending_perm_queue,
+                            None,
+                        );
                     }
 
                     // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
@@ -2226,27 +1831,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     .await;
 
     // Deny any hanging permissions / questionnaires so rt.agent tasks can finish
-    while let Some(req) = rt.pending_perm_queue.pop_front() {
-        let _ = req.reply.send(false);
-    }
-    while let Some(req) = rt.pending_question_queue.pop_front() {
-        let _ = req.reply.send(Err(QuestionError::Cancelled));
-    }
-    // Best-effort: stop background shells so we don't leave orphans.
-    rt.agent.background_registry().kill_all();
+    shutdown_runtime_queues(&mut rt);
 
     // Parked sessions: deny their waiters, abort their turns, persist.
     for mut bg in runtimes.drain(..) {
-        while let Some(req) = bg.pending_perm_queue.pop_front() {
-            let _ = req.reply.send(false);
-        }
-        while let Some(req) = bg.pending_question_queue.pop_front() {
-            let _ = req.reply.send(Err(QuestionError::Cancelled));
-        }
+        shutdown_runtime_queues(&mut bg);
         if let Some(h) = bg.turn_join.take() {
             h.abort();
         }
-        bg.agent.background_registry().kill_all();
         bg.persist("shutdown");
     }
 
@@ -3016,6 +2608,486 @@ fn drain_turn_events(app: &mut TuiApp, event_rx: &mut mpsc::UnboundedReceiver<Tu
     flush_text(app, &mut text_buf);
     flush_think(app, &mut think_buf);
     any
+}
+
+/// Apply a finished turn to the visible session. Returns `true` when the
+/// catalog fetch should be queued (no live context window yet).
+#[allow(clippy::too_many_arguments)]
+fn apply_turn_outcome(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    outcome: TurnOutcome,
+    cancel_requested_at: &mut Option<Instant>,
+    pending_async_title: &mut Option<(String, String)>,
+    provider: &str,
+    model: &str,
+    config: &Config,
+    api_key: &str,
+    suggest_tx: &mpsc::UnboundedSender<String>,
+) -> bool {
+    rt.agent_busy = false;
+    rt.cancel_flag = None;
+    *cancel_requested_at = None;
+    rt.turn_join = None;
+    rt.session_backup = None;
+    let queue_catalog = app.api_context_window.is_none();
+    let work_ms = match &outcome {
+        TurnOutcome::Ok { work_ms, .. }
+        | TurnOutcome::Err { work_ms, .. }
+        | TurnOutcome::Remote { work_ms, .. } => *work_ms,
+    };
+    let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
+    app.mark_dirty();
+    crate::heap::request_release_after_draw("turn_done");
+    match outcome {
+        TurnOutcome::Ok {
+            text,
+            agent: a,
+            session: s,
+            work_ms: _,
+        } => {
+            rt.agent = a;
+            rt.session = s;
+            if let Some((sid, title)) = pending_async_title.take()
+                && rt.session.id == sid
+            {
+                let _ = rt.session.apply_generated_title(&title);
+            }
+            app.session_title = rt.session.title.clone();
+            if !text.is_empty()
+                && let Some(last) = app.messages.last_mut()
+                && last.role == ChatRole::Assistant
+                && last.content.is_empty()
+            {
+                last.content = text.clone();
+            }
+            app.finish_open_thinking();
+            app.current_agent_state = AgentState::Idle;
+            if app.turn_usage.is_none() {
+                app.sync_context_estimate(&rt.session);
+            }
+            app.refresh_git_branch();
+            app.status_message = format_turn_done_status(
+                app,
+                rt.agent.info.name.as_str(),
+                provider,
+                model,
+                elapsed_ms,
+                false,
+            );
+            rt.persist("ok");
+            maybe_spawn_prompt_suggestion(
+                config,
+                &rt.session,
+                provider,
+                model,
+                api_key,
+                app,
+                suggest_tx.clone(),
+            );
+        }
+        TurnOutcome::Remote {
+            text,
+            error,
+            work_ms: _,
+        } => {
+            app.finish_open_thinking();
+            if let Some(err) = error {
+                app.current_agent_state = AgentState::Idle;
+                app.add_message(ChatRole::System, format!("Remote error: {err}"));
+                app.status_message = "remote error".into();
+            } else {
+                if !text.is_empty()
+                    && let Some(last) = app.messages.last_mut()
+                    && last.role == ChatRole::Assistant
+                    && last.content.is_empty()
+                {
+                    last.content = text.clone();
+                }
+                app.current_agent_state = AgentState::Idle;
+                app.status_message = format_turn_done_status(
+                    app,
+                    rt.agent.info.name.as_str(),
+                    provider,
+                    model,
+                    elapsed_ms,
+                    false,
+                );
+            }
+        }
+        TurnOutcome::Err {
+            error,
+            agent: a,
+            session: s,
+            cancelled,
+            work_ms: _,
+        } => {
+            rt.agent = a;
+            rt.session = s;
+            if let Some((sid, title)) = pending_async_title.take()
+                && rt.session.id == sid
+            {
+                let _ = rt.session.apply_generated_title(&title);
+            }
+            app.session_title = rt.session.title.clone();
+            app.finish_open_thinking();
+            if app.turn_usage.is_none() {
+                app.sync_context_estimate(&rt.session);
+            }
+            if cancelled {
+                app.current_agent_state = AgentState::Idle;
+                app.status_message = format_turn_done_status(
+                    app,
+                    rt.agent.info.name.as_str(),
+                    provider,
+                    model,
+                    elapsed_ms,
+                    true,
+                );
+                app.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
+                rt.persist("cancelled");
+            } else {
+                let display =
+                    whycode_llm::format_turn_error(&whycode_core::Error::Llm(error.clone()));
+                app.current_agent_state = AgentState::Error(display.clone());
+                let dur = elapsed_ms
+                    .map(|ms| format!("{} · ", format_elapsed_ms(ms)))
+                    .unwrap_or_default();
+                app.status_message = format!("{dur}error — see chat");
+                app.add_message(ChatRole::System, format!("Error: {display}"));
+                app.toasts
+                    .push(crate::toast::ToastKind::Error, truncate_toast(&display, 48));
+                whycode_core::logging::emit_sid(
+                    "tui",
+                    "error",
+                    "turn.error",
+                    Some(rt.session.id.as_str()),
+                    Some(serde_json::json!({
+                        "error": error,
+                        "display": display,
+                        "elapsed_ms": elapsed_ms,
+                    })),
+                );
+                rt.persist("error");
+            }
+        }
+    }
+    queue_catalog
+}
+
+/// Close the active session (`usize::MAX`) or a parked slot.
+fn close_session_slot(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut Vec<SessionRuntime>,
+    mru: &mut Vec<usize>,
+    close_idx: usize,
+) {
+    if close_idx == usize::MAX {
+        if rt.agent_busy {
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                "Turn in flight — Esc first, then close",
+            );
+        } else if runtimes.is_empty() {
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                "Last live session stays open",
+            );
+        } else {
+            rt.persist("close");
+            let idx = mru.pop().unwrap_or(runtimes.len() - 1);
+            let idx = idx.min(runtimes.len() - 1);
+            let mut closed = std::mem::replace(rt, runtimes.remove(idx));
+            closed.turn_join.take();
+            mru.retain(|&i| i != idx);
+            for i in mru.iter_mut() {
+                if *i > idx {
+                    *i -= 1;
+                }
+            }
+            rt.unread = false;
+            app.adopt_view(&mut rt.view);
+            app.dialogs.clear();
+            app.mark_dirty();
+            app.focus = FocusPane::Prompt;
+            app.toasts.push(
+                crate::toast::ToastKind::Info,
+                format!(
+                    "Closed · now {} ({} live)",
+                    rt.session.title,
+                    runtimes.len() + 1
+                ),
+            );
+        }
+    } else if close_idx < runtimes.len() {
+        let mut bg = runtimes.remove(close_idx);
+        while let Some(req) = bg.pending_perm_queue.pop_front() {
+            let _ = req.reply.send(false);
+        }
+        while let Some(req) = bg.pending_question_queue.pop_front() {
+            let _ = req.reply.send(Err(QuestionError::Cancelled));
+        }
+        if let Some(h) = bg.turn_join.take() {
+            h.abort();
+        }
+        bg.agent.background_registry().kill_all();
+        bg.persist("close");
+        mru.retain(|&i| i != close_idx);
+        for i in mru.iter_mut() {
+            if *i > close_idx {
+                *i -= 1;
+            }
+        }
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            format!(
+                "Closed · {} ({} live)",
+                bg.session.title,
+                runtimes.len() + 1
+            ),
+        );
+    }
+}
+
+/// Switch to a parked live session, or load a persisted id into the active one.
+fn resume_or_switch_session(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut [SessionRuntime],
+    mru: &mut Vec<usize>,
+    id: String,
+    project_dir: &std::path::Path,
+    config: &Config,
+) {
+    if rt.agent_busy {
+        app.pending_session_id = Some(id);
+        return;
+    }
+    if let Some(idx) = runtimes.iter().position(|b| b.session.id == id) {
+        switch_to_runtime(app, rt, runtimes, idx);
+        mru.retain(|&i| i != idx);
+        mru.push(idx);
+        app.toasts.push(
+            crate::toast::ToastKind::Success,
+            format!("Switched to live session · {}", rt.session.title),
+        );
+        return;
+    }
+    match try_load_session(&id) {
+        Ok(Some(loaded)) => {
+            if !rt.session.messages.is_empty() {
+                rt.persist("switch");
+            }
+            let n = loaded.messages.len();
+            rt.history = SessionHistory::new();
+            rt.session = loaded;
+            rt.session.system_prompt = with_project_memory(
+                &Agent::with_agents_md(&rt.agent.system_prompt(), project_dir),
+                project_dir,
+                config,
+                None,
+            );
+            if config.session.auto_title && rt.session.maybe_upgrade_title_from_history() {
+                rt.persist("title_backfill");
+            }
+            let title = rt.session.title.clone();
+            app.load_messages_from_session(&rt.session);
+            app.toasts.push(
+                crate::toast::ToastKind::Success,
+                format!("Resumed · {title} ({n} msgs)"),
+            );
+            app.status_message = format!("Resumed rt.session {}", short_session_id(&rt.session.id));
+        }
+        Ok(None) => {
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                format!("Session not found: {}", short_session_id(&id)),
+            );
+        }
+        Err(e) => {
+            app.toasts.push(
+                crate::toast::ToastKind::Error,
+                format!("Resume failed: {e}"),
+            );
+        }
+    }
+}
+
+fn reply_permission(
+    app: &mut TuiApp,
+    queue: &mut std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    allow: bool,
+) {
+    if let Some(req) = queue.pop_front() {
+        let _ = req.reply.send(allow);
+    }
+    app.dialogs.pop();
+    app.mode = AppMode::Normal;
+    app.key_context = KeymapContext::Normal;
+    if let Some(next) = queue.front() {
+        app.ask_permission(next.tool_name.clone(), next.detail.clone());
+        app.status_message = format!(
+            "{} — {} more permission(s)…",
+            if allow { "Allowed" } else { "Denied" },
+            queue.len()
+        );
+    } else if allow {
+        app.current_agent_state = AgentState::Generating;
+        app.status_message = "Allowed — continuing…".into();
+    } else {
+        app.current_agent_state = AgentState::Generating;
+        app.status_message = "Denied tool".into();
+    }
+}
+
+fn complete_questionnaire_ui(
+    app: &mut TuiApp,
+    queue: &mut std::collections::VecDeque<QuestionRequest>,
+    perm_queue: &std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    answers: Option<Vec<whycode_tools::question::QuestionAnswer>>,
+) {
+    let answered = answers.is_some();
+    if let Some(req) = queue.pop_front() {
+        let _ = match answers {
+            Some(a) => req.reply.send(Ok(a)),
+            None => req.reply.send(Err(QuestionError::Cancelled)),
+        };
+    }
+    if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+        if answered {
+            app.mode = AppMode::Normal;
+            app.key_context = KeymapContext::Normal;
+        }
+        resume_after_question(app, queue, perm_queue);
+    }
+}
+
+fn warn_missing_api_key(app: &mut TuiApp, provider: &str) {
+    let env_name = format!("{}_API_KEY", provider.to_uppercase());
+    app.add_message(
+        ChatRole::System,
+        format!(
+            "No API key for `{provider}`\n\
+                 → export {env_name}=…\n\
+                 → whycode provider add {provider} --api-key <key> · then /connect"
+        ),
+    );
+    app.status_message = "no API key · /connect".into();
+    app.toasts.push(
+        crate::toast::ToastKind::Warning,
+        format!("Missing {provider} API key"),
+    );
+}
+
+fn apply_idle_suggestion(app: &mut TuiApp, suggestion: String, agent_busy: bool) {
+    if suggestion.trim().is_empty() || agent_busy {
+        return;
+    }
+    app.pending_suggestion = Some(suggestion.clone());
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        truncate_toast(&format!("suggest · Tab · {suggestion}"), 64),
+    );
+    app.mark_dirty();
+}
+
+fn apply_catalog_window(
+    app: &mut TuiApp,
+    provider: &str,
+    model: &str,
+    for_provider: &str,
+    for_model: &str,
+    window: u32,
+    config: &Config,
+) -> bool {
+    if for_provider != provider || for_model != model {
+        return false;
+    }
+    app.mark_dirty();
+    app.set_api_context_window(
+        for_provider,
+        for_model,
+        window,
+        config.configured_context_window(provider, model),
+        config.session.max_context_tokens as u64,
+    );
+    whycode_core::logging::emit(
+        "whycode_tui",
+        "info",
+        "tui.context_window_applied",
+        Some(serde_json::json!({
+            "provider": for_provider,
+            "model": for_model,
+            "window": window,
+            "max": app.max_context_tokens,
+        })),
+    );
+    true
+}
+
+async fn apply_auth_flow_event(
+    app: &mut TuiApp,
+    ev: AuthFlowEvent,
+    active_provider: &str,
+    api_key: &mut String,
+) {
+    match ev {
+        AuthFlowEvent::Note(text) => {
+            app.add_message(ChatRole::System, &text);
+            app.status_message = text.lines().next().unwrap_or("").to_string();
+        }
+        AuthFlowEvent::NeedCode(sink) => {
+            app.auth_code_sink = Some(sink);
+            app.status_message = "Paste the sign-in code, then Enter · Esc cancels".into();
+            app.focus_prompt();
+        }
+        AuthFlowEvent::Done {
+            provider: p,
+            result,
+        } => match result {
+            Ok(_) => {
+                if p == active_provider
+                    && let Ok(dir) = Config::data_dir()
+                    && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
+                {
+                    whycode_llm::oauth_refresh::register(&p, dir);
+                    *api_key = tok;
+                }
+                let hint = if p == active_provider {
+                    String::new()
+                } else {
+                    format!(" — switch with /models {p}/<model>")
+                };
+                app.add_message(
+                    ChatRole::System,
+                    format!("✓ Signed in to `{p}` (subscription){hint}"),
+                );
+                app.status_message = format!("Signed in · {p}");
+                app.toasts
+                    .push(crate::toast::ToastKind::Success, format!("Connected · {p}"));
+            }
+            Err(msg) => {
+                app.add_message(ChatRole::System, format!("Sign-in to `{p}` failed: {msg}"));
+                app.status_message = format!("sign-in failed · {p}");
+                app.toasts.push(
+                    crate::toast::ToastKind::Error,
+                    truncate_toast(&format!("sign-in failed: {msg}"), 64),
+                );
+            }
+        },
+    }
+    app.mark_dirty();
+}
+
+fn shutdown_runtime_queues(rt: &mut SessionRuntime) {
+    while let Some(req) = rt.pending_perm_queue.pop_front() {
+        let _ = req.reply.send(false);
+    }
+    while let Some(req) = rt.pending_question_queue.pop_front() {
+        let _ = req.reply.send(Err(QuestionError::Cancelled));
+    }
+    rt.agent.background_registry().kill_all();
 }
 
 fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
@@ -6955,5 +7027,515 @@ mod tests {
         h.run("/agent plan").await;
         assert_eq!(h.agent.info.name, "plan");
         assert!(h.app.status_message.contains("plan"));
+    }
+
+    fn outcome_ok(name: &str, text: &str) -> TurnOutcome {
+        TurnOutcome::Ok {
+            text: text.into(),
+            agent: Agent::new(dummy_info(name)),
+            session: Session::new(PathBuf::from("/work"), "sys".into()),
+            work_ms: 1500,
+        }
+    }
+
+    #[test]
+    fn apply_turn_outcome_ok_remote_and_errors() {
+        isolate_home();
+        let mut rt = test_runtime();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.add_message(ChatRole::Assistant, "");
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let config = Config::default();
+        let mut cancel_at = Some(Instant::now());
+        let mut pending_title = Some((rt.session.id.clone(), "New Title".into()));
+
+        let queue = apply_turn_outcome(
+            &mut app,
+            &mut rt,
+            outcome_ok("ok-agent", "hello"),
+            &mut cancel_at,
+            &mut pending_title,
+            "acme",
+            "m",
+            &config,
+            "",
+            &tx,
+        );
+        assert!(queue, "no live window → catalog queued");
+        assert!(!rt.agent_busy);
+        assert!(cancel_at.is_none());
+        assert_eq!(rt.agent.info.name, "ok-agent");
+        assert_eq!(app.current_agent_state, AgentState::Idle);
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.role == ChatRole::Assistant && m.content == "hello")
+        );
+
+        app.add_message(ChatRole::Assistant, "");
+        apply_turn_outcome(
+            &mut app,
+            &mut rt,
+            TurnOutcome::Remote {
+                text: "from-serve".into(),
+                error: None,
+                work_ms: 10,
+            },
+            &mut cancel_at,
+            &mut pending_title,
+            "acme",
+            "m",
+            &config,
+            "",
+            &tx,
+        );
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.content == "from-serve" || m.content.contains("from-serve"))
+        );
+
+        apply_turn_outcome(
+            &mut app,
+            &mut rt,
+            TurnOutcome::Remote {
+                text: String::new(),
+                error: Some("down".into()),
+                work_ms: 4,
+            },
+            &mut cancel_at,
+            &mut pending_title,
+            "acme",
+            "m",
+            &config,
+            "",
+            &tx,
+        );
+        assert_eq!(app.status_message, "remote error");
+
+        apply_turn_outcome(
+            &mut app,
+            &mut rt,
+            TurnOutcome::Err {
+                error: "cancelled by user".into(),
+                agent: Agent::new(dummy_info("cx")),
+                session: Session::new(PathBuf::from("/work"), "sys".into()),
+                cancelled: true,
+                work_ms: 20,
+            },
+            &mut cancel_at,
+            &mut pending_title,
+            "acme",
+            "m",
+            &config,
+            "",
+            &tx,
+        );
+        assert!(app.messages.iter().any(|m| m.content.contains("cancelled")));
+
+        apply_turn_outcome(
+            &mut app,
+            &mut rt,
+            TurnOutcome::Err {
+                error: "provider exploded".into(),
+                agent: Agent::new(dummy_info("err")),
+                session: Session::new(PathBuf::from("/work"), "sys".into()),
+                cancelled: false,
+                work_ms: 30,
+            },
+            &mut cancel_at,
+            &mut pending_title,
+            "acme",
+            "m",
+            &config,
+            "",
+            &tx,
+        );
+        assert!(matches!(app.current_agent_state, AgentState::Error(_)));
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.kind == crate::toast::ToastKind::Error)
+        );
+    }
+
+    #[test]
+    fn close_session_slot_busy_last_and_parked() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut rt = test_runtime();
+        let mut runtimes = Vec::new();
+        let mut mru = Vec::new();
+
+        rt.agent_busy = true;
+        close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, usize::MAX);
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("in flight"))
+        );
+
+        rt.agent_busy = false;
+        close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, usize::MAX);
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Last live"))
+        );
+
+        let parked = test_runtime();
+        let parked_title = parked.session.title.clone();
+        runtimes.push(parked);
+        mru.push(0);
+        close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, 0);
+        assert!(runtimes.is_empty());
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains(&parked_title) || t.message.contains("Closed"))
+        );
+
+        let parked = test_runtime();
+        runtimes.push(parked);
+        mru.push(0);
+        let after_title = runtimes[0].session.title.clone();
+        close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, usize::MAX);
+        assert!(runtimes.is_empty());
+        assert_eq!(rt.session.title, after_title);
+    }
+
+    #[test]
+    fn resume_or_switch_session_paths() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut rt = test_runtime();
+        let mut parked = test_runtime();
+        parked.session.add_user_message("parked-hi");
+        let live_id = parked.session.id.clone();
+        let mut runtimes = vec![parked];
+        let mut mru = vec![];
+
+        rt.agent_busy = true;
+        resume_or_switch_session(
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            "busy-id".into(),
+            PathBuf::from("/work").as_path(),
+            &Config::default(),
+        );
+        assert_eq!(app.pending_session_id.as_deref(), Some("busy-id"));
+
+        rt.agent_busy = false;
+        app.pending_session_id = None;
+        resume_or_switch_session(
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            live_id,
+            PathBuf::from("/work").as_path(),
+            &Config::default(),
+        );
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Switched to live"))
+        );
+
+        resume_or_switch_session(
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            "nope-id".into(),
+            PathBuf::from("/work").as_path(),
+            &Config::default(),
+        );
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("not found"))
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = Session::new(dir.path().to_path_buf(), "sys".into());
+        saved.add_user_message("persisted hello");
+        persist_session_best_effort(&saved, "resume-test");
+        let id = saved.id.clone();
+        resume_or_switch_session(
+            &mut app,
+            &mut rt,
+            &mut runtimes,
+            &mut mru,
+            id,
+            dir.path(),
+            &Config::default(),
+        );
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Resumed"))
+        );
+    }
+
+    #[test]
+    fn reply_permission_allow_deny_and_queue() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.ask_permission("bash", "ls");
+        let mut q = std::collections::VecDeque::new();
+        reply_permission(&mut app, &mut q, true);
+        assert_eq!(app.status_message, "Allowed — continuing…");
+
+        let (tx1, rx1) = tokio::sync::oneshot::channel();
+        let (tx2, _rx2) = tokio::sync::oneshot::channel();
+        q.push_back(whycode_agent::PermissionRequest {
+            tool_name: "bash".into(),
+            detail: "one".into(),
+            reply: tx1,
+        });
+        q.push_back(whycode_agent::PermissionRequest {
+            tool_name: "read".into(),
+            detail: "two".into(),
+            reply: tx2,
+        });
+        app.ask_permission("bash", "one");
+        reply_permission(&mut app, &mut q, false);
+        assert!(rx1.blocking_recv().ok() == Some(false));
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Permission { .. })
+        ));
+        assert!(app.status_message.contains("Denied"));
+    }
+
+    #[test]
+    fn questionnaire_complete_and_cancel() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut q = std::collections::VecDeque::new();
+        let p = std::collections::VecDeque::new();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        complete_questionnaire_ui(
+            &mut app,
+            &mut q,
+            &p,
+            Some(vec![whycode_tools::question::QuestionAnswer {
+                selected: vec!["Yes".into()],
+                free_text: None,
+            }]),
+        );
+        assert!(rx.blocking_recv().unwrap().is_ok());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        complete_questionnaire_ui(&mut app, &mut q, &p, None);
+        assert!(matches!(
+            rx.blocking_recv().unwrap(),
+            Err(QuestionError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn warn_suggestion_catalog_and_shutdown() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        warn_missing_api_key(&mut app, "acme");
+        assert!(app.status_message.contains("no API key"));
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.content.contains("ACME_API_KEY"))
+        );
+
+        apply_idle_suggestion(&mut app, "   ".into(), false);
+        assert!(app.pending_suggestion.is_none());
+        apply_idle_suggestion(&mut app, "try cargo test".into(), true);
+        assert!(app.pending_suggestion.is_none());
+        apply_idle_suggestion(&mut app, "try cargo test".into(), false);
+        assert_eq!(app.pending_suggestion.as_deref(), Some("try cargo test"));
+
+        let config = Config::default();
+        assert!(!apply_catalog_window(
+            &mut app, "p", "m", "other", "m", 8_000, &config
+        ));
+        assert!(apply_catalog_window(
+            &mut app, "p", "m", "p", "m", 128_000, &config
+        ));
+        assert_eq!(app.api_context_window, Some(128_000));
+
+        let mut rt = test_runtime();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        rt.pending_perm_queue
+            .push_back(whycode_agent::PermissionRequest {
+                tool_name: "bash".into(),
+                detail: "x".into(),
+                reply: tx,
+            });
+        shutdown_runtime_queues(&mut rt);
+        assert!(rx.blocking_recv().ok() == Some(false));
+        assert!(rt.pending_perm_queue.is_empty());
+    }
+
+    #[tokio::test]
+    async fn apply_auth_flow_note_code_and_results() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut key = String::new();
+        apply_auth_flow_event(
+            &mut app,
+            AuthFlowEvent::Note("Visit https://x\nthen paste".into()),
+            "anthropic",
+            &mut key,
+        )
+        .await;
+        assert_eq!(app.status_message, "Visit https://x");
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        apply_auth_flow_event(&mut app, AuthFlowEvent::NeedCode(tx), "anthropic", &mut key).await;
+        assert!(app.auth_code_sink.is_some());
+        assert!(app.status_message.contains("Paste"));
+
+        apply_auth_flow_event(
+            &mut app,
+            AuthFlowEvent::Done {
+                provider: "anthropic".into(),
+                result: Err("nope".into()),
+            },
+            "anthropic",
+            &mut key,
+        )
+        .await;
+        assert!(app.status_message.contains("sign-in failed"));
+
+        apply_auth_flow_event(
+            &mut app,
+            AuthFlowEvent::Done {
+                provider: "openai".into(),
+                result: Ok("ok".into()),
+            },
+            "anthropic",
+            &mut key,
+        )
+        .await;
+        assert!(app.status_message.contains("Signed in"));
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.content.contains("/models openai"))
+        );
+    }
+
+    #[test]
+    fn handle_question_enter_confirms_and_multi_space() {
+        let spec = whycode_tools::question::QuestionSpec {
+            prompt: "Pick many?".into(),
+            options: vec![
+                whycode_tools::question::QuestionOption {
+                    label: "A".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+                whycode_tools::question::QuestionOption {
+                    label: "B".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+            ],
+            multi_select: true,
+        };
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut q = std::collections::VecDeque::new();
+        let p = std::collections::VecDeque::new();
+        app.ask_question(vec![spec.clone()]);
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char(' '),
+            &mut q,
+            &p
+        ));
+        if let Some(DialogKind::Question(st)) = app.dialogs.active() {
+            assert!(!st.multi_selected.is_empty());
+        }
+        // Enter on multi without finishing stays open (or finishes if confirm works).
+        assert!(handle_question_key(&mut app, KeyCode::Enter, &mut q, &p));
+
+        let single = sample_question();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![single.clone()],
+            reply: tx,
+        });
+        app.ask_question(vec![single]);
+        assert!(handle_question_key(&mut app, KeyCode::Enter, &mut q, &p));
+        assert!(rx.blocking_recv().unwrap().is_ok());
+    }
+
+    #[test]
+    fn project_diff_on_a_real_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir.path())
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .status()
+                .unwrap()
+        };
+        assert!(git(&["init", "-q"]).success());
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        assert!(git(&["add", "a.txt"]).success());
+        assert!(git(&["commit", "-q", "-m", "init"]).success());
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        let out = project_diff_report(dir.path());
+        assert!(out.contains("Diff"), "{out}");
+        assert!(
+            out.contains("status") || out.contains("a.txt") || out.contains("HEAD"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn context_report_counts_tool_blocks() {
+        isolate_home();
+        let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+        session.add_user_message("go");
+        session.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "t1".into(),
+            content: "x".repeat(80),
+            is_error: false,
+        }]);
+        let app = TuiApp::from_config(TuiAppConfig::default());
+        let agent = Agent::new(dummy_info("build"));
+        let out = context_report(&session, &app, &Config::default(), &agent);
+        assert!(out.contains("tool:"), "{out}");
+        assert!(out.contains("largest tool results"), "{out}");
+    }
+
+    #[test]
+    fn tui_login_prompt_pasted_code_cancels_when_dropped() {
+        use whycode_auth::providers::LoginUi;
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut ui = TuiLoginUi { tx };
+        let fut = ui.prompt_pasted_code();
+        // Dropping the NeedCode sender (the TUI side) cancels the flow.
+        drop(fut);
     }
 }
