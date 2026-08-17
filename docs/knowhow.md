@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Sessions dialog / parked drain burned idle CPU
+
+**Symptom:** Opening the live-session dashboard kept the TUI at ~25 fps full paints with nothing changing. Several parked sessions made idle ticks allocate.
+
+**Root cause:** The loop `mark_dirty()`’d whenever `DialogKind::Sessions` was open. The picker rebuild also re-hit SQLite when the list was live-only. `drain_background_runtime` built a `TuiApp::new` (applies the default syntax theme → can flush highlight caches) and cloned the whole transcript every tick, even with an empty event channel.
+
+**Fix:** Dirty dashboard/picker only when rows change. Skip DB on picker refresh. Idle drain is `try_recv` only; events `adopt_view`/`yield_view` a detached app (`from_config`, no theme swap). Session switch moves the transcript (live snapshot stays empty — dashboard preview reads `app.messages`). Closed highlight memo is LRU, not nuke-all at 64.
+
+**Prevention:** Idle poll must stay 500 ms with a modal open and no row change. Parked drain with no events must not reallocate `view.messages`. `TuiApp::new` is only for the visible app. After switch, do not read `rt.view.messages` for the active row.
+
+---
+
 ### 2026-08-17 — Answer sat above tools; chat flush on [stop]
 
 **Symptom:** During a tool-using turn the written reply stayed at the top of the bubble (tools looked fine). The last transcript line sat on the `[stop]` row. Bubbles had almost no left/right margin. Fenced code often looked uncoloured.

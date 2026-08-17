@@ -195,11 +195,7 @@ pub fn highlight_code(code: &str, language: &str) -> String {
 /// deep-copying every span every frame (the TUI pays this per visible block).
 pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Arc<Vec<Vec<CodeSpan>>> {
     let key = cache_key(code, language);
-    if let Some(hit) = closed_cache()
-        .lock()
-        .ok()
-        .and_then(|c| c.get(&key).cloned())
-    {
+    if let Some(hit) = closed_cache().lock().ok().and_then(|mut c| c.get(&key)) {
         return hit;
     }
 
@@ -227,7 +223,59 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Arc<Vec<Vec<C
 /// Most highlighted blocks held at once in the closed-content memo.
 const CACHE_ENTRIES: usize = 64;
 
-type HighlightCache = Mutex<rustc_hash::FxHashMap<u64, Arc<Vec<Vec<CodeSpan>>>>>;
+/// Bounded LRU of finished (fully committed) highlight results.
+///
+/// A full `clear()` at capacity used to evict *every* stable fence the
+/// first time a session painted the 65th distinct block — the next scroll
+/// frame then re-tokenised the visible ones. Evict only the oldest.
+#[derive(Default)]
+struct ClosedHighlightCache {
+    map: rustc_hash::FxHashMap<u64, Arc<Vec<Vec<CodeSpan>>>>,
+    /// Oldest at the front.
+    order: std::collections::VecDeque<u64>,
+}
+
+impl ClosedHighlightCache {
+    fn get(&mut self, key: &u64) -> Option<Arc<Vec<Vec<CodeSpan>>>> {
+        let hit = self.map.get(key).cloned()?;
+        if let Some(i) = self.order.iter().position(|k| k == key) {
+            self.order.remove(i);
+        }
+        self.order.push_back(*key);
+        Some(hit)
+    }
+
+    fn insert(&mut self, key: u64, value: Arc<Vec<Vec<CodeSpan>>>) {
+        let existed = self.map.insert(key, value).is_some();
+        if existed {
+            if let Some(i) = self.order.iter().position(|k| *k == key) {
+                self.order.remove(i);
+            }
+            self.order.push_back(key);
+            return;
+        }
+        while self.map.len() > CACHE_ENTRIES {
+            if let Some(old) = self.order.pop_front() {
+                self.map.remove(&old);
+            } else {
+                break;
+            }
+        }
+        self.order.push_back(key);
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
+type HighlightCache = Mutex<ClosedHighlightCache>;
 
 fn closed_cache() -> &'static HighlightCache {
     static CACHE: OnceLock<HighlightCache> = OnceLock::new();
@@ -236,9 +284,6 @@ fn closed_cache() -> &'static HighlightCache {
 
 fn insert_closed(key: u64, value: Arc<Vec<Vec<CodeSpan>>>) {
     if let Ok(mut cache) = closed_cache().lock() {
-        if cache.len() >= CACHE_ENTRIES {
-            cache.clear();
-        }
         cache.insert(key, value);
     }
 }
@@ -600,6 +645,29 @@ mod tests {
             highlight_code_spans(&format!("let unique_{i} = {i};\n"), Some("rust"));
         }
         assert!(closed_cache().lock().unwrap().len() <= CACHE_ENTRIES);
+    }
+
+    #[test]
+    fn closed_cache_evicts_oldest_not_everything() {
+        let mut cache = ClosedHighlightCache::default();
+        let keep = Arc::new(vec![vec![((1, 2, 3), String::from("keep"))]]);
+        cache.insert(1, Arc::clone(&keep));
+        for i in 2..=CACHE_ENTRIES as u64 {
+            cache.insert(i, Arc::new(vec![vec![((0, 0, 0), format!("{i}"))]]));
+        }
+        assert_eq!(cache.len(), CACHE_ENTRIES);
+        // Recency bump so key 1 survives the next insert.
+        assert!(cache.get(&1).is_some());
+        cache.insert(
+            CACHE_ENTRIES as u64 + 1,
+            Arc::new(vec![vec![((0, 0, 0), String::from("new"))]]),
+        );
+        assert_eq!(cache.len(), CACHE_ENTRIES);
+        assert!(cache.get(&1).is_some(), "recently used entry must survive");
+        assert!(
+            cache.get(&2).is_none(),
+            "oldest unused entry must be evicted"
+        );
     }
 
     #[test]

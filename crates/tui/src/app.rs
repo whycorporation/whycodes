@@ -1362,7 +1362,7 @@ pub struct SessionListState {
 }
 
 /// One dashboard row: a live (in-memory) session, active or parked.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDashboardRow {
     /// Index into the parked runtimes vec; `None` = the active session.
     pub parked_idx: Option<usize>,
@@ -1635,6 +1635,13 @@ impl TuiApp {
 
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
         config.theme.apply_syntax_theme();
+        Self::from_config(config)
+    }
+
+    /// Same as [`Self::new`] but does **not** touch the process-wide syntax
+    /// theme. Background-session drain uses this so a parked turn cannot
+    /// flush highlight caches every tick.
+    pub(crate) fn from_config(config: crate::config::TuiAppConfig) -> Self {
         Self {
             running: true,
             mode: AppMode::Normal,
@@ -2676,6 +2683,47 @@ impl TuiApp {
         self.pending_suggestion = view.pending_suggestion.clone();
         self.dialogs.clear();
         self.mark_dirty();
+    }
+
+    /// Move `view` into this app (no transcript clone). Pair with
+    /// [`Self::yield_view`] after applying background turn events.
+    pub fn adopt_view(&mut self, view: &mut crate::session_runtime::ViewSnapshot) {
+        self.messages = std::mem::take(&mut view.messages);
+        self.session_title = std::mem::take(&mut view.session_title);
+        self.status_message = std::mem::take(&mut view.status_message);
+        self.current_agent_state =
+            std::mem::replace(&mut view.current_agent_state, AgentState::Idle);
+        self.scroll_offset = view.scroll_offset;
+        self.auto_scroll = view.auto_scroll;
+        self.selected_msg = view.selected_msg;
+        self.input_buffer = std::mem::take(&mut view.input_buffer);
+        self.input_lines = std::mem::take(&mut view.input_lines);
+        self.input_cursor = view.input_cursor;
+        self.intent_badge = view.intent_badge.take();
+        self.intent_kind = view.intent_kind.take();
+        self.turn_usage = view.turn_usage.take();
+        self.context_used = view.context_used;
+        self.pending_suggestion = view.pending_suggestion.take();
+    }
+
+    /// Move this app's view fields back into `view` (no transcript clone).
+    pub fn yield_view(&mut self, view: &mut crate::session_runtime::ViewSnapshot) {
+        view.messages = std::mem::take(&mut self.messages);
+        view.session_title = std::mem::take(&mut self.session_title);
+        view.status_message = std::mem::take(&mut self.status_message);
+        view.current_agent_state =
+            std::mem::replace(&mut self.current_agent_state, AgentState::Idle);
+        view.scroll_offset = self.scroll_offset;
+        view.auto_scroll = self.auto_scroll;
+        view.selected_msg = self.selected_msg;
+        view.input_buffer = std::mem::take(&mut self.input_buffer);
+        view.input_lines = std::mem::take(&mut self.input_lines);
+        view.input_cursor = self.input_cursor;
+        view.intent_badge = self.intent_badge.take();
+        view.intent_kind = self.intent_kind.take();
+        view.turn_usage = self.turn_usage.take();
+        view.context_used = self.context_used;
+        view.pending_suggestion = self.pending_suggestion.take();
     }
 
     /// Add a message to the chat view.

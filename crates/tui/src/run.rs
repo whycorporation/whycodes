@@ -694,16 +694,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             for bg in runtimes.iter_mut() {
                 drain_background_runtime(bg);
             }
-            // Dashboard open: keep rows live as background state changes.
+            // Dashboard / picker: rebuild only when rows actually change.
+            // Unconditional mark_dirty here used to lock the idle poll at
+            // 40 ms (~25 fps full paints) for as long as the dialog stayed open.
             if matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
                 let cursor = app.sessions_cursor;
-                refresh_sessions_rows(&mut app, &rt, &runtimes);
-                app.sessions_cursor = cursor.min(app.sessions_rows.len().saturating_sub(1));
-                app.mark_dirty();
+                let changed = refresh_sessions_rows(&mut app, &rt, &runtimes);
+                let clamped = cursor.min(app.sessions_rows.len().saturating_sub(1));
+                if changed || clamped != app.sessions_cursor {
+                    app.sessions_cursor = clamped;
+                    app.mark_dirty();
+                }
             }
-            // Session picker open: keep the live section at the top fresh.
-            if matches!(app.dialogs.active(), Some(DialogKind::SessionList)) {
-                refresh_picker_live_section(&mut app, &rt, &runtimes);
+            if matches!(app.dialogs.active(), Some(DialogKind::SessionList))
+                && refresh_picker_live_section(&mut app, &rt, &runtimes)
+            {
+                app.mark_dirty();
             }
 
             // Expire toasts before drawing, so one never lingers a frame past
@@ -1089,7 +1095,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             }
                         }
                         rt.unread = false;
-                        app.restore_view(&rt.view);
+                        app.adopt_view(&mut rt.view);
+                        app.dialogs.clear();
+                        app.mark_dirty();
                         app.focus = FocusPane::Prompt;
                         app.toasts.push(
                             crate::toast::ToastKind::Info,
@@ -1901,7 +1909,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             );
                             continue;
                         }
-                        app.save_view(&mut rt.view);
+                        app.yield_view(&mut rt.view);
                         let parked = std::mem::replace(
                             &mut rt,
                             spawn_new_session_runtime(
@@ -1916,6 +1924,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         runtimes.push(parked);
                         mru.push(runtimes.len() - 1);
                         app.restore_view(&rt.view);
+                        app.session_title = rt.session.title.clone();
                         app.focus = FocusPane::Prompt;
                         app.toasts.push(
                             crate::toast::ToastKind::Info,
@@ -2722,7 +2731,13 @@ fn open_sessions_dashboard(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Se
 }
 
 /// Rebuild the grouped row snapshot in place (live refresh while open).
-fn refresh_sessions_rows(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+///
+/// Returns `true` when the painted rows changed (caller should `mark_dirty`).
+fn refresh_sessions_rows(
+    app: &mut TuiApp,
+    rt: &SessionRuntime,
+    runtimes: &[SessionRuntime],
+) -> bool {
     let mut rows: Vec<crate::app::SessionDashboardRow> = Vec::new();
     let active_state = rt.state();
     rows.push(crate::app::SessionDashboardRow {
@@ -2733,7 +2748,7 @@ fn refresh_sessions_rows(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Sess
         preview: if rt.agent_busy {
             app.status_message.clone()
         } else {
-            rt.preview()
+            crate::session_runtime::preview_from_messages(&app.messages)
         },
         unread: false,
     });
@@ -2757,13 +2772,25 @@ fn refresh_sessions_rows(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Sess
         };
         (rank, r.parked_idx.unwrap_or(usize::MAX))
     });
+    if app.sessions_rows == rows {
+        return false;
+    }
     app.sessions_rows = rows;
+    true
 }
 
 /// Rewrite the picker's live section in place: live rows (active + parked
 /// runtimes) sit at the top, persisted-only rows below. Persisted rows keep
 /// their relative order; the cursor stays on the same entry when possible.
-fn refresh_picker_live_section(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[SessionRuntime]) {
+///
+/// Returns `true` when the painted list or cursor changed.
+/// Does **not** reopen SQLite — `/sessions` and `/resume` load the DB once
+/// when the dialog opens; a per-tick `list_sessions` was a hidden stall.
+fn refresh_picker_live_section(
+    app: &mut TuiApp,
+    rt: &SessionRuntime,
+    runtimes: &[SessionRuntime],
+) -> bool {
     let selected_id = app
         .session_list
         .sessions
@@ -2790,46 +2817,42 @@ fn refresh_picker_live_section(app: &mut TuiApp, rt: &SessionRuntime, runtimes: 
     }
     let live_ids: std::collections::HashSet<&str> =
         live_rows.iter().map(|e| e.id.as_str()).collect();
-    let mut persisted: Vec<crate::app::SessionEntry> = app
+    let persisted: Vec<crate::app::SessionEntry> = app
         .session_list
         .sessions
         .iter()
         .filter(|e| e.live.is_none() && !live_ids.contains(e.id.as_str()))
         .cloned()
         .collect();
-    // First open: sessions list is empty until the slash command fills it —
-    // merge DB rows then.
-    if persisted.is_empty() && app.session_list.sessions.iter().all(|e| e.live.is_some()) {
-        persisted = load_session_entries()
-            .into_iter()
-            .filter(|e| !live_ids.contains(e.id.as_str()))
-            .collect();
-    }
     let mut merged = live_rows;
     merged.extend(persisted);
+    if app.session_list.sessions == merged {
+        return false;
+    }
     app.session_list.sessions = merged;
     if let Some(id) = selected_id
         && let Some(pos) = app.session_list.sessions.iter().position(|e| e.id == id)
     {
         app.session_list.selected = pos;
     }
+    true
 }
 
 /// Swap the active runtime with `runtimes[idx]`, preserving both sessions'
-/// view state. The outgoing active session's `TuiApp` view is saved into
-/// its snapshot; the incoming one's snapshot is restored into `app`.
+/// view state. Transcripts **move** (no clone): the visible app yields into
+/// the outgoing snapshot and adopts the incoming one.
 fn switch_to_runtime(
     app: &mut TuiApp,
     rt: &mut SessionRuntime,
     runtimes: &mut [SessionRuntime],
     idx: usize,
 ) {
-    // Outgoing: save the visible view into the runtime being parked.
-    app.save_view(&mut rt.view);
-    // Incoming: swap runtimes, restore its snapshot into the visible app.
+    app.yield_view(&mut rt.view);
     std::mem::swap(rt, &mut runtimes[idx]);
     rt.unread = false;
-    app.restore_view(&rt.view);
+    app.adopt_view(&mut rt.view);
+    app.dialogs.clear();
+    app.mark_dirty();
     app.focus = FocusPane::Prompt;
 }
 
@@ -2837,6 +2860,11 @@ fn switch_to_runtime(
 /// turn events into its view snapshot, completion into agent/session restore.
 /// Never touches the visible `app`; sets `unread` on any activity so the
 /// dashboard and cycle keys can surface it.
+///
+/// Idle path is a few `try_recv`s — no `TuiApp`, no transcript clone, no
+/// syntax-theme swap. Events move the snapshot into a detached scratch app
+/// and back (`adopt_view` / `yield_view`) so a parked stream does not
+/// duplicate the whole transcript every tick.
 fn drain_background_runtime(rt: &mut SessionRuntime) {
     while let Ok(req) = rt.perm_rx.try_recv() {
         rt.pending_perm_queue.push_back(req);
@@ -2847,13 +2875,15 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
         rt.unread = true;
     }
 
-    // Replay turn events through a scratch TuiApp holding this runtime's
-    // snapshot — reuses the exact active-path rendering logic.
-    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
-    scratch.restore_view(&rt.view);
-    if drain_turn_events(&mut scratch, &mut rt.event_rx) {
-        rt.unread = true;
-        scratch.save_view(&mut rt.view);
+    if !rt.event_rx.is_empty() {
+        // Disjoint from `rt.view`: adopt → drain → yield, no overlapping borrow.
+        let mut scratch = TuiApp::from_config(crate::config::TuiAppConfig::default());
+        scratch.adopt_view(&mut rt.view);
+        let any = drain_turn_events(&mut scratch, &mut rt.event_rx);
+        scratch.yield_view(&mut rt.view);
+        if any {
+            rt.unread = true;
+        }
     }
 
     if let Ok(outcome) = rt.done_rx.try_recv() {
@@ -2873,34 +2903,31 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 rt.session = s;
                 rt.last_error = false;
                 if !text.is_empty() {
-                    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
-                    scratch.restore_view(&rt.view);
-                    if let Some(last) = scratch.messages.last_mut()
-                        && last.role == ChatRole::Assistant
-                        && last.content.is_empty()
-                    {
-                        last.content = text;
-                    }
-                    scratch.save_view(&mut rt.view);
+                    with_view_scratch(&mut rt.view, |scratch| {
+                        if let Some(last) = scratch.messages.last_mut()
+                            && last.role == ChatRole::Assistant
+                            && last.content.is_empty()
+                        {
+                            last.content = text;
+                        }
+                    });
                 }
             }
             TurnOutcome::Remote { text, error, .. } => {
                 rt.last_error = error.is_some();
                 if let Some(err) = error {
-                    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
-                    scratch.restore_view(&rt.view);
-                    scratch.add_message(ChatRole::System, format!("Remote error: {err}"));
-                    scratch.save_view(&mut rt.view);
+                    with_view_scratch(&mut rt.view, |scratch| {
+                        scratch.add_message(ChatRole::System, format!("Remote error: {err}"));
+                    });
                 } else if !text.is_empty() {
-                    let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
-                    scratch.restore_view(&rt.view);
-                    if let Some(last) = scratch.messages.last_mut()
-                        && last.role == ChatRole::Assistant
-                        && last.content.is_empty()
-                    {
-                        last.content = text;
-                    }
-                    scratch.save_view(&mut rt.view);
+                    with_view_scratch(&mut rt.view, |scratch| {
+                        if let Some(last) = scratch.messages.last_mut()
+                            && last.role == ChatRole::Assistant
+                            && last.content.is_empty()
+                        {
+                            last.content = text;
+                        }
+                    });
                 }
             }
             TurnOutcome::Err {
@@ -2913,20 +2940,29 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                 rt.agent = a;
                 rt.session = s;
                 rt.last_error = !cancelled;
-                let mut scratch = TuiApp::new(crate::config::TuiAppConfig::default());
-                scratch.restore_view(&rt.view);
-                if cancelled {
-                    scratch.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
-                } else {
-                    let display =
-                        whycode_llm::format_turn_error(&whycode_core::Error::Llm(error.clone()));
-                    scratch.add_message(ChatRole::System, format!("Error: {display}"));
-                }
-                scratch.save_view(&mut rt.view);
+                with_view_scratch(&mut rt.view, |scratch| {
+                    if cancelled {
+                        scratch.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
+                    } else {
+                        let display = whycode_llm::format_turn_error(&whycode_core::Error::Llm(
+                            error.clone(),
+                        ));
+                        scratch.add_message(ChatRole::System, format!("Error: {display}"));
+                    }
+                });
             }
         }
         rt.persist("background");
     }
+}
+
+/// Apply `f` to a detached copy of `view` without cloning the transcript or
+/// touching the process-wide syntax theme.
+fn with_view_scratch(view: &mut crate::session_runtime::ViewSnapshot, f: impl FnOnce(&mut TuiApp)) {
+    let mut scratch = TuiApp::from_config(crate::config::TuiAppConfig::default());
+    scratch.adopt_view(view);
+    f(&mut scratch);
+    scratch.yield_view(view);
 }
 
 /// Drain the agent event channel, coalescing consecutive text/thinking deltas
@@ -5413,5 +5449,147 @@ mod tests {
         assert!(out.contains("swarm:"), "{out}");
         assert!(out.contains("context:"), "{out}");
         assert!(out.contains("status:"), "{out}");
+    }
+
+    #[test]
+    fn refresh_sessions_rows_is_idempotent() {
+        let rt = test_runtime();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        assert!(refresh_sessions_rows(&mut app, &rt, &[]));
+        assert!(
+            !refresh_sessions_rows(&mut app, &rt, &[]),
+            "unchanged dashboard must not report a paint"
+        );
+        app.status_message = "Generating…".into();
+        // Idle runtime preview ignores status — still unchanged.
+        assert!(!refresh_sessions_rows(&mut app, &rt, &[]));
+    }
+
+    #[test]
+    fn refresh_sessions_rows_dirties_when_title_changes() {
+        let mut rt = test_runtime();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        assert!(refresh_sessions_rows(&mut app, &rt, &[]));
+        rt.session.title = "renamed".into();
+        assert!(refresh_sessions_rows(&mut app, &rt, &[]));
+        assert!(
+            app.sessions_rows[0].title.contains("renamed"),
+            "{:?}",
+            app.sessions_rows[0].title
+        );
+    }
+
+    #[test]
+    fn refresh_picker_skips_db_and_is_idempotent() {
+        let rt = test_runtime();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.session_list.sessions = vec![crate::app::SessionEntry {
+            id: "persisted".into(),
+            title: "old".into(),
+            messages: 2,
+            updated_at: None,
+            live: None,
+        }];
+        assert!(refresh_picker_live_section(&mut app, &rt, &[]));
+        assert!(
+            !refresh_picker_live_section(&mut app, &rt, &[]),
+            "second refresh with the same live+persisted set is a no-op"
+        );
+        assert!(
+            app.session_list
+                .sessions
+                .iter()
+                .any(|e| e.id == "persisted" && e.live.is_none()),
+            "persisted tail must survive without a DB reload"
+        );
+    }
+
+    #[test]
+    fn drain_background_idle_does_not_touch_view() {
+        let mut rt = test_runtime();
+        let mut seed = TuiApp::from_config(TuiAppConfig::default());
+        seed.add_message(ChatRole::Assistant, "hello");
+        seed.yield_view(&mut rt.view);
+        let ptr = rt.view.messages.as_ptr();
+        drain_background_runtime(&mut rt);
+        assert_eq!(
+            rt.view.messages.as_ptr(),
+            ptr,
+            "idle drain must not reallocate the parked transcript"
+        );
+        assert!(!rt.unread);
+        assert_eq!(rt.view.messages[0].content, "hello");
+    }
+
+    #[test]
+    fn drain_background_applies_text_delta_in_place() {
+        let mut rt = test_runtime();
+        let mut seed = TuiApp::from_config(TuiAppConfig::default());
+        seed.add_message(ChatRole::Assistant, "hi");
+        seed.yield_view(&mut rt.view);
+        rt.event_tx
+            .send(TurnEvent::TextDelta(" there".into()))
+            .expect("open channel");
+        drain_background_runtime(&mut rt);
+        assert!(rt.unread);
+        assert_eq!(rt.view.messages.last().unwrap().content, "hi there");
+    }
+
+    #[test]
+    fn switch_to_runtime_moves_transcripts() {
+        let mut active = test_runtime();
+        let mut parked = test_runtime();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "from-active");
+        let mut seed = TuiApp::from_config(TuiAppConfig::default());
+        seed.add_message(ChatRole::User, "from-parked");
+        seed.yield_view(&mut parked.view);
+        let mut runtimes = vec![parked];
+        switch_to_runtime(&mut app, &mut active, &mut runtimes, 0);
+        assert_eq!(app.messages[0].content, "from-parked");
+        assert_eq!(runtimes[0].view.messages[0].content, "from-active");
+        assert!(
+            active.view.messages.is_empty(),
+            "live snapshot stays empty while adopted"
+        );
+        assert_eq!(
+            crate::session_runtime::preview_from_messages(&app.messages),
+            "from-parked"
+        );
+    }
+
+    fn test_runtime() -> SessionRuntime {
+        use std::sync::OnceLock;
+        static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+        let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
+        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+
+        let info = whycode_core::types::AgentInfo {
+            name: "build".into(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        };
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        let (done_tx, done_rx) = mpsc::unbounded_channel();
+        let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
+        let (question_prompter, question_rx) = ChannelQuestionPrompter::new(None);
+        SessionRuntime::new(
+            Agent::new(info),
+            Session::new(PathBuf::from("/work/proj"), "sys".into()),
+            SessionHistory::new(),
+            event_tx,
+            event_rx,
+            done_tx,
+            done_rx,
+            Arc::new(perm_prompter),
+            Arc::new(question_prompter),
+            perm_rx,
+            question_rx,
+        )
     }
 }

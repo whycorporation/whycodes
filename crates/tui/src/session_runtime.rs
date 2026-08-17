@@ -258,24 +258,29 @@ impl SessionRuntime {
         if self.agent_busy && !self.view.status_message.is_empty() {
             return self.view.status_message.clone();
         }
-        self.view
-            .messages
-            .iter()
-            .rev()
-            .find(|m| {
-                matches!(m.role, ChatRole::Assistant | ChatRole::User) && !m.content.is_empty()
-            })
-            .map(|m| {
-                m.content
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .chars()
-                    .take(80)
-                    .collect()
-            })
-            .unwrap_or_default()
+        preview_from_messages(&self.view.messages)
     }
+}
+
+/// Last non-empty user/assistant first line, capped at 80 chars.
+///
+/// Shared by parked `view.messages` and the *active* `TuiApp` transcript —
+/// after a move-on-switch the live session's snapshot is empty.
+pub(crate) fn preview_from_messages(messages: &[ChatMessage]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|m| matches!(m.role, ChatRole::Assistant | ChatRole::User) && !m.content.is_empty())
+        .map(|m| {
+            m.content
+                .lines()
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(80)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
