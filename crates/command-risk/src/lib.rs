@@ -185,14 +185,40 @@ mod tests {
 
     #[test]
     fn confirm_and_refuse_carry_a_reason() {
-        match decide_for("rm -rf ~", RiskThreshold::Destructive) {
-            Decision::Refuse { reason } => assert!(reason.contains('~')),
-            other => panic!("expected refusal, got {other:?}"),
-        }
-        match decide_for("rm -rf /tmp/x", RiskThreshold::Destructive) {
-            Decision::Confirm { reason } => assert!(reason.contains("/tmp/x")),
-            other => panic!("expected confirmation, got {other:?}"),
-        }
+        let refuse = decide_for("rm -rf ~", RiskThreshold::Destructive);
+        assert!(
+            matches!(&refuse, Decision::Refuse { reason } if reason.contains('~')),
+            "{refuse:?}"
+        );
+        let confirm = decide_for("rm -rf /tmp/x", RiskThreshold::Destructive);
+        assert!(
+            matches!(&confirm, Decision::Confirm { reason } if reason.contains("/tmp/x")),
+            "{confirm:?}"
+        );
+    }
+
+    #[test]
+    fn decide_falls_back_to_a_generic_reason() {
+        let a = Assessment {
+            level: RiskLevel::Destructive,
+            reason: None,
+        };
+        assert_eq!(
+            decide(&a, RiskThreshold::Destructive),
+            Decision::Confirm {
+                reason: "destructive command".into(),
+            }
+        );
+        let a = Assessment {
+            level: RiskLevel::Catastrophic,
+            reason: None,
+        };
+        assert_eq!(
+            decide(&a, RiskThreshold::Off),
+            Decision::Refuse {
+                reason: "destructive command".into(),
+            }
+        );
     }
 
     #[test]
@@ -206,7 +232,80 @@ mod tests {
             RiskThreshold::Destructive
         );
         assert_eq!(RiskThreshold::from_str("off").unwrap(), RiskThreshold::Off);
+        assert_eq!(RiskThreshold::from_str("none").unwrap(), RiskThreshold::Off);
         assert!(RiskThreshold::from_str("nonsense").is_err());
+    }
+
+    #[test]
+    fn assess_and_home_dir_read_the_environment() {
+        // Mutates process environment. Keep every HOME/USERPROFILE/HOMEDRIVE
+        // read in this one test so it cannot race with itself.
+        let keys = ["HOME", "USERPROFILE", "HOMEDRIVE", "HOMEPATH"];
+        let saved: Vec<(String, Option<String>)> = keys
+            .iter()
+            .map(|k| ((*k).to_string(), std::env::var(k).ok()))
+            .collect();
+        let restore = || {
+            for (k, v) in &saved {
+                match v {
+                    Some(v) => unsafe { std::env::set_var(k, v) },
+                    None => unsafe { std::env::remove_var(k) },
+                }
+            }
+        };
+        struct Restore<F: Fn()>(F);
+        impl<F: Fn()> Drop for Restore<F> {
+            fn drop(&mut self) {
+                (self.0)();
+            }
+        }
+        let _guard = Restore(restore);
+
+        unsafe { std::env::set_var("HOME", "/home/from-home") };
+        assert_eq!(
+            crate::paths::home_dir().as_deref(),
+            Some(std::path::Path::new("/home/from-home"))
+        );
+        assert_eq!(
+            assess("ls", std::path::Path::new("/work/proj")).level,
+            RiskLevel::Safe
+        );
+
+        unsafe {
+            std::env::set_var("HOME", "");
+            std::env::set_var("USERPROFILE", r"C:\Users\from-up");
+        }
+        assert_eq!(
+            crate::paths::home_dir().as_deref(),
+            Some(std::path::Path::new(r"C:\Users\from-up"))
+        );
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::set_var("USERPROFILE", "");
+            std::env::set_var("HOMEDRIVE", "C:");
+            std::env::set_var("HOMEPATH", r"\Users\combo");
+        }
+        assert_eq!(
+            crate::paths::home_dir().as_deref(),
+            Some(std::path::Path::new(r"C:\Users\combo"))
+        );
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+            std::env::set_var("HOMEDRIVE", "");
+            std::env::set_var("HOMEPATH", r"\Users\x");
+        }
+        assert_eq!(crate::paths::home_dir(), None);
+
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+            std::env::remove_var("HOMEDRIVE");
+            std::env::remove_var("HOMEPATH");
+        }
+        assert_eq!(crate::paths::home_dir(), None);
     }
 
     #[test]

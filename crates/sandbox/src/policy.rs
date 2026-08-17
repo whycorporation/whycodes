@@ -67,14 +67,23 @@ impl SandboxOutcome {
             );
         }
         if let Some(ref w) = self.warning {
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str("[sandbox] ");
-            result.push_str(w);
+            append_sandbox_warning(&mut result, w);
         }
         (result, self.status.success())
     }
+}
+
+fn append_sandbox_warning(result: &mut String, warning: &str) {
+    if !result.is_empty() {
+        result.push('\n');
+    }
+    result.push_str("[sandbox] ");
+    result.push_str(warning);
+}
+
+#[cfg(test)]
+pub(crate) fn append_sandbox_warning_for_test(result: &mut String, warning: &str) {
+    append_sandbox_warning(result, warning);
 }
 
 #[derive(Debug, Error)]
@@ -88,12 +97,21 @@ pub enum SandboxError {
 }
 
 pub fn prepare(request: &SandboxRequest) -> Result<PreparedCommand, SandboxError> {
+    prepare_with(request, bwrap::bwrap_path().is_some())
+}
+
+/// Same as [`prepare`] but the caller supplies whether bwrap is present.
+/// Tests use this to hit both fallback branches on a host that has bwrap.
+pub fn prepare_with(
+    request: &SandboxRequest,
+    bwrap_available: bool,
+) -> Result<PreparedCommand, SandboxError> {
     let cwd = resolve_working_dir(&request.working_dir)?;
 
     match request.settings.mode {
         SandboxMode::Off => Ok(host::prepare_host(&request.command, cwd, None)),
         SandboxMode::Workspace => {
-            if bwrap::bwrap_path().is_some() {
+            if bwrap_available {
                 bwrap::prepare_bwrap(&request.command, &cwd, request.settings.network)
             } else {
                 let msg = "sandbox=workspace requires bubblewrap (`bwrap`) on Linux; \
@@ -116,7 +134,14 @@ pub fn prepare(request: &SandboxRequest) -> Result<PreparedCommand, SandboxError
 }
 
 pub fn run(request: &SandboxRequest) -> Result<SandboxOutcome, SandboxError> {
-    let prepared = prepare(request)?;
+    run_with(request, bwrap::bwrap_path().is_some())
+}
+
+pub(crate) fn run_with(
+    request: &SandboxRequest,
+    bwrap_available: bool,
+) -> Result<SandboxOutcome, SandboxError> {
+    let prepared = prepare_with(request, bwrap_available)?;
     let output = spawn_capture(&prepared)?;
     Ok(SandboxOutcome {
         backend: prepared.backend,
@@ -127,7 +152,7 @@ pub fn run(request: &SandboxRequest) -> Result<SandboxOutcome, SandboxError> {
     })
 }
 
-fn spawn_capture(prepared: &PreparedCommand) -> Result<Output, SandboxError> {
+pub(crate) fn spawn_capture(prepared: &PreparedCommand) -> Result<Output, SandboxError> {
     let mut cmd = Command::new(&prepared.program);
     cmd.args(&prepared.args)
         .current_dir(&prepared.working_dir)
@@ -141,6 +166,18 @@ fn resolve_working_dir(path: &Path) -> Result<PathBuf, SandboxError> {
     if !path.exists() {
         return Ok(path.to_path_buf());
     }
-    std::fs::canonicalize(path)
-        .map_err(|e| SandboxError::BadWorkingDir(format!("{}: {e}", path.display())))
+    canonicalize_or_bad(path)
+}
+
+pub(crate) fn canonicalize_or_bad(path: &Path) -> Result<PathBuf, SandboxError> {
+    std::fs::canonicalize(path).map_err(|e| bad_working_dir(path, e))
+}
+
+fn bad_working_dir(path: &Path, e: std::io::Error) -> SandboxError {
+    SandboxError::BadWorkingDir(format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+pub(crate) fn bad_working_dir_for_test(path: &Path, e: std::io::Error) -> SandboxError {
+    bad_working_dir(path, e)
 }

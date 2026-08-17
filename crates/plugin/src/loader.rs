@@ -158,7 +158,7 @@ impl LoadedPlugin {
             self.manifest_path.display().to_string()
         };
         let working_dir = if self.dir.as_os_str().is_empty() {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+            path_or_dot(std::env::current_dir())
         } else {
             self.dir.clone()
         };
@@ -261,19 +261,18 @@ fn inferred_command(dir: &Path) -> Option<String> {
     if dir.as_os_str().is_empty() {
         return None;
     }
-    let names = if cfg!(windows) {
-        &[
-            "run.cmd",
-            "run.ps1",
-            "run.bat",
-            "plugin.cmd",
-            "run.sh",
-            "run",
-            "plugin.sh",
-        ][..]
-    } else {
-        &["run", "run.sh", "plugin.sh"][..]
-    };
+    #[cfg(windows)]
+    let names: &[&str] = &[
+        "run.cmd",
+        "run.ps1",
+        "run.bat",
+        "plugin.cmd",
+        "run.sh",
+        "run",
+        "plugin.sh",
+    ];
+    #[cfg(not(windows))]
+    let names: &[&str] = &["run", "run.sh", "plugin.sh"];
     for name in names {
         let p = dir.join(name);
         if p.is_file() {
@@ -304,6 +303,10 @@ fn resolve_command(dir: &Path, command: &str) -> String {
         return candidate.to_string_lossy().into_owned();
     }
     cmd.to_string()
+}
+
+fn path_or_dot(cwd: Result<PathBuf, std::io::Error>) -> PathBuf {
+    cwd.unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn nonempty(value: &str, fallback: &str) -> String {
@@ -437,5 +440,219 @@ mod tests {
             project_plugins_dir(Path::new("/repo")),
             PathBuf::from("/repo/.whycode/plugins")
         );
+    }
+
+    fn bare_manifest(name: &str, command: Option<&str>) -> PluginManifest {
+        PluginManifest {
+            name: name.into(),
+            version: String::new(),
+            description: String::new(),
+            command: command.map(str::to_string),
+            tools: vec![],
+            hooks: vec![],
+        }
+    }
+
+    #[test]
+    fn register_find_and_default() {
+        let mut mgr = PluginManager::default();
+        mgr.register(PluginManifest {
+            name: "reg".into(),
+            version: "1".into(),
+            description: "   ".into(),
+            command: Some("/bin/echo".into()),
+            tools: vec![],
+            hooks: vec!["reserved".into()],
+        });
+        assert!(mgr.find("reg").is_some());
+        assert!(mgr.find("missing").is_none());
+        let specs = mgr.shell_specs();
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].origin, "reg");
+        assert_eq!(specs[0].command, "/bin/echo");
+        assert_eq!(specs[0].description, "reg");
+        assert!(specs[0].working_dir.as_os_str().is_empty() || specs[0].working_dir.exists());
+    }
+
+    #[test]
+    fn discover_dir_skips_files_and_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("not-a-dir.txt"), "x").unwrap();
+        let empty = tmp.path().join("empty-sub");
+        std::fs::create_dir_all(&empty).unwrap();
+        let mut mgr = PluginManager::new();
+        assert_eq!(mgr.discover_dir(tmp.path()), 0);
+        assert_eq!(
+            mgr.discover_dir(tmp.path().join("does-not-exist").as_path()),
+            0
+        );
+    }
+
+    #[test]
+    fn discover_standard_and_global_dir() {
+        let global = global_plugins_dir();
+        assert!(global.is_some());
+        assert!(global.unwrap().ends_with("plugins"));
+
+        let tmp = tempfile::tempdir().unwrap();
+        write_plugin(
+            &project_plugins_dir(tmp.path()),
+            "proj",
+            r#"{"name":"from-project","command":"echo p"}"#,
+        );
+        let mut mgr = PluginManager::new();
+        let n_none = mgr.discover_standard(None);
+        let n_some = mgr.discover_standard(Some(tmp.path()));
+        assert!(n_some >= 1);
+        assert!(n_none < 10_000);
+        assert!(mgr.find("from-project").is_some());
+    }
+
+    #[test]
+    fn loads_manifest_json_and_invalid_or_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let mf_only = tmp.path().join("mf");
+        std::fs::create_dir_all(&mf_only).unwrap();
+        std::fs::write(
+            mf_only.join("manifest.json"),
+            r#"{"name":"via-manifest","command":"echo m"}"#,
+        )
+        .unwrap();
+
+        let bad_json = tmp.path().join("badjson");
+        std::fs::create_dir_all(&bad_json).unwrap();
+        std::fs::write(bad_json.join("plugin.json"), "{not json").unwrap();
+
+        let nonempty_then_mf = tmp.path().join("emptyname");
+        std::fs::create_dir_all(&nonempty_then_mf).unwrap();
+        std::fs::write(nonempty_then_mf.join("plugin.json"), r#"{"name":""}"#).unwrap();
+        std::fs::write(
+            nonempty_then_mf.join("manifest.json"),
+            r#"{"name":"recovered","command":"echo r"}"#,
+        )
+        .unwrap();
+
+        let unreadable = tmp.path().join("badutf8");
+        std::fs::create_dir_all(&unreadable).unwrap();
+        std::fs::write(unreadable.join("plugin.json"), [0xff, 0xfe]).unwrap();
+        std::fs::write(
+            unreadable.join("manifest.json"),
+            r#"{"name":"after-utf8","command":"echo u"}"#,
+        )
+        .unwrap();
+
+        let mut mgr = PluginManager::new();
+        assert_eq!(mgr.discover_dir(tmp.path()), 3);
+        assert!(mgr.find("via-manifest").is_some());
+        assert!(mgr.find("recovered").is_some());
+        assert!(mgr.find("after-utf8").is_some());
+    }
+
+    #[test]
+    fn shell_specs_skips_when_no_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_plugin(tmp.path(), "none", r#"{"name":"none","description":"d"}"#);
+        let mut mgr = PluginManager::new();
+        mgr.discover_dir(tmp.path());
+        assert!(mgr.shell_specs().is_empty());
+        assert!(inferred_command(&PathBuf::new()).is_none());
+        assert!(inferred_command(tmp.path().join("none").as_path()).is_none());
+    }
+
+    #[test]
+    fn single_tool_name_and_skipped_tool() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_plugin(
+            tmp.path(),
+            "one",
+            &json!({
+                "name": "one",
+                "tools": [{"name": "  ", "command": "echo lone"}]
+            })
+            .to_string(),
+        );
+        write_plugin(
+            tmp.path(),
+            "named",
+            &json!({
+                "name": "named",
+                "tools": [{"name": "only", "command": "echo only", "parameters": {"type":"object"}}]
+            })
+            .to_string(),
+        );
+        write_plugin(
+            tmp.path(),
+            "skip",
+            &json!({
+                "name": "skip",
+                "tools": [{"name": "orphan"}]
+            })
+            .to_string(),
+        );
+        let mut mgr = PluginManager::new();
+        mgr.discover_dir(tmp.path());
+        let specs = mgr.shell_specs();
+        let names: Vec<_> = specs.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"one"));
+        assert!(names.contains(&"only"));
+        assert!(!names.iter().any(|n| n.contains("skip")));
+        let only = specs.iter().find(|s| s.name == "only").unwrap();
+        assert!(only.parameters.is_some());
+    }
+
+    #[test]
+    fn resolve_command_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = write_plugin(
+            tmp.path(),
+            "res",
+            r#"{"name":"res","command":"/usr/bin/true"}"#,
+        );
+        std::fs::write(dir.join("exists.sh"), "#!/bin/sh\n").unwrap();
+        let mut mgr = PluginManager::new();
+        mgr.discover_dir(tmp.path());
+        assert_eq!(mgr.shell_specs()[0].command, "/usr/bin/true");
+
+        assert_eq!(resolve_command(&dir, "   "), "");
+        assert_eq!(resolve_command(&PathBuf::new(), "echo"), "echo");
+        assert_eq!(resolve_command(&dir, "/abs/cmd"), "/abs/cmd");
+        let missing = resolve_command(&dir, "./missing.sh");
+        assert_eq!(missing, "./missing.sh");
+        let slashy = resolve_command(&dir, "bin/tool");
+        assert_eq!(slashy, "bin/tool");
+        let backslash = resolve_command(&dir, "bin\\tool");
+        assert_eq!(backslash, "bin\\tool");
+        let hidden = resolve_command(&dir, ".hidden");
+        assert_eq!(hidden, ".hidden");
+        let resolved = resolve_command(&dir, "exists.sh");
+        assert!(resolved.ends_with("exists.sh"));
+        assert_ne!(resolved, "exists.sh");
+    }
+
+    #[test]
+    fn infers_run_and_plugin_sh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run_dir = write_plugin(tmp.path(), "r", r#"{"name":"r"}"#);
+        std::fs::write(run_dir.join("run"), "#!/bin/sh\n").unwrap();
+        let plug_dir = write_plugin(tmp.path(), "p", r#"{"name":"p"}"#);
+        std::fs::write(plug_dir.join("plugin.sh"), "#!/bin/sh\n").unwrap();
+        assert_eq!(inferred_command(&run_dir).as_deref(), Some("run"));
+        assert_eq!(inferred_command(&plug_dir).as_deref(), Some("plugin.sh"));
+    }
+
+    #[test]
+    fn register_without_command_yields_no_specs() {
+        let mut mgr = PluginManager::new();
+        mgr.register(bare_manifest("bare", None));
+        assert!(mgr.shell_specs().is_empty());
+    }
+
+    #[test]
+    fn path_or_dot_falls_back_when_cwd_fails() {
+        let ok = path_or_dot(Ok(PathBuf::from("/tmp")));
+        assert_eq!(ok, PathBuf::from("/tmp"));
+        let fallback = path_or_dot(Err(std::io::Error::other("gone")));
+        assert_eq!(fallback, PathBuf::from("."));
     }
 }

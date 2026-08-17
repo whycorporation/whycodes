@@ -122,12 +122,18 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      # Ratchet: the workspace line coverage must stay above the floor.
-      # Raise the number as tests improve — current measured total is ~54%.
+      # Ratchet: workspace line coverage must stay above the floor.
+      # `--ignore-filename-regex`: rustc sysroot (e.g. thread_local) leaks into
+      # llvm-cov totals on Arch/system toolchains and is not our code.
       # `--skip tests::watcher_picks_up_changes`: notify-timing flake under
       # instrumentation (see crates/index) — it still runs in the `test` job.
       - name: Measure coverage
-        run: cargo llvm-cov --workspace --fail-under-lines 50 --summary-only -- --skip tests::watcher_picks_up_changes
+        run: |
+          IGNORE='/usr/src/|/rustc-'
+          cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --fail-under-lines 66 --summary-only -- --skip tests::watcher_picks_up_changes
+          for crate in whycode-function whycode-schema whycode-skill whycode-sandbox whycode-protocol whycode-plugin whycode-command-risk; do
+            cargo llvm-cov -p "$crate" --ignore-filename-regex "$IGNORE" --fail-under-lines 100 --summary-only
+          done
 
   build:
     name: Build (linux)
