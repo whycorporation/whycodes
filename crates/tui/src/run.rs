@@ -17,7 +17,6 @@ use crossterm::terminal::{
 };
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
-use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
 use whycode_agent::agent::Agent;
@@ -764,7 +763,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 // Cell snapshot is only for mouse text selection → clipboard.
                 // Skip the ~4k String allocs/frame when nothing is selected.
                 if app.mouse_sel.is_some() {
-                    app.screen_cells = snapshot_cells(completed.buffer);
+                    app.screen_cells = crate::cell_grid::CellGrid::from_buffer(completed.buffer);
                 } else if !app.screen_cells.is_empty() {
                     app.screen_cells.clear();
                 }
@@ -2588,20 +2587,6 @@ fn with_session_db<T>(f: impl FnOnce(&whycode_storage::db::Database) -> T) -> Op
         *guard = open_db_quiet();
     }
     guard.as_ref().map(f)
-}
-
-/// Flatten the drawn buffer into `[row][col]` symbols for selection → clipboard.
-fn snapshot_cells(buf: &Buffer) -> Vec<Vec<String>> {
-    let a = buf.area();
-    let mut rows = Vec::with_capacity(a.height as usize);
-    for y in a.y..a.y.saturating_add(a.height) {
-        let mut row = Vec::with_capacity(a.width as usize);
-        for x in a.x..a.x.saturating_add(a.width) {
-            row.push(buf[(x, y)].symbol().to_string());
-        }
-        rows.push(row);
-    }
-    rows
 }
 
 /// Status line after a turn ends (header chrome).
@@ -5092,11 +5077,11 @@ mod tests {
         let mut buf = Buffer::empty(Rect::new(0, 0, 2, 2));
         buf[(0, 0)].set_symbol("a");
         buf[(1, 1)].set_symbol("b");
-        let rows = snapshot_cells(&buf);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0][0], "a");
-        assert_eq!(rows[1][1], "b");
-        assert_eq!(rows[0][1], " ");
+        let grid = crate::cell_grid::CellGrid::from_buffer(&buf);
+        assert_eq!(grid.height(), 2);
+        assert_eq!(grid.get(0, 0), "a");
+        assert_eq!(grid.get(1, 1), "b");
+        assert_eq!(grid.get(1, 0), " ");
     }
 
     #[test]

@@ -182,6 +182,46 @@ pub fn parse_markdown(text: &str) -> Vec<Block> {
     blocks
 }
 
+/// Last byte offset of a *stable* prefix while `text` is still growing.
+///
+/// Grok Build checkpoint: content before this offset cannot change if more
+/// bytes are appended, so a streaming renderer freezes those output lines
+/// and only re-parses the tail (O(N) instead of O(N²) over a turn).
+///
+/// Conservative on purpose — a later chunk must not retroactively merge
+/// frozen text into a new block (open fence, GFM table waiting on `---`).
+/// Newline scan is byte-wise (`b'\n'`) so we never allocate `.lines()`.
+pub fn last_checkpoint(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut in_fence = false;
+    let mut last = 0usize;
+    let mut line_start = 0usize;
+    let mut i = 0usize;
+    while i <= bytes.len() {
+        if i == bytes.len() || bytes[i] == b'\n' {
+            let line = &text[line_start..i];
+            let is_fence = line.trim_start().starts_with("```");
+            if is_fence {
+                in_fence = !in_fence;
+                if !in_fence && i < bytes.len() {
+                    last = i + 1;
+                }
+            } else if !in_fence && i < bytes.len() {
+                let t = line.trim();
+                if t.is_empty() || (!looks_like_table_row(line) && !is_table_separator(line)) {
+                    last = i + 1;
+                }
+            }
+            line_start = i.saturating_add(1);
+        }
+        if i == bytes.len() {
+            break;
+        }
+        i += 1;
+    }
+    last.min(text.len())
+}
+
 /// Try to parse a GFM pipe table starting at `lines[0]`.
 ///
 /// Returns `(Block::Table, lines_consumed)` or `None` if this is not a table
@@ -861,6 +901,35 @@ mod tests {
     #[test]
     fn empty_input_parses_to_nothing() {
         assert!(parse_markdown("").is_empty());
+    }
+
+    #[test]
+    fn last_checkpoint_stays_at_zero_for_an_open_line() {
+        assert_eq!(last_checkpoint(""), 0);
+        assert_eq!(last_checkpoint("hello"), 0);
+        assert_eq!(last_checkpoint("hello\nworld"), 6);
+        assert_eq!(last_checkpoint("hello\n"), 6);
+    }
+
+    #[test]
+    fn last_checkpoint_does_not_cross_an_open_fence() {
+        assert_eq!(last_checkpoint("intro\n```rs\nfn x"), 6);
+        let closed = "intro\n```rs\nfn x\n```\n";
+        assert_eq!(last_checkpoint(closed), closed.len());
+    }
+
+    #[test]
+    fn last_checkpoint_holds_a_table_until_the_blank() {
+        let header = "| a | b |\n";
+        assert_eq!(
+            last_checkpoint(header),
+            0,
+            "header alone may become a table"
+        );
+        let with_sep = "| a | b |\n|---|---|\n| 1 | 2 |";
+        assert_eq!(last_checkpoint(with_sep), 0, "table still growing");
+        let done = "| a | b |\n|---|---|\n| 1 | 2 |\n\n";
+        assert_eq!(last_checkpoint(done), done.len());
     }
 
     #[test]

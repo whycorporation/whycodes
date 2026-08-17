@@ -18,6 +18,8 @@ use std::process::{Command, Stdio};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
+use crate::cell_grid::CellGrid;
+
 /// Copy `text` to the clipboard. Returns true if at least one path succeeded.
 pub fn copy_text(text: &str) -> bool {
     let osc = osc52(text);
@@ -119,8 +121,8 @@ pub fn is_pad_symbol(sym: &str) -> bool {
 
 /// Shrink `(xs, xe)` so the range ends on the last non-pad cell.
 /// Returns `None` when the slice is pad-only (nothing to paint or copy).
-pub fn content_end(row: &[String], xs: usize, xe: usize) -> Option<usize> {
-    content_span(row, xs, xe).map(|(_, end)| end)
+pub fn content_end(cells: &CellGrid, y: u16, xs: usize, xe: usize) -> Option<usize> {
+    content_span(cells, y, xs, xe).map(|(_, end)| end)
 }
 
 /// First and last non-pad indices inside `[xs, xe]`.
@@ -128,16 +130,17 @@ pub fn content_end(row: &[String], xs: usize, xe: usize) -> Option<usize> {
 /// Used for the selection overlay so leading layout pad and trailing
 /// background fill are not reverse-video'd. Clipboard extraction still
 /// starts at the raw linear `xs` and dedents common indent afterward.
-pub fn content_span(row: &[String], xs: usize, xe: usize) -> Option<(usize, usize)> {
-    if row.is_empty() || xs > xe {
+pub fn content_span(cells: &CellGrid, y: u16, xs: usize, xe: usize) -> Option<(usize, usize)> {
+    let row_len = cells.width() as usize;
+    if cells.is_empty() || row_len == 0 || xs > xe {
         return None;
     }
-    let xe = xe.min(row.len().saturating_sub(1));
+    let xe = xe.min(row_len.saturating_sub(1));
     let xs = xs.min(xe);
-    let start = (xs..=xe).find(|&i| row.get(i).is_some_and(|s| !is_pad_symbol(s)))?;
+    let start = (xs..=xe).find(|&i| !is_pad_symbol(cells.get(i as u16, y)))?;
     let end = (start..=xe)
         .rev()
-        .find(|&i| row.get(i).is_some_and(|s| !is_pad_symbol(s)))?;
+        .find(|&i| !is_pad_symbol(cells.get(i as u16, y)))?;
     Some((start, end))
 }
 
@@ -182,13 +185,13 @@ impl ClipRect {
 /// This is the Grok-like path: multi-line drags do not pull in the empty
 /// rectangle corners to the right of short lines, trailing pad is stripped,
 /// shared left indent (layout chrome) is dedented, and pad-only rows drop out.
-pub fn text_from_cells(cells: &[Vec<String>], x0: u16, y0: u16, x1: u16, y1: u16) -> String {
+pub fn text_from_cells(cells: &CellGrid, x0: u16, y0: u16, x1: u16, y1: u16) -> String {
     text_from_cells_linear(cells, x0, y0, x1, y1, None)
 }
 
 /// Like [`text_from_cells`] but only cells inside `clip` are extracted.
 pub fn text_from_cells_clipped(
-    cells: &[Vec<String>],
+    cells: &CellGrid,
     x0: u16,
     y0: u16,
     x1: u16,
@@ -199,7 +202,7 @@ pub fn text_from_cells_clipped(
 }
 
 pub fn text_from_cells_linear(
-    cells: &[Vec<String>],
+    cells: &CellGrid,
     x0: u16,
     y0: u16,
     x1: u16,
@@ -220,13 +223,10 @@ pub fn text_from_cells_linear(
         {
             continue;
         }
-        let Some(row) = cells.get(y as usize) else {
-            continue;
-        };
-        if row.is_empty() {
+        if y >= cells.height() {
             continue;
         }
-        let row_max = (row.len().saturating_sub(1)) as u16;
+        let row_max = cells.width().saturating_sub(1);
         let Some((xs, xe)) = linear_cols(y, top_y, bot_y, top_x, bot_x, row_max) else {
             continue;
         };
@@ -243,13 +243,13 @@ pub fn text_from_cells_linear(
         };
         let xs = xs as usize;
         let xe = xe as usize;
-        let Some(end) = content_end(row, xs, xe) else {
+        let Some(end) = content_end(cells, y, xs, xe) else {
             // Pad-only row inside the drag — keep a blank line only when it
             // sits between real content (collapsed later).
             lines.push(String::new());
             continue;
         };
-        lines.push(extract_row(row, xs, end));
+        lines.push(extract_row(cells, y, xs, end));
     }
 
     clean_copied_lines(lines).join("\n")
@@ -299,11 +299,11 @@ fn reading_order(x0: u16, y0: u16, x1: u16, y1: u16) -> (u16, u16, u16, u16) {
     }
 }
 
-fn extract_row(row: &[String], xs: usize, end: usize) -> String {
+fn extract_row(cells: &CellGrid, y: u16, xs: usize, end: usize) -> String {
     let mut s = String::new();
     let mut x = xs;
     while x <= end {
-        let sym = row.get(x).map(|s| s.as_str()).unwrap_or("");
+        let sym = cells.get(x as u16, y);
         // Multi-width glyphs occupy one logical cell + blank continuations
         // in the ratatui buffer; advance by display width so we don't
         // double-append empty continuation cells as spaces.
@@ -395,19 +395,13 @@ fn dedent_common(lines: Vec<String>) -> Vec<String> {
 ///
 /// Used by the selection overlay so empty pad cells to the right of short
 /// lines are not reverse-video'd (matches what ends up on the clipboard).
-pub fn paint_ranges(
-    cells: &[Vec<String>],
-    x0: u16,
-    y0: u16,
-    x1: u16,
-    y1: u16,
-) -> Vec<(u16, u16, u16)> {
+pub fn paint_ranges(cells: &CellGrid, x0: u16, y0: u16, x1: u16, y1: u16) -> Vec<(u16, u16, u16)> {
     paint_ranges_clipped(cells, x0, y0, x1, y1, None)
 }
 
 /// Like [`paint_ranges`] but intersects each row with `clip` (modal bounds).
 pub fn paint_ranges_clipped(
-    cells: &[Vec<String>],
+    cells: &CellGrid,
     x0: u16,
     y0: u16,
     x1: u16,
@@ -426,13 +420,10 @@ pub fn paint_ranges_clipped(
         {
             continue;
         }
-        let Some(row) = cells.get(y as usize) else {
-            continue;
-        };
-        if row.is_empty() {
+        if y >= cells.height() || cells.width() == 0 {
             continue;
         }
-        let row_max = (row.len().saturating_sub(1)) as u16;
+        let row_max = cells.width().saturating_sub(1);
         let Some((xs, xe)) = linear_cols(y, top_y, bot_y, top_x, bot_x, row_max) else {
             continue;
         };
@@ -447,7 +438,7 @@ pub fn paint_ranges_clipped(
             }
             None => (xs, xe),
         };
-        let Some((start, end)) = content_span(row, xs as usize, xe as usize) else {
+        let Some((start, end)) = content_span(cells, y, xs as usize, xe as usize) else {
             continue;
         };
         out.push((y, start as u16, end as u16));
@@ -459,23 +450,27 @@ pub fn paint_ranges_clipped(
 mod tests {
     use super::*;
 
-    fn grid(rows: &[&str]) -> Vec<Vec<String>> {
-        rows.iter()
-            .map(|r| r.chars().map(|c| c.to_string()).collect())
-            .collect()
+    fn grid(rows: &[&str]) -> CellGrid {
+        CellGrid::from_rows(
+            rows.iter()
+                .map(|r| r.chars().map(|c| c.to_string()).collect())
+                .collect(),
+        )
     }
 
     /// Pad every row to `width` with spaces (screen-like background fill).
-    fn grid_padded(rows: &[&str], width: usize) -> Vec<Vec<String>> {
-        rows.iter()
-            .map(|r| {
-                let mut cells: Vec<String> = r.chars().map(|c| c.to_string()).collect();
-                while cells.len() < width {
-                    cells.push(" ".into());
-                }
-                cells
-            })
-            .collect()
+    fn grid_padded(rows: &[&str], width: usize) -> CellGrid {
+        CellGrid::from_rows(
+            rows.iter()
+                .map(|r| {
+                    let mut cells: Vec<String> = r.chars().map(|c| c.to_string()).collect();
+                    while cells.len() < width {
+                        cells.push(" ".into());
+                    }
+                    cells
+                })
+                .collect(),
+        )
     }
 
     #[test]
@@ -562,7 +557,7 @@ mod tests {
         while row.len() < 6 {
             row.push(" ".into());
         }
-        let cells = vec![row];
+        let cells = CellGrid::from_rows(vec![row]);
         let t = text_from_cells(&cells, 0, 0, 5, 0);
         assert_eq!(t, "世a");
     }
