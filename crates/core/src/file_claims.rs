@@ -97,7 +97,7 @@ impl Default for FileClaimRegistryInner {
 
 impl std::fmt::Debug for FileClaimRegistry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let n = self.inner.claims.lock().map(|m| m.len()).unwrap_or(0);
+        let n = recover_lock(self.inner.claims.lock()).len();
         f.debug_struct("FileClaimRegistry")
             .field("claims", &n)
             .finish()
@@ -111,9 +111,7 @@ impl FileClaimRegistry {
 
     /// Install (or replace) the conflict listener.
     pub fn set_listener(&self, listener: Option<ConflictListener>) {
-        if let Ok(mut slot) = self.inner.listener.lock() {
-            *slot = listener;
-        }
+        *recover_lock(self.inner.listener.lock()) = listener;
     }
 
     /// Normalize a path for claim keys: absolute, no trailing slash noise.
@@ -121,22 +119,14 @@ impl FileClaimRegistry {
         let abs = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join(path)
+            path_or_dot(std::env::current_dir()).join(path)
         };
         // Prefer canonicalize when the path exists; otherwise use cleaned abs.
         let normalized = abs.canonicalize().unwrap_or_else(|_| {
             // Clean `..` / `.` components without requiring existence.
             let mut out = PathBuf::new();
             for comp in abs.components() {
-                match comp {
-                    std::path::Component::ParentDir => {
-                        out.pop();
-                    }
-                    std::path::Component::CurDir => {}
-                    other => out.push(other.as_os_str()),
-                }
+                apply_component(&mut out, comp);
             }
             out
         });
@@ -195,15 +185,12 @@ impl FileClaimRegistry {
                 generation,
             },
         );
-        if let Ok(mut seen) = self.inner.last_seen.lock() {
-            seen.insert((agent_id.to_string(), key.to_string()), generation);
-        }
+        recover_lock(self.inner.last_seen.lock())
+            .insert((agent_id.to_string(), key.to_string()), generation);
     }
 
     pub fn set_stale_listener(&self, listener: Option<StaleListener>) {
-        if let Ok(mut slot) = self.inner.stale_listener.lock() {
-            *slot = listener;
-        }
+        *recover_lock(self.inner.stale_listener.lock()) = listener;
     }
 
     /// Record a read. If another agent wrote since this reader last saw the
@@ -232,18 +219,14 @@ impl FileClaimRegistry {
             writer_id,
             writer_label,
         };
-        if let Ok(slot) = self.inner.stale_listener.lock()
-            && let Some(ref f) = *slot
-        {
+        if let Some(ref f) = *recover_lock(self.inner.stale_listener.lock()) {
             f(ev.clone());
         }
         Some(ev)
     }
 
     fn emit_conflict(&self, ev: FileConflictEvent) {
-        if let Ok(slot) = self.inner.listener.lock()
-            && let Some(ref f) = *slot
-        {
+        if let Some(ref f) = *recover_lock(self.inner.listener.lock()) {
             f(ev);
         }
     }
@@ -271,7 +254,7 @@ impl FileClaimRegistry {
     }
 
     pub fn len(&self) -> usize {
-        self.inner.claims.lock().map(|m| m.len()).unwrap_or(0)
+        recover_lock(self.inner.claims.lock()).len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -279,7 +262,21 @@ impl FileClaimRegistry {
     }
 }
 
-fn recover_lock<T>(res: std::sync::LockResult<T>) -> T {
+pub(crate) fn apply_component(out: &mut PathBuf, comp: std::path::Component<'_>) {
+    match comp {
+        std::path::Component::ParentDir => {
+            out.pop();
+        }
+        std::path::Component::CurDir => {}
+        other => out.push(other.as_os_str()),
+    }
+}
+
+pub(crate) fn path_or_dot(res: std::io::Result<PathBuf>) -> PathBuf {
+    res.unwrap_or_else(|_| PathBuf::from("."))
+}
+
+pub(crate) fn recover_lock<T>(res: std::sync::LockResult<T>) -> T {
     match res {
         Ok(g) => g,
         Err(p) => p.into_inner(),
@@ -287,105 +284,28 @@ fn recover_lock<T>(res: std::sync::LockResult<T>) -> T {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn first_claim_acquires_second_same_agent_holds() {
-        let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_claim_test_a.rs");
-        assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Acquired);
-        assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Held);
+impl FileClaimRegistry {
+    pub(crate) fn poison_claims(&self) {
+        poison_mutex(&self.inner.claims);
     }
-
-    #[test]
-    fn second_agent_conflicts_and_notifies() {
-        let reg = FileClaimRegistry::new();
-        let hits = Arc::new(AtomicUsize::new(0));
-        let hits2 = Arc::clone(&hits);
-        reg.set_listener(Some(Arc::new(move |_ev| {
-            hits2.fetch_add(1, Ordering::SeqCst);
-        })));
-        let p = Path::new("/tmp/whycode_claim_test_b.rs");
-        assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Acquired);
-        match reg.try_claim("w1", "worker-1", p) {
-            ClaimResult::Conflict {
-                owner_id,
-                owner_label,
-            } => {
-                assert_eq!(owner_id, "w0");
-                assert_eq!(owner_label, "worker-0");
-            }
-            other => panic!("expected conflict, got {other:?}"),
-        }
-        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    pub(crate) fn poison_last_write(&self) {
+        poison_mutex(&self.inner.last_write);
     }
-
-    #[test]
-    fn release_agent_frees_paths() {
-        let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_claim_test_c.rs");
-        reg.try_claim("w0", "worker-0", p);
-        reg.release_agent("w0");
-        assert_eq!(reg.try_claim("w1", "worker-1", p), ClaimResult::Acquired);
+    pub(crate) fn poison_last_seen(&self) {
+        poison_mutex(&self.inner.last_seen);
     }
-
-    #[test]
-    fn read_after_other_write_is_stale() {
-        let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_claim_test_stale.rs");
-        reg.try_claim("w0", "worker-0", p);
-        let ev = reg.note_read("w1", p).expect("stale");
-        assert_eq!(ev.writer_id, "w0");
-        assert!(reg.note_read("w1", p).is_none());
+    pub(crate) fn poison_listener(&self) {
+        poison_mutex(&self.inner.listener);
     }
-
-    #[test]
-    fn claim_key_debug_snapshot_clear_and_stale_listener() {
-        let reg = FileClaimRegistry::new();
-        assert!(reg.is_empty());
-        assert_eq!(reg.len(), 0);
-        let _ = format!("{reg:?}");
-
-        let rel = Path::new("/no/such/whycode/dir/foo/../bar.rs");
-        let key = FileClaimRegistry::claim_key(rel);
-        assert!(key.contains("bar.rs"), "{key}");
-        let cur = FileClaimRegistry::claim_key(Path::new("./."));
-        assert!(!cur.is_empty());
-
-        let hits = Arc::new(AtomicUsize::new(0));
-        let hits2 = Arc::clone(&hits);
-        reg.set_stale_listener(Some(Arc::new(move |_| {
-            hits2.fetch_add(1, Ordering::SeqCst);
-        })));
-        let p = Path::new("/tmp/whycode_claim_snap.rs");
-        assert_eq!(reg.try_claim("w0", "lab", p), ClaimResult::Acquired);
-        assert_eq!(reg.len(), 1);
-        let snap = reg.snapshot();
-        assert_eq!(snap.len(), 1);
-        assert_eq!(snap[0].1, "lab");
-        assert!(reg.note_read("w0", p).is_none());
-        let ev = reg.note_read("w2", p);
-        assert!(ev.is_some());
-        assert_eq!(hits.load(Ordering::SeqCst), 1);
-        reg.clear();
-        assert!(reg.is_empty());
-        reg.set_stale_listener(None);
-        reg.set_listener(None);
+    pub(crate) fn poison_stale_listener(&self) {
+        poison_mutex(&self.inner.stale_listener);
     }
+}
 
-    #[test]
-    fn recover_lock_ok_and_poisoned() {
-        let m = std::sync::Mutex::new(7);
-        assert_eq!(*recover_lock(m.lock()), 7);
-        let m = Arc::new(std::sync::Mutex::new(3));
-        let m2 = Arc::clone(&m);
-        let _ = std::thread::spawn(move || {
-            let _g = m2.lock().unwrap();
-            panic!("poison");
-        })
-        .join();
-        assert_eq!(*recover_lock(m.lock()), 3);
-    }
+#[cfg(test)]
+fn poison_mutex<T>(m: &Mutex<T>) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = m.lock().unwrap();
+        panic!("poison");
+    }));
 }

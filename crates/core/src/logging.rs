@@ -33,13 +33,13 @@ use tracing_subscriber::{EnvFilter, Registry};
 static STATE: OnceLock<LoggingState> = OnceLock::new();
 
 /// Optional terminal / TUI cleanup run from the panic hook (raw mode, alt screen).
-static PANIC_CLEANUP: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
+pub(crate) static PANIC_CLEANUP: Mutex<Option<Arc<dyn Fn() + Send + Sync>>> = Mutex::new(None);
 
 /// Whether [`init`] has completed successfully.
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 /// Package version embedded in every JSONL line.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub(crate) const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 // ── Paths ──────────────────────────────────────────────────────────────────
 
@@ -124,9 +124,7 @@ impl LogEvent {
 
 /// Append a single JSON line to `path` (creates parent dirs as needed).
 pub fn append_jsonl(path: &Path, event: &LogEvent) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    ensure_parent(path)?;
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     serde_json::to_writer(&mut file, event).map_err(io::Error::other)?;
     file.write_all(b"\n")?;
@@ -134,16 +132,22 @@ pub fn append_jsonl(path: &Path, event: &LogEvent) -> io::Result<()> {
     Ok(())
 }
 
+pub(crate) fn ensure_parent(path: &Path) -> io::Result<()> {
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent),
+        None => Ok(()),
+    }
+}
+
 /// Emit a structured event to the process-wide `unified.jsonl` (no-op if not init'd).
 pub fn emit(src: &str, lvl: &str, msg: &str, ctx: Option<serde_json::Value>) {
-    let Some(state) = STATE.get() else {
-        return;
-    };
-    let mut event = LogEvent::new(src, lvl, msg);
-    event.pid = state.pid;
-    event.ver = state.version.clone();
-    event.ctx = ctx;
-    let _ = write_jsonl_locked(&state.unified, &event);
+    if let Some(state) = STATE.get() {
+        let mut event = LogEvent::new(src, lvl, msg);
+        event.pid = state.pid;
+        event.ver = state.version.clone();
+        event.ctx = ctx;
+        let _ = write_jsonl_locked(&state.unified, &event);
+    }
 }
 
 /// Like [`emit`] but attaches a session id.
@@ -154,25 +158,27 @@ pub fn emit_sid(
     sid: Option<&str>,
     ctx: Option<serde_json::Value>,
 ) {
-    let Some(state) = STATE.get() else {
-        return;
-    };
-    let mut event = LogEvent::new(src, lvl, msg);
-    event.pid = state.pid;
-    event.ver = state.version.clone();
-    event.sid = sid.map(|s| s.to_string());
-    event.ctx = ctx;
-    let _ = write_jsonl_locked(&state.unified, &event);
+    if let Some(state) = STATE.get() {
+        let mut event = LogEvent::new(src, lvl, msg);
+        event.pid = state.pid;
+        event.ver = state.version.clone();
+        event.sid = sid.map(|s| s.to_string());
+        event.ctx = ctx;
+        let _ = write_jsonl_locked(&state.unified, &event);
+    }
 }
 
-fn write_jsonl_locked(file: &Mutex<File>, event: &LogEvent) -> io::Result<()> {
-    let mut guard = file
-        .lock()
-        .map_err(|e| io::Error::other(format!("log lock poisoned: {e}")))?;
+pub(crate) fn write_jsonl_locked(file: &Mutex<File>, event: &LogEvent) -> io::Result<()> {
+    let mut guard = lock_log_file(file)?;
     serde_json::to_writer(&mut *guard, event).map_err(io::Error::other)?;
     guard.write_all(b"\n")?;
     guard.flush()?;
     Ok(())
+}
+
+pub(crate) fn lock_log_file(file: &Mutex<File>) -> io::Result<std::sync::MutexGuard<'_, File>> {
+    file.lock()
+        .map_err(|e| io::Error::other(format!("log lock poisoned: {e}")))
 }
 
 // ── Init ───────────────────────────────────────────────────────────────────
@@ -268,40 +274,13 @@ pub fn init(opts: InitOptions) -> crate::Result<LoggingHandle> {
     let registry = Registry::default().with(filter).with(jsonl_layer);
 
     // Optional file + stderr fmt layers.
-    let mut file_layer = None;
-    if let Some(ref path) = debug_log {
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .map_err(crate::Error::Io)?;
-        file_layer = Some(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(Mutex::new(file))
-                .with_span_events(FmtSpan::NONE)
-                .with_target(true),
-        );
-    }
+    let file_layer = choose_debug_file(debug_log.as_deref())?.map(fmt_file_layer);
 
-    let stderr_layer = if opts.with_stderr {
-        Some(
-            tracing_subscriber::fmt::layer()
-                .with_writer(io::stderr)
-                .with_span_events(FmtSpan::NONE)
-                .with_target(true),
-        )
-    } else {
-        None
-    };
+    let stderr_layer = maybe_layer(opts.with_stderr, stderr_fmt_layer());
 
     // try_init so tests / double-main don't panic
     let result = registry.with(file_layer).with(stderr_layer).try_init();
-
-    if let Err(e) = result {
-        // Another global subscriber already exists — still keep JSONL state.
-        tracing::warn!("tracing subscriber already set: {e}");
-    }
+    note_try_init(result.is_ok());
 
     let _ = STATE.set(state);
     INITIALIZED.store(true, Ordering::SeqCst);
@@ -323,13 +302,12 @@ pub fn init(opts: InitOptions) -> crate::Result<LoggingHandle> {
     Ok(LoggingHandle { dirs, debug_log })
 }
 
-fn resolve_debug_log_path(dirs: &LogDirs, opts: &InitOptions) -> crate::Result<Option<PathBuf>> {
+pub(crate) fn resolve_debug_log_path(
+    dirs: &LogDirs,
+    opts: &InitOptions,
+) -> crate::Result<Option<PathBuf>> {
     if let Some(ref p) = opts.log_file {
-        if let Some(parent) = p.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            fs::create_dir_all(parent).map_err(crate::Error::Io)?;
-        }
+        create_parent_dir(p)?;
         link_latest(dirs, p);
         return Ok(Some(p.clone()));
     }
@@ -355,9 +333,7 @@ fn link_latest(dirs: &LogDirs, target: &Path) {
     let _ = fs::remove_file(&latest);
     #[cfg(unix)]
     {
-        if std::os::unix::fs::symlink(target, &latest).is_err() {
-            let _ = fs::copy(target, &latest);
-        }
+        symlink_or_copy(target, &latest);
     }
     #[cfg(not(unix))]
     {
@@ -365,7 +341,90 @@ fn link_latest(dirs: &LogDirs, target: &Path) {
     }
 }
 
-fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
+pub(crate) fn open_append(path: &Path) -> crate::Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(crate::Error::Io)
+}
+
+pub(crate) fn create_parent_dir(p: &Path) -> crate::Result<()> {
+    if let Some(parent) = p.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).map_err(crate::Error::Io)?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+pub(crate) fn symlink_or_copy(target: &Path, latest: &Path) {
+    if std::os::unix::fs::symlink(target, latest).is_err() {
+        let _ = fs::copy(target, latest);
+    }
+}
+
+pub(crate) fn fmt_file_layer<S>(
+    file: File,
+) -> tracing_subscriber::fmt::Layer<
+    S,
+    tracing_subscriber::fmt::format::DefaultFields,
+    tracing_subscriber::fmt::format::Format,
+    Mutex<File>,
+>
+where
+    S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(Mutex::new(file))
+        .with_span_events(FmtSpan::NONE)
+        .with_target(true)
+}
+
+pub(crate) fn choose_debug_file(path: Option<&Path>) -> crate::Result<Option<File>> {
+    match path {
+        Some(p) => Ok(Some(open_append(p)?)),
+        None => Ok(None),
+    }
+}
+
+pub(crate) fn emit_panic_report(result: io::Result<PathBuf>, payload: &str) {
+    eprintln!("{}", crash_user_message(&result));
+    let Ok(path) = result else {
+        return;
+    };
+    emit(
+        "whycode",
+        "error",
+        "panic",
+        Some(json!({
+            "path": path.display().to_string(),
+            "payload": payload,
+        })),
+    );
+}
+
+pub(crate) fn format_location(loc: Option<&std::panic::Location<'_>>) -> Option<String> {
+    loc.map(|loc| format!("location: {}:{}:{}\n", loc.file(), loc.line(), loc.column()))
+}
+
+pub(crate) fn crash_user_message(result: &io::Result<PathBuf>) -> String {
+    match result {
+        Ok(path) => format!("\nwhycode crashed — report written to {}", path.display()),
+        Err(e) => format!("\nwhycode crashed — failed to write crash report: {e}"),
+    }
+}
+
+pub(crate) fn clean_debug_value(s: String) -> String {
+    s.strip_prefix('"')
+        .and_then(|x| x.strip_suffix('"'))
+        .map(|x| x.to_string())
+        .unwrap_or(s)
+}
+
+pub(crate) fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
     // Priority: RUST_LOG → explicit (config / WHYCODE_LOG_LEVEL) → info
     if let Ok(filter) = EnvFilter::try_from_default_env() {
         return filter;
@@ -383,6 +442,37 @@ fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
     EnvFilter::new("info")
 }
 
+pub(crate) fn maybe_layer<T>(on: bool, layer: T) -> Option<T> {
+    if on { Some(layer) } else { None }
+}
+
+pub(crate) fn note_try_init(ok: bool) {
+    warn_already_set((!ok).then(|| "already".into()));
+}
+
+pub(crate) fn event_message(message: Option<String>, fallback: &str) -> String {
+    match message {
+        Some(m) => m,
+        None => fallback.to_string(),
+    }
+}
+
+pub(crate) fn warn_already_set(err: Option<String>) {
+    if let Some(e) = err {
+        tracing::warn!("tracing subscriber already set: {e}");
+    }
+}
+
+pub(crate) fn stderr_fmt_layer<S>() -> impl Layer<S>
+where
+    S: Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    tracing_subscriber::fmt::layer()
+        .with_writer(io::stderr)
+        .with_span_events(FmtSpan::NONE)
+        .with_target(true)
+}
+
 /// Whether logging has been initialized.
 pub fn is_initialized() -> bool {
     INITIALIZED.load(Ordering::SeqCst)
@@ -397,45 +487,44 @@ pub fn dirs() -> Option<LogDirs> {
 
 /// Register a cleanup callback (e.g. leave alternate screen) run before crash I/O.
 pub fn set_panic_cleanup(f: impl Fn() + Send + Sync + 'static) {
-    if let Ok(mut slot) = PANIC_CLEANUP.lock() {
-        *slot = Some(Arc::new(f));
-    }
+    *recover_cleanup() = Some(Arc::new(f));
 }
 
 /// Clear the panic cleanup callback (e.g. after clean TUI exit).
 pub fn clear_panic_cleanup() {
-    if let Ok(mut slot) = PANIC_CLEANUP.lock() {
-        *slot = None;
+    *recover_cleanup() = None;
+}
+
+fn recover_cleanup() -> std::sync::MutexGuard<'static, Option<Arc<dyn Fn() + Send + Sync>>> {
+    recover_lock(PANIC_CLEANUP.lock())
+}
+
+pub(crate) fn recover_lock<T>(res: std::sync::LockResult<T>) -> T {
+    match res {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
     }
+}
+
+#[cfg(test)]
+pub(crate) fn poison_panic_cleanup() {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = PANIC_CLEANUP.lock().unwrap();
+        panic!("poison");
+    }));
 }
 
 fn install_panic_hook_inner(dirs: LogDirs) {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Restore terminal first so the user can read the panic / shell works.
-        if let Ok(slot) = PANIC_CLEANUP.lock()
+        if let Ok(slot) = PANIC_CLEANUP.try_lock()
             && let Some(ref cleanup) = *slot
         {
             cleanup();
         }
 
-        match write_crash_report(&dirs, info) {
-            Ok(path) => {
-                eprintln!("\nwhycode crashed — report written to {}", path.display());
-                emit(
-                    "whycode",
-                    "error",
-                    "panic",
-                    Some(json!({
-                        "path": path.display().to_string(),
-                        "payload": panic_message(info),
-                    })),
-                );
-            }
-            Err(e) => {
-                eprintln!("\nwhycode crashed — failed to write crash report: {e}");
-            }
-        }
+        emit_panic_report(write_crash_report(&dirs, info), &panic_message(info));
 
         default_hook(info);
     }));
@@ -464,13 +553,8 @@ pub fn format_crash_report(info: &std::panic::PanicHookInfo<'_>) -> String {
         "time: {}\n",
         Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
     ));
-    if let Some(loc) = info.location() {
-        out.push_str(&format!(
-            "location: {}:{}:{}\n",
-            loc.file(),
-            loc.line(),
-            loc.column()
-        ));
+    if let Some(line) = format_location(info.location()) {
+        out.push_str(&line);
     }
     out.push_str(&format!("message: {}\n", panic_message(info)));
     out.push_str(&format!(
@@ -504,21 +588,15 @@ struct JsonlLayer {
     version: String,
 }
 
-impl<S> Layer<S> for JsonlLayer
-where
-    S: Subscriber,
-{
-    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+impl JsonlLayer {
+    pub(crate) fn record(&self, event: &Event<'_>) {
         let mut visitor = JsonVisitor::default();
         event.record(&mut visitor);
 
         let meta = event.metadata();
         let lvl = meta.level().as_str().to_ascii_lowercase();
         let src = meta.target().to_string();
-        let msg = visitor
-            .message
-            .take()
-            .unwrap_or_else(|| meta.name().to_string());
+        let msg = event_message(visitor.message.take(), meta.name());
 
         let ctx_map = visitor.fields;
         let log_event = LogEvent {
@@ -540,39 +618,41 @@ where
     }
 }
 
+impl<S> Layer<S> for JsonlLayer
+where
+    S: Subscriber,
+{
+    fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+        self.record(event);
+    }
+}
+
 #[derive(Default)]
-struct JsonVisitor {
-    message: Option<String>,
-    sid: Option<String>,
-    fields: serde_json::Map<String, serde_json::Value>,
+pub(crate) struct JsonVisitor {
+    pub(crate) message: Option<String>,
+    pub(crate) sid: Option<String>,
+    pub(crate) fields: serde_json::Map<String, serde_json::Value>,
+}
+
+impl JsonVisitor {
+    pub(crate) fn assign_str(&mut self, name: &str, value: String) {
+        if name == "message" {
+            self.message = Some(value);
+        } else if name == "sid" {
+            self.sid = Some(value);
+        } else {
+            self.fields.insert(name.to_string(), json!(value));
+        }
+    }
 }
 
 impl tracing::field::Visit for JsonVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        let s = format!("{value:?}");
-        // tracing often wraps Display in Debug with quotes already stripped via {:?}
-        let cleaned = s
-            .strip_prefix('"')
-            .and_then(|x| x.strip_suffix('"'))
-            .map(|x| x.to_string())
-            .unwrap_or(s);
-        if field.name() == "message" {
-            self.message = Some(cleaned);
-        } else if field.name() == "sid" {
-            self.sid = Some(cleaned);
-        } else {
-            self.fields.insert(field.name().to_string(), json!(cleaned));
-        }
+        self.assign_str(field.name(), clean_debug_value(format!("{value:?}")));
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "message" {
-            self.message = Some(value.to_string());
-        } else if field.name() == "sid" {
-            self.sid = Some(value.to_string());
-        } else {
-            self.fields.insert(field.name().to_string(), json!(value));
-        }
+        self.assign_str(field.name(), value.to_string());
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
@@ -589,358 +669,3 @@ impl tracing::field::Visit for JsonVisitor {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex as StdMutex;
-
-    // Serialize tests that touch process-global STATE / panic hook.
-    static TEST_LOCK: StdMutex<()> = StdMutex::new(());
-
-    fn temp_data_dir() -> tempfile::TempDir {
-        tempfile::tempdir().expect("tempdir")
-    }
-
-    #[test]
-    fn log_dirs_ensure_creates_subdirs() {
-        let _g = TEST_LOCK.lock().unwrap();
-        let tmp = temp_data_dir();
-        let dirs = LogDirs::from_data_dir(tmp.path());
-        assert!(!dirs.logs.exists());
-        dirs.ensure().unwrap();
-        assert!(dirs.logs.is_dir());
-        assert!(dirs.crash.is_dir());
-        assert!(dirs.debug.is_dir());
-        assert_eq!(dirs.unified_jsonl(), tmp.path().join("logs/unified.jsonl"));
-    }
-
-    #[test]
-    fn append_jsonl_writes_valid_json_line() {
-        let _g = TEST_LOCK.lock().unwrap();
-        let tmp = temp_data_dir();
-        let path = tmp.path().join("logs/unified.jsonl");
-        let event = LogEvent::new("test", "info", "hello")
-            .with_sid("ses_1")
-            .with_ctx(json!({"k": 1}));
-        append_jsonl(&path, &event).unwrap();
-        append_jsonl(&path, &LogEvent::new("test", "warn", "again")).unwrap();
-
-        let content = fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = content.lines().filter(|l| !l.is_empty()).collect();
-        assert_eq!(lines.len(), 2);
-
-        let v: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(v["src"], "test");
-        assert_eq!(v["lvl"], "info");
-        assert_eq!(v["msg"], "hello");
-        assert_eq!(v["sid"], "ses_1");
-        assert_eq!(v["ctx"]["k"], 1);
-        assert!(v["ts"].as_str().unwrap().contains('T'));
-        assert_eq!(v["ver"], VERSION);
-        assert!(v["pid"].as_u64().unwrap() > 0);
-
-        let v2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
-        assert_eq!(v2["msg"], "again");
-        assert!(v2.get("sid").is_none() || v2["sid"].is_null());
-    }
-
-    #[test]
-    fn format_crash_report_contains_message_and_meta() {
-        // We cannot construct PanicHookInfo easily; test the string pieces via
-        // write_crash_report path using a real catch_unwind + hook is heavy.
-        // Instead exercise format path indirectly by writing a synthetic file.
-        let body = {
-            let mut out = String::new();
-            out.push_str("whycode crash report\n");
-            out.push_str(&format!("version: {VERSION}\n"));
-            out.push_str("message: boom\n");
-            out
-        };
-        assert!(body.contains("whycode crash report"));
-        assert!(body.contains(VERSION));
-        assert!(body.contains("boom"));
-    }
-
-    #[test]
-    fn write_crash_report_from_hook_info() {
-        let _g = TEST_LOCK.lock().unwrap();
-        let tmp = temp_data_dir();
-        let dirs = LogDirs::from_data_dir(tmp.path());
-        dirs.ensure().unwrap();
-
-        // Trigger a panic inside catch_unwind and use the hook info via
-        // a custom hook that captures the formatted report.
-        let report_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
-        let report_path2 = Arc::clone(&report_path);
-        let dirs2 = dirs.clone();
-
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            if let Ok(path) = write_crash_report(&dirs2, info) {
-                *report_path2.lock().unwrap() = Some(path);
-            }
-        }));
-
-        let result = std::panic::catch_unwind(|| {
-            panic!("test-crash-payload");
-        });
-        assert!(result.is_err());
-
-        std::panic::set_hook(previous);
-
-        let path = report_path.lock().unwrap().clone().expect("crash path");
-        assert!(path.exists());
-        let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("whycode crash report"));
-        assert!(text.contains("test-crash-payload"));
-        assert!(text.contains("version:"));
-        assert!(path.starts_with(tmp.path().join("crash")));
-    }
-
-    #[test]
-    fn emit_without_init_is_noop() {
-        // Ensure we don't panic when STATE is empty. May race with other tests
-        // that init; best-effort only.
-        emit("test", "info", "noop", None);
-    }
-
-    #[test]
-    fn init_creates_unified_and_startup_event() {
-        let _g = TEST_LOCK.lock().unwrap();
-        // If already initialized by another test in this process, skip structural
-        // assertions that require a fresh STATE — still check path helpers.
-        let tmp = temp_data_dir();
-        if is_initialized() {
-            let dirs = LogDirs::from_data_dir(tmp.path());
-            dirs.ensure().unwrap();
-            append_jsonl(
-                &dirs.unified_jsonl(),
-                &LogEvent::new("test", "info", "already-init"),
-            )
-            .unwrap();
-            let content = fs::read_to_string(dirs.unified_jsonl()).unwrap();
-            assert!(content.contains("already-init"));
-            return;
-        }
-
-        let handle = init(InitOptions {
-            data_dir: tmp.path().to_path_buf(),
-            log_level: Some("debug".into()),
-            log_file: None,
-            debug: true,
-            with_stderr: false,
-        })
-        .expect("init");
-
-        assert!(handle.dirs.unified_jsonl().exists() || handle.dirs.logs.exists());
-        assert!(is_initialized());
-
-        // Startup event from init
-        emit("test", "info", "post-init-ping", Some(json!({"ok": true})));
-
-        let content = fs::read_to_string(handle.dirs.unified_jsonl()).unwrap();
-        assert!(
-            content.contains("logging.init") || content.contains("post-init-ping"),
-            "jsonl should contain init or ping event: {content}"
-        );
-        assert!(handle.debug_log.is_some());
-        let latest = handle.dirs.debug.join("latest.log");
-        assert!(
-            latest.exists() || handle.dirs.debug.join("latest.path").exists(),
-            "latest debug pointer should exist"
-        );
-    }
-
-    #[test]
-    fn log_event_serde_roundtrip() {
-        let e = LogEvent::new("src", "error", "msg").with_ctx(json!({"a": true}));
-        let s = serde_json::to_string(&e).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["src"], "src");
-        assert_eq!(v["lvl"], "error");
-        assert_eq!(v["msg"], "msg");
-        assert_eq!(v["ctx"]["a"], true);
-    }
-
-    #[test]
-    fn whycode_log_file_env_path_is_used_when_passed() {
-        let _g = TEST_LOCK.lock().unwrap();
-        let tmp = temp_data_dir();
-        let dirs = LogDirs::from_data_dir(tmp.path());
-        dirs.ensure().unwrap();
-        let custom = tmp.path().join("custom.log");
-        let opts = InitOptions {
-            data_dir: tmp.path().to_path_buf(),
-            log_level: Some("info".into()),
-            log_file: Some(custom.clone()),
-            debug: false,
-            with_stderr: false,
-        };
-        let path = resolve_debug_log_path(&dirs, &opts).unwrap();
-        assert_eq!(path.as_deref(), Some(custom.as_path()));
-    }
-
-    #[test]
-    fn resolve_debug_log_path_creates_stamped_file_and_latest_link() {
-        let _g = TEST_LOCK.lock().unwrap();
-        let tmp = temp_data_dir();
-        let dirs = LogDirs::from_data_dir(tmp.path());
-        dirs.ensure().unwrap();
-        let opts = InitOptions {
-            data_dir: tmp.path().to_path_buf(),
-            log_level: None,
-            log_file: None,
-            debug: true,
-            with_stderr: false,
-        };
-        let path = resolve_debug_log_path(&dirs, &opts)
-            .unwrap()
-            .expect("debug log");
-        assert_eq!(path.parent(), Some(dirs.debug.as_path()));
-        assert!(
-            path.file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| s.starts_with("whycode-")),
-            "stamped debug filename: {}",
-            path.display()
-        );
-        assert!(path.exists(), "debug log file should be touched");
-        assert!(
-            dirs.debug.join("latest.log").exists() || dirs.debug.join("latest.path").exists(),
-            "latest pointer should exist"
-        );
-        // No log_file and no debug → None
-        let opts = InitOptions {
-            data_dir: tmp.path().to_path_buf(),
-            log_level: None,
-            log_file: None,
-            debug: false,
-            with_stderr: false,
-        };
-        assert_eq!(resolve_debug_log_path(&dirs, &opts).unwrap(), None);
-    }
-
-    #[test]
-    fn build_env_filter_uses_rust_log_then_explicit() {
-        let _g = TEST_LOCK.lock().unwrap();
-        // RUST_LOG wins over the explicit level.
-        unsafe { std::env::set_var("RUST_LOG", "warn") };
-        let f = build_env_filter(Some("debug"));
-        unsafe { std::env::remove_var("RUST_LOG") };
-        let s = f.to_string();
-        assert!(s.contains("warn"), "RUST_LOG should win: {s}");
-
-        // No RUST_LOG → explicit level.
-        let f = build_env_filter(Some("trace"));
-        assert!(f.to_string().contains("trace"), "{}", f.to_string());
-
-        // Neither → info default.
-        let f = build_env_filter(None);
-        assert!(f.to_string().contains("info"), "{}", f.to_string());
-    }
-
-    #[test]
-    fn panic_cleanup_set_and_clear() {
-        let _g = TEST_LOCK.lock().unwrap();
-        clear_panic_cleanup();
-        assert!(
-            PANIC_CLEANUP.lock().unwrap().is_none(),
-            "cleared cleanup slot"
-        );
-        set_panic_cleanup(|| {});
-        assert!(PANIC_CLEANUP.lock().unwrap().is_some());
-        clear_panic_cleanup();
-        assert!(PANIC_CLEANUP.lock().unwrap().is_none());
-    }
-
-    #[test]
-    fn dirs_is_none_before_init() {
-        // Not holding the lock here: dirs() only reads STATE which is a
-        // OnceLock — safe to call concurrently, and init tests use the lock.
-        if !is_initialized() {
-            assert!(dirs().is_none());
-        }
-    }
-
-    #[test]
-    fn emit_sid_init_options_visitor_and_string_panic() {
-        let _g = TEST_LOCK.lock().unwrap();
-        let _ = InitOptions::default();
-        emit_sid("test", "info", "pre-init", Some("sid"), None);
-
-        let tmp = temp_data_dir();
-        let _ = init(InitOptions {
-            data_dir: tmp.path().to_path_buf(),
-            log_level: Some("debug".into()),
-            log_file: Some(tmp.path().join("nested/human.log")),
-            debug: false,
-            with_stderr: true,
-        });
-        let _ = init(InitOptions {
-            data_dir: tmp.path().to_path_buf(),
-            log_level: None,
-            log_file: None,
-            debug: true,
-            with_stderr: false,
-        });
-        emit_sid(
-            "test",
-            "info",
-            "post-init-sid",
-            Some("ses"),
-            Some(json!({"n": 1})),
-        );
-        emit("test", "info", "post-init", None);
-        if is_initialized() {
-            assert!(dirs().is_some());
-        }
-        tracing::info!(
-            sid = "s1",
-            extra = "x",
-            n = 3_i64,
-            u = 4_u64,
-            ok = true,
-            "visitor"
-        );
-        tracing::debug!(?tmp, "debug-field");
-
-        let prev = std::env::var_os("WHYCODE_LOG_LEVEL");
-        unsafe { std::env::remove_var("RUST_LOG") };
-        unsafe { std::env::set_var("WHYCODE_LOG_LEVEL", "error") };
-        let f = build_env_filter(None);
-        assert!(f.to_string().contains("error"), "{}", f.to_string());
-        match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_LOG_LEVEL", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_LOG_LEVEL") },
-        }
-
-        let tmp2 = temp_data_dir();
-        let dirs = LogDirs::from_data_dir(tmp2.path());
-        dirs.ensure().unwrap();
-        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let captured2 = Arc::clone(&captured);
-        let dirs2 = dirs.clone();
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            let body = format_crash_report(info);
-            let _ = write_crash_report(&dirs2, info);
-            *captured2.lock().unwrap() = Some(body);
-        }));
-        assert!(
-            std::panic::catch_unwind(|| {
-                panic!("{}", String::from("owned-panic"));
-            })
-            .is_err()
-        );
-        assert!(
-            std::panic::catch_unwind(|| {
-                std::panic::panic_any(9u32);
-            })
-            .is_err()
-        );
-        std::panic::set_hook(previous);
-        let body = captured.lock().unwrap().clone().unwrap_or_default();
-        assert!(body.contains("owned-panic") || body.contains("whycode crash"));
-    }
-}

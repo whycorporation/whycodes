@@ -293,7 +293,7 @@ impl LlmRequest {
     }
 }
 
-fn default_use_prompt_cache() -> bool {
+pub(crate) fn default_use_prompt_cache() -> bool {
     true
 }
 
@@ -618,9 +618,8 @@ impl PermissionSet {
             let Some((tool, arg_pat)) = parse_shell_rule(pattern) else {
                 continue;
             };
-            if tool != "bash" && tool != "shell" {
-                continue;
-            }
+            debug_assert!(tool == "bash" || tool == "shell");
+            let _ = tool;
             if !shell_arg_matches(&arg_pat, cmd) {
                 continue;
             }
@@ -638,7 +637,7 @@ impl PermissionSet {
 }
 
 /// Parse `bash(git *)` / `shell(npm test)` → (`bash`, `git *`).
-fn parse_shell_rule(pattern: &str) -> Option<(String, String)> {
+pub(crate) fn parse_shell_rule(pattern: &str) -> Option<(String, String)> {
     let pattern = pattern.trim();
     let open = pattern.find('(')?;
     let close = pattern.rfind(')')?;
@@ -657,7 +656,7 @@ fn parse_shell_rule(pattern: &str) -> Option<(String, String)> {
 }
 
 /// Parse `edit(src/**)` / `read(*)` → (tool, glob).
-fn parse_path_rule(pattern: &str) -> Option<(String, String)> {
+pub(crate) fn parse_path_rule(pattern: &str) -> Option<(String, String)> {
     let pattern = pattern.trim();
     let open = pattern.find('(')?;
     let close = pattern.rfind(')')?;
@@ -687,7 +686,7 @@ fn parse_path_rule(pattern: &str) -> Option<(String, String)> {
 /// Glob match for path rules.
 ///
 /// Supports: exact, `prefix/**`, `**/name`, `*.rs`, `src/*`, `**`.
-fn path_glob_matches(glob: &str, path: &str) -> bool {
+pub(crate) fn path_glob_matches(glob: &str, path: &str) -> bool {
     let glob = glob.trim_start_matches("./");
     let path = path.trim_start_matches("./");
     if glob == "*" || glob == "**" {
@@ -713,7 +712,7 @@ fn path_glob_matches(glob: &str, path: &str) -> bool {
 
 /// `*` matches any run of non-`/` characters; path may include `/` only where
 /// the pattern has literal `/`.
-fn match_simple_star(pat: &str, s: &str) -> bool {
+pub(crate) fn match_simple_star(pat: &str, s: &str) -> bool {
     let mut pi = 0usize;
     let mut si = 0usize;
     let pb = pat.as_bytes();
@@ -752,12 +751,9 @@ fn match_simple_star(pat: &str, s: &str) -> bool {
 
 /// Glob-ish match for shell rule payloads. `:` is treated as a separator like
 /// Claude Code's `Bash(git:*)` form.
-fn shell_arg_matches(pat: &str, command: &str) -> bool {
+pub(crate) fn shell_arg_matches(pat: &str, command: &str) -> bool {
     let pat = pat.trim().replace(':', " ");
     let cmd = command.trim();
-    if pat == "*" {
-        return true;
-    }
     if let Some(prefix) = pat.strip_suffix('*') {
         let prefix = prefix.trim_end();
         if prefix.is_empty() {
@@ -774,7 +770,7 @@ const DANGEROUS_SHELL_ALLOW_BASES: &[&str] = &[
     "sh", "zsh", "fish", "eval", "exec", "env", "xargs", "sudo", "npx", "bunx", "ssh",
 ];
 
-fn is_dangerous_shell_allow_pattern(arg_pat: &str) -> bool {
+pub(crate) fn is_dangerous_shell_allow_pattern(arg_pat: &str) -> bool {
     let p = arg_pat.trim().to_ascii_lowercase().replace(':', " ");
     let p = p.trim();
     // Bare `*` allow on bash is full shell — never silent-allow.
@@ -815,611 +811,4 @@ pub struct SessionInfo {
     pub updated_at: chrono::DateTime<chrono::Utc>,
     pub message_count: usize,
     pub project_path: PathBuf,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // ── test_message_content_as_text ────────────────────────────────────
-
-    #[test]
-    fn test_message_content_as_text_string_variant() {
-        let mc = MessageContent::Text("hello world".to_string());
-        assert_eq!(mc.as_text(), Some("hello world"));
-    }
-
-    #[test]
-    fn test_message_content_as_text_blocks_with_text() {
-        let mc = MessageContent::Blocks(vec![
-            ContentBlock::Text {
-                text: "first block".to_string(),
-            },
-            ContentBlock::Text {
-                text: "second block".to_string(),
-            },
-        ]);
-        assert_eq!(mc.as_text(), Some("first block"));
-    }
-
-    #[test]
-    fn test_message_content_as_text_blocks_without_text() {
-        let mc = MessageContent::Blocks(vec![ContentBlock::ToolUse {
-            id: "tool-1".to_string(),
-            name: "search".to_string(),
-            input: serde_json::json!({"q": "test"}),
-        }]);
-        assert_eq!(mc.as_text(), None);
-    }
-
-    #[test]
-    fn test_message_content_as_text_empty_blocks() {
-        let mc = MessageContent::Blocks(vec![]);
-        assert_eq!(mc.as_text(), None);
-    }
-
-    #[test]
-    fn test_message_content_text_constructor() {
-        let mc = MessageContent::text("hello");
-        assert_eq!(mc.as_text(), Some("hello"));
-    }
-
-    // ── test_serialize_deserialize_message ──────────────────────────────
-
-    #[test]
-    fn test_serialize_deserialize_message_text() {
-        let msg = Message {
-            role: Role::User,
-            content: MessageContent::Text("hello".to_string()),
-            tool_call_id: None,
-            name: None,
-            created_at: None,
-        };
-        let json = serde_json::to_string(&msg).expect("serialize");
-        let deser: Message = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deser.role, Role::User);
-        assert_eq!(deser.content.as_text(), Some("hello"));
-        assert!(deser.tool_call_id.is_none());
-    }
-
-    #[test]
-    fn test_serialize_deserialize_message_blocks() {
-        let msg = Message {
-            role: Role::Assistant,
-            content: MessageContent::Blocks(vec![ContentBlock::Text {
-                text: "assistant reply".to_string(),
-            }]),
-            tool_call_id: None,
-            name: Some("assistant".to_string()),
-            created_at: None,
-        };
-        let json = serde_json::to_string(&msg).expect("serialize");
-        let deser: Message = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deser.role, Role::Assistant);
-        assert_eq!(deser.content.as_text(), Some("assistant reply"));
-        assert_eq!(deser.name.as_deref(), Some("assistant"));
-    }
-
-    #[test]
-    fn thinking_block_roundtrips_signature() {
-        let b = ContentBlock::Thinking {
-            text: "plan".into(),
-            signature: Some("sig-abc".into()),
-        };
-        let v = serde_json::to_value(&b).unwrap();
-        assert_eq!(v["type"], "thinking");
-        assert_eq!(v["signature"], "sig-abc");
-        let back: ContentBlock = serde_json::from_value(v).unwrap();
-        match back {
-            ContentBlock::Thinking { text, signature } => {
-                assert_eq!(text, "plan");
-                assert_eq!(signature.as_deref(), Some("sig-abc"));
-            }
-            other => panic!("{other:?}"),
-        }
-    }
-
-    #[test]
-    fn strip_trailing_thinking_keeps_text_and_tools() {
-        let blocks = vec![
-            ContentBlock::Thinking {
-                text: "a".into(),
-                signature: Some("s".into()),
-            },
-            ContentBlock::Text { text: "hi".into() },
-            ContentBlock::Thinking {
-                text: "orphan".into(),
-                signature: None,
-            },
-        ];
-        let out = strip_trailing_thinking(&blocks);
-        assert_eq!(out.len(), 2);
-        assert!(matches!(out[1], ContentBlock::Text { .. }));
-    }
-
-    #[test]
-    fn test_serialize_deserialize_message_tool() {
-        let msg = Message {
-            role: Role::Tool,
-            content: MessageContent::Text("tool result".to_string()),
-            tool_call_id: Some("call-1".to_string()),
-            name: None,
-            created_at: None,
-        };
-        let json = serde_json::to_string(&msg).expect("serialize");
-        let deser: Message = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deser.role, Role::Tool);
-        assert_eq!(deser.tool_call_id.as_deref(), Some("call-1"));
-    }
-
-    // ── test_tool_definition_serialize ──────────────────────────────────
-
-    #[test]
-    fn test_tool_definition_serialize() {
-        let td = ToolDefinition {
-            name: "search".to_string(),
-            description: "Search the web".to_string(),
-            parameters: serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"}
-                },
-                "required": ["query"]
-            }),
-        };
-
-        let json = serde_json::to_string(&td).expect("serialize");
-        let deser: ToolDefinition = serde_json::from_str(&json).expect("deserialize");
-
-        assert_eq!(deser.name, "search");
-        assert_eq!(deser.description, "Search the web");
-        assert_eq!(deser.parameters["type"], "object");
-        assert!(deser.parameters["required"][0] == "query");
-    }
-
-    // ── test_permission_set_default ─────────────────────────────────────
-
-    #[test]
-    fn test_permission_set_default() {
-        let ps = PermissionSet::default();
-        assert!(ps.allowed_tools.is_none());
-        assert!(ps.denied_tools.is_none());
-        // Default booleans are false
-        assert!(!ps.allow_file_writes);
-        assert!(!ps.allow_network);
-        assert!(!ps.allow_shell);
-        assert!(ps.allowed_paths.is_none());
-        assert!(ps.rules.is_empty());
-    }
-
-    #[test]
-    fn browser_defaults_to_ask() {
-        let ps = PermissionSet {
-            allow_file_writes: true,
-            allow_shell: true,
-            allow_network: true,
-            ..Default::default()
-        };
-        assert_eq!(ps.action_for("browser"), PermissionAction::Ask);
-        assert!(ps.is_tool_allowed("browser"));
-    }
-
-    #[test]
-    fn test_permission_action_for_rules() {
-        let mut ps = PermissionSet {
-            allow_file_writes: true,
-            allow_shell: true,
-            allow_network: true,
-            ..Default::default()
-        };
-        ps.rules.insert("bash".into(), PermissionAction::Ask);
-        ps.rules.insert("edit".into(), PermissionAction::Deny);
-        ps.rules.insert("mymcp_*".into(), PermissionAction::Deny);
-
-        assert_eq!(ps.action_for("bash"), PermissionAction::Ask);
-        assert_eq!(ps.action_for("edit"), PermissionAction::Deny);
-        assert_eq!(ps.action_for("mymcp_search"), PermissionAction::Deny);
-        assert_eq!(ps.action_for("read"), PermissionAction::Allow);
-        assert!(!ps.is_tool_allowed("edit"));
-        assert!(ps.is_tool_allowed("bash")); // ask still appears in schema
-    }
-
-    #[test]
-    fn test_role_serialization() {
-        let role = Role::User;
-        let json = serde_json::to_string(&role).expect("serialize");
-        assert_eq!(json, "\"user\"");
-
-        let deser: Role = serde_json::from_str("\"assistant\"").expect("deserialize");
-        assert_eq!(deser, Role::Assistant);
-    }
-
-    #[test]
-    fn test_provider_config_resolve_url() {
-        let pc = ProviderConfig {
-            name: "openai".to_string(),
-            api_key: None,
-            api_base: None,
-            base_url: None,
-            headers: None,
-            models: vec![],
-            tool_arguments: None,
-            extra: HashMap::new(),
-        };
-        assert_eq!(
-            pc.resolve_url("gpt-4"),
-            "https://api.openai.com/v1/chat/completions"
-        );
-
-        let pc_custom = ProviderConfig {
-            name: "openai".to_string(),
-            api_key: None,
-            api_base: None,
-            base_url: Some("https://custom.example.com/api".to_string()),
-            headers: None,
-            models: vec![],
-            tool_arguments: None,
-            extra: HashMap::new(),
-        };
-        assert_eq!(
-            pc_custom.resolve_url("gpt-4"),
-            "https://custom.example.com/api/chat/completions"
-        );
-    }
-
-    // ── shell-scoped permission rules ─────────────────────────────────
-
-    fn perms_with(rules: &[(&str, PermissionAction)]) -> PermissionSet {
-        let mut p = PermissionSet {
-            allow_file_writes: true,
-            allow_network: true,
-            allow_shell: true,
-            ..Default::default()
-        };
-        for (k, a) in rules {
-            p.rules.insert((*k).to_string(), *a);
-        }
-        p
-    }
-
-    #[test]
-    fn shell_rule_git_star_allows_git_commands() {
-        let p = perms_with(&[("bash(git *)", PermissionAction::Allow)]);
-        assert_eq!(
-            p.action_for_shell("git status"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(
-            p.action_for_shell("git commit -m x"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(p.action_for_shell("rm -rf /"), None);
-    }
-
-    #[test]
-    fn shell_rule_colon_form_matches() {
-        let p = perms_with(&[("Bash(cargo:*)", PermissionAction::Allow)]);
-        assert_eq!(
-            p.action_for_shell("cargo test"),
-            Some(PermissionAction::Allow)
-        );
-    }
-
-    #[test]
-    fn dangerous_interpreter_allow_coerces_to_ask() {
-        let p = perms_with(&[("bash(python *)", PermissionAction::Allow)]);
-        assert_eq!(
-            p.action_for_shell("python script.py"),
-            Some(PermissionAction::Ask)
-        );
-        let p = perms_with(&[("bash(node:*)", PermissionAction::Allow)]);
-        assert_eq!(
-            p.action_for_shell("node app.js"),
-            Some(PermissionAction::Ask)
-        );
-    }
-
-    #[test]
-    fn shell_rule_deny_blocks_matching() {
-        let p = perms_with(&[("bash(curl *)", PermissionAction::Deny)]);
-        assert_eq!(
-            p.action_for_shell("curl https://evil"),
-            Some(PermissionAction::Deny)
-        );
-    }
-
-    #[test]
-    fn path_rule_edit_src_star() {
-        let p = perms_with(&[("edit(src/**)", PermissionAction::Allow)]);
-        assert_eq!(
-            p.action_for_path("edit", "src/main.rs"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(p.action_for_path("edit", "crates/foo.rs"), None);
-    }
-
-    #[test]
-    fn path_rule_write_md() {
-        let p = perms_with(&[("write(**/*.md)", PermissionAction::Ask)]);
-        // **/*.md via **/suffix style — our parser uses **/ only at start.
-        // Prefer write(*.md) for basename or write(docs/**).
-        let p2 = perms_with(&[("write(docs/**)", PermissionAction::Allow)]);
-        assert_eq!(
-            p2.action_for_path("write", "docs/a.md"),
-            Some(PermissionAction::Allow)
-        );
-        let _ = p;
-    }
-
-    #[test]
-    fn stamp_messages_mut_provider_urls_and_permission_edges() {
-        let m = Message {
-            role: Role::User,
-            content: MessageContent::text("hi"),
-            tool_call_id: None,
-            name: None,
-            created_at: None,
-        }
-        .stamp();
-        assert!(m.created_at.is_some());
-        let again = m.clone().stamp();
-        assert_eq!(again.created_at, m.created_at);
-
-        let mut req = LlmRequest {
-            system: String::new(),
-            messages: std::sync::Arc::from(vec![m]),
-            tools: vec![],
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: default_use_prompt_cache(),
-        };
-        req.messages_mut()[0].name = Some("u".into());
-        assert_eq!(req.messages[0].name.as_deref(), Some("u"));
-
-        let names = [
-            "openai",
-            "anthropic",
-            "groq",
-            "deepseek",
-            "google",
-            "gemini",
-            "azure",
-            "openrouter",
-            "together",
-            "together_ai",
-            "fireworks",
-            "mistral",
-            "cohere",
-            "perplexity",
-            "xai",
-            "custom-x",
-        ];
-        for name in names {
-            let pc = ProviderConfig {
-                name: name.into(),
-                api_key: None,
-                api_base: None,
-                base_url: None,
-                headers: None,
-                models: vec![],
-                tool_arguments: None,
-                extra: Default::default(),
-            };
-            assert_eq!(pc.tool_arguments_format(), ToolArgumentsFormat::JsonString);
-            assert!(pc.resolve_url("m").contains("http"));
-        }
-
-        assert_eq!(
-            PermissionAction::parse("allow"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(
-            PermissionAction::parse("prompt"),
-            Some(PermissionAction::Ask)
-        );
-        assert_eq!(
-            PermissionAction::parse("block"),
-            Some(PermissionAction::Deny)
-        );
-        assert_eq!(PermissionAction::parse("???"), None);
-
-        let mut p = PermissionSet {
-            allow_file_writes: false,
-            allow_shell: false,
-            allow_network: false,
-            denied_tools: Some(vec!["secret".into()]),
-            allowed_tools: Some(vec!["read".into()]),
-            ..Default::default()
-        };
-        p.rules.insert("mcp_*".into(), PermissionAction::Deny);
-        assert_eq!(p.action_for("mcp_x"), PermissionAction::Deny);
-        p.rules.insert("*".into(), PermissionAction::Ask);
-        assert_eq!(p.action_for("anything"), PermissionAction::Ask);
-        p.rules.clear();
-        assert_eq!(p.action_for("secret"), PermissionAction::Deny);
-        assert_eq!(p.action_for("write"), PermissionAction::Deny);
-        assert_eq!(p.action_for("grep"), PermissionAction::Deny);
-        p.allowed_tools = None;
-        assert_eq!(p.action_for("write"), PermissionAction::Deny);
-        assert_eq!(p.action_for("bash"), PermissionAction::Deny);
-        assert_eq!(p.action_for("webfetch"), PermissionAction::Deny);
-
-        let p2 = perms_with(&[
-            ("edit(src/**)", PermissionAction::Allow),
-            ("write(**/*.md)", PermissionAction::Ask),
-            ("read(*)", PermissionAction::Allow),
-            ("write(/etc/**)", PermissionAction::Allow),
-            ("not-a-rule", PermissionAction::Allow),
-            ("edit()", PermissionAction::Allow),
-        ]);
-        assert_eq!(
-            p2.action_for_path("edit", "src\\mod.rs"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(
-            p2.action_for_path("write", "notes.md"),
-            Some(PermissionAction::Ask)
-        );
-        assert_eq!(
-            p2.action_for_path("read", "a.rs"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(
-            p2.action_for_path("write", "/etc/passwd"),
-            Some(PermissionAction::Ask)
-        );
-        assert!(p2.action_for_path("bash", "x").is_none());
-        assert!(path_glob_matches("src/*.rs", "src/main.rs"));
-        assert!(path_glob_matches("foo", "foo/bar"));
-        assert!(path_glob_matches("**/*.rs", "lib/x.rs"));
-        assert!(!match_simple_star("a*", "a/b"));
-
-        let sh = perms_with(&[
-            ("bash(git *)", PermissionAction::Allow),
-            ("bash(*)", PermissionAction::Allow),
-            ("bash(python *)", PermissionAction::Allow),
-            ("bash(npm run *)", PermissionAction::Allow),
-            ("shell()", PermissionAction::Allow),
-            ("edit(x)", PermissionAction::Allow),
-            ("bash", PermissionAction::Allow),
-        ]);
-        assert!(sh.action_for_shell("").is_none());
-        assert_eq!(
-            sh.action_for_shell("git status"),
-            Some(PermissionAction::Allow)
-        );
-        assert_eq!(
-            sh.action_for_shell("python x.py"),
-            Some(PermissionAction::Ask)
-        );
-        assert_eq!(sh.action_for_shell("ls"), Some(PermissionAction::Ask));
-        assert!(is_dangerous_shell_allow_pattern("*"));
-        assert!(is_dangerous_shell_allow_pattern("python"));
-        assert!(is_dangerous_shell_allow_pattern("python*"));
-        assert!(is_dangerous_shell_allow_pattern("npm run"));
-        assert!(is_dangerous_shell_allow_pattern("yarn run *"));
-        assert!(is_dangerous_shell_allow_pattern("python -c *"));
-        assert!(is_dangerous_shell_allow_pattern("node*"));
-        assert!(!is_dangerous_shell_allow_pattern("git status"));
-        assert!(parse_shell_rule("bash)(x").is_none());
-        assert!(parse_shell_rule("edit(src)").is_none());
-        assert!(parse_path_rule("bash(src)").is_none());
-        assert!(parse_path_rule("read)(x").is_none());
-        assert!(shell_arg_matches("*", "anything"));
-        assert!(shell_arg_matches(" *", "x"));
-        assert!(!match_simple_star("a*", "a/b"));
-        assert!(!match_simple_star("ab", "a"));
-        assert!(
-            ContentBlock::Thinking {
-                text: "t".into(),
-                signature: None
-            }
-            .is_thinking()
-        );
-        assert!(ContentBlock::RedactedThinking { data: "x".into() }.is_thinking());
-    }
-}
-
-#[cfg(test)]
-mod usage_tests {
-    use super::Usage;
-
-    fn usage(input: u64, output: u64, created: Option<u64>, read: Option<u64>) -> Usage {
-        Usage {
-            input_tokens: input,
-            output_tokens: output,
-            cache_creation_input_tokens: created,
-            cache_read_input_tokens: read,
-        }
-    }
-
-    #[test]
-    fn adding_accumulates_every_field() {
-        let mut total = usage(10, 20, Some(1), Some(2));
-        total.add(&usage(5, 7, Some(3), Some(4)));
-        assert_eq!(total.input_tokens, 15);
-        assert_eq!(total.output_tokens, 27);
-        assert_eq!(total.cache_creation_input_tokens, Some(4));
-        assert_eq!(total.cache_read_input_tokens, Some(6));
-    }
-
-    #[test]
-    fn cache_stays_none_until_a_provider_reports_it() {
-        // A provider without prompt caching must not make the session look
-        // like it cached zero tokens — it reported nothing at all.
-        let mut total = Usage::default();
-        total.add(&usage(10, 20, None, None));
-        assert_eq!(total.cache_creation_input_tokens, None);
-        assert_eq!(total.cache_read_input_tokens, None);
-    }
-
-    #[test]
-    fn the_first_report_promotes_none_to_some() {
-        let mut total = usage(10, 20, None, None);
-        total.add(&usage(0, 0, Some(5), Some(6)));
-        assert_eq!(total.cache_creation_input_tokens, Some(5));
-        assert_eq!(total.cache_read_input_tokens, Some(6));
-    }
-
-    #[test]
-    fn total_counts_cache_tokens_as_well() {
-        // Cache reads and writes are input tokens reported separately, not a
-        // subset of input_tokens, so they add rather than overlap.
-        assert_eq!(usage(10, 20, Some(3), Some(4)).total(), 37);
-        assert_eq!(usage(10, 20, None, None).total(), 30);
-    }
-
-    #[test]
-    fn an_untouched_usage_is_empty() {
-        assert!(Usage::default().is_empty());
-        assert!(usage(0, 0, Some(0), Some(0)).is_empty());
-        assert!(!usage(0, 1, None, None).is_empty());
-        assert!(!usage(0, 0, Some(1), None).is_empty());
-    }
-
-    #[test]
-    fn accumulating_nothing_changes_nothing() {
-        let mut total = usage(10, 20, Some(1), Some(2));
-        let before = total.clone();
-        total.add(&Usage::default());
-        assert_eq!(total.input_tokens, before.input_tokens);
-        assert_eq!(total.output_tokens, before.output_tokens);
-        assert_eq!(
-            total.cache_creation_input_tokens,
-            before.cache_creation_input_tokens
-        );
-    }
-
-    #[test]
-    fn absorb_stream_takes_max_not_sum() {
-        let mut step = Usage::default();
-        // Anthropic split: input at start, output on the last delta.
-        step.absorb_stream(100, 0);
-        step.absorb_stream(0, 20);
-        assert_eq!(step.input_tokens, 100);
-        assert_eq!(step.output_tokens, 20);
-        // Repeated full snapshot (OpenAI include_usage on every chunk).
-        step.absorb_stream(100, 20);
-        step.absorb_stream(100, 20);
-        assert_eq!(step.input_tokens, 100);
-        assert_eq!(step.output_tokens, 20);
-        // Running total climbs; max tracks the last snapshot.
-        step.absorb_stream(100, 35);
-        assert_eq!(step.output_tokens, 35);
-    }
-
-    #[test]
-    fn absorb_stream_cache_does_not_double() {
-        let mut step = Usage::default();
-        step.absorb_stream_cache(8, 40);
-        step.absorb_stream_cache(8, 40);
-        assert_eq!(step.cache_creation_input_tokens, Some(8));
-        assert_eq!(step.cache_read_input_tokens, Some(40));
-        step.absorb_stream_cache(0, 0);
-        assert_eq!(step.cache_creation_input_tokens, Some(8));
-    }
 }
