@@ -108,6 +108,7 @@ fn convert_input(messages: &[Message]) -> Vec<Value> {
                                 "output": content,
                             }));
                         }
+                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
                     }
                 }
                 flush_message(&mut items, role, &mut texts);

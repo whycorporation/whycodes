@@ -798,6 +798,13 @@ impl ThinkingBlock {
         }
     }
 
+    /// Restore a completed thought from session history.
+    pub fn finished(text: impl Into<String>) -> Self {
+        let mut b = Self::new(text);
+        b.finish();
+        b
+    }
+
     pub fn elapsed_ms(&self) -> u128 {
         match self.finished_at {
             Some(end) => end.saturating_duration_since(self.started_at).as_millis(),
@@ -3060,6 +3067,18 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                                 }
                             };
                             image_labels.push(label);
+                        }
+                        ContentBlock::Thinking { text, .. } => {
+                            if !text.is_empty() {
+                                ui_blocks.push(ChatBlock::Thinking(ThinkingBlock::finished(
+                                    text.clone(),
+                                )));
+                            }
+                        }
+                        ContentBlock::RedactedThinking { .. } => {
+                            ui_blocks.push(ChatBlock::Thinking(ThinkingBlock::finished(
+                                "[redacted]".to_string(),
+                            )));
                         }
                     }
                 }

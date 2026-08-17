@@ -13,6 +13,7 @@ pub mod swarm;
 pub mod swarm_worktree;
 #[cfg(test)]
 mod tests;
+pub mod thinking_acc;
 pub mod title;
 pub mod tool_stream;
 

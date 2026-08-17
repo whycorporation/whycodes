@@ -10,7 +10,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent};
+use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
@@ -77,25 +77,7 @@ impl LlmProvider for CopilotProvider {
 
         let choice = &json["choices"][0];
         let message = &choice["message"];
-
-        let mut content: Vec<ContentBlock> = Vec::new();
-        if let Some(text) = message["content"].as_str()
-            && !text.is_empty()
-        {
-            content.push(ContentBlock::Text {
-                text: text.to_string(),
-            });
-        }
-        if let Some(tool_calls) = message["tool_calls"].as_array() {
-            for tc in tool_calls {
-                let func = &tc["function"];
-                content.push(ContentBlock::ToolUse {
-                    id: tc["id"].as_str().unwrap_or("").to_string(),
-                    name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
-                });
-            }
-        }
+        let content = crate::openai_compat::content_blocks_from_chat_message(message);
 
         let usage = &json["usage"];
         Ok(LlmResponse {

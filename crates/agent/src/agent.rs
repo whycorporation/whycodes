@@ -1081,6 +1081,12 @@ impl Agent {
             let mut request =
                 session.build_request(&tools, None, self.info.temperature, Some(true));
             request.use_prompt_cache = self.use_prompt_cache;
+            crate::thinking_acc::attach_thinking_request(
+                &mut request,
+                provider_name,
+                model,
+                self.info.model.as_ref(),
+            );
 
             // First LLM step: ephemeral intent posture (not stored in session;
             // keeps system prompt cache-stable). Notice is already on Intent event.
@@ -1113,6 +1119,7 @@ impl Agent {
             }
 
             let mut accumulated_text = String::new();
+            let mut thinking_acc = crate::thinking_acc::ThinkingAccumulator::new();
             let mut turn_usage = whycode_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
             let mut speculative_reads: Vec<crate::speculative_read::SpeculativeRead> = Vec::new();
@@ -1175,11 +1182,15 @@ impl Agent {
                     biased;
                     _ = wait_until_cancelled(&cancel) => {
                         crate::speculative_read::abort_all(&mut speculative_reads);
+                        let mut blocks = thinking_acc.into_blocks();
                         if !accumulated_text.is_empty() {
-                            session.add_assistant_message(vec![ContentBlock::Text {
+                            blocks.push(ContentBlock::Text {
                                 text: accumulated_text.clone(),
-                            }]);
+                            });
                             final_text.push_str(&accumulated_text);
+                        }
+                        if !blocks.is_empty() {
+                            session.add_assistant_message(blocks);
                         }
                         emit(&events, TurnEvent::Cancelled);
                         return Err(whycode_core::Error::Agent("Cancelled".into()));
@@ -1193,6 +1204,7 @@ impl Agent {
 
                 match event? {
                     StreamEvent::TextDelta { text } => {
+                        thinking_acc.flush();
                         if ttft_ms.is_none() {
                             ttft_ms = Some(user_turn_t0.elapsed().as_millis());
                         }
@@ -1200,6 +1212,7 @@ impl Agent {
                         accumulated_text.push_str(&text);
                     }
                     StreamEvent::ToolUse { id, name, input } => {
+                        thinking_acc.flush();
                         // Defer ToolStart until after argument fragments are
                         // merged — OpenAI streams send null/empty args first.
                         assembler.on_tool_use(id, name, input);
@@ -1237,6 +1250,7 @@ impl Agent {
                         if ttft_ms.is_none() {
                             ttft_ms = Some(user_turn_t0.elapsed().as_millis());
                         }
+                        thinking_acc.push_text(&text);
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::trace!(n = text.len(), "thinking delta");
                     }
@@ -1247,8 +1261,15 @@ impl Agent {
                         if ttft_ms.is_none() {
                             ttft_ms = Some(user_turn_t0.elapsed().as_millis());
                         }
+                        thinking_acc.push_text(&text);
                         emit(&events, TurnEvent::ThinkingDelta(text.clone()));
                         tracing::trace!(n = text.len(), "thinking delta");
+                    }
+                    StreamEvent::ThinkingSignature { signature } => {
+                        thinking_acc.push_signature(&signature);
+                    }
+                    StreamEvent::RedactedThinking { data } => {
+                        thinking_acc.push_redacted(&data);
                     }
                     StreamEvent::MessageStop => break,
                     StreamEvent::Usage {
@@ -1310,7 +1331,7 @@ impl Agent {
                 emit(&events, TurnEvent::Usage(turn_usage.clone()));
             }
 
-            let mut blocks: Vec<ContentBlock> = Vec::new();
+            let mut blocks: Vec<ContentBlock> = thinking_acc.into_blocks();
 
             if !accumulated_text.is_empty() {
                 blocks.push(ContentBlock::Text {

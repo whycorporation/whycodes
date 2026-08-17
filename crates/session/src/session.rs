@@ -87,6 +87,11 @@ fn message_tokens(msg: &Message) -> usize {
                     estimate_tokens(name) + estimate_tokens(&input.to_string())
                 }
                 ContentBlock::Image { .. } => 100,
+                ContentBlock::Thinking { text, signature } => {
+                    estimate_tokens(text)
+                        + signature.as_ref().map(|s| estimate_tokens(s)).unwrap_or(0)
+                }
+                ContentBlock::RedactedThinking { data } => estimate_tokens(data),
             })
             .sum(),
     }
@@ -1243,6 +1248,12 @@ impl Session {
                             }
                             ContentBlock::Image { .. } => {
                                 out.push_str("*[image]*\n\n");
+                            }
+                            ContentBlock::Thinking { text, .. } => {
+                                out.push_str(&format!("```thinking\n{text}\n```\n\n"));
+                            }
+                            ContentBlock::RedactedThinking { .. } => {
+                                out.push_str("*[redacted thinking]*\n\n");
                             }
                         }
                     }

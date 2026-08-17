@@ -97,6 +97,40 @@ fn test_anthropic_build_body_with_thinking() {
 }
 
 #[test]
+fn test_anthropic_build_body_uses_requested_budget() {
+    let provider = AnthropicProvider::new();
+    let mut request = make_basic_request();
+    request.thinking = Some(serde_json::json!({"enabled": true, "budget_tokens": 8000}));
+    let body = provider.build_body(&request, "claude-opus");
+    assert_eq!(body["thinking"]["budget_tokens"].as_u64().unwrap(), 8000);
+    assert!(body["max_tokens"].as_u64().unwrap() >= 8000 + 4096);
+}
+
+#[test]
+fn test_openai_build_body_sends_reasoning_effort() {
+    let provider = OpenAiProvider::new();
+    let mut request = make_basic_request();
+    request.thinking = Some(serde_json::json!({
+        "enabled": true,
+        "reasoning_effort": "high"
+    }));
+    let body = provider.build_body(&request, "gpt-5");
+    assert_eq!(body["reasoning_effort"].as_str().unwrap(), "high");
+}
+
+#[test]
+fn test_xai_build_body_sends_reasoning_effort() {
+    let provider = whycode_llm::xai::XaiProvider::new();
+    let mut request = make_basic_request();
+    request.thinking = Some(serde_json::json!({
+        "enabled": true,
+        "reasoning_effort": "low"
+    }));
+    let body = provider.build_body(&request, "grok-4");
+    assert_eq!(body["reasoning_effort"].as_str().unwrap(), "low");
+}
+
+#[test]
 fn test_anthropic_build_body_uses_top_level_system() {
     let provider = AnthropicProvider::new();
     let request = make_basic_request();

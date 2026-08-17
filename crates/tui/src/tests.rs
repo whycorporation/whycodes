@@ -1134,6 +1134,10 @@ fn load_messages_from_session_restores_user_and_assistant() {
     let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
     session.add_user_message("hello");
     session.add_assistant_message(vec![
+        ContentBlock::Thinking {
+            text: "plan".into(),
+            signature: Some("sig".into()),
+        },
         ContentBlock::Text {
             text: "hi there".into(),
         },
@@ -1159,6 +1163,13 @@ fn load_messages_from_session_restores_user_and_assistant() {
     );
     assert_eq!(msgs[1].role, ChatRole::Assistant);
     assert!(msgs[1].content.contains("hi there"));
+    assert!(
+        msgs[1]
+            .blocks
+            .iter()
+            .any(|b| matches!(b, crate::app::ChatBlock::Thinking(t) if t.text == "plan" && !t.is_running())),
+        "thinking block should restore as a finished thought"
+    );
     assert_eq!(msgs[1].tool_calls.len(), 1);
     assert_eq!(msgs[1].tool_calls[0].name, "read");
     assert_eq!(

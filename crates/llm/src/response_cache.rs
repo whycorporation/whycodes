@@ -268,6 +268,15 @@ fn hash_content(h: &mut FxHasher, content: &MessageContent) {
                     ContentBlock::Image { .. } => {
                         0x49u8.hash(h); // 'I' — images differ by presence only
                     }
+                    ContentBlock::Thinking { text, signature } => {
+                        0x54u8.hash(h);
+                        text.hash(h);
+                        signature.hash(h);
+                    }
+                    ContentBlock::RedactedThinking { data } => {
+                        0x52u8.hash(h);
+                        data.hash(h);
+                    }
                 }
             }
         }

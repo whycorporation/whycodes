@@ -108,12 +108,15 @@ pub fn detect_capabilities(provider: &str, model: &str) -> ModelCapabilities {
 
     let thinking = model_lower.contains("claude-sonnet-4")
         || model_lower.contains("claude-opus-4")
+        || model_lower.contains("claude-4")
         || model_lower.contains("claude-3-7")
         || model_lower.contains("claude-3.7")
         || model_lower.contains("gpt-4.5")
+        || model_lower.contains("gpt-5")
         || model_lower.starts_with("o1")
         || model_lower.starts_with("o3")
         || model_lower.starts_with("o4")
+        || model_lower.contains("grok-4")
         || model_lower.contains("grok-3-mini")
         || model_lower.contains("reasoner")
         || model_lower.contains("thinking");
@@ -197,6 +200,15 @@ fn known_capabilities(model_lower: &str) -> Option<ModelCapabilities> {
             vision: true,
             thinking: true,
             context_window: 128_000,
+            caching: false,
+        });
+    }
+    if model_lower.starts_with("gpt-5") {
+        return Some(ModelCapabilities {
+            tools: true,
+            vision: true,
+            thinking: true,
+            context_window: 200_000,
             caching: false,
         });
     }
@@ -439,8 +451,17 @@ mod tests {
     fn test_grok_catalog() {
         let caps = detect_capabilities("xai", "grok-4");
         assert_eq!(caps.context_window, 256_000);
+        assert!(caps.thinking);
         let caps = detect_capabilities("xai", "grok-3");
         assert_eq!(caps.context_window, 131_072);
+    }
+
+    #[test]
+    fn gpt5_and_claude_4_think() {
+        assert!(detect_capabilities("openai", "gpt-5").thinking);
+        assert!(detect_capabilities("openai", "gpt-5-mini").thinking);
+        assert!(detect_capabilities("anthropic", "claude-opus-4-1").thinking);
+        assert!(detect_capabilities("anthropic", "claude-4-sonnet").thinking);
     }
 
     #[test]
