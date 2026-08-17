@@ -839,4 +839,92 @@ mod tests {
         let data = pop_sse_data(&mut buf).unwrap();
         assert!(data.contains("cancelled"));
     }
+
+    #[test]
+    fn pop_sse_joins_multiline_data() {
+        let mut buf = "data: one\ndata: two\n\n".to_string();
+        assert_eq!(pop_sse_data(&mut buf).as_deref(), Some("one\ntwo"));
+        assert!(pop_sse_data(&mut buf).is_none());
+    }
+
+    #[test]
+    fn normalize_https_and_whitespace() {
+        assert_eq!(
+            normalize_base("  https://example.test/v1/  "),
+            "https://example.test/v1"
+        );
+        assert_eq!(normalize_base("localhost:9"), "http://localhost:9");
+    }
+
+    #[test]
+    fn resolve_binary_prefers_explicit_then_env() {
+        let p = resolve_binary(Some(Path::new("/opt/whycode"))).unwrap();
+        assert_eq!(p, PathBuf::from("/opt/whycode"));
+        let prev = std::env::var_os("WHYCODE");
+        unsafe { std::env::set_var("WHYCODE", "/env/whycode") };
+        let p = resolve_binary(None).unwrap();
+        assert_eq!(p, PathBuf::from("/env/whycode"));
+        match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODE", v) },
+            None => unsafe { std::env::remove_var("WHYCODE") },
+        }
+    }
+
+    #[test]
+    fn status_error_maps_http_codes() {
+        assert_eq!(
+            status_error(reqwest::StatusCode::NOT_FOUND, "x").code,
+            ErrorCode::UnknownSession
+        );
+        assert_eq!(
+            status_error(reqwest::StatusCode::BAD_REQUEST, "x").code,
+            ErrorCode::InvalidRequest
+        );
+        assert_eq!(
+            status_error(reqwest::StatusCode::UNAUTHORIZED, "x").code,
+            ErrorCode::Auth
+        );
+        assert_eq!(
+            status_error(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "x").code,
+            ErrorCode::Internal
+        );
+        let e = SdkError::new(ErrorCode::Timeout, "slow");
+        assert!(e.to_string().contains("timeout") || e.to_string().contains("slow"));
+    }
+
+    #[test]
+    fn ephemeral_port_binds() {
+        let p = ephemeral_port().unwrap();
+        assert!(p > 0);
+    }
+
+    #[test]
+    fn launch_options_default() {
+        let o = LaunchOptions::default();
+        assert!(o.inherit_logins);
+        assert!(o.binary.is_none());
+        assert!(o.port.is_none());
+    }
+
+    #[tokio::test]
+    async fn take_stderr_empty_without_child() {
+        let mut none = None;
+        assert!(take_stderr(&mut none).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn launch_missing_binary_is_serve_not_found() {
+        let err = match WhycodeClient::launch(LaunchOptions {
+            binary: Some(PathBuf::from("/no/such/whycode-binary")),
+            inherit_logins: false,
+            startup_timeout: Duration::from_millis(200),
+            ..Default::default()
+        })
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected ServeNotFound"),
+        };
+        assert_eq!(err.code, ErrorCode::ServeNotFound);
+    }
 }

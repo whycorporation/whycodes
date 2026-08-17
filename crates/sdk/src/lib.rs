@@ -6,6 +6,9 @@
 
 pub mod client;
 
+#[cfg(test)]
+mod mock_tests;
+
 pub use client::{EventStream, LaunchOptions, RunOptions, WhycodeClient};
 pub use whycode_protocol::sdk::{
     CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelInfo,

@@ -210,10 +210,7 @@ impl LspClient {
         let resp = self
             .request("textDocument/hover", serde_json::to_value(&params)?)
             .await?;
-        match resp.result {
-            Some(result) if !result.is_null() => Ok(Some(serde_json::from_value(result)?)),
-            _ => Ok(None),
-        }
+        parse_hover_result(resp.result)
     }
 
     /// Go to definition.
@@ -227,17 +224,7 @@ impl LspClient {
         let resp = self
             .request("textDocument/definition", serde_json::to_value(&params)?)
             .await?;
-        match resp.result {
-            Some(result) if !result.is_null() => {
-                // Can be a single Location or Vec<Location>
-                if result.is_array() {
-                    Ok(serde_json::from_value(result)?)
-                } else {
-                    Ok(vec![serde_json::from_value(result)?])
-                }
-            }
-            _ => Ok(vec![]),
-        }
+        parse_locations(resp.result)
     }
 
     /// Find references.
@@ -248,22 +235,14 @@ impl LspClient {
             "context": { "includeDeclaration": false }
         });
         let resp = self.request("textDocument/references", params).await?;
-        match resp.result {
-            Some(result) if !result.is_null() => Ok(serde_json::from_value(result)?),
-            _ => Ok(vec![]),
-        }
+        parse_locations(resp.result)
     }
 
     // ── Low-level JSON-RPC helpers ───────────────────────────────────────────
 
     async fn send_message(&self, msg: &serde_json::Value) -> Result<()> {
-        let body = serde_json::to_string(msg)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
         let mut writer = self.writer.lock().await;
-        writer.write_all(header.as_bytes()).await?;
-        writer.write_all(body.as_bytes()).await?;
-        writer.flush().await?;
-        Ok(())
+        write_framed(&mut *writer, msg).await
     }
 
     async fn notify(&self, method: &str, params: serde_json::Value) -> Result<()> {
@@ -380,6 +359,40 @@ fn line_strip_prefix<'a>(prefix: &str, line: &'a str) -> Option<&'a str> {
     line.strip_prefix(prefix)
 }
 
+pub(crate) fn encode_lsp_frame(body: &str) -> Vec<u8> {
+    format!("Content-Length: {}\r\n\r\n{body}", body.len()).into_bytes()
+}
+
+pub(crate) async fn write_framed<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    msg: &serde_json::Value,
+) -> Result<()> {
+    let body = serde_json::to_string(msg)?;
+    writer.write_all(&encode_lsp_frame(&body)).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+pub(crate) fn parse_hover_result(result: Option<serde_json::Value>) -> Result<Option<HoverResult>> {
+    match result {
+        Some(result) if !result.is_null() => Ok(Some(serde_json::from_value(result)?)),
+        _ => Ok(None),
+    }
+}
+
+pub(crate) fn parse_locations(result: Option<serde_json::Value>) -> Result<Vec<Location>> {
+    match result {
+        Some(result) if !result.is_null() => {
+            if result.is_array() {
+                Ok(serde_json::from_value(result)?)
+            } else {
+                Ok(vec![serde_json::from_value(result)?])
+            }
+        }
+        _ => Ok(vec![]),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,5 +441,80 @@ mod tests {
             Some("123")
         );
         assert_eq!(line_strip_prefix("Content-Length: ", "foo"), None);
+    }
+
+    #[test]
+    fn more_extensions_have_servers_and_ids() {
+        assert_eq!(
+            language_server_for_extension("js"),
+            Some(("typescript-language-server", vec!["--stdio"]))
+        );
+        assert_eq!(language_server_for_extension("c"), Some(("clangd", vec![])));
+        assert_eq!(
+            language_server_for_extension("java"),
+            Some(("jdtls", vec![]))
+        );
+        assert_eq!(
+            language_server_for_extension("lua"),
+            Some(("lua-language-server", vec![]))
+        );
+        assert_eq!(language_server_for_extension("zig"), Some(("zls", vec![])));
+        assert_eq!(
+            language_server_for_extension("swift"),
+            Some(("sourcekit-lsp", vec![]))
+        );
+        assert_eq!(language_id_for_extension("go"), "go");
+        assert_eq!(language_id_for_extension("yaml"), "yaml");
+        assert_eq!(language_id_for_extension("toml"), "toml");
+        assert_eq!(language_id_for_extension("json"), "json");
+        assert_eq!(language_id_for_extension("java"), "java");
+        assert_eq!(language_id_for_extension("lua"), "lua");
+    }
+
+    #[test]
+    fn encode_frame_and_parse_results() {
+        let frame = encode_lsp_frame("{}");
+        let s = String::from_utf8(frame).unwrap();
+        assert!(s.starts_with("Content-Length: 2\r\n\r\n"));
+        assert!(s.ends_with("{}"));
+
+        assert!(parse_hover_result(None).unwrap().is_none());
+        assert!(
+            parse_hover_result(Some(serde_json::Value::Null))
+                .unwrap()
+                .is_none()
+        );
+        let hover = parse_hover_result(Some(serde_json::json!({
+            "contents": "hello"
+        })))
+        .unwrap()
+        .unwrap();
+        assert_eq!(hover.contents_string(), "hello");
+
+        assert!(parse_locations(None).unwrap().is_empty());
+        assert!(
+            parse_locations(Some(serde_json::Value::Null))
+                .unwrap()
+                .is_empty()
+        );
+        let one = parse_locations(Some(serde_json::json!({
+            "uri": "file:///a.rs",
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}
+        })))
+        .unwrap();
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].uri, "file:///a.rs");
+        let many = parse_locations(Some(serde_json::json!([{
+            "uri": "file:///a.rs",
+            "range": {"start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1}}
+        }])))
+        .unwrap();
+        assert_eq!(many.len(), 1);
+    }
+
+    #[test]
+    fn command_available_known_and_missing() {
+        assert!(command_available("sh") || command_available("true"));
+        assert!(!command_available("whycode-definitely-not-on-path-xyz"));
     }
 }

@@ -18,3 +18,4 @@ tempfile.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+axum = { version = "0.7", features = ["macros"] }

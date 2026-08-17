@@ -75,8 +75,8 @@ not a frames-per-second race.
 
 ## Coverage
 
-Workspace line coverage **78.59%** (Linux x86_64, 2026-08-17). CI fails
-below **77%**. Method and how to re-measure:
+Workspace line coverage **79.47%** (Linux x86_64, 2026-08-17). CI fails
+below **78%**. Method and how to re-measure:
 [docs/coverage.md](docs/coverage.md).
 
 | Crate | Lines |
@@ -86,18 +86,18 @@ below **77%**. Method and how to re-measure:
 | format | 89.9% |
 | tui | 85.9% |
 | index | 85.5% |
-| session | 84.6% |
+| session | 85.2% |
 | core | 80.4% |
+| sdk | 78.7% |
 | memory | 78.5% |
 | tools | 77.6% |
 | server | 77.1% |
 | llm | 75.8% |
 | mcp | 73.5% |
 | auth | 64.9% |
-| lsp | 58.0% |
-| sdk | 57.1% |
-| agent | 56.0% |
-| cli | 39.7% |
+| lsp | 64.1% |
+| agent | 60.1% |
+| cli | 43.6% |
 
 ## Documentation
 
