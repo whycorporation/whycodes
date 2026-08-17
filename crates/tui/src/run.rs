@@ -200,6 +200,249 @@ pub struct TuiRunOptions {
 /// Sentinel for `TuiRunOptions::resume_session_id`: most recently updated session.
 pub const RESUME_LATEST: &str = "__latest__";
 
+/// Everything `run` needs before it touches the terminal.
+struct TuiBoot {
+    app: TuiApp,
+    config: Config,
+    file_index: Arc<whycode_index::WorkspaceIndex>,
+    agent: Agent,
+    session: Session,
+    history: SessionHistory,
+    perm_prompter: Arc<ChannelPermissionPrompter>,
+    question_prompter: Arc<ChannelQuestionPrompter>,
+    perm_rx: mpsc::UnboundedReceiver<whycode_agent::PermissionRequest>,
+    question_rx: mpsc::UnboundedReceiver<QuestionRequest>,
+    session_claims: whycode_core::FileClaimRegistry,
+    missing_key: bool,
+}
+
+fn apply_resume(
+    app: &mut TuiApp,
+    session: &mut Session,
+    system_prompt: &str,
+    want: &str,
+    auto_title: bool,
+) {
+    match try_load_session(want) {
+        Ok(Some(loaded)) => {
+            let n = loaded.messages.len();
+            *session = loaded;
+            session.system_prompt = system_prompt.to_string();
+            if auto_title && session.maybe_upgrade_title_from_history() {
+                persist_session_best_effort(session, "title_backfill");
+            }
+            let title = session.title.clone();
+            app.load_messages_from_session(session);
+            app.toasts.push(
+                crate::toast::ToastKind::Success,
+                format!("Resumed · {title} ({n} msgs)"),
+            );
+        }
+        Ok(None) => {
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                if want == RESUME_LATEST {
+                    "No saved sessions to continue".into()
+                } else {
+                    format!("Session not found: {want}")
+                },
+            );
+        }
+        Err(e) => {
+            app.toasts.push(
+                crate::toast::ToastKind::Error,
+                format!("Resume failed: {e}"),
+            );
+        }
+    }
+}
+
+async fn apply_remote_hydrate(
+    app: &mut TuiApp,
+    session: &mut Session,
+    rem: &crate::remote::RemoteAttach,
+) {
+    match crate::remote::fetch_messages(&rem.base_url, &rem.session_id).await {
+        Ok((title, msgs)) => {
+            session.id = rem.session_id.clone();
+            if !title.is_empty() {
+                session.title = title;
+            }
+            if !msgs.is_empty() {
+                session.messages = msgs;
+                app.load_messages_from_session(session);
+            }
+            app.session_title = session.title.clone();
+        }
+        Err(e) => {
+            session.id = rem.session_id.clone();
+            app.toasts.push(
+                crate::toast::ToastKind::Warning,
+                format!("Remote hydrate: {e}"),
+            );
+        }
+    }
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        format!("Attached · {} (auto-approves tools)", rem.base_url),
+    );
+}
+
+async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
+    let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
+    let mut app = TuiApp::new(tui_cfg);
+
+    let file_index = whycode_index::WorkspaceIndex::start(
+        whycode_index::WorkspaceIndex::project_roots(&opts.project_dir),
+    );
+    app.set_file_index(file_index.clone());
+
+    app.provider_name = opts.provider.clone();
+    app.model_name = opts.model.clone();
+    app.agent_name = opts.agent_name.clone();
+    app.project_dir = opts
+        .project_dir
+        .canonicalize()
+        .unwrap_or_else(|_| opts.project_dir.clone());
+    app.project_label = app
+        .project_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| app.project_dir.display().to_string());
+    app.refresh_git_branch();
+    app.apply_context_window(
+        &opts.provider,
+        &opts.model,
+        opts.config
+            .configured_context_window(&opts.provider, &opts.model),
+        opts.config.session.max_context_tokens as u64,
+    );
+
+    let mut config = opts.config.clone();
+    config.load_command_files(&opts.project_dir);
+
+    app.primary_agents = config
+        .agents
+        .iter()
+        .filter(|a| a.mode == AgentMode::Primary || a.mode == AgentMode::All)
+        .map(|a| a.name.clone())
+        .collect();
+    if app.primary_agents.is_empty() {
+        app.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
+    }
+    if let Some(idx) = app
+        .primary_agents
+        .iter()
+        .position(|n| n == &opts.agent_name)
+    {
+        app.agent_cycle_idx = idx;
+    }
+
+    let missing_key = opts.api_key.is_empty();
+    app.status_message = if missing_key {
+        format!(
+            "agent={}  {}/{}  — no API key · /connect  ? help",
+            opts.agent_name, opts.provider, opts.model
+        )
+    } else {
+        format!(
+            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  ? help",
+            opts.agent_name, opts.provider, opts.model
+        )
+    };
+
+    let agent_info = config
+        .get_agent(&opts.agent_name)
+        .cloned()
+        .unwrap_or_else(|| whycode_core::types::AgentInfo {
+            name: opts.agent_name.clone(),
+            description: "Default".into(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet {
+                allow_file_writes: true,
+                allow_network: true,
+                allow_shell: true,
+                ..whycode_core::types::PermissionSet::default()
+            },
+            model: None,
+            system_prompt: None,
+            temperature: None,
+            top_p: None,
+        });
+
+    let base = agent_info
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| Agent::system_prompt_for(&opts.agent_name));
+    let system_prompt = with_project_memory(
+        &Agent::with_agents_md(&base, &opts.project_dir),
+        &opts.project_dir,
+        &config,
+        None,
+    );
+
+    let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
+    let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
+
+    let q_timeout = if config.tools.question.timeout_enabled {
+        Some(Duration::from_secs(
+            config.tools.question.timeout_secs.max(1),
+        ))
+    } else {
+        None
+    };
+    let (question_prompter, question_rx) = ChannelQuestionPrompter::new(q_timeout);
+    let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
+
+    config.general.project_path = Some(opts.project_dir.clone());
+    let session_claims = whycode_core::FileClaimRegistry::new();
+    let agent = Agent::new(agent_info)
+        .with_config(&config)
+        .with_file_index(file_index.clone())
+        .with_session_claims(session_claims.clone())
+        .with_permission_prompter(
+            Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+        )
+        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
+        .with_plugins(Some(opts.project_dir.as_path()));
+
+    let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
+    app.session_title = session.title.clone();
+    if app.session_list.sessions.is_empty() {
+        app.session_list.sessions = load_session_entries();
+    }
+    let history = SessionHistory::new();
+
+    if let Some(ref want) = opts.resume_session_id {
+        apply_resume(
+            &mut app,
+            &mut session,
+            &system_prompt,
+            want,
+            opts.config.session.auto_title,
+        );
+    }
+
+    if let Some(ref rem) = opts.remote {
+        apply_remote_hydrate(&mut app, &mut session, rem).await;
+    }
+
+    TuiBoot {
+        app,
+        config,
+        file_index,
+        agent,
+        session,
+        history,
+        perm_prompter,
+        question_prompter,
+        perm_rx,
+        question_rx,
+        session_claims,
+        missing_key,
+    }
+}
+
 /// True when a full-screen TUI can attach to a real terminal.
 ///
 /// Prefer the controlling terminal (`/dev/tty`) so IDEs/wrappers that capture
@@ -302,205 +545,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // Wall clock for the Cline-style exit summary (process open → quit).
     let session_started = Instant::now();
 
-    let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
-    let mut app = TuiApp::new(tui_cfg);
-
-    // Workspace file index: background scan of the project + allowed external
-    // dirs; powers the `@file` picker (Ctrl+Space) and, once warm, the file
-    // tools' glob/grep/list fast paths.
-    let file_index = whycode_index::WorkspaceIndex::start(
-        whycode_index::WorkspaceIndex::project_roots(&opts.project_dir),
-    );
-    app.set_file_index(file_index.clone());
-
-    // Session chrome labels
-    app.provider_name = opts.provider.clone();
-    app.model_name = opts.model.clone();
-    app.agent_name = opts.agent_name.clone();
-    app.project_dir = opts
-        .project_dir
-        .canonicalize()
-        .unwrap_or_else(|_| opts.project_dir.clone());
-    app.project_label = app
-        .project_dir
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| app.project_dir.display().to_string());
-    app.refresh_git_branch();
-    app.apply_context_window(
-        &opts.provider,
-        &opts.model,
-        opts.config
-            .configured_context_window(&opts.provider, &opts.model),
-        opts.config.session.max_context_tokens as u64,
-    );
-
-    let mut config = opts.config.clone();
-    config.load_command_files(&opts.project_dir);
-
-    // Primary agents for Ctrl+T cycle
-    app.primary_agents = config
-        .agents
-        .iter()
-        .filter(|a| a.mode == AgentMode::Primary || a.mode == AgentMode::All)
-        .map(|a| a.name.clone())
-        .collect();
-    if app.primary_agents.is_empty() {
-        app.primary_agents = vec!["build".into(), "plan".into(), "ask".into()];
-    }
-    if let Some(idx) = app
-        .primary_agents
-        .iter()
-        .position(|n| n == &opts.agent_name)
-    {
-        app.agent_cycle_idx = idx;
-    }
-
-    let missing_key = opts.api_key.is_empty();
-    app.status_message = if missing_key {
-        format!(
-            "agent={}  {}/{}  — no API key · /connect  ? help",
-            opts.agent_name, opts.provider, opts.model
-        )
-    } else {
-        format!(
-            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  ? help",
-            opts.agent_name, opts.provider, opts.model
-        )
-    };
-
-    let agent_info = config
-        .get_agent(&opts.agent_name)
-        .cloned()
-        .unwrap_or_else(|| whycode_core::types::AgentInfo {
-            name: opts.agent_name.clone(),
-            description: "Default".into(),
-            mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet {
-                allow_file_writes: true,
-                allow_network: true,
-                allow_shell: true,
-                ..whycode_core::types::PermissionSet::default()
-            },
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        });
-
-    let base = agent_info
-        .system_prompt
-        .clone()
-        .unwrap_or_else(|| Agent::system_prompt_for(&opts.agent_name));
-    let system_prompt = with_project_memory(
-        &Agent::with_agents_md(&base, &opts.project_dir),
-        &opts.project_dir,
-        &config,
-        None,
-    );
-
-    // Permission channel: agent blocks until TUI replies (shared across agent switches)
-    let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
-    let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
-
-    // Questionnaire channel (Grok-style `question` tool)
-    let q_timeout = if config.tools.question.timeout_enabled {
-        Some(Duration::from_secs(
-            config.tools.question.timeout_secs.max(1),
-        ))
-    } else {
-        None
-    };
-    let (question_prompter, question_rx) = ChannelQuestionPrompter::new(q_timeout);
-    let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
-
-    config.general.project_path = Some(opts.project_dir.clone());
-    // Plugins only at boot — MCP connect can block on slow servers. Defer MCP
-    // (+ memory auto-index) until after the first frame so the TUI paints ASAP.
-    let session_claims = whycode_core::FileClaimRegistry::new();
-    let mut agent = Agent::new(agent_info)
-        .with_config(&config)
-        .with_file_index(file_index.clone())
-        .with_session_claims(session_claims.clone())
-        .with_permission_prompter(
-            Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
-        )
-        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
-        .with_plugins(Some(opts.project_dir.as_path()));
-
+    let boot = prepare_tui_boot(&opts).await;
+    let mut app = boot.app;
+    let config = boot.config;
+    let file_index = boot.file_index;
+    let mut agent = boot.agent;
+    let session = boot.session;
+    let history = boot.history;
+    let perm_prompter = boot.perm_prompter;
+    let question_prompter = boot.question_prompter;
+    let perm_rx = boot.perm_rx;
+    let question_rx = boot.question_rx;
+    let session_claims = boot.session_claims;
+    let missing_key = boot.missing_key;
     let remote = opts.remote.clone();
-    let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
-    app.session_title = session.title.clone();
-    // Welcome /resume list (Grok home) — cheap SQLite read, newest first.
-    if app.session_list.sessions.is_empty() {
-        app.session_list.sessions = load_session_entries();
-    }
-    // Code RAG auto-index deferred past first paint (see loop below).
-    let history = SessionHistory::new();
-
-    // CLI `--continue` / `--resume`: hydrate before first paint when possible.
-    if let Some(ref want) = opts.resume_session_id {
-        match try_load_session(want) {
-            Ok(Some(loaded)) => {
-                let n = loaded.messages.len();
-                session = loaded;
-                // system_prompt is not persisted yet — keep the live agent prompt.
-                session.system_prompt = system_prompt.clone();
-                if opts.config.session.auto_title && session.maybe_upgrade_title_from_history() {
-                    persist_session_best_effort(&session, "title_backfill");
-                }
-                let title = session.title.clone();
-                app.load_messages_from_session(&session);
-                app.toasts.push(
-                    crate::toast::ToastKind::Success,
-                    format!("Resumed · {title} ({n} msgs)"),
-                );
-            }
-            Ok(None) => {
-                app.toasts.push(
-                    crate::toast::ToastKind::Warning,
-                    if want == RESUME_LATEST {
-                        "No saved sessions to continue".into()
-                    } else {
-                        format!("Session not found: {want}")
-                    },
-                );
-            }
-            Err(e) => {
-                app.toasts.push(
-                    crate::toast::ToastKind::Error,
-                    format!("Resume failed: {e}"),
-                );
-            }
-        }
-    }
-
-    if let Some(ref rem) = remote {
-        match crate::remote::fetch_messages(&rem.base_url, &rem.session_id).await {
-            Ok((title, msgs)) => {
-                session.id = rem.session_id.clone();
-                if !title.is_empty() {
-                    session.title = title;
-                }
-                if !msgs.is_empty() {
-                    session.messages = msgs;
-                    app.load_messages_from_session(&session);
-                }
-                app.session_title = session.title.clone();
-            }
-            Err(e) => {
-                session.id = rem.session_id.clone();
-                app.toasts.push(
-                    crate::toast::ToastKind::Warning,
-                    format!("Remote hydrate: {e}"),
-                );
-            }
-        }
-        app.toasts.push(
-            crate::toast::ToastKind::Info,
-            format!("Attached · {} (auto-approves tools)", rem.base_url),
-        );
-    }
 
     let mut provider = opts.provider.clone();
     let mut model = opts.model.clone();
@@ -667,18 +725,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     // Title may arrive before TurnOutcome restores the real rt.session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
 
-    // Keep home empty so the brand logo shows (no system spam).
-    // Key missing is communicated via footer "Get started /connect".
-    if missing_key {
-        app.status_message = "no API key · /connect".to_string();
-    }
-
-    if let Some(p) = opts.initial_prompt
-        && !p.is_empty()
-    {
-        app.add_message(ChatRole::User, &p);
-        app.pending_prompt = Some(p);
-    }
+    apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
 
     // Inert unless WHYCODE_BENCH is set; see crate::bench.
     let bench = crate::bench::config_from_env();
@@ -799,50 +846,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     AgentState::WaitingForPermission | AgentState::WaitingForQuestion
                 )
             {
-                const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-                spinner_frame = (spinner_frame + 1) % FRAMES.len();
-                app.spinner_frame = spinner_frame;
-                app.mark_dirty();
-                let generic = app.status_message.contains("Generating")
-                    || app
-                        .status_message
-                        .chars()
-                        .next()
-                        .map(|c| "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(c))
-                        .unwrap_or(false);
-                if generic {
-                    // Spinner lives on the turn-status / footer glyphs — keep
-                    // status text free of chrome so the turn strip doesn't
-                    // repeat "Generating… Esc cancel".
-                    app.status_message.clear();
-                }
+                tick_spinner(&mut app, &mut spinner_frame);
             }
 
-            // ── Permission requests (queued; show next when idle) ─────
+            // ── Permission / question requests (queued; one at a time) ─
             while let Ok(req) = rt.perm_rx.try_recv() {
                 rt.pending_perm_queue.push_back(req);
             }
-            if !matches!(
-                app.current_agent_state,
-                AgentState::WaitingForPermission | AgentState::WaitingForQuestion
-            ) && let Some(front) = rt.pending_perm_queue.front()
-            {
-                app.ask_permission(front.tool_name.clone(), front.detail.clone());
-                app.mark_dirty();
-            }
-
-            // ── Question requests (queued; one questionnaire at a time) ─
             while let Ok(req) = rt.question_rx.try_recv() {
                 rt.pending_question_queue.push_back(req);
             }
-            if !matches!(
-                app.current_agent_state,
-                AgentState::WaitingForPermission | AgentState::WaitingForQuestion
-            ) && let Some(front) = rt.pending_question_queue.front()
-            {
-                app.ask_question(front.questions.clone());
-                app.mark_dirty();
-            }
+            maybe_open_queued_dialog(&mut app, &rt);
 
             // ── Async title refine (does not hold rt.agent_busy) ─────────
             while let Ok((sid, title)) = title_rx.try_recv() {
@@ -914,22 +928,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 close_session_slot(&mut app, &mut rt, &mut runtimes, &mut mru, close_idx);
             }
 
-            // ── Dashboard switch selection ──────────────────────────
-            if let Some(target) = app.pending_session_switch.take()
-                && target != usize::MAX
-                && target < runtimes.len()
-            {
-                switch_to_runtime(&mut app, &mut rt, &mut runtimes, target);
-                mru.retain(|&i| i != target);
-                mru.push(target);
-                app.toasts.push(
-                    crate::toast::ToastKind::Success,
-                    format!(
-                        "Session · {} ({} live)",
-                        rt.session.title,
-                        runtimes.len() + 1
-                    ),
-                );
+            if let Some(target) = app.pending_session_switch.take() {
+                apply_dashboard_switch(&mut app, &mut rt, &mut runtimes, &mut mru, target);
             }
 
             if let Some(id) = app.pending_session_id.take() {
@@ -1075,12 +1075,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             // Drain scheduled /loop prompts when idle (no pending manual submit).
-            if !rt.agent_busy
-                && app.pending_prompt.is_none()
-                && let Some(next) = app.pending_auto_prompts.pop_front()
-            {
-                app.pending_prompt = Some(next);
-            }
+            queue_auto_prompt_if_idle(&mut app, rt.agent_busy);
 
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
@@ -1168,27 +1163,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 let title_provider = provider.clone();
                 let title_session_model = model.clone();
 
-                // Move rt.agent + rt.session into background task
-                let ag = std::mem::replace(
-                    &mut rt.agent,
-                    // temporary placeholder; restored when turn completes
-                    Agent::new(whycode_core::types::AgentInfo {
-                        name: "_pending".into(),
-                        description: String::new(),
-                        mode: AgentMode::Primary,
-                        permission: whycode_core::types::PermissionSet::default(),
-                        model: None,
-                        system_prompt: Some(String::new()),
-                        temperature: None,
-                        top_p: None,
-                    }),
-                );
-                // Snapshot for force-abort recovery (task owns the live rt.session).
-                rt.session_backup = Some(rt.session.clone());
-                let sess = std::mem::replace(
-                    &mut rt.session,
-                    Session::new(project_dir.clone(), String::new()),
-                );
+                let (ag, sess) = take_turn_owner(&mut rt, &project_dir);
 
                 rt.turn_join = Some(tokio::spawn(async move {
                     let agent = ag;
@@ -1413,33 +1388,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         && app.mode == AppMode::Normal
                     {
                         if runtimes.len() + 1 >= MAX_LIVE_SESSIONS {
-                            app.toasts.push(
-                                crate::toast::ToastKind::Warning,
-                                format!("Session limit ({MAX_LIVE_SESSIONS}) — close one first"),
-                            );
+                            warn_session_limit(&mut app);
                             continue;
                         }
-                        app.yield_view(&mut rt.view);
-                        let parked = std::mem::replace(
-                            &mut rt,
-                            spawn_new_session_runtime(
-                                &app.agent_name,
-                                &config,
-                                &project_dir,
-                                &file_index,
-                                session_claims.clone(),
-                            )
-                            .await,
-                        );
-                        runtimes.push(parked);
-                        mru.push(runtimes.len() - 1);
-                        app.restore_view(&rt.view);
-                        app.session_title = rt.session.title.clone();
-                        app.focus = FocusPane::Prompt;
-                        app.toasts.push(
-                            crate::toast::ToastKind::Info,
-                            format!("New session ({} live)", runtimes.len() + 1),
-                        );
+                        let fresh = spawn_new_session_runtime(
+                            &app.agent_name,
+                            &config,
+                            &project_dir,
+                            &file_index,
+                            session_claims.clone(),
+                        )
+                        .await;
+                        adopt_fresh_runtime(&mut app, &mut rt, &mut runtimes, &mut mru, fresh);
                         continue;
                     }
 
@@ -1453,21 +1413,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         && app.mode == AppMode::Normal
                         && !runtimes.is_empty()
                     {
-                        let idx = if key.code == KeyCode::PageDown {
-                            0
-                        } else {
-                            runtimes.len() - 1
-                        };
-                        switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
-                        mru.retain(|&i| i != idx);
-                        mru.push(idx);
-                        app.toasts.push(
-                            crate::toast::ToastKind::Info,
-                            format!(
-                                "Session · {} ({} live)",
-                                rt.session.title,
-                                runtimes.len() + 1
-                            ),
+                        cycle_live_session(
+                            &mut app,
+                            &mut rt,
+                            &mut runtimes,
+                            &mut mru,
+                            key.code == KeyCode::PageDown,
                         );
                         continue;
                     }
@@ -1495,19 +1446,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         && app.mode == AppMode::Normal
                         && !runtimes.is_empty()
                     {
-                        let idx = mru.pop().unwrap_or(runtimes.len() - 1);
-                        let idx = idx.min(runtimes.len() - 1);
-                        switch_to_runtime(&mut app, &mut rt, &mut runtimes, idx);
-                        mru.retain(|&i| i != idx);
-                        mru.push(idx);
-                        app.toasts.push(
-                            crate::toast::ToastKind::Info,
-                            format!(
-                                "Session · {} ({} live)",
-                                rt.session.title,
-                                runtimes.len() + 1
-                            ),
-                        );
+                        switch_mru_session(&mut app, &mut rt, &mut runtimes, &mut mru);
                         continue;
                     }
 
@@ -1517,38 +1456,28 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         && key.code == KeyCode::Enter
                         && app.mode == AppMode::Normal
                         && !rt.agent_busy
+                        && let Some(text) = slash_command_from_prompt(&app)
                     {
-                        let mut text = app.input_buffer.trim().to_string();
-                        if app.slash_suggest.active
-                            && let Some(cmd) = app.slash_suggest.current()
-                        {
-                            text = cmd.name.to_string();
-                        }
-                        if text.starts_with('/') {
-                            app.input_buffer.clear();
-                            app.input_cursor = 0;
-                            app.pending_pastes.clear();
-                            app.slash_suggest.dismiss();
-                            handle_slash(
-                                &text,
-                                &mut SlashContext {
-                                    app: &mut app,
-                                    session: &mut rt.session,
-                                    history: &mut rt.history,
-                                    agent: &mut rt.agent,
-                                    config: &config,
-                                    project_dir: &project_dir,
-                                    provider: &mut provider,
-                                    model: &mut model,
-                                    api_key: &mut api_key,
-                                    perm_prompter: Arc::clone(&rt.perm_prompter),
-                                    question_prompter: Arc::clone(&rt.question_prompter),
-                                    auth_tx: auth_tx.clone(),
-                                },
-                            )
-                            .await;
-                            continue;
-                        }
+                        consume_slash_draft(&mut app);
+                        handle_slash(
+                            &text,
+                            &mut SlashContext {
+                                app: &mut app,
+                                session: &mut rt.session,
+                                history: &mut rt.history,
+                                agent: &mut rt.agent,
+                                config: &config,
+                                project_dir: &project_dir,
+                                provider: &mut provider,
+                                model: &mut model,
+                                api_key: &mut api_key,
+                                perm_prompter: Arc::clone(&rt.perm_prompter),
+                                question_prompter: Arc::clone(&rt.question_prompter),
+                                auth_tx: auth_tx.clone(),
+                            },
+                        )
+                        .await;
+                        continue;
                     }
 
                     // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
@@ -1631,51 +1560,40 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                     .modifiers
                                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
                             {
-                                // Grok: Ctrl+C clears draft first; second cancels.
-                                // Empty draft + already cancelling → force-stop.
-                                if app.input_buffer.is_empty() {
-                                    if cancel_requested_at.is_some() {
-                                        force_stop_turn(
-                                            &mut app,
-                                            &mut rt.agent,
-                                            &mut rt.session,
-                                            &mut rt.agent_busy,
-                                            &mut rt.cancel_flag,
-                                            &mut cancel_requested_at,
-                                            &mut rt.turn_join,
-                                            &mut rt.session_backup,
-                                            &mut rt.pending_question_queue,
-                                            &mut rt.pending_perm_queue,
-                                            &mut rt.done_rx,
-                                            &config,
-                                            &project_dir,
-                                            &provider,
-                                            &model,
-                                            rt.event_tx.clone(),
-                                            Arc::clone(&rt.perm_prompter),
-                                            Arc::clone(&rt.question_prompter),
-                                            &file_index,
-                                        );
-                                    } else {
-                                        begin_cancel(
-                                            &mut app,
-                                            &rt.cancel_flag,
-                                            &mut cancel_requested_at,
-                                            &mut rt.pending_question_queue,
-                                            &mut rt.pending_perm_queue,
-                                        );
-                                    }
-                                } else {
-                                    app.clear_prompt_draft();
-                                    app.toasts.push(
-                                        crate::toast::ToastKind::Info,
-                                        "Draft cleared — Ctrl+C again to cancel",
-                                    );
+                                match busy_ctrl_c(&mut app, cancel_requested_at) {
+                                    BusyCtrlC::ClearedDraft => {}
+                                    BusyCtrlC::BeginCancel => begin_cancel(
+                                        &mut app,
+                                        &rt.cancel_flag,
+                                        &mut cancel_requested_at,
+                                        &mut rt.pending_question_queue,
+                                        &mut rt.pending_perm_queue,
+                                    ),
+                                    BusyCtrlC::ForceStop => force_stop_turn(
+                                        &mut app,
+                                        &mut rt.agent,
+                                        &mut rt.session,
+                                        &mut rt.agent_busy,
+                                        &mut rt.cancel_flag,
+                                        &mut cancel_requested_at,
+                                        &mut rt.turn_join,
+                                        &mut rt.session_backup,
+                                        &mut rt.pending_question_queue,
+                                        &mut rt.pending_perm_queue,
+                                        &mut rt.done_rx,
+                                        &config,
+                                        &project_dir,
+                                        &provider,
+                                        &model,
+                                        rt.event_tx.clone(),
+                                        Arc::clone(&rt.perm_prompter),
+                                        Arc::clone(&rt.question_prompter),
+                                        &file_index,
+                                    ),
                                 }
                                 continue;
                             }
                             KeyCode::Enter => {
-                                // Block submit while generating; keep draft.
                                 app.toasts.push(
                                     crate::toast::ToastKind::Info,
                                     "Wait for turn or Esc to cancel",
@@ -3130,6 +3048,221 @@ fn apply_model_choice(
         "Model → {p}/{m}  ·  window {}",
         format_token_count(app.max_context_tokens),
     );
+}
+
+fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
+    const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    *spinner_frame = (*spinner_frame + 1) % FRAMES.len();
+    app.spinner_frame = *spinner_frame;
+    app.mark_dirty();
+    let generic = app.status_message.contains("Generating")
+        || app
+            .status_message
+            .chars()
+            .next()
+            .map(|c| "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".contains(c))
+            .unwrap_or(false);
+    if generic {
+        app.status_message.clear();
+    }
+}
+
+fn cycle_live_session(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut [SessionRuntime],
+    mru: &mut Vec<usize>,
+    page_down: bool,
+) {
+    if runtimes.is_empty() {
+        return;
+    }
+    let idx = if page_down { 0 } else { runtimes.len() - 1 };
+    switch_to_runtime(app, rt, runtimes, idx);
+    mru.retain(|&i| i != idx);
+    mru.push(idx);
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        format!(
+            "Session · {} ({} live)",
+            rt.session.title,
+            runtimes.len() + 1
+        ),
+    );
+}
+
+fn switch_mru_session(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut [SessionRuntime],
+    mru: &mut Vec<usize>,
+) {
+    if runtimes.is_empty() {
+        return;
+    }
+    let idx = mru.pop().unwrap_or(runtimes.len() - 1);
+    let idx = idx.min(runtimes.len() - 1);
+    switch_to_runtime(app, rt, runtimes, idx);
+    mru.retain(|&i| i != idx);
+    mru.push(idx);
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        format!(
+            "Session · {} ({} live)",
+            rt.session.title,
+            runtimes.len() + 1
+        ),
+    );
+}
+
+fn adopt_fresh_runtime(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut Vec<SessionRuntime>,
+    mru: &mut Vec<usize>,
+    fresh: SessionRuntime,
+) {
+    app.yield_view(&mut rt.view);
+    let parked = std::mem::replace(rt, fresh);
+    runtimes.push(parked);
+    mru.push(runtimes.len() - 1);
+    app.restore_view(&rt.view);
+    app.session_title = rt.session.title.clone();
+    app.focus = FocusPane::Prompt;
+    app.toasts.push(
+        crate::toast::ToastKind::Info,
+        format!("New session ({} live)", runtimes.len() + 1),
+    );
+}
+
+fn warn_session_limit(app: &mut TuiApp) {
+    app.toasts.push(
+        crate::toast::ToastKind::Warning,
+        format!("Session limit ({MAX_LIVE_SESSIONS}) — close one first"),
+    );
+}
+
+/// Slash line to run, if the prompt currently holds a `/command`.
+fn slash_command_from_prompt(app: &TuiApp) -> Option<String> {
+    let mut text = app.input_buffer.trim().to_string();
+    if app.slash_suggest.active
+        && let Some(cmd) = app.slash_suggest.current()
+    {
+        text = cmd.name.to_string();
+    }
+    text.starts_with('/').then_some(text)
+}
+
+fn consume_slash_draft(app: &mut TuiApp) {
+    app.input_buffer.clear();
+    app.input_cursor = 0;
+    app.pending_pastes.clear();
+    app.slash_suggest.dismiss();
+}
+
+fn busy_ctrl_c(app: &mut TuiApp, cancel_requested_at: Option<Instant>) -> BusyCtrlC {
+    if !app.input_buffer.is_empty() {
+        app.clear_prompt_draft();
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "Draft cleared — Ctrl+C again to cancel",
+        );
+        return BusyCtrlC::ClearedDraft;
+    }
+    if cancel_requested_at.is_some() {
+        BusyCtrlC::ForceStop
+    } else {
+        BusyCtrlC::BeginCancel
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BusyCtrlC {
+    ClearedDraft,
+    BeginCancel,
+    ForceStop,
+}
+
+fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
+    if matches!(
+        app.current_agent_state,
+        AgentState::WaitingForPermission | AgentState::WaitingForQuestion
+    ) {
+        return;
+    }
+    if let Some(front) = rt.pending_perm_queue.front() {
+        app.ask_permission(front.tool_name.clone(), front.detail.clone());
+        app.mark_dirty();
+    } else if let Some(front) = rt.pending_question_queue.front() {
+        app.ask_question(front.questions.clone());
+        app.mark_dirty();
+    }
+}
+
+fn apply_dashboard_switch(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    runtimes: &mut [SessionRuntime],
+    mru: &mut Vec<usize>,
+    target: usize,
+) {
+    if target == usize::MAX || target >= runtimes.len() {
+        return;
+    }
+    switch_to_runtime(app, rt, runtimes, target);
+    mru.retain(|&i| i != target);
+    mru.push(target);
+    app.toasts.push(
+        crate::toast::ToastKind::Success,
+        format!(
+            "Session · {} ({} live)",
+            rt.session.title,
+            runtimes.len() + 1
+        ),
+    );
+}
+
+fn apply_boot_prompt(app: &mut TuiApp, missing_key: bool, initial_prompt: Option<String>) {
+    if missing_key {
+        app.status_message = "no API key · /connect".to_string();
+    }
+    if let Some(p) = initial_prompt
+        && !p.is_empty()
+    {
+        app.add_message(ChatRole::User, &p);
+        app.pending_prompt = Some(p);
+    }
+}
+
+fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (Agent, Session) {
+    let ag = std::mem::replace(
+        &mut rt.agent,
+        Agent::new(whycode_core::types::AgentInfo {
+            name: "_pending".into(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: Some(String::new()),
+            temperature: None,
+            top_p: None,
+        }),
+    );
+    rt.session_backup = Some(rt.session.clone());
+    let sess = std::mem::replace(
+        &mut rt.session,
+        Session::new(project_dir.to_path_buf(), String::new()),
+    );
+    (ag, sess)
+}
+
+fn queue_auto_prompt_if_idle(app: &mut TuiApp, agent_busy: bool) {
+    if agent_busy || app.pending_prompt.is_some() {
+        return;
+    }
+    if let Some(next) = app.pending_auto_prompts.pop_front() {
+        app.pending_prompt = Some(next);
+    }
 }
 
 fn apply_async_title(
@@ -7751,5 +7884,299 @@ mod tests {
             pending.as_ref().map(|(s, _)| s.as_str()),
             Some("unknown-sid")
         );
+    }
+
+    fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
+        TuiRunOptions {
+            project_dir: dir.to_path_buf(),
+            provider: "acme".into(),
+            model: "m1".into(),
+            api_key: key.into(),
+            agent_name: "plan".into(),
+            max_turns: 4,
+            initial_prompt: None,
+            config: Config::default(),
+            resume_session_id: None,
+            remote: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn prepare_tui_boot_sets_chrome_and_defaults() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("README.md"), "hi").unwrap();
+        let mut opts = boot_opts(dir.path(), "");
+        opts.agent_name = "plan".into();
+        opts.config.tools.question.timeout_enabled = true;
+        opts.config.tools.question.timeout_secs = 5;
+        let mut plan = dummy_info("plan");
+        plan.mode = AgentMode::All;
+        opts.config.agents.push(plan);
+        let boot = prepare_tui_boot(&opts).await;
+        assert_eq!(boot.app.provider_name, "acme");
+        assert_eq!(boot.app.model_name, "m1");
+        assert_eq!(boot.app.agent_name, "plan");
+        assert!(boot.missing_key);
+        assert!(boot.app.status_message.contains("no API key"));
+        assert!(boot.app.primary_agents.contains(&"plan".to_string()));
+        assert_eq!(boot.app.agent_cycle_idx, 1);
+        assert_eq!(boot.agent.info.name, "plan");
+
+        let opts = boot_opts(dir.path(), "sk-test");
+        let boot = prepare_tui_boot(&opts).await;
+        assert!(!boot.missing_key);
+        assert!(boot.app.status_message.contains("Tab focus"));
+    }
+
+    #[test]
+    fn apply_resume_found_missing_and_latest() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        apply_resume(&mut app, &mut session, "sys", RESUME_LATEST, false);
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("No saved"))
+        );
+        apply_resume(&mut app, &mut session, "sys", "missing-id", false);
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("not found"))
+        );
+
+        let mut saved = Session::new(dir.path().to_path_buf(), "sys".into());
+        saved.add_user_message("resume me");
+        persist_session_best_effort(&saved, "boot");
+        apply_resume(&mut app, &mut session, "keep-sys", &saved.id, true);
+        assert_eq!(session.id, saved.id);
+        assert_eq!(session.system_prompt, "keep-sys");
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Resumed"))
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_remote_hydrate_error_still_attaches() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+        let rem = crate::remote::RemoteAttach::new("127.0.0.1:1", "sid-9");
+        apply_remote_hydrate(&mut app, &mut session, &rem).await;
+        assert_eq!(session.id, "sid-9");
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Attached"))
+        );
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Remote hydrate"))
+        );
+    }
+
+    #[test]
+    fn spinner_session_keys_slash_and_busy_ctrl_c() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut frame = 0usize;
+        app.status_message = "Generating…".into();
+        tick_spinner(&mut app, &mut frame);
+        assert_eq!(frame, 1);
+        assert!(app.status_message.is_empty());
+        app.status_message = "⠋ working".into();
+        tick_spinner(&mut app, &mut frame);
+        assert!(app.status_message.is_empty());
+        app.status_message = "tool: run".into();
+        tick_spinner(&mut app, &mut frame);
+        assert_eq!(app.status_message, "tool: run");
+
+        warn_session_limit(&mut app);
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Session limit"))
+        );
+
+        let mut rt = test_runtime();
+        let parked = test_runtime();
+        let mut runtimes = vec![parked];
+        let mut mru = vec![0];
+        cycle_live_session(&mut app, &mut rt, &mut runtimes, &mut mru, true);
+        switch_mru_session(&mut app, &mut rt, &mut runtimes, &mut mru);
+        cycle_live_session(&mut app, &mut rt, &mut [], &mut mru, false);
+
+        let fresh = test_runtime();
+        adopt_fresh_runtime(&mut app, &mut rt, &mut runtimes, &mut mru, fresh);
+        assert_eq!(runtimes.len(), 2);
+
+        app.input_buffer = "/help".into();
+        assert_eq!(slash_command_from_prompt(&app).as_deref(), Some("/help"));
+        consume_slash_draft(&mut app);
+        assert!(app.input_buffer.is_empty());
+        app.input_buffer = "hello".into();
+        assert!(slash_command_from_prompt(&app).is_none());
+
+        app.input_buffer = "draft".into();
+        assert_eq!(busy_ctrl_c(&mut app, None), BusyCtrlC::ClearedDraft);
+        assert!(app.input_buffer.is_empty());
+        assert_eq!(busy_ctrl_c(&mut app, None), BusyCtrlC::BeginCancel);
+        assert_eq!(
+            busy_ctrl_c(&mut app, Some(Instant::now())),
+            BusyCtrlC::ForceStop
+        );
+
+        queue_auto_prompt_if_idle(&mut app, true);
+        assert!(app.pending_prompt.is_none());
+        app.pending_auto_prompts.push_back("next".into());
+        queue_auto_prompt_if_idle(&mut app, false);
+        assert_eq!(app.pending_prompt.as_deref(), Some("next"));
+        app.pending_auto_prompts.push_back("held".into());
+        queue_auto_prompt_if_idle(&mut app, false);
+        assert_eq!(app.pending_prompt.as_deref(), Some("next"));
+
+        app.input_buffer = "/".into();
+        app.slash_suggest.refresh(&app.input_buffer);
+        let picked = slash_command_from_prompt(&app).expect("slash menu");
+        assert!(picked.starts_with('/'), "{picked}");
+
+        apply_boot_prompt(&mut app, true, None);
+        assert_eq!(app.status_message, "no API key · /connect");
+        apply_boot_prompt(&mut app, false, Some(String::new()));
+        apply_boot_prompt(&mut app, false, Some("do it".into()));
+        assert_eq!(app.pending_prompt.as_deref(), Some("do it"));
+
+        let mut rt = test_runtime();
+        let name = rt.agent.info.name.clone();
+        let (ag, sess) = take_turn_owner(&mut rt, PathBuf::from("/work").as_path());
+        assert_eq!(ag.info.name, name);
+        assert_eq!(rt.agent.info.name, "_pending");
+        assert!(rt.session_backup.is_some());
+        let _ = sess;
+
+        let mut rt = test_runtime();
+        maybe_open_queued_dialog(&mut app, &rt);
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        rt.pending_perm_queue
+            .push_back(whycode_agent::PermissionRequest {
+                tool_name: "bash".into(),
+                detail: "ls".into(),
+                reply: tx,
+            });
+        maybe_open_queued_dialog(&mut app, &rt);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Permission { .. })
+        ));
+        maybe_open_queued_dialog(&mut app, &rt);
+
+        app.dialogs.clear();
+        app.mode = AppMode::Normal;
+        app.current_agent_state = AgentState::Idle;
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        rt.pending_perm_queue.clear();
+        rt.pending_question_queue.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        maybe_open_queued_dialog(&mut app, &rt);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Question(_))
+        ));
+
+        let mut parked = test_runtime();
+        parked.session.add_user_message("dash");
+        let mut runtimes = vec![parked];
+        let mut mru = vec![];
+        apply_dashboard_switch(&mut app, &mut rt, &mut runtimes, &mut mru, usize::MAX);
+        apply_dashboard_switch(&mut app, &mut rt, &mut runtimes, &mut mru, 9);
+        apply_dashboard_switch(&mut app, &mut rt, &mut runtimes, &mut mru, 0);
+        assert_eq!(mru, vec![0]);
+    }
+
+    #[tokio::test]
+    async fn prepare_boot_with_resume_and_remote() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = Session::new(dir.path().to_path_buf(), "sys".into());
+        saved.add_user_message("boot resume");
+        persist_session_best_effort(&saved, "boot-resume");
+        let mut opts = boot_opts(dir.path(), "sk");
+        opts.resume_session_id = Some(saved.id.clone());
+        opts.remote = Some(crate::remote::RemoteAttach::new("127.0.0.1:1", "r1"));
+        let boot = prepare_tui_boot(&opts).await;
+        assert_eq!(boot.session.id, "r1", "remote hydrate overwrites id");
+        assert!(
+            boot.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Resumed") || t.message.contains("Attached"))
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_remote_hydrate_success() {
+        isolate_home();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = vec![0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let body = r#"{"title":"remote-title","messages":[{"role":"user","content":"hi"}]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        });
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut session = Session::new(PathBuf::from("/work"), "sys".into());
+        let rem = crate::remote::RemoteAttach::new(format!("http://{addr}"), "sid-ok");
+        apply_remote_hydrate(&mut app, &mut session, &rem).await;
+        assert_eq!(session.id, "sid-ok");
+        assert_eq!(session.title, "remote-title");
+        assert_eq!(session.messages.len(), 1);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind2");
+        let addr = listener.local_addr().expect("addr2");
+        tokio::spawn(async move {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                return;
+            };
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut buf = vec![0u8; 2048];
+            let _ = sock.read(&mut buf).await;
+            let body = r#"{"title":"","messages":[]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+        });
+        let rem = crate::remote::RemoteAttach::new(format!("http://{addr}"), "sid-empty");
+        apply_remote_hydrate(&mut app, &mut session, &rem).await;
+        assert_eq!(session.id, "sid-empty");
     }
 }
