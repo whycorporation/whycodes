@@ -94,7 +94,7 @@ pub fn column_widths(
         if total > max_cells {
             // Shrink widest columns first until we fit.
             let mut excess = total - max_cells;
-            while excess > 0 {
+            while excess > 0 && widths.iter().any(|w| *w > 1) {
                 if let Some((idx, _)) = widths
                     .iter()
                     .enumerate()
@@ -103,8 +103,6 @@ pub fn column_widths(
                 {
                     widths[idx] -= 1;
                     excess -= 1;
-                } else {
-                    break;
                 }
             }
         }
@@ -151,7 +149,7 @@ pub fn pad_cell(cell: &str, width: usize, align: TableAlign) -> String {
     }
 }
 
-fn truncate_to_width(s: &str, width: usize) -> String {
+pub(crate) fn truncate_to_width(s: &str, width: usize) -> String {
     if width == 0 {
         return String::new();
     }
@@ -219,54 +217,5 @@ fn format_row(cells: &[&str], widths: &[usize], aligns: &[TableAlign], col_count
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_table() {
-        let headers = &["Name", "Age", "City"];
-        let rows = &[
-            vec!["Alice".to_string(), "30".to_string(), "NYC".to_string()],
-            vec!["Bob".to_string(), "25".to_string(), "LA".to_string()],
-        ];
-        let result = format_table(headers, rows);
-        assert!(result.contains("Alice"), "{result}");
-        assert!(result.contains("Bob"), "{result}");
-        assert!(result.contains('┌'), "{result}");
-        assert!(result.contains('│'), "{result}");
-    }
-
-    #[test]
-    fn test_empty_rows() {
-        let headers = &["Col"];
-        let result = format_table(headers, &[]);
-        assert!(result.contains("Col"), "{result}");
-        assert!(result.contains('┌'), "{result}");
-    }
-
-    #[test]
-    fn test_empty_headers() {
-        let result = format_table(&[], &[]);
-        assert_eq!(result, "");
-    }
-
-    #[test]
-    fn right_align_pads_left() {
-        let rows = &[vec!["42".to_string()]];
-        let aligns = [TableAlign::Right];
-        // Longer header forces pad on the short right-aligned cell.
-        let headers = &["Num"];
-        let result = format_table_aligned(headers, rows, &aligns);
-        assert!(result.contains(" 42"), "{result}");
-    }
-
-    #[test]
-    fn column_widths_respect_cap() {
-        let headers = vec!["abcdefghij".into(), "xyz".into()];
-        let rows = vec![vec!["1".into(), "2".into()]];
-        let w = column_widths(&headers, &rows, Some(20));
-        let chrome = 1 + 3 * 2;
-        assert!(w.iter().sum::<usize>() + chrome <= 20 + 2); // small slack
-        assert_eq!(w.len(), 2);
-    }
-}
+#[path = "table_tests.rs"]
+mod tests;

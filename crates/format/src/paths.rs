@@ -20,11 +20,7 @@ pub fn truncate_path(path: &str, max_len: usize) -> String {
     // Split into components
     let components: Vec<&str> = path.split('/').collect();
     if components.len() <= 3 {
-        // Not enough components to truncate meaningfully
-        if path.len() <= max_len {
-            return path.to_string();
-        }
-        // Just cut from the middle
+        // Path is already longer than max_len (checked above).
         let third = max_len.saturating_sub(3) / 2;
         return format!("{}...{}", &path[..third], &path[path.len() - third..]);
     }
@@ -65,27 +61,5 @@ pub fn truncate_path(path: &str, max_len: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_short_path_unchanged() {
-        let result = truncate_path("/home/user", 80);
-        assert_eq!(result, "/home/user");
-    }
-
-    #[test]
-    fn test_long_path_truncated() {
-        let result = truncate_path("/very/long/path/with/many/components/here", 30);
-        // Should contain ... in the middle
-        assert!(result.contains("..."));
-        assert!(result.starts_with("/very"));
-        assert!(result.ends_with("here"));
-    }
-
-    #[test]
-    fn test_very_short_max_len() {
-        let result = truncate_path("/a/b/c/d/e/f/g/h", 12);
-        assert!(result.len() <= 12 || result.contains("..."));
-    }
-}
+#[path = "paths_tests.rs"]
+mod tests;
