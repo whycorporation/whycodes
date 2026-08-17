@@ -131,7 +131,7 @@ jobs:
         run: |
           IGNORE='/usr/src/|/rustc-'
           cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --fail-under-lines 66 --summary-only -- --skip tests::watcher_picks_up_changes
-          for crate in whycode-function whycode-schema whycode-skill whycode-sandbox whycode-protocol whycode-plugin whycode-command-risk; do
+          for crate in whycode-function whycode-schema whycode-skill whycode-sandbox whycode-protocol whycode-plugin whycode-command-risk whycode-storage; do
             cargo llvm-cov -p "$crate" --ignore-filename-regex "$IGNORE" --fail-under-lines 100 --summary-only
           done
 
