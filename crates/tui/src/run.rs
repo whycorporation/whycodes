@@ -5597,4 +5597,690 @@ mod tests {
             question_rx,
         )
     }
+
+    fn isolate_home() {
+        use std::sync::OnceLock;
+        static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+        let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
+        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+    }
+
+    #[test]
+    fn apply_turn_event_covers_every_variant() {
+        isolate_home();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+
+        apply_turn_event(&mut app, TurnEvent::TextDelta("hello".into()));
+        assert_eq!(app.current_agent_state, AgentState::Generating);
+        assert!(app.messages.iter().any(|m| m.content.contains("hello")));
+
+        apply_turn_event(&mut app, TurnEvent::ThinkingDelta("hmm".into()));
+        assert_eq!(app.current_agent_state, AgentState::Thinking);
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolStart {
+                id: "t1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"cmd": "ls"}),
+            },
+        );
+        assert!(app.status_message.contains("tool: run"));
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolStart {
+                id: "t2".into(),
+                name: "read_file".into(),
+                input: serde_json::json!({}),
+            },
+        );
+        assert!(app.status_message.contains("tool: read"));
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolStart {
+                id: "t3".into(),
+                name: "search_code".into(),
+                input: serde_json::json!({}),
+            },
+        );
+        assert!(app.status_message.contains("tool: grep"));
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolStart {
+                id: "t4".into(),
+                name: "custom_tool".into(),
+                input: serde_json::json!({}),
+            },
+        );
+        assert!(app.status_message.contains("custom_tool"));
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolEnd {
+                id: "t1".into(),
+                content: "ok".into(),
+                is_error: false,
+            },
+        );
+
+        app.current_agent_state = AgentState::Idle;
+        apply_turn_event(&mut app, TurnEvent::Status("Remembered foo".into()));
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Remembered"))
+        );
+        apply_turn_event(&mut app, TurnEvent::Status("working".into()));
+        assert_eq!(app.status_message, "working");
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Intent {
+                kind: "change".into(),
+                confidence: 0.9,
+                badge: "chg".into(),
+                notice_kind: "warning".into(),
+                notice: "mode mismatch — switch agent".into(),
+            },
+        );
+        assert_eq!(app.intent_kind.as_deref(), Some("change"));
+        assert_eq!(app.intent_badge.as_deref(), Some("chg"));
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Intent {
+                kind: "question".into(),
+                confidence: 0.4,
+                badge: String::new(),
+                notice_kind: "info".into(),
+                notice: "short note".into(),
+            },
+        );
+        assert!(app.intent_badge.is_none());
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Usage(whycode_core::types::Usage {
+                input_tokens: 10,
+                output_tokens: 4,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            }),
+        );
+        assert!(app.turn_usage.is_some());
+
+        apply_turn_event(&mut app, TurnEvent::Cancelled);
+        assert_eq!(app.current_agent_state, AgentState::Idle);
+        assert!(app.status_message.contains("Cancelled"));
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::FileConflict {
+                path: "src/lib.rs".into(),
+                claimant: "a".into(),
+                owner: "b".into(),
+            },
+        );
+        assert!(app.status_message.contains("lib.rs"));
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::SwarmStatus {
+                active: 1,
+                total: 3,
+                message: String::new(),
+            },
+        );
+        assert_eq!(app.status_message, "swarm 3…");
+        apply_turn_event(
+            &mut app,
+            TurnEvent::SwarmStatus {
+                active: 1,
+                total: 3,
+                message: "workers go".into(),
+            },
+        );
+        assert_eq!(app.status_message, "workers go");
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Background {
+                id: "bg-1".into(),
+                status: "running".into(),
+                summary: "cargo test".into(),
+            },
+        );
+        assert_eq!(app.bg_running_count, 1);
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Background {
+                id: "bg-1".into(),
+                status: "done".into(),
+                summary: "ok".into(),
+            },
+        );
+        assert_eq!(app.bg_running_count, 0);
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Background {
+                id: "bg-2".into(),
+                status: "failed".into(),
+                summary: "boom".into(),
+            },
+        );
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Background {
+                id: "bg-3".into(),
+                status: "killed".into(),
+                summary: String::new(),
+            },
+        );
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Background {
+                id: "bg-4".into(),
+                status: "queued".into(),
+                summary: String::new(),
+            },
+        );
+        assert!(app.status_message.contains("bg-4"));
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::EnqueuePrompt {
+                text: "  next  ".into(),
+            },
+        );
+        assert_eq!(app.pending_auto_prompts.len(), 1);
+        apply_turn_event(&mut app, TurnEvent::EnqueuePrompt { text: "   ".into() });
+        assert_eq!(app.pending_auto_prompts.len(), 1);
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Panel(whycode_core::PanelUpdate::File {
+                path: "x.rs".into(),
+                text: "fn x() {}".into(),
+            }),
+        );
+        assert!(app.sidebar.visible);
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Subagent {
+                id: "kid".into(),
+                kind: "explore".into(),
+                description: "look".into(),
+                status: "running".into(),
+                activity: "Thinking".into(),
+                elapsed_ms: 12,
+                output: String::new(),
+            },
+        );
+        assert!(app.subagents.iter().any(|s| s.id == "kid"));
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::SwarmMessage {
+                from: "a".into(),
+                to: "b".into(),
+                text: "hi".into(),
+            },
+        );
+        apply_turn_event(
+            &mut app,
+            TurnEvent::PermissionAsk {
+                request_id: "p".into(),
+                tool_name: "bash".into(),
+                detail: "ls".into(),
+            },
+        );
+        apply_turn_event(
+            &mut app,
+            TurnEvent::QuestionAsk {
+                request_id: "q".into(),
+                questions: serde_json::json!([]),
+            },
+        );
+        apply_turn_event(
+            &mut app,
+            TurnEvent::FileStale {
+                path: "src/main.rs".into(),
+                reader: "r".into(),
+                writer: "w".into(),
+            },
+        );
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("stale"))
+        );
+    }
+
+    #[test]
+    fn drain_turn_events_coalesces_deltas() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        assert!(!drain_turn_events(&mut app, &mut rx));
+        tx.send(TurnEvent::ThinkingDelta("th".into())).unwrap();
+        tx.send(TurnEvent::ThinkingDelta("ink".into())).unwrap();
+        tx.send(TurnEvent::TextDelta("hel".into())).unwrap();
+        tx.send(TurnEvent::TextDelta("lo".into())).unwrap();
+        tx.send(TurnEvent::Status("done".into())).unwrap();
+        assert!(drain_turn_events(&mut app, &mut rx));
+        assert_eq!(app.status_message, "done");
+        assert!(app.messages.iter().any(|m| m.content.contains("hello")));
+    }
+
+    #[test]
+    fn helpers_tui_available_summary_share_and_diff() {
+        isolate_home();
+        let _ = tui_available();
+        print_session_summary("coverage-summary");
+        assert!(!share_server_up(1), "port 1 should be closed");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(share_server_up(port));
+        drop(listener);
+
+        let dir = tempfile::tempdir().unwrap();
+        let out = project_diff_report(dir.path());
+        assert!(out.contains("Diff"), "{out}");
+        assert!(
+            out.contains("git") || out.contains("clean") || out.contains("status"),
+            "{out}"
+        );
+
+        let shares = dir.path().join(".whycode").join("shares");
+        std::fs::create_dir_all(&shares).unwrap();
+        std::fs::write(shares.join("abc.json"), "{}").unwrap();
+        std::fs::write(shares.join("abc.md"), "#").unwrap();
+        assert_eq!(unshare_session(dir.path(), "abc"), 2);
+        assert_eq!(unshare_session(dir.path(), "abc"), 0);
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = which_bwrap();
+        }
+
+        persist_session_best_effort(
+            &Session::new(dir.path().to_path_buf(), "sys".into()),
+            "test",
+        );
+        let _ = try_load_session("no-such-session");
+        let _ = open_db_quiet();
+    }
+
+    #[test]
+    fn refresh_sidebar_and_dashboard() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
+        std::fs::create_dir_all(dir.path().join(".whycode")).unwrap();
+        std::fs::write(
+            dir.path().join(".whycode").join("todos.json"),
+            r#"{"todos":[{"content":"do it","status":"pending"}]}"#,
+        )
+        .unwrap();
+        let idx = whycode_index::WorkspaceIndex::start_with(
+            vec![dir.path().to_path_buf()],
+            whycode_index::IndexOptions {
+                watch: false,
+                threads: 1,
+                ..Default::default()
+            },
+        );
+        let _ = idx.wait_ready(Duration::from_secs(5));
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.project_dir = dir.path().to_path_buf();
+        let mut config = Config::default();
+        config.mcp_servers.insert(
+            "demo".into(),
+            whycode_config::McpServerConfig {
+                transport: None,
+                command: Some("true".into()),
+                args: Vec::new(),
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        );
+        refresh_sidebar(&mut app, &config, &idx);
+        assert!(app.sidebar.todos.iter().any(|t| t.contains("do it")));
+        assert!(app.sidebar.mcp_status.iter().any(|s| s.contains("demo")));
+
+        let rt = test_runtime();
+        open_sessions_dashboard(&mut app, &rt, &[]);
+        assert!(matches!(app.dialogs.active(), Some(DialogKind::Sessions)));
+        assert_eq!(app.key_context, KeymapContext::Dialog);
+
+        let mut view = crate::session_runtime::ViewSnapshot::default();
+        app.add_message(ChatRole::User, "scratch");
+        app.yield_view(&mut view);
+        with_view_scratch(&mut view, |scratch| {
+            scratch.add_message(ChatRole::Assistant, "from-scratch");
+        });
+        assert!(
+            view.messages
+                .iter()
+                .any(|m| m.content.contains("from-scratch"))
+        );
+    }
+
+    #[test]
+    fn begin_cancel_sets_flag_and_status() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let flag = new_cancel_flag();
+        let mut at = None;
+        let mut q = std::collections::VecDeque::new();
+        let mut p = std::collections::VecDeque::new();
+        begin_cancel(&mut app, &Some(Arc::clone(&flag)), &mut at, &mut q, &mut p);
+        assert!(whycode_agent::is_cancelled(&Some(flag)));
+        assert!(at.is_some());
+        assert!(app.status_message.contains("Cancelling"));
+        begin_cancel(&mut app, &None, &mut at, &mut q, &mut p);
+        assert!(at.is_some(), "second call keeps the original timer");
+    }
+
+    #[test]
+    fn tui_login_ui_emits_notes() {
+        use whycode_auth::providers::LoginUi;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let mut ui = TuiLoginUi { tx };
+        ui.show_sign_in("Anthropic", "https://example.test", true);
+        ui.show_sign_in("Anthropic", "https://example.test", false);
+        ui.note("waiting");
+        ui.show_device_code("ABCD", "https://github.com/login", true);
+        ui.show_device_code("ABCD", "https://github.com/login", false);
+        let mut notes = 0usize;
+        while let Ok(ev) = rx.try_recv() {
+            if let AuthFlowEvent::Note(_) = ev {
+                notes += 1;
+            }
+        }
+        assert_eq!(notes, 5);
+    }
+
+    #[test]
+    fn event_forces_redraw_treats_paste_as_dirty() {
+        assert!(event_forces_redraw(&Event::Paste("x".into())));
+        assert!(event_forces_redraw(&Event::FocusGained));
+    }
+
+    #[test]
+    fn expand_at_files_multiple_and_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "AAA").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "BBB").unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        let out = expand_at_files("see @a.txt and @b.txt please", dir.path());
+        assert!(out.contains("AAA") && out.contains("BBB"), "{out}");
+        let out = expand_at_files("open @src now", dir.path());
+        assert!(out.contains("@src"), "dirs stay literal: {out}");
+    }
+
+    #[test]
+    fn run_options_and_turn_outcome_exist() {
+        let opts = TuiRunOptions {
+            project_dir: PathBuf::from("/tmp"),
+            provider: "x".into(),
+            model: "y".into(),
+            api_key: String::new(),
+            agent_name: "build".into(),
+            max_turns: 8,
+            initial_prompt: None,
+            config: Config::default(),
+            resume_session_id: Some(RESUME_LATEST.into()),
+            remote: None,
+        };
+        assert_eq!(opts.resume_session_id.as_deref(), Some(RESUME_LATEST));
+        let _ = TurnOutcome::Remote {
+            text: "hi".into(),
+            error: None,
+            work_ms: 1,
+        };
+    }
+
+    struct SlashHarness {
+        _tmp: tempfile::TempDir,
+        app: TuiApp,
+        session: Session,
+        history: SessionHistory,
+        agent: Agent,
+        config: Config,
+        provider: String,
+        model: String,
+        api_key: String,
+        perm_prompter: Arc<ChannelPermissionPrompter>,
+        question_prompter: Arc<ChannelQuestionPrompter>,
+        auth_tx: mpsc::UnboundedSender<AuthFlowEvent>,
+        _auth_rx: mpsc::UnboundedReceiver<AuthFlowEvent>,
+    }
+
+    impl SlashHarness {
+        fn new() -> Self {
+            isolate_home();
+            let tmp = tempfile::tempdir().expect("tmpdir");
+            let info = whycode_core::types::AgentInfo {
+                name: "build".into(),
+                description: String::new(),
+                mode: AgentMode::Primary,
+                permission: whycode_core::types::PermissionSet::default(),
+                model: None,
+                system_prompt: Some("sys".into()),
+                temperature: None,
+                top_p: None,
+            };
+            let (perm_prompter, _perm_rx) = ChannelPermissionPrompter::new();
+            let (question_prompter, _q_rx) = ChannelQuestionPrompter::new(None);
+            let (auth_tx, auth_rx) = mpsc::unbounded_channel();
+            let session = Session::new(tmp.path().to_path_buf(), "sys".into());
+            Self {
+                app: TuiApp::from_config(TuiAppConfig::default()),
+                session,
+                history: SessionHistory::new(),
+                agent: Agent::new(info),
+                config: Config::default(),
+                provider: "acme".into(),
+                model: "m1".into(),
+                api_key: String::new(),
+                perm_prompter: Arc::new(perm_prompter),
+                question_prompter: Arc::new(question_prompter),
+                auth_tx,
+                _auth_rx: auth_rx,
+                _tmp: tmp,
+            }
+        }
+
+        async fn run(&mut self, cmd: &str) {
+            let project_dir = self.session.project_path.clone();
+            let mut ctx = SlashContext {
+                app: &mut self.app,
+                session: &mut self.session,
+                history: &mut self.history,
+                agent: &mut self.agent,
+                config: &self.config,
+                project_dir: &project_dir,
+                provider: &mut self.provider,
+                model: &mut self.model,
+                api_key: &mut self.api_key,
+                perm_prompter: Arc::clone(&self.perm_prompter),
+                question_prompter: Arc::clone(&self.question_prompter),
+                auth_tx: self.auth_tx.clone(),
+            };
+            handle_slash(cmd, &mut ctx).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn handle_slash_covers_local_commands() {
+        let mut h = SlashHarness::new();
+
+        h.run("/help").await;
+        assert_eq!(h.app.mode, AppMode::Help);
+        h.app.mode = AppMode::Normal;
+
+        h.run("/exit").await;
+        assert!(!h.app.running);
+        h.app.running = true;
+
+        h.run("/rename").await;
+        assert!(h.app.status_message.contains("Title"));
+        h.run("/rename coverage-session").await;
+        assert!(h.session.title.contains("coverage"));
+
+        h.run("/undo").await;
+        assert!(h.app.status_message.to_lowercase().contains("nothing"));
+        h.run("/redo").await;
+        assert!(h.app.status_message.to_lowercase().contains("nothing"));
+
+        h.run("/compact").await;
+        assert!(h.app.status_message.contains("Compacted"));
+
+        h.run("/bg").await;
+        assert!(
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("No background"))
+        );
+        h.run("/bg kill missing").await;
+        h.run("/bg whatever").await;
+        assert!(h.app.status_message.contains("Usage"));
+
+        h.run("/loop").await;
+        assert!(h.app.status_message.contains("Usage"));
+        h.run("/loop 2 do the thing").await;
+        assert_eq!(h.app.pending_prompt.as_deref(), Some("do the thing"));
+        assert_eq!(h.app.pending_auto_prompts.len(), 1);
+        h.run("/loop stop").await;
+        assert!(h.app.pending_auto_prompts.is_empty());
+
+        h.run("/remember").await;
+        assert!(h.app.status_message.contains("Usage"));
+        h.run("/remember save this fact").await;
+        h.run("/memory").await;
+
+        h.run("/agent").await;
+        assert!(h.app.status_message.contains("Agent"));
+        h.run("/agent no-such-agent").await;
+        assert!(
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Unknown agent"))
+        );
+
+        h.run("/theme").await;
+        assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Theme)));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+        h.run("/theme nord").await;
+        assert_eq!(h.app.theme, crate::theme::ThemeName::Nord);
+        h.run("/theme not-a-theme").await;
+
+        h.run("/sessions").await;
+        assert!(matches!(
+            h.app.dialogs.active(),
+            Some(DialogKind::SessionList)
+        ));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+
+        h.run("/resume abcdef").await;
+        assert_eq!(h.app.pending_session_id.as_deref(), Some("abcdef"));
+        h.app.pending_session_id = None;
+        h.run("/continue").await;
+        assert_eq!(h.app.pending_session_id.as_deref(), Some(RESUME_LATEST));
+        h.app.pending_session_id = None;
+        h.run("/resume").await;
+        assert!(matches!(
+            h.app.dialogs.active(),
+            Some(DialogKind::SessionList)
+        ));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+
+        h.run("/models").await;
+        assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Model)));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+        h.run("/models m2").await;
+        assert_eq!(h.model, "m2");
+        h.run("/models acme/m3").await;
+        assert_eq!(h.provider, "acme");
+        assert_eq!(h.model, "m3");
+
+        h.run("/tools").await;
+        h.run("/info").await;
+        h.run("/doctor").await;
+        h.run("/diff").await;
+        h.run("/context").await;
+        h.run("/cost").await;
+        h.run("/init").await;
+        assert!(h.app.pending_prompt.is_some());
+
+        h.run("/unshare").await;
+        h.run("/share").await;
+        h.run("/connect").await;
+        h.run("/login").await;
+        h.run("/login not-oauth").await;
+        h.run("/nope").await;
+        assert!(
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Unknown command"))
+        );
+
+        h.run("/new").await;
+        assert!(
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("New session"))
+        );
+
+        h.config.commands.insert(
+            "hello".into(),
+            whycode_config::CustomCommandConfig {
+                template: "hello $ARGUMENTS".into(),
+                description: Some("say hi".into()),
+                agent: None,
+                model: None,
+                subtask: None,
+            },
+        );
+        h.run("/hello world").await;
+        assert_eq!(h.app.pending_prompt.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn memory_and_index_helpers() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::default();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        maybe_session_auto_index(dir.path(), &config, &mut app);
+        let prompt = with_project_memory("base prompt", dir.path(), &config, Some("query"));
+        assert!(prompt.contains("base prompt"));
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        let agent = Agent::new(whycode_core::types::AgentInfo {
+            name: "build".into(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: Some("sys".into()),
+            temperature: None,
+            top_p: None,
+        });
+        refresh_session_memory(&mut session, &agent, dir.path(), &config, None);
+        let _ = memory_service(dir.path(), &config);
+    }
 }
