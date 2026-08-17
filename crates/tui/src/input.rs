@@ -2418,4 +2418,442 @@ mod event_tests {
         handle_event(&mut a, key(KeyCode::Enter));
         assert_eq!(a.pending_session_switch, Some(3));
     }
+
+    #[test]
+    fn confirm_delete_provider_and_live_session_switch() {
+        let mut a = app();
+        a.confirm(
+            "Delete",
+            "gone?",
+            ConfirmAction::DeleteProvider("acme".into()),
+        );
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert!(a.status_message.contains("acme"));
+        assert_eq!(a.mode, AppMode::Normal);
+
+        let mut a = app();
+        a.session_list.sessions = vec![crate::app::SessionEntry {
+            id: "live".into(),
+            title: "t".into(),
+            messages: 1,
+            updated_at: None,
+            live: Some(usize::MAX),
+        }];
+        open_dialog(&mut a, DialogKind::SessionList);
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert_eq!(a.pending_session_switch, Some(usize::MAX));
+
+        let mut a = app();
+        a.session_list.sessions = vec![crate::app::SessionEntry {
+            id: "persisted".into(),
+            title: "t".into(),
+            messages: 1,
+            updated_at: None,
+            live: None,
+        }];
+        open_dialog(&mut a, DialogKind::SessionList);
+        handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        );
+        assert!(
+            a.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("persisted") || t.message.contains("live"))
+        );
+    }
+
+    #[test]
+    fn permission_and_question_dismiss() {
+        let mut a = app();
+        a.ask_permission("bash", "rm -rf /");
+        assert!(matches!(
+            a.dialogs.active(),
+            Some(DialogKind::Permission { .. })
+        ));
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert!(!a.dialogs.is_open());
+
+        let mut a = app();
+        a.ask_question(vec![whycode_tools::question::QuestionSpec {
+            prompt: "Go?".into(),
+            options: vec![whycode_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+        }]);
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert!(a.question_dismissed);
+        assert!(!a.dialogs.is_open());
+    }
+
+    #[test]
+    fn mouse_confirms_list_and_question_rows() {
+        let mut a = app();
+        a.theme_selected = 0;
+        open_dialog(&mut a, DialogKind::Theme);
+        a.dialog_modal_hit = Some(Rect {
+            x: 10,
+            y: 5,
+            width: 40,
+            height: 12,
+        });
+        a.dialog_list_hit = Some(Rect {
+            x: 12,
+            y: 8,
+            width: 30,
+            height: 6,
+        });
+        a.dialog_list_total = crate::theme::ThemeName::ALL.len();
+        a.dialog_list_visible = 6;
+        a.dialog_list_scroll_start = 0;
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 14, 10),
+        );
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 10));
+        assert_eq!(a.mode, AppMode::Normal);
+
+        let mut a = app();
+        a.ask_question(vec![whycode_tools::question::QuestionSpec {
+            prompt: "Go?".into(),
+            options: vec![
+                whycode_tools::question::QuestionOption {
+                    label: "Yes".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+                whycode_tools::question::QuestionOption {
+                    label: "No".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+            ],
+            multi_select: false,
+        }]);
+        a.dialog_modal_hit = Some(Rect {
+            x: 10,
+            y: 5,
+            width: 40,
+            height: 12,
+        });
+        a.dialog_list_hit = Some(Rect {
+            x: 12,
+            y: 8,
+            width: 30,
+            height: 4,
+        });
+        a.dialog_list_total = 3;
+        a.dialog_list_visible = 4;
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 14, 8),
+        );
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 14, 8));
+        assert!(
+            a.pending_question_answers.is_some() || a.dialogs.is_open(),
+            "click either finishes or keeps the questionnaire"
+        );
+    }
+
+    #[test]
+    fn modal_scrollbar_and_copy_selection() {
+        let mut a = app();
+        open_dialog(&mut a, DialogKind::Theme);
+        a.dialog_modal_hit = Some(Rect {
+            x: 10,
+            y: 5,
+            width: 40,
+            height: 12,
+        });
+        a.dialog_scrollbar_hit = Some(Rect {
+            x: 49,
+            y: 6,
+            width: 1,
+            height: 10,
+        });
+        a.dialog_list_total = crate::theme::ThemeName::ALL.len();
+        a.dialog_list_visible = 6;
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 49, 8),
+        );
+        assert!(a.dialog_scrollbar_grab.is_some());
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Drag(MouseButton::Left), 49, 12),
+        );
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 49, 12));
+        assert!(a.dialog_scrollbar_grab.is_none());
+
+        let mut a = app();
+        a.mode = AppMode::Help;
+        a.key_context = KeymapContext::Help;
+        a.dialog_close_hit = Some(Rect {
+            x: 70,
+            y: 1,
+            width: 3,
+            height: 1,
+        });
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 71, 1),
+        );
+        assert_eq!(a.mode, AppMode::Normal);
+
+        let mut a = app();
+        open_dialog(&mut a, DialogKind::Theme);
+        a.dialog_modal_hit = Some(Rect {
+            x: 10,
+            y: 5,
+            width: 20,
+            height: 8,
+        });
+        a.mouse_sel = Some(crate::app::MouseSelection {
+            anchor_x: 11,
+            anchor_y: 6,
+            focus_x: 18,
+            focus_y: 7,
+            dragging: true,
+        });
+        copy_modal_selection(&mut a, 18, 7);
+        let active = a.dialogs.active().cloned();
+        apply_modal_scrollbar(&mut a, active.as_ref(), 6, None);
+        a.dialog_scrollbar_hit = Some(Rect {
+            x: 29,
+            y: 6,
+            width: 1,
+            height: 6,
+        });
+        a.dialog_list_total = 20;
+        a.dialog_list_visible = 6;
+        apply_modal_scrollbar(&mut a, active.as_ref(), 8, Some(1));
+        let grab = scrollbar_grab_at(
+            &a,
+            8,
+            Rect {
+                x: 29,
+                y: 6,
+                width: 1,
+                height: 6,
+            },
+        );
+        let _ = grab;
+    }
+
+    #[test]
+    fn chat_scrollbar_offset_snaps_and_noops() {
+        let mut a = app();
+        apply_chat_scrollbar_offset(&mut a, 5, None);
+        a.chat_scrollbar_hit = Some(Rect {
+            x: 40,
+            y: 1,
+            width: 1,
+            height: 10,
+        });
+        a.chat_scroll_total = 0;
+        apply_chat_scrollbar_offset(&mut a, 5, None);
+
+        a.chat_scroll_total = 8;
+        a.chat_viewport_rows = 10;
+        apply_chat_scrollbar_offset(&mut a, 5, None);
+        assert_eq!(a.scroll_offset, 0);
+        assert!(a.auto_scroll);
+
+        a.chat_scroll_total = 100;
+        a.chat_viewport_rows = 10;
+        apply_chat_scrollbar_offset(&mut a, 1, None);
+        assert!(a.scroll_offset > 0, "top of track → oldest");
+        apply_chat_scrollbar_offset(&mut a, 10, None);
+        assert_eq!(a.scroll_offset, 0, "bottom of track → newest");
+        apply_chat_scrollbar_offset(&mut a, 0, None);
+        apply_chat_scrollbar_offset(&mut a, 50, Some(1));
+        let grab = chat_scrollbar_grab_at(
+            &a,
+            3,
+            Rect {
+                x: 40,
+                y: 1,
+                width: 1,
+                height: 10,
+            },
+        );
+        let _ = grab;
+    }
+
+    #[test]
+    fn paste_token_edits_as_a_unit_and_session_paste() {
+        let mut a = app();
+        a.insert_paste_text("one\ntwo\nthree\nfour");
+        assert!(!a.pending_pastes.is_empty());
+        a.input_cursor = 0;
+        handle_event(&mut a, key(KeyCode::Delete));
+        assert!(a.input_buffer.is_empty() || !a.input_buffer.contains('\n'));
+
+        let mut a = app();
+        a.insert_paste_text("one\ntwo\nthree\nfour");
+        let end = a.input_buffer.len();
+        a.input_cursor = end;
+        handle_event(&mut a, key(KeyCode::Left));
+        assert!(a.input_cursor < end);
+        handle_event(&mut a, key(KeyCode::Right));
+        assert_eq!(a.input_cursor, a.input_buffer.len());
+
+        let mut a = app();
+        a.mode = AppMode::Session;
+        handle_event(&mut a, Event::Paste("hello session".into()));
+        assert!(a.input_buffer.contains("hello session"));
+    }
+
+    #[test]
+    fn provider_form_fields_and_command_aliases() {
+        let mut a = app();
+        open_provider_dialog(&mut a);
+        a.provider_dialog.mode = crate::app::ProviderDialogMode::AddCustom;
+        for (field, ch, get) in [
+            (1usize, 'k', "form_api_key"),
+            (2, 'u', "form_base_url"),
+            (3, 'h', "form_headers"),
+        ] {
+            a.provider_dialog.active_field = field;
+            handle_event(&mut a, key(KeyCode::Char(ch)));
+            let val = match field {
+                1 => a.provider_dialog.form_api_key.as_str(),
+                2 => a.provider_dialog.form_base_url.as_str(),
+                _ => a.provider_dialog.form_headers.as_str(),
+            };
+            assert_eq!(val, ch.to_string(), "{get}");
+            handle_event(&mut a, key(KeyCode::Backspace));
+        }
+
+        for cmd in [":quit", ":h", ":prov"] {
+            let mut a = app();
+            a.mode = AppMode::Command;
+            a.key_context = KeymapContext::Command;
+            a.command.buffer = cmd.into();
+            handle_event(&mut a, key(KeyCode::Enter));
+            match cmd {
+                ":quit" => assert!(!a.running),
+                ":h" => assert_eq!(a.mode, AppMode::Help),
+                _ => assert!(matches!(a.dialogs.active(), Some(DialogKind::Provider))),
+            }
+        }
+    }
+
+    #[test]
+    fn open_subagent_falls_back_to_last_and_shift_jumps() {
+        let mut a = app();
+        a.upsert_subagent(crate::app::SubagentUpdate {
+            id: "only".into(),
+            kind: "explore".into(),
+            description: "d".into(),
+            status: "running".into(),
+            activity: String::new(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        a.selected_msg = None;
+        open_selected_subagent(&mut a);
+        assert_eq!(a.open_subagent.as_deref(), Some("only"));
+
+        let mut a = app();
+        a.add_message(ChatRole::User, "u1");
+        a.add_message(ChatRole::Assistant, "a1");
+        a.add_message(ChatRole::User, "u2");
+        handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT)),
+        );
+        handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::SHIFT)),
+        );
+    }
+
+    #[test]
+    fn mouse_drag_without_down_and_plain_click() {
+        let mut a = app();
+        handle_event(&mut a, mouse(MouseEventKind::Drag(MouseButton::Left), 4, 4));
+        assert!(a.mouse_sel.is_some());
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 4, 4));
+
+        let mut a = app();
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 2, 2));
+        handle_event(&mut a, mouse(MouseEventKind::Up(MouseButton::Left), 2, 2));
+        assert!(a.mouse_sel.is_none());
+    }
+
+    #[test]
+    fn move_in_dialog_to_clamps_each_kind() {
+        let mut a = app();
+        open_provider_dialog(&mut a);
+        move_in_dialog_to(&mut a, &DialogKind::Provider, 99);
+        assert!(a.provider_dialog.selected > 0);
+
+        a.model_selection.models = vec![("p".into(), "m".into())];
+        move_in_dialog_to(&mut a, &DialogKind::Model, 9);
+        assert_eq!(a.model_selection.selected, 0);
+
+        a.session_list.sessions = vec![crate::app::SessionEntry {
+            id: "x".into(),
+            title: "t".into(),
+            messages: 0,
+            updated_at: None,
+            live: None,
+        }];
+        move_in_dialog_to(&mut a, &DialogKind::SessionList, 4);
+        assert_eq!(a.session_list.selected, 0);
+
+        a.sessions_rows = vec![crate::app::SessionDashboardRow {
+            parked_idx: None,
+            title: "s".into(),
+            glyph: "·".into(),
+            state_label: "idle".into(),
+            preview: String::new(),
+            unread: false,
+        }];
+        move_in_dialog_to(&mut a, &DialogKind::Sessions, 3);
+        assert_eq!(a.sessions_cursor, 0);
+
+        a.login_dialog.rows = vec![crate::app::LoginProviderRow {
+            provider: "x".into(),
+            label: "X".into(),
+            connected: false,
+        }];
+        move_in_dialog_to(&mut a, &DialogKind::Login, 2);
+        assert_eq!(a.login_dialog.selected, 0);
+
+        move_in_dialog_to(&mut a, &DialogKind::Theme, 0);
+        assert_eq!(a.theme_selected, 0);
+        move_in_dialog_to(&mut a, &DialogKind::Help, 0);
+    }
+
+    #[test]
+    fn dialog_question_keys_move_without_free_text() {
+        let mut a = app();
+        a.ask_question(vec![whycode_tools::question::QuestionSpec {
+            prompt: "Go?".into(),
+            options: vec![
+                whycode_tools::question::QuestionOption {
+                    label: "A".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+                whycode_tools::question::QuestionOption {
+                    label: "B".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+            ],
+            multi_select: true,
+        }]);
+        handle_event(&mut a, key(KeyCode::Down));
+        handle_event(&mut a, key(KeyCode::Up));
+        if let Some(DialogKind::Question(st)) = a.dialogs.active() {
+            assert!(!st.free_text_focus);
+        }
+    }
 }

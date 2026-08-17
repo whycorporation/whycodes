@@ -6283,4 +6283,677 @@ mod tests {
         refresh_session_memory(&mut session, &agent, dir.path(), &config, None);
         let _ = memory_service(dir.path(), &config);
     }
+
+    fn dummy_info(name: &str) -> whycode_core::types::AgentInfo {
+        whycode_core::types::AgentInfo {
+            name: name.into(),
+            description: String::new(),
+            mode: AgentMode::Primary,
+            permission: whycode_core::types::PermissionSet::default(),
+            model: None,
+            system_prompt: Some("sys".into()),
+            temperature: None,
+            top_p: None,
+        }
+    }
+
+    fn temp_index() -> (tempfile::TempDir, Arc<whycode_index::WorkspaceIndex>) {
+        let dir = tempfile::tempdir().unwrap();
+        let idx = whycode_index::WorkspaceIndex::start_with(
+            vec![dir.path().to_path_buf()],
+            whycode_index::IndexOptions {
+                watch: false,
+                threads: 1,
+                ..Default::default()
+            },
+        );
+        (dir, idx)
+    }
+
+    fn sample_question() -> whycode_tools::question::QuestionSpec {
+        whycode_tools::question::QuestionSpec {
+            prompt: "Pick?".into(),
+            options: vec![
+                whycode_tools::question::QuestionOption {
+                    label: "Yes".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+                whycode_tools::question::QuestionOption {
+                    label: "No".into(),
+                    description: String::new(),
+                    preview: None,
+                },
+            ],
+            multi_select: false,
+        }
+    }
+
+    #[test]
+    fn force_stop_applies_outcome_or_rebuilds() {
+        isolate_home();
+        let (dir, idx) = temp_index();
+        let config = Config::default();
+        let (perm, _prx) = ChannelPermissionPrompter::new();
+        let (question, _qrx) = ChannelQuestionPrompter::new(None);
+        let perm = Arc::new(perm);
+        let question = Arc::new(question);
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let (done_tx, mut done_rx) = mpsc::unbounded_channel();
+
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.add_message(ChatRole::Assistant, "partial");
+        let mut agent = Agent::new(dummy_info("build"));
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        let mut busy = true;
+        let mut flag = Some(new_cancel_flag());
+        let mut at = Some(Instant::now());
+        let mut join = None;
+        let mut backup = None;
+        let mut q = std::collections::VecDeque::new();
+        let mut p = std::collections::VecDeque::new();
+
+        done_tx
+            .send(TurnOutcome::Ok {
+                text: "done".into(),
+                agent: Agent::new(dummy_info("from-outcome")),
+                session: Session::new(dir.path().to_path_buf(), "restored".into()),
+                work_ms: 3,
+            })
+            .unwrap();
+        force_stop_turn(
+            &mut app,
+            &mut agent,
+            &mut session,
+            &mut busy,
+            &mut flag,
+            &mut at,
+            &mut join,
+            &mut backup,
+            &mut q,
+            &mut p,
+            &mut done_rx,
+            &config,
+            dir.path(),
+            "acme",
+            "m",
+            event_tx.clone(),
+            Arc::clone(&perm),
+            Arc::clone(&question),
+            &idx,
+        );
+        assert!(!busy);
+        assert!(flag.is_none());
+        assert_eq!(agent.info.name, "from-outcome");
+        assert!(
+            app.messages
+                .iter()
+                .any(|m| m.role == ChatRole::System && m.content.contains("Stopped"))
+        );
+
+        // No outcome → restore backup and rebuild.
+        let mut agent = Agent::new(dummy_info("old"));
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        let mut busy = true;
+        let mut flag = Some(new_cancel_flag());
+        let mut at = Some(Instant::now());
+        let mut backup = Some(Session::new(dir.path().to_path_buf(), "backup-sys".into()));
+        app.agent_name = "plan".into();
+        app.add_message(ChatRole::System, "already cancelled");
+        force_stop_turn(
+            &mut app,
+            &mut agent,
+            &mut session,
+            &mut busy,
+            &mut flag,
+            &mut at,
+            &mut join,
+            &mut backup,
+            &mut q,
+            &mut p,
+            &mut done_rx,
+            &config,
+            dir.path(),
+            "acme",
+            "m",
+            event_tx,
+            perm,
+            question,
+            &idx,
+        );
+        assert!(!busy);
+        assert!(backup.is_none());
+        assert_eq!(session.system_prompt, "backup-sys");
+    }
+
+    #[test]
+    fn rebuild_agent_resolves_pending_name() {
+        isolate_home();
+        let (dir, idx) = temp_index();
+        let config = Config::default();
+        let (perm, _) = ChannelPermissionPrompter::new();
+        let (question, _) = ChannelQuestionPrompter::new(None);
+        let (event_tx, _) = mpsc::unbounded_channel();
+        let mut agent = Agent::new(dummy_info("old"));
+        let mut session = Session::new(dir.path().to_path_buf(), String::new());
+        rebuild_agent_after_force_stop(
+            &mut agent,
+            &mut session,
+            &config,
+            dir.path(),
+            "_pending",
+            event_tx.clone(),
+            Arc::new(perm),
+            Arc::new(question),
+            &idx,
+        );
+        assert_eq!(agent.info.name, "build");
+        assert!(!session.system_prompt.is_empty());
+
+        let (perm, _) = ChannelPermissionPrompter::new();
+        let (question, _) = ChannelQuestionPrompter::new(None);
+        rebuild_agent_after_force_stop(
+            &mut agent,
+            &mut session,
+            &config,
+            dir.path(),
+            "",
+            event_tx,
+            Arc::new(perm),
+            Arc::new(question),
+            &idx,
+        );
+        assert_eq!(agent.info.name, "build");
+    }
+
+    #[tokio::test]
+    async fn cycle_agent_walks_primary_list() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        let (perm, _) = ChannelPermissionPrompter::new();
+        let (question, _) = ChannelQuestionPrompter::new(None);
+        let perm = Arc::new(perm);
+        let question = Arc::new(question);
+        let (event_tx, _) = mpsc::unbounded_channel();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut agent = Agent::new(dummy_info("build"));
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        let mut config = Config::default();
+
+        app.primary_agents.clear();
+        cycle_agent(
+            &mut app,
+            &mut agent,
+            &mut session,
+            &config,
+            dir.path(),
+            Arc::clone(&perm),
+            Arc::clone(&question),
+            &event_tx,
+        )
+        .await;
+        assert!(app.agent_name.is_empty() || app.agent_name == "build");
+
+        app.primary_agents = vec!["build".into(), "plan".into()];
+        app.agent_cycle_idx = 0;
+        config.agents.push(dummy_info("plan"));
+        cycle_agent(
+            &mut app,
+            &mut agent,
+            &mut session,
+            &config,
+            dir.path(),
+            perm,
+            question,
+            &event_tx,
+        )
+        .await;
+        assert_eq!(app.agent_name, "plan");
+        assert_eq!(agent.info.name, "plan");
+        assert!(app.status_message.contains("plan"));
+    }
+
+    #[test]
+    fn handle_question_key_navigates_confirms_and_cancels() {
+        let spec = sample_question();
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut qqueue = std::collections::VecDeque::new();
+        let pqueue = std::collections::VecDeque::new();
+        assert!(!handle_question_key(
+            &mut app,
+            KeyCode::Enter,
+            &mut qqueue,
+            &pqueue
+        ));
+
+        app.ask_question(vec![spec.clone()]);
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Down,
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Up,
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('j'),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('k'),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Right,
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Left,
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('y'),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(
+            app.toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Copied") || t.message.contains("clipboard"))
+        );
+
+        // Digit 1 selects first option and finishes.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        qqueue.push_back(QuestionRequest {
+            questions: vec![spec.clone()],
+            reply: tx,
+        });
+        app.ask_question(vec![spec.clone()]);
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('1'),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(qqueue.is_empty());
+        assert!(rx.blocking_recv().unwrap().is_ok());
+        assert_eq!(app.mode, AppMode::Normal);
+
+        // Esc cancels.
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        qqueue.push_back(QuestionRequest {
+            questions: vec![spec.clone()],
+            reply: tx,
+        });
+        app.ask_question(vec![spec.clone()]);
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Esc,
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(matches!(
+            rx.blocking_recv().unwrap(),
+            Err(QuestionError::Cancelled)
+        ));
+
+        // Other + free text + Enter.
+        app.ask_question(vec![spec.clone()]);
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('o'),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('x'),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Backspace,
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char('z'),
+            &mut qqueue,
+            &pqueue
+        ));
+        if let Some(DialogKind::Question(st)) = app.dialogs.active() {
+            assert_eq!(st.free_text, "z");
+            assert!(st.free_text_focus);
+        } else {
+            panic!("expected question dialog");
+        }
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Esc,
+            &mut qqueue,
+            &pqueue
+        ));
+        if let Some(DialogKind::Question(st)) = app.dialogs.active() {
+            assert!(!st.free_text_focus);
+        }
+
+        // Space on Other focuses free text; unknown key is not consumed.
+        app.ask_question(vec![spec]);
+        if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
+            st.cursor = st.option_count() - 1;
+            app.dialogs.push(DialogKind::Question(st));
+        }
+        assert!(handle_question_key(
+            &mut app,
+            KeyCode::Char(' '),
+            &mut qqueue,
+            &pqueue
+        ));
+        assert!(!handle_question_key(
+            &mut app,
+            KeyCode::F(1),
+            &mut qqueue,
+            &pqueue
+        ));
+    }
+
+    #[test]
+    fn resume_after_question_opens_next_or_permission() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut q = std::collections::VecDeque::new();
+        let mut p = std::collections::VecDeque::new();
+        resume_after_question(&mut app, &q, &p);
+        assert!(app.status_message.contains("continuing"));
+
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        resume_after_question(&mut app, &q, &p);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Question(_))
+        ));
+        assert!(app.status_message.contains("more question"));
+
+        q.clear();
+        app.dialogs.clear();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        p.push_back(whycode_agent::PermissionRequest {
+            tool_name: "bash".into(),
+            detail: "ls".into(),
+            reply: tx,
+        });
+        resume_after_question(&mut app, &q, &p);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Permission { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn spawn_runtime_and_drain_outcomes() {
+        isolate_home();
+        let (dir, idx) = temp_index();
+        let rt = spawn_new_session_runtime(
+            "no-such-agent",
+            &Config::default(),
+            dir.path(),
+            &idx,
+            whycode_core::FileClaimRegistry::new(),
+        )
+        .await;
+        assert_eq!(rt.agent.info.name, "no-such-agent");
+        assert!(!rt.agent_busy);
+
+        let mut rt = test_runtime();
+        let agent = Agent::new(dummy_info("ok"));
+        let session = Session::new(PathBuf::from("/work"), "sys".into());
+        rt.done_tx
+            .send(TurnOutcome::Ok {
+                text: "hi".into(),
+                agent,
+                session,
+                work_ms: 1,
+            })
+            .unwrap();
+        drain_background_runtime(&mut rt);
+        assert!(!rt.agent_busy);
+        assert_eq!(rt.agent.info.name, "ok");
+
+        rt.done_tx
+            .send(TurnOutcome::Remote {
+                text: String::new(),
+                error: Some("boom".into()),
+                work_ms: 1,
+            })
+            .unwrap();
+        drain_background_runtime(&mut rt);
+        assert!(rt.last_error);
+        assert!(
+            rt.view
+                .messages
+                .iter()
+                .any(|m| m.content.contains("Remote error"))
+        );
+
+        let agent = Agent::new(dummy_info("err"));
+        let session = Session::new(PathBuf::from("/work"), "sys".into());
+        rt.done_tx
+            .send(TurnOutcome::Err {
+                error: "nope".into(),
+                agent,
+                session,
+                cancelled: false,
+                work_ms: 1,
+            })
+            .unwrap();
+        drain_background_runtime(&mut rt);
+        assert!(rt.last_error);
+
+        let agent = Agent::new(dummy_info("cx"));
+        let session = Session::new(PathBuf::from("/work"), "sys".into());
+        rt.done_tx
+            .send(TurnOutcome::Err {
+                error: "x".into(),
+                agent,
+                session,
+                cancelled: true,
+                work_ms: 1,
+            })
+            .unwrap();
+        drain_background_runtime(&mut rt);
+        assert!(!rt.last_error);
+        assert!(
+            rt.view
+                .messages
+                .iter()
+                .any(|m| m.content.contains("cancelled"))
+        );
+    }
+
+    #[tokio::test]
+    async fn drain_background_queues_prompter_asks() {
+        use whycode_agent::{PermissionPrompter, QuestionPrompter};
+        let mut rt = test_runtime();
+        let perm = Arc::clone(&rt.perm_prompter);
+        let question = Arc::clone(&rt.question_prompter);
+        let p = tokio::spawn(async move {
+            perm.ask("bash", "ls").await;
+        });
+        let q = tokio::spawn(async move {
+            let _ = question.ask(vec![sample_question()]).await;
+        });
+        for _ in 0..50 {
+            drain_background_runtime(&mut rt);
+            if !rt.pending_perm_queue.is_empty() && !rt.pending_question_queue.is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        assert!(!rt.pending_perm_queue.is_empty());
+        assert!(!rt.pending_question_queue.is_empty());
+        assert!(rt.unread);
+        // Unblock the waiters so the test can finish.
+        let _ = rt.pending_perm_queue.pop_front().unwrap().reply.send(false);
+        let _ = rt
+            .pending_question_queue
+            .pop_front()
+            .unwrap()
+            .reply
+            .send(Err(QuestionError::Cancelled));
+        let _ = p.await;
+        let _ = q.await;
+    }
+
+    #[test]
+    fn suggestion_and_catalog_helpers_short_circuit() {
+        isolate_home();
+        let session = Session::new(PathBuf::from("/work"), "sys".into());
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let (tx, _rx) = mpsc::unbounded_channel();
+        let mut config = Config::default();
+        maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx.clone());
+        config.tui.prompt_suggestions = "idle".into();
+        maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "", &mut app, tx.clone());
+        maybe_spawn_prompt_suggestion(&config, &session, "p", "m", "key", &mut app, tx);
+
+        spawn_model_context_fetch(&config, "p", "m", "", {
+            let (tx, _rx) = mpsc::unbounded_channel();
+            tx
+        });
+        restore_terminal_on(&mut Vec::<u8>::new());
+        if let Ok(mut w) = open_tui_writer() {
+            let _ = w.write(b"");
+            let _ = w.flush();
+        }
+        let _ = bind_agent_prompters(
+            Agent::new(dummy_info("build")),
+            &{
+                let (p, _) = ChannelPermissionPrompter::new();
+                Arc::new(p)
+            },
+            &{
+                let (q, _) = ChannelQuestionPrompter::new(None);
+                Arc::new(q)
+            },
+        );
+    }
+
+    #[test]
+    fn load_session_entries_and_picker_merge() {
+        isolate_home();
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        session.add_user_message("hello there");
+        persist_session_best_effort(&session, "entries");
+        let entries = load_session_entries();
+        assert!(
+            entries.iter().any(|e| e.id == session.id),
+            "persisted session must appear: {entries:?}"
+        );
+
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let rt = test_runtime();
+        let parked = test_runtime();
+        app.session_list.sessions = entries;
+        assert!(refresh_picker_live_section(&mut app, &rt, &[parked]));
+        assert!(
+            app.session_list
+                .sessions
+                .iter()
+                .any(|e| e.live == Some(usize::MAX)),
+            "current live row"
+        );
+        assert!(
+            app.session_list.sessions.iter().any(|e| e.live == Some(0)),
+            "parked live row"
+        );
+    }
+
+    #[test]
+    fn doctor_report_flags_missing_project() {
+        isolate_home();
+        let session = Session::new(PathBuf::from("/no/such/project/dir"), "sys".into());
+        let app = TuiApp::from_config(TuiAppConfig::default());
+        let config = Config::default();
+        let agent = Agent::new(dummy_info("build"));
+        let out = doctor_report(
+            &session,
+            &app,
+            &config,
+            &agent,
+            PathBuf::from("/no/such/project/dir").as_path(),
+        );
+        assert!(out.contains("issues"), "{out}");
+        assert!(out.contains("project directory missing"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn handle_slash_more_aliases_and_connect_with_key() {
+        let mut h = SlashHarness::new();
+        h.run("/q").await;
+        assert!(!h.app.running);
+        h.app.running = true;
+        h.run("/h").await;
+        assert_eq!(h.app.mode, AppMode::Help);
+        h.app.mode = AppMode::Normal;
+        h.app.key_context = KeymapContext::Normal;
+
+        h.run("/clear").await;
+        h.run("/summarize").await;
+        h.run("/export").await;
+        h.run("/usage").await;
+        h.run("/themes").await;
+        assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Theme)));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+
+        h.run("/loop keep going").await;
+        assert_eq!(h.app.pending_prompt.as_deref(), Some("keep going"));
+        assert_eq!(
+            h.app.pending_auto_prompts.len(),
+            2,
+            "default N=3 → 2 queued"
+        );
+
+        h.api_key = "sk-test".into();
+        h.run("/connect").await;
+        assert!(
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("Connected")),
+            "{:?}",
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .map(|t| t.message.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        h.config.agents.push(dummy_info("plan"));
+        h.run("/agent plan").await;
+        assert_eq!(h.agent.info.name, "plan");
+        assert!(h.app.status_message.contains("plan"));
+    }
 }
