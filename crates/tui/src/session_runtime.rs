@@ -300,6 +300,7 @@ mod tests {
             created_at: None,
             layout_cache: None,
             line_cache: None,
+            stream_md: None,
         }
     }
 

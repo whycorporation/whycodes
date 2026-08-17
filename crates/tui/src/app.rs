@@ -589,6 +589,9 @@ pub struct ChatMessage {
     /// Cached painted lines for closed messages at `(width, closed)`.
     /// `Arc` so a scroll frame can paint by reference (no per-row String clone).
     pub line_cache: Option<(u16, bool, std::sync::Arc<Vec<ratatui::text::Line<'static>>>)>,
+    /// Live-tail markdown freeze (Grok checkpoint). Only the growing
+    /// assistant bubble uses this; closed messages sit in `line_cache`.
+    pub stream_md: Option<crate::md_stream::IncrementalMarkdown>,
 }
 
 impl ChatMessage {
@@ -596,6 +599,8 @@ impl ChatMessage {
     pub fn invalidate_layout(&mut self) {
         self.layout_cache = None;
         self.line_cache = None;
+        // Keep `stream_md`: append-only growth still hits the frozen prefix.
+        // Width / prefix mismatch inside IncrementalMarkdown resets itself.
     }
 
     fn blank(role: ChatRole, content: impl Into<String>) -> Self {
@@ -611,6 +616,7 @@ impl ChatMessage {
             created_at: Some(chrono::Utc::now()),
             layout_cache: None,
             line_cache: None,
+            stream_md: None,
         }
     }
 }
@@ -1170,8 +1176,8 @@ pub struct TuiApp {
 
     // ── mouse text selection (app-owned; native terminal select copies pad spaces) ──
     pub mouse_sel: Option<MouseSelection>,
-    /// Last drawn frame as cell symbols `[row][col]`, used to build clipboard text.
-    pub screen_cells: Vec<Vec<String>>,
+    /// Last drawn frame as a packed cell grid (selection → clipboard).
+    pub screen_cells: crate::cell_grid::CellGrid,
 
     // ── dialogs ──
     pub dialogs: DialogManager,
@@ -1671,7 +1677,7 @@ impl TuiApp {
             chat_scroll_total: 0,
             chat_scrollbar_grab: None,
             mouse_sel: None,
-            screen_cells: Vec::new(),
+            screen_cells: crate::cell_grid::CellGrid::default(),
             dialogs: DialogManager::new(),
             provider_dialog: ProviderDialogState::default(),
             model_selection: ModelSelectionState::default(),

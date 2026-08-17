@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Port Grok paint-window + markdown checkpoints + packed cells
+
+**Symptom:** Long transcripts walked every message each frame. Streaming a reply re-parsed the whole bubble (O(N²)). Mouse-select allocated one `String` per cell.
+
+**Root cause:** Grok Build already solved these: `partition_point` on prefix-sum `virtual_y`, freeze markdown at `last_checkpoint`, pack the selection grid as UTF-8 + `u32` offsets.
+
+**Fix:** `visible_message_range` (two `partition_point`s). `IncrementalMarkdown` on the live assistant bubble. `CellGrid` for `screen_cells`.
+
+**Prevention:** Viewport → message must be O(log n). Live markdown must not re-parse frozen prefix. Selection snapshot must not heap-allocate per cell.
+
+---
+
 ### 2026-08-17 — Sessions dialog / parked drain burned idle CPU
 
 **Symptom:** Opening the live-session dashboard kept the TUI at ~25 fps full paints with nothing changing. Several parked sessions made idle ticks allocate.

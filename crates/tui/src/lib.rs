@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod bench;
+pub mod cell_grid;
 pub mod clipboard;
 pub mod config;
 pub mod frecency;
@@ -10,6 +11,7 @@ pub mod hit_area;
 pub mod images;
 pub mod input;
 pub mod keymap;
+pub mod md_stream;
 pub mod paste;
 pub mod remote;
 pub mod run;

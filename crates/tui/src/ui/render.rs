@@ -792,6 +792,7 @@ mod paint_tests {
             created_at: None,
             layout_cache: None,
             line_cache: None,
+            stream_md: None,
         }
     }
 
@@ -883,7 +884,12 @@ mod paint_tests {
             dragging: true,
         });
         // Non-empty snapshot → clipboard paint_ranges_clipped path.
-        a.screen_cells = vec![vec!["a".into(), "b".into(), "c".into(), "d".into()]];
+        a.screen_cells = crate::cell_grid::CellGrid::from_rows(vec![vec![
+            "a".into(),
+            "b".into(),
+            "c".into(),
+            "d".into(),
+        ]]);
         let (buf, _) = paint(20, 3, |f| {
             f.render_widget(
                 ratatui::widgets::Paragraph::new("hello world"),

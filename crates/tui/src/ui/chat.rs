@@ -70,7 +70,7 @@ pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
             total += lines.len();
             continue;
         }
-        total += render_message(msg, app, &palette, i, width).len();
+        total += render_message(msg, app, &palette, i, width, None).len();
     }
     (starts, total)
 }
@@ -98,7 +98,7 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
         } else {
             let lines = {
                 let palette = app.config.palette();
-                render_message(&app.messages[i], app, &palette, i, width)
+                render_message_live(app, i, &palette, width)
             };
             let h = lines.len();
             // Open (streaming) bubbles grow every token — never cache height
@@ -117,16 +117,31 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
 
 /// Last user prompt whose first row sits above the viewport (Grok sticky header).
 fn last_scrolled_past_user(app: &TuiApp, starts: &[usize], view_start: usize) -> Option<usize> {
-    let mut last = None;
-    for (i, start) in starts.iter().enumerate() {
-        if *start >= view_start {
-            break;
-        }
-        if matches!(app.messages.get(i).map(|m| &m.role), Some(ChatRole::User)) {
-            last = Some(i);
-        }
+    // Binary search to the first message at/after the viewport, then walk
+    // backward (Grok `partition_point` on `virtual_y`).
+    let above = starts.partition_point(|&s| s < view_start);
+    (0..above)
+        .rev()
+        .find(|&i| matches!(app.messages.get(i).map(|m| &m.role), Some(ChatRole::User)))
+}
+
+/// Message index range whose rows intersect `[view_start, view_end)`.
+///
+/// Grok `compute_paint_window`: `starts` is a prefix-sum of heights, so
+/// two `partition_point`s replace a linear scan of the whole transcript.
+pub fn visible_message_range(
+    starts: &[usize],
+    total: usize,
+    view_start: usize,
+    view_end: usize,
+) -> std::ops::Range<usize> {
+    if starts.is_empty() || view_start >= view_end || view_start >= total {
+        return 0..0;
     }
-    last
+    let end = starts.partition_point(|&s| s < view_end);
+    let first_after = starts.partition_point(|&s| s <= view_start);
+    let start = first_after.saturating_sub(1);
+    start.min(end)..end
 }
 
 /// Visible `[start, end)` range for bottom-anchored scroll.
@@ -285,13 +300,9 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         y = y.saturating_add(1);
     }
 
-    let n = app.messages.len();
-    for i in 0..n {
+    let paint = visible_message_range(&starts, total, view_start, view_end);
+    for i in paint {
         let msg_start = starts[i];
-        let msg_end = if i + 1 < n { starts[i + 1] } else { total };
-        if msg_end <= view_start || msg_start >= view_end {
-            continue;
-        }
 
         let selected =
             app.selected_msg == Some(i) && app.focus == crate::app::FocusPane::Scrollback;
@@ -325,7 +336,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             continue;
         }
 
-        let rendered = render_message(&app.messages[i], app, palette, i, content_width);
+        let rendered = render_message_live(app, i, palette, content_width);
         if closed {
             let arc = Arc::new(rendered);
             let h = arc.len();
@@ -567,12 +578,42 @@ fn message_is_closed(app: &TuiApp, index: usize) -> bool {
     true
 }
 
+/// Render message `index`, threading the Grok checkpoint cache on live
+/// assistant bubbles so a growing reply does not re-parse frozen blocks.
+fn render_message_live(
+    app: &mut TuiApp,
+    index: usize,
+    palette: &ThemePalette,
+    width: u16,
+) -> Vec<Line<'static>> {
+    if app
+        .messages
+        .get(index)
+        .is_some_and(|m| matches!(m.role, ChatRole::Assistant) && !message_is_closed(app, index))
+        && app.messages[index].stream_md.is_none()
+    {
+        app.messages[index].stream_md = Some(crate::md_stream::IncrementalMarkdown::default());
+    }
+    let mut stream = app.messages[index].stream_md.take();
+    let lines = render_message(
+        &app.messages[index],
+        app,
+        palette,
+        index,
+        width,
+        stream.as_mut(),
+    );
+    app.messages[index].stream_md = stream;
+    lines
+}
+
 fn render_message(
     msg: &crate::app::ChatMessage,
     app: &TuiApp,
     palette: &ThemePalette,
     index: usize,
     width: u16,
+    mut stream: Option<&mut crate::md_stream::IncrementalMarkdown>,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     // Blank line between messages
@@ -615,18 +656,25 @@ fn render_message(
                 }
             };
             let md_width = (width as usize).saturating_sub(4).max(20);
-            let emit_markdown = |lines: &mut Vec<Line<'static>>, text: &str| {
-                if text.is_empty() {
-                    return;
-                }
-                let start = lines.len();
-                lines.extend(super::markdown::render_with_width(
-                    text,
-                    palette,
-                    Some(md_width),
-                ));
-                stamp(&mut lines[start..]);
-            };
+            let emit_markdown =
+                |lines: &mut Vec<Line<'static>>,
+                 text: &str,
+                 stream: &mut Option<&mut crate::md_stream::IncrementalMarkdown>| {
+                    if text.is_empty() {
+                        return;
+                    }
+                    let start = lines.len();
+                    if let Some(inc) = stream.as_mut() {
+                        lines.extend(inc.render(text, palette, Some(md_width)));
+                    } else {
+                        lines.extend(super::markdown::render_with_width(
+                            text,
+                            palette,
+                            Some(md_width),
+                        ));
+                    }
+                    stamp(&mut lines[start..]);
+                };
 
             for block in &msg.blocks {
                 match block {
@@ -656,7 +704,7 @@ fn render_message(
                     }
                     ChatBlock::Text(t) if msg.content.is_empty() => {
                         // Restore path: no live `content` tail, paint Text in place.
-                        emit_markdown(&mut lines, t);
+                        emit_markdown(&mut lines, t, &mut stream);
                     }
                     ChatBlock::Text(_) | ChatBlock::ToolResult { .. } => {
                         // Live `content` is emitted after every tool. ToolResult
@@ -720,7 +768,7 @@ fn render_message(
                 }
             }
             // Written answer last — always nearest the prompt / stop row.
-            emit_markdown(&mut lines, &msg.content);
+            emit_markdown(&mut lines, &msg.content, &mut stream);
             // Turn footer: past tense, muted duration ("Worked for 12s").
             // Provider/model live under the prompt meta row once.
             let is_last = index + 1 == app.messages.len();
@@ -2766,7 +2814,7 @@ mod tests {
     use super::{
         SparseLines, ToolOutHint, ToolPaint, hard_truncate_line, message_row_layout_mut,
         parse_grep_hit, prettify_tool_result, split_read_line, tool_block, tool_display_name,
-        tool_result, tool_summary,
+        tool_result, tool_summary, visible_message_range,
     };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
@@ -3294,6 +3342,20 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
     }
 
     #[test]
+    fn visible_message_range_is_binary_search() {
+        // starts = prefix sums: msg0@0 h=3, msg1@3 h=5, msg2@8 h=2, total=10
+        let starts = [0usize, 3, 8];
+        let total = 10;
+        assert_eq!(visible_message_range(&starts, total, 0, 3), 0..1);
+        assert_eq!(visible_message_range(&starts, total, 2, 4), 0..2);
+        assert_eq!(visible_message_range(&starts, total, 3, 8), 1..2);
+        assert_eq!(visible_message_range(&starts, total, 7, 10), 1..3);
+        assert_eq!(visible_message_range(&starts, total, 8, 10), 2..3);
+        assert!(visible_message_range(&starts, total, 10, 12).is_empty());
+        assert!(visible_message_range(&[], 0, 0, 5).is_empty());
+    }
+
+    #[test]
     fn layout_height_cache_hits_on_second_pass() {
         let mut app = TuiApp::new(TuiAppConfig::default());
         app.add_message(ChatRole::User, "hello");
@@ -3380,7 +3442,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         app.add_tool_result("t1", "ok", false);
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80);
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None);
         let texts: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -3406,7 +3468,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         app.add_message(ChatRole::Assistant, "hello from the agent");
         app.messages[1].duration_ms = Some(1200);
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80);
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None);
         let answer = lines
             .iter()
             .find(|l| {
@@ -3487,7 +3549,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let mut app = TuiApp::new(TuiAppConfig::default());
         app.add_message(ChatRole::User, "hello from history");
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[0], &app, &palette, 0, 80);
+        let lines = super::render_message(&app.messages[0], &app, &palette, 0, 80, None);
         let row = lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))
