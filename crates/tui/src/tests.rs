@@ -1778,6 +1778,41 @@ fn user_message_preserves_newlines_in_panel() {
 }
 
 #[test]
+fn git_output_timeout_kills_a_sleeping_child() {
+    let start = std::time::Instant::now();
+    let out = crate::app::git_output_timeout(
+        std::process::Command::new("sleep").arg("2"),
+        std::time::Duration::from_millis(80),
+    );
+    assert!(out.is_none(), "sleep must not outlast the cap");
+    assert!(
+        start.elapsed() < std::time::Duration::from_millis(800),
+        "timeout must not wait for the full sleep"
+    );
+}
+
+#[test]
+fn coalesce_resizes_keeps_only_the_last() {
+    use crossterm::event::Event;
+    let mut events = vec![
+        Event::Resize(80, 24),
+        Event::Key(crossterm::event::KeyEvent::from(
+            crossterm::event::KeyCode::Char('a'),
+        )),
+        Event::Resize(100, 30),
+        Event::Resize(120, 40),
+    ];
+    crate::input::coalesce_resizes(&mut events);
+    let resizes: Vec<_> = events
+        .iter()
+        .filter(|e| matches!(e, Event::Resize(_, _)))
+        .collect();
+    assert_eq!(resizes.len(), 1);
+    assert!(matches!(resizes[0], Event::Resize(120, 40)));
+    assert_eq!(events.len(), 2, "key + last resize");
+}
+
+#[test]
 fn adopt_yield_view_moves_transcript_without_clone() {
     let mut app = TuiApp::from_config(test_config());
     app.add_message(ChatRole::Assistant, String::from("body"));

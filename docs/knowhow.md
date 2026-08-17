@@ -140,6 +140,16 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-17 — Competitor audit: draw recovery, resize coalesce, git timeout
+
+**Symptom / gap:** jcode keeps the TUI alive after a widget panic; Grok never `malloc_trim`s inside a frame; a wedged `git` or a resize flood can stall whycode.
+
+**Fix:** `catch_unwind` around `render_inner` + fallback banner. Coalesce `Resize` to the last size in a batch. `git rev-parse` capped at 250 ms (child killed). Turn-done heap trim is `request_release_after_draw` (Grok), drained after `terminal.draw`.
+
+**Prevention:** Recovered-frame paint test. Resize-coalesce keeps one event. Sleep+timeout test must finish ≪ 2s.
+
+---
+
 ### 2026-08-17 — jcode: toasts are not animation; deep idle + malloc_trim
 
 **Symptom:** A visible toast (or any static chrome) kept the loop at 40 ms full paints. jcode measured the same class of bug at ~180 frames per 3s notice and 0.22 CPU cores on decorative 60 fps.

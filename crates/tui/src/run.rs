@@ -771,6 +771,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     app.screen_cells.clear();
                 }
                 crate::bench::record_draw();
+                // Grok: never malloc_trim inside the paint; drain after flush.
+                crate::heap::run_deferred_release();
                 // Stay dirty while animation is live; otherwise clear so the
                 // next idle poll does not repaint an unchanged screen.
                 app.needs_redraw = animate;
@@ -918,8 +920,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 };
                 let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
                 app.mark_dirty();
-                // jcode: drop glibc arena pages after the turn's transients die.
-                crate::heap::release_retained_heap("turn_done");
+                // jcode/Grok: trim after the next frame flush, not mid-loop.
+                crate::heap::request_release_after_draw("turn_done");
                 match outcome {
                     TurnOutcome::Ok {
                         text,
@@ -1775,6 +1777,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     idle_trim_armed = true;
                 }
                 input::coalesce_chat_wheels(&mut app, &mut batch);
+                input::coalesce_resizes(&mut batch);
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
                 }

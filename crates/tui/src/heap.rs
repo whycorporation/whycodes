@@ -6,12 +6,15 @@
 //! Inert on non-Linux. Never call on the draw path.
 
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long the client must be quiet before an idle trim (jcode: 60s).
 pub const IDLE_TRIM_AFTER: Duration = Duration::from_secs(60);
 
 static LAST_TRIM: Mutex<Option<Instant>> = Mutex::new(None);
+static AFTER_DRAW: AtomicBool = AtomicBool::new(false);
+static AFTER_DRAW_REASON: Mutex<&'static str> = Mutex::new("post-draw");
 
 /// Ask glibc to return unused arena pages. Safe no-op elsewhere.
 pub fn release_retained_heap(reason: &'static str) {
@@ -47,6 +50,25 @@ pub fn release_retained_heap_debounced(reason: &'static str, min_interval: Durat
     true
 }
 
+/// Grok `request_release_after_draw`: coalesce trims requested on the
+/// draw/tick path and run them **after** the frame flush so `malloc_trim`
+/// cannot stall the paint the user is waiting for.
+pub fn request_release_after_draw(reason: &'static str) {
+    if let Ok(mut r) = AFTER_DRAW_REASON.lock() {
+        *r = reason;
+    }
+    AFTER_DRAW.store(true, Ordering::Relaxed);
+}
+
+/// Drain a pending [`request_release_after_draw`]. Call once after
+/// `terminal.draw` succeeds.
+pub fn run_deferred_release() {
+    if AFTER_DRAW.swap(false, Ordering::Relaxed) {
+        let reason = AFTER_DRAW_REASON.lock().map(|r| *r).unwrap_or("post-draw");
+        release_retained_heap(reason);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,5 +85,18 @@ mod tests {
             "debounce_skip",
             Duration::from_secs(60)
         ));
+    }
+
+    #[test]
+    fn deferred_request_coalesces_and_drains_once() {
+        // Drain any leftover from a sibling test.
+        run_deferred_release();
+        request_release_after_draw("a");
+        request_release_after_draw("b");
+        assert!(AFTER_DRAW.load(Ordering::Relaxed));
+        run_deferred_release();
+        assert!(!AFTER_DRAW.load(Ordering::Relaxed));
+        run_deferred_release();
+        assert!(!AFTER_DRAW.load(Ordering::Relaxed));
     }
 }

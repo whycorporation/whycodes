@@ -911,6 +911,20 @@ pub fn coalesce_chat_wheels(app: &mut TuiApp, events: &mut Vec<Event>) {
     }
 }
 
+/// Keep only the last `Resize` in a drained batch (jcode / Grok: a
+/// window-manager snap floods `TIOCGWINSZ`; laying out each size is wasted).
+pub fn coalesce_resizes(events: &mut Vec<Event>) {
+    let last = events.iter().rev().find_map(|e| match e {
+        Event::Resize(w, h) => Some((*w, *h)),
+        _ => None,
+    });
+    let Some((w, h)) = last else {
+        return;
+    };
+    events.retain(|e| !matches!(e, Event::Resize(_, _)));
+    events.push(Event::Resize(w, h));
+}
+
 /// Grab offset within the chat scrollbar thumb (top-origin track math).
 fn chat_scrollbar_grab_at(app: &TuiApp, row: u16, track: ratatui::layout::Rect) -> u16 {
     use crate::ui::scrollbar::{scrollbar_metrics, thumb_top_for_offset};
