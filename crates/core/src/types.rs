@@ -1150,6 +1150,178 @@ mod tests {
         );
         let _ = p;
     }
+
+    #[test]
+    fn stamp_messages_mut_provider_urls_and_permission_edges() {
+        let m = Message {
+            role: Role::User,
+            content: MessageContent::text("hi"),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }
+        .stamp();
+        assert!(m.created_at.is_some());
+        let again = m.clone().stamp();
+        assert_eq!(again.created_at, m.created_at);
+
+        let mut req = LlmRequest {
+            system: String::new(),
+            messages: std::sync::Arc::from(vec![m]),
+            tools: vec![],
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: default_use_prompt_cache(),
+        };
+        req.messages_mut()[0].name = Some("u".into());
+        assert_eq!(req.messages[0].name.as_deref(), Some("u"));
+
+        let names = [
+            "openai",
+            "anthropic",
+            "groq",
+            "deepseek",
+            "google",
+            "gemini",
+            "azure",
+            "openrouter",
+            "together",
+            "together_ai",
+            "fireworks",
+            "mistral",
+            "cohere",
+            "perplexity",
+            "xai",
+            "custom-x",
+        ];
+        for name in names {
+            let pc = ProviderConfig {
+                name: name.into(),
+                api_key: None,
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: vec![],
+                tool_arguments: None,
+                extra: Default::default(),
+            };
+            assert_eq!(pc.tool_arguments_format(), ToolArgumentsFormat::JsonString);
+            assert!(pc.resolve_url("m").contains("http"));
+        }
+
+        assert_eq!(
+            PermissionAction::parse("allow"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(
+            PermissionAction::parse("prompt"),
+            Some(PermissionAction::Ask)
+        );
+        assert_eq!(
+            PermissionAction::parse("block"),
+            Some(PermissionAction::Deny)
+        );
+        assert_eq!(PermissionAction::parse("???"), None);
+
+        let mut p = PermissionSet {
+            allow_file_writes: false,
+            allow_shell: false,
+            allow_network: false,
+            denied_tools: Some(vec!["secret".into()]),
+            allowed_tools: Some(vec!["read".into()]),
+            ..Default::default()
+        };
+        p.rules.insert("mcp_*".into(), PermissionAction::Deny);
+        assert_eq!(p.action_for("mcp_x"), PermissionAction::Deny);
+        p.rules.insert("*".into(), PermissionAction::Ask);
+        assert_eq!(p.action_for("anything"), PermissionAction::Ask);
+        p.rules.clear();
+        assert_eq!(p.action_for("secret"), PermissionAction::Deny);
+        assert_eq!(p.action_for("write"), PermissionAction::Deny);
+        assert_eq!(p.action_for("grep"), PermissionAction::Deny);
+        p.allowed_tools = None;
+        assert_eq!(p.action_for("write"), PermissionAction::Deny);
+        assert_eq!(p.action_for("bash"), PermissionAction::Deny);
+        assert_eq!(p.action_for("webfetch"), PermissionAction::Deny);
+
+        let p2 = perms_with(&[
+            ("edit(src/**)", PermissionAction::Allow),
+            ("write(**/*.md)", PermissionAction::Ask),
+            ("read(*)", PermissionAction::Allow),
+            ("write(/etc/**)", PermissionAction::Allow),
+            ("not-a-rule", PermissionAction::Allow),
+            ("edit()", PermissionAction::Allow),
+        ]);
+        assert_eq!(
+            p2.action_for_path("edit", "src\\mod.rs"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(
+            p2.action_for_path("write", "notes.md"),
+            Some(PermissionAction::Ask)
+        );
+        assert_eq!(
+            p2.action_for_path("read", "a.rs"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(
+            p2.action_for_path("write", "/etc/passwd"),
+            Some(PermissionAction::Ask)
+        );
+        assert!(p2.action_for_path("bash", "x").is_none());
+        assert!(path_glob_matches("src/*.rs", "src/main.rs"));
+        assert!(path_glob_matches("foo", "foo/bar"));
+        assert!(path_glob_matches("**/*.rs", "lib/x.rs"));
+        assert!(!match_simple_star("a*", "a/b"));
+
+        let sh = perms_with(&[
+            ("bash(git *)", PermissionAction::Allow),
+            ("bash(*)", PermissionAction::Allow),
+            ("bash(python *)", PermissionAction::Allow),
+            ("bash(npm run *)", PermissionAction::Allow),
+            ("shell()", PermissionAction::Allow),
+            ("edit(x)", PermissionAction::Allow),
+            ("bash", PermissionAction::Allow),
+        ]);
+        assert!(sh.action_for_shell("").is_none());
+        assert_eq!(
+            sh.action_for_shell("git status"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(
+            sh.action_for_shell("python x.py"),
+            Some(PermissionAction::Ask)
+        );
+        assert_eq!(sh.action_for_shell("ls"), Some(PermissionAction::Ask));
+        assert!(is_dangerous_shell_allow_pattern("*"));
+        assert!(is_dangerous_shell_allow_pattern("python"));
+        assert!(is_dangerous_shell_allow_pattern("python*"));
+        assert!(is_dangerous_shell_allow_pattern("npm run"));
+        assert!(is_dangerous_shell_allow_pattern("yarn run *"));
+        assert!(is_dangerous_shell_allow_pattern("python -c *"));
+        assert!(is_dangerous_shell_allow_pattern("node*"));
+        assert!(!is_dangerous_shell_allow_pattern("git status"));
+        assert!(parse_shell_rule("bash)(x").is_none());
+        assert!(parse_shell_rule("edit(src)").is_none());
+        assert!(parse_path_rule("bash(src)").is_none());
+        assert!(parse_path_rule("read)(x").is_none());
+        assert!(shell_arg_matches("*", "anything"));
+        assert!(shell_arg_matches(" *", "x"));
+        assert!(!match_simple_star("a*", "a/b"));
+        assert!(!match_simple_star("ab", "a"));
+        assert!(
+            ContentBlock::Thinking {
+                text: "t".into(),
+                signature: None
+            }
+            .is_thinking()
+        );
+        assert!(ContentBlock::RedactedThinking { data: "x".into() }.is_thinking());
+    }
 }
 
 #[cfg(test)]

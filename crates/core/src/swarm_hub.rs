@@ -57,11 +57,9 @@ impl SwarmHub {
 
     /// Register a participant so broadcasts reach them even before they send.
     pub fn ensure(&self, id: &str) {
-        let mut boxes = match self.inner.inboxes.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        boxes.entry(id.to_string()).or_default();
+        recover_lock(self.inner.inboxes.lock())
+            .entry(id.to_string())
+            .or_default();
     }
 
     pub fn set_listener(&self, listener: Option<SwarmMessageListener>) {
@@ -77,10 +75,7 @@ impl SwarmHub {
         if text.is_empty() {
             return;
         }
-        let mut boxes = match self.inner.inboxes.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
+        let mut boxes = recover_lock(self.inner.inboxes.lock());
         let targets: Vec<String> = if to.eq_ignore_ascii_case("all") {
             let mut ids: Vec<String> = boxes.keys().cloned().collect();
             if !ids.iter().any(|k| k == "parent") {
@@ -117,11 +112,16 @@ impl SwarmHub {
 
     /// Take every pending message for `id`.
     pub fn drain(&self, id: &str) -> Vec<SwarmMessage> {
-        let mut boxes = match self.inner.inboxes.lock() {
-            Ok(g) => g,
-            Err(p) => p.into_inner(),
-        };
-        boxes.remove(id).unwrap_or_default()
+        recover_lock(self.inner.inboxes.lock())
+            .remove(id)
+            .unwrap_or_default()
+    }
+}
+
+fn recover_lock<T>(res: std::sync::LockResult<T>) -> T {
+    match res {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
     }
 }
 
@@ -152,5 +152,39 @@ mod tests {
         assert!(hub.drain("worker-0").is_empty());
         let w1 = hub.drain("worker-1");
         assert!(w1.iter().any(|m| m.text == "heads up"));
+    }
+
+    #[test]
+    fn empty_send_listener_and_broadcast_without_inboxes() {
+        let hub = SwarmHub::new();
+        let _ = format!("{hub:?}");
+        hub.send("a", "b", "   ");
+        assert!(hub.drain("b").is_empty());
+
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits2 = std::sync::Arc::clone(&hits);
+        hub.set_listener(Some(std::sync::Arc::new(move |_| {
+            hits2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        })));
+        hub.send("solo", "all", "ping");
+        assert!(hits.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+        let parent = hub.drain("parent");
+        assert!(parent.iter().any(|m| m.text == "ping"));
+        hub.set_listener(None);
+        hub.ensure("late");
+        hub.send("late", "all", "later");
+        assert!(hub.drain("parent").iter().any(|m| m.text == "later"));
+    }
+
+    #[test]
+    fn recover_lock_poisoned() {
+        let m = std::sync::Arc::new(std::sync::Mutex::new(1));
+        let m2 = std::sync::Arc::clone(&m);
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        assert_eq!(*recover_lock(m.lock()), 1);
     }
 }
