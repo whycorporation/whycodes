@@ -779,6 +779,13 @@ even if dirty stayed false. The test asserts the store actually contains
 `src/main.rs` after `wait_ready` so a walk/ignore miss is not mistaken
 for this race.
 
+Do **not** clear `results_pending` on the first empty settle. Nucleo can
+report `running=false` before workers start; a last-chance read of that
+empty snapshot used to drop the pending flag, after which later ticks
+never adopted the snapshot (`matches=[]`, `status=Ready { total: 4 }`).
+Clear pending only after `matching()` has been seen true (`rematch_seen`)
+or the list is non-empty.
+
 **Prevention:** Do not "fix" this by raising the poll deadline again.
 If it fails, print `matches` + `scan_status` and check whether the
 store has the file (walk) vs the fuzzy snapshot never published (tick).

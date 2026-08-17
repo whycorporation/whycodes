@@ -50,6 +50,11 @@ pub struct FileSuggestState {
     /// Keeps the run loop on a short poll cadence until workers publish;
     /// without it a late publish could wait out a 500 ms idle poll.
     results_pending: bool,
+    /// `matching()` has reported work since the last `refresh`. An empty
+    /// first poll must not clear `results_pending`: nucleo can sit idle
+    /// for a tick before workers start, and a last-chance read of that
+    /// empty snapshot used to lock the picker on `matches=[]`.
+    rematch_seen: bool,
 }
 
 /// Find the `@token` covering `cursor`: a maximal run of non-terminator
@@ -179,6 +184,7 @@ impl FileSuggestState {
         // Browse forms are store-backed (complete instantly); only fuzzy
         // queries need the short-poll window.
         self.results_pending = !self.query.is_empty() && !self.query.ends_with('/');
+        self.rematch_seen = false;
         self.active = true;
     }
 
@@ -198,6 +204,9 @@ impl FileSuggestState {
         // just-finished worker then skips notify, and the UI never ticks
         // again. Seen as `picker_flow_over_real_index` under parallel CI.
         let running = index.matching();
+        if running {
+            self.rematch_seen = true;
+        }
         if !dirty && !self.results_pending {
             return false;
         }
@@ -211,7 +220,9 @@ impl FileSuggestState {
         if self.selected >= self.matches.len() {
             self.selected = 0;
         }
-        if !index.matching() {
+        // Do not clear pending on an empty first settle — workers may not
+        // have started yet. Wait until we saw a rematch or got hits.
+        if !index.matching() && (self.rematch_seen || !self.matches.is_empty()) {
             self.results_pending = false;
         }
         before.len() != self.matches.len()
@@ -242,6 +253,7 @@ impl FileSuggestState {
         self.list_hit = None;
         self.list_scroll_start = 0;
         self.results_pending = false;
+        self.rematch_seen = false;
     }
 
     pub fn step(&mut self, delta: isize) {
