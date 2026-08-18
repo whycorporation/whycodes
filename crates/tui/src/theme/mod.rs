@@ -281,6 +281,27 @@ impl ThemePalette {
         Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
     }
 
+    /// Elevated band behind a user prompt (Grok `bg_light` on the canvas).
+    ///
+    /// GrokNight lifts the canvas by ~16 (`#141414` → `#242424`). Light
+    /// themes drop the same amount so the strip still reads as a bubble.
+    /// Selected prompts step one more notch (Grok native `Gray` cue).
+    pub fn prompt_band(&self, selected: bool) -> Color {
+        let delta = if selected { 28 } else { 16 };
+        self.elevate_bg(delta)
+    }
+
+    fn elevate_bg(&self, delta: u8) -> Color {
+        let (r, g, b) = to_rgb(self.bg);
+        let lift = |c: u8| c.saturating_add(delta);
+        let drop = |c: u8| c.saturating_sub(delta);
+        if u16::from(r) + u16::from(g) + u16::from(b) > 480 {
+            Color::Rgb(drop(r), drop(g), drop(b))
+        } else {
+            Color::Rgb(lift(r), lift(g), lift(b))
+        }
+    }
+
     /// Stronger wash for diff add/remove rows (Grok-style green/red bands).
     ///
     /// `callout_bg` is ~20% accent — invisible as a row band on dark themes.

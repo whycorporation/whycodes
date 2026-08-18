@@ -1611,8 +1611,14 @@ fn jump_user_turn_finds_previous_user_message() {
 fn scroll_rows_uses_display_height_not_message_count() {
     let mut app = TuiApp::new(test_config());
     // A long wrapped user message is many rows but one message.
+    // Expand so Grok's 3-line collapse does not hide the wrap height.
     let long = "word ".repeat(80);
     app.add_message(ChatRole::User, long);
+    app.messages[0].results_expanded = true;
+    // User bubbles fold to 3 lines unless expanded (Grok UserPromptBlock).
+    if let Some(msg) = app.messages.last_mut() {
+        msg.results_expanded = true;
+    }
     app.chat_content_width = 40;
     app.chat_viewport_rows = 5;
     let total = crate::ui::chat::session_line_count(&app, 40);

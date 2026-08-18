@@ -1,11 +1,19 @@
 //! Grok Build clock labels for chat bubbles and the session picker.
 //!
-//! Chat clocks (always on): `August 15, 14:32`
-//! History / welcome: `just now`, `5m ago`, `3h ago`, then the same absolute.
+//! Chat clocks (always on): `2:32 PM` — Grok pager `%-I:%M %p`.
+//! History / welcome: `just now`, `5m ago`, `3h ago`, then the long absolute.
 
 use chrono::{Datelike, Timelike};
 
-/// Absolute local wall-clock — Grok pager `%B %-d, %H:%M`.
+/// Short bubble clock — Grok overlay `%-I:%M %p` (`2:32 PM`).
+pub fn format_clock(ts: chrono::DateTime<chrono::Utc>) -> String {
+    let local = ts.with_timezone(&chrono::Local);
+    let (pm, hour) = local.hour12();
+    let ampm = if pm { "PM" } else { "AM" };
+    format!("{hour}:{:02} {ampm}", local.minute())
+}
+
+/// Long absolute — session picker / welcome after a day (`August 15, 14:32`).
 pub fn format_absolute(ts: chrono::DateTime<chrono::Utc>) -> String {
     let local = ts.with_timezone(&chrono::Local);
     format!(
@@ -54,6 +62,18 @@ mod tests {
             .with_ymd_and_hms(y, m, d, h, min, 0)
             .single()
             .expect("valid local datetime")
+    }
+
+    #[test]
+    fn clock_is_12_hour_ampm() {
+        let ts = local(2026, 8, 15, 14, 32).with_timezone(&chrono::Utc);
+        assert_eq!(format_clock(ts), "2:32 PM");
+        let morning = local(2026, 8, 15, 9, 5).with_timezone(&chrono::Utc);
+        assert_eq!(format_clock(morning), "9:05 AM");
+        let noon = local(2026, 8, 15, 12, 0).with_timezone(&chrono::Utc);
+        assert_eq!(format_clock(noon), "12:00 PM");
+        let midnight = local(2026, 8, 15, 0, 7).with_timezone(&chrono::Utc);
+        assert_eq!(format_clock(midnight), "12:07 AM");
     }
 
     #[test]
