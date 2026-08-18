@@ -50,7 +50,7 @@ pub mod layout {
     /// Floor before the ratio/cap so portrait phones keep a usable prompt.
     pub const PROMPT_MIN_WIDTH: u16 = 24;
     /// Session main column horizontal padding (bubble left/right margin).
-    pub const SIDE_PAD: u16 = 4;
+    pub const SIDE_PAD: u16 = 2;
     /// Tighter side pad on phone-portrait / keyboard-shrunk widths.
     pub const SIDE_PAD_NARROW: u16 = 1;
     /// Use [`SIDE_PAD_NARROW`] at or below this terminal body width.
@@ -177,7 +177,7 @@ mod tests {
             assert!(layout::PROMPT_MAX_WIDTH > 0);
             assert!(layout::PROMPT_WIDTH_RATIO > 0.0 && layout::PROMPT_WIDTH_RATIO < 1.0);
             assert!(layout::SIDEBAR_WIDTH > layout::SIDE_PAD * 2);
-            assert!(layout::SIDE_PAD >= 4);
+            assert!(layout::SIDE_PAD >= 2);
             assert!(layout::SIDE_PAD_NARROW >= 1);
             assert!(layout::PROMPT_MIN_WIDTH >= 8);
             assert!(layout::SIDEBAR_MIN_BODY > layout::SIDEBAR_MIN_CHAT);

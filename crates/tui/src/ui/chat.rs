@@ -689,34 +689,58 @@ fn render_message(
                     stamp(&mut lines[start..]);
                 };
 
+            let paint = ToolPaint {
+                is_error: false,
+                palette,
+                expanded: msg.results_expanded,
+                width,
+                spin: app.spinner_frame,
+            };
+            let mut group: Vec<ToolRef<'_>> = Vec::new();
+            let flush_group = |lines: &mut Vec<Line<'static>>, group: &mut Vec<ToolRef<'_>>| {
+                if group.is_empty() {
+                    return;
+                }
+                lines.extend(paint_tool_run(group, paint));
+                group.clear();
+            };
+
             for block in &msg.blocks {
                 match block {
                     ChatBlock::Thinking(t) => {
+                        flush_group(&mut lines, &mut group);
                         lines.extend(thinking_lines(t, palette, width, app.spinner_frame));
                     }
                     ChatBlock::ToolUse { id, name, input } => {
-                        // Prefer the live tool_calls result when this id already finished.
                         let (result, is_error) = msg
                             .tool_calls
                             .iter()
                             .find(|tc| tc.id == *id)
                             .map(|tc| (tc.result.as_deref(), tc.is_error))
                             .unwrap_or((None, false));
-                        lines.extend(tool_block(
+                        let tool = ToolRef {
                             name,
                             input,
                             result,
-                            ToolPaint {
-                                is_error,
-                                palette,
-                                expanded: msg.results_expanded,
-                                width,
-                                spin: app.spinner_frame,
-                            },
-                        ));
+                            is_error,
+                        };
+                        if !msg.results_expanded && verb_kind(name).is_some() {
+                            group.push(tool);
+                        } else {
+                            flush_group(&mut lines, &mut group);
+                            lines.extend(tool_block(
+                                tool.name,
+                                tool.input,
+                                tool.result,
+                                ToolPaint {
+                                    is_error: tool.is_error,
+                                    ..paint
+                                },
+                            ));
+                        }
                     }
                     ChatBlock::Text(t) if msg.content.is_empty() => {
-                        // Restore path: no live `content` tail, paint Text in place.
+                        flush_group(&mut lines, &mut group);
                         emit_markdown(&mut lines, t, &mut stream);
                     }
                     ChatBlock::Text(_) | ChatBlock::ToolResult { .. } => {
@@ -731,6 +755,7 @@ fn render_message(
                         elapsed_ms,
                         ..
                     } => {
+                        flush_group(&mut lines, &mut group);
                         let bullet = if status == "running" {
                             crate::ui::subagents::SPIN
                                 [app.spinner_frame % crate::ui::subagents::SPIN.len()]
@@ -765,21 +790,31 @@ fn render_message(
                     .blocks
                     .iter()
                     .any(|b| matches!(b, ChatBlock::ToolUse { id, .. } if id == &tc.id));
-                if !dup {
+                if dup {
+                    continue;
+                }
+                let tool = ToolRef {
+                    name: &tc.name,
+                    input: &tc.arguments,
+                    result: tc.result.as_deref(),
+                    is_error: tc.is_error,
+                };
+                if !msg.results_expanded && verb_kind(&tc.name).is_some() {
+                    group.push(tool);
+                } else {
+                    flush_group(&mut lines, &mut group);
                     lines.extend(tool_block(
-                        &tc.name,
-                        &tc.arguments,
-                        tc.result.as_deref(),
+                        tool.name,
+                        tool.input,
+                        tool.result,
                         ToolPaint {
-                            is_error: tc.is_error,
-                            palette,
-                            expanded: msg.results_expanded,
-                            width,
-                            spin: app.spinner_frame,
+                            is_error: tool.is_error,
+                            ..paint
                         },
                     ));
                 }
             }
+            flush_group(&mut lines, &mut group);
             // Written answer last — always nearest the prompt / stop row.
             emit_markdown(&mut lines, &msg.content, &mut stream);
             // Turn footer: past tense, muted duration ("Worked for 12s").
@@ -972,6 +1007,7 @@ impl AccentRail {
 }
 
 /// Shared paint knobs for a tool card (keeps `tool_block` under clippy's arg cap).
+#[derive(Clone, Copy)]
 struct ToolPaint<'a> {
     is_error: bool,
     palette: &'a ThemePalette,
@@ -1006,7 +1042,7 @@ fn meta_gutter() -> Span<'static> {
 const EXPAND_INDICATOR: &str = "›";
 
 /// Grok `scrollback.blocks.tool.bullet = "diamond"`.
-const TOOL_BULLET: &str = "◆ ";
+const TOOL_BULLET: &str = "• ";
 
 /// Put `clock` on the first non-empty line. Returns whether it landed.
 fn stamp_first_content_line(
@@ -1609,7 +1645,7 @@ fn tool_header_verb(name: &str, running: bool) -> String {
         ("run", true) => "Running".into(),
         ("run", false) => "Run".into(),
         ("grep", true) => "Searching".into(),
-        ("grep", false) => "Grep".into(),
+        ("grep", false) => "Searched".into(),
         ("list" | "list_dir", true) => "Listing".into(),
         ("list" | "list_dir", false) => "Listed".into(),
         ("edit" | "write" | "apply_patch", true) => "Editing".into(),
@@ -1629,7 +1665,120 @@ fn tool_header_verb(name: &str, running: bool) -> String {
     }
 }
 
-/// Quiet Grok-style tool chrome: `◆ Read  path`, heavy ┃ body when open.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VerbKind {
+    File,
+    Search,
+    Dir,
+    WebFetch,
+    WebSearch,
+    Memory,
+}
+
+impl VerbKind {
+    fn verb(self, running: bool) -> &'static str {
+        let (past, present) = match self {
+            Self::File => ("Read", "Reading"),
+            Self::Search | Self::WebSearch | Self::Memory => ("Searched", "Searching"),
+            Self::Dir => ("Listed", "Listing"),
+            Self::WebFetch => ("Fetched", "Fetching"),
+        };
+        if running { present } else { past }
+    }
+
+    fn noun(self, count: usize) -> &'static str {
+        let (one, many) = match self {
+            Self::File => ("file", "files"),
+            Self::Search => ("pattern", "patterns"),
+            Self::Dir => ("dir", "dirs"),
+            Self::WebFetch | Self::WebSearch => ("website", "websites"),
+            Self::Memory => ("memory", "memories"),
+        };
+        if count == 1 { one } else { many }
+    }
+}
+
+fn verb_kind(name: &str) -> Option<VerbKind> {
+    match tool_display_name(name) {
+        "read" => Some(VerbKind::File),
+        "grep" | "glob" => Some(VerbKind::Search),
+        "list" | "list_dir" => Some(VerbKind::Dir),
+        "web_search" => Some(VerbKind::WebSearch),
+        "web_fetch" | "webfetch" | "fetch" => Some(VerbKind::WebFetch),
+        "memory_search" | "memory" => Some(VerbKind::Memory),
+        _ => None,
+    }
+}
+
+struct ToolRef<'a> {
+    name: &'a str,
+    input: &'a serde_json::Value,
+    result: Option<&'a str>,
+    is_error: bool,
+}
+
+fn paint_tool_run(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Vec<Line<'static>> {
+    if run.is_empty() {
+        return Vec::new();
+    }
+    if paint.expanded || run.len() == 1 {
+        let mut out = Vec::new();
+        for t in run {
+            out.extend(tool_block(
+                t.name,
+                t.input,
+                t.result,
+                ToolPaint {
+                    is_error: t.is_error,
+                    ..paint
+                },
+            ));
+        }
+        return out;
+    }
+    vec![verb_group_line(run, paint)]
+}
+
+fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
+    let running = run.iter().any(|t| t.result.is_none());
+    let failed = run.iter().filter(|t| t.is_error).count();
+    let mut buckets: Vec<(VerbKind, usize)> = Vec::new();
+    for t in run {
+        let Some(kind) = verb_kind(t.name) else {
+            continue;
+        };
+        if let Some(b) = buckets.iter_mut().find(|b| b.0 == kind) {
+            b.1 += 1;
+        } else {
+            buckets.push((kind, 1));
+        }
+    }
+    let mut text = String::new();
+    for (i, (kind, count)) in buckets.iter().enumerate() {
+        if i > 0 {
+            text.push_str(", ");
+        }
+        text.push_str(kind.verb(running));
+        text.push(' ');
+        text.push_str(&count.to_string());
+        text.push(' ');
+        text.push_str(kind.noun(*count));
+    }
+    if failed > 0 {
+        text.push_str(&format!(" · {failed} failed"));
+    }
+    let style = if failed > 0 {
+        Style::default().fg(paint.palette.error)
+    } else {
+        Style::default().fg(paint.palette.dim)
+    };
+    Line::from(vec![
+        Span::styled(TOOL_BULLET.to_string(), style),
+        Span::styled(text, style),
+    ])
+}
+
+/// Quiet Grok-style tool chrome: `• Read path`. Expanded execute keeps a ┃.
 ///
 /// Execute (`Run`) keeps a status-colored ┃ on the header (and body when
 /// open). The rail pulses down the column while the command is running.
@@ -1681,20 +1830,18 @@ fn tool_block(
     };
 
     let mut header = Vec::new();
-    header.push(meta_gutter());
-    if execute {
+    if expanded && execute {
         header.push(Span::styled(ACCENT_RAIL.to_string(), rail.style(0)));
         header.push(Span::raw(" "));
     }
     header.push(Span::styled(TOOL_BULLET.to_string(), name_style));
     header.push(Span::styled(display.to_string(), name_style));
     if !summary.is_empty() {
-        header.push(Span::styled("  ".to_string(), detail));
+        header.push(Span::styled(" ".to_string(), detail));
         header.push(Span::styled(summary, summary_style));
     }
 
-    let mut foldable = false;
-    if let Some(r) = result {
+    if expanded && let Some(r) = result {
         if is_error {
             header.push(Span::styled("  ✕".to_string(), name_style));
         } else if looks_like_diff(r) {
@@ -1721,82 +1868,27 @@ fn tool_block(
                     ));
                 }
             }
-        } else if matches!(name, "grep" | "search_code" | "rg") {
-            // Grok: match count sits on the header next to the pattern.
-            if let Some(n) = grep_match_count(r) {
-                header.push(Span::styled(
-                    format!("  {n}"),
-                    Style::default()
-                        .fg(palette.highlight)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                header.push(Span::styled(
-                    if n == 1 {
-                        " match".to_string()
-                    } else {
-                        " matches".to_string()
-                    },
-                    detail,
-                ));
-            }
-        } else if matches!(name, "bash" | "shell" | "run_terminal_command") {
-            // run: short exit/line chip when finished (quiet, Grok-like).
-            let n = r.lines().filter(|l| !l.trim().is_empty()).count();
-            if n > 0 {
-                header.push(Span::styled(
-                    format!("  {n}"),
-                    Style::default().fg(palette.dim),
-                ));
-                header.push(Span::styled(
-                    if n == 1 {
-                        " line".to_string()
-                    } else {
-                        " lines".to_string()
-                    },
-                    detail,
-                ));
-            }
-        } else if matches!(name, "read" | "read_file") {
-            // read: line count chip when we have numbered body.
-            let n = r.lines().filter(|l| split_read_line(l).is_some()).count();
-            if n > 0 {
-                header.push(Span::styled(
-                    format!("  {n}"),
-                    Style::default().fg(palette.dim),
-                ));
-                header.push(Span::styled(
-                    if n == 1 {
-                        " line".to_string()
-                    } else {
-                        " lines".to_string()
-                    },
-                    detail,
-                ));
-            }
-        }
-        if !expanded {
-            let n = r.lines().count();
-            let limit = if looks_like_diff(r) {
-                TOOL_RESULT_DIFF_PREVIEW
-            } else {
-                TOOL_RESULT_PREVIEW
-            };
-            if n > limit {
-                foldable = true;
-            }
+        } else if matches!(name, "grep" | "search_code" | "rg")
+            && let Some(n) = grep_match_count(r)
+        {
+            header.push(Span::styled(
+                format!("  {n}"),
+                Style::default()
+                    .fg(palette.highlight)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            header.push(Span::styled(
+                if n == 1 {
+                    " match".to_string()
+                } else {
+                    " matches".to_string()
+                },
+                detail,
+            ));
         }
     }
 
-    if result.is_some_and(|r| !r.trim().is_empty()) && !expanded {
-        foldable = true;
-    }
-
-    let header_line = if foldable {
-        line_with_right(header, Some(EXPAND_INDICATOR), detail, width)
-    } else {
-        Line::from(header)
-    };
-    lines.push(header_line);
+    lines.push(Line::from(header));
 
     // Grok muted_collapsed: header only until the user expands (`l`).
     if expanded && let Some(r) = result {
@@ -2788,8 +2880,10 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
             .unwrap_or("")
             .to_string(),
         "bash" | "shell" | "run_terminal_command" => input
-            .get("command")
+            .get("description")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| input.get("command").and_then(|v| v.as_str()))
             .unwrap_or("")
             .to_string(),
         "glob" => input
@@ -3143,11 +3237,9 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             },
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
-        assert!(header.contains("Grep"), "got {header}");
+        assert!(header.contains('•'), "Grok bullet, got {header}");
+        assert!(header.contains("Searched"), "got {header}");
         assert!(header.contains("foo"), "got {header}");
-        assert!(header.contains("2"), "got {header}");
-        assert!(header.contains("match"), "got {header}");
     }
 
     #[test]
@@ -3175,10 +3267,10 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
-            header.contains('┃'),
-            "Run keeps a left accent, got {header}"
+            !header.contains('┃'),
+            "collapsed Run has no accent rail, got {header}"
         );
-        assert!(header.contains('◆'), "Grok diamond bullet, got {header}");
+        assert!(header.contains('•'), "Grok bullet, got {header}");
         assert!(header.contains("Run"), "got {header}");
         assert!(!header.contains("bash"), "got {header}");
         assert!(header.contains("cargo test"), "got {header}");
@@ -3210,11 +3302,40 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             "Grok collapsed tool is a one-liner: {lines:?}"
         );
         let header: String = lines[0].spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(header.contains('◆'), "{header}");
-        assert!(header.contains('›'), "folded tool shows ›, got {header}");
+        assert!(header.contains('•'), "{header}");
         assert!(
             !header.contains("line 5"),
             "body must not leak into the header: {header}"
+        );
+    }
+
+    #[test]
+    fn collapsed_tools_group_into_one_verb_line() {
+        use crate::app::{ChatRole, TuiApp};
+        use crate::config::TuiAppConfig;
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "look");
+        app.add_message(ChatRole::Assistant, "");
+        app.add_tool_call("t1".into(), "grep".into(), json!({"pattern": "a"}));
+        app.add_tool_result("t1", "(1 match)", false);
+        app.add_tool_call("t2".into(), "grep".into(), json!({"pattern": "b"}));
+        app.add_tool_result("t2", "(1 match)", false);
+        app.add_tool_call("t3".into(), "grep".into(), json!({"pattern": "c"}));
+        app.add_tool_result("t3", "(1 match)", false);
+        app.add_tool_call("t4".into(), "list".into(), json!({"path": "."}));
+        app.add_tool_result("t4", "ok", false);
+        app.add_tool_call("t5".into(), "read".into(), json!({"path": "CLAUDE.md"}));
+        app.add_tool_result("t5", "ok", false);
+        let palette = app.config.palette();
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None);
+        let texts: Vec<String> = lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        let joined = texts.join("\n");
+        assert!(
+            joined.contains("Searched 3 patterns, Listed 1 dir, Read 1 file"),
+            "Grok verb-group line, got {texts:?}"
         );
     }
 
@@ -3302,7 +3423,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let paint = |spin| ToolPaint {
             is_error: false,
             palette: &palette,
-            expanded: false,
+            expanded: true,
             width: 60,
             spin,
         };
@@ -3335,7 +3456,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             ToolPaint {
                 is_error: true,
                 palette: &palette,
-                expanded: false,
+                expanded: true,
                 width: 60,
                 spin: 0,
             },
@@ -3512,7 +3633,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             .collect();
         let tool_at = texts
             .iter()
-            .position(|t| t.contains('◆') || t.contains("Read"));
+            .position(|t| t.contains('•') || t.contains("Read"));
         let answer_at = texts.iter().position(|t| t.contains("AFTER_TOOLS_ANSWER"));
         assert!(tool_at.is_some(), "tool card missing: {texts:?}");
         assert!(answer_at.is_some(), "answer missing: {texts:?}");
