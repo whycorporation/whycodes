@@ -645,6 +645,7 @@ fn render_message(
                 palette,
                 width,
                 selected,
+                msg.results_expanded,
             ));
         }
         ChatRole::Assistant => {
@@ -1053,7 +1054,7 @@ fn turn_done_footer(
 }
 
 fn message_clock(msg: &crate::app::ChatMessage) -> String {
-    crate::ui::timefmt::format_absolute(msg.created_at.unwrap_or_else(chrono::Utc::now))
+    crate::ui::timefmt::format_clock(msg.created_at.unwrap_or_else(chrono::Utc::now))
 }
 
 /// Grok `prompt_arrow()`: U+276F HEAVY RIGHT-POINTING ANGLE QUOTATION MARK + space.
@@ -1069,11 +1070,7 @@ fn sticky_user_lines(
     is_selected: bool,
 ) -> Vec<Line<'static>> {
     let ts = message_clock(msg);
-    let band = if is_selected {
-        palette.input_bg
-    } else {
-        palette.status_bar_bg
-    };
+    let band = palette.prompt_band(is_selected);
     let band_style = Style::default().bg(band);
     let prefix_style = Style::default().fg(palette.user_msg).bg(band);
     let body_style = Style::default().fg(palette.fg).bg(band);
@@ -1103,19 +1100,26 @@ fn sticky_user_lines(
     ]
 }
 
+/// Grok pager `UserPromptBlock` collapsed cap (content rows, not vpad).
+const USER_COLLAPSED_MAX_LINES: usize = 3;
+/// Grok collapsed ellipsis (`" …"` = space + U+2026).
+const USER_ELLIPSIS: &str = " \u{2026}";
+
 /// Grok-style user prompt block.
 ///
 /// ```text
 /// ┌──────────────── full-width elevated band ────────────────┐
-/// │ ❯ first line of the prompt…                              │
+/// │ ❯ first line of the prompt…                     2:32 PM  │
 /// │   soft-wrapped continuation                              │
 /// └──────────────────────────────────────────────────────────┘
 /// ```
 ///
 /// Matches Grok pager `UserPromptBlock`:
 /// - prefix `❯ ` in user accent (Grok `accent_user`)
-/// - body primary fg on `bg_light` band (`status_bar_bg` / panel step)
+/// - body primary fg on `bg_light` band (canvas + ~16)
 /// - vertical pad rows with the same band
+/// - long prompts fold to 3 lines + ` …` until expanded
+/// - `/command` tokens pick up the skill/accent color
 /// - no left `┃` rail (accent is the arrow, not a border)
 fn user_prompt_lines(
     content: &str,
@@ -1124,35 +1128,30 @@ fn user_prompt_lines(
     palette: &ThemePalette,
     width: u16,
     is_selected: bool,
+    expanded: bool,
 ) -> Vec<Line<'static>> {
-    // Grok: elevated band = bg_light; selected steps up slightly in native mode.
-    let band = if is_selected {
-        palette.input_bg
-    } else {
-        palette.status_bar_bg
-    };
+    // Grok: elevated band = bg_light; selected steps up slightly.
+    let band = palette.prompt_band(is_selected);
     let band_style = Style::default().bg(band);
     let prefix_style = Style::default().fg(palette.user_msg).bg(band);
     let body_style = Style::default().fg(palette.fg).bg(band);
+    let skill_style = Style::default().fg(palette.accent).bg(band);
     let img_style = Style::default()
         .fg(palette.accent)
         .bg(band)
         .add_modifier(Modifier::DIM);
 
-    let mut lines = Vec::new();
-    // vpad top (Grok PromptConfig.vpad = true)
-    lines.push(band_pad_line(band_style));
+    let mut body_lines: Vec<Line<'static>> = Vec::new();
     let ts_style = Style::default().fg(palette.dim).bg(band);
     let push_first = |lines: &mut Vec<Line<'static>>, prefix: &str, body: &str, body_st: Style| {
-        lines.push(line_with_right(
-            vec![
-                Span::styled(prefix.to_string(), prefix_style),
-                Span::styled(body.to_string(), body_st),
-            ],
-            timestamp,
-            ts_style,
-            width,
-        ));
+        let mut left = vec![Span::styled(prefix.to_string(), prefix_style)];
+        left.extend(prompt_body_spans(body, body_st, skill_style));
+        lines.push(line_with_right(left, timestamp, ts_style, width));
+    };
+    let push_cont = |lines: &mut Vec<Line<'static>>, body: &str| {
+        let mut spans = vec![Span::styled("  ".to_string(), prefix_style)];
+        spans.extend(prompt_body_spans(body, body_style, skill_style));
+        lines.push(Line::from(spans));
     };
 
     // Image attachment chips (file names from drag-drop / paste).
@@ -1162,7 +1161,7 @@ fn user_prompt_lines(
             .map(|l| format!("🖼 {l}"))
             .collect::<Vec<_>>()
             .join("  ");
-        push_first(&mut lines, PROMPT_ARROW, &chips, img_style);
+        push_first(&mut body_lines, PROMPT_ARROW, &chips, img_style);
     }
 
     // Gap before the clock + 1-col gutter so a scrollbar / band edge
@@ -1175,20 +1174,21 @@ fn user_prompt_lines(
         .saturating_sub(ts_reserve)
         .max(4);
     let content_w = width.saturating_sub(PROMPT_ARROW_WIDTH).max(4) as usize;
-    // When we already showed image chips with the arrow, indent body lines.
     let text = content.trim_end_matches('\n');
     // Skip redundant "[Image: …]" body when labels already render chips and
     // content is the synthetic image-only placeholder.
     let skip_body =
         !image_labels.is_empty() && (text.starts_with("[Image:") || text.starts_with("[Images:"));
     if skip_body {
+        let mut lines = vec![band_pad_line(band_style)];
+        lines.extend(body_lines);
         lines.push(band_pad_line(band_style));
         return lines;
     }
 
     if text.is_empty() {
         if image_labels.is_empty() {
-            push_first(&mut lines, PROMPT_ARROW, " ", body_style);
+            push_first(&mut body_lines, PROMPT_ARROW, " ", body_style);
         }
     } else {
         // Soft-wrap per logical line so explicit newlines stay as hard breaks
@@ -1198,10 +1198,10 @@ fn user_prompt_lines(
         for logical in text.split('\n') {
             if logical.is_empty() {
                 if first_visual {
-                    push_first(&mut lines, PROMPT_ARROW, "", body_style);
+                    push_first(&mut body_lines, PROMPT_ARROW, "", body_style);
                     first_visual = false;
                 } else {
-                    lines.push(Line::from(vec![Span::styled(
+                    body_lines.push(Line::from(vec![Span::styled(
                         " ".repeat(PROMPT_ARROW_WIDTH as usize),
                         prefix_style,
                     )]));
@@ -1214,7 +1214,7 @@ fn user_prompt_lines(
                     continue;
                 };
                 let slice = logical[row.byte_range.0..row.byte_range.1].trim_end();
-                push_first(&mut lines, PROMPT_ARROW, slice, body_style);
+                push_first(&mut body_lines, PROMPT_ARROW, slice, body_style);
                 first_visual = false;
                 let remain = logical[row.byte_range.1..].trim_start();
                 if remain.is_empty() {
@@ -1222,10 +1222,7 @@ fn user_prompt_lines(
                 }
                 for row in crate::widgets::wrap::wrap_text(remain, content_w as u16) {
                     let slice = remain[row.byte_range.0..row.byte_range.1].trim_end();
-                    lines.push(Line::from(vec![
-                        Span::styled("  ".to_string(), prefix_style),
-                        Span::styled(slice.to_string(), body_style),
-                    ]));
+                    push_cont(&mut body_lines, slice);
                 }
                 continue;
             }
@@ -1235,20 +1232,73 @@ fn user_prompt_lines(
             }
             for row in wrapped {
                 let slice = logical[row.byte_range.0..row.byte_range.1].trim_end();
-                lines.push(Line::from(vec![
-                    Span::styled("  ".to_string(), prefix_style),
-                    Span::styled(slice.to_string(), body_style),
-                ]));
+                push_cont(&mut body_lines, slice);
             }
         }
         if first_visual {
-            push_first(&mut lines, PROMPT_ARROW, " ", body_style);
+            push_first(&mut body_lines, PROMPT_ARROW, " ", body_style);
         }
     }
 
-    // vpad bottom
+    // Grok default: fold past 3 visual lines; `e`/`l` expands.
+    if !expanded && body_lines.len() > USER_COLLAPSED_MAX_LINES {
+        body_lines.truncate(USER_COLLAPSED_MAX_LINES);
+        if let Some(last) = body_lines.last_mut() {
+            append_user_ellipsis(last, body_style, width);
+        }
+    }
+
+    let mut lines = Vec::with_capacity(body_lines.len() + 2);
+    // vpad top / bottom (Grok PromptConfig.vpad = true)
+    lines.push(band_pad_line(band_style));
+    lines.extend(body_lines);
     lines.push(band_pad_line(band_style));
     lines
+}
+
+/// Highlight `/command` tokens the way Grok paints `accent_skill`.
+fn prompt_body_spans(text: &str, body: Style, skill: Style) -> Vec<Span<'static>> {
+    if text.is_empty() {
+        return vec![Span::styled(String::new(), body)];
+    }
+    let bytes = text.as_bytes();
+    let mut spans = Vec::new();
+    let mut start = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let at_token = bytes[i] == b'/'
+            && (i == 0 || bytes[i - 1].is_ascii_whitespace())
+            && i + 1 < bytes.len()
+            && bytes[i + 1].is_ascii_alphabetic();
+        if !at_token {
+            i += 1;
+            continue;
+        }
+        if i > start {
+            spans.push(Span::styled(text[start..i].to_string(), body));
+        }
+        let mut j = i + 2;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-') {
+            j += 1;
+        }
+        spans.push(Span::styled(text[i..j].to_string(), skill));
+        start = j;
+        i = j;
+    }
+    if start < text.len() {
+        spans.push(Span::styled(text[start..].to_string(), body));
+    }
+    if spans.is_empty() {
+        spans.push(Span::styled(text.to_string(), body));
+    }
+    spans
+}
+
+fn append_user_ellipsis(line: &mut Line<'static>, style: Style, width: u16) {
+    let ew = UnicodeWidthStr::width(USER_ELLIPSIS);
+    truncate_spans_to(&mut line.spans, (width as usize).saturating_sub(ew));
+    line.spans
+        .push(Span::styled(USER_ELLIPSIS.to_string(), style));
 }
 
 fn truncate_home_title(title: &str, budget: usize) -> String {
@@ -1281,7 +1331,7 @@ fn band_pad_line(band_style: Style) -> Line<'static> {
     Line::from(Span::styled(" ".to_string(), band_style))
 }
 
-/// Left content + right-aligned clock (`August 17, 14:32`).
+/// Left content + right-aligned clock (`2:32 PM`).
 ///
 /// The last column is left empty so a transcript scrollbar cannot paint
 /// over the clock. If the left side is still too wide, it is truncated —
@@ -3421,7 +3471,8 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
     fn user_prompt_puts_clock_on_the_first_content_line() {
         use crate::theme::ThemeName;
         let palette = ThemeName::DefaultDark.palette();
-        let lines = super::user_prompt_lines("hello", &[], Some("14:32"), &palette, 40, false);
+        let lines =
+            super::user_prompt_lines("hello", &[], Some("2:32 PM"), &palette, 40, false, false);
         let first = lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))
@@ -3429,11 +3480,11 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let text: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("hello"), "got {text:?}");
         assert!(
-            text.contains("14:32"),
+            text.contains("2:32 PM"),
             "clock must sit on the ❯ row, got {text:?}"
         );
         let hello_at = text.find("hello").unwrap();
-        let clock_at = text.find("14:32").unwrap();
+        let clock_at = text.find("2:32 PM").unwrap();
         assert!(
             clock_at > hello_at,
             "clock must be to the right of the text"
@@ -3491,10 +3542,14 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             .expect("assistant body");
         let text: String = answer.spans.iter().map(|s| s.content.as_ref()).collect();
         let hello_at = text.find("hello").expect("answer text");
-        let colon = text.rfind(':').expect("HH:MM clock on the reply");
+        let colon = text.rfind(':').expect("h:mm AM/PM clock on the reply");
         assert!(
             colon > hello_at,
             "Grok puts the clock on the right of the agent line, got {text:?}"
+        );
+        assert!(
+            text.contains("AM") || text.contains("PM"),
+            "Grok bubble clock is 12-hour, got {text:?}"
         );
         let footer = lines
             .iter()
@@ -3569,15 +3624,14 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let text: String = row.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.contains("hello from history"), "got {text:?}");
         let hello_at = text.find("hello").expect("prompt text");
-        let colon = text.rfind(':').expect("HH:MM clock");
+        let colon = text.rfind(':').expect("h:mm AM/PM clock");
         assert!(
             colon > hello_at,
             "clock must sit to the right, got {text:?}"
         );
-        let trimmed = text.trim_end();
         assert!(
-            trimmed.bytes().last().is_some_and(|b| b.is_ascii_digit()),
-            "clock should end in minutes, got {text:?}"
+            text.contains("AM") || text.contains("PM"),
+            "Grok bubble clock is 12-hour, got {text:?}"
         );
     }
 
@@ -3587,16 +3641,16 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let palette = ThemeName::DefaultDark.palette();
         let prompt = "please look at the first message bubble in chat history \
 and tell me if the clock should be on the right side of it like grok does \
-with a full date stamp August style";
+with a short 12-hour stamp";
         let lines =
-            super::user_prompt_lines(prompt, &[], Some("August 17, 14:32"), &palette, 72, false);
+            super::user_prompt_lines(prompt, &[], Some("2:32 PM"), &palette, 72, false, false);
         let first = lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))
             .expect("prompt row");
         let text: String = first.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(
-            text.contains("14:32"),
+            text.contains("2:32 PM"),
             "long first bubble must keep the clock, got {text:?}"
         );
     }
@@ -3632,6 +3686,69 @@ with a full date stamp August style";
             unicode_width::UnicodeWidthStr::width(text.as_str()) <= 20,
             "row must still fit, got {text:?}"
         );
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn long_user_prompt_collapses_to_three_lines() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let prompt = "one\ntwo\nthree\nfour\nfive";
+        let folded = super::user_prompt_lines(prompt, &[], None, &palette, 40, false, false);
+        let texts: Vec<String> = folded.iter().map(line_text).collect();
+        let content: Vec<&String> = texts.iter().filter(|t| !t.trim().is_empty()).collect();
+        assert_eq!(content.len(), 3, "Grok folds to 3 content rows: {texts:?}");
+        assert!(
+            content.last().is_some_and(|t| t.contains('\u{2026}')),
+            "collapsed last row carries …, got {texts:?}"
+        );
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.contains("four") || t.contains("five")),
+            "hidden tail must not paint: {texts:?}"
+        );
+
+        let open = super::user_prompt_lines(prompt, &[], None, &palette, 40, false, true);
+        let open_text: Vec<String> = open.iter().map(line_text).collect();
+        assert!(
+            open_text.iter().any(|t| t.contains("four")),
+            "expanded shows the tail: {open_text:?}"
+        );
+        assert!(
+            !open_text.iter().any(|t| t.contains('\u{2026}')),
+            "expanded has no ellipsis: {open_text:?}"
+        );
+    }
+
+    #[test]
+    fn slash_command_token_uses_accent() {
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let lines = super::user_prompt_lines("/help please", &[], None, &palette, 40, false, false);
+        let row = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains("/help")))
+            .expect("prompt row");
+        let token = row
+            .spans
+            .iter()
+            .find(|s| s.content.as_ref() == "/help")
+            .expect("/help span");
+        assert_eq!(
+            token.style.fg,
+            Some(palette.accent),
+            "Grok paints /command in the skill accent"
+        );
+        let rest = row
+            .spans
+            .iter()
+            .find(|s| s.content.contains("please"))
+            .expect("args span");
+        assert_eq!(rest.style.fg, Some(palette.fg));
     }
 }
 

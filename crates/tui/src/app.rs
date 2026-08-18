@@ -1223,6 +1223,10 @@ pub struct TuiApp {
     // ── transient notices ──
     pub toasts: crate::toast::Toasts,
     pub help_scroll: usize,
+    /// Filter text in the Keyboard Shortcuts popup (`/` to start).
+    pub help_query: String,
+    /// True while the cheatsheet search bar owns typing.
+    pub help_searching: bool,
 
     // ── sidebar ──
     pub sidebar: SidebarState,
@@ -1704,6 +1708,8 @@ impl TuiApp {
             file_suggest: crate::ui::file_suggest::FileSuggestState::default(),
             toasts: crate::toast::Toasts::default(),
             help_scroll: 0,
+            help_query: String::new(),
+            help_searching: false,
             sidebar: SidebarState {
                 visible: config.show_sidebar,
                 ..SidebarState::default()
@@ -2399,6 +2405,13 @@ impl TuiApp {
         if let Some(i) = self.selected_msg
             && let Some(msg) = self.messages.get_mut(i)
         {
+            // Grok `e`/`h` also unfolds a collapsed user prompt.
+            if msg.role == ChatRole::User {
+                msg.results_expanded = !msg.results_expanded;
+                msg.invalidate_layout();
+                self.mark_dirty();
+                return;
+            }
             // Flip all thinking blocks in the selected message to the opposite
             // of the last one's state (per-block fold, coordinated toggle).
             let target = msg
