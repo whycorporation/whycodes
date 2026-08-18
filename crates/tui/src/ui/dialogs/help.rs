@@ -23,7 +23,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     let chrome = dialog_frame(
         frame,
         "Help",
-        &["↑/↓ scroll", "Esc/?/q close"],
+        &["↑/↓ scroll", "Esc/q close"],
         palette,
         65,
         75,
@@ -58,7 +58,7 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
 
     let help_text = vec![
         section("General"),
-        row("?", "Toggle this help"),
+        row("/help", "Open this help"),
         row("Tab", "Focus prompt ↔ scrollback"),
         row("Ctrl+T", "Cycle primary agent"),
         row(":", "Enter command mode"),

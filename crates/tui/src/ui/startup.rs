@@ -157,7 +157,7 @@ pub fn render(frame: &mut Frame, area: Rect, screen: &StartupScreen) {
         )),
         Line::from(""),
         Line::from(Span::styled(
-            "  Press ? for help  |  : for commands",
+            "  /help for keybindings  |  : for commands",
             Style::default().fg(muted),
         )),
     ];

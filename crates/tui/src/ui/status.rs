@@ -175,7 +175,7 @@ fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
                         parts.push(("enter", "send"));
                         parts.push(("tab", "scrollback"));
                         parts.push(("^t", "agent"));
-                        parts.push(("?", "help"));
+                        parts.push(("/help", "help"));
                     }
                     FocusPane::Scrollback => {
                         parts.push(("j/k", "select"));
@@ -470,7 +470,7 @@ mod tests {
         assert!(text.contains("enter send"), "{text}");
         assert!(text.contains("tab scrollback"), "{text}");
         assert!(text.contains("^t agent"), "{text}");
-        assert!(text.contains("? help"), "{text}");
+        assert!(text.contains("/help help"), "{text}");
     }
 
     #[test]

@@ -1662,7 +1662,7 @@ impl TuiApp {
             focus: FocusPane::Prompt,
             messages: vec![],
             current_agent_state: AgentState::Idle,
-            status_message: String::from("Ready — press ? for help"),
+            status_message: String::from("Ready — /help for keybindings"),
             spinner_frame: 0,
             needs_redraw: true,
             input_buffer: String::new(),

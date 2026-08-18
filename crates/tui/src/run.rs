@@ -341,12 +341,12 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let missing_key = opts.api_key.is_empty();
     app.status_message = if missing_key {
         format!(
-            "agent={}  {}/{}  — no API key · /connect  ? help",
+            "agent={}  {}/{}  — no API key · /connect  /help",
             opts.agent_name, opts.provider, opts.model
         )
     } else {
         format!(
-            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  ? help",
+            "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
             opts.agent_name, opts.provider, opts.model
         )
     };
@@ -3949,6 +3949,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         "/help" | "/h" => {
             ctx.app.mode = AppMode::Help;
             ctx.app.key_context = KeymapContext::Help;
+            ctx.app.help_scroll = 0;
         }
         "/new" | "/clear" => {
             *ctx.history = SessionHistory::new();
