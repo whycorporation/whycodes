@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-18 — Chat scrollbar must not overlay transcript text
+
+**Symptom:** Overflowing chat painted the solid scrollbar on the last wrap column, so glyphs sat under the bar.
+
+**Root cause:** `render_session` used `content_width = area.width` then drew the bar over `x + width - 1`.
+
+**Fix:** When `total > viewport`, wrap at `width − SCROLLBAR_GUTTER` and paint the bar in that reserved column. Hit box matches the gutter (not two cells into the text).
+
+**Prevention:** `overflowing_chat_does_not_paint_text_under_scrollbar` in `chat_scroll_tests.rs`.
+
+---
+
 ### 2026-08-17 — Competitor audit: draw recovery, resize coalesce, git timeout
 
 **Symptom / gap:** jcode keeps the TUI alive after a widget panic; Grok never `malloc_trim`s inside a frame; a wedged `git` or a resize flood can stall whycode.

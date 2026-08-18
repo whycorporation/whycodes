@@ -429,12 +429,12 @@ fn chat_scrollbar_bottom_click_is_exact_bottom_even_with_mid_thumb_grab() {
 }
 
 #[test]
-fn chat_scrollbar_hit_is_two_cells_wide() {
+fn chat_scrollbar_hit_is_gutter_wide() {
     let mut app = TuiApp::new(cfg());
     let bar = Rect {
-        x: 38,
+        x: 39,
         y: 0,
-        width: 2,
+        width: 1,
         height: 10,
     };
     app.apply_chat_paint(
@@ -447,9 +447,8 @@ fn chat_scrollbar_hit_is_two_cells_wide() {
         Some(bar),
         50,
     );
-    assert!(app.chat_scrollbar_contains(38, 3));
     assert!(app.chat_scrollbar_contains(39, 3));
-    assert!(!app.chat_scrollbar_contains(37, 3));
+    assert!(!app.chat_scrollbar_contains(38, 3));
 }
 
 // ── Dialog / help isolation ────────────────────────────────────────────
@@ -693,6 +692,13 @@ fn paint_publishes_scrollbar_when_overflowing() {
         "overflowing chat must expose scrollbar hit"
     );
     assert!(app.chat_area.is_some());
+    let hit = app.chat_scrollbar_hit.expect("bar");
+    assert_eq!(hit.x + hit.width, 40, "bar sits on the right edge");
+    assert_eq!(
+        app.chat_content_width,
+        40 - crate::ui::scrollbar::SCROLLBAR_GUTTER,
+        "text wrap must reserve the scrollbar gutter"
+    );
 }
 
 #[test]
@@ -732,6 +738,37 @@ fn painted_scrollbar_thumb_at_bottom_when_scroll_offset_zero() {
             bottom.bg
         );
     }
+}
+
+#[test]
+fn overflowing_chat_does_not_paint_text_under_scrollbar() {
+    let mut app = TuiApp::new(cfg());
+    fill_overflowing_chat(&mut app, 20);
+    let w = 40u16;
+    let h = 12u16;
+    let backend = TestBackend::new(w, h);
+    let mut terminal = Terminal::new(backend).unwrap();
+    let palette = app.config.palette();
+    terminal
+        .draw(|f| super::render(f, f.area(), &mut app, &palette))
+        .unwrap();
+    let buf = terminal.backend().buffer();
+    let bar_x = w - 1;
+    for y in 0..h {
+        let cell = buf.cell((bar_x, y)).expect("bar cell");
+        assert_eq!(
+            cell.symbol(),
+            "█",
+            "rightmost column must be the scrollbar, not transcript text at y={y}"
+        );
+    }
+    let hit = app.chat_scrollbar_hit.expect("bar hit");
+    assert_eq!(hit.x, bar_x);
+    assert_eq!(hit.width, crate::ui::scrollbar::SCROLLBAR_GUTTER);
+    assert_eq!(
+        app.chat_content_width,
+        w - crate::ui::scrollbar::SCROLLBAR_GUTTER
+    );
 }
 
 #[test]
