@@ -297,7 +297,12 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
 
 /// session: optional sidebar + padded main column
 fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    let main = if app.sidebar.visible && area.width >= 36 {
+    let sidebar_fits = area.width >= layout::SIDEBAR_MIN_BODY
+        && area
+            .width
+            .saturating_sub(layout::SIDEBAR_WIDTH.min(area.width / 3).max(24))
+            >= layout::SIDEBAR_MIN_CHAT;
+    let main = if app.sidebar.visible && sidebar_fits {
         let w = layout::SIDEBAR_WIDTH.min(area.width / 3).max(24);
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -310,10 +315,11 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         area
     };
 
+    let side = layout::side_pad(main.width);
     let inset = Rect {
-        x: main.x.saturating_add(layout::SIDE_PAD),
+        x: main.x.saturating_add(side),
         y: main.y,
-        width: main.width.saturating_sub(layout::SIDE_PAD * 2),
+        width: main.width.saturating_sub(side.saturating_mul(2)),
         height: main.height.saturating_sub(layout::BOTTOM_PAD),
     };
 
@@ -1243,10 +1249,36 @@ mod paint_tests {
         let mut a = session_with_overflow();
         let (_buf, _) = paint_full_shell(&mut a, 100, 24);
         let chat = a.chat_area.expect("session publishes a chat hit rect");
-        let expected_x = layout::SAFE_LEFT + layout::SIDE_PAD;
+        let expected_x = layout::SAFE_LEFT + layout::side_pad(100);
         assert_eq!(
             chat.x, expected_x,
             "bubble column must sit SIDE_PAD inside the safe area"
+        );
+    }
+
+    #[test]
+    fn narrow_session_uses_tighter_side_margin() {
+        let mut a = session_with_overflow();
+        let (_buf, _) = paint_full_shell(&mut a, 40, 24);
+        let chat = a.chat_area.expect("session publishes a chat hit rect");
+        let expected_x = layout::SAFE_LEFT + layout::SIDE_PAD_NARROW;
+        assert_eq!(
+            chat.x, expected_x,
+            "portrait width must not spend 8 columns on SIDE_PAD"
+        );
+    }
+
+    #[test]
+    fn split_pane_hides_sidebar_so_chat_keeps_the_width() {
+        let mut a = session_with_overflow();
+        a.sidebar.visible = true;
+        // Half of a typical 80-col PTY — old gate (`>= 36`) still drew a 24-col rail.
+        let (_buf, _) = paint_full_shell(&mut a, 40, 24);
+        let chat = a.chat_area.expect("session publishes a chat hit rect");
+        assert!(
+            chat.width >= 30,
+            "half-pane chat must not shrink for a sidebar: width={}",
+            chat.width
         );
     }
 

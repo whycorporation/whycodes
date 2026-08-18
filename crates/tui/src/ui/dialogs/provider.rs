@@ -15,6 +15,7 @@ use ratatui::{
 };
 
 use super::base::dialog_frame;
+use super::select::paint_picker_row;
 
 pub fn render_provider_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     match app.provider_dialog.mode {
@@ -27,10 +28,8 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
     let chrome = dialog_frame(
         frame,
         "Select Provider",
-        &["↑/↓ / wheel", "Enter select", "Esc / [✗]"],
+        &["↑/↓ nav", "Enter select", "Esc close"],
         palette,
-        60,
-        70,
         app.mouse_pos,
     );
     let area = chrome.content;
@@ -53,59 +52,60 @@ fn render_provider_select(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePa
     };
     let start = scroll_to_selected(pd.selected, item_count, list_budget);
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled(
-        "Choose a provider or add a custom one:",
-        Style::default().fg(palette.dim),
-    )));
-    lines.push(Line::from(""));
+    let lines = vec![
+        Line::from(Span::styled(
+            "Choose a provider or add a custom one:",
+            Style::default().fg(palette.dim),
+        )),
+        Line::from(""),
+    ];
 
-    for i in start..start.saturating_add(list_budget).min(item_count) {
-        if i < pd.providers.len() {
-            let name = &pd.providers[i];
-            let prefix = if i == pd.selected { "▸ " } else { "  " };
-            let style = if i == pd.selected {
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(palette.fg)
-            };
-            lines.push(Line::from(Span::styled(format!("{prefix}{name}"), style)));
-        } else {
-            // Add custom entry (last selectable row).
-            let prefix = if i == pd.selected { "▸ " } else { "  " };
-            let style = if i == pd.selected {
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(palette.dim)
-            };
-            lines.push(Line::from(Span::styled(
-                format!("{prefix}+ Add Custom Provider…"),
-                style,
-            )));
-        }
-    }
+    // Hint + blank occupy HEADER_ROWS; selectable rows start below.
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: list_width,
+            height: HEADER_ROWS as u16,
+        },
+    );
 
-    // Clickable rows start below the fixed header.
     let rows_area = Rect {
         x: area.x,
         y: area.y + HEADER_ROWS as u16,
         width: list_width,
         height: area.height.saturating_sub(HEADER_ROWS as u16),
     };
-    let list_area = Rect {
-        x: area.x,
-        y: area.y,
-        width: list_width,
-        height: area.height,
-    };
-    let p = Paragraph::new(Text::from(lines))
-        .wrap(Wrap { trim: true })
-        .style(Style::default().bg(palette.bg));
-    frame.render_widget(p, list_area);
+    for (row_i, i) in (start..start.saturating_add(list_budget).min(item_count)).enumerate() {
+        let row = Rect {
+            x: rows_area.x,
+            y: rows_area.y + row_i as u16,
+            width: rows_area.width,
+            height: 1,
+        };
+        if i < pd.providers.len() {
+            paint_picker_row(
+                frame.buffer_mut(),
+                row,
+                &pd.providers[i],
+                None,
+                i == pd.selected,
+                palette,
+                false,
+            );
+        } else {
+            paint_picker_row(
+                frame.buffer_mut(),
+                row,
+                "+ Add Custom Provider…",
+                None,
+                i == pd.selected,
+                palette,
+                true,
+            );
+        }
+    }
 
     let mut scrollbar_hit = None;
     if needs_scrollbar {
@@ -147,10 +147,8 @@ fn render_provider_add(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalet
     let chrome = dialog_frame(
         frame,
         "Add Custom Provider",
-        &["Ctrl+S save", "Tab next", "Esc / [✗]"],
+        &["Ctrl+S save", "Tab next", "Esc close"],
         palette,
-        70,
-        65,
         app.mouse_pos,
     );
     app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
@@ -243,10 +241,8 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     let chrome = dialog_frame(
         frame,
         "Select Model",
-        &["↑/↓ / wheel", "Enter select", "Esc / [✗]"],
+        &["↑/↓ nav", "Enter select", "Esc close"],
         palette,
-        50,
-        50,
         app.mouse_pos,
     );
     let area = chrome.content;
@@ -267,34 +263,23 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     };
     let start = scroll_to_selected(ms.selected, item_count, list_budget);
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(Line::from(Span::styled(
-        "Choose a model:",
-        Style::default().fg(palette.dim),
-    )));
-    lines.push(Line::from(""));
-
-    if ms.models.is_empty() {
-        lines.push(Line::from(Span::styled(
-            " No models configured. Add a provider first.",
+    let lines = vec![
+        Line::from(Span::styled(
+            "Choose a model:",
             Style::default().fg(palette.dim),
-        )));
-    } else {
-        for (i, (provider, model)) in ms.models.iter().enumerate().skip(start).take(list_budget) {
-            let prefix = if i == ms.selected { "▸ " } else { "  " };
-            let style = if i == ms.selected {
-                Style::default()
-                    .fg(palette.accent)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(palette.fg)
-            };
-            lines.push(Line::from(Span::styled(
-                format!("{prefix}{provider} / {model}"),
-                style,
-            )));
-        }
-    }
+        )),
+        Line::from(""),
+    ];
+
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
+        Rect {
+            x: area.x,
+            y: area.y,
+            width: list_width,
+            height: HEADER_ROWS as u16,
+        },
+    );
 
     let rows_area = Rect {
         x: area.x,
@@ -302,16 +287,47 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         width: list_width,
         height: area.height.saturating_sub(HEADER_ROWS as u16),
     };
-    let list_area = Rect {
-        x: area.x,
-        y: area.y,
-        width: list_width,
-        height: area.height,
-    };
-    let p = Paragraph::new(Text::from(lines))
-        .wrap(Wrap { trim: true })
-        .style(Style::default().bg(palette.bg));
-    frame.render_widget(p, list_area);
+    if ms.models.is_empty() {
+        paint_picker_row(
+            frame.buffer_mut(),
+            Rect {
+                x: rows_area.x,
+                y: rows_area.y,
+                width: rows_area.width,
+                height: 1,
+            },
+            "No models configured. Add a provider first.",
+            None,
+            false,
+            palette,
+            true,
+        );
+    } else {
+        for (row_i, (i, (provider, model))) in ms
+            .models
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(list_budget)
+            .enumerate()
+        {
+            let row = Rect {
+                x: rows_area.x,
+                y: rows_area.y + row_i as u16,
+                width: rows_area.width,
+                height: 1,
+            };
+            paint_picker_row(
+                frame.buffer_mut(),
+                row,
+                &format!("{provider} / {model}"),
+                None,
+                i == ms.selected,
+                palette,
+                false,
+            );
+        }
+    }
 
     let mut scrollbar_hit = None;
     if needs_scrollbar && !ms.models.is_empty() {

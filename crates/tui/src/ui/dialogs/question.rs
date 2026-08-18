@@ -72,7 +72,9 @@ pub fn render_question_dialog(
     // title chrome + prompt + blank + options + free-text + multi hint + pad
     let content_rows = 2 + prompt_lines + 1 + n_opts + 3 + 2;
     let area_h = frame.area().height.max(1);
-    let percent_y = ((content_rows as u16 * 100) / area_h).clamp(22, 55);
+    // Phone / keyboard-shrunk heights: keep a usable share of the viewport
+    // instead of a 22% sliver that clips options.
+    let percent_y = ((content_rows as u16 * 100) / area_h).clamp(40, 90);
 
     let chrome = dialog_frame_placed(
         frame,

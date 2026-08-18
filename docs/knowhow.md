@@ -140,6 +140,44 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — Keyboard Shortcuts popup is 70%/max 80, not 90%
+
+**Symptom:** whycode dialogs were stretched to 90% of the terminal after copying the generic `ModalSizing::large()` numbers. They did not look like Grok's Ctrl+. cheatsheet.
+
+**JSONL / crash:** none.
+
+**Root cause:** Grok's keyboard shortcuts modal uses `shortcuts_help::modal_sizing`: `width_pct=0.70`, `max_width=80`, `min_width=44`, `v_margin=4`, `footer_lines=2`. Rows are `◆` + right-aligned detail with a selected-row wash — not `▸` + accent text. 90% is the import-claude / form size, not the cheatsheet.
+
+**Fix:** `DialogSizing::popup()` matches those numbers. List/help rows share `paint_picker_row`. Help is titled "Keyboard Shortcuts" with `/ to search`.
+
+**Prevention:** Do not bump dialog `percent_x` to 90 to "match Grok". Use `popup_rect` / `DialogSizing::popup()`. Test: `popup_rect_matches_grok_shortcuts_sizing`.
+
+---
+
+### 2026-08-18 — Phone portrait popups + OSK resize
+
+**Symptom:** On a vertical phone PTY, help/confirm/select popups were a thin percentage box. Opening/closing the on-screen keyboard left a garbled TUI until the next key.
+
+**Root cause:** `centered_rect` used only `%` of the frame (50% of 40 cols = 20). ratatui autoresizes on `draw`; a `Resize` during a long idle poll left the internal buffer at the old size.
+
+**Fix:** Floor modal size to 36×10 (clamped to the frame). Narrow sessions use `SIDE_PAD_NARROW`. `handle_event(Resize)` marks dirty; the loop `terminal.resize`s before the next paint.
+
+**Prevention:** `centered_rect_expands_on_phone_portrait`, `narrow_session_uses_tighter_side_margin`, resize dirty assert.
+
+---
+
+### 2026-08-18 — Split/quarter pane: Grok popup formula + drop sidebar
+
+**Symptom:** A tmux/iTerm split (½ or ¼ of ~80 cols) left confirm/help as a thin % box and still reserved a 24-col sidebar, crushing the transcript.
+
+**Root cause:** Dialogs passed 50–70% into `centered_rect`. Grok uses `max(percent of outer, min).min(outer)` at ~90%. Sidebar gated on `width >= 36`, so a 40-col pane still paid for the rail.
+
+**Fix:** Shared `layout::popup_dim`. Callers use 90% (Grok). Compact inner pad under 48×14. Sidebar only when `width >= 72` *and* chat keeps 32 cols.
+
+**Prevention:** `popup_dim_matches_grok_max_percent_then_clamp`, `split_pane_hides_sidebar_so_chat_keeps_the_width`.
+
+---
+
 ### 2026-08-18 — Chat scrollbar must not overlay transcript text
 
 **Symptom:** Overflowing chat painted the solid scrollbar on the last wrap column, so glyphs sat under the bar.

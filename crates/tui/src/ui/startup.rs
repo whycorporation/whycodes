@@ -105,7 +105,7 @@ pub fn render(frame: &mut Frame, area: Rect, screen: &StartupScreen) {
     };
 
     // Center the startup content
-    let popup_area = crate::widgets::centered_rect(50, 40, area);
+    let popup_area = crate::ui::dialogs::centered_rect(90, 50, area);
     frame.render_widget(Clear, popup_area);
 
     let accent = blend((100, 149, 237), fade_alpha);

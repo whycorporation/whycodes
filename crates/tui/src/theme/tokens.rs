@@ -47,8 +47,23 @@ pub mod layout {
     /// Prompt max width: absolute cap, or fraction of terminal width.
     pub const PROMPT_MAX_WIDTH: u16 = 75;
     pub const PROMPT_WIDTH_RATIO: f32 = 0.70;
+    /// Floor before the ratio/cap so portrait phones keep a usable prompt.
+    pub const PROMPT_MIN_WIDTH: u16 = 24;
     /// Session main column horizontal padding (bubble left/right margin).
     pub const SIDE_PAD: u16 = 4;
+    /// Tighter side pad on phone-portrait / keyboard-shrunk widths.
+    pub const SIDE_PAD_NARROW: u16 = 1;
+    /// Use [`SIDE_PAD_NARROW`] at or below this terminal body width.
+    pub const NARROW_WIDTH: u16 = 56;
+
+    /// Horizontal pad for the current body width.
+    pub fn side_pad(width: u16) -> u16 {
+        if width <= NARROW_WIDTH {
+            SIDE_PAD_NARROW
+        } else {
+            SIDE_PAD
+        }
+    }
     /// Blank rows under the status header so chat does not sit flush on it.
     pub const TOP_PAD: u16 = 2;
     /// Blank rows between the transcript and the turn-status / prompt.
@@ -66,6 +81,21 @@ pub mod layout {
     pub const ASSISTANT_PAD: u16 = 2;
     /// Sidebar preferred width (clamped by terminal size at render time).
     pub const SIDEBAR_WIDTH: u16 = 42;
+    /// Hide the sidebar below this body width so a tmux/iTerm split (½ or ¼
+    /// of an 80-col PTY) keeps the transcript instead of a 24-col rail.
+    /// Grok drops extra chrome the same way when the overlay cannot fit both.
+    pub const SIDEBAR_MIN_BODY: u16 = 72;
+    /// Chat column that must remain after the sidebar is reserved.
+    pub const SIDEBAR_MIN_CHAT: u16 = 32;
+
+    /// Grok popup formula: `max(percent of outer, min).min(outer)`.
+    pub fn popup_dim(outer: u16, percent: u16, min: u16) -> u16 {
+        if outer == 0 {
+            return 0;
+        }
+        let pct = ((outer as u32 * percent as u32) / 100) as u16;
+        pct.max(min.min(outer)).min(outer)
+    }
 
     /// Shrink `area` by the safe-area insets on every edge.
     pub fn inset_safe(area: Rect) -> Rect {
@@ -148,8 +178,24 @@ mod tests {
             assert!(layout::PROMPT_WIDTH_RATIO > 0.0 && layout::PROMPT_WIDTH_RATIO < 1.0);
             assert!(layout::SIDEBAR_WIDTH > layout::SIDE_PAD * 2);
             assert!(layout::SIDE_PAD >= 4);
+            assert!(layout::SIDE_PAD_NARROW >= 1);
+            assert!(layout::PROMPT_MIN_WIDTH >= 8);
+            assert!(layout::SIDEBAR_MIN_BODY > layout::SIDEBAR_MIN_CHAT);
             assert!(layout::CHAT_GAP >= 1);
         }
+    }
+
+    #[test]
+    fn popup_dim_matches_grok_max_percent_then_clamp() {
+        // Grok: max(pct, min).min(outer). 90% of 40 is 36 — already at the floor.
+        assert_eq!(layout::popup_dim(40, 90, 36), 36);
+        // 50% of 40 is 20, floored to 36 then clamped to 40.
+        assert_eq!(layout::popup_dim(40, 50, 36), 36);
+        // Quarter pane (~20 cols): fill the PTY.
+        assert_eq!(layout::popup_dim(20, 90, 36), 20);
+        // Wide terminal: 90% of 120 is 108, above the 36 floor.
+        assert_eq!(layout::popup_dim(120, 90, 36), 108);
+        assert_eq!(layout::popup_dim(0, 90, 36), 0);
     }
 
     #[test]

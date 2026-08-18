@@ -513,10 +513,20 @@ fn pick_hint() -> &'static str {
 }
 
 fn center_prompt_area(area: Rect) -> Rect {
-    let max_w = layout::PROMPT_MAX_WIDTH
-        .min((area.width as f32 * layout::PROMPT_WIDTH_RATIO) as u16)
-        .max(40)
-        .min(area.width.saturating_sub(4));
+    // Wide terminals: 70% capped at PROMPT_MAX_WIDTH. Narrow / portrait: fill
+    // almost the full width (2-col side breathing room) so the box is not a
+    // 70%-of-40 island that wastes the PTY.
+    let side = if area.width >= 48 { 4 } else { 2 };
+    let usable = area.width.saturating_sub(side);
+    let ratio_w = (area.width as f32 * layout::PROMPT_WIDTH_RATIO) as u16;
+    let preferred = if area.width < 64 {
+        usable
+    } else {
+        layout::PROMPT_MAX_WIDTH.min(ratio_w.max(layout::PROMPT_MIN_WIDTH))
+    };
+    let max_w = preferred
+        .min(usable)
+        .max(layout::PROMPT_MIN_WIDTH.min(usable));
     let x = area.x + (area.width.saturating_sub(max_w)) / 2;
     Rect {
         x,
@@ -723,6 +733,18 @@ mod wrap_tests {
         const {
             assert!(OUTER_TOP_GAP + VPAD_TOP + 1 + INFO_BLOCK + HINT_GAP >= 5);
         }
+    }
+
+    #[test]
+    fn center_prompt_uses_almost_full_width_on_phone() {
+        let area = Rect::new(0, 0, 40, 6);
+        let boxed = center_prompt_area(area);
+        assert!(
+            boxed.width >= 36,
+            "portrait prompt.width={} should not sit at the old 40-col floor",
+            boxed.width
+        );
+        assert!(boxed.x + boxed.width <= area.width);
     }
 
     #[test]

@@ -59,8 +59,6 @@ fn dialog_frame_centers_modal_and_reports_content() {
             "Select Provider",
             &["↑/↓", "Enter select", "Esc / [✗]"],
             &palette,
-            60,
-            70,
             None,
         );
         // Modal centered horizontally: x >= 8 on an 80-wide screen at 60%.
@@ -109,7 +107,7 @@ fn dialog_frame_placed_bottom_docks_modal() {
             "bottom-docked modal must end at the screen bottom"
         );
         // Centered variant must NOT be at the bottom.
-        let centered = dialog_frame(f, "Q", &[], &palette, 80, 30, None);
+        let centered = dialog_frame(f, "Q", &[], &palette, None);
         assert!(
             centered.modal.y + centered.modal.height <= 40,
             "centered modal stays inside the screen"
@@ -121,9 +119,51 @@ fn dialog_frame_placed_bottom_docks_modal() {
 fn dialog_frame_too_small_area_returns_no_close_hit() {
     let palette = ThemeName::DefaultDark.palette();
     let (_buf, _text) = paint(8, 4, |f| {
-        let chrome = dialog_frame(f, "T", &["Esc"], &palette, 60, 60, None);
+        let chrome = dialog_frame(f, "T", &["Esc"], &palette, None);
         assert!(chrome.close_hit.is_none());
     });
+}
+
+#[test]
+fn centered_rect_expands_on_phone_portrait() {
+    // 50% of 40 cols is 20 — too narrow for a readable modal. Floor to 36.
+    // Callers now pass Grok's 90%, but the floor still applies to a 50% request.
+    let r = Rect::new(0, 0, 40, 24);
+    let modal = centered_rect(50, 30, r);
+    assert!(
+        modal.width >= 36,
+        "portrait modal.width={} must expand past 50%",
+        modal.width
+    );
+    assert!(
+        modal.height >= 10,
+        "portrait modal.height={} must expand past 30%",
+        modal.height
+    );
+    assert!(modal.x + modal.width <= 40);
+    assert!(modal.y + modal.height <= 24);
+}
+
+#[test]
+fn centered_rect_fills_tiny_viewport() {
+    let r = Rect::new(0, 0, 20, 8);
+    let modal = centered_rect(50, 30, r);
+    assert_eq!(modal.width, 20);
+    assert_eq!(modal.height, 8);
+    assert_eq!(modal.x, 0);
+    assert_eq!(modal.y, 0);
+}
+
+#[test]
+fn bottom_rect_stays_docked_after_min_expand() {
+    let r = Rect::new(0, 0, 40, 16);
+    let modal = bottom_rect(50, 22, r);
+    assert_eq!(
+        modal.y + modal.height,
+        16,
+        "bottom-docked modal must stay on the bottom after expand"
+    );
+    assert!(modal.width >= 36, "modal.width={}", modal.width);
 }
 
 #[test]
@@ -203,7 +243,10 @@ fn permission_dialog_without_risk_and_key_value_detail() {
 #[test]
 fn permission_dialog_truncates_overflowing_body() {
     let palette = ThemeName::DefaultDark.palette();
-    let detail = format!("Command:\n{}\n\nRisk: x", "echo line".repeat(40));
+    // Many logical lines (not one wrapped blob) so the body exceeds the
+    // content row budget even after the portrait min-height expand.
+    let body: String = (0..40).map(|i| format!("echo line {i}\n")).collect();
+    let detail = format!("Command:\n{body}\nRisk: x");
     let (_buf, text) = paint(80, 12, |f| {
         render_permission_dialog(f, "bash", &detail, &palette, None);
     });
@@ -237,11 +280,11 @@ fn select_dialog_paints_items_and_marks_selection() {
     assert!(text.contains("gamma"), "{text}");
     // Detail rendered dimmed after label.
     assert!(text.contains("the second"), "{text}");
-    // Selection arrow on the selected row.
+    // Grok picker leaf mark on every row (selection is the wash, not ▸).
     let lines: Vec<&str> = text.lines().filter(|l| l.contains("beta")).collect();
     assert!(
-        lines.iter().any(|l| l.contains('▸')),
-        "selected row must carry the marker: {text}"
+        lines.iter().any(|l| l.contains('◆')),
+        "selected row must carry the diamond: {text}"
     );
 }
 
@@ -286,10 +329,14 @@ fn help_overlay_paints_sections_and_clamps_scroll() {
     let (buf, text) = paint(90, 24, |f| {
         render_help_overlay(f, &mut app, &palette);
     });
-    assert!(text.contains("Help"), "{text}");
-    // Scrolled to the max offset, so the tail sections are visible.
-    assert!(text.contains("Dialogs & commands"), "{text}");
-    assert!(text.contains("Ctrl+P"), "{text}");
+    assert!(text.contains("Keyboard Shortcuts"), "{text}");
+    assert!(
+        text.contains("/ to search") || text.contains("search:"),
+        "{text}"
+    );
+    // Scrolled to the max offset, so the tail bindings are visible.
+    assert!(text.contains(":q") || text.contains("Quit"), "{text}");
+    assert!(text.contains("◆"), "{text}");
     // Clamped into range so the scroll window never exceeds content.
     assert!(app.help_scroll <= 100, "help_scroll={}", app.help_scroll);
     assert!(app.help_scroll > 0, "large offset must clamp, not stay raw");
@@ -299,6 +346,23 @@ fn help_overlay_paints_sections_and_clamps_scroll() {
     // Scrollbar visible because content overflows a 24-row window.
     assert!(app.dialog_list_visible < app.dialog_list_total);
     let _ = buf;
+}
+
+#[test]
+fn help_overlay_search_filters_bindings() {
+    let mut app = TuiApp::new(cfg());
+    app.help_searching = true;
+    app.help_query = "provider".into();
+    let palette = app.config.palette();
+    let (_buf, text) = paint(90, 30, |f| {
+        render_help_overlay(f, &mut app, &palette);
+    });
+    assert!(text.contains("search: provider"), "{text}");
+    assert!(text.contains("Ctrl+P"), "{text}");
+    assert!(
+        !text.contains("Ctrl+O"),
+        "unrelated session binding should drop out: {text}"
+    );
 }
 
 #[test]
@@ -402,8 +466,8 @@ fn model_dialog_lists_provider_model_pairs() {
     assert!(text.contains("openai / gpt-4o"), "{text}");
     let lines: Vec<&str> = text.lines().filter(|l| l.contains("gpt-4o")).collect();
     assert!(
-        lines.iter().any(|l| l.contains('▸')),
-        "selected model row must carry the marker: {text}"
+        lines.iter().any(|l| l.contains('◆')),
+        "selected model row must carry the diamond: {text}"
     );
     assert!(app.dialog_list_hit.is_some());
 }
@@ -625,6 +689,6 @@ fn help_mode_renders_via_standalone_entry() {
     let (_buf, text) = paint(90, 24, |f| {
         render_help(f, &mut app, &palette);
     });
-    assert!(text.contains("Help"), "{text}");
+    assert!(text.contains("Keyboard Shortcuts"), "{text}");
     assert!(app.dialog_list_hit.is_some());
 }

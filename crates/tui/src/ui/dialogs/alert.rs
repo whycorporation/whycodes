@@ -9,7 +9,7 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::{DialogChrome, dialog_frame};
+use super::base::DialogChrome;
 
 pub fn render_alert_dialog(
     frame: &mut Frame,
@@ -18,7 +18,15 @@ pub fn render_alert_dialog(
     palette: &ThemePalette,
     mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
-    let chrome = dialog_frame(frame, title, &["any-key / [✗]"], palette, 50, 30, mouse_pos);
+    let chrome = super::base::dialog_frame_sized(
+        frame,
+        title,
+        &["any-key / [✗]"],
+        palette,
+        super::base::DialogSizing::compact(),
+        mouse_pos,
+        super::base::DialogPlacement::Center,
+    );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
         return chrome;
