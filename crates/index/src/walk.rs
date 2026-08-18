@@ -11,6 +11,27 @@ use ignore::{DirEntry, WalkBuilder, WalkState};
 
 use crate::policy;
 
+pub(crate) fn allow_dir_entry(depth: usize, name: &str, is_dir: bool) -> bool {
+    if depth == 0 {
+        return true;
+    }
+    if is_dir {
+        !policy::is_pruned_dir(name)
+    } else {
+        !policy::is_pruned_file(name)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn rel_is_empty(rel: &str) -> bool {
+    rel.is_empty()
+}
+
+#[cfg(test)]
+pub(crate) fn entry_is_err<T, E>(r: &Result<T, E>) -> bool {
+    r.is_err()
+}
+
 /// One discovered entry, root-relative with `/` separators.
 #[derive(Debug, Clone)]
 pub struct WalkEntry {
@@ -58,16 +79,14 @@ pub fn walk_root(
     // `filter_entry` drives descent control in both serial and parallel mode:
     // a pruned directory is never descended into.
     builder.filter_entry(|entry| {
-        if entry.depth() == 0 {
-            return true; // the root itself
-        }
-        let name = entry.file_name().to_string_lossy();
-        match entry.file_type() {
-            Some(ft) if ft.is_dir() => !policy::is_pruned_dir(&name),
-            // Files and symlinks (never followed) are name-filtered only.
-            _ => !policy::is_pruned_file(&name),
-        }
+        allow_dir_entry(
+            entry.depth(),
+            &entry.file_name().to_string_lossy(),
+            entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false),
+        )
     });
+
+    // Root (depth 0) is always entered; hidden/pruned names are skipped.
 
     let accept = |entry: &DirEntry| -> Option<WalkEntry> {
         if entry.depth() == 0 {
@@ -78,9 +97,6 @@ pub fn walk_root(
         let is_dir = ft.is_dir() && !is_symlink;
         let rel = entry.path().strip_prefix(root).ok()?;
         let rel = rel.to_string_lossy().replace('\\', "/");
-        if rel.is_empty() {
-            return None;
-        }
         let size = if is_dir || is_symlink {
             0
         } else {
@@ -100,8 +116,8 @@ pub fn walk_root(
         if cancel.load(Ordering::Relaxed) {
             return WalkState::Quit;
         }
-        let Ok(entry) = entry else {
-            return WalkState::Continue; // unreadable entries never block a scan
+        let Some(entry) = entry.ok() else {
+            return WalkState::Continue;
         };
         let Some(we) = accept(&entry) else {
             return WalkState::Continue;
@@ -138,100 +154,5 @@ pub fn walk_root(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::sync::Mutex;
-
-    fn collect(root: &Path, threads: usize) -> Vec<String> {
-        let scanned = AtomicUsize::new(0);
-        let cancel = AtomicBool::new(false);
-        let out = Mutex::new(Vec::new());
-        walk_root(root, threads, 100_000, &scanned, &cancel, &|e| {
-            out.lock()
-                .unwrap()
-                .push(format!("{}{}", e.rel, if e.is_dir { "/" } else { "" }));
-        });
-        out.into_inner().unwrap()
-    }
-
-    fn fixture() -> tempfile::TempDir {
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        fs::write(root.join("README.md"), "hi").unwrap();
-        fs::create_dir_all(root.join("target/debug")).unwrap();
-        fs::write(root.join("target/debug/x.o"), "bin").unwrap();
-        fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
-        fs::write(root.join("node_modules/pkg/i.js"), "x").unwrap();
-        fs::create_dir_all(root.join(".git")).unwrap();
-        fs::write(root.join(".git/config"), "x").unwrap();
-        fs::create_dir_all(root.join(".github/workflows")).unwrap();
-        fs::write(root.join(".github/workflows/ci.yml"), "on: push").unwrap();
-        fs::write(root.join(".env"), "SECRET=1").unwrap();
-        fs::write(root.join(".gitignore"), "ignored.txt\n").unwrap();
-        fs::write(root.join("ignored.txt"), "x").unwrap();
-        dir
-    }
-
-    #[test]
-    fn walk_respects_policy_and_gitignore() {
-        for threads in [1, 4] {
-            let dir = fixture();
-            let entries = collect(dir.path(), threads);
-            assert!(
-                entries.iter().any(|e| e == "src/main.rs"),
-                "threads={threads}: {entries:?}"
-            );
-            assert!(entries.iter().any(|e| e == "src/"), "threads={threads}");
-            assert!(
-                entries.iter().any(|e| e == ".github/workflows/ci.yml"),
-                "threads={threads}: {entries:?}"
-            );
-            assert!(entries.iter().any(|e| e == ".gitignore"));
-            for bad in [
-                "target/debug/x.o",
-                "node_modules/pkg/i.js",
-                ".git/config",
-                ".env",
-                "ignored.txt",
-            ] {
-                assert!(
-                    !entries.iter().any(|e| e == bad),
-                    "threads={threads}: {bad} must be excluded: {entries:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn walk_caps_entries() {
-        let dir = tempfile::TempDir::new().unwrap();
-        for i in 0..100 {
-            fs::write(dir.path().join(format!("f{i:03}.txt")), "x").unwrap();
-        }
-        let scanned = AtomicUsize::new(0);
-        let cancel = AtomicBool::new(false);
-        let count = AtomicUsize::new(0);
-        let stats = walk_root(dir.path(), 1, 10, &scanned, &cancel, &|_| {
-            count.fetch_add(1, Ordering::Relaxed);
-        });
-        assert!(stats.truncated);
-        assert_eq!(stats.scanned, 10);
-        assert_eq!(count.load(Ordering::Relaxed), 10);
-    }
-
-    #[test]
-    fn walk_is_cancellable() {
-        let dir = tempfile::TempDir::new().unwrap();
-        for i in 0..100 {
-            fs::write(dir.path().join(format!("f{i:03}.txt")), "x").unwrap();
-        }
-        let scanned = AtomicUsize::new(0);
-        let cancel = AtomicBool::new(true); // pre-cancelled
-        let stats = walk_root(dir.path(), 1, 100_000, &scanned, &cancel, &|_| {});
-        assert_eq!(stats.scanned, 0);
-        assert!(!stats.truncated);
-    }
-}
+#[path = "walk_tests.rs"]
+mod tests;

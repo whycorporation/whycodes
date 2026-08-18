@@ -170,7 +170,6 @@ impl WorkspaceIndex {
         let scanner = std::thread::Builder::new()
             .name("whycode-index".into())
             .spawn(move || scanner_main(thread_shared, cmd_rx))
-            .map_err(|e| tracing::warn!(error = %e, "index scanner thread failed to spawn"))
             .ok();
         Arc::new(Self { shared, scanner })
     }
@@ -352,7 +351,7 @@ impl WorkspaceIndex {
     }
 
     /// Visit every primary-root entry without cloning (tools hot path).
-    pub fn visit(&self, mut f: impl FnMut(&Entry)) {
+    pub fn visit(&self, f: &mut dyn FnMut(&Entry)) {
         if let Some(state) = self.shared.states.first() {
             for e in read(&state.store).entries() {
                 f(e);
@@ -418,6 +417,29 @@ fn sanitize_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     out
 }
 
+#[cfg(test)]
+pub(crate) fn recv_should_stop(e: mpsc::RecvTimeoutError) -> bool {
+    matches!(e, mpsc::RecvTimeoutError::Disconnected)
+}
+
+#[derive(Debug)]
+pub(crate) enum RecvAct {
+    Stop,
+    Idle,
+    Rescan,
+    Batch(Vec<Change>),
+}
+
+pub(crate) fn classify_recv(r: Result<Command, mpsc::RecvTimeoutError>) -> RecvAct {
+    match r {
+        Ok(Command::Shutdown) => RecvAct::Stop,
+        Ok(Command::Rescan) => RecvAct::Rescan,
+        Ok(Command::Batch(cs)) => RecvAct::Batch(cs),
+        Err(mpsc::RecvTimeoutError::Disconnected) => RecvAct::Stop,
+        Err(mpsc::RecvTimeoutError::Timeout) => RecvAct::Idle,
+    }
+}
+
 /// Scanner thread body: initial scan, then watcher-fed delta loop.
 fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
     full_scan(&shared);
@@ -440,18 +462,17 @@ fn scanner_main(shared: Arc<Shared>, cmd_rx: Receiver<Command>) {
         if shared.cancel.load(Ordering::Relaxed) {
             break;
         }
-        match cmd_rx.recv_timeout(WATCH_DEBOUNCE) {
-            Ok(Command::Shutdown) => break,
-            Ok(Command::Rescan) => {
+        match classify_recv(cmd_rx.recv_timeout(WATCH_DEBOUNCE)) {
+            RecvAct::Stop => break,
+            RecvAct::Idle => {}
+            RecvAct::Rescan => {
                 pending.clear();
                 full_scan(&shared);
                 if !shared.cancel.load(Ordering::Relaxed) {
                     shared.state.store(STATE_READY, Ordering::Release);
                 }
             }
-            Ok(Command::Batch(cs)) => pending.extend(cs),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            RecvAct::Batch(cs) => pending.extend(cs),
         }
         if !pending.is_empty() {
             apply_changes(&shared, std::mem::take(&mut pending));
@@ -511,7 +532,7 @@ fn full_scan(shared: &Arc<Shared>) {
 
 /// Apply one debounced watcher batch: upserts push into nucleo; removals
 /// rebuild that root's engine from the store (nucleo has no item removal).
-fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
+pub(crate) fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
     // Group by root so each engine is touched at most once per batch.
     let mut by_root: rustc_hash::FxHashMap<u16, Vec<Change>> = Default::default();
     for c in changes {
@@ -569,206 +590,5 @@ fn apply_changes(shared: &Arc<Shared>, changes: Vec<Change>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    fn fixture() -> tempfile::TempDir {
-        let dir = tempfile::TempDir::new().unwrap();
-        let root = dir.path();
-        fs::create_dir_all(root.join("src/nested")).unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        fs::write(root.join("src/nested/deep.rs"), "// deep").unwrap();
-        fs::write(root.join("Cargo.toml"), "[package]").unwrap();
-        fs::create_dir_all(root.join("target/debug")).unwrap();
-        fs::write(root.join("target/debug/x.o"), "bin").unwrap();
-        fs::write(root.join(".env"), "SECRET=1").unwrap();
-        dir
-    }
-
-    #[test]
-    fn end_to_end_scan_query_browse() {
-        let dir = fixture();
-        let idx = WorkspaceIndex::start_with(
-            vec![dir.path().to_path_buf()],
-            IndexOptions {
-                watch: false,
-                ..Default::default()
-            },
-        );
-        assert!(idx.wait_ready(Duration::from_secs(10)));
-        match idx.status() {
-            ScanStatus::Ready { total, truncated } => {
-                assert!(total >= 5, "total={total}");
-                assert!(!truncated);
-            }
-            other => panic!("expected Ready, got {other:?}"),
-        }
-
-        // Fuzzy.
-        let hits = idx.query("main.rs", 10);
-        assert!(!hits.is_empty());
-        assert_eq!(hits[0].rel, "src/main.rs");
-        assert_eq!(hits[0].root, 0);
-
-        // Pruned entries never made it in.
-        assert!(idx.query("x.o", 10).is_empty());
-        assert!(idx.query(".env", 10).is_empty());
-
-        // Browse: empty query → top level, dirs first.
-        let top = idx.query("", 20);
-        assert!(top.iter().any(|m| m.rel == "src" && m.is_dir));
-        assert!(top.iter().any(|m| m.rel == "Cargo.toml" && !m.is_dir));
-        assert!(top[0].is_dir, "dirs first: {top:?}");
-
-        // Browse subdir via trailing slash.
-        let src = idx.query("src/", 20);
-        assert!(src.iter().any(|m| m.rel == "src/main.rs"));
-        assert!(src.iter().all(|m| m.rel.starts_with("src/")));
-
-        // Tools view.
-        assert!(idx.entries().iter().any(|e| &*e.rel == "src/main.rs"));
-        let mut seen = 0;
-        idx.visit(|_| seen += 1);
-        assert!(seen >= 5);
-
-        // Resolve.
-        let m = &hits[0];
-        assert!(idx.resolve(m).ends_with("src/main.rs"));
-    }
-
-    #[test]
-    fn watcher_picks_up_changes() {
-        let dir = fixture();
-        let idx = WorkspaceIndex::start(vec![dir.path().to_path_buf()]);
-        assert!(idx.wait_ready(Duration::from_secs(10)));
-        let before = idx.len();
-
-        // Create → appears. `wait_ready` now means the watcher is armed, so
-        // this write cannot race the first `watch()`. Still poll: debounce
-        // is 250 ms and CI can starve the apply thread.
-        fs::write(dir.path().join("src/new_file.rs"), "// new").unwrap();
-        let deadline = Instant::now() + Duration::from_secs(15);
-        let appeared = loop {
-            let hit = idx
-                .query("new_file", 10)
-                .iter()
-                .any(|m| m.rel == "src/new_file.rs");
-            if hit || Instant::now() >= deadline {
-                break hit;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        };
-        assert!(appeared, "create must be indexed");
-        assert_eq!(idx.len(), before + 1, "create adds one store entry");
-
-        // Delete → disappears from the store (fuzzy engine rebuilds).
-        fs::remove_file(dir.path().join("src/new_file.rs")).unwrap();
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            let gone = {
-                let mut found = false;
-                idx.visit(|e| found |= &*e.rel == "src/new_file.rs");
-                !found
-            };
-            if gone || Instant::now() >= deadline {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let mut found = false;
-        idx.visit(|e| found |= &*e.rel == "src/new_file.rs");
-        assert!(!found, "delete must be removed from store");
-    }
-
-    #[test]
-    fn sanitize_roots_dedups_nested() {
-        let dir = fixture();
-        let root = dir.path().canonicalize().unwrap();
-        let roots = sanitize_roots(vec![
-            root.clone(),
-            root.join("src"),     // nested → dropped
-            root.join("missing"), // nonexistent → dropped
-            root.clone(),         // dup → dropped
-        ]);
-        assert_eq!(roots, vec![root]);
-    }
-
-    #[test]
-    fn project_roots_reads_allowlist() {
-        let dir = fixture();
-        let ext = tempfile::TempDir::new().unwrap();
-        fs::create_dir_all(dir.path().join(".whycode")).unwrap();
-        fs::write(
-            dir.path().join(".whycode/external_dirs_allowed"),
-            format!("# comment\n{}\n\n", ext.path().display()),
-        )
-        .unwrap();
-        let roots = WorkspaceIndex::project_roots(dir.path());
-        assert_eq!(roots.len(), 2);
-        assert_eq!(roots[0], dir.path());
-        assert_eq!(roots[1], ext.path());
-    }
-
-    #[test]
-    fn empty_roots_is_safe() {
-        let idx = WorkspaceIndex::start_with(vec![], IndexOptions::default());
-        assert!(idx.roots().is_empty());
-        assert!(idx.query("x", 5).is_empty());
-    }
-
-    /// The UI contract: query_now never blocks on a rematch, fresh results
-    /// arrive via the dirty flag, and matching eventually settles.
-    #[test]
-    fn async_query_eventually_consistent() {
-        // 5k files — big enough that a full rematch is measurable.
-        let dir = tempfile::TempDir::new().unwrap();
-        for d in 0..50 {
-            let p = dir.path().join(format!("pkg{d}/src"));
-            fs::create_dir_all(&p).unwrap();
-            for f in 0..100 {
-                fs::write(p.join(format!("file{f}.rs")), "x").unwrap();
-            }
-        }
-        fs::write(dir.path().join("pkg7/src/needle.rs"), "x").unwrap();
-        let idx = WorkspaceIndex::start_with(
-            vec![dir.path().to_path_buf()],
-            IndexOptions {
-                watch: false,
-                ..Default::default()
-            },
-        );
-        assert!(idx.wait_ready(Duration::from_secs(30)));
-
-        // set path returns fast even with a full rematch queued.
-        let t = Instant::now();
-        let _ = idx.query_now("needle.rs", 10);
-        let first_ms = t.elapsed().as_secs_f64() * 1000.0;
-        assert!(first_ms < 50.0, "query_now blocked {first_ms:.1}ms");
-
-        // Dirty flag flips and results converge without another keystroke.
-        // Always nudge (`matching`) so a missed nucleo notify cannot stall
-        // the snapshot — same contract the TUI picker now uses.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut found = false;
-        while Instant::now() < deadline {
-            let dirty = idx.take_results_dirty();
-            let running = idx.matching();
-            if dirty || !running {
-                let hits = idx.read_matches(10);
-                if hits.iter().any(|m| m.rel.ends_with("needle.rs")) {
-                    found = true;
-                    break;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert!(found, "needle.rs never appeared via dirty-flag polling");
-        // …and matching reports quiescence once converged.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while idx.matching() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        assert!(!idx.matching());
-    }
-}
+#[path = "lib_tests.rs"]
+mod tests;

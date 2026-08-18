@@ -27,7 +27,7 @@ the gate:
 CRATE_IGNORE="$IGNORE|tests\\.rs$"
 for crate in whycode-function whycode-schema whycode-skill whycode-sandbox \
              whycode-protocol whycode-plugin whycode-command-risk whycode-storage \
-             whycode-core whycode-config whycode-format; do
+             whycode-core whycode-config whycode-format whycode-index; do
   cargo llvm-cov -p "$crate" --ignore-filename-regex "$CRATE_IGNORE" \
     --fail-under-lines 100 --show-missing-lines --summary-only
 done
@@ -42,7 +42,7 @@ toolchain, point `LLVM_COV` / `LLVM_PROFDATA` at the system binaries.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **78%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `format` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `format`, `index` | **100%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
 comfortably above it, raise `--fail-under-lines` in
