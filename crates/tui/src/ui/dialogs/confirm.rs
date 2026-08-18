@@ -3,6 +3,7 @@
 // Permission prompts get a structured layout (tool · body · risk).
 
 use crate::theme::ThemePalette;
+use crate::widgets::wrap::wrap_text;
 use ratatui::{
     Frame,
     style::{Modifier, Style},
@@ -10,7 +11,7 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::{DialogChrome, dialog_frame};
+use super::base::DialogChrome;
 
 pub fn render_confirm_dialog(
     frame: &mut Frame,
@@ -19,14 +20,14 @@ pub fn render_confirm_dialog(
     palette: &ThemePalette,
     mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
-    let chrome = dialog_frame(
+    let chrome = super::base::dialog_frame_sized(
         frame,
         title,
         &["y yes", "n no", "Enter confirm", "Esc / [✗]"],
         palette,
-        50,
-        30,
+        super::base::DialogSizing::compact(),
         mouse_pos,
+        super::base::DialogPlacement::Center,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
@@ -67,14 +68,14 @@ pub fn render_permission_dialog(
     palette: &ThemePalette,
     mouse_pos: Option<(u16, u16)>,
 ) -> DialogChrome {
-    let chrome = dialog_frame(
+    let chrome = super::base::dialog_frame_sized(
         frame,
         "Permission required",
         &["y/a allow", "n/d deny", "Esc / [✗]"],
         palette,
-        72,
-        50,
+        super::base::DialogSizing::popup(),
         mouse_pos,
+        super::base::DialogPlacement::Center,
     );
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
@@ -164,20 +165,38 @@ pub fn render_permission_dialog(
         Style::default().fg(palette.dim),
     )));
 
-    // Drop lines that would overflow the content area (keep footer readable).
+    // Wrap first, then drop overflow so a single long command (or many
+    // wrapped rows) still leaves the footer readable.
+    let wrap_w = area.width.max(1);
+    let mut wrapped: Vec<Line> = Vec::new();
+    for line in lines {
+        let spans = line.spans;
+        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+        if text.is_empty() {
+            wrapped.push(Line::from(""));
+            continue;
+        }
+        let style = spans
+            .first()
+            .map(|s| s.style)
+            .unwrap_or_else(Style::default);
+        for row in wrap_text(&text, wrap_w) {
+            let slice = &text[row.byte_range.0..row.byte_range.1];
+            wrapped.push(Line::from(Span::styled(slice.to_string(), style)));
+        }
+    }
+
     let max_rows = area.height as usize;
-    if lines.len() > max_rows {
+    if wrapped.len() > max_rows {
         let keep = max_rows.saturating_sub(1);
-        lines.truncate(keep);
-        lines.push(Line::from(Span::styled(
+        wrapped.truncate(keep);
+        wrapped.push(Line::from(Span::styled(
             "  … (truncated)",
             Style::default().fg(palette.dim),
         )));
     }
 
-    let body = Paragraph::new(Text::from(lines))
-        .wrap(Wrap { trim: false })
-        .style(Style::default().bg(palette.bg));
+    let body = Paragraph::new(Text::from(wrapped)).style(Style::default().bg(palette.bg));
     frame.render_widget(body, area);
     chrome
 }

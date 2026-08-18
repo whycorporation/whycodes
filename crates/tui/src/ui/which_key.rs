@@ -27,8 +27,9 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
     let max_height = (area.height as usize).saturating_sub(4).max(6);
     let total_height: u16 = ((num_rows + 5).min(max_height).max(6)) as u16;
 
-    let perc_y = ((total_height + 2) as u16 * 100 / area.height.max(1)).max(1);
-    let popup_area = crate::widgets::centered_rect(total_width, perc_y, area);
+    let perc_y = ((total_height + 2) as u16 * 100 / area.height.max(1)).clamp(1, 90);
+    let perc_x = ((total_width as u32 * 100) / area.width.max(1) as u32).min(90) as u16;
+    let popup_area = crate::ui::dialogs::centered_rect(perc_x.max(50), perc_y, area);
 
     // Clear background
     frame.render_widget(Clear, popup_area);

@@ -1260,6 +1260,19 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
                 input::coalesce_chat_wheels(&mut app, &mut batch);
                 input::coalesce_resizes(&mut batch);
+                if let Some(Event::Resize(w, h)) = batch
+                    .iter()
+                    .rev()
+                    .find(|e| matches!(e, Event::Resize(_, _)))
+                    && *w > 0
+                    && *h > 0
+                {
+                    // ratatui only autoresizes on `draw`. Mobile OSK hide/show
+                    // can emit Resize while we are in a long poll; apply it
+                    // immediately so the next paint uses the new viewport
+                    // instead of a stale buffer (garbled rows / clipped popup).
+                    let _ = terminal.resize(Rect::new(0, 0, *w, *h));
+                }
                 if batch.iter().any(event_forces_redraw) {
                     app.mark_dirty();
                 }
@@ -3950,6 +3963,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             ctx.app.mode = AppMode::Help;
             ctx.app.key_context = KeymapContext::Help;
             ctx.app.help_scroll = 0;
+            ctx.app.help_query.clear();
+            ctx.app.help_searching = false;
         }
         "/new" | "/clear" => {
             *ctx.history = SessionHistory::new();

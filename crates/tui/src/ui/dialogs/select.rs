@@ -5,14 +5,19 @@
 //! scrollbar on the right edge.
 
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use super::base::dialog_frame;
 use crate::theme::ThemePalette;
-use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar, scroll_to_selected};
+use crate::ui::scrollbar::{ScrollbarColors, elevate, paint_scrollbar, scroll_to_selected};
+
+/// Grok picker leaf mark (`diamond_filled`).
+const DIAMOND: &str = "◆ ";
+/// Selected-row wash — Grok `bg_visual` ≈ +44 on the canvas.
+const SELECTED_LIFT: u8 = 44;
 
 /// One row: what to show, and an optional dimmed detail after it.
 pub struct SelectItem {
@@ -71,10 +76,8 @@ pub fn render_select(
     let chrome = dialog_frame(
         frame,
         title,
-        &["↑/↓ / wheel", "Enter select", "Esc / [✗]"],
+        &["↑/↓ nav", "Enter select", "Esc close"],
         palette,
-        60,
-        60,
         mouse_pos,
     );
     let area = chrome.content;
@@ -103,47 +106,47 @@ pub fn render_select(
 
     let start = scroll_to_selected(selected, total, visible);
 
-    let mut lines: Vec<Line> = Vec::new();
-
     if items.is_empty() {
-        lines.push(Line::from(Span::styled(
-            format!(" {empty}"),
-            Style::default().fg(palette.dim),
-        )));
+        let row = Rect {
+            x: list_area.x,
+            y: list_area.y,
+            width: list_area.width,
+            height: 1,
+        };
+        paint_picker_row(
+            frame.buffer_mut(),
+            row,
+            empty,
+            None,
+            false,
+            palette,
+            /* dimmed */ true,
+        );
     } else {
-        for (i, item) in items.iter().enumerate().skip(start).take(visible) {
-            let current = i == selected;
-            // Grok/fzf: selected row recolors text with accent, no full wash.
-            let mut spans = vec![
-                Span::styled(
-                    if current { " ▸ " } else { "   " }.to_string(),
-                    Style::default().fg(palette.accent),
-                ),
-                Span::styled(
-                    item.label.clone(),
-                    if current {
-                        Style::default()
-                            .fg(palette.accent)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(palette.fg)
-                    },
-                ),
-            ];
-            if let Some(detail) = &item.detail {
-                spans.push(Span::styled(
-                    format!("  {detail}"),
-                    Style::default().fg(palette.dim),
-                ));
-            }
-            lines.push(Line::from(spans));
+        for (row_i, (i, item)) in items
+            .iter()
+            .enumerate()
+            .skip(start)
+            .take(visible)
+            .enumerate()
+        {
+            let row = Rect {
+                x: list_area.x,
+                y: list_area.y + row_i as u16,
+                width: list_area.width,
+                height: 1,
+            };
+            paint_picker_row(
+                frame.buffer_mut(),
+                row,
+                &item.label,
+                item.detail.as_deref(),
+                i == selected,
+                palette,
+                false,
+            );
         }
     }
-
-    frame.render_widget(
-        Paragraph::new(lines).style(Style::default().bg(palette.bg)),
-        list_area,
-    );
 
     let scrollbar_hit = if needs_scrollbar {
         let colors = ScrollbarColors::from_palette(palette);
@@ -176,6 +179,99 @@ pub fn render_select(
         visible,
         total,
     }
+}
+
+/// Grok Keyboard Shortcuts / picker row: `◆ label` left, optional detail
+/// right-aligned. Selected row is a `bg_visual` wash + bold primary text —
+/// no `▸` caret (selection is the wash).
+pub fn paint_picker_row(
+    buf: &mut Buffer,
+    row: Rect,
+    label: &str,
+    detail: Option<&str>,
+    selected: bool,
+    palette: &ThemePalette,
+    dimmed: bool,
+) {
+    if row.width == 0 || row.height == 0 {
+        return;
+    }
+    let bg = if selected {
+        elevate(palette.bg, SELECTED_LIFT)
+    } else {
+        palette.bg
+    };
+    let fill = Style::default().bg(bg);
+    for x in row.x..row.x.saturating_add(row.width) {
+        if let Some(cell) = buf.cell_mut((x, row.y)) {
+            cell.set_symbol(" ");
+            cell.set_style(fill);
+        }
+    }
+
+    let label_style = if dimmed {
+        Style::default().fg(palette.dim).bg(bg)
+    } else if selected {
+        Style::default()
+            .fg(palette.fg)
+            .bg(bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(palette.fg).bg(bg)
+    };
+    let mark_style = Style::default().fg(palette.dim).bg(bg);
+    let detail_style = Style::default().fg(palette.dim).bg(bg);
+
+    let mark_w = UnicodeWidthStr::width(DIAMOND) as u16;
+    buf.set_stringn(
+        row.x,
+        row.y,
+        DIAMOND,
+        row.width as usize,
+        if dimmed { label_style } else { mark_style },
+    );
+
+    let label_x = row.x.saturating_add(mark_w);
+    let trailing = 1u16;
+    let after_label = row
+        .x
+        .saturating_add(row.width)
+        .saturating_sub(trailing)
+        .saturating_sub(label_x);
+    let detail_text = detail.unwrap_or("");
+    let detail_w = if detail_text.is_empty() {
+        0u16
+    } else {
+        let cap = (after_label / 2).max(1);
+        (UnicodeWidthStr::width(detail_text) as u16).min(cap)
+    };
+    let gap = if detail_w > 0 { 2u16 } else { 0 };
+    let label_budget = after_label.saturating_sub(detail_w + gap) as usize;
+    buf.set_stringn(label_x, row.y, label, label_budget, label_style);
+
+    if detail_w > 0 {
+        let right_x = row
+            .x
+            .saturating_add(row.width)
+            .saturating_sub(detail_w + trailing);
+        buf.set_stringn(right_x, row.y, detail_text, detail_w as usize, detail_style);
+    }
+}
+
+/// Grok section header: `── Label ──` in dim, not selectable.
+pub fn paint_section_header(buf: &mut Buffer, row: Rect, label: &str, palette: &ThemePalette) {
+    if row.width == 0 || row.height == 0 {
+        return;
+    }
+    let style = Style::default().fg(palette.dim).bg(palette.bg);
+    for x in row.x..row.x.saturating_add(row.width) {
+        if let Some(cell) = buf.cell_mut((x, row.y)) {
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
+    }
+    let text = format!("── {label} ──");
+    buf.set_stringn(row.x, row.y, &text, row.width as usize, style);
 }
 
 #[cfg(test)]

@@ -24,7 +24,12 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
             handle_paste(app, &data);
             true
         }
-        Event::Resize(_, _) => true,
+        Event::Resize(_, _) => {
+            // Viewport changed (window snap, phone rotate, OSK show/hide).
+            // Force a full paint so layout is not left on the previous size.
+            app.mark_dirty();
+            true
+        }
         _ => true,
     }
 }
@@ -100,6 +105,11 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     // If dialog mode, route to dialog handler first.
     if ctx == KeymapContext::Dialog {
         return handle_dialog_key(app, &key);
+    }
+    // Cheatsheet owns `/` search and Esc-to-clear before the keymap.
+    if ctx == KeymapContext::Help && handle_help_type(app, &key) {
+        app.mark_dirty();
+        return true;
     }
 
     // Resolve and dispatch (focus-aware).
@@ -366,6 +376,15 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         None => {
             // Unmapped key — treat as text input. Grok simple mode: any letter
             // while scrollback is focused auto-focuses the prompt.
+            // Stale key_context (still Normal) still has to close help on `q`.
+            if app.mode == AppMode::Help
+                && !handle_help_type(app, &key)
+                && matches!(key.code, KeyCode::Char('q'))
+            {
+                app.mode = AppMode::Normal;
+                app.key_context = KeymapContext::Normal;
+                return true;
+            }
             match app.mode {
                 AppMode::Normal => {
                     if let KeyCode::Char(c) = key.code {
@@ -393,12 +412,6 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
                 AppMode::Command => {
                     if let KeyCode::Char(c) = key.code {
                         app.command.buffer.push(c);
-                    }
-                }
-                AppMode::Help => {
-                    if let KeyCode::Char('q') = key.code {
-                        app.mode = AppMode::Normal;
-                        app.key_context = KeymapContext::Normal;
                     }
                 }
                 _ => {}
@@ -476,6 +489,13 @@ fn handle_escape(app: &mut TuiApp) {
             return;
         }
         AppMode::Help => {
+            if app.help_searching || !app.help_query.is_empty() {
+                app.help_query.clear();
+                app.help_searching = false;
+                app.help_scroll = 0;
+                app.esc_armed_at = None;
+                return;
+            }
             app.mode = AppMode::Normal;
             app.key_context = KeymapContext::Normal;
             app.esc_armed_at = None;
@@ -1276,6 +1296,13 @@ fn apply_modal_scrollbar(
 /// Dismiss Help overlay or the top dialog — shared by Esc and `[✗]`.
 fn dismiss_modal(app: &mut TuiApp) {
     if app.mode == AppMode::Help && !app.dialogs.is_open() {
+        if app.help_searching || !app.help_query.is_empty() {
+            app.help_query.clear();
+            app.help_searching = false;
+            app.help_scroll = 0;
+            app.mark_dirty();
+            return;
+        }
         app.mode = AppMode::Normal;
         app.key_context = KeymapContext::Normal;
         app.mouse_sel = None;
@@ -1285,6 +1312,70 @@ fn dismiss_modal(app: &mut TuiApp) {
         return;
     }
     dismiss_dialog(app);
+}
+
+/// Open the Keyboard Shortcuts cheatsheet (clears any leftover filter).
+fn open_help(app: &mut TuiApp) {
+    app.mode = AppMode::Help;
+    app.key_context = KeymapContext::Help;
+    app.help_scroll = 0;
+    app.help_query.clear();
+    app.help_searching = false;
+}
+
+/// Type into the cheatsheet search bar. Returns true when the key was consumed.
+fn handle_help_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Up => {
+            app.help_scroll = app.help_scroll.saturating_sub(1);
+            true
+        }
+        KeyCode::Down => {
+            app.help_scroll = app.help_scroll.saturating_add(1);
+            true
+        }
+        KeyCode::Char('k') if !app.help_searching && app.help_query.is_empty() => {
+            app.help_scroll = app.help_scroll.saturating_sub(1);
+            true
+        }
+        KeyCode::Char('j') if !app.help_searching && app.help_query.is_empty() => {
+            app.help_scroll = app.help_scroll.saturating_add(1);
+            true
+        }
+        KeyCode::Char('q') if !app.help_searching && app.help_query.is_empty() => {
+            // Grok Esc · Whycode `q` — close even when key_context is stale.
+            app.mode = AppMode::Normal;
+            app.key_context = KeymapContext::Normal;
+            true
+        }
+        KeyCode::Char('/') if !app.help_searching => {
+            app.help_searching = true;
+            app.help_scroll = 0;
+            true
+        }
+        KeyCode::Char(c) if app.help_searching || !app.help_query.is_empty() => {
+            if !c.is_control() {
+                app.help_searching = true;
+                app.help_query.push(c);
+                app.help_scroll = 0;
+            }
+            true
+        }
+        KeyCode::Backspace if app.help_searching || !app.help_query.is_empty() => {
+            if app.help_query.pop().is_none() {
+                app.help_searching = false;
+            }
+            app.help_scroll = 0;
+            true
+        }
+        KeyCode::Esc if app.help_searching || !app.help_query.is_empty() => {
+            app.help_query.clear();
+            app.help_searching = false;
+            app.help_scroll = 0;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Pop the active dialog and leave dialog mode when the stack is empty.
@@ -1370,8 +1461,22 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
         }
     };
 
+    if matches!(active, DialogKind::Help) && handle_help_type(app, key) {
+        app.mark_dirty();
+        return true;
+    }
+
     match action {
         Some(Action::DialogCancel) => {
+            if matches!(active, DialogKind::Help)
+                && (app.help_searching || !app.help_query.is_empty())
+            {
+                app.help_query.clear();
+                app.help_searching = false;
+                app.help_scroll = 0;
+                app.mark_dirty();
+                return true;
+            }
             dismiss_dialog(app);
         }
         Some(Action::DialogConfirm) => {
@@ -1461,6 +1566,10 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                 };
                 field_val.push(c);
             }
+            if matches!(active, DialogKind::Help) && handle_help_type(app, key) {
+                app.mark_dirty();
+                return true;
+            }
         }
     }
 
@@ -1549,8 +1658,7 @@ fn execute_command(app: &mut TuiApp, cmd: &str) {
             app.running = false;
         }
         Some(":h") | Some(":help") => {
-            app.mode = AppMode::Help;
-            app.key_context = KeymapContext::Help;
+            open_help(app);
         }
         Some(":provider") | Some(":prov") => {
             open_provider_dialog(app);
@@ -1791,6 +1899,10 @@ mod event_tests {
         assert!(handle_event(&mut a, Event::Key(rel)));
         assert!(a.input_buffer.is_empty());
         assert!(handle_event(&mut a, Event::Resize(120, 40)));
+        assert!(
+            a.needs_redraw,
+            "resize (OSK / rotate) must dirty so the next paint uses the new size"
+        );
         assert!(handle_event(&mut a, Event::FocusGained));
     }
 
@@ -2283,6 +2395,25 @@ mod event_tests {
             mouse(MouseEventKind::Down(MouseButton::Left), 49, 5),
         );
         assert!(!a.dialogs.is_open());
+    }
+
+    #[test]
+    fn help_overlay_search_then_esc_clears_then_closes() {
+        let mut a = app();
+        a.mode = AppMode::Help;
+        a.key_context = KeymapContext::Help;
+        handle_event(&mut a, key(KeyCode::Char('/')));
+        assert!(a.help_searching);
+        handle_event(&mut a, key(KeyCode::Char('t')));
+        handle_event(&mut a, key(KeyCode::Char('a')));
+        handle_event(&mut a, key(KeyCode::Char('b')));
+        assert_eq!(a.help_query, "tab");
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert!(a.help_query.is_empty());
+        assert!(!a.help_searching);
+        assert_eq!(a.mode, AppMode::Help);
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert_eq!(a.mode, AppMode::Normal);
     }
 
     #[test]

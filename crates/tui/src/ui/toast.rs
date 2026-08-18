@@ -32,12 +32,12 @@ fn color(kind: ToastKind, palette: &ThemePalette) -> ratatui::style::Color {
 
 /// Render `toasts` stacked downward from the top-right of `area`.
 pub fn render(frame: &mut Frame, area: Rect, toasts: &[Toast], palette: &ThemePalette) {
-    if toasts.is_empty() || area.width < 16 || area.height < 3 {
+    if toasts.is_empty() || area.width < 8 || area.height < 3 {
         return;
     }
 
     let max_w = area.width.saturating_sub(MARGIN * 2).max(1);
-    let width = MAX_WIDTH.min(max_w).max(16).min(area.width);
+    let width = MAX_WIDTH.min(max_w).max(8.min(area.width)).min(area.width);
     // Inner text width: borders (2) + left pad " " + glyph + " " ≈ 5 cells.
     let inner = width.saturating_sub(5) as usize;
     let mut top = area.y + MARGIN.min(area.height.saturating_sub(1));
