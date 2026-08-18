@@ -1,5 +1,5 @@
 // ── which_key.rs: Keyboard shortcut popup ──────────────────────────────
-// Activated by pressing '?' or Ctrl+H. Shows context-appropriate shortcuts.
+// Activated by `/help`. Shows context-appropriate shortcuts.
 // When the binding list overflows, a solid scrollbar is painted on the right.
 
 use ratatui::{
@@ -106,7 +106,7 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
     // Footer
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "  up/down scroll  |  Esc / ? / Ctrl+H to close  ",
+        "  up/down scroll  |  Esc / q to close  ",
         Style::default().fg(Color::DarkGray),
     )));
 

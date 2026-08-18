@@ -116,17 +116,6 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             }
             true
         }
-        Some(Action::ToggleHelp) => {
-            if app.mode == AppMode::Help {
-                app.mode = AppMode::Normal;
-                app.key_context = KeymapContext::Normal;
-            } else {
-                app.mode = AppMode::Help;
-                app.key_context = KeymapContext::Help;
-                app.help_scroll = 0;
-            }
-            true
-        }
         Some(Action::EnterCommand) => {
             if app.mode == AppMode::Normal {
                 app.mode = AppMode::Command;
@@ -1873,10 +1862,18 @@ mod event_tests {
         assert!(handle_event(&mut a, key(KeyCode::Esc)));
         assert_eq!(a.mode, AppMode::Normal);
 
+        a.mode = AppMode::Help;
+        a.key_context = KeymapContext::Help;
         assert!(handle_event(&mut a, key(KeyCode::Char('?'))));
         assert_eq!(a.mode, AppMode::Help);
+        assert!(handle_event(&mut a, key(KeyCode::Char('q'))));
+        assert_eq!(a.mode, AppMode::Normal);
+
+        a.input_buffer.clear();
+        a.input_cursor = 0;
         assert!(handle_event(&mut a, key(KeyCode::Char('?'))));
         assert_eq!(a.mode, AppMode::Normal);
+        assert_eq!(a.input_buffer, "?");
 
         assert!(handle_event(&mut a, key(KeyCode::Char(':'))));
         assert_eq!(a.mode, AppMode::Command);

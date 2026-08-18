@@ -19,7 +19,6 @@ pub enum KeymapContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Quit,
-    ToggleHelp,
     EnterCommand,
     EscapeMode,
     SubmitInput,
@@ -155,7 +154,6 @@ impl Keymap {
                 match (ctrl, key.code) {
                     (true, KeyCode::Char('c')) => return Some(Action::Quit),
                     (true, KeyCode::Char('q')) => return Some(Action::Quit),
-                    (false, KeyCode::Char('?')) => return Some(Action::ToggleHelp),
                     (false, KeyCode::Char(':')) if focus == FocusPane::Prompt => {
                         return Some(Action::EnterCommand);
                     }
@@ -275,7 +273,6 @@ impl Keymap {
             KeymapContext::Help => match key.code {
                 KeyCode::Esc => Some(Action::EscapeMode),
                 KeyCode::Char('q') => Some(Action::EscapeMode),
-                KeyCode::Char('?') => Some(Action::ToggleHelp),
                 _ => None,
             },
         }
@@ -285,7 +282,7 @@ impl Keymap {
 // ── Binding lists for help display ─────────────────────────────────────
 fn normal_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("?", "Toggle help", KeymapContext::Normal),
+        KeyBinding::new("/help", "Open help", KeymapContext::Normal),
         KeyBinding::new("Tab", "Focus prompt ↔ scrollback", KeymapContext::Normal),
         KeyBinding::new("Ctrl+T", "Cycle primary agent", KeymapContext::Normal),
         KeyBinding::new(":", "Enter command mode (prompt)", KeymapContext::Normal),
@@ -347,7 +344,7 @@ fn command_bindings() -> Vec<KeyBinding> {
 
 fn help_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("Esc/?/q", "Close help", KeymapContext::Help),
+        KeyBinding::new("Esc/q", "Close help", KeymapContext::Help),
         KeyBinding::new("Up/Down", "Scroll help", KeymapContext::Help),
     ]
 }
@@ -370,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn quit_and_help_work_from_both_focuses() {
+    fn quit_works_from_both_focuses_and_question_mark_is_not_help() {
         let k = Keymap::new();
         for focus in [FocusPane::Prompt, FocusPane::Scrollback] {
             assert_eq!(
@@ -383,7 +380,7 @@ mod tests {
             );
             assert_eq!(
                 k.resolve(KeymapContext::Normal, focus, &key(KeyCode::Char('?'))),
-                Some(Action::ToggleHelp)
+                None
             );
         }
     }
@@ -850,7 +847,7 @@ mod tests {
                 FocusPane::Prompt,
                 &key(KeyCode::Char('?'))
             ),
-            Some(Action::ToggleHelp)
+            None
         );
     }
 
