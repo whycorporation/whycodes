@@ -41,13 +41,18 @@ pub enum ChangeKind {
     Remove,
 }
 
+#[cfg(test)]
+pub(crate) fn log_watcher_unavailable(e: &dyn std::fmt::Display) {
+    tracing::warn!(error = %e, "file watcher unavailable; index will not self-refresh");
+}
+
 /// Spawn one recursive watcher covering all roots. Events are mapped to
 /// root-relative [`Change`]s and forwarded on `tx`.
 ///
 /// Returns `None` when no watcher could be installed.
 pub fn spawn(roots: &[PathBuf], tx: Sender<Command>) -> Option<RecommendedWatcher> {
     let watched: Vec<PathBuf> = roots.to_vec();
-    let mut watcher = match RecommendedWatcher::new(
+    let watcher = RecommendedWatcher::new(
         move |res: Result<Event, notify::Error>| {
             let Ok(event) = res else { return };
             let changes = map_event(&watched, &event);
@@ -56,13 +61,8 @@ pub fn spawn(roots: &[PathBuf], tx: Sender<Command>) -> Option<RecommendedWatche
             }
         },
         notify::Config::default(),
-    ) {
-        Ok(w) => w,
-        Err(e) => {
-            tracing::warn!(error = %e, "file watcher unavailable; index will not self-refresh");
-            return None;
-        }
-    };
+    );
+    let mut watcher = watcher.ok()?;
 
     let mut any = false;
     for root in roots {
@@ -77,7 +77,7 @@ pub fn spawn(roots: &[PathBuf], tx: Sender<Command>) -> Option<RecommendedWatche
 }
 
 /// Translate one notify event into policy-filtered changes.
-fn map_event(roots: &[PathBuf], event: &Event) -> Vec<Change> {
+pub(crate) fn map_event(roots: &[PathBuf], event: &Event) -> Vec<Change> {
     use notify::event::{CreateKind, RemoveKind};
     let mut out = Vec::new();
     match event.kind {
@@ -134,39 +134,5 @@ fn push_change(roots: &[PathBuf], path: &Path, kind: ChangeKind, out: &mut Vec<C
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn change_mapping_filters_policy() {
-        let roots = vec![PathBuf::from("/proj")];
-        let mut out = Vec::new();
-        push_change(
-            &roots,
-            Path::new("/proj/src/main.rs"),
-            ChangeKind::Upsert,
-            &mut out,
-        );
-        push_change(
-            &roots,
-            Path::new("/proj/target/x.o"),
-            ChangeKind::Upsert,
-            &mut out,
-        );
-        push_change(
-            &roots,
-            Path::new("/proj/.env"),
-            ChangeKind::Upsert,
-            &mut out,
-        );
-        push_change(
-            &roots,
-            Path::new("/other/f.rs"),
-            ChangeKind::Upsert,
-            &mut out,
-        );
-        assert_eq!(out.len(), 1);
-        assert_eq!(out[0].rel, "src/main.rs");
-        assert_eq!(out[0].root, 0);
-    }
-}
+#[path = "watch_tests.rs"]
+mod tests;

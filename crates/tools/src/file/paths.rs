@@ -81,7 +81,7 @@ pub fn index_entries(
     let prefix = rel_root.to_string_lossy().replace('\\', "/");
     let prefix = prefix.trim_matches('/').to_string();
     let mut out = Vec::new();
-    index.visit(|e| {
+    index.visit(&mut |e| {
         let in_scope = if prefix.is_empty() {
             true
         } else {

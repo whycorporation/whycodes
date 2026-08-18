@@ -17,10 +17,15 @@ use nucleo::{Config, Injector, Matcher, Nucleo};
 /// and a TUI frame budget is 16 ms. Two threads starve at 35k+ items; four
 /// keeps full rematches in the low single-digit ms there.
 fn matcher_threads() -> usize {
-    match std::thread::available_parallelism()
-        .map(|n| n.get())
-        .unwrap_or(2)
-    {
+    matcher_thread_count(
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2),
+    )
+}
+
+pub(crate) fn matcher_thread_count(n: usize) -> usize {
+    match n {
         0..=4 => 2,
         5..=8 => 3,
         _ => 4,
@@ -51,6 +56,10 @@ pub struct FileMatch {
 /// (helix completion uses `7 * len + 14`; Grok Build uses `7 + len * 14`).
 fn min_score(query: &str) -> u32 {
     7 + query.chars().count() as u32 * 14
+}
+
+pub(crate) fn below_floor(score: u32, floor: u32) -> bool {
+    score < floor
 }
 
 /// Streaming fuzzy engine over path strings.
@@ -172,10 +181,10 @@ impl FuzzyEngine {
         for item in snapshot.matched_items(0..total.min(limit as u32)) {
             let text = &item.matcher_columns[0];
             let mut indices = Vec::new();
-            let Some(score) = col_pattern.indices(text.slice(..), matcher, &mut indices) else {
-                continue;
-            };
-            if score < floor {
+            let score = col_pattern
+                .indices(text.slice(..), matcher, &mut indices)
+                .unwrap_or(0);
+            if below_floor(score, floor) {
                 continue;
             }
             let mut rel = text.to_string();
@@ -210,67 +219,5 @@ impl Default for FuzzyEngine {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn engine() -> FuzzyEngine {
-        let e = FuzzyEngine::default();
-        let inj = e.injector();
-        FuzzyEngine::push(&inj, "src/main.rs", false);
-        FuzzyEngine::push(&inj, "src/lib.rs", false);
-        FuzzyEngine::push(&inj, "crates/tui/src/app.rs", false);
-        FuzzyEngine::push(&inj, "docs", true);
-        FuzzyEngine::push(&inj, "README.md", false);
-        drop(inj);
-        e
-    }
-
-    #[test]
-    fn query_finds_paths_with_indices() {
-        let mut e = engine();
-        let hits = e.query_blocking("main.rs", 10);
-        assert!(!hits.is_empty());
-        assert_eq!(hits[0].rel, "src/main.rs");
-        assert!(!hits[0].is_dir);
-        assert!(!hits[0].indices.is_empty());
-        assert!(hits[0].score >= min_score("main.rs"));
-    }
-
-    #[test]
-    fn query_matches_subsequence_across_dirs() {
-        let mut e = engine();
-        let hits = e.query_blocking("tuiapp", 10);
-        assert!(
-            hits.iter().any(|h| h.rel == "crates/tui/src/app.rs"),
-            "{hits:?}"
-        );
-    }
-
-    #[test]
-    fn short_query_drops_weak_tail() {
-        let mut e = engine();
-        let hits = e.query_blocking("zzzzz", 10);
-        assert!(hits.is_empty(), "{hits:?}");
-    }
-
-    #[test]
-    fn dirs_strip_trailing_slash() {
-        let mut e = engine();
-        let hits = e.query_blocking("docs", 10);
-        assert!(hits.iter().any(|h| h.rel == "docs" && h.is_dir));
-    }
-
-    #[test]
-    fn restart_clears_items() {
-        let mut e = engine();
-        assert!(!e.query_blocking("main", 10).is_empty());
-        e.restart();
-        assert!(e.query_blocking("main", 10).is_empty());
-    }
-
-    #[test]
-    fn empty_query_is_browse_not_fuzzy() {
-        let mut e = engine();
-        assert!(e.query_blocking("", 10).is_empty());
-    }
-}
+#[path = "fuzzy_tests.rs"]
+mod tests;
