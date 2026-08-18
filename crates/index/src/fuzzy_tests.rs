@@ -90,8 +90,22 @@ fn set_query_incremental_and_nudge() {
     e.set_query("ma");
     e.set_query("main");
     let _ = e.nudge();
+    e.rearm();
     let (hits, _) = e.read(10);
     assert!(hits.iter().any(|h| h.rel.ends_with("main.rs")), "{hits:?}");
     e.set_query("main ");
     let _ = e.read(5);
+}
+
+#[test]
+fn rearm_republishes_the_same_query() {
+    let mut e = engine();
+    e.set_query("main");
+    e.rearm();
+    e.rearm(); // empty-query no-op path is covered after restart
+    let (hits, _) = e.read(10);
+    assert!(hits.iter().any(|h| h.rel.ends_with("main.rs")), "{hits:?}");
+    e.restart();
+    e.rearm();
+    assert!(e.query_blocking("", 4).is_empty());
 }

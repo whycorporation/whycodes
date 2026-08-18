@@ -263,6 +263,7 @@ fn query_now_sorts_multiple_hits() {
     );
     assert!(idx.wait_ready(Duration::from_secs(10)));
     let _ = idx.query_now("rs", 20);
+    idx.rearm_fuzzy();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut hits = Vec::new();
     while Instant::now() < deadline {

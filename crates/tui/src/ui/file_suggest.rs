@@ -210,8 +210,16 @@ impl FileSuggestState {
         if !dirty && !self.results_pending {
             return false;
         }
-        if !dirty && running {
-            return false; // rematch in flight; keep the last non-empty list
+        // Rematch in flight: keep a non-empty list. An *empty* list must
+        // still be re-read — a missed notify leaves `running` true and
+        // `dirty` false, and skipping the read parks the picker on [].
+        if !dirty && running && !self.matches.is_empty() {
+            return false;
+        }
+        // Engine idle, still pending, list empty: `set_query` is a no-op
+        // on the same pattern, so reparse + tick(5) to force a snapshot.
+        if !dirty && self.results_pending && self.matches.is_empty() {
+            index.rearm_fuzzy();
         }
 
         let before = self.matches.clone();
@@ -589,6 +597,14 @@ mod tests {
                 .iter()
                 .map(|e| e.rel.as_ref())
                 .collect::<Vec<_>>(),
+        );
+
+        // Blocking rematch ticks nucleo until injectors land. Do this
+        // before the picker so `query_now` + poll is not racing ingest.
+        assert!(
+            idx.query("mai", 10).iter().any(|m| m.rel == "src/main.rs"),
+            "blocking fuzzy missed src/main.rs; status={:?}",
+            idx.status(),
         );
 
         let mut st = FileSuggestState::default();
