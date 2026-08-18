@@ -131,6 +131,28 @@ impl FuzzyEngine {
     /// This is the UI path — a keystroke must never wait on a full rematch
     /// (measured 3–16 ms at 35k items, worse beyond; that used to block the
     /// frame and flash stale/empty rows on `tick` timeout).
+    /// Re-parse the current query and wait briefly for a snapshot.
+    ///
+    /// `set_query` is a no-op when the pattern is unchanged. Under load a
+    /// `tick(0)` can miss nucleo's notify (workers finish with
+    /// `should_notify == false`), so the picker sits on an empty snapshot
+    /// until the next keystroke. The idle-empty poll path calls this.
+    pub fn rearm(&mut self) {
+        if self.query.is_empty() {
+            return;
+        }
+        let pattern = self.query.clone();
+        self.nucleo.pattern.reparse(
+            0,
+            &pattern,
+            CaseMatching::Smart,
+            Normalization::Smart,
+            false,
+        );
+        let status = self.nucleo.tick(5);
+        self.running = status.running || self.nucleo.active_injectors() > 0;
+    }
+
     pub fn set_query(&mut self, pattern: &str) {
         if pattern == self.query {
             return;

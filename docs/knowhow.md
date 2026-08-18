@@ -886,6 +886,17 @@ or the list is non-empty.
 If it fails, print `matches` + `scan_status` and check whether the
 store has the file (walk) vs the fuzzy snapshot never published (tick).
 
+`set_query` is a no-op on the same pattern, so a missed notify used to
+leave the picker empty forever. Two follow-ups:
+
+1. Do not skip `read_matches` while `running && matches.is_empty()` —
+   that is the CI failure shape (`Ready { total: 4 }` + `matches=[]`).
+2. `poll_matches` calls `WorkspaceIndex::rearm_fuzzy` (reparse +
+   `tick(5)`) when the list is still empty.
+
+The coverage job also `--skip`s `picker_flow_over_real_index` the same
+way it skips the notify watcher flake; the normal Test job still runs it.
+
 ---
 
 ### 2026-08-17 — `format::highlight` stream-vs-batch tests flake under parallel load

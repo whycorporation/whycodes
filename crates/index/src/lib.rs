@@ -277,6 +277,16 @@ impl WorkspaceIndex {
         self.shared.results_dirty.swap(false, Ordering::Acquire)
     }
 
+    /// Re-issue the last fuzzy query so workers publish a snapshot.
+    ///
+    /// Needed when a `tick(0)` missed notify and the picker is idle on an
+    /// empty list. See `FuzzyEngine::rearm`.
+    pub fn rearm_fuzzy(&self) {
+        for state in &self.shared.states {
+            lock(&state.fuzzy).rearm();
+        }
+    }
+
     /// True while any engine is still matching or ingesting (walk running).
     /// UIs should keep polling on a short cadence while this holds.
     pub fn matching(&self) -> bool {
