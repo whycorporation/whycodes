@@ -5,7 +5,7 @@
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::theme::ThemePalette;
 use crate::tokens::{HOME_LOGO_CODE, HOME_LOGO_WHY, layout};
-use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
+use crate::ui::scrollbar::{SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
 #[cfg(test)]
 use ratatui::widgets::Widget;
@@ -269,18 +269,32 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
 
 fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     // Shell already applies SIDE_PAD — don't pad again (extra spaces end up in mouse selection).
-    // Keep wrap width == area.width so it matches `app.chat_content_width`
-    // (scroll math / ensure_selected_visible). Scrollbar is painted over the
-    // rightmost column when content overflows.
+    // When the transcript overflows, reserve a dedicated right-hand gutter so
+    // the solid scrollbar never paints over wrapped text.
     let height = area.height as usize;
-    let content_width = area.width;
-
-    // Virtualize paint: height-cache all messages, but only `render_message`
-    // those that intersect the viewport. Long transcripts no longer re-parse
-    // every finished bubble on every spinner frame.
-    let (starts, total) = message_row_layout_mut(app, content_width);
+    let full_width = area.width;
+    let (starts_full, total_full) = message_row_layout_mut(app, full_width);
+    let mut needs_bar = total_full > height && area.width > SCROLLBAR_GUTTER;
+    let mut content_width = if needs_bar {
+        full_width.saturating_sub(SCROLLBAR_GUTTER)
+    } else {
+        full_width
+    };
+    let (starts, total) = if needs_bar && content_width != full_width {
+        let relayout = message_row_layout_mut(app, content_width);
+        // Narrower wrap can grow height. If it still overflows, keep the
+        // gutter; if it now fits, give the column back to the transcript.
+        if relayout.1 > height {
+            relayout
+        } else {
+            needs_bar = false;
+            content_width = full_width;
+            (starts_full, total_full)
+        }
+    } else {
+        (starts_full, total_full)
+    };
     let (view_start, view_end) = visible_range(total, height, app.scroll_offset);
-    let needs_bar = total > height && area.width > 1;
 
     // Pin messages to the bottom: empty rows sit above the transcript.
     let visible = view_end.saturating_sub(view_start).min(height);
@@ -288,7 +302,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     let buf = frame.buffer_mut();
     let row = ChatRowPaint {
         x: area.x,
-        width: area.width,
+        width: content_width,
         bg: palette.bg,
         caret_style: Style::default()
             .fg(palette.accent)
@@ -389,9 +403,9 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         // top-origin `view_start` with `thumb_pos = view_start * travel / max_off`,
         // matching drag math in `ui/scrollbar` (0 → top, max_off → flush bottom).
         let sb = Rect {
-            x: area.x + area.width.saturating_sub(1),
+            x: area.x + area.width.saturating_sub(SCROLLBAR_GUTTER),
             y: area.y,
-            width: 1,
+            width: SCROLLBAR_GUTTER,
             height: area.height,
         };
         let colors = ScrollbarColors::from_palette(palette);
@@ -404,19 +418,17 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             colors.track,
             colors.thumb,
         );
-        // Widen the hit column slightly so the 1-cell track is easier to grab.
-        let hit_w = 2u16.min(area.width);
-        Some(Rect {
-            x: area.x + area.width.saturating_sub(hit_w),
-            y: area.y,
-            width: hit_w,
-            height: area.height,
-        })
+        Some(sb)
     } else {
         None
     };
 
     app.apply_chat_paint(area, scrollbar_hit, total);
+    // Scroll math / ensure_selected_visible wrap at the text column, not the
+    // overlayed bar. Keep the published width in sync with `content_width`.
+    if needs_bar {
+        app.chat_content_width = content_width;
+    }
 }
 
 /// Paint chat lines, filling every row so previous-frame glyphs cannot linger.

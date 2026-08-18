@@ -207,7 +207,7 @@ fn session_list_detail(s: &crate::app::SessionEntry) -> String {
     }
 }
 
-/// Standalone help overlay (not stack-based, triggered by `?` key).
+/// Standalone help overlay (not stack-based, triggered by `/help`).
 ///
 /// Clears and repaints modal hits so selection/copy match other popups.
 pub fn render_help(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
