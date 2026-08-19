@@ -203,7 +203,16 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Arc<Vec<Vec<C
     // fence pays O(new lines) instead of re-tokenising the whole body.
     if find_syntax_for(syntax_set(), language, code).is_some() {
         let mut stream = recover_lock(open_stream().lock());
-        let lines = stream.highlight(code, language).unwrap_or_default();
+        let Some(()) = stream.highlight_in_place(code, language) else {
+            drop(stream);
+            let computed = Arc::new(highlight_uncached(code, language));
+            insert_closed(key, Arc::clone(&computed));
+            return computed;
+        };
+        let mut lines = stream.committed_lines.clone();
+        if let Some(p) = &stream.partial {
+            lines.push(p.clone());
+        }
         let committed = stream.is_fully_committed(code);
         drop(stream);
         let arc = Arc::new(lines);
@@ -389,6 +398,22 @@ fn open_stream() -> &'static Mutex<OpenStreamHighlighter> {
     STREAM.get_or_init(|| Mutex::new(OpenStreamHighlighter::new()))
 }
 
+/// Visit highlighted lines of a growing fence without cloning the committed
+/// prefix. The TUI open-fence painter uses this so a 500-line stream is
+/// O(new lines) per frame rather than O(N) span clones.
+///
+/// `f` receives (committed newline-terminated lines, optional partial tail).
+pub fn with_open_code_spans<R>(
+    code: &str,
+    language: Option<&str>,
+    f: impl FnOnce(&[Vec<CodeSpan>], Option<&[CodeSpan]>) -> R,
+) -> Option<R> {
+    find_syntax_for(syntax_set(), language, code)?;
+    let mut stream = recover_lock(open_stream().lock());
+    stream.highlight_in_place(code, language)?;
+    Some(f(&stream.committed_lines, stream.partial.as_deref()))
+}
+
 /// Resumable syntect state for the hot (usually trailing, still-open) fence.
 struct OpenStreamHighlighter {
     /// Language token this state was built for (`None` = plain / unset).
@@ -397,6 +422,8 @@ struct OpenStreamHighlighter {
     committed_source: String,
     /// Highlighted lines corresponding to `committed_source`.
     committed_lines: Vec<Vec<CodeSpan>>,
+    /// Trailing partial line (no newline yet). Not committed.
+    partial: Option<Vec<CodeSpan>>,
     parse_state: ParseState,
     highlight_state: HighlightState,
 }
@@ -409,6 +436,7 @@ impl OpenStreamHighlighter {
             language: None,
             committed_source: String::new(),
             committed_lines: Vec::new(),
+            partial: None,
             parse_state: ParseState::new(ps.find_syntax_plain_text()),
             highlight_state: HighlightState::new(&highlighter, ScopeStack::new()),
         }
@@ -416,19 +444,32 @@ impl OpenStreamHighlighter {
 
     /// Whether every byte of `code` is in the committed prefix (no partial tail).
     fn is_fully_committed(&self, code: &str) -> bool {
-        self.committed_source == code
+        self.committed_source == code && self.partial.is_none()
     }
 
     fn invalidate_parse(&mut self) {
         self.language = None;
         self.committed_source.clear();
         self.committed_lines.clear();
+        self.partial = None;
     }
 
     /// Highlight `code` for `language`, reusing state when the body grew by
     /// append only. Returns `None` only if the language has no syntax (caller
     /// should fall back to plain text).
+    #[cfg(test)]
     fn highlight(&mut self, code: &str, language: Option<&str>) -> Option<Vec<Vec<CodeSpan>>> {
+        self.highlight_in_place(code, language)?;
+        let mut out = self.committed_lines.clone();
+        if let Some(last) = &self.partial {
+            out.push(last.clone());
+        }
+        Some(out)
+    }
+
+    /// Advance parse state in place. Committed lines stay put so a TUI
+    /// visitor can read them without an O(N) clone of every span.
+    fn highlight_in_place(&mut self, code: &str, language: Option<&str>) -> Option<()> {
         let ps = syntax_set();
         let syntax = find_syntax_for(ps, language, code)?;
 
@@ -440,17 +481,19 @@ impl OpenStreamHighlighter {
             self.language = lang_key;
             self.committed_source.clear();
             self.committed_lines.clear();
+            self.partial = None;
             self.parse_state = ParseState::new(syntax);
             self.highlight_state = HighlightState::new(&highlighter, ScopeStack::new());
         }
 
+        self.partial = None;
+
         // Nothing new past the last committed newline.
         if self.committed_source.len() == code.len() {
-            return Some(self.committed_lines.clone());
+            return Some(());
         }
 
         let highlighter = Highlighter::new(theme());
-        let mut tentative: Option<Vec<CodeSpan>> = None;
 
         for line in LinesWithEndings::from(&code[self.committed_source.len()..]) {
             if line.ends_with('\n') {
@@ -486,15 +529,11 @@ impl OpenStreamHighlighter {
                         })
                         .filter(|(_, t)| !t.is_empty())
                         .collect();
-                tentative = Some(spans_or_blank(spans));
+                self.partial = Some(spans_or_blank(spans));
             }
         }
 
-        let mut out = self.committed_lines.clone();
-        if let Some(last) = tentative {
-            out.push(last);
-        }
-        Some(out)
+        Some(())
     }
 
     /// Test helper: how many complete lines are committed.

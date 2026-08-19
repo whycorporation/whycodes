@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — Streaming code fence was O(N) Line clones per frame
+
+**Symptom:** A long streamed ` ```rust ` dump made the TUI hitch. Idle startup/scroll were already cheap; the live bubble felt slow.
+
+**JSONL / crash:** none.
+
+**Root cause:** `last_checkpoint` cannot freeze inside an open fence. Every 40 ms frame re-parsed the whole tail, `highlight_code_spans` cloned every committed span, `render_code` rebuilt every ratatui `Line`, and `IncrementalMarkdown::render` cloned the frozen prefix into a new `Vec`. Layout then painted the live bubble again (2×).
+
+**Fix:** Keep committed fence rows in `IncrementalMarkdown.buf`. Highlight via `with_open_code_spans` (no prefix clone). Paint live markdown by reference (`prefix` + `stream_md.lines()`).
+
+**Prevention:** Never re-wrap a growing fence from scratch. Do not `clone()` frozen `Line`s on the stream frame. Do not concatenate the live answer into a throwaway `Vec` just to measure height.
+
 ### 2026-08-19 — `/compact` is Grok full-replace, not a 150k no-op
 
 **Symptom:** `/compact` printed `Compacted N → N` and left the chat unchanged unless the session was already over ~112k tokens.
