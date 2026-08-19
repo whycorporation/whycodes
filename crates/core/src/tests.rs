@@ -538,6 +538,30 @@ mod logging_tests {
     }
 
     #[test]
+    fn panic_hook_runs_registered_cleanup() {
+        let _g = TEST_LOCK.lock().unwrap();
+        let tmp = temp_data_dir();
+        let dirs = LogDirs::from_data_dir(tmp.path());
+        dirs.ensure().unwrap();
+        crate::logging::install_panic_hook_for_test(dirs);
+
+        let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = std::sync::Arc::clone(&ran);
+        set_panic_cleanup(move || {
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        assert!(
+            std::panic::catch_unwind(|| panic!("hook-cleanup")).is_err(),
+            "panic must unwind"
+        );
+        clear_panic_cleanup();
+        assert!(
+            ran.load(std::sync::atomic::Ordering::SeqCst),
+            "panic hook must invoke the registered terminal cleanup"
+        );
+    }
+
+    #[test]
     fn dirs_is_none_before_init() {
         // Not holding the lock here: dirs() only reads STATE which is a
         // OnceLock — safe to call concurrently, and init tests use the lock.
