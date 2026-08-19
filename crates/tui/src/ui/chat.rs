@@ -869,7 +869,7 @@ const ACCENT_RAIL: &str = "┃";
 /// - Left `┃` accent column on **every** row while the body is open (Grok paints
 ///   a full-height accent column beside header + body; none when collapsed)
 /// - Running + collapsed → header + live tail (last N lines)
-/// - Finished + collapsed → single header line (+ expand hint)
+/// - Finished + collapsed → single header line
 /// - Expanded → header + full body
 fn thinking_lines(
     t: &crate::app::ThinkingBlock,
@@ -905,7 +905,7 @@ fn thinking_lines(
     let content_w = width.saturating_sub(2);
 
     // Grok: live is `Thinking...` with the timer on the right (`1.4s`).
-    // Finished is `Thought for 1.4s`; folded rows get `›` on the right.
+    // Finished is `Thought for 1.4s` with no chevron on the right.
     let elapsed = t.format_elapsed();
     let header_spans: Vec<Span<'static>> = if t.is_running() {
         vec![Span::styled("Thinking...".to_string(), label_style)]
@@ -921,8 +921,6 @@ fn thinking_lines(
         } else {
             Some(elapsed)
         }
-    } else if t.collapsed {
-        Some(EXPAND_INDICATOR.to_string())
     } else {
         None
     };
@@ -1037,9 +1035,6 @@ fn accent_line(content: Vec<Span<'static>>, show_rail: bool, rail_style: Style) 
 fn meta_gutter() -> Span<'static> {
     Span::raw(" ".repeat(layout::ASSISTANT_PAD as usize))
 }
-
-/// Grok `scrollback.display.expandable_indicator_char` (folded thinking / tools).
-const EXPAND_INDICATOR: &str = "›";
 
 /// Grok `scrollback.blocks.tool.bullet = "diamond"`.
 const TOOL_BULLET: &str = "• ";
@@ -1786,10 +1781,10 @@ fn verb_group_line(run: &[ToolRef<'_>], paint: ToolPaint<'_>) -> Line<'static> {
 /// ```text
 /// ┃ Thinking...                                          1.4s
 /// ┃ …
-///   ◆ Read  path/to/file.rs
-/// ┃ ◆ Run  cargo test
+///   • Read  path/to/file.rs
+/// ┃ • Run  cargo test
 /// ┃ ok
-/// ┃ Thought for 2.1s                                      ›
+/// ┃ Thought for 2.1s
 /// ```
 fn tool_block(
     name: &str,
@@ -3307,6 +3302,10 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             !header.contains("line 5"),
             "body must not leak into the header: {header}"
         );
+        assert!(
+            !header.contains('›') && !header.contains('>'),
+            "collapsed tool must not trail a chevron: {header}"
+        );
     }
 
     #[test]
@@ -3706,7 +3705,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
     }
 
     #[test]
-    fn collapsed_thinking_uses_grok_expand_indicator() {
+    fn collapsed_thinking_has_no_trailing_chevron() {
         use crate::app::ThinkingBlock;
         use crate::theme::ThemeName;
         let palette = ThemeName::DefaultDark.palette();
@@ -3721,8 +3720,8 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
             "thinking keeps a left accent, got {header:?}"
         );
         assert!(
-            header.contains('›'),
-            "folded thinking must show Grok ›, got {header:?}"
+            !header.contains('›') && !header.contains('>'),
+            "folded rows must not trail a chevron, got {header:?}"
         );
         assert!(
             !header.contains("(e expand)"),
