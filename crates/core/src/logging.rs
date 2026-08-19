@@ -526,6 +526,13 @@ pub(crate) fn poison_panic_cleanup() {
     }));
 }
 
+/// Re-install the production panic hook so tests can cover the cleanup
+/// branch without depending on which test called [`init`] first.
+#[cfg(test)]
+pub(crate) fn install_panic_hook_for_test(dirs: LogDirs) {
+    install_panic_hook_inner(dirs);
+}
+
 fn install_panic_hook_inner(dirs: LogDirs) {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
