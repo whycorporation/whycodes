@@ -271,6 +271,18 @@ pub struct ThemePalette {
     pub diff_hunk: Color,
 }
 
+/// Optional prompt-chrome overrides from a theme file (`agentBuild`, `model`, …).
+///
+/// Built-in palettes leave this empty and fall back to semantic roles
+/// (`success` / `accent` / `info`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExtraColors {
+    pub agent_build: Option<Color>,
+    pub agent_plan: Option<Color>,
+    pub agent_ask: Option<Color>,
+    pub model: Option<Color>,
+}
+
 impl ThemePalette {
     /// Accent dimmed over bg — used for callout backgrounds so the panel reads
     /// as a tinted wash, not a block of solid accent color.
@@ -333,6 +345,76 @@ impl ThemePalette {
             Color::White,   // 6: white
         ];
         AGENT_COLORS[idx % AGENT_COLORS.len()]
+    }
+
+    /// Theme-aware color for a named primary agent.
+    ///
+    /// Built-ins map onto semantic roles so a theme change actually retints
+    /// the prompt footer / header chip. Unknown names keep the cycle index.
+    pub fn color_for_agent_name(&self, name: &str, idx: usize) -> Color {
+        match name {
+            "build" => self.success,
+            "plan" => self.accent,
+            "ask" => self.info,
+            _ => self.agent_color_by_index(idx),
+        }
+    }
+
+    /// Resolve a color spec from config or a theme role name.
+    ///
+    /// Accepts `#rgb` / `#rrggbb`, theme roles (`accent`, `success`, `info`,
+    /// `warning`, `error`, `primary`, `secondary`, `thinking`, `dim`), and
+    /// basic ANSI names (`red`, `green`, …).
+    pub fn parse_spec(&self, spec: &str) -> Option<Color> {
+        let s = spec.trim();
+        if s.is_empty() {
+            return None;
+        }
+        if let Some(c) = parse_hex_color(s) {
+            return Some(c);
+        }
+        match s.to_ascii_lowercase().as_str() {
+            "accent" | "primary" => Some(self.accent),
+            "secondary" => Some(self.user_msg),
+            "success" => Some(self.success),
+            "warning" => Some(self.warning),
+            "error" => Some(self.error),
+            "info" => Some(self.info),
+            "thinking" => Some(self.thinking),
+            "dim" | "muted" | "textmuted" => Some(self.dim),
+            "highlight" => Some(self.highlight),
+            "red" => Some(Color::Red),
+            "green" => Some(Color::Green),
+            "yellow" => Some(Color::Yellow),
+            "blue" => Some(Color::Blue),
+            "magenta" | "purple" => Some(Color::Magenta),
+            "cyan" => Some(Color::Cyan),
+            "white" => Some(Color::White),
+            "black" => Some(Color::Black),
+            _ => None,
+        }
+    }
+}
+
+/// Parse `#rrggbb` or `#rgb`.
+pub(crate) fn parse_hex_color(value: &str) -> Option<Color> {
+    let hex = value.strip_prefix('#')?;
+    let expand = |c: char| -> Option<u8> { u8::from_str_radix(&format!("{c}{c}"), 16).ok() };
+    match hex.len() {
+        3 => {
+            let mut it = hex.chars();
+            Some(Color::Rgb(
+                expand(it.next()?)?,
+                expand(it.next()?)?,
+                expand(it.next()?)?,
+            ))
+        }
+        6 => Some(Color::Rgb(
+            u8::from_str_radix(&hex[0..2], 16).ok()?,
+            u8::from_str_radix(&hex[2..4], 16).ok()?,
+            u8::from_str_radix(&hex[4..6], 16).ok()?,
+        )),
+        _ => None,
     }
 }
 

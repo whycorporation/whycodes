@@ -392,6 +392,24 @@ Each file provides `name` and `name-light`. Only `background`, `text`,
 A file theme wins over a built-in of the same name. A malformed file is
 skipped without taking the TUI down.
 
+The prompt footer (bottom-right of the input box) and the header chip
+color the active agent and the provider/model. Built-ins: `build` uses
+`success`, `plan` uses `accent`, `ask` uses `info`, and the model uses
+`info`. Override per agent (or `model`) in config:
+
+```toml
+[tui.agent_colors]
+build = "#7aa2f7"
+plan = "accent"
+ask = "info"
+model = "secondary"
+```
+
+Values are `#rgb` / `#rrggbb`, a theme role (`accent`, `success`, `info`,
+`warning`, `error`, `primary`, `secondary`, `thinking`, `dim`), or an
+ANSI name (`red`, `green`, …). Theme JSON can set the same slots as
+`agentBuild`, `agentPlan`, `agentAsk`, and `model`.
+
 ### Permissions
 
 ```toml

@@ -22,7 +22,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             .fg(palette.accent)
             .add_modifier(Modifier::BOLD),
     );
-    let agent_color = palette.agent_color_by_index(app.agent_cycle_idx);
+    let agent_color = app
+        .config
+        .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
     let agent = Span::styled(
         format!(" {} ", app.agent_name),
         Style::default()
@@ -59,7 +61,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
                 app.model_name.as_str()
             }
         ),
-        Style::default().fg(palette.dim),
+        Style::default().fg(app.config.model_color(palette)),
     ));
 
     frame.render_widget(

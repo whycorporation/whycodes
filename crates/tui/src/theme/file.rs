@@ -24,7 +24,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::theme::{ThemeName, ThemePalette};
+use crate::theme::{ExtraColors, ThemeName, ThemePalette, parse_hex_color};
 
 /// Suffix appended to the light variant of a loaded file.
 pub const LIGHT_SUFFIX: &str = "-light";
@@ -86,28 +86,6 @@ impl std::fmt::Display for ThemeFileError {
 
 impl std::error::Error for ThemeFileError {}
 
-/// Parse `#rrggbb` or `#rgb`.
-fn parse_hex(value: &str) -> Option<Color> {
-    let hex = value.strip_prefix('#')?;
-    let expand = |c: char| -> Option<u8> { u8::from_str_radix(&format!("{c}{c}"), 16).ok() };
-    match hex.len() {
-        3 => {
-            let mut it = hex.chars();
-            Some(Color::Rgb(
-                expand(it.next()?)?,
-                expand(it.next()?)?,
-                expand(it.next()?)?,
-            ))
-        }
-        6 => Some(Color::Rgb(
-            u8::from_str_radix(&hex[0..2], 16).ok()?,
-            u8::from_str_radix(&hex[2..4], 16).ok()?,
-            u8::from_str_radix(&hex[4..6], 16).ok()?,
-        )),
-        _ => None,
-    }
-}
-
 impl ThemeFile {
     pub fn parse(json: &str) -> Result<Self, ThemeFileError> {
         serde_json::from_str(json).map_err(|e| ThemeFileError::Parse(e.to_string()))
@@ -120,7 +98,7 @@ impl ThemeFile {
         };
         let raw = value.for_variant(light);
 
-        if let Some(color) = parse_hex(raw) {
+        if let Some(color) = parse_hex_color(raw) {
             return Ok(Some(color));
         }
         let Some(def) = self.defs.get(raw) else {
@@ -129,10 +107,24 @@ impl ThemeFile {
                 name: raw.to_string(),
             });
         };
-        parse_hex(def).map(Some).ok_or(ThemeFileError::BadColor {
-            role: role.to_string(),
-            value: def.clone(),
-        })
+        parse_hex_color(def)
+            .map(Some)
+            .ok_or(ThemeFileError::BadColor {
+                role: role.to_string(),
+                value: def.clone(),
+            })
+    }
+
+    /// Optional prompt-chrome roles. Missing keys stay `None`; a bad value
+    /// is ignored so a typo on `agentBuild` does not reject the whole theme.
+    pub fn extra(&self, light: bool) -> ExtraColors {
+        let opt = |role: &str| self.color(role, light).ok().flatten();
+        ExtraColors {
+            agent_build: opt("agentBuild"),
+            agent_plan: opt("agentPlan"),
+            agent_ask: opt("agentAsk"),
+            model: opt("model"),
+        }
     }
 
     /// Build a palette for one variant.
@@ -206,6 +198,7 @@ impl ThemeFile {
 pub struct LoadedTheme {
     pub name: String,
     pub palette: ThemePalette,
+    pub extra: ExtraColors,
 }
 
 /// Read every `*.json` in `dir`, producing a dark and a light theme per file.
@@ -242,6 +235,7 @@ pub fn load_dir(dir: &Path) -> (Vec<LoadedTheme>, Vec<(PathBuf, ThemeFileError)>
                     match file.palette(light) {
                         Ok(palette) => loaded.push(LoadedTheme {
                             name: format!("{stem}{suffix}"),
+                            extra: file.extra(light),
                             palette,
                         }),
                         Err(e) => errors.push((path.clone(), e)),
@@ -312,6 +306,29 @@ mod tests {
     }
 
     #[test]
+    fn extra_prompt_roles_are_optional() {
+        let file = ThemeFile::parse(SAMPLE).unwrap();
+        assert_eq!(file.extra(false), ExtraColors::default());
+
+        let json = r##"{"defs":{},"theme":{
+            "background":{"dark":"#000000","light":"#ffffff"},
+            "text":{"dark":"#ffffff","light":"#000000"},
+            "border":{"dark":"#111111","light":"#eeeeee"},
+            "accent":{"dark":"#ff0000","light":"#aa0000"},
+            "agentBuild":"#11aa22",
+            "agentPlan":"#3344aa",
+            "model":{"dark":"#abcdef","light":"#123456"}
+        }}"##;
+        let file = ThemeFile::parse(json).unwrap();
+        let extra = file.extra(false);
+        assert_eq!(extra.agent_build, Some(Color::Rgb(0x11, 0xaa, 0x22)));
+        assert_eq!(extra.agent_plan, Some(Color::Rgb(0x33, 0x44, 0xaa)));
+        assert_eq!(extra.agent_ask, None);
+        assert_eq!(extra.model, Some(Color::Rgb(0xab, 0xcd, 0xef)));
+        assert_eq!(file.extra(true).model, Some(Color::Rgb(0x12, 0x34, 0x56)));
+    }
+
+    #[test]
     fn unspecified_roles_fall_back_to_the_built_in_palette() {
         let file = ThemeFile::parse(SAMPLE).unwrap();
         let palette = file.palette(false).unwrap();
@@ -356,11 +373,14 @@ mod tests {
 
     #[test]
     fn parses_both_hex_lengths() {
-        assert_eq!(parse_hex("#abc"), Some(Color::Rgb(0xaa, 0xbb, 0xcc)));
-        assert_eq!(parse_hex("#aabbcc"), Some(Color::Rgb(0xaa, 0xbb, 0xcc)));
-        assert_eq!(parse_hex("aabbcc"), None);
-        assert_eq!(parse_hex("#gg0000"), None);
-        assert_eq!(parse_hex("#ab"), None);
+        assert_eq!(parse_hex_color("#abc"), Some(Color::Rgb(0xaa, 0xbb, 0xcc)));
+        assert_eq!(
+            parse_hex_color("#aabbcc"),
+            Some(Color::Rgb(0xaa, 0xbb, 0xcc))
+        );
+        assert_eq!(parse_hex_color("aabbcc"), None);
+        assert_eq!(parse_hex_color("#gg0000"), None);
+        assert_eq!(parse_hex_color("#ab"), None);
     }
 
     #[test]

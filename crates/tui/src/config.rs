@@ -1,7 +1,9 @@
 // ── config.rs: TUI-specific configuration ─────────────────────────────
 
-use crate::theme::{ThemeName, ThemePalette};
+use crate::theme::{ExtraColors, ThemeName, ThemePalette};
 use crate::theme_file;
+use ratatui::style::Color;
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
 use whycode_config::TuiConfig;
@@ -26,6 +28,10 @@ pub struct TuiAppConfig {
     pub show_sidebar: bool,
     /// Base scrollback limit.
     pub scrollback: usize,
+    /// `[tui.agent_colors]` specs (`build = "#7aa2f7"` / `"accent"`).
+    pub agent_color_specs: HashMap<String, String>,
+    /// Optional prompt-chrome colors from the active theme file.
+    pub extra: ExtraColors,
 }
 
 impl Default for TuiAppConfig {
@@ -37,6 +43,8 @@ impl Default for TuiAppConfig {
             auto_scroll: true,
             show_sidebar: false,
             scrollback: 10_000,
+            agent_color_specs: HashMap::new(),
+            extra: ExtraColors::default(),
         }
     }
 }
@@ -47,6 +55,35 @@ impl TuiAppConfig {
         self.theme_override
             .clone()
             .unwrap_or_else(|| self.theme.palette())
+    }
+
+    /// Color for the named agent in prompt/header chrome.
+    ///
+    /// Precedence: `[tui.agent_colors]` spec → theme-file extra role →
+    /// built-in name mapping (`build`/`plan`/`ask`) → cycle index.
+    pub fn agent_color(&self, name: &str, idx: usize, palette: &ThemePalette) -> Color {
+        if let Some(spec) = self.agent_color_specs.get(name)
+            && let Some(c) = palette.parse_spec(spec)
+        {
+            return c;
+        }
+        let themed = match name {
+            "build" => self.extra.agent_build,
+            "plan" => self.extra.agent_plan,
+            "ask" => self.extra.agent_ask,
+            _ => None,
+        };
+        themed.unwrap_or_else(|| palette.color_for_agent_name(name, idx))
+    }
+
+    /// Color for the provider/model caption on the prompt footer.
+    pub fn model_color(&self, palette: &ThemePalette) -> Color {
+        if let Some(spec) = self.agent_color_specs.get("model")
+            && let Some(c) = palette.parse_spec(spec)
+        {
+            return c;
+        }
+        self.extra.model.unwrap_or(palette.info)
     }
 
     /// Build from the core `TuiConfig` loaded from config.toml.
@@ -77,6 +114,7 @@ impl TuiAppConfig {
                 }
                 if let Some(found) = loaded.into_iter().find(|t| &t.name == theme_name) {
                     c.theme_override = Some(found.palette);
+                    c.extra = found.extra;
                 }
             }
 
@@ -92,6 +130,7 @@ impl TuiAppConfig {
             c.key_bindings = kb.clone();
         }
         c.show_sidebar = cfg.show_sidebar;
+        c.agent_color_specs = cfg.agent_colors.clone();
         c
     }
 }
@@ -187,5 +226,17 @@ mod tests {
         let c = TuiAppConfig::from_core_config_with_themes(&tui_config(None), None);
         assert_eq!(c.theme, ThemeName::DefaultDark);
         assert!(c.theme_override.is_none());
+    }
+
+    #[test]
+    fn agent_color_specs_come_from_core_config() {
+        let mut cfg = tui_config(None);
+        cfg.agent_colors.insert("build".into(), "#112233".into());
+        let c = TuiAppConfig::from_core_config_with_themes(&cfg, None);
+        let palette = c.palette();
+        assert_eq!(
+            c.agent_color("build", 0, &palette),
+            ratatui::style::Color::Rgb(0x11, 0x22, 0x33)
+        );
     }
 }

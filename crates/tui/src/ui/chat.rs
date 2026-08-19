@@ -209,7 +209,9 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     }
 
     lines.push(Line::from(""));
-    let agent_color = palette.agent_color_by_index(app.agent_cycle_idx);
+    let agent_color = app
+        .config
+        .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
     let meta_part = format!(
         "  ·  {}/{}",
         empty_dash(&app.provider_name),

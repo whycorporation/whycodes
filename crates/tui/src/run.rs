@@ -4636,6 +4636,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.theme = t;
                 ctx.app.config.theme = t;
                 ctx.app.config.theme_override = None;
+                ctx.app.config.extra = crate::theme::ExtraColors::default();
                 ctx.app.theme_selected = ThemeName::ALL.iter().position(|x| *x == t).unwrap_or(0);
                 t.apply_syntax_theme();
                 for msg in &mut ctx.app.messages {
