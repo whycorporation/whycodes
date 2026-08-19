@@ -70,7 +70,7 @@ pub fn message_row_layout(app: &TuiApp, width: u16) -> (Vec<usize>, usize) {
             total += lines.len();
             continue;
         }
-        total += render_message(msg, app, &palette, i, width, None).len();
+        total += render_message(msg, app, &palette, i, width, None, false).len();
     }
     (starts, total)
 }
@@ -95,19 +95,23 @@ pub fn message_row_layout_mut(app: &mut TuiApp, width: u16) -> (Vec<usize>, usiz
             let h = lines.len();
             app.messages[i].layout_cache = Some((width, closed, h));
             h
+        } else if !closed {
+            // Live bubble: prefix (thinking/tools) is small; markdown lives in
+            // IncrementalMarkdown.buf so a growing fence is not cloned here.
+            refresh_live_markdown(app, i, width);
+            let prefix = {
+                let palette = app.config.palette();
+                render_message_live(app, i, &palette, width, false)
+            };
+            prefix.len() + live_md_len(app, i)
         } else {
             let lines = {
                 let palette = app.config.palette();
-                render_message_live(app, i, &palette, width)
+                render_message_live(app, i, &palette, width, true)
             };
             let h = lines.len();
-            // Open (streaming) bubbles grow every token — never cache height
-            // or a missed invalidate leaves the viewport parked on the first
-            // few lines while the real answer is below the fold.
-            if closed {
-                app.messages[i].layout_cache = Some((width, closed, h));
-                app.messages[i].line_cache = Some((width, closed, Arc::new(lines)));
-            }
+            app.messages[i].layout_cache = Some((width, closed, h));
+            app.messages[i].line_cache = Some((width, closed, Arc::new(lines)));
             h
         };
         total += h;
@@ -350,8 +354,8 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
             continue;
         }
 
-        let rendered = render_message_live(app, i, palette, content_width);
         if closed {
+            let rendered = render_message_live(app, i, palette, content_width, true);
             let arc = Arc::new(rendered);
             let h = arc.len();
             app.messages[i].line_cache = Some((content_width, closed, Arc::clone(&arc)));
@@ -366,7 +370,22 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
                 selected,
             );
         } else {
-            y = paint_message_slice(buf, y, &row, &rendered, slice_from, slice_to_excl, selected);
+            refresh_live_markdown(app, i, content_width);
+            let prefix = render_message_live(app, i, palette, content_width, false);
+            let md = app.messages[i]
+                .stream_md
+                .as_ref()
+                .map(|s| s.lines())
+                .unwrap_or(&[]);
+            y = paint_concat_slices(
+                buf,
+                y,
+                &row,
+                &prefix,
+                md,
+                slice_from..slice_to_excl,
+                selected,
+            );
         }
     }
 
@@ -475,24 +494,45 @@ fn line_has_content(line: &Line<'_>) -> bool {
 /// Stamp `lines[from..to]` at `y`. Returns the next free row.
 fn paint_message_slice(
     buf: &mut Buffer,
-    mut y: u16,
+    y: u16,
     row: &ChatRowPaint,
     lines: &[Line<'static>],
     from: usize,
     to_excl: usize,
     selected: bool,
 ) -> u16 {
-    let to = to_excl.min(lines.len());
+    paint_concat_slices(buf, y, row, lines, &[], from..to_excl, selected)
+}
+
+/// Paint `a` then `b` as one transcript, clipping to `view`.
+fn paint_concat_slices(
+    buf: &mut Buffer,
+    mut y: u16,
+    row: &ChatRowPaint,
+    a: &[Line<'static>],
+    b: &[Line<'static>],
+    view: std::ops::Range<usize>,
+    selected: bool,
+) -> u16 {
+    let total = a.len() + b.len();
+    let from = view.start;
+    let to = view.end.min(total);
     if from >= to {
         return y;
     }
     let caret_at = if selected {
-        lines.iter().position(line_has_content)
+        a.iter()
+            .position(line_has_content)
+            .or_else(|| b.iter().position(line_has_content).map(|i| i + a.len()))
     } else {
         None
     };
-    for (i, line) in lines[from..to].iter().enumerate() {
-        let abs = from + i;
+    for abs in from..to {
+        let line = if abs < a.len() {
+            &a[abs]
+        } else {
+            &b[abs - a.len()]
+        };
         paint_chat_row(buf, y, row, Some(line), caret_at == Some(abs));
         y = y.saturating_add(1);
     }
@@ -590,13 +630,57 @@ fn message_is_closed(app: &TuiApp, index: usize) -> bool {
     true
 }
 
+fn live_md_width(width: u16) -> usize {
+    (width as usize).saturating_sub(4).max(20)
+}
+
+fn live_md_len(app: &TuiApp, index: usize) -> usize {
+    app.messages
+        .get(index)
+        .and_then(|m| m.stream_md.as_ref())
+        .map(|s| s.lines().len())
+        .unwrap_or(0)
+}
+
+/// Refresh the live assistant's incremental markdown buffer (no Line clone).
+fn refresh_live_markdown(app: &mut TuiApp, index: usize, width: u16) {
+    let live = app
+        .messages
+        .get(index)
+        .is_some_and(|m| matches!(m.role, ChatRole::Assistant) && !message_is_closed(app, index));
+    if !live {
+        return;
+    }
+    if app.messages[index].stream_md.is_none() {
+        app.messages[index].stream_md = Some(crate::md_stream::IncrementalMarkdown::default());
+    }
+    let palette = app.config.palette();
+    let md_width = live_md_width(width);
+    let mut stream = app.messages[index].stream_md.take();
+    if let Some(inc) = stream.as_mut() {
+        inc.render(&app.messages[index].content, &palette, Some(md_width));
+        let ts = message_clock(&app.messages[index]);
+        stamp_first_content_line(
+            inc.lines_mut(),
+            Some(&ts),
+            Style::default().fg(palette.dim),
+            width,
+        );
+    }
+    app.messages[index].stream_md = stream;
+}
+
 /// Render message `index`, threading the Grok checkpoint cache on live
 /// assistant bubbles so a growing reply does not re-parse frozen blocks.
+///
+/// `include_live_md`: when false, skip the growing answer (caller paints
+/// [`IncrementalMarkdown::lines`] by reference).
 fn render_message_live(
     app: &mut TuiApp,
     index: usize,
     palette: &ThemePalette,
     width: u16,
+    include_live_md: bool,
 ) -> Vec<Line<'static>> {
     if app
         .messages
@@ -607,6 +691,7 @@ fn render_message_live(
         app.messages[index].stream_md = Some(crate::md_stream::IncrementalMarkdown::default());
     }
     let mut stream = app.messages[index].stream_md.take();
+    let skip_md = !include_live_md && stream.is_some();
     let lines = render_message(
         &app.messages[index],
         app,
@@ -614,6 +699,7 @@ fn render_message_live(
         index,
         width,
         stream.as_mut(),
+        skip_md,
     );
     app.messages[index].stream_md = stream;
     lines
@@ -626,6 +712,7 @@ fn render_message(
     index: usize,
     width: u16,
     mut stream: Option<&mut crate::md_stream::IncrementalMarkdown>,
+    skip_live_md: bool,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     // Blank line between messages
@@ -673,12 +760,12 @@ fn render_message(
                 |lines: &mut Vec<Line<'static>>,
                  text: &str,
                  stream: &mut Option<&mut crate::md_stream::IncrementalMarkdown>| {
-                    if text.is_empty() {
+                    if skip_live_md || text.is_empty() {
                         return;
                     }
                     let start = lines.len();
                     if let Some(inc) = stream.as_mut() {
-                        lines.extend(inc.render(text, palette, Some(md_width)));
+                        lines.extend_from_slice(inc.render(text, palette, Some(md_width)));
                     } else {
                         lines.extend(super::markdown::render_with_width(
                             text,
@@ -1052,6 +1139,9 @@ fn stamp_first_content_line(
     for line in lines.iter_mut() {
         if !line_has_content(line) {
             continue;
+        }
+        if line.spans.iter().any(|s| s.content.as_ref() == clock) {
+            return true;
         }
         let left = std::mem::take(&mut line.spans);
         *line = line_with_right(left, Some(clock), style, width);
@@ -3342,7 +3432,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         app.add_tool_call("t5".into(), "read".into(), json!({"path": "CLAUDE.md"}));
         app.add_tool_result("t5", "ok", false);
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None);
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None, false);
         let texts: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -3641,7 +3731,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         );
         app.add_tool_result("t1", "ok", false);
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None);
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None, false);
         let texts: Vec<String> = lines
             .iter()
             .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
@@ -3667,7 +3757,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         app.add_message(ChatRole::Assistant, "hello from the agent");
         app.messages[1].duration_ms = Some(1200);
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None);
+        let lines = super::render_message(&app.messages[1], &app, &palette, 1, 80, None, false);
         let answer = lines
             .iter()
             .find(|l| {
@@ -3752,7 +3842,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let mut app = TuiApp::new(TuiAppConfig::default());
         app.add_message(ChatRole::User, "hello from history");
         let palette = app.config.palette();
-        let lines = super::render_message(&app.messages[0], &app, &palette, 0, 80, None);
+        let lines = super::render_message(&app.messages[0], &app, &palette, 0, 80, None, false);
         let row = lines
             .iter()
             .find(|l| l.spans.iter().any(|s| s.content.contains('\u{276F}')))

@@ -11,7 +11,8 @@
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use whycode_format::markdown::{Block, Inline, TableAlign, highlight_code_spans, parse_markdown};
+use whycode_format::highlight::{CodeSpan, highlight_code_spans, with_open_code_spans};
+use whycode_format::markdown::{Block, Inline, TableAlign, parse_markdown};
 use whycode_format::mermaid::{is_mermaid_language, render_mermaid};
 use whycode_format::table::{column_widths, pad_cell};
 
@@ -259,60 +260,185 @@ fn render_code(
     max_width: Option<usize>,
 ) -> Vec<Line<'static>> {
     let band = palette.status_bar_bg;
-    let gutter = Style::default().fg(palette.dim).bg(band);
     let mut out = Vec::with_capacity(lines.len() + 3);
+    push_code_header(&mut out, language, palette);
+    let n = lines.len().max(1);
+    let nw = n.to_string().len().max(2);
+    let source: Vec<String> = lines.iter().map(|l| l.replace('\t', "    ")).collect();
+    let highlighted = highlight_code_spans(&source.join("\n"), language);
+    for (i, spans) in highlighted.iter().enumerate() {
+        push_code_source_line(&mut out, i, spans, nw, palette, max_width);
+    }
     out.push(code_band_pad(band));
+    out
+}
 
+fn push_code_header(out: &mut Vec<Line<'static>>, language: Option<&str>, palette: &ThemePalette) {
+    let band = palette.status_bar_bg;
+    let gutter = Style::default().fg(palette.dim).bg(band);
+    out.push(code_band_pad(band));
     if let Some(lang) = language.map(str::trim).filter(|s| !s.is_empty()) {
         out.push(Line::from(vec![
             Span::styled(format!(" {lang} "), gutter),
             Span::styled(" ".to_string(), Style::default().bg(band)),
         ]));
     }
+}
 
-    let n = lines.len().max(1);
-    let nw = n.to_string().len().max(2);
-    let gutter_w = nw + 2; // " 1 "
+fn push_code_source_line(
+    out: &mut Vec<Line<'static>>,
+    i: usize,
+    spans: &[CodeSpan],
+    nw: usize,
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+) {
+    let band = palette.status_bar_bg;
+    let gutter = Style::default().fg(palette.dim).bg(band);
+    let gutter_w = nw + 2;
     let body_w = max_width.map(|w| w.saturating_sub(gutter_w).max(8));
-    let source: Vec<String> = lines.iter().map(|l| l.replace('\t', "    ")).collect();
-    let highlighted = highlight_code_spans(&source.join("\n"), language);
-
-    for (i, spans) in highlighted.iter().enumerate() {
-        let mut code_spans: Vec<Span<'static>> = spans
-            .iter()
-            .map(|((r, g, b), text)| {
-                Span::styled(
-                    text.trim_end_matches('\n').to_string(),
-                    Style::default().fg(Color::Rgb(*r, *g, *b)).bg(band),
-                )
-            })
-            .collect();
-        if code_spans.is_empty() {
-            code_spans.push(Span::styled(" ".to_string(), Style::default().bg(band)));
-        }
-        let rows = match body_w {
-            Some(w) => wrap_spans(code_spans, w as u16),
-            None => vec![Line::from(code_spans)],
+    let mut code_spans: Vec<Span<'static>> = spans
+        .iter()
+        .map(|((r, g, b), text)| {
+            Span::styled(
+                text.trim_end_matches('\n').to_string(),
+                Style::default().fg(Color::Rgb(*r, *g, *b)).bg(band),
+            )
+        })
+        .collect();
+    if code_spans.is_empty() {
+        code_spans.push(Span::styled(" ".to_string(), Style::default().bg(band)));
+    }
+    let rows = match body_w {
+        Some(w) => wrap_spans(code_spans, w as u16),
+        None => vec![Line::from(code_spans)],
+    };
+    let no = format!(" {:>w$} ", i + 1, w = nw);
+    let hang = " ".repeat(gutter_w);
+    for (j, row) in rows.into_iter().enumerate() {
+        let mut line = if j == 0 {
+            vec![Span::styled(no.clone(), gutter)]
+        } else {
+            vec![Span::styled(hang.clone(), Style::default().bg(band))]
         };
-        let no = format!(" {:>w$} ", i + 1, w = nw);
-        let hang = " ".repeat(gutter_w);
-        for (j, row) in rows.into_iter().enumerate() {
-            let mut line = if j == 0 {
-                vec![Span::styled(no.clone(), gutter)]
-            } else {
-                vec![Span::styled(hang.clone(), Style::default().bg(band))]
-            };
-            for mut s in row.spans {
-                s.style.bg = Some(band);
-                line.push(s);
-            }
-            line.push(Span::styled(" ".to_string(), Style::default().bg(band)));
-            out.push(Line::from(line));
+        for mut s in row.spans {
+            s.style.bg = Some(band);
+            line.push(s);
         }
+        line.push(Span::styled(" ".to_string(), Style::default().bg(band)));
+        out.push(Line::from(line));
+    }
+}
+
+/// If `tail` is an open fenced block (` ```lang\n…` with no closing fence),
+/// return `(language, body)`. The streaming renderer uses this to skip a
+/// full `parse_markdown` of a growing dump.
+pub fn open_fence_tail(tail: &str) -> Option<(Option<&str>, &str)> {
+    let header_end = tail.find('\n').unwrap_or(tail.len());
+    let header = tail[..header_end].trim_start();
+    if !header.starts_with("```") || header[3..].contains("```") {
+        return None;
+    }
+    // A second fence marker later in `tail` means this chunk is not a single
+    // open fence (closed in this tail, or nested junk) — fall back.
+    if tail[header_end..].contains("\n```") {
+        return None;
+    }
+    let lang = header.trim_start_matches('`').trim();
+    let lang = (!lang.is_empty()).then_some(lang);
+    let body = if header_end < tail.len() {
+        &tail[header_end + 1..]
+    } else {
+        ""
+    };
+    Some((lang, body))
+}
+
+const PLAIN_CODE_FG: (u8, u8, u8) = (0xcc, 0xcc, 0xcc);
+
+fn complete_source_lines(body: &str) -> usize {
+    if body.is_empty() {
+        0
+    } else if body.ends_with('\n') {
+        body.lines().count()
+    } else {
+        body.lines().count().saturating_sub(1)
+    }
+}
+
+/// Digit width `render_code` uses for the gutter (`max(2, digits(n))`).
+pub fn code_gutter_nw(body: &str) -> usize {
+    body.lines().count().max(1).to_string().len().max(2)
+}
+
+/// Append an open fenced block onto `out` without re-wrapping already-painted
+/// complete source lines. `out` must already hold `[header + complete rows]`
+/// when `committed_src > 0` (no partial tail, no closing pad).
+///
+/// Paints new complete rows, then the partial last line and closing pad
+/// (those two are not committed). Returns `(committed_src, committed_display)`
+/// so the next frame can `truncate` back to the committed prefix.
+pub fn append_open_fence(
+    out: &mut Vec<Line<'static>>,
+    language: Option<&str>,
+    body: &str,
+    palette: &ThemePalette,
+    max_width: Option<usize>,
+    committed_src: usize,
+) -> (usize, usize) {
+    let band = palette.status_bar_bg;
+    let nw = code_gutter_nw(body);
+    let expanded;
+    let source = if body.contains('\t') {
+        expanded = body.replace('\t', "    ");
+        expanded.as_str()
+    } else {
+        body
+    };
+
+    if committed_src == 0 {
+        push_code_header(out, language, palette);
     }
 
+    let start_src = committed_src;
+    let (new_committed, committed_display) = if let Some(v) =
+        with_open_code_spans(source, language, |committed, partial| {
+            for (i, spans) in committed.iter().enumerate().skip(start_src) {
+                push_code_source_line(out, i, spans, nw, palette, max_width);
+            }
+            let display = out.len();
+            if let Some(tail) = partial {
+                push_code_source_line(out, committed.len(), tail, nw, palette, max_width);
+            }
+            (committed.len(), display)
+        }) {
+        v
+    } else {
+        let committed_n = complete_source_lines(source);
+        for (i, line) in source.lines().enumerate() {
+            if i >= committed_n {
+                break;
+            }
+            if i < start_src {
+                continue;
+            }
+            let spans = vec![(PLAIN_CODE_FG, line.to_string())];
+            push_code_source_line(out, i, &spans, nw, palette, max_width);
+        }
+        let display = out.len();
+        if !source.ends_with('\n')
+            && !source.is_empty()
+            && let Some((i, line)) = source.lines().enumerate().last()
+            && i >= start_src
+        {
+            let spans = vec![(PLAIN_CODE_FG, line.to_string())];
+            push_code_source_line(out, i, &spans, nw, palette, max_width);
+        }
+        (committed_n, display)
+    };
+
     out.push(code_band_pad(band));
-    out
+    (new_committed, committed_display)
 }
 
 fn code_band_pad(band: Color) -> Line<'static> {
