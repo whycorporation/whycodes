@@ -159,12 +159,8 @@ fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<
             Span::styled(format!(" for {elapsed}"), detail),
         ]
     };
-    if t.is_running() {
-        if !elapsed.is_empty() && elapsed != "0.0s" {
-            header_spans.push(Span::styled(format!("  {elapsed}"), detail));
-        }
-    } else if t.collapsed {
-        header_spans.push(Span::styled(" ›".to_string(), detail));
+    if t.is_running() && !elapsed.is_empty() && elapsed != "0.0s" {
+        header_spans.push(Span::styled(format!("  {elapsed}"), detail));
     }
     lines.push(rail_prefix(header_spans));
     if show_rail {
@@ -330,14 +326,17 @@ mod tests {
     }
 
     #[test]
-    fn thinking_finished_collapsed_shows_expand_hint() {
+    fn thinking_finished_collapsed_has_no_trailing_chevron() {
         let p = palette();
         let mut t = ThinkingBlock::new("body line");
         t.finish();
         let lines = thinking_widget_lines(&t, &p);
         let all: Vec<String> = lines.iter().map(line_text).collect();
         assert!(all[0].contains("Thought for"), "{all:?}");
-        assert!(all[0].contains('›'), "{all:?}");
+        assert!(
+            !all[0].contains('›') && !all[0].contains('>'),
+            "no trailing chevron: {all:?}"
+        );
         assert_eq!(all.len(), 1, "no body when collapsed: {all:?}");
     }
 
