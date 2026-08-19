@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — Coverage flake: nucleo `rearm` tick(5) is too short under llvm-cov
+
+**Symptom:** `Coverage (line floor)` fails `picker_flow_over_real_index` with `Ready { total: 4 }` and `matches=[]`. Isolated re-run and the `Test` job are green. Same shape as the 2026-08-16 picker note.
+
+**JSONL / crash:** none.
+
+**Root cause:** Idle-empty recovery called `nucleo.tick(5)`. Under llvm-cov / parallel load that times out before workers publish. `set_query` on the same pattern also returned without a tick, so a missed notify never recovered.
+
+**Fix:** `rearm` / `query_blocking` share a 50 ms settle. Same-pattern `set_query` still `tick(0)`. Coverage job keeps `--skip picker_flow_over_real_index`.
+
+**Prevention:** Do not lower the settle below `query_blocking`. Do not make `query_now` wait on `rearm` — that blocks a keystroke.
+
 ### 2026-08-19 — Keyboard Shortcuts popup is 70%/max 80, not 90%
 
 **Symptom:** whycode dialogs were stretched to 90% of the terminal after copying the generic `ModalSizing::large()` numbers. They did not look like Grok's Ctrl+. cheatsheet.

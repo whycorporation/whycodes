@@ -58,6 +58,10 @@ fn min_score(query: &str) -> u32 {
     7 + query.chars().count() as u32 * 14
 }
 
+/// Bound for `nucleo::tick` when we must wait for a snapshot. `5` was enough
+/// isolated; llvm-cov / parallel CI needs the same wait as a blocking query.
+const SETTLE_MS: u64 = 50;
+
 pub(crate) fn below_floor(score: u32, floor: u32) -> bool {
     score < floor
 }
@@ -124,19 +128,16 @@ impl FuzzyEngine {
         self.running
     }
 
-    /// Non-blocking query update: reparse the pattern and nudge the matcher
-    /// workers, then return immediately. Results are read back with
-    /// [`read`](Self::read); `results_dirty` flips when they are fresh.
+    /// Re-parse the current query and wait for a snapshot.
     ///
-    /// This is the UI path — a keystroke must never wait on a full rematch
-    /// (measured 3–16 ms at 35k items, worse beyond; that used to block the
-    /// frame and flash stale/empty rows on `tick` timeout).
-    /// Re-parse the current query and wait briefly for a snapshot.
-    ///
-    /// `set_query` is a no-op when the pattern is unchanged. Under load a
-    /// `tick(0)` can miss nucleo's notify (workers finish with
+    /// `set_query` does not reparse when the pattern is unchanged. Under load
+    /// a `tick(0)` can miss nucleo's notify (workers finish with
     /// `should_notify == false`), so the picker sits on an empty snapshot
     /// until the next keystroke. The idle-empty poll path calls this.
+    ///
+    /// Wait matches [`query_blocking`]: `tick(5)` times out under llvm-cov /
+    /// parallel CI and leaves `picker_flow_over_real_index` on
+    /// `Ready { total: 4 }` with `matches=[]`.
     pub fn rearm(&mut self) {
         if self.query.is_empty() {
             return;
@@ -149,12 +150,18 @@ impl FuzzyEngine {
             Normalization::Smart,
             false,
         );
-        let status = self.nucleo.tick(5);
+        let status = self.nucleo.tick(SETTLE_MS);
         self.running = status.running || self.nucleo.active_injectors() > 0;
     }
 
+    /// Non-blocking query update: reparse and `tick(0)`. Never wait here —
+    /// a keystroke must not block on a full rematch (3–16 ms at 35k items).
     pub fn set_query(&mut self, pattern: &str) {
         if pattern == self.query {
+            // Same pattern is not a full no-op: a missed notify still needs
+            // a tick so the next poll can adopt an already-finished snapshot.
+            let status = self.nucleo.tick(0);
+            self.running = status.running || self.nucleo.active_injectors() > 0;
             return;
         }
         let append = pattern.as_bytes().starts_with(self.query.as_bytes())
@@ -229,7 +236,7 @@ impl FuzzyEngine {
     /// wait (bounded) for the matcher to settle, then read.
     pub fn query_blocking(&mut self, pattern: &str, limit: usize) -> Vec<FileMatch> {
         self.set_query(pattern);
-        self.nucleo.tick(50);
+        self.nucleo.tick(SETTLE_MS);
         self.read(limit).0
     }
 }

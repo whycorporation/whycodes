@@ -251,6 +251,33 @@ fn cancel_aborts_scan_and_loop() {
 }
 
 #[test]
+fn query_now_same_pattern_after_blocking_still_hits() {
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    assert!(
+        idx.query("main", 10).iter().any(|m| m.rel == "src/main.rs"),
+        "blocking fuzzy missed src/main.rs"
+    );
+    // `set_query` used to return immediately on the same pattern; a missed
+    // notify then left `query_now` on an empty snapshot (CI picker flake).
+    assert!(
+        idx.query_now("main", 10)
+            .iter()
+            .any(|m| m.rel == "src/main.rs"),
+        "same-pattern query_now missed src/main.rs"
+    );
+    assert!(idx.query_now("zzzznotapath", 10).is_empty());
+}
+
+#[test]
 fn query_now_sorts_multiple_hits() {
     let dir = fixture();
     let idx = WorkspaceIndex::start_with(
