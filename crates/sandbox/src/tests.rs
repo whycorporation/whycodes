@@ -354,6 +354,20 @@ fn prepare_bwrap_without_home_and_root_auth_sock() {
     restore_os("HOME", prev_home);
     restore_os("SSH_AUTH_SOCK", prev_sock);
     prepared.expect("prepare with missing ssh parent");
+
+    // HOME set, SSH_AUTH_SOCK unset — the `if let Ok(auth_sock)` miss
+    // path. Self-hosted CI often has an agent socket in the environment,
+    // so other tests never take this branch and llvm-cov flags the
+    // closing brace of that `if let` (bwrap.rs) as uncovered.
+    let prev_home = std::env::var_os("HOME");
+    let prev_sock = std::env::var_os("SSH_AUTH_SOCK");
+    unsafe { std::env::set_var("HOME", tempfile::tempdir().unwrap().path()) };
+    unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
+    let dir = tempfile::tempdir().unwrap();
+    let prepared = crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "true", dir.path(), true);
+    restore_os("HOME", prev_home);
+    restore_os("SSH_AUTH_SOCK", prev_sock);
+    prepared.expect("prepare without SSH_AUTH_SOCK");
 }
 
 fn home_or_tmp(home: Option<std::ffi::OsString>) -> PathBuf {
