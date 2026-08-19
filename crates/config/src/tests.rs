@@ -1055,10 +1055,27 @@ fn hook_and_security_defaults_and_serde() {
     .unwrap();
     assert!(cfg.session.auto_title);
     assert_eq!(cfg.tui.prompt_suggestions, "off");
+    assert!(cfg.tui.agent_colors.is_empty());
     assert!(cfg.memory.enabled);
     assert!(cfg.swarm.enabled);
     assert_eq!(cfg.hooks[0].tool_match, "*");
     assert_eq!(cfg.hooks[0].timeout_secs, 30);
+}
+
+#[test]
+fn tui_agent_colors_table_parses() {
+    let cfg: Config = toml::from_str(
+        r##"
+        [tui.agent_colors]
+        build = "#7aa2f7"
+        plan = "accent"
+        model = "secondary"
+        "##,
+    )
+    .unwrap();
+    assert_eq!(cfg.tui.agent_colors.get("build").unwrap(), "#7aa2f7");
+    assert_eq!(cfg.tui.agent_colors.get("plan").unwrap(), "accent");
+    assert_eq!(cfg.tui.agent_colors.get("model").unwrap(), "secondary");
 }
 
 #[test]
@@ -1337,6 +1354,14 @@ fn merge_with_covers_provider_model_memory_tools() {
         },
     );
     other.tui.key_bindings = Some(HashMap::from([("k".into(), "v".into())]));
+    other
+        .tui
+        .agent_colors
+        .insert("build".into(), "#7aa2f7".into());
+    other
+        .tui
+        .agent_colors
+        .insert("plan".into(), "accent".into());
     other.command_configs.insert(
         "run".into(),
         CommandConfig {
@@ -1398,6 +1423,14 @@ fn merge_with_covers_provider_model_memory_tools() {
             .get("k")
             .map(String::as_str),
         Some("v")
+    );
+    assert_eq!(
+        merged.tui.agent_colors.get("build").map(String::as_str),
+        Some("#7aa2f7")
+    );
+    assert_eq!(
+        merged.tui.agent_colors.get("plan").map(String::as_str),
+        Some("accent")
     );
     assert_eq!(merged.command_configs["run"].max_turns, Some(3));
     assert_eq!(merged.command_configs["run"].agent.as_deref(), Some("plan"));

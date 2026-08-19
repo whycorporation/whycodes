@@ -1006,6 +1006,21 @@ pub struct TuiConfig {
     /// Show the sidebar when the TUI opens.
     #[serde(default)]
     pub show_sidebar: bool,
+    /// Per-agent (and `model`) colors for prompt chrome.
+    ///
+    /// Values are `#rgb` / `#rrggbb`, a theme role (`accent`, `success`,
+    /// `info`, `warning`, `error`, `primary`, `secondary`, `thinking`, `dim`),
+    /// or an ANSI name (`red`, `green`, …).
+    ///
+    /// ```toml
+    /// [tui.agent_colors]
+    /// build = "#7aa2f7"
+    /// plan = "accent"
+    /// ask = "info"
+    /// model = "secondary"
+    /// ```
+    #[serde(default)]
+    pub agent_colors: HashMap<String, String>,
 }
 
 impl Default for TuiConfig {
@@ -1015,6 +1030,7 @@ impl Default for TuiConfig {
             key_bindings: None,
             prompt_suggestions: default_prompt_suggestions(),
             show_sidebar: false,
+            agent_colors: HashMap::new(),
         }
     }
 }
@@ -1455,6 +1471,9 @@ impl Config {
         }
         if other.tui.show_sidebar {
             merged.tui.show_sidebar = true;
+        }
+        for (name, spec) in &other.tui.agent_colors {
+            merged.tui.agent_colors.insert(name.clone(), spec.clone());
         }
 
         // General

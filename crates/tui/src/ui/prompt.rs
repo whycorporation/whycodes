@@ -126,7 +126,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         palette.border
     };
     let accent = if prompt_focused {
-        palette.agent_color_by_index(app.agent_cycle_idx)
+        app.config
+            .agent_color(&app.agent_name, app.agent_cycle_idx, palette)
     } else {
         palette.dim
     };
@@ -180,7 +181,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         .split(area);
 
     let border_style = Style::default().fg(border_color);
-    let caption_style = Style::default().fg(palette.dim);
 
     // ── Top: ╭──────────╮ ───────────────────────────────────────────
     let top_border = chunks[1];
@@ -313,7 +313,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let bottom = chunks[4];
     if bottom.height > 0 {
         paint_h_border(frame, bottom, border_style, false);
-        paint_bottom_meta(frame, bottom, app, caption_style);
+        paint_bottom_meta(frame, bottom, app, palette);
     }
 
     // Home rotating hint under the box.
@@ -428,7 +428,10 @@ fn paint_side_borders(frame: &mut Frame, text_area: Rect, full: Rect, style: Sty
 
 /// Right-aligned ` agent · provider/model ` on the bottom border, with
 /// leading/trailing spaces blanking adjacent `─` (Grok chrome caption).
-fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, caption_style: Style) {
+///
+/// Agent and model pick up theme / `[tui.agent_colors]` so the caption is
+/// not a dim grey smear — same identity color as the header chip.
+fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, palette: &ThemePalette) {
     if row.width < 8 {
         return;
     }
@@ -442,24 +445,84 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, caption_style: 
     } else {
         app.model_name.as_str()
     };
-    // Keep agent identity in the chrome (Grok only shows model; we keep agent).
-    // Optional intent badge: `build · Q · anthropic/…`
-    let label = if let Some(ref badge) = app.intent_badge {
-        format!(" {} · {badge} · {provider}/{model} ", app.agent_name)
-    } else {
-        format!(" {} · {provider}/{model} ", app.agent_name)
+    let agent_color = app
+        .config
+        .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
+    let model_color = app.config.model_color(palette);
+    let sep_style = Style::default().fg(palette.dim);
+    let agent_style = Style::default()
+        .fg(agent_color)
+        .add_modifier(Modifier::BOLD);
+    let model_style = Style::default().fg(model_color);
+    let badge_style = match app.intent_kind.as_deref() {
+        Some("question") => Style::default()
+            .fg(palette.info)
+            .add_modifier(Modifier::BOLD),
+        Some("plan") => Style::default()
+            .fg(palette.accent)
+            .add_modifier(Modifier::BOLD),
+        Some("change") => Style::default()
+            .fg(palette.success)
+            .add_modifier(Modifier::BOLD),
+        _ => sep_style,
     };
+
     // Corners + 1-cell inset each side stay pure border.
     let max_w = row.width.saturating_sub(4) as usize;
-    let trunc = if UnicodeWidthStr::width(label.as_str()) > max_w {
-        truncate_to_width(&label, max_w)
+    let model_label = format!("{provider}/{model}");
+    let reserved = 2 // leading/trailing spaces
+        + UnicodeWidthStr::width(app.agent_name.as_str())
+        + 3 // ` · `
+        + app
+            .intent_badge
+            .as_deref()
+            .map(|b| UnicodeWidthStr::width(b) + 3)
+            .unwrap_or(0);
+    let model_max = max_w.saturating_sub(reserved);
+    let model_shown = if UnicodeWidthStr::width(model_label.as_str()) > model_max {
+        truncate_to_width(&model_label, model_max)
     } else {
-        label
+        model_label
     };
-    let label_w = UnicodeWidthStr::width(trunc.as_str()) as u16;
-    if label_w == 0 {
+
+    let mut spans = vec![
+        Span::styled(" ", sep_style),
+        Span::styled(app.agent_name.clone(), agent_style),
+    ];
+    if let Some(ref badge) = app.intent_badge {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(badge.clone(), badge_style));
+    }
+    if !model_shown.is_empty() {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(model_shown, model_style));
+    }
+    spans.push(Span::styled(" ", sep_style));
+
+    let label_w: usize = spans
+        .iter()
+        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+        .sum();
+    if label_w == 0 || label_w > max_w {
+        // Narrow box: fall back to a single truncated, still-colored agent name.
+        let trunc = truncate_to_width(&format!(" {} ", app.agent_name), max_w);
+        let w = UnicodeWidthStr::width(trunc.as_str()) as u16;
+        if w == 0 {
+            return;
+        }
+        let x = row.x + row.width.saturating_sub(2 + w);
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(trunc, agent_style))),
+            Rect {
+                x,
+                y: row.y,
+                width: w,
+                height: 1,
+            },
+        );
         return;
     }
+    let label_w = label_w as u16;
     // Right-align ending 2 cells before ╯.
     let x = row.x + row.width.saturating_sub(2 + label_w);
     let meta_rect = Rect {
@@ -468,10 +531,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, caption_style: 
         width: label_w,
         height: 1,
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(trunc, caption_style))),
-        meta_rect,
-    );
+    frame.render_widget(Paragraph::new(Line::from(spans)), meta_rect);
 }
 
 fn truncate_to_width(s: &str, max_w: usize) -> String {
@@ -866,6 +926,97 @@ mod overflow_render_tests {
                 assert_ne!(buf[(x, y)].symbol(), "x", "leak left ({x},{y})");
             }
         }
+    }
+
+    #[test]
+    fn bottom_meta_uses_agent_and_model_colors() {
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "anthropic".into();
+        app.model_name = "sonnet".into();
+        app.focus = crate::app::FocusPane::Prompt;
+        let palette = app.config.palette();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(
+                    f,
+                    Rect {
+                        x: 0,
+                        y: 8,
+                        width: area.width,
+                        height: 8,
+                    },
+                    &app,
+                    &palette,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let mut row = String::new();
+        let mut agent_fg = None;
+        let mut model_fg = None;
+        for y in 0..16u16 {
+            let mut line = String::new();
+            for x in 0..80u16 {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            if let Some(col) = cell_seq_col(buf, y, 80, "build") {
+                agent_fg = Some(buf[(col, y)].fg);
+                row = line;
+            }
+            if let Some(col) = cell_seq_col(buf, y, 80, "sonnet") {
+                model_fg = Some(buf[(col, y)].fg);
+            }
+        }
+        assert!(row.contains("build"), "footer should show agent: {row}");
+        assert!(row.contains("sonnet"), "footer should show model: {row}");
+        assert_eq!(agent_fg, Some(palette.success), "agent uses success: {row}");
+        assert_eq!(model_fg, Some(palette.info), "model uses info: {row}");
+        assert_ne!(
+            agent_fg,
+            Some(palette.dim),
+            "agent must not be the dim caption color"
+        );
+    }
+
+    fn cell_seq_col(
+        buf: &ratatui::buffer::Buffer,
+        y: u16,
+        width: u16,
+        needle: &str,
+    ) -> Option<u16> {
+        let chars: Vec<char> = needle.chars().collect();
+        if chars.is_empty() {
+            return None;
+        }
+        let n = chars.len() as u16;
+        for x in 0..=width.saturating_sub(n) {
+            if (0..n).all(|i| buf[(x + i, y)].symbol() == chars[i as usize].to_string()) {
+                return Some(x);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn agent_color_spec_overrides_named_default() {
+        let mut cfg = TuiAppConfig::default();
+        cfg.agent_color_specs
+            .insert("build".into(), "#ff00aa".into());
+        cfg.agent_color_specs
+            .insert("model".into(), "warning".into());
+        let palette = cfg.palette();
+        assert_eq!(
+            cfg.agent_color("build", 0, &palette),
+            ratatui::style::Color::Rgb(0xff, 0x00, 0xaa)
+        );
+        assert_eq!(cfg.model_color(&palette), palette.warning);
+        assert_eq!(cfg.agent_color("plan", 1, &palette), palette.accent);
     }
 
     #[test]

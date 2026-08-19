@@ -83,6 +83,32 @@ fn test_agent_color_by_index_cycles() {
 }
 
 #[test]
+fn named_agents_use_theme_semantic_colors() {
+    let palette = ThemeName::DefaultDark.palette();
+    assert_eq!(palette.color_for_agent_name("build", 0), palette.success);
+    assert_eq!(palette.color_for_agent_name("plan", 1), palette.accent);
+    assert_eq!(palette.color_for_agent_name("ask", 2), palette.info);
+    assert_eq!(
+        palette.color_for_agent_name("custom", 3),
+        palette.agent_color_by_index(3)
+    );
+}
+
+#[test]
+fn parse_spec_accepts_hex_roles_and_ansi() {
+    let palette = ThemeName::DefaultDark.palette();
+    assert_eq!(
+        palette.parse_spec("#ff00aa"),
+        Some(ratatui::style::Color::Rgb(0xff, 0x00, 0xaa))
+    );
+    assert_eq!(palette.parse_spec("accent"), Some(palette.accent));
+    assert_eq!(palette.parse_spec("SUCCESS"), Some(palette.success));
+    assert_eq!(palette.parse_spec("red"), Some(ratatui::style::Color::Red));
+    assert_eq!(palette.parse_spec(""), None);
+    assert_eq!(palette.parse_spec("not-a-color"), None);
+}
+
+#[test]
 fn test_all_themes_produce_palette() {
     let themes = [
         ThemeName::DefaultDark,
