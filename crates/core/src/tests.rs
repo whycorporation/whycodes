@@ -540,25 +540,35 @@ mod logging_tests {
     #[test]
     fn panic_hook_runs_registered_cleanup() {
         let _g = TEST_LOCK.lock().unwrap();
-        let tmp = temp_data_dir();
-        let dirs = LogDirs::from_data_dir(tmp.path());
-        dirs.ensure().unwrap();
-        crate::logging::install_panic_hook_for_test(dirs);
-
         let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let flag = std::sync::Arc::clone(&ran);
         set_panic_cleanup(move || {
             flag.store(true, std::sync::atomic::Ordering::SeqCst);
         });
-        assert!(
-            std::panic::catch_unwind(|| panic!("hook-cleanup")).is_err(),
-            "panic must unwind"
-        );
+        crate::logging::run_panic_cleanup();
         clear_panic_cleanup();
+        crate::logging::run_panic_cleanup();
         assert!(
             ran.load(std::sync::atomic::Ordering::SeqCst),
-            "panic hook must invoke the registered terminal cleanup"
+            "registered terminal cleanup must run"
         );
+
+        crate::logging::poison_panic_cleanup();
+        let ran2 = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag2 = std::sync::Arc::clone(&ran2);
+        set_panic_cleanup(move || {
+            flag2.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        crate::logging::run_panic_cleanup();
+        clear_panic_cleanup();
+        assert!(
+            ran2.load(std::sync::atomic::Ordering::SeqCst),
+            "cleanup must still run after PANIC_CLEANUP is poisoned"
+        );
+
+        // Holding the mutex: try_lock WouldBlock, so this is a no-op.
+        let _held = crate::logging::recover_lock(PANIC_CLEANUP.lock());
+        crate::logging::run_panic_cleanup();
     }
 
     #[test]

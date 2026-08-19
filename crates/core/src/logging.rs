@@ -526,22 +526,26 @@ pub(crate) fn poison_panic_cleanup() {
     }));
 }
 
-/// Re-install the production panic hook so tests can cover the cleanup
-/// branch without depending on which test called [`init`] first.
-#[cfg(test)]
-pub(crate) fn install_panic_hook_for_test(dirs: LogDirs) {
-    install_panic_hook_inner(dirs);
+/// Run the registered terminal cleanup if we can take `PANIC_CLEANUP`
+/// without blocking. Poison is recovered so a prior test/thread panic
+/// does not skip leaving the alternate screen. `WouldBlock` means this
+/// thread already holds the lock (e.g. panicking inside `set_panic_cleanup`).
+pub(crate) fn run_panic_cleanup() {
+    let slot = match PANIC_CLEANUP.try_lock() {
+        Ok(g) => g,
+        Err(std::sync::TryLockError::Poisoned(p)) => p.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
+    if let Some(ref cleanup) = *slot {
+        cleanup();
+    }
 }
 
 fn install_panic_hook_inner(dirs: LogDirs) {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Restore terminal first so the user can read the panic / shell works.
-        if let Ok(slot) = PANIC_CLEANUP.try_lock()
-            && let Some(ref cleanup) = *slot
-        {
-            cleanup();
-        }
+        run_panic_cleanup();
 
         emit_panic_report(write_crash_report(&dirs, info), &panic_message(info));
 
