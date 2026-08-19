@@ -142,7 +142,7 @@ Both TUI and `--plain`:
 | `/undo` | Undo the last turn and restore files via git |
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
-| `/compact` `/summarize` | Compact the conversation context |
+| `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage |
 | `/sessions` | Session picker (Enter to resume) |

@@ -418,8 +418,10 @@ pub async fn compact(
         .await
         .ok_or(StatusCode::NOT_FOUND)?;
     let mut s = handle.lock().await;
-    let max = req.max_tokens.unwrap_or(150_000).max(1);
-    s.compact(max);
+    // `max_tokens` is accepted for SDK compat; Grok-style compact is
+    // full-replace (not a budget drop), so the field is unused.
+    let _ = req.max_tokens;
+    s.compact_full_replace_local();
     if let Some(db) = AppState::open_db()
         && let Err(e) = s.save_to_db(&db)
     {

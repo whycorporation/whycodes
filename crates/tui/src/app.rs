@@ -1440,7 +1440,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "/compact",
-        hint: "Compact the conversation",
+        hint: "[context] Compact the conversation (LLM summary)",
     },
     SlashCommand {
         name: "/remember",

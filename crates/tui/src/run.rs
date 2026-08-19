@@ -4023,12 +4023,34 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             }
         }
         "/compact" | "/summarize" => {
-            let before = ctx.session.messages.len();
-            ctx.session.compact(ctx.config.session.compaction_threshold);
-            // Provider usage is stale after trim — fall back to the char heuristic.
-            ctx.app.sync_context_estimate(ctx.session);
-            ctx.app.turn_usage = None;
-            ctx.app.status_message = format!("Compacted {before} → {}", ctx.session.messages.len());
+            if ctx.session.messages.is_empty() {
+                ctx.app.status_message = "Nothing to compact".into();
+            } else {
+                let note = rest.trim();
+                ctx.app.status_message = "Compacting conversation…".into();
+                let outcome = ctx
+                    .agent
+                    .compact_session(
+                        ctx.session,
+                        ctx.provider,
+                        ctx.model,
+                        ctx.api_key,
+                        if note.is_empty() { None } else { Some(note) },
+                    )
+                    .await;
+                ctx.app.load_messages_from_session(ctx.session);
+                persist_session_best_effort(ctx.session, "compact");
+                ctx.app.status_message = format!(
+                    "Conversation compacted ({} → {} msgs, ~{} → ~{} tok)",
+                    outcome.messages_before,
+                    outcome.messages_after,
+                    outcome.tokens_before,
+                    outcome.tokens_after
+                );
+                ctx.app
+                    .toasts
+                    .push(crate::toast::ToastKind::Success, "Conversation compacted");
+            }
         }
         "/bg" => {
             let rest = rest.trim();
@@ -6447,7 +6469,21 @@ mod tests {
         assert!(h.app.status_message.to_lowercase().contains("nothing"));
 
         h.run("/compact").await;
-        assert!(h.app.status_message.contains("Compacted"));
+        assert!(h.app.status_message.contains("Nothing to compact"));
+        h.session.add_user_message("old task");
+        h.session
+            .add_assistant_message(vec![whycode_core::types::ContentBlock::Text {
+                text: "working".into(),
+            }]);
+        h.session.add_user_message("fix login");
+        h.app.load_messages_from_session(&h.session);
+        h.run("/compact keep the auth details").await;
+        assert!(
+            h.app.status_message.contains("Conversation compacted"),
+            "{}",
+            h.app.status_message
+        );
+        assert_eq!(h.session.messages[0].content.as_text(), Some("fix login"));
 
         h.run("/bg").await;
         assert!(

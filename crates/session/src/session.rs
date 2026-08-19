@@ -28,6 +28,13 @@ const SUMMARY_TOKEN_SLACK: usize = 256;
 /// Max chars of dropped-message transcript retained for optional LLM summary.
 const DROPPED_TRANSCRIPT_MAX_CHARS: usize = 12_000;
 
+/// Whole-session transcript cap for Grok-style full-replace compact.
+const FULL_TRANSCRIPT_MAX_CHARS: usize = 48_000;
+
+/// Preamble prepended to the post-compact summary carrier (Grok full-replace).
+pub const COMPACT_CONTINUATION_PREAMBLE: &str = "This session is being continued from a previous conversation that ran out of context. \
+     The summary below covers the earlier portion of the conversation.";
+
 /// Outcome of [`Session::compact`] for autocompact circuit breakers.
 #[derive(Debug, Clone, Default)]
 pub struct CompactOutcome {
@@ -203,6 +210,63 @@ fn cap_tool_text_to(text: String, max_chars: usize) -> String {
         "\n\n[... {omitted} characters truncated for context management]"
     ));
     out
+}
+
+/// True when a user message is a compact stub, not a real user turn.
+pub fn is_compact_summary_text(text: &str) -> bool {
+    let t = text.trim_start();
+    t.starts_with("[Compacted") || t.starts_with("This session is being continued")
+}
+
+/// Clean a compaction-model reply into a plain summary body.
+pub fn format_compact_summary(raw: &str) -> String {
+    let mut result = raw.trim().to_string();
+
+    if let Some(start) = result.find("<analysis>")
+        && result[..start].trim().is_empty()
+    {
+        match result[start..].find("</analysis>") {
+            Some(rel) => {
+                result = result[start + rel + "</analysis>".len()..]
+                    .trim()
+                    .to_string();
+            }
+            None => {
+                let drop_to = result[start..]
+                    .find("<summary>")
+                    .map_or(result.len(), |rel| start + rel);
+                result = result[drop_to..].trim().to_string();
+            }
+        }
+    }
+
+    if let Some(start) = result.find("<summary>") {
+        if let Some(end) = result.rfind("</summary>")
+            && end > start
+        {
+            let inner = result[start + "<summary>".len()..end].trim();
+            result = format!("Summary:\n{inner}");
+        } else {
+            result = result.replacen("<summary>", "Summary:\n", 1);
+        }
+    }
+
+    while result.contains("\n\n\n") {
+        result = result.replace("\n\n\n", "\n\n");
+    }
+    result.trim().to_string()
+}
+
+/// Continuation carrier that replaces compacted history (Grok full-replace).
+pub fn format_compact_summary_content(raw: &str) -> String {
+    let cleaned = format_compact_summary(raw);
+    if cleaned.is_empty() {
+        return String::new();
+    }
+    if cleaned.starts_with("This session is being continued") {
+        return cleaned;
+    }
+    format!("{COMPACT_CONTINUATION_PREAMBLE}\n\n{cleaned}")
 }
 
 fn summarize_trimmed(trimmed: &[Message]) -> String {
@@ -916,7 +980,7 @@ impl Session {
         if let Some(first) = self.messages.first_mut()
             && first.role == Role::User
             && let MessageContent::Text(t) = &first.content
-            && t.starts_with("[Compacted")
+            && is_compact_summary_text(t)
         {
             first.content = MessageContent::Text(body);
             self.token_cache.invalidate();
@@ -947,6 +1011,130 @@ impl Session {
         let keep_tail = MIN_KEEP_MESSAGES.min(self.messages.len());
         let end = self.messages.len().saturating_sub(keep_tail);
         messages_transcript(&self.messages[..end], max_chars)
+    }
+
+    /// Whole-session transcript for Grok-style full-replace compact.
+    pub fn transcript_for_full_summary(&self, max_chars: usize) -> String {
+        let cap = if max_chars == 0 {
+            FULL_TRANSCRIPT_MAX_CHARS
+        } else {
+            max_chars
+        };
+        messages_transcript(&self.messages, cap)
+    }
+
+    /// Index of the last real user turn (skips compact-summary carriers).
+    fn last_real_user_index(&self) -> Option<usize> {
+        self.messages.iter().enumerate().rev().find_map(|(i, m)| {
+            if m.role != Role::User {
+                return None;
+            }
+            match &m.content {
+                MessageContent::Text(t) if is_compact_summary_text(t) => None,
+                _ => Some(i),
+            }
+        })
+    }
+
+    /// Local stub used when the compact LLM is off or fails.
+    pub fn local_full_replace_summary(&self) -> String {
+        let end = self.last_real_user_index().unwrap_or(self.messages.len());
+        let slice = if end == 0 {
+            &self.messages[..]
+        } else {
+            &self.messages[..end]
+        };
+        summarize_trimmed(slice)
+    }
+
+    /// Replace history with last user query + recent tail + summary carrier.
+    ///
+    /// Grok full-replace: the model-visible conversation becomes
+    /// `[last_user?, recent…, continuation_summary]`. System prompt stays
+    /// on the session, not in `messages`.
+    pub fn apply_full_replace(&mut self, summary: &str) -> CompactOutcome {
+        let tokens_before = self.token_count_cached();
+        let messages_before = self.messages.len();
+        if self.messages.is_empty() {
+            return CompactOutcome {
+                tokens_before,
+                tokens_after: tokens_before,
+                messages_before,
+                messages_after: 0,
+                dropped_transcript: String::new(),
+            };
+        }
+
+        let last_idx = self.last_real_user_index();
+        let prefix_end = last_idx.unwrap_or(self.messages.len());
+        let dropped_transcript =
+            messages_transcript(&self.messages[..prefix_end], DROPPED_TRANSCRIPT_MAX_CHARS);
+        let last_user_query =
+            last_idx.and_then(|i| self.messages[i].content.as_text().map(str::to_string));
+        let recent = last_idx
+            .map(|i| self.messages[i + 1..].to_vec())
+            .unwrap_or_default();
+
+        let mut body = format_compact_summary_content(summary);
+        if body.is_empty() {
+            body = format_compact_summary_content(&self.local_full_replace_summary());
+        }
+
+        let mut new_messages = Vec::with_capacity(1 + recent.len() + 1);
+        if let Some(q) = last_user_query {
+            new_messages.push(
+                Message {
+                    role: Role::User,
+                    content: MessageContent::Text(q),
+                    tool_call_id: None,
+                    name: None,
+                    created_at: None,
+                }
+                .stamp(),
+            );
+        }
+        new_messages.extend(recent);
+        if !body.is_empty() {
+            new_messages.push(
+                Message {
+                    role: Role::User,
+                    content: MessageContent::Text(body),
+                    tool_call_id: None,
+                    name: None,
+                    created_at: None,
+                }
+                .stamp(),
+            );
+        }
+        self.messages = new_messages;
+        self.token_cache
+            .rebuild(&self.system_prompt, &self.messages);
+        self.touch();
+        CompactOutcome {
+            tokens_before,
+            tokens_after: self.token_count_cached(),
+            messages_before,
+            messages_after: self.messages.len(),
+            dropped_transcript,
+        }
+    }
+
+    /// Full-replace compact without an LLM (local stub summary).
+    pub fn compact_full_replace_local(&mut self) -> CompactOutcome {
+        self.truncate_large_tool_results();
+        self.prune_old_tool_results();
+        if self.messages.is_empty() {
+            let n = self.token_count_cached();
+            return CompactOutcome {
+                tokens_before: n,
+                tokens_after: n,
+                messages_before: 0,
+                messages_after: 0,
+                dropped_transcript: String::new(),
+            };
+        }
+        let summary = self.local_full_replace_summary();
+        self.apply_full_replace(&summary)
     }
 
     pub fn compact(&mut self, max_tokens: usize) -> CompactOutcome {
@@ -1573,6 +1761,96 @@ mod tests {
 
         assert_eq!(session.messages.len(), before);
         assert_eq!(session.messages[0].content.as_text(), Some("only message"));
+    }
+
+    #[test]
+    fn format_compact_summary_strips_analysis_and_wraps() {
+        let raw = "<analysis>\nthinking\n</analysis>\n<summary>\n1. Primary Request: fix login\n</summary>";
+        let cleaned = format_compact_summary(raw);
+        assert!(!cleaned.contains("thinking"), "{cleaned}");
+        assert!(cleaned.starts_with("Summary:\n"), "{cleaned}");
+        assert!(cleaned.contains("fix login"), "{cleaned}");
+
+        let carrier = format_compact_summary_content(raw);
+        assert!(
+            carrier.starts_with("This session is being continued"),
+            "{carrier}"
+        );
+        assert!(carrier.contains("fix login"), "{carrier}");
+        assert!(is_compact_summary_text(&carrier));
+    }
+
+    #[test]
+    fn apply_full_replace_keeps_last_user_and_recent_tail() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("first task");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "working on it".into(),
+        }]);
+        session.add_user_message("fix the login bug");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "looking at auth.rs".into(),
+        }]);
+        session.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "t1".into(),
+            content: "fn login() {}".into(),
+            is_error: false,
+        }]);
+
+        let outcome = session.apply_full_replace(
+            "<summary>\n1. Primary Request: fix the login bug\n2. Files: auth.rs\n</summary>",
+        );
+        assert!(outcome.dropped_messages());
+        assert!(
+            outcome.dropped_transcript.contains("first task"),
+            "{}",
+            outcome.dropped_transcript
+        );
+
+        let texts: Vec<String> = session
+            .messages
+            .iter()
+            .filter_map(|m| m.content.as_text().map(str::to_string))
+            .collect();
+        assert_eq!(texts[0], "fix the login bug");
+        assert!(
+            texts.iter().any(|t| t.contains("looking at auth.rs")),
+            "{texts:?}"
+        );
+        let last = texts.last().expect("summary carrier");
+        assert!(
+            last.starts_with("This session is being continued"),
+            "{last}"
+        );
+        assert!(last.contains("fix the login bug"), "{last}");
+    }
+
+    #[test]
+    fn compact_full_replace_local_empty_is_noop() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        let outcome = session.compact_full_replace_local();
+        assert_eq!(outcome.messages_before, 0);
+        assert_eq!(session.messages.len(), 0);
+        assert!(!outcome.dropped_messages());
+    }
+
+    #[test]
+    fn compact_full_replace_local_always_replaces_prefix() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("old work");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "done".into(),
+        }]);
+        session.add_user_message("new work");
+        let outcome = session.compact_full_replace_local();
+        assert!(outcome.dropped_messages());
+        assert_eq!(session.messages[0].content.as_text(), Some("new work"));
+        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        assert!(
+            last.starts_with("This session is being continued"),
+            "{last}"
+        );
+        assert!(last.contains("earlier messages trimmed"), "{last}");
     }
 
     #[test]

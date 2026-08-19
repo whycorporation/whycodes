@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — `/compact` is Grok full-replace, not a 150k no-op
+
+**Symptom:** `/compact` printed `Compacted N → N` and left the chat unchanged unless the session was already over ~112k tokens.
+
+**JSONL / crash:** none.
+
+**Root cause:** Manual compact reused `Session::compact(compaction_threshold)` (drop-oldest only when over ¾ of 150k). TUI did not reload the view. LLM summary ran only on auto-compact after a drop.
+
+**Fix:** `/compact [context]` always full-replaces like grok-build: LLM structured summary (session model), keep last real user query + current-turn tail, prepend the continuation carrier, reload TUI from the session. Local stub when LLM is off or fails. Auto-compact uses the same path at `compaction_threshold`.
+
+**Prevention:** Do not gate manual `/compact` on the auto-compact token threshold. Do not skip `load_messages_from_session` after a compact that mutates `session.messages`.
+
 ### 2026-08-19 — `apply_resume_found_missing_and_latest` flakes on shared `WHYCODE_HOME`
 
 **Symptom:** `Test (linux)` fails `run::tests::apply_resume_found_missing_and_latest`: toast does not contain `No saved`. Isolated re-run is green.

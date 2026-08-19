@@ -561,3 +561,71 @@ async fn scripted_thinking_and_text_emits_events() {
     assert!(saw_intent, "intent event");
     assert!(saw_status, "status event");
 }
+
+#[tokio::test]
+async fn compact_session_local_without_key_keeps_last_user() {
+    let agent = Agent::new(make_test_agent_info("build"));
+    let mut session = whycode_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".into(),
+    );
+    session.add_user_message("old request");
+    session.add_assistant_message(vec![whycode_core::types::ContentBlock::Text {
+        text: "old answer".into(),
+    }]);
+    session.add_user_message("fix login");
+    let outcome = agent
+        .compact_session(&mut session, "script", "m", "", None)
+        .await;
+    assert!(outcome.dropped_messages());
+    assert_eq!(session.messages[0].content.as_text(), Some("fix login"));
+    let last = session.messages.last().unwrap().content.as_text().unwrap();
+    assert!(
+        last.starts_with("This session is being continued"),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn compact_session_uses_llm_summary_when_scripted() {
+    let summary = "<summary>\n1. Primary Request: fix login\n2. Key Technical Concepts: auth\n\
+         3. Files and Code Sections: src/auth.rs\n4. Errors and Fixes: None\n\
+         5. Problem Solving: None\n6. All User Messages: fix login\n\
+         7. Pending Tasks: None\n8. Current Work: editing auth.rs\n\
+         9. Optional Next Step: run tests\n</summary>";
+    let agent = scripted_agent([whycode_llm::ScriptedStep::Text(summary.into())]);
+    let mut session = whycode_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".into(),
+    );
+    session.add_user_message("old");
+    session.add_assistant_message(vec![whycode_core::types::ContentBlock::Text {
+        text: "ack".into(),
+    }]);
+    session.add_user_message("fix login");
+    let outcome = agent
+        .compact_session(&mut session, "script", "m", "k", Some("keep auth.rs"))
+        .await;
+    assert!(outcome.dropped_messages());
+    let last = session.messages.last().unwrap().content.as_text().unwrap();
+    assert!(last.contains("fix login"), "{last}");
+    assert!(last.contains("auth.rs"), "{last}");
+    assert!(
+        last.starts_with("This session is being continued"),
+        "{last}"
+    );
+}
+
+#[tokio::test]
+async fn compact_session_empty_is_noop() {
+    let agent = Agent::new(make_test_agent_info("build"));
+    let mut session = whycode_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".into(),
+    );
+    let outcome = agent
+        .compact_session(&mut session, "script", "m", "", None)
+        .await;
+    assert_eq!(outcome.messages_before, 0);
+    assert!(session.messages.is_empty());
+}
