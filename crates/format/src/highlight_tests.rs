@@ -252,6 +252,35 @@ fn stream_non_prefix_edit_rebuilds() {
 }
 
 #[test]
+fn with_open_code_spans_visits_committed_and_partial() {
+    let _theme = lock_theme();
+    set_syntax_theme(SyntaxTheme::GrokNight);
+    let complete = with_open_code_spans("let a = 1;\n", Some("rust"), |committed, partial| {
+        assert_eq!(committed.len(), 1);
+        assert!(partial.is_none());
+        committed.len()
+    });
+    assert_eq!(complete, Some(1));
+
+    let open = with_open_code_spans("let a = 1;\nlet b", Some("rust"), |committed, partial| {
+        assert_eq!(committed.len(), 1);
+        assert!(partial.is_some());
+        (
+            committed.len(),
+            partial.map(|p| p.iter().map(|(_, t)| t.as_str()).collect::<String>()),
+        )
+    });
+    let (n, tail) = open.expect("rust syntax");
+    assert_eq!(n, 1);
+    assert_eq!(tail.as_deref(), Some("let b"));
+
+    assert!(
+        with_open_code_spans("plain", Some("not-a-language"), |_, _| 0).is_none(),
+        "unknown language must skip the open-stream visitor"
+    );
+}
+
+#[test]
 fn public_api_stream_growth_matches_batch() {
     let _theme = lock_theme();
     set_syntax_theme(SyntaxTheme::GrokNight);
