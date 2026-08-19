@@ -164,6 +164,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 **Prevention:** Compact carriers (`This session is being continued` / `[Compacted`) must not render as `ChatRole::User` prompts.
 
+### 2026-08-19 — `/compact` froze the TUI
+
+**Symptom:** After `/compact` the pager stopped taking keys / redraws until the LLM returned (or the 60s timeout).
+
+**JSONL / crash:** none.
+
+**Root cause:** `handle_slash` awaited `Agent::compact_session` on the event loop. That LLM complete can take tens of seconds (timeout 60s, retries ~90s). Grok runs compact as `CommandRunning` so the pager keeps pumping.
+
+**Fix:** `/compact` only queues `SessionRuntime.pending_compact`. The loop spawns it like a turn (`take_turn_owner` + `TurnOutcome::Compact`). Esc still force-stops.
+
+**Prevention:** Never `.await` an LLM call from `handle_slash` or any other path that sits on the TUI poll loop.
+
 ### 2026-08-19 — `apply_resume_found_missing_and_latest` flakes on shared `WHYCODE_HOME`
 
 **Symptom:** `Test (linux)` fails `run::tests::apply_resume_found_missing_and_latest`: toast does not contain `No saved`. Isolated re-run is green.
