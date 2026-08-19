@@ -3018,7 +3018,19 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
 
         match &msg.content {
             MessageContent::Text(t) => {
-                let mut row = ChatMessage::blank(role, t.clone());
+                // Compact carriers are model-facing user_meta. Grok paints a
+                // session event, not a collapsed ❯ prompt — show the summary
+                // body as a system card so the 9 sections stay readable.
+                let (role, content) =
+                    if role == ChatRole::User && whycode_session::is_compact_summary_text(t) {
+                        (
+                            ChatRole::System,
+                            whycode_session::compact_summary_display_text(t),
+                        )
+                    } else {
+                        (role, t.clone())
+                    };
+                let mut row = ChatMessage::blank(role, content);
                 row.created_at = msg.created_at;
                 out.push(row);
             }

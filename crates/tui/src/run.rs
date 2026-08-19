@@ -6484,6 +6484,25 @@ mod tests {
             h.app.status_message
         );
         assert_eq!(h.session.messages[0].content.as_text(), Some("fix login"));
+        assert!(
+            h.app.messages.iter().any(|m| m.role == ChatRole::System
+                && m.content.contains("Conversation compacted")
+                && !m.content.contains("ran out of context")),
+            "compact summary should render as a system card, not a collapsed user prompt: {:?}",
+            h.app
+                .messages
+                .iter()
+                .map(|m| (
+                    m.role.as_str(),
+                    m.content.chars().take(80).collect::<String>()
+                ))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !h.app.messages.iter().any(|m| m.role == ChatRole::User
+                && m.content.starts_with("This session is being continued")),
+            "compact carrier must not appear as a user ❯ bubble"
+        );
 
         h.run("/bg").await;
         assert!(
