@@ -1060,6 +1060,31 @@ host-only assertion arms as missed lines.
 
 ---
 
+### 2026-08-20 — sandbox 100% floor misses `SSH_AUTH_SOCK` unset
+
+**Symptom:** `Coverage (line floor)` fails `whycode-sandbox` with
+`Uncovered Lines: crates/sandbox/src/bwrap.rs: 105` (the closing `}` of
+`if let Ok(auth_sock) = std::env::var("SSH_AUTH_SOCK")`). Workspace 78%
+and the other 100% crates are green. Isolated `cargo test -p whycode-sandbox`
+is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** That `if let` sits inside `if let Some(home) = HOME`.
+Tests either unset `HOME` (skip the whole block) or set `SSH_AUTH_SOCK`
+to a path. The self-hosted runner usually already has an agent socket, so
+the `Err` arm is never taken and llvm-cov attributes the closing brace
+to the miss.
+
+**Fix:** `prepare_bwrap_without_home_and_root_auth_sock` now also sets
+`HOME` and *removes* `SSH_AUTH_SOCK`.
+
+**Prevention:** Env-dependent `if let Ok(std::env::var(…))` in a 100%
+crate needs an explicit unset test under `env_lock()`, not just the
+happy path. Do not "fix" by dropping the crate off the 100% list.
+
+---
+
 
 ### Template (copy for new entries)
 
