@@ -201,20 +201,17 @@ pub fn highlight_code_spans(code: &str, language: Option<&str>) -> Arc<Vec<Vec<C
 
     // Known languages go through the open-stream highlighter so a growing
     // fence pays O(new lines) instead of re-tokenising the whole body.
-    if find_syntax_for(syntax_set(), language, code).is_some() {
-        let mut stream = recover_lock(open_stream().lock());
-        let Some(()) = stream.highlight_in_place(code, language) else {
-            drop(stream);
-            let computed = Arc::new(highlight_uncached(code, language));
-            insert_closed(key, Arc::clone(&computed));
-            return computed;
-        };
-        let mut lines = stream.committed_lines.clone();
-        if let Some(p) = &stream.partial {
-            lines.push(p.clone());
+    if let Some((lines, committed)) = with_open_code_spans(code, language, |committed, partial| {
+        let mut lines = Vec::with_capacity(committed.len() + usize::from(partial.is_some()));
+        lines.extend(committed.iter().cloned());
+        if let Some(p) = partial {
+            lines.push(p.to_vec());
         }
-        let committed = stream.is_fully_committed(code);
-        drop(stream);
+        // Same as `OpenStreamHighlighter::is_fully_committed`: no partial
+        // tail means every byte is a committed newline-terminated line.
+        let fully = partial.is_none() && (code.is_empty() || code.ends_with('\n'));
+        (lines, fully)
+    }) {
         let arc = Arc::new(lines);
         if committed {
             insert_closed(key, Arc::clone(&arc));
@@ -443,6 +440,7 @@ impl OpenStreamHighlighter {
     }
 
     /// Whether every byte of `code` is in the committed prefix (no partial tail).
+    #[cfg(test)]
     fn is_fully_committed(&self, code: &str) -> bool {
         self.committed_source == code && self.partial.is_none()
     }
