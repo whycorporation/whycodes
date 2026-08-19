@@ -23,7 +23,7 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 
 † whycode ACP: deliberately **post-product** (`status.md`, 2026-08-04).  
 ‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.  
-§ whycode OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google`, `xai` (`whycode auth login` or in-TUI `/connect`); API-call routing live for all five (openai → Codex backend, google → Code Assist, xAI → `api.x.ai` with `X-XAI-Token-Auth`). Credential import: `whycode auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([../auth.md](../auth.md), [plan-oauth](plan-oauth.md)).
+§ whycode OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google`, `xai` (`whycode auth login` or in-TUI `/connect`); API-call routing live for all five (openai → Codex backend, google → Code Assist, xAI OAuth → `cli-chat-proxy.grok.com`). Credential import: `whycode auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([../auth.md](../auth.md), [plan-oauth](plan-oauth.md)).
 
 ---
 

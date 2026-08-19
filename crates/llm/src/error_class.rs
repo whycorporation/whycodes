@@ -82,6 +82,9 @@ impl ClassifiedError {
             ErrorKind::Timeout => "Request timed out".into(),
             ErrorKind::Auth => {
                 let lower = self.message.to_ascii_lowercase();
+                if lower.contains("xai") {
+                    return "xAI authentication failed — run `whycode auth login xai` (or set XAI_API_KEY)".into();
+                }
                 if lower.contains("not eligible") && lower.contains("code assist") {
                     // Gemini Code Assist free-tier eligibility is account-based;
                     // the credential is fine, so "check API key" misleads.
@@ -428,6 +431,14 @@ mod tests {
     fn auth_401_keeps_the_key_hint() {
         let c = classify_message("Provider API error (401): Unauthorized");
         assert_eq!(c.user_message(), "Authentication failed — check API key");
+    }
+
+    #[test]
+    fn xai_401_points_at_login_not_api_key() {
+        let c = classify_message("xAI API error (401): Unauthorized");
+        let msg = c.user_message();
+        assert!(msg.contains("auth login xai"), "{msg}");
+        assert!(!msg.contains("check API key"), "{msg}");
     }
 
     #[test]
