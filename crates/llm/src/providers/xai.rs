@@ -1,5 +1,10 @@
 /// xAI Grok LLM provider.
 /// OpenAI-compatible API at api.x.ai.
+///
+/// Console API keys (`xai-…`) go as `Authorization: Bearer`. Subscription
+/// tokens from `whycode auth login xai` are JWTs and need the
+/// `X-XAI-Token-Auth: xai-grok-cli` selector the public Grok client uses
+/// so `api.x.ai` treats them as account sessions rather than API keys.
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
@@ -11,6 +16,22 @@ use async_trait::async_trait;
 
 pub struct XaiProvider {
     name: String,
+}
+
+/// True when `key` is an xAI OAuth access token (JWT) rather than a
+/// console API key (`xai-…`).
+pub fn is_xai_oauth_token(key: &str) -> bool {
+    key.starts_with("eyJ") && key.matches('.').count() == 2
+}
+
+fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
+    let req =
+        crate::client_identity::post(url).header("Authorization", format!("Bearer {api_key}"));
+    if is_xai_oauth_token(api_key) {
+        req.header("X-XAI-Token-Auth", "xai-grok-cli")
+    } else {
+        req
+    }
 }
 
 impl XaiProvider {
@@ -78,12 +99,10 @@ impl LlmProvider for XaiProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = crate::client_identity::post(self.default_base_url())
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+            authed_post(self.default_base_url(), key).json(&body)
+        })
+        .await?;
 
         let status = resp.status();
         let json: Value = resp
@@ -122,12 +141,10 @@ impl LlmProvider for XaiProvider {
         let mut body = self.build_body(request, model);
         crate::openai_compat::attach_stream_usage_option(&mut body);
 
-        let resp = crate::client_identity::post(self.default_base_url())
-            .header("Authorization", format!("Bearer {}", api_key))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+            authed_post(self.default_base_url(), key).json(&body)
+        })
+        .await?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -186,5 +203,18 @@ impl LlmProvider for XaiProvider {
 impl Default for XaiProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oauth_jwts_are_distinguished_from_console_keys() {
+        assert!(is_xai_oauth_token("eyJhbGciOiJ.eyJzdWIiOiJx.sig"));
+        assert!(!is_xai_oauth_token("xai-abc123"));
+        assert!(!is_xai_oauth_token("eyJnoDots"));
+        assert!(!is_xai_oauth_token(""));
     }
 }

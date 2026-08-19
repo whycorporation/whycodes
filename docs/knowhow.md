@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — xAI loopback login is CORS/PNA, not only a 302
+
+**Symptom:** Browser Grok/xAI sign-in would hang or fail if the loopback waiter treated the first TCP request as the code.
+
+**JSONL / crash:** none.
+
+**Root cause:** Grok Build's public client (`auth.x.ai`) lets the accounts app at `https://accounts.x.ai` fetch `http://127.0.0.1:<port>/callback` (Chrome Private Network Access). That starts with OPTIONS, and the GET needs `Access-Control-Allow-Private-Network`. A one-shot HTTP/1.1 accept (favicon / preflight) would miss the `code`.
+
+**Fix:** `wait_for_callback` ignores OPTIONS and requests without `code`/`error`, answers CORS/PNA, and uses `127.0.0.1` in the xAI redirect URI. API calls send `X-XAI-Token-Auth: xai-grok-cli` for JWT subscription tokens.
+
+**Prevention:** Do not collapse the loopback waiter to a single accept. Do not advertise `localhost` for a client registered as `127.0.0.1`.
+
 ### 2026-08-19 — Streaming code fence was O(N) Line clones per frame
 
 **Symptom:** A long streamed ` ```rust ` dump made the TUI hitch. Idle startup/scroll were already cheap; the live bubble felt slow.

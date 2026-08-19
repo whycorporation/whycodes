@@ -2,9 +2,9 @@
 //!
 //! The flows reuse the public, pre-registered OAuth client ids that
 //! first-party and community terminal agents already ship (Claude Code,
-//! Codex CLI, Gemini CLI, VS Code's GitHub client). whycode cannot register
-//! its own client for these providers, so subscription login rides on the
-//! same identifiers a user's first-party CLI would use.
+//! Codex CLI, Gemini CLI, VS Code's GitHub client, Grok Build). whycode
+//! cannot register its own client for these providers, so subscription
+//! login rides on the same identifiers a user's first-party CLI would use.
 //!
 //! Flow shape per provider:
 //! - `anthropic` — PKCE, browser. The public Claude client's registered
@@ -17,6 +17,9 @@
 //! - `github-copilot` — GitHub device-code flow (the only grant GitHub
 //!   offers this client), then the GitHub token is exchanged for the
 //!   short-lived Copilot API token.
+//! - `xai` — PKCE, browser → loopback callback on an ephemeral
+//!   `127.0.0.1` port (the public Grok Build client is registered that
+//!   way per RFC 8252). SuperGrok / X Premium tokens go to `api.x.ai`.
 //!
 //! Security: tokens are printed nowhere. URLs contain only the PKCE
 //! challenge (never the verifier). The verifier and tokens stay in memory
@@ -105,6 +108,9 @@ pub struct ProviderSpec {
     /// Fixed loopback port when the registered redirect demands one
     /// (OpenAI). `None` → bind an ephemeral port.
     pub loopback_port: Option<u16>,
+    /// Host used in the loopback redirect URI. `None` → `localhost`.
+    /// xAI's public client is registered for `127.0.0.1` (RFC 8252).
+    pub loopback_host: Option<&'static str>,
     /// Path the loopback listener answers on.
     pub callback_path: &'static str,
     /// Extra authorize-url query pairs (provider-specific switches).
@@ -131,6 +137,7 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             token_encoding: TokenEncoding::Json,
             redirect_uri: Some("https://console.anthropic.com/oauth/code/callback"),
             loopback_port: None,
+            loopback_host: None,
             callback_path: "",
             extra_authorize: &[("code", "true")],
             derived: None,
@@ -149,6 +156,7 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             token_encoding: TokenEncoding::Form,
             redirect_uri: None,
             loopback_port: Some(1455),
+            loopback_host: None,
             callback_path: "/auth/callback",
             extra_authorize: &[
                 ("id_token_add_organizations", "true"),
@@ -169,6 +177,7 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             token_encoding: TokenEncoding::Form,
             redirect_uri: None,
             loopback_port: None,
+            loopback_host: None,
             callback_path: "/oauth2callback",
             extra_authorize: &[("access_type", "offline"), ("prompt", "consent")],
             derived: None,
@@ -187,6 +196,7 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             token_encoding: TokenEncoding::Form,
             redirect_uri: None,
             loopback_port: None,
+            loopback_host: None,
             callback_path: "",
             extra_authorize: &[],
             derived: Some(DerivedCredential {
@@ -194,6 +204,25 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
                 auth_scheme: "token",
                 headers: &[("Editor-Version", "vscode/1.95.0")],
             }),
+        }),
+        // Public Grok Build client. Redirect is loopback
+        // `http://127.0.0.1/callback` (port-agnostic per RFC 8252).
+        "xai" => Ok(ProviderSpec {
+            name: "xai",
+            label: "xAI (Grok / SuperGrok)",
+            flow: FlowKind::LoopbackPkce,
+            client_id: "b1a00492-073a-47ea-816f-4c329264a828",
+            client_secret: None,
+            authorize_url: "https://auth.x.ai/oauth2/authorize",
+            token_url: "https://auth.x.ai/oauth2/token",
+            scopes: "openid profile email offline_access grok-cli:access api:access",
+            token_encoding: TokenEncoding::Form,
+            redirect_uri: None,
+            loopback_port: None,
+            loopback_host: Some("127.0.0.1"),
+            callback_path: "/callback",
+            extra_authorize: &[("referrer", "whycode")],
+            derived: None,
         }),
         other => Err(AuthError::UnsupportedProvider(other.to_string())),
     }
@@ -436,7 +465,8 @@ async fn loopback_login(
         None => flow::bind_loopback()?.0,
     };
     let port = listener.local_addr().map_err(AuthError::Io)?.port();
-    let redirect_uri = format!("http://localhost:{port}{}", spec.callback_path);
+    let host = spec.loopback_host.unwrap_or("localhost");
+    let redirect_uri = format!("http://{host}:{port}{}", spec.callback_path);
     let url = flow::authorize_url(
         spec.authorize_url,
         spec.client_id,
@@ -890,6 +920,7 @@ pub fn suggested_models(provider: &str) -> &'static [&'static str] {
         "openai" => &["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
         "github-copilot" => &["gpt-4.1", "gpt-4o"],
         "google" => &["gemini-3.6-flash", "gemini-3.5-flash"],
+        "xai" => &["grok-4.6", "grok-4.5", "grok-build-0.1"],
         _ => &[],
     }
 }
@@ -966,6 +997,16 @@ pub fn validate(spec: &ProviderSpec) -> Vec<String> {
                     spec.name
                 ),
             );
+            if let Some(host) = spec.loopback_host {
+                check(
+                    &mut issues,
+                    host == "localhost" || host == "127.0.0.1",
+                    format!(
+                        "{}: loopback_host must be \"localhost\" or \"127.0.0.1\"",
+                        spec.name
+                    ),
+                );
+            }
         }
         FlowKind::PasteCodePkce => {
             let ok = match spec.redirect_uri {
@@ -991,6 +1032,13 @@ pub fn validate(spec: &ProviderSpec) -> Vec<String> {
                 ),
             );
         }
+    }
+    if spec.flow != FlowKind::LoopbackPkce {
+        check(
+            &mut issues,
+            spec.loopback_host.is_none(),
+            format!("{}: loopback_host is only for LoopbackPkce", spec.name),
+        );
     }
 
     // Authorize-url extras: no empty or duplicate keys.
@@ -1086,6 +1134,9 @@ mod tests {
             spec_for("github-copilot").unwrap().flow,
             FlowKind::DeviceCode
         );
+        assert_eq!(spec_for("xai").unwrap().flow, FlowKind::LoopbackPkce);
+        assert_eq!(spec_for("xai").unwrap().loopback_host, Some("127.0.0.1"));
+        assert_eq!(spec_for("xai").unwrap().callback_path, "/callback");
     }
 
     #[test]

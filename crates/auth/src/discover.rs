@@ -1,7 +1,7 @@
 //! Credential discovery and consented import from other CLIs.
 //!
 //! The machine very likely already holds working credentials for Claude
-//! Code, Codex CLI, Gemini CLI or GitHub Copilot. This module locates those
+//! Code, Codex CLI, Gemini CLI, GitHub Copilot or Grok Build. This module locates those
 //! files, but **never reads one until the user approves that exact path**,
 //! and never modifies one either (no move, rewrite, or permission change;
 //! symlinked sources are refused outright — a planted link could point at
@@ -62,6 +62,12 @@ pub const KNOWN_SOURCES: &[KnownSource] = &[
         label: "GitHub Copilot",
         rel_path: ".config/github-copilot/hosts.json",
         parse: parse_copilot,
+    },
+    KnownSource {
+        provider: "xai",
+        label: "Grok Build",
+        rel_path: ".grok/auth.json",
+        parse: parse_grok_build,
     },
 ];
 
@@ -328,6 +334,59 @@ fn parse_gemini(json: &Value) -> Result<OAuthToken> {
     })
 }
 
+/// Grok Build `~/.grok/auth.json`: a map of scope keys to credential
+/// objects. The OAuth2 slot is `https://auth.x.ai::<client_id>` with
+/// `key` (access token), `refresh_token`, `expires_at` (RFC 3339).
+/// API-key slots (`xai::api_key` / `auth_mode: api_key`) are skipped.
+fn parse_grok_build(json: &Value) -> Result<OAuthToken> {
+    let obj = json.as_object().ok_or_else(|| {
+        AuthError::TokenExchange("Grok Build auth.json is not an object".to_string())
+    })?;
+    let mut fallback: Option<&Value> = None;
+    let mut preferred: Option<&Value> = None;
+    for (k, v) in obj {
+        if k == "xai::api_key" || k.contains("::api_key") {
+            continue;
+        }
+        if v.get("auth_mode").and_then(Value::as_str) == Some("api_key") {
+            continue;
+        }
+        let Some(access) = v.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        if access.is_empty() {
+            continue;
+        }
+        if k.contains("auth.x.ai") {
+            preferred = Some(v);
+            break;
+        }
+        if fallback.is_none() {
+            fallback = Some(v);
+        }
+    }
+    let entry = preferred.or(fallback).ok_or_else(|| {
+        AuthError::TokenExchange("Grok Build auth.json has no OAuth credential".to_string())
+    })?;
+    let access = need(entry, "/key")?.to_string();
+    let refresh = entry
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let expires_at = entry
+        .get("expires_at")
+        .and_then(Value::as_str)
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+        .map(|dt| dt.with_timezone(&chrono::Utc));
+    Ok(OAuthToken {
+        access_token: access,
+        refresh_token: refresh,
+        expires_at,
+        extra: Default::default(),
+    })
+}
+
 /// GitHub Copilot `~/.config/github-copilot/hosts.json`:
 /// `{"github.com":{"oauth_token":"gho_…","user":…}}`. No expiry; the
 /// derived Copilot API token is exchanged on first use.
@@ -419,6 +478,37 @@ mod tests {
         assert_eq!(token.access_token, "gho_abc");
         assert!(token.refresh_token.is_none());
         assert!(token.expires_at.is_none());
+    }
+
+    #[test]
+    fn parses_grok_build_auth_json_prefers_xai_oauth_slot() {
+        let json = serde_json::json!({
+            "xai::api_key": {
+                "key": "xai-should-skip",
+                "auth_mode": "api_key"
+            },
+            "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828": {
+                "key": "oauth-access",
+                "auth_mode": "oidc",
+                "refresh_token": "oauth-refresh",
+                "expires_at": "2030-01-01T00:00:00Z"
+            }
+        });
+        let token = parse_grok_build(&json).unwrap();
+        assert_eq!(token.access_token, "oauth-access");
+        assert_eq!(token.refresh_token.as_deref(), Some("oauth-refresh"));
+        assert!(token.expires_at.is_some());
+    }
+
+    #[test]
+    fn parse_grok_build_skips_api_key_only_store() {
+        let json = serde_json::json!({
+            "xai::api_key": {
+                "key": "xai-only",
+                "auth_mode": "api_key"
+            }
+        });
+        assert!(parse_grok_build(&json).is_err());
     }
 
     #[test]

@@ -5,7 +5,7 @@ whycode accepts two credential kinds per provider:
 1. **API keys** — env var (`ANTHROPIC_API_KEY`, …) or `api_key` in `config.toml`.
 2. **OAuth subscription login** — `whycode auth login <provider>` stores a
    token from an existing subscription (Claude Pro/Max, ChatGPT Plus/Pro,
-   GitHub Copilot, Google/Gemini).
+   GitHub Copilot, Google/Gemini, xAI SuperGrok / X Premium).
 
 Resolution order is always: **env var → config `api_key` → OAuth store**.
 An explicit key therefore never loses to a stored subscription login.
@@ -17,6 +17,7 @@ whycode auth login anthropic          # browser sign-in (Claude Pro/Max)
 whycode auth login openai             # browser sign-in (ChatGPT Plus/Pro)
 whycode auth login github-copilot     # device code on github.com
 whycode auth login google             # browser sign-in (Gemini)
+whycode auth login xai                # browser sign-in (SuperGrok / X Premium)
 whycode auth login <p> --no-browser   # print the URL instead of opening it
 whycode auth status                   # who is logged in (never prints tokens)
 whycode auth logout <provider>        # remove stored credential
@@ -58,6 +59,7 @@ community CLIs — whycode has no registered client of its own.
 | `openai` | PKCE → loopback callback on the registered port `localhost:1455` | ✅ yes — JWT-shaped subscription tokens are routed to the Codex backend (`chatgpt.com/backend-api/codex/responses`, Responses API) with the stored `chatgpt-account-id`; API keys keep the `api.openai.com` chat-completions path (`crates/llm/src/codex.rs`) |
 | `github-copilot` | GitHub device-code grant → GitHub token is exchanged for the short-lived Copilot API token | ✅ yes — `github-copilot` provider calls `api.githubcopilot.com/chat/completions`; the Copilot token re-exchanges automatically near expiry |
 | `google` | PKCE → loopback callback on an ephemeral port | ✅ yes — `ya29.…` OAuth tokens are routed to the Code Assist endpoint (`cloudcode-pa.googleapis.com/v1internal`) with `loadCodeAssist`/`onboardUser` project discovery (`GOOGLE_CLOUD_PROJECT` overrides); `AIza…` API keys keep the `generativelanguage` route (`crates/llm/src/codeassist.rs`) |
+| `xai` | PKCE → loopback callback on an ephemeral `127.0.0.1` port (`/callback`); public Grok Build client | ✅ yes — JWT subscription tokens are sent as `Authorization: Bearer` plus `X-XAI-Token-Auth: xai-grok-cli` to `api.x.ai`; console keys (`xai-…`) stay Bearer-only (`crates/llm/src/providers/xai.rs`) |
 
 Expired access tokens refresh transparently on next use (GitHub's token
 does not expire; the derived Copilot token does and is re-exchanged). If a
@@ -76,6 +78,7 @@ imports them **only after explicit per-path approval**:
 | Codex CLI | `~/.codex/auth.json` | `openai` |
 | Gemini CLI | `~/.gemini/oauth_creds.json` | `google` |
 | GitHub Copilot | `~/.config/github-copilot/hosts.json` | `github-copilot` |
+| Grok Build | `~/.grok/auth.json` | `xai` |
 
 The consent model (mirroring jcode's `OAUTH.md`):
 

@@ -25,4 +25,4 @@ pub use store::TokenStore;
 pub use token::{OAuthToken, ProviderAuth};
 
 /// Providers that support OAuth subscription login.
-pub const OAUTH_PROVIDERS: &[&str] = &["anthropic", "openai", "github-copilot", "google"];
+pub const OAUTH_PROVIDERS: &[&str] = &["anthropic", "openai", "github-copilot", "google", "xai"];
