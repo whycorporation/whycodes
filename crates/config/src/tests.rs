@@ -1022,6 +1022,7 @@ fn get_command_config_returns_override() {
 
 #[test]
 fn project_path_uses_configured_or_cwd() {
+    let _guard = lock_env();
     let cfg = Config::default();
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     assert_eq!(cfg.project_path(), cwd);

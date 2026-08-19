@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — Coverage flake: `project_path_uses_configured_or_cwd` vs chdir
+
+**Symptom:** `Coverage (line floor)` fails `tests::project_path_uses_configured_or_cwd` (`left` a `/tmp/.tmp*` dir, `right` `crates/config`). `Test (linux)` is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `project_path_falls_back_when_cwd_gone` `set_current_dir`s a tempfile under `ENV_LOCK`. The other test read cwd twice without the lock, so a parallel thread could chdir between the snapshot and `Config::project_path()`.
+
+**Fix:** Hold `lock_env()` in `project_path_uses_configured_or_cwd`.
+
+**Prevention:** Any test that reads `current_dir()` in this crate must take `ENV_LOCK`. Process cwd is global to the test binary.
+
 ### 2026-08-19 — xAI loopback login is CORS/PNA, not only a 302
 
 **Symptom:** Browser Grok/xAI sign-in would hang or fail if the loopback waiter treated the first TCP request as the code.
