@@ -1399,6 +1399,12 @@ async fn cmd_run(
                         outcome.tokens_before,
                         outcome.tokens_after
                     );
+                    if let Some(last) = session.messages.last()
+                        && let Some(text) = last.content.as_text()
+                        && whycode_session::is_compact_summary_text(text)
+                    {
+                        println!("{}", whycode_session::compact_summary_display_text(text));
+                    }
                     continue;
                 }
                 "/diff" => {

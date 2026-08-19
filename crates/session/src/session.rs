@@ -269,6 +269,28 @@ pub fn format_compact_summary_content(raw: &str) -> String {
     format!("{COMPACT_CONTINUATION_PREAMBLE}\n\n{cleaned}")
 }
 
+/// Human-facing compact card: drop the model preamble, keep the summary body.
+pub fn compact_summary_display_text(text: &str) -> String {
+    let t = text.trim();
+    let mut rest = t;
+    for prefix in [
+        COMPACT_CONTINUATION_PREAMBLE,
+        "[Compacted earlier conversation]",
+    ] {
+        if let Some(stripped) = t.strip_prefix(prefix) {
+            rest = stripped.trim();
+            break;
+        }
+    }
+    if rest.is_empty() {
+        "Conversation compacted".into()
+    } else if rest.starts_with("Conversation compacted") {
+        rest.to_string()
+    } else {
+        format!("Conversation compacted\n{rest}")
+    }
+}
+
 fn summarize_trimmed(trimmed: &[Message]) -> String {
     let mut users = 0usize;
     let mut assistants = 0usize;
@@ -1778,6 +1800,11 @@ mod tests {
         );
         assert!(carrier.contains("fix login"), "{carrier}");
         assert!(is_compact_summary_text(&carrier));
+
+        let shown = compact_summary_display_text(&carrier);
+        assert!(shown.starts_with("Conversation compacted"), "{shown}");
+        assert!(!shown.contains("ran out of context"), "{shown}");
+        assert!(shown.contains("fix login"), "{shown}");
     }
 
     #[test]

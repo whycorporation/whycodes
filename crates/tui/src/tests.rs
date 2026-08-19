@@ -1184,6 +1184,41 @@ fn load_messages_from_session_restores_user_and_assistant() {
 }
 
 #[test]
+fn load_messages_renders_compact_carrier_as_system_summary() {
+    use crate::app::{ChatRole, chat_messages_from_session};
+    use whycode_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.add_user_message("fix login");
+    session.apply_full_replace(
+        "<summary>\n1. Primary Request: fix login\n2. Files: src/auth.rs\n</summary>",
+    );
+
+    let msgs = chat_messages_from_session(&session);
+    assert!(
+        msgs.iter()
+            .any(|m| m.role == ChatRole::User && m.content == "fix login"),
+        "{:?}",
+        msgs.iter().map(|m| &m.content).collect::<Vec<_>>()
+    );
+    let summary = msgs
+        .iter()
+        .find(|m| m.role == ChatRole::System)
+        .expect("compact carrier should be a system card");
+    assert!(
+        summary.content.starts_with("Conversation compacted"),
+        "{}",
+        summary.content
+    );
+    assert!(summary.content.contains("fix login"), "{}", summary.content);
+    assert!(
+        !summary.content.contains("ran out of context"),
+        "preamble stays model-only: {}",
+        summary.content
+    );
+}
+
+#[test]
 fn load_messages_uses_transcript_estimate_not_session_usage() {
     use whycode_core::types::Usage;
     use whycode_session::session::Session;

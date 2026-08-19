@@ -1468,6 +1468,7 @@ impl CalloutKind {
             || head.contains("ready")
             || head.contains("loaded")
             || head.contains("success")
+            || head.contains("compacted")
         {
             Self::Success
         } else {
@@ -1505,7 +1506,7 @@ impl CalloutKind {
 
 /// Compact system notices: little vertical space, quiet in the stream, still
 /// readable. Title in normal fg; steps dim. No panel fill / bold / padding rows.
-fn system_callout(content: &str, palette: &ThemePalette, _width: u16) -> Vec<Line<'static>> {
+fn system_callout(content: &str, palette: &ThemePalette, width: u16) -> Vec<Line<'static>> {
     let kind = CalloutKind::from_content(content);
     let accent = kind.accent(palette);
     let mut lines = Vec::new();
@@ -1549,16 +1550,31 @@ fn system_callout(content: &str, palette: &ThemePalette, _width: u16) -> Vec<Lin
         Span::styled(title_text, Style::default().fg(palette.fg)),
     ]));
 
+    // Body sits under the title. Wrap so a compact summary (or any long
+    // notice) is readable instead of one clipped terminal row.
+    let wrap_w = width.saturating_sub(4).max(16);
     for line in body.iter().skip(1) {
         let t = line.trim();
         if t.is_empty() {
             continue;
         }
-        // Steps / detail sit one level quieter under the title.
-        lines.push(Line::from(vec![
-            Span::styled("│ ".to_string(), Style::default().fg(accent)),
-            Span::styled(format!("  {t}"), Style::default().fg(palette.dim)),
-        ]));
+        let wrapped = crate::widgets::wrap::wrap_text(t, wrap_w);
+        if wrapped.is_empty() {
+            continue;
+        }
+        for row in wrapped {
+            if row.byte_range.0 >= row.byte_range.1 {
+                continue;
+            }
+            let slice = t[row.byte_range.0..row.byte_range.1].trim_end();
+            if slice.is_empty() {
+                continue;
+            }
+            lines.push(Line::from(vec![
+                Span::styled("│ ".to_string(), Style::default().fg(accent)),
+                Span::styled(format!("  {slice}"), Style::default().fg(palette.dim)),
+            ]));
+        }
     }
 
     lines

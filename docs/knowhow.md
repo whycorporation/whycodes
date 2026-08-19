@@ -152,6 +152,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 **Prevention:** Do not gate manual `/compact` on the auto-compact token threshold. Do not skip `load_messages_from_session` after a compact that mutates `session.messages`.
 
+### 2026-08-19 — Compact summary hid behind the user-prompt 3-line fold
+
+**Symptom:** After `/compact`, the chat showed `❯ This session is being continued…` and ` …`. The 9-section summary was not visible.
+
+**JSONL / crash:** none.
+
+**Root cause:** The model carrier is a user message. TUI paints user prompts like Grok `UserPromptBlock` (3 lines + ellipsis). The long preamble filled the cap. Grok does not put that carrier in the scrollback — it paints a session event ("Compaction completed" / "Context compacted: 48.8k → 27.1k") and keeps the summary model-only.
+
+**Fix:** `chat_messages_from_session` maps compact carriers to a system card titled `Conversation compacted` with the summary body (preamble stripped). System callouts wrap so the sections stay readable.
+
+**Prevention:** Compact carriers (`This session is being continued` / `[Compacted`) must not render as `ChatRole::User` prompts.
+
 ### 2026-08-19 — `apply_resume_found_missing_and_latest` flakes on shared `WHYCODE_HOME`
 
 **Symptom:** `Test (linux)` fails `run::tests::apply_resume_found_missing_and_latest`: toast does not contain `No saved`. Isolated re-run is green.
