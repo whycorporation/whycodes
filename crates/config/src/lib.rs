@@ -931,8 +931,9 @@ pub struct SessionConfig {
     /// (`ask` / `plan`) still enforce tool denylists regardless of this flag.
     #[serde(default = "default_intent_guidance")]
     pub intent_guidance: String,
-    /// When over `compaction_threshold`, after local prune: `"auto"` (default)
-    /// may call a small model to summarize dropped history; `"off"` is local only.
+    /// Full-replace compact (manual `/compact` and auto over threshold):
+    /// `"auto"` (default) asks the session model for a structured summary;
+    /// `"off"` is the local stub only.
     #[serde(default = "default_compaction_llm")]
     pub compaction_llm: String,
 }

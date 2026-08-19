@@ -1376,17 +1376,29 @@ async fn cmd_run(
                     continue;
                 }
                 "/compact" | "/summarize" => {
-                    let before = session.messages.len();
-                    let outcome = session.compact(config.session.compaction_threshold);
+                    if session.messages.is_empty() {
+                        println!("{} Nothing to compact.", "ℹ".cyan());
+                        continue;
+                    }
+                    let note = rest.trim();
+                    println!("{} Compacting conversation…", "…".dimmed());
+                    let outcome = agent
+                        .compact_session(
+                            &mut session,
+                            &provider,
+                            &model,
+                            &api_key,
+                            if note.is_empty() { None } else { Some(note) },
+                        )
+                        .await;
                     println!(
-                        "{} Compacted session ({} → {} messages, ~{} → ~{} tok).",
+                        "{} Conversation compacted ({} → {} messages, ~{} → ~{} tok).",
                         "✓".green(),
                         outcome.messages_before,
                         outcome.messages_after,
                         outcome.tokens_before,
                         outcome.tokens_after
                     );
-                    let _ = before;
                     continue;
                 }
                 "/diff" => {
@@ -1839,7 +1851,8 @@ fn print_slash_help() {
     println!("  /undo                  — Undo last message + file changes (git)");
     println!("  /redo                  — Redo previously undone turn");
     println!("  /share, /export        — Export session JSON");
-    println!("  /compact, /summarize   — Compact long context");
+    println!("  /compact [context]     — Compact conversation (LLM summary)");
+    println!("  /summarize             — Alias for /compact");
     println!("  /diff                  — Git status + diff --stat");
     println!("  /context               — Context window breakdown");
     println!("  /review                — AI review of git changes");
