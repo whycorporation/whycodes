@@ -148,9 +148,9 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 **Root cause:** Console keys (`xai-…`) authorize `api.x.ai`. SuperGrok / X Premium OAuth tokens authorize the Grok Build proxy `https://cli-chat-proxy.grok.com/v1` with `X-XAI-Token-Auth: xai-grok-cli`. Sending the subscription token to `api.x.ai/v1/chat/completions` is a 401.
 
-**Fix:** `XaiProvider` routes non-`xai-` credentials to the proxy (chat completions + proxy headers). API keys stay on `api.x.ai`.
+**Fix:** `XaiProvider` routes non-`xai-` credentials to the proxy (chat completions + Grok CLI identity: `User-Agent: grok-shell/…`, `x-grok-client-identifier`, `X-XAI-Token-Auth`). A whycode UA / GitHub `HTTP-Referer` yields `upstream=Unauthenticated, reason=no auth context` even with a fresh token. API keys stay on `api.x.ai`.
 
-**Prevention:** Do not treat Grok account login as an `XAI_API_KEY`. Mirror Codex: subscription token → first-party proxy, key → public API.
+**Prevention:** Do not treat Grok account login as an `XAI_API_KEY`. Do not send `client_identity::post` (whycode Referer) to `cli-chat-proxy.grok.com`.
 
 ### 2026-08-19 — Coverage flake: `project_path_uses_configured_or_cwd` vs chdir
 
