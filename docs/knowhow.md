@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — `apply_resume_found_missing_and_latest` flakes on shared `WHYCODE_HOME`
+
+**Symptom:** `Test (linux)` fails `run::tests::apply_resume_found_missing_and_latest`: toast does not contain `No saved`. Isolated re-run is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `isolate_home()` uses a process-wide OnceLock temp dir. Parallel tests persist sessions into the same store, so `RESUME_LATEST` resumes a sibling session instead of the empty-store warning.
+
+**Fix:** That test uses `isolate_home_fresh()` — a mutex plus a unique temp dir held for the test body.
+
+**Prevention:** Tests that assert on an empty session store must not share `WHYCODE_HOME` with other tests.
+
 ### 2026-08-19 — Coverage flake: nucleo `rearm` tick(5) is too short under llvm-cov
 
 **Symptom:** `Coverage (line floor)` fails `picker_flow_over_real_index` with `Ready { total: 4 }` and `matches=[]`. Isolated re-run and the `Test` job are green. Same shape as the 2026-08-16 picker note.

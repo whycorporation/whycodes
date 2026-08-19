@@ -141,13 +141,7 @@ pub(crate) fn ensure_parent(path: &Path) -> io::Result<()> {
 
 /// Emit a structured event to the process-wide `unified.jsonl` (no-op if not init'd).
 pub fn emit(src: &str, lvl: &str, msg: &str, ctx: Option<serde_json::Value>) {
-    if let Some(state) = STATE.get() {
-        let mut event = LogEvent::new(src, lvl, msg);
-        event.pid = state.pid;
-        event.ver = state.version.clone();
-        event.ctx = ctx;
-        let _ = write_jsonl_locked(&state.unified, &event);
-    }
+    emit_to_state(STATE.get(), src, lvl, msg, None, ctx);
 }
 
 /// Like [`emit`] but attaches a session id.
@@ -158,14 +152,32 @@ pub fn emit_sid(
     sid: Option<&str>,
     ctx: Option<serde_json::Value>,
 ) {
-    if let Some(state) = STATE.get() {
-        let mut event = LogEvent::new(src, lvl, msg);
-        event.pid = state.pid;
-        event.ver = state.version.clone();
-        event.sid = sid.map(|s| s.to_string());
-        event.ctx = ctx;
-        let _ = write_jsonl_locked(&state.unified, &event);
-    }
+    emit_to_state(STATE.get(), src, lvl, msg, sid, ctx);
+}
+
+fn emit_to_state(
+    state: Option<&LoggingState>,
+    src: &str,
+    lvl: &str,
+    msg: &str,
+    sid: Option<&str>,
+    ctx: Option<serde_json::Value>,
+) {
+    let Some(state) = state else {
+        return;
+    };
+    let mut event = LogEvent::new(src, lvl, msg);
+    event.pid = state.pid;
+    event.ver = state.version.clone();
+    event.sid = sid.map(|s| s.to_string());
+    event.ctx = ctx;
+    let _ = write_jsonl_locked(&state.unified, &event);
+}
+
+/// Cover the uninitialized skip even after another test has set `STATE`.
+#[cfg(test)]
+pub(crate) fn emit_uninitialized_for_test() {
+    emit_to_state(None, "test", "info", "uninitialized", None, None);
 }
 
 pub(crate) fn write_jsonl_locked(file: &Mutex<File>, event: &LogEvent) -> io::Result<()> {

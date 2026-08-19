@@ -384,6 +384,8 @@ mod logging_tests {
         // Ensure we don't panic when STATE is empty. May race with other tests
         // that init; best-effort only.
         emit("test", "info", "noop", None);
+        // Force the uninitialized skip even if another test already set STATE.
+        crate::logging::emit_uninitialized_for_test();
     }
 
     #[test]

@@ -5905,6 +5905,17 @@ mod tests {
         unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
     }
 
+    /// Exclusive empty `WHYCODE_HOME` for tests that assert on an empty session
+    /// store. The shared [`isolate_home`] OnceLock is process-wide, so a
+    /// sibling persist can make `RESUME_LATEST` look populated.
+    fn isolate_home_fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        (lock, dir)
+    }
+
     #[test]
     fn apply_turn_event_covers_every_variant() {
         isolate_home();
@@ -7959,7 +7970,7 @@ mod tests {
 
     #[test]
     fn apply_resume_found_missing_and_latest() {
-        isolate_home();
+        let (_home_lock, _home) = isolate_home_fresh();
         let dir = tempfile::tempdir().unwrap();
         let mut app = TuiApp::from_config(TuiAppConfig::default());
         let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
