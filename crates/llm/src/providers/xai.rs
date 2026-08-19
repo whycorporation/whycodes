@@ -1,10 +1,10 @@
 /// xAI Grok LLM provider.
-/// OpenAI-compatible API at api.x.ai.
 ///
-/// Console API keys (`xai-…`) go as `Authorization: Bearer`. Subscription
-/// tokens from `whycode auth login xai` are JWTs and need the
-/// `X-XAI-Token-Auth: xai-grok-cli` selector the public Grok client uses
-/// so `api.x.ai` treats them as account sessions rather than API keys.
+/// Console API keys (`xai-…`) use `https://api.x.ai/v1/chat/completions`.
+/// SuperGrok / X Premium tokens from `whycode auth login xai` are rejected
+/// there — they authorize the Grok Build chat proxy at
+/// `cli-chat-proxy.grok.com` (same path the public Grok client uses), with
+/// `X-XAI-Token-Auth: xai-grok-cli`.
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
@@ -18,17 +18,33 @@ pub struct XaiProvider {
     name: String,
 }
 
-/// True when `key` is an xAI OAuth access token (JWT) rather than a
-/// console API key (`xai-…`).
+/// Console chat-completions endpoint (`XAI_API_KEY`).
+pub const CONSOLE_CHAT_URL: &str = "https://api.x.ai/v1/chat/completions";
+/// Grok Build subscription proxy. OAuth tokens from `auth.x.ai` only work here.
+pub const SUBSCRIPTION_CHAT_URL: &str = "https://cli-chat-proxy.grok.com/v1/chat/completions";
+
+/// True when `key` is a SuperGrok / X Premium OAuth token rather than a
+/// console API key (`xai-…`). Access tokens may be JWTs or opaque.
 pub fn is_xai_oauth_token(key: &str) -> bool {
-    key.starts_with("eyJ") && key.matches('.').count() == 2
+    !key.is_empty() && !key.starts_with("xai-")
 }
 
-fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
-    let req =
-        crate::client_identity::post(url).header("Authorization", format!("Bearer {api_key}"));
+/// Chat-completions URL for this credential.
+pub fn inference_url(api_key: &str) -> &'static str {
+    if is_xai_oauth_token(api_key) {
+        SUBSCRIPTION_CHAT_URL
+    } else {
+        CONSOLE_CHAT_URL
+    }
+}
+
+fn authed_post(api_key: &str) -> reqwest::RequestBuilder {
+    let req = crate::client_identity::post(inference_url(api_key))
+        .header("Authorization", format!("Bearer {api_key}"));
     if is_xai_oauth_token(api_key) {
         req.header("X-XAI-Token-Auth", "xai-grok-cli")
+            .header("x-authenticateresponse", "authenticate-response")
+            .header("x-grok-client-mode", "interactive")
     } else {
         req
     }
@@ -87,7 +103,7 @@ impl LlmProvider for XaiProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.x.ai/v1/chat/completions"
+        CONSOLE_CHAT_URL
     }
 
     async fn complete(
@@ -100,7 +116,7 @@ impl LlmProvider for XaiProvider {
         body["stream"] = serde_json::Value::Bool(false);
 
         let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-            authed_post(self.default_base_url(), key).json(&body)
+            authed_post(key).json(&body)
         })
         .await?;
 
@@ -142,7 +158,7 @@ impl LlmProvider for XaiProvider {
         crate::openai_compat::attach_stream_usage_option(&mut body);
 
         let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-            authed_post(self.default_base_url(), key).json(&body)
+            authed_post(key).json(&body)
         })
         .await?;
 
@@ -211,10 +227,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn oauth_jwts_are_distinguished_from_console_keys() {
+    fn oauth_tokens_are_distinguished_from_console_keys() {
         assert!(is_xai_oauth_token("eyJhbGciOiJ.eyJzdWIiOiJx.sig"));
+        assert!(is_xai_oauth_token("opaque-oauth-token"));
         assert!(!is_xai_oauth_token("xai-abc123"));
-        assert!(!is_xai_oauth_token("eyJnoDots"));
         assert!(!is_xai_oauth_token(""));
+        assert_eq!(
+            inference_url("eyJhbGciOiJ.eyJzdWIiOiJx.sig"),
+            SUBSCRIPTION_CHAT_URL
+        );
+        assert_eq!(inference_url("xai-abc123"), CONSOLE_CHAT_URL);
     }
 }

@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-19 — xAI OAuth tokens are rejected by api.x.ai
+
+**Symptom:** `whycode auth login xai` succeeds, then the first turn shows `Authentication failed — check API key`.
+
+**JSONL / crash:** none.
+
+**Root cause:** Console keys (`xai-…`) authorize `api.x.ai`. SuperGrok / X Premium OAuth tokens authorize the Grok Build proxy `https://cli-chat-proxy.grok.com/v1` with `X-XAI-Token-Auth: xai-grok-cli`. Sending the subscription token to `api.x.ai/v1/chat/completions` is a 401.
+
+**Fix:** `XaiProvider` routes non-`xai-` credentials to the proxy (chat completions + proxy headers). API keys stay on `api.x.ai`.
+
+**Prevention:** Do not treat Grok account login as an `XAI_API_KEY`. Mirror Codex: subscription token → first-party proxy, key → public API.
+
 ### 2026-08-19 — Coverage flake: `project_path_uses_configured_or_cwd` vs chdir
 
 **Symptom:** `Coverage (line floor)` fails `tests::project_path_uses_configured_or_cwd` (`left` a `/tmp/.tmp*` dir, `right` `crates/config`). `Test (linux)` is green.

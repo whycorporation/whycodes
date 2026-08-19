@@ -1007,7 +1007,15 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // OAuth login flow progress (`/connect` spawned task).
             while let Ok(ev) = auth_rx.try_recv() {
-                apply_auth_flow_event(&mut app, ev, &provider, &mut api_key).await;
+                apply_auth_flow_event(
+                    &mut app,
+                    ev,
+                    &mut provider,
+                    &mut model,
+                    &mut api_key,
+                    &config,
+                )
+                .await;
             }
 
             // ── Apply async single-model context_length from gateway ──
@@ -2897,8 +2905,10 @@ fn apply_catalog_window(
 async fn apply_auth_flow_event(
     app: &mut TuiApp,
     ev: AuthFlowEvent,
-    active_provider: &str,
+    provider: &mut String,
+    model: &mut String,
     api_key: &mut String,
+    config: &Config,
 ) {
     match ev {
         AuthFlowEvent::Note(text) => {
@@ -2915,21 +2925,38 @@ async fn apply_auth_flow_event(
             result,
         } => match result {
             Ok(_) => {
-                if p == active_provider
-                    && let Ok(dir) = Config::data_dir()
+                let already_on = *provider == p;
+                if !already_on {
+                    let m = whycode_auth::providers::suggested_models(&p)
+                        .first()
+                        .copied()
+                        .unwrap_or("");
+                    if !m.is_empty() {
+                        apply_model_choice(
+                            app,
+                            provider,
+                            model,
+                            api_key,
+                            p.clone(),
+                            m.to_string(),
+                            config,
+                        );
+                    }
+                }
+                if let Ok(dir) = Config::data_dir()
                     && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
                 {
                     whycode_llm::oauth_refresh::register(&p, dir);
                     *api_key = tok;
                 }
-                let hint = if p == active_provider {
+                let model_note = if already_on {
                     String::new()
                 } else {
-                    format!(" — switch with /models {p}/<model>")
+                    format!(" · using {p}/{model}")
                 };
                 app.add_message(
                     ChatRole::System,
-                    format!("✓ Signed in to `{p}` (subscription){hint}"),
+                    format!("✓ Signed in to `{p}` (subscription){model_note}"),
                 );
                 app.status_message = format!("Signed in · {p}");
                 app.toasts
@@ -7825,17 +7852,30 @@ mod tests {
         isolate_home();
         let mut app = TuiApp::from_config(TuiAppConfig::default());
         let mut key = String::new();
+        let mut provider = "anthropic".to_string();
+        let mut model = "claude-sonnet-5".to_string();
+        let config = Config::default();
         apply_auth_flow_event(
             &mut app,
             AuthFlowEvent::Note("Visit https://x\nthen paste".into()),
-            "anthropic",
+            &mut provider,
+            &mut model,
             &mut key,
+            &config,
         )
         .await;
         assert_eq!(app.status_message, "Visit https://x");
 
         let (tx, _rx) = tokio::sync::oneshot::channel();
-        apply_auth_flow_event(&mut app, AuthFlowEvent::NeedCode(tx), "anthropic", &mut key).await;
+        apply_auth_flow_event(
+            &mut app,
+            AuthFlowEvent::NeedCode(tx),
+            &mut provider,
+            &mut model,
+            &mut key,
+            &config,
+        )
+        .await;
         assert!(app.auth_code_sink.is_some());
         assert!(app.status_message.contains("Paste"));
 
@@ -7845,8 +7885,10 @@ mod tests {
                 provider: "anthropic".into(),
                 result: Err("nope".into()),
             },
-            "anthropic",
+            &mut provider,
+            &mut model,
             &mut key,
+            &config,
         )
         .await;
         assert!(app.status_message.contains("sign-in failed"));
@@ -7857,15 +7899,20 @@ mod tests {
                 provider: "openai".into(),
                 result: Ok("ok".into()),
             },
-            "anthropic",
+            &mut provider,
+            &mut model,
             &mut key,
+            &config,
         )
         .await;
         assert!(app.status_message.contains("Signed in"));
+        assert_eq!(provider, "openai");
         assert!(
             app.messages
                 .iter()
-                .any(|m| m.content.contains("/models openai"))
+                .any(|m| m.content.contains("using openai/")),
+            "{:?}",
+            app.messages.iter().map(|m| &m.content).collect::<Vec<_>>()
         );
     }
 
