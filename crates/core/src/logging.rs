@@ -593,14 +593,10 @@ pub fn format_crash_report(info: &std::panic::PanicHookInfo<'_>) -> String {
     out
 }
 
-fn panic_message(info: &std::panic::PanicHookInfo<'_>) -> String {
-    if let Some(s) = info.payload().downcast_ref::<&str>() {
-        return (*s).to_string();
-    }
-    if let Some(s) = info.payload().downcast_ref::<String>() {
-        return s.clone();
-    }
-    "Box<dyn Any>".to_string()
+pub(crate) fn panic_message(info: &std::panic::PanicHookInfo<'_>) -> String {
+    info.payload_as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| "Box<dyn Any>".to_string())
 }
 
 // ── Tracing → JSONL layer ──────────────────────────────────────────────────

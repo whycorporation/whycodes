@@ -279,6 +279,18 @@ mod logging_tests {
     // Serialize tests that touch process-global STATE / panic hook.
     static TEST_LOCK: StdMutex<()> = StdMutex::new(());
 
+    type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+    /// Restore the previous panic hook even if the test asserts.
+    struct RestoreHook(Option<PanicHook>);
+    impl Drop for RestoreHook {
+        fn drop(&mut self) {
+            if let Some(h) = self.0.take() {
+                std::panic::set_hook(h);
+            }
+        }
+    }
+
     fn temp_data_dir() -> tempfile::TempDir {
         tempfile::tempdir().expect("tempdir")
     }
@@ -356,8 +368,12 @@ mod logging_tests {
         let report_path2 = Arc::clone(&report_path);
         let dirs2 = dirs.clone();
 
-        let previous = std::panic::take_hook();
+        let _restore = RestoreHook(Some(std::panic::take_hook()));
         std::panic::set_hook(Box::new(move |info| {
+            // Other tests in this binary panic on worker threads; ignore them.
+            if crate::logging::panic_message(info) != "test-crash-payload" {
+                return;
+            }
             if let Ok(path) = write_crash_report(&dirs2, info) {
                 *report_path2.lock().unwrap() = Some(path);
             }
@@ -368,14 +384,12 @@ mod logging_tests {
         });
         assert!(result.is_err());
 
-        std::panic::set_hook(previous);
-
         let path = report_path.lock().unwrap().clone().expect("crash path");
         assert!(path.exists());
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("whycode crash report"));
-        assert!(text.contains("test-crash-payload"));
-        assert!(text.contains("version:"));
+        assert!(text.contains("whycode crash report"), "{text}");
+        assert!(text.contains("test-crash-payload"), "{text}");
+        assert!(text.contains("version:"), "{text}");
         assert!(path.starts_with(tmp.path().join("crash")));
     }
 
