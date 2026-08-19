@@ -61,6 +61,9 @@ pub struct SlashContext<'a> {
     pub perm_prompter: Arc<ChannelPermissionPrompter>,
     pub question_prompter: Arc<ChannelQuestionPrompter>,
     pub auth_tx: mpsc::UnboundedSender<AuthFlowEvent>,
+    /// Queued `/compact [note]` — the event loop spawns it like a turn so
+    /// the LLM summary cannot freeze the pager.
+    pub pending_compact: &'a mut Option<String>,
 }
 
 /// Messages from an in-flight OAuth login task (`/connect` with no stored
@@ -536,6 +539,13 @@ pub enum TurnOutcome {
         agent: Agent,
         session: Session,
         cancelled: bool,
+        work_ms: u128,
+    },
+    /// Manual `/compact` finished (agent/session were moved out like a turn).
+    Compact {
+        agent: Agent,
+        session: Session,
+        outcome: whycode_session::CompactOutcome,
         work_ms: u128,
     },
 }
@@ -1053,6 +1063,22 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Drain scheduled /loop prompts when idle (no pending manual submit).
             queue_auto_prompt_if_idle(&mut app, rt.agent_busy);
 
+            // ── Start compact if queued (must not await on the event loop) ──
+            if !rt.agent_busy
+                && let Some(note) = rt.pending_compact.take()
+            {
+                start_compact_task(
+                    &mut app,
+                    &mut rt,
+                    &mut cancel_requested_at,
+                    note,
+                    &provider,
+                    &model,
+                    &api_key,
+                    &project_dir,
+                );
+            }
+
             // ── Start turn if needed ──────────────────────────────────
             if !rt.agent_busy
                 && let Some(prompt) = app.pending_prompt.take()
@@ -1463,6 +1489,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 perm_prompter: Arc::clone(&rt.perm_prompter),
                                 question_prompter: Arc::clone(&rt.question_prompter),
                                 auth_tx: auth_tx.clone(),
+                                pending_compact: &mut rt.pending_compact,
                             },
                         )
                         .await;
@@ -1820,6 +1847,11 @@ fn force_stop_turn(
                 ..
             }
             | TurnOutcome::Err {
+                agent: a,
+                session: s,
+                ..
+            }
+            | TurnOutcome::Compact {
                 agent: a,
                 session: s,
                 ..
@@ -2341,6 +2373,19 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                     }
                 });
             }
+            TurnOutcome::Compact {
+                agent: a,
+                session: s,
+                outcome,
+                ..
+            } => {
+                rt.agent = a;
+                rt.last_error = false;
+                with_view_scratch(&mut rt.view, |scratch| {
+                    apply_compact_view(scratch, &s, &outcome);
+                });
+                rt.session = s;
+            }
         }
         rt.persist("background");
     }
@@ -2427,7 +2472,8 @@ fn apply_turn_outcome(
     let work_ms = match &outcome {
         TurnOutcome::Ok { work_ms, .. }
         | TurnOutcome::Err { work_ms, .. }
-        | TurnOutcome::Remote { work_ms, .. } => *work_ms,
+        | TurnOutcome::Remote { work_ms, .. }
+        | TurnOutcome::Compact { work_ms, .. } => *work_ms,
     };
     let elapsed_ms = Some(app.complete_turn_timing_ms(work_ms));
     app.mark_dirty();
@@ -2564,8 +2610,37 @@ fn apply_turn_outcome(
                 rt.persist("error");
             }
         }
+        TurnOutcome::Compact {
+            agent: a,
+            session: s,
+            outcome,
+            work_ms: _,
+        } => {
+            rt.agent = a;
+            rt.session = s;
+            apply_compact_view(app, &rt.session, &outcome);
+            rt.persist("compact");
+        }
     }
     queue_catalog
+}
+
+fn apply_compact_view(
+    app: &mut TuiApp,
+    session: &Session,
+    outcome: &whycode_session::CompactOutcome,
+) {
+    app.load_messages_from_session(session);
+    app.current_agent_state = AgentState::Idle;
+    app.status_message = format!(
+        "Conversation compacted ({} → {} msgs, ~{} → ~{} tok)",
+        outcome.messages_before,
+        outcome.messages_after,
+        outcome.tokens_before,
+        outcome.tokens_after
+    );
+    app.toasts
+        .push(crate::toast::ToastKind::Success, "Conversation compacted");
 }
 
 /// Close the active session (`usize::MAX`) or a parked slot.
@@ -3257,6 +3332,56 @@ fn apply_boot_prompt(app: &mut TuiApp, missing_key: bool, initial_prompt: Option
         app.add_message(ChatRole::User, &p);
         app.pending_prompt = Some(p);
     }
+}
+
+/// Spawn `/compact` off the event loop (Grok CommandRunning). The pager
+/// keeps painting and Esc still force-stops after [`CANCEL_FORCE_AFTER`].
+#[allow(clippy::too_many_arguments)]
+fn start_compact_task(
+    app: &mut TuiApp,
+    rt: &mut SessionRuntime,
+    cancel_requested_at: &mut Option<Instant>,
+    note: String,
+    provider: &str,
+    model: &str,
+    api_key: &str,
+    project_dir: &std::path::Path,
+) {
+    rt.agent_busy = true;
+    let flag = new_cancel_flag();
+    rt.cancel_flag = Some(Arc::clone(&flag));
+    *cancel_requested_at = None;
+    app.current_agent_state = AgentState::Generating;
+    app.status_message = "Compacting conversation…".into();
+    app.mark_dirty();
+
+    let (ag, sess) = take_turn_owner(rt, project_dir);
+    let provider2 = provider.to_string();
+    let model2 = model.to_string();
+    let api_key2 = api_key.to_string();
+    let done_tx2 = rt.done_tx.clone();
+    let user_context = if note.is_empty() { None } else { Some(note) };
+    rt.turn_join = Some(tokio::spawn(async move {
+        let t0 = Instant::now();
+        let agent = ag;
+        let mut session = sess;
+        let outcome = agent
+            .compact_session(
+                &mut session,
+                &provider2,
+                &model2,
+                &api_key2,
+                user_context.as_deref(),
+            )
+            .await;
+        let work_ms = t0.elapsed().as_millis();
+        let _ = done_tx2.send(TurnOutcome::Compact {
+            agent,
+            session,
+            outcome,
+            work_ms,
+        });
+    }));
 }
 
 fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (Agent, Session) {
@@ -4026,30 +4151,9 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             if ctx.session.messages.is_empty() {
                 ctx.app.status_message = "Nothing to compact".into();
             } else {
-                let note = rest.trim();
+                *ctx.pending_compact = Some(rest.trim().to_string());
                 ctx.app.status_message = "Compacting conversation…".into();
-                let outcome = ctx
-                    .agent
-                    .compact_session(
-                        ctx.session,
-                        ctx.provider,
-                        ctx.model,
-                        ctx.api_key,
-                        if note.is_empty() { None } else { Some(note) },
-                    )
-                    .await;
-                ctx.app.load_messages_from_session(ctx.session);
-                persist_session_best_effort(ctx.session, "compact");
-                ctx.app.status_message = format!(
-                    "Conversation compacted ({} → {} msgs, ~{} → ~{} tok)",
-                    outcome.messages_before,
-                    outcome.messages_after,
-                    outcome.tokens_before,
-                    outcome.tokens_after
-                );
-                ctx.app
-                    .toasts
-                    .push(crate::toast::ToastKind::Success, "Conversation compacted");
+                ctx.app.mark_dirty();
             }
         }
         "/bg" => {
@@ -6389,6 +6493,7 @@ mod tests {
         question_prompter: Arc<ChannelQuestionPrompter>,
         auth_tx: mpsc::UnboundedSender<AuthFlowEvent>,
         _auth_rx: mpsc::UnboundedReceiver<AuthFlowEvent>,
+        pending_compact: Option<String>,
     }
 
     impl SlashHarness {
@@ -6422,6 +6527,7 @@ mod tests {
                 question_prompter: Arc::new(question_prompter),
                 auth_tx,
                 _auth_rx: auth_rx,
+                pending_compact: None,
                 _tmp: tmp,
             }
         }
@@ -6441,6 +6547,7 @@ mod tests {
                 perm_prompter: Arc::clone(&self.perm_prompter),
                 question_prompter: Arc::clone(&self.question_prompter),
                 auth_tx: self.auth_tx.clone(),
+                pending_compact: &mut self.pending_compact,
             };
             handle_slash(cmd, &mut ctx).await;
         }
@@ -6479,30 +6586,16 @@ mod tests {
         h.app.load_messages_from_session(&h.session);
         h.run("/compact keep the auth details").await;
         assert!(
-            h.app.status_message.contains("Conversation compacted"),
+            h.app.status_message.contains("Compacting conversation"),
             "{}",
             h.app.status_message
         );
-        assert_eq!(h.session.messages[0].content.as_text(), Some("fix login"));
-        assert!(
-            h.app.messages.iter().any(|m| m.role == ChatRole::System
-                && m.content.contains("Conversation compacted")
-                && !m.content.contains("ran out of context")),
-            "compact summary should render as a system card, not a collapsed user prompt: {:?}",
-            h.app
-                .messages
-                .iter()
-                .map(|m| (
-                    m.role.as_str(),
-                    m.content.chars().take(80).collect::<String>()
-                ))
-                .collect::<Vec<_>>()
+        assert_eq!(
+            h.pending_compact.as_deref(),
+            Some("keep the auth details"),
+            "slash must queue compact; the event loop spawns the LLM"
         );
-        assert!(
-            !h.app.messages.iter().any(|m| m.role == ChatRole::User
-                && m.content.starts_with("This session is being continued")),
-            "compact carrier must not appear as a user ❯ bubble"
-        );
+        assert_eq!(h.session.messages[0].content.as_text(), Some("old task"));
 
         h.run("/bg").await;
         assert!(
@@ -7451,6 +7544,48 @@ mod tests {
                 .visible()
                 .iter()
                 .any(|t| t.kind == crate::toast::ToastKind::Error)
+        );
+
+        let mut compacted = Session::new(PathBuf::from("/work"), "sys".into());
+        compacted.add_user_message("fix login");
+        compacted.apply_full_replace(
+            "<summary>\n1. Primary Request: fix login\n2. Files: auth.rs\n</summary>",
+        );
+        apply_turn_outcome(
+            &mut app,
+            &mut rt,
+            TurnOutcome::Compact {
+                agent: Agent::new(dummy_info("cmp")),
+                session: compacted,
+                outcome: whycode_session::CompactOutcome {
+                    messages_before: 4,
+                    messages_after: 2,
+                    tokens_before: 800,
+                    tokens_after: 200,
+                    dropped_transcript: "old".into(),
+                },
+                work_ms: 12,
+            },
+            &mut cancel_at,
+            &mut pending_title,
+            "acme",
+            "m",
+            &config,
+            "",
+            &tx,
+        );
+        assert!(!rt.agent_busy);
+        assert_eq!(app.current_agent_state, AgentState::Idle);
+        assert!(
+            app.status_message.contains("Conversation compacted"),
+            "{}",
+            app.status_message
+        );
+        assert!(
+            app.messages.iter().any(|m| m.role == ChatRole::System
+                && m.content.contains("Conversation compacted")
+                && m.content.contains("fix login")),
+            "compact result should paint the summary card"
         );
     }
 

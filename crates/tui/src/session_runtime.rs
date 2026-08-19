@@ -139,6 +139,8 @@ pub struct SessionRuntime {
     /// Restored if we have to abort the task (which would otherwise drop
     /// agent/session).
     pub session_backup: Option<Session>,
+    /// `/compact [note]` waiting to spawn (same session; does not follow the UI).
+    pub pending_compact: Option<String>,
 
     /// Agent → UI turn events (text deltas, tool calls, status, …).
     pub event_tx: mpsc::UnboundedSender<TurnEvent>,
@@ -201,6 +203,7 @@ impl SessionRuntime {
             cancel_flag: None,
             turn_join: None,
             session_backup: None,
+            pending_compact: None,
             event_tx,
             event_rx,
             done_tx,
