@@ -112,6 +112,7 @@ Contributors checking a TUI change on Alacritty / Kitty / WezTerm / VTE: see
 | `:` | Command mode (`:theme`, `:q`, …) |
 | `Ctrl+P` / `Ctrl+M` | Provider setup / model selection |
 | `Ctrl+B` | Toggle sidebar (Files / Diag / MCP / Todos / View) |
+| — | Todo list from `todowrite` appears under the header (live, color-coded) |
 | `[` / `]` | Cycle sidebar tabs (scrollback focus) |
 | `Ctrl+C` / `Ctrl+Q` | Clear draft or quit |
 

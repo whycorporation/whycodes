@@ -98,6 +98,8 @@ pub struct ViewSnapshot {
     pub turn_usage: Option<whycode_core::types::Usage>,
     pub context_used: u64,
     pub pending_suggestion: Option<String>,
+    pub session_id: String,
+    pub todos: Vec<whycode_core::TodoItem>,
 }
 
 impl Default for ViewSnapshot {
@@ -118,6 +120,8 @@ impl Default for ViewSnapshot {
             turn_usage: None,
             context_used: 0,
             pending_suggestion: None,
+            session_id: String::new(),
+            todos: Vec::new(),
         }
     }
 }

@@ -40,6 +40,14 @@ Durable project facts and user preferences survive sessions via the `memory` too
 - Recalled memories may appear under Auto Memory / Recalled Memories in your context; verify against the repo if they look stale.
 - Never store secrets, tokens, or passwords in memory.
 
+## Task list
+Use `todowrite` (alias `todo`) for work with 3+ steps. The user sees this list **live at the top** of the session.
+- Create the list before starting.
+- Keep exactly one item `in_progress`.
+- Mark `completed` as soon as a step is done; do not skip silently.
+- Status updates should send the changed items (merge defaults to true). Use `merge: false` only to replace the whole list.
+- `todoread` shows the current list if you need to check it.
+
 ## Mode switches
 - Pure Q&A sessions: user can use **ask** mode (Ctrl+T) for hard read-only.
 - Design-first work: **plan** mode (Ctrl+T) for a structured plan before build.

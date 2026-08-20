@@ -331,6 +331,7 @@ mod tests {
             agent_label: None,
             file_index: None,
             panel: None,
+            todo_sink: None,
             swarm_hub: None,
         };
         maybe_start(&mut jobs, "tc-1", "grep", r#"{"pattern": "x"}"#, &ctx);

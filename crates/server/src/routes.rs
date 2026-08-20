@@ -584,6 +584,13 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
                 "elapsed_ms": elapsed_ms,
             })
         }
+        TurnEvent::Todos { todos } => {
+            serde_json::json!({
+                "type": "todos",
+                "count": todos.len(),
+                "done": whycode_core::todo::terminal_count(todos),
+            })
+        }
         TurnEvent::Panel(update) => match update {
             whycode_core::PanelUpdate::Clear => {
                 serde_json::json!({"type": "panel", "action": "clear"})

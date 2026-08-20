@@ -146,20 +146,16 @@ fn render_mcp(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
 }
 
 fn render_todos(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    let sidebar = &app.sidebar;
     let mut lines: Vec<Line> = Vec::new();
 
-    if sidebar.todos.is_empty() {
+    if app.todos.is_empty() {
         lines.push(Line::from(Span::styled(
             " No TODOs ",
             Style::default().fg(palette.dim),
         )));
     } else {
-        for todo in &sidebar.todos {
-            lines.push(Line::from(Span::styled(
-                format!(" {todo}"),
-                Style::default().fg(palette.fg),
-            )));
+        for item in &app.todos {
+            lines.push(super::todos::item_line(item, palette));
         }
     }
 
@@ -363,7 +359,10 @@ mod tests {
         assert!(text.contains("No TODOs"), "{text}");
 
         let mut app = app_with_tab(SidebarTab::Todos);
-        app.sidebar.todos = vec!["☐ first".into(), "☑ done".into()];
+        app.todos = vec![
+            whycode_core::TodoItem::new("a", "first", whycode_core::TodoStatus::Pending),
+            whycode_core::TodoItem::new("b", "done", whycode_core::TodoStatus::Completed),
+        ];
         let palette = app.config.palette();
         let text = paint(60, 12, |f| render(f, f.area(), &app, &palette));
         assert!(text.contains("☐ first"), "{text}");

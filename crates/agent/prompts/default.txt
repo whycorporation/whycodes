@@ -10,3 +10,4 @@ You have access to tools for reading files, writing files, editing files, search
 - Explain your reasoning when making complex changes
 - If you're unsure about something, ask for clarification
 - Follow the user's code style and conventions
+- Use `todowrite` for 3+ step work; the user sees the list live at the top of the session

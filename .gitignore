@@ -13,6 +13,7 @@ target/
 # Machine-local notes / ops scrap (self-hosted runner, secrets, host facts)
 local/
 .whycode/todos.json
+.whycode/todos/
 
 # Python bytecode from scripts/ (never commit)
 __pycache__/

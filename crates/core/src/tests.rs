@@ -9,6 +9,7 @@ use crate::panel::*;
 use crate::paths::*;
 use crate::sandbox::*;
 use crate::swarm_hub::*;
+use crate::todo::*;
 use crate::tool::*;
 use crate::types::*;
 use async_trait::async_trait;
@@ -949,6 +950,162 @@ mod panel_tests {
         let _ = format!("{a:?}{b:?}{c:?}{d:?}");
         let sink: PanelSink = Arc::new(|_| {});
         sink(PanelUpdate::Clear);
+    }
+}
+
+// ── todo.rs ───────────────────────────────────────────────
+
+mod todo_tests {
+    use super::*;
+
+    #[test]
+    fn status_parse_mark_and_terminal() {
+        assert_eq!(TodoStatus::parse("pending"), TodoStatus::Pending);
+        assert_eq!(TodoStatus::parse("in_progress"), TodoStatus::InProgress);
+        assert_eq!(TodoStatus::parse("completed"), TodoStatus::Completed);
+        assert_eq!(TodoStatus::parse("cancelled"), TodoStatus::Cancelled);
+        assert_eq!(TodoStatus::parse("nope"), TodoStatus::Pending);
+        assert_eq!(TodoStatus::Pending.as_str(), "pending");
+        assert_eq!(TodoStatus::InProgress.as_str(), "in_progress");
+        assert_eq!(TodoStatus::Completed.as_str(), "completed");
+        assert_eq!(TodoStatus::Cancelled.as_str(), "cancelled");
+        assert_eq!(TodoStatus::Pending.mark(), "☐");
+        assert_eq!(TodoStatus::InProgress.mark(), "▶");
+        assert_eq!(TodoStatus::Completed.mark(), "☑");
+        assert_eq!(TodoStatus::Cancelled.mark(), "✗");
+        assert!(!TodoStatus::Pending.is_terminal());
+        assert!(!TodoStatus::InProgress.is_terminal());
+        assert!(TodoStatus::Completed.is_terminal());
+        assert!(TodoStatus::Cancelled.is_terminal());
+    }
+
+    #[test]
+    fn serde_round_trip_and_unknown_status() {
+        let item = TodoItem::new("a", "do it", TodoStatus::InProgress);
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("in_progress"));
+        let back: TodoItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, item);
+        let unknown: TodoItem =
+            serde_json::from_str(r#"{"id":"x","content":"y","status":"mystery"}"#).unwrap();
+        assert_eq!(unknown.status, TodoStatus::Pending);
+        let defaults: TodoItem = serde_json::from_str("{}").unwrap();
+        assert!(defaults.id.is_empty());
+        assert!(defaults.content.is_empty());
+        assert_eq!(defaults.status, TodoStatus::Pending);
+        assert_eq!(item.line(), "▶ do it");
+        let list = TodoList {
+            todos: vec![item.clone()],
+        };
+        let _ = format!("{list:?}");
+        assert_eq!(list, list.clone());
+    }
+
+    #[test]
+    fn path_session_scoped_or_fallback() {
+        let root = Path::new("/proj");
+        assert_eq!(
+            todos_path(root, Some("sess-1")),
+            PathBuf::from("/proj/.whycode/todos/sess-1.json")
+        );
+        assert_eq!(
+            todos_path(root, Some("  ")),
+            PathBuf::from("/proj/.whycode/todos.json")
+        );
+        assert_eq!(
+            todos_path(root, None),
+            PathBuf::from("/proj/.whycode/todos.json")
+        );
+    }
+
+    #[test]
+    fn load_missing_invalid_and_save_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_todos(dir.path(), None).is_empty());
+        let why = dir.path().join(".whycode");
+        std::fs::create_dir_all(&why).unwrap();
+        std::fs::write(why.join("todos.json"), "not json {{{").unwrap();
+        assert!(load_todos(dir.path(), None).is_empty());
+        std::fs::write(why.join("todos.json"), r#"{"other":1}"#).unwrap();
+        assert!(load_todos(dir.path(), None).is_empty());
+
+        let items = vec![
+            TodoItem::new("1", "a", TodoStatus::Pending),
+            TodoItem::new("2", "b", TodoStatus::Completed),
+        ];
+        save_todos(dir.path(), Some("abc"), &items).unwrap();
+        let loaded = load_todos(dir.path(), Some("abc"));
+        assert_eq!(loaded, items);
+        assert!(load_todos(dir.path(), Some("other")).is_empty());
+    }
+
+    #[test]
+    fn save_fails_when_parent_is_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("file");
+        std::fs::write(&blocker, "x").unwrap();
+        let err = save_todos(&blocker, None, &[]).unwrap_err();
+        assert!(err.contains("creating todo dir"), "{err}");
+    }
+
+    #[test]
+    fn save_fails_when_target_is_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let why = dir.path().join(".whycode");
+        std::fs::create_dir_all(why.join("todos.json")).unwrap();
+        let err = save_todos(dir.path(), None, &[]).unwrap_err();
+        assert!(err.contains("writing todos"), "{err}");
+    }
+
+    #[test]
+    fn merge_by_id_and_replace() {
+        let existing = vec![
+            TodoItem::new("a", "old", TodoStatus::Pending),
+            TodoItem::new("b", "keep", TodoStatus::Pending),
+        ];
+        let incoming = vec![
+            TodoItem::new("a", "new", TodoStatus::Completed),
+            TodoItem::new("c", "add", TodoStatus::InProgress),
+            TodoItem::new("", "no-id", TodoStatus::Pending),
+        ];
+        let merged = apply_todo_update(existing.clone(), incoming.clone(), true);
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged[0].content, "new");
+        assert_eq!(merged[0].status, TodoStatus::Completed);
+        assert_eq!(merged[1].content, "keep");
+        assert_eq!(merged[2].id, "c");
+        assert_eq!(merged[3].content, "no-id");
+        let replaced = apply_todo_update(existing, incoming, false);
+        assert_eq!(replaced.len(), 3);
+    }
+
+    #[test]
+    fn apply_todowrite_args_default_merge() {
+        let existing = vec![TodoItem::new("a", "old", TodoStatus::Pending)];
+        let next = apply_todowrite_args(
+            &existing,
+            &json!({"todos":[{"id":"a","content":"upd","status":"completed"}]}),
+        )
+        .unwrap();
+        assert_eq!(next[0].content, "upd");
+        let replaced = apply_todowrite_args(
+            &existing,
+            &json!({
+                "merge": false,
+                "todos":[{"id":"z","content":"only","status":"pending"}]
+            }),
+        )
+        .unwrap();
+        assert_eq!(replaced.len(), 1);
+        assert_eq!(replaced[0].id, "z");
+        assert!(apply_todowrite_args(&existing, &json!({})).is_none());
+        assert!(apply_todowrite_args(&existing, &json!({"todos":"nope"})).is_none());
+        assert_eq!(terminal_count(&next), 1);
+        assert!(all_terminal(&next));
+        assert!(!all_terminal(&[]));
+        assert!(!all_terminal(&existing));
+        let sink: TodoSink = Arc::new(|_| {});
+        sink(next);
     }
 }
 
