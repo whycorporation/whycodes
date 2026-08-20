@@ -140,6 +140,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-20 — TUI has no default max-turns cap (Grok parity)
+
+**Symptom:** After ~19 minutes / 25 LLM steps a TUI turn died with
+`Agent error: Exceeded maximum turns (25)` even though the task was still
+in progress.
+
+**JSONL / crash:** none (user-facing `Error::Agent`).
+
+**Root cause:** `whycode run` defaulted `-t/--max-turns` to 25 and the TUI
+passed that into `Agent::run_turn`. Grok's `--max-turns` is **headless-only**;
+the interactive TUI is unlimited and ignores the flag.
+
+**Fix:** `max_turns: Option<usize>` (`None` = unlimited). Interactive TUI /
+`--plain` REPL drop `--max-turns` with a stderr warning. `generate` and
+`--format json|stream-json` still honour an explicit cap. Subagents keep
+their own default (15).
+
+**Prevention:** Do not put a default numeric turn cap on the interactive
+agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
+
 ### 2026-08-20 — Long paste leftover sits beside the prompt
 
 **Symptom:** After pasting a long prompt (then submitting / continuing the turn), the first lines of the paste stay visible in the 2-row gap above the input box (`Workspace line coverage…` next to `…`).

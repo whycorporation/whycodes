@@ -345,7 +345,7 @@ pub async fn chat(
         return Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep));
     }
 
-    let max_turns = req.max_turns.unwrap_or(state.max_turns).max(1);
+    let max_turns = req.max_turns.or(state.max_turns).map(|n| n.max(1));
     let agent = Arc::clone(&state.agent);
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
     let scope = RunScope {

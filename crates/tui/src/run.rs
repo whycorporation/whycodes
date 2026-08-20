@@ -188,7 +188,8 @@ pub struct TuiRunOptions {
     pub model: String,
     pub api_key: String,
     pub agent_name: String,
-    pub max_turns: usize,
+    /// Headless-only cap. Interactive TUI passes `None` (Grok: no default turn limit).
+    pub max_turns: Option<usize>,
     pub initial_prompt: Option<String>,
     pub config: Config,
     /// When set, load this session (or the latest if `"__latest__"`) before first paint.
@@ -6546,7 +6547,7 @@ mod tests {
             model: "y".into(),
             api_key: String::new(),
             agent_name: "build".into(),
-            max_turns: 8,
+            max_turns: None,
             initial_prompt: None,
             config: Config::default(),
             resume_session_id: Some(RESUME_LATEST.into()),
@@ -8223,7 +8224,7 @@ mod tests {
             model: "m1".into(),
             api_key: key.into(),
             agent_name: "plan".into(),
-            max_turns: 4,
+            max_turns: None,
             initial_prompt: None,
             config: Config::default(),
             resume_session_id: None,

@@ -470,7 +470,7 @@ async fn scripted_text_turn_returns_assistant_text() {
     let agent = scripted_agent([whycode_llm::ScriptedStep::Text("hello from script".into())]);
     let mut session = scripted_session("please say hello");
     let out = agent
-        .run_turn(&mut session, "script", "m", "k", 4)
+        .run_turn(&mut session, "script", "m", "k", Some(4))
         .await
         .expect("turn");
     assert!(out.contains("hello from script"), "got: {out}");
@@ -481,7 +481,7 @@ async fn scripted_unknown_provider_errors() {
     let agent = scripted_agent([whycode_llm::ScriptedStep::Text("x".into())]);
     let mut session = scripted_session("hi there friend");
     let err = agent
-        .run_turn(&mut session, "no-such-provider", "m", "k", 2)
+        .run_turn(&mut session, "no-such-provider", "m", "k", Some(2))
         .await
         .expect_err("unknown provider");
     assert!(
@@ -494,7 +494,9 @@ async fn scripted_unknown_provider_errors() {
 async fn scripted_fail_open_surfaces_provider_error() {
     let agent = scripted_agent([whycode_llm::ScriptedStep::FailOpen("boom".into())]);
     let mut session = scripted_session("please explain rust");
-    let err = agent.run_turn(&mut session, "script", "m", "k", 2).await;
+    let err = agent
+        .run_turn(&mut session, "script", "m", "k", Some(2))
+        .await;
     assert!(err.is_err(), "expected provider error, got {err:?}");
 }
 
@@ -511,7 +513,7 @@ async fn scripted_tool_then_exhausted_turns() {
         whycode_session::session::Session::new(dir.path().to_path_buf(), "test".into());
     session.add_user_message("please read note.txt and summarize it");
     let err = agent
-        .run_turn(&mut session, "script", "m", "k", 1)
+        .run_turn(&mut session, "script", "m", "k", Some(1))
         .await
         .expect_err("max turns after tool");
     assert!(
@@ -522,13 +524,43 @@ async fn scripted_tool_then_exhausted_turns() {
 }
 
 #[tokio::test]
+async fn scripted_unlimited_turns_continue_after_tool() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "secret note").unwrap();
+    let agent = scripted_agent([
+        whycode_llm::ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "note.txt"}),
+        },
+        whycode_llm::ScriptedStep::Text("the note is secret".into()),
+    ]);
+    let mut session =
+        whycode_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("please read note.txt and summarize it");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", None)
+        .await
+        .expect("unlimited turns should finish after the tool");
+    assert!(out.to_lowercase().contains("secret"), "got: {out}");
+}
+
+#[tokio::test]
 async fn scripted_cancel_before_llm() {
     let agent = scripted_agent([whycode_llm::ScriptedStep::Text("never".into())]);
     let mut session = scripted_session("please explain the retry loop");
     let cancel = crate::events::new_cancel_flag();
     crate::events::request_cancel(&cancel);
     let err = agent
-        .run_turn_with_events(&mut session, "script", "m", "k", 4, None, Some(cancel))
+        .run_turn_with_events(
+            &mut session,
+            "script",
+            "m",
+            "k",
+            Some(4),
+            None,
+            Some(cancel),
+        )
         .await
         .expect_err("cancelled");
     assert!(err.to_string().to_lowercase().contains("cancel"), "{err}");
@@ -547,7 +579,7 @@ async fn scripted_thinking_and_text_emits_events() {
     let mut session = scripted_session("please summarize crates/agent");
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let out = agent
-        .run_turn_with_events(&mut session, "script", "m", "k", 4, Some(tx), None)
+        .run_turn_with_events(&mut session, "script", "m", "k", Some(4), Some(tx), None)
         .await
         .expect("turn");
     assert!(out.contains("answer"), "{out}");

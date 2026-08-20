@@ -146,7 +146,7 @@ fn runtime_choice_per_command() {
     assert!(command_needs_multi_thread(&cli(None)));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Run {
         prompt: None,
-        max_turns: 25,
+        max_turns: None,
         format: OutputFormat::Text,
     }))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Mcp {
@@ -491,7 +491,7 @@ fn version_only_argv_and_tui_invoke() {
     assert!(is_tui_invoke(&cli(None)));
     assert!(is_tui_invoke(&cli(Some(Commands::Run {
         prompt: None,
-        max_turns: 25,
+        max_turns: None,
         format: OutputFormat::Text,
     }))));
     assert!(is_tui_invoke(&cli(Some(Commands::Connect {
@@ -505,10 +505,17 @@ fn version_only_argv_and_tui_invoke() {
 }
 
 #[test]
+fn interactive_mode_drops_max_turns() {
+    assert_eq!(ignore_max_turns_interactive(None), None);
+    assert_eq!(ignore_max_turns_interactive(Some(25)), None);
+    assert_eq!(ignore_max_turns_interactive(Some(1)), None);
+}
+
+#[test]
 fn runtime_choice_covers_remaining_commands() {
     assert!(command_needs_multi_thread(&cli(Some(Commands::Generate {
         prompt: vec!["x".into()],
-        max_turns: 1,
+        max_turns: Some(1),
         jobs: 1,
         format: OutputFormat::Text,
     }))));
@@ -893,7 +900,7 @@ async fn headless_turn_with_scripted_provider() {
         "m",
         "k",
         "build",
-        4,
+        Some(4),
         OutputFormat::Text,
     )
     .await
@@ -916,7 +923,7 @@ async fn headless_turn_with_scripted_provider() {
             "m",
             "k",
             "build",
-            4,
+            Some(4),
             OutputFormat::StreamJson,
         )
         .await
@@ -943,11 +950,11 @@ async fn cmd_generate_single_and_parallel_unknown_provider() {
     c.provider = Some("script".into());
     c.dir = Some(dir.path().display().to_string());
     c.no_memory = true;
-    let single = cmd_generate(&c, &["hello".into()], 1, 1, OutputFormat::Text).await;
+    let single = cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text).await;
     let parallel = cmd_generate(
         &c,
         &["a".into(), "b".into(), "".into()],
-        1,
+        Some(1),
         2,
         OutputFormat::Json,
     )
@@ -977,7 +984,7 @@ async fn run_one_parallel_turn_unknown_provider_fails() {
         "m",
         "build",
         "k",
-        1,
+        Some(1),
         OutputFormat::Text,
         dir.path(),
         false,

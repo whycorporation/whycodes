@@ -34,8 +34,8 @@ pub struct AppState {
     pub project_dir: PathBuf,
     /// In-process session map (warm across requests).
     pub sessions: Arc<std::sync::Mutex<HashMap<String, SessionHandle>>>,
-    /// Max agent steps per chat request.
-    pub max_turns: usize,
+    /// Max agent steps per chat request (`None` = unlimited, Grok TUI parity).
+    pub max_turns: Option<usize>,
     /// True when MCP / plugins were loaded at startup.
     pub mcp_warm: bool,
     /// True when a workspace file index was started.
@@ -163,7 +163,7 @@ pub(crate) fn test_state() -> AppState {
         config: Arc::new(Config::default()),
         project_dir: std::env::temp_dir(),
         sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        max_turns: 5,
+        max_turns: Some(5),
         mcp_warm: false,
         index_warm: false,
         started_at: std::time::Instant::now(),
