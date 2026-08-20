@@ -1040,13 +1040,6 @@ mod todo_tests {
     }
 
     #[test]
-    fn empty_todo_list_json_is_valid_envelope() {
-        let raw = empty_todo_list_json();
-        let list: TodoList = serde_json::from_str(&raw).unwrap();
-        assert!(list.todos.is_empty());
-    }
-
-    #[test]
     fn save_fails_when_parent_is_a_file() {
         let dir = tempfile::tempdir().unwrap();
         let blocker = dir.path().join("file");

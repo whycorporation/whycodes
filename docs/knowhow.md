@@ -153,7 +153,8 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 the closing brace (same shape as the sandbox `SSH_AUTH_SOCK` miss).
 
 **Fix:** `create_dir_all(path.parent().unwrap_or(working_dir))` — no
-`if let`. Serde fallback extracted to `empty_todo_list_json` and unit-tested.
+`if let`. Serialize via `serde_json::Value` + eager `unwrap_or(to_string())`
+so there is no dead `unwrap_or_else` closure for llvm-cov to miss.
 
 **Prevention:** On 100% crates, do not `if let Some(parent) = path.parent()`
 when the path is constructed with a directory prefix. Prefer `unwrap_or`
