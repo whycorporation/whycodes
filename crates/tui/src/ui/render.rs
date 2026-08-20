@@ -24,6 +24,7 @@ use super::slash_suggest;
 use super::status;
 use super::subagents;
 use super::toast;
+use super::todos;
 
 const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -223,17 +224,44 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     status::render_footer(frame, outer[2], app, palette);
 
     let strip_h = subagents::strip_height(app);
-    let (strip, body) = if strip_h > 0 {
+    let todo_h = todos::panel_height(app, body.height.saturating_sub(strip_h));
+    let (strip, todo_area, body) = if strip_h == 0 && todo_h == 0 {
+        (None, None, body)
+    } else {
+        let mut constraints = Vec::new();
+        if strip_h > 0 {
+            constraints.push(Constraint::Length(strip_h));
+        }
+        if todo_h > 0 {
+            constraints.push(Constraint::Length(todo_h));
+        }
+        constraints.push(Constraint::Min(3));
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(strip_h), Constraint::Min(3)])
+            .constraints(constraints)
             .split(body);
-        (Some(chunks[0]), chunks[1])
-    } else {
-        (None, body)
+        let mut i = 0;
+        let strip = if strip_h > 0 {
+            let a = chunks[i];
+            i += 1;
+            Some(a)
+        } else {
+            None
+        };
+        let todo_area = if todo_h > 0 {
+            let a = chunks[i];
+            i += 1;
+            Some(a)
+        } else {
+            None
+        };
+        (strip, todo_area, chunks[i])
     };
     if let Some(area) = strip {
         subagents::render_strip(frame, area, app, palette);
+    }
+    if let Some(area) = todo_area {
+        todos::render_panel(frame, area, app, palette);
     }
 
     if app.messages.is_empty() {

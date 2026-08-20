@@ -411,6 +411,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
+    app.session_id = session.id.clone();
     if app.session_list.sessions.is_empty() {
         app.session_list.sessions = load_session_entries();
     }
@@ -818,6 +819,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     rt.agent.load_mcp(&config).await;
                     maybe_session_auto_index(&project_dir, &config, &mut app);
                     refresh_sidebar(&mut app, &config, &file_index);
+                    load_app_todos(&mut app);
                     if !app.toasts.is_empty() {
                         app.mark_dirty();
                     }
@@ -3510,6 +3512,11 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
                 other => other,
             };
             app.status_message = format!("tool: {shown}");
+            if matches!(name.as_str(), "todowrite" | "todo")
+                && let Some(next) = whycode_core::todo::apply_todowrite_args(&app.todos, &input)
+            {
+                app.todos = next;
+            }
             app.add_tool_call(id, name, input);
         }
         TurnEvent::ToolEnd {
@@ -3658,6 +3665,10 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
         TurnEvent::Panel(update) => {
             apply_panel_update(app, update);
         }
+        TurnEvent::Todos { todos } => {
+            app.todos = todos;
+            app.mark_dirty();
+        }
         TurnEvent::Subagent {
             id,
             kind,
@@ -3724,7 +3735,7 @@ pub(crate) fn apply_panel_update(app: &mut TuiApp, update: whycode_core::PanelUp
     app.mark_dirty();
 }
 
-/// Refresh sidebar lists from the workspace index, config, and todos.json.
+/// Refresh sidebar lists from the workspace index, config, and session todos.
 fn refresh_sidebar(
     app: &mut TuiApp,
     config: &whycode_config::Config,
@@ -3753,37 +3764,17 @@ fn refresh_sidebar(
         .collect();
     mcp.sort();
     app.sidebar.mcp_status = mcp;
-
-    app.sidebar.todos = load_sidebar_todos(&app.project_dir);
 }
 
-fn load_sidebar_todos(project_dir: &std::path::Path) -> Vec<String> {
-    let path = project_dir.join(".whycode").join("todos.json");
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap_or(serde_json::Value::Null);
-    let Some(items) = parsed.get("todos").and_then(|v| v.as_array()) else {
-        return Vec::new();
-    };
-    items
-        .iter()
-        .filter_map(|item| {
-            let content = item.get("content")?.as_str()?;
-            let status = item
-                .get("status")
-                .and_then(|s| s.as_str())
-                .unwrap_or("pending");
-            let mark = match status {
-                "completed" => "☑",
-                "cancelled" => "✗",
-                "in_progress" => "…",
-                _ => "☐",
-            };
-            Some(format!("{mark} {content}"))
-        })
-        .take(40)
-        .collect()
+fn load_app_todos(app: &mut TuiApp) {
+    app.todos = whycode_core::todo::load_todos(
+        &app.project_dir,
+        if app.session_id.is_empty() {
+            None
+        } else {
+            Some(app.session_id.as_str())
+        },
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4152,6 +4143,8 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ),
             );
             ctx.app.session_title = ctx.session.title.clone();
+            ctx.app.session_id = ctx.session.id.clone();
+            ctx.app.todos.clear();
             ctx.app.messages.clear();
             ctx.app.sync_context_estimate(ctx.session);
             ctx.app.turn_usage = None;
@@ -5784,10 +5777,9 @@ mod tests {
     }
 
     #[test]
-    fn load_sidebar_todos_missing_and_valid() {
+    fn load_session_todos_missing_and_valid() {
         let dir = tempfile::tempdir().unwrap();
-        // No todos.json → empty.
-        assert!(load_sidebar_todos(dir.path()).is_empty());
+        assert!(whycode_core::todo::load_todos(dir.path(), None).is_empty());
 
         let whycode = dir.path().join(".whycode");
         std::fs::create_dir_all(&whycode).unwrap();
@@ -5802,24 +5794,24 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let todos = load_sidebar_todos(dir.path());
+        let todos = whycode_core::todo::load_todos(dir.path(), None);
         assert_eq!(todos.len(), 5);
-        assert_eq!(todos[0], "☐ finish task");
-        assert_eq!(todos[1], "☑ done item");
-        assert_eq!(todos[2], "… working now");
-        assert_eq!(todos[3], "✗ skipped");
-        assert_eq!(todos[4], "☐ no status");
+        assert_eq!(todos[0].line(), "☐ finish task");
+        assert_eq!(todos[1].line(), "☑ done item");
+        assert_eq!(todos[2].line(), "▶ working now");
+        assert_eq!(todos[3].line(), "✗ skipped");
+        assert_eq!(todos[4].line(), "☐ no status");
     }
 
     #[test]
-    fn load_sidebar_todos_invalid_json_and_wrong_shape() {
+    fn load_session_todos_invalid_json_and_wrong_shape() {
         let dir = tempfile::tempdir().unwrap();
         let whycode = dir.path().join(".whycode");
         std::fs::create_dir_all(&whycode).unwrap();
         std::fs::write(whycode.join("todos.json"), "not json {{{").unwrap();
-        assert!(load_sidebar_todos(dir.path()).is_empty());
+        assert!(whycode_core::todo::load_todos(dir.path(), None).is_empty());
         std::fs::write(whycode.join("todos.json"), r#"{"other": 1}"#).unwrap();
-        assert!(load_sidebar_todos(dir.path()).is_empty());
+        assert!(whycode_core::todo::load_todos(dir.path(), None).is_empty());
     }
 
     #[test]
@@ -6342,6 +6334,44 @@ mod tests {
                 .iter()
                 .any(|t| t.message.contains("stale"))
         );
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::Todos {
+                todos: vec![whycode_core::TodoItem::new(
+                    "a",
+                    "panel item",
+                    whycode_core::TodoStatus::InProgress,
+                )],
+            },
+        );
+        assert_eq!(app.todos.len(), 1);
+        assert_eq!(app.todos[0].content, "panel item");
+
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolStart {
+                id: "tw".into(),
+                name: "todowrite".into(),
+                input: serde_json::json!({
+                    "todos":[{"id":"a","content":"updated","status":"completed"}]
+                }),
+            },
+        );
+        assert_eq!(app.todos[0].status, whycode_core::TodoStatus::Completed);
+        apply_turn_event(
+            &mut app,
+            TurnEvent::ToolStart {
+                id: "tw2".into(),
+                name: "todo".into(),
+                input: serde_json::json!({
+                    "merge": false,
+                    "todos":[{"id":"z","content":"only","status":"pending"}]
+                }),
+            },
+        );
+        assert_eq!(app.todos.len(), 1);
+        assert_eq!(app.todos[0].id, "z");
     }
 
     #[test]
@@ -6434,7 +6464,8 @@ mod tests {
             },
         );
         refresh_sidebar(&mut app, &config, &idx);
-        assert!(app.sidebar.todos.iter().any(|t| t.contains("do it")));
+        load_app_todos(&mut app);
+        assert!(app.todos.iter().any(|t| t.content == "do it"));
         assert!(app.sidebar.mcp_status.iter().any(|s| s.contains("demo")));
 
         let rt = test_runtime();

@@ -1,21 +1,10 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::Path;
 
 use crate::tool::{Tool, ToolContext};
+use whycode_core::todo::{TodoItem, apply_todo_update, load_todos, save_todos};
 use whycode_core::types::ToolResult;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TodoItem {
-    id: String,
-    content: String,
-    status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TodoList {
-    todos: Vec<TodoItem>,
-}
 
 pub struct TodoWriteTool {
     name: &'static str,
@@ -45,7 +34,9 @@ impl Tool for TodoWriteTool {
     }
 
     fn description(&self) -> &str {
-        "Create and manage a structured task list"
+        "Create and manage a structured task list. The user sees this list live at the top of the \
+         session. Use for any task with 3+ steps. Mark the current item in_progress (only one) \
+         and completed as soon as the step is done. Default merge=true updates items by id."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -77,7 +68,7 @@ impl Tool for TodoWriteTool {
                 },
                 "merge": {
                     "type": "boolean",
-                    "description": "If true, merge with existing todos; if false, replace entirely"
+                    "description": "If true (default), merge with existing todos by id; if false, replace entirely"
                 }
             },
             "required": ["todos"]
@@ -85,114 +76,178 @@ impl Tool for TodoWriteTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let merge = args.get("merge").and_then(|v| v.as_bool()).unwrap_or(false);
+        let merge = args.get("merge").and_then(|v| v.as_bool()).unwrap_or(true);
 
-        // Parse new todos from args
         let new_todos: Vec<TodoItem> = match serde_json::from_value(args["todos"].clone()) {
             Ok(t) => t,
             Err(e) => {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Error parsing todos: {}", e),
+                    content: format!("Error parsing todos: {e}"),
                     is_error: true,
                 };
             }
         };
 
-        // Determine the storage directory
-        let whycode_dir = std::path::Path::new(&ctx.working_dir).join(".whycode");
-        let todos_path = whycode_dir.join("todos.json");
-
-        // Create .whycode directory if it doesn't exist
-        if let Err(e) = std::fs::create_dir_all(&whycode_dir) {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error creating .whycode directory: {}", e),
-                is_error: true,
-            };
-        }
-
-        // Load existing todos if merging
-        let final_todos: Vec<TodoItem> = if merge {
-            match std::fs::read_to_string(&todos_path) {
-                Ok(content) => {
-                    match serde_json::from_str::<TodoList>(&content) {
-                        Ok(list) => {
-                            let mut existing = list.todos;
-                            // Merge: update existing items by id, add new ones
-                            for new_item in new_todos {
-                                if let Some(existing_item) =
-                                    existing.iter_mut().find(|t| t.id == new_item.id)
-                                {
-                                    existing_item.content = new_item.content;
-                                    existing_item.status = new_item.status;
-                                } else {
-                                    existing.push(new_item);
-                                }
-                            }
-                            existing
-                        }
-                        Err(_) => new_todos,
-                    }
-                }
-                Err(_) => new_todos,
-            }
+        let working = Path::new(&ctx.working_dir);
+        let session_id = ctx.session_id.as_deref();
+        let existing = if merge {
+            load_todos(working, session_id)
         } else {
-            new_todos
+            Vec::new()
         };
+        let final_todos = apply_todo_update(existing, new_todos, merge);
 
-        // Save todos
-        let todo_list = TodoList {
-            todos: final_todos.clone(),
-        };
-
-        let json_str = match serde_json::to_string_pretty(&todo_list) {
-            Ok(s) => s,
-            Err(e) => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Error serializing todos: {}", e),
-                    is_error: true,
-                };
-            }
-        };
-
-        if let Err(e) = std::fs::write(&todos_path, &json_str) {
+        if let Err(e) = save_todos(working, session_id, &final_todos) {
             return ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Error writing todos file: {}", e),
+                content: format!("Error writing todos: {e}"),
                 is_error: true,
             };
         }
 
-        // Format the result
-        let mut result = String::from("Todos:\n");
-        let status_icons = [
-            ("pending", "⏳"),
-            ("in_progress", "🔄"),
-            ("completed", "✅"),
-            ("cancelled", "❌"),
-        ];
-
-        for item in &final_todos {
-            let icon = status_icons
-                .iter()
-                .find(|(s, _)| s == &item.status.as_str())
-                .map(|(_, i)| *i)
-                .unwrap_or("❓");
-            result.push_str(&format!("  {} [{}] {}\n", icon, item.id, item.content));
+        if let Some(sink) = &ctx.todo_sink {
+            sink(final_todos.clone());
         }
-
-        result.push_str(&format!(
-            "\nStored {} todos in {}",
-            final_todos.len(),
-            todos_path.display()
-        ));
 
         ToolResult {
             tool_call_id: String::new(),
-            content: result,
+            content: format_todo_result(&final_todos, working, session_id),
             is_error: false,
         }
+    }
+}
+
+fn format_todo_result(todos: &[TodoItem], working: &Path, session_id: Option<&str>) -> String {
+    let mut result = String::from("Todos:\n");
+    for item in todos {
+        result.push_str(&format!(
+            "  {} [{}] {}\n",
+            item.status.mark(),
+            item.id,
+            item.content
+        ));
+    }
+    result.push_str(&format!(
+        "\nStored {} todos in {}",
+        todos.len(),
+        whycode_core::todo::todos_path(working, session_id).display()
+    ));
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use whycode_core::todo::TodoStatus;
+
+    fn ctx(dir: &std::path::Path, session: Option<&str>) -> ToolContext {
+        let mut c = ToolContext::unsandboxed(dir.to_string_lossy().into_owned());
+        c.session_id = session.map(str::to_string);
+        c
+    }
+
+    #[tokio::test]
+    async fn writes_merges_and_notifies_sink() {
+        let dir = tempfile::tempdir().unwrap();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let cap = captured.clone();
+        let mut c = ctx(dir.path(), Some("sess-a"));
+        c.todo_sink = Some(Arc::new(move |todos| {
+            *cap.lock().unwrap() = todos;
+        }));
+
+        let tool = TodoWriteTool::new();
+        assert_eq!(tool.name(), "todowrite");
+        assert!(tool.description().contains("live"));
+        assert_eq!(TodoWriteTool::as_todo().name(), "todo");
+        let _ = TodoWriteTool::default();
+
+        let first = tool
+            .execute(
+                json!({"todos":[
+                    {"id":"a","content":"one","status":"pending"},
+                    {"id":"b","content":"two","status":"in_progress"}
+                ]}),
+                &c,
+            )
+            .await;
+        assert!(!first.is_error, "{}", first.content);
+        assert!(first.content.contains("☐ [a] one"));
+        assert!(first.content.contains("▶ [b] two"));
+        assert_eq!(captured.lock().unwrap().len(), 2);
+
+        let merged = tool
+            .execute(
+                json!({"todos":[{"id":"a","content":"one","status":"completed"}]}),
+                &c,
+            )
+            .await;
+        assert!(!merged.is_error, "{}", merged.content);
+        let list = captured.lock().unwrap().clone();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].status, TodoStatus::Completed);
+        assert_eq!(list[1].status, TodoStatus::InProgress);
+
+        let replaced = tool
+            .execute(
+                json!({
+                    "merge": false,
+                    "todos":[{"id":"z","content":"only","status":"pending"}]
+                }),
+                &c,
+            )
+            .await;
+        assert!(!replaced.is_error, "{}", replaced.content);
+        assert_eq!(captured.lock().unwrap().len(), 1);
+
+        let bad = tool.execute(json!({"todos": "nope"}), &c).await;
+        assert!(bad.is_error);
+        assert!(bad.content.contains("Error parsing todos"));
+    }
+
+    #[tokio::test]
+    async fn session_path_differs_from_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = TodoWriteTool::new();
+        let with_id = ctx(dir.path(), Some("s1"));
+        let without = ctx(dir.path(), None);
+        let _ = tool
+            .execute(
+                json!({"todos":[{"id":"a","content":"sess","status":"pending"}]}),
+                &with_id,
+            )
+            .await;
+        let _ = tool
+            .execute(
+                json!({"todos":[{"id":"b","content":"fb","status":"pending"}]}),
+                &without,
+            )
+            .await;
+        let sess = whycode_core::todo::load_todos(dir.path(), Some("s1"));
+        let fb = whycode_core::todo::load_todos(dir.path(), None);
+        assert_eq!(sess[0].content, "sess");
+        assert_eq!(fb[0].content, "fb");
+    }
+
+    #[tokio::test]
+    async fn save_error_is_tool_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("not-a-dir");
+        std::fs::write(&blocker, "x").unwrap();
+        let c = ctx(&blocker, None);
+        let out = TodoWriteTool::new()
+            .execute(
+                json!({"todos":[{"id":"a","content":"x","status":"pending"}]}),
+                &c,
+            )
+            .await;
+        assert!(out.is_error);
+        assert!(
+            out.content.contains("Error writing todos"),
+            "{}",
+            out.content
+        );
     }
 }

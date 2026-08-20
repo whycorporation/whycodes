@@ -532,6 +532,7 @@ pub(crate) fn from_turn_event(ev: &TurnEvent) -> Option<SdkEvent> {
         // TUI-only chrome — not part of the public v1 contract.
         TurnEvent::EnqueuePrompt { .. }
         | TurnEvent::Panel(_)
+        | TurnEvent::Todos { .. }
         | TurnEvent::SwarmMessage { .. }
         | TurnEvent::FileStale { .. }
         | TurnEvent::Subagent { .. } => return None,
@@ -600,6 +601,16 @@ mod tests {
 
         // TUI-only chrome is not part of the v1 contract.
         assert!(from_turn_event(&TurnEvent::Panel(PanelUpdate::Clear)).is_none());
+        assert!(
+            from_turn_event(&TurnEvent::Todos {
+                todos: vec![whycode_core::TodoItem::new(
+                    "a",
+                    "x",
+                    whycode_core::TodoStatus::Pending
+                )]
+            })
+            .is_none()
+        );
         assert!(
             from_turn_event(&TurnEvent::SwarmMessage {
                 from: "a".into(),

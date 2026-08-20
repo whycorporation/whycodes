@@ -18,5 +18,6 @@ pub mod status_bar;
 pub mod subagents;
 pub mod timefmt;
 pub mod toast;
+pub mod todos;
 
 pub use render::render;

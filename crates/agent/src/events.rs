@@ -75,6 +75,8 @@ pub enum TurnEvent {
         to: String,
         text: String,
     },
+    /// Session todo list for the sticky TUI panel (Grok-style).
+    Todos { todos: Vec<whycode_core::TodoItem> },
     /// Subagent lifecycle for the parent TUI (Grok-style strip / tasks pane).
     Subagent {
         id: String,

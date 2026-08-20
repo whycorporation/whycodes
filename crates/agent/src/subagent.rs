@@ -234,6 +234,7 @@ impl SubagentRunner {
             agent_label: self.agent_label.clone(),
             file_index: self.file_index.clone(),
             panel: self.panel.clone(),
+            todo_sink: None,
             swarm_hub: self.swarm_hub.clone(),
         };
 
