@@ -42,10 +42,9 @@ fn render_inner(frame: &mut Frame, app: &mut TuiApp) {
     // theme file takes precedence over the built-in of the same name.
     let palette = app.config.palette();
 
-    frame.render_widget(
-        Block::default().style(Style::default().bg(palette.bg)),
-        frame.area(),
-    );
+    // Own every cell (symbol + bg). `Block::style(bg)` only tints; leftover
+    // paste echo in breathing-room rows would otherwise show through.
+    super::layout::fill_blank(frame, frame.area(), palette.bg);
 
     if app.dialogs.is_open() {
         render_shell(frame, app, &palette);
@@ -266,6 +265,18 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
         width: area.width,
         height: area.height.saturating_sub(layout::BOTTOM_PAD),
     };
+    super::layout::fill_blank(
+        frame,
+        Rect {
+            x: area.x,
+            y: area
+                .y
+                .saturating_add(area.height.saturating_sub(layout::BOTTOM_PAD)),
+            width: area.width,
+            height: layout::BOTTOM_PAD,
+        },
+        palette.bg,
+    );
     let turn_h = turn_status_height(app);
     // Prefer the height the prompt actually needs. Leave a few rows for the
     // logo; do not force height/2 (that clipped the box on long pastes).
@@ -287,6 +298,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
     app.chat_content_width = chunks[0].width;
 
     chat::render(frame, chunks[0], app, palette);
+    super::layout::fill_blank(frame, chunks[1], palette.bg);
     if turn_h > 0 {
         render_turn_status(frame, chunks[2], app, palette);
     }
@@ -322,6 +334,38 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         width: main.width.saturating_sub(side.saturating_mul(2)),
         height: main.height.saturating_sub(layout::BOTTOM_PAD),
     };
+    super::layout::fill_blank(
+        frame,
+        Rect {
+            x: main.x,
+            y: main.y,
+            width: side,
+            height: main.height,
+        },
+        palette.bg,
+    );
+    super::layout::fill_blank(
+        frame,
+        Rect {
+            x: main.x.saturating_add(main.width.saturating_sub(side)),
+            y: main.y,
+            width: side,
+            height: main.height,
+        },
+        palette.bg,
+    );
+    super::layout::fill_blank(
+        frame,
+        Rect {
+            x: main.x,
+            y: main
+                .y
+                .saturating_add(main.height.saturating_sub(layout::BOTTOM_PAD)),
+            width: main.width,
+            height: layout::BOTTOM_PAD,
+        },
+        palette.bg,
+    );
 
     let turn_h = turn_status_height(app);
     let needed = prompt::prompt_height(app, inset.width);
@@ -342,6 +386,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
     app.chat_content_width = chunks[0].width;
 
     chat::render(frame, chunks[0], app, palette);
+    super::layout::fill_blank(frame, chunks[1], palette.bg);
     if turn_h > 0 {
         render_turn_status(frame, chunks[2], app, palette);
     }
@@ -1242,6 +1287,43 @@ mod paint_tests {
             !gap.contains('\u{276F}') && !gap.contains("[stop]"),
             "safezone row must be empty of chat/stop: {gap:?}"
         );
+    }
+
+    #[test]
+    fn prompt_gap_clears_stained_glyphs() {
+        // Bracketed paste echo (or a previously taller box) dumps text into
+        // the breathing-room rows above ╭─╮. Those rows must be rewritten.
+        let mut a = session_with_overflow();
+        a.current_agent_state = AgentState::Generating;
+        a.input_buffer.clear();
+        a.input_cursor = 0;
+        let (buf, _) = paint(100, 24, |f| {
+            let stain: Vec<Line> = (0..24).map(|_| Line::from("Z".repeat(100))).collect();
+            f.render_widget(Paragraph::new(Text::from(stain)), f.area());
+            crate::ui::render(f, &mut a);
+        });
+        let mut top_y = None;
+        for y in 0..24u16 {
+            for x in 0..100u16 {
+                if buf[(x, y)].symbol() == "╭" {
+                    top_y = Some(y);
+                    break;
+                }
+            }
+        }
+        let top_y = top_y.expect("prompt top border ╭");
+        assert!(
+            top_y >= 2,
+            "expected OUTER_TOP_GAP rows above the box, top_y={top_y}"
+        );
+        for dy in 1..=2u16 {
+            let y = top_y - dy;
+            let row = row_text(&buf, y);
+            assert!(
+                !row.contains('Z'),
+                "gap row {y} still has paste stain: {row:?}"
+            );
+        }
     }
 
     #[test]

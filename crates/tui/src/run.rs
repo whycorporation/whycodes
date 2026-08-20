@@ -741,6 +741,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let bench = crate::bench::config_from_env();
 
     let mut first_frame = true;
+    // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
+    // diff. Clear the terminal on the next paint so leftover text cannot sit
+    // in the unpainted rows beside the prompt.
+    let mut force_full_clear = false;
     // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
     let mut last_user_input = Instant::now();
     let mut idle_trim_armed = true;
@@ -775,6 +779,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // full frames per notice when they pulled the loop to 40 ms.
             let animate = rt.agent_busy || app.running_subagent_count() > 0;
             if app.needs_redraw || animate || first_frame {
+                if force_full_clear {
+                    if let Err(e) = terminal.clear() {
+                        whycode_core::logging::emit(
+                            "whycode_tui",
+                            "warn",
+                            "tui.full_clear_failed",
+                            Some(serde_json::json!({ "error": e.to_string() })),
+                        );
+                    }
+                    force_full_clear = false;
+                }
                 let completed = match terminal.draw(|f| render::render(f, &mut app)) {
                     Ok(c) => c,
                     Err(e) => {
@@ -1308,6 +1323,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     let _ = terminal.resize(Rect::new(0, 0, *w, *h));
                 }
                 if batch.iter().any(event_forces_redraw) {
+                    app.mark_dirty();
+                }
+                if batch
+                    .iter()
+                    .any(crate::redraw_schedule::event_needs_full_clear)
+                {
+                    force_full_clear = true;
                     app.mark_dirty();
                 }
 

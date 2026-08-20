@@ -180,6 +180,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         ])
         .split(area);
 
+    // Breathing-room rows above ╭─╮ are otherwise never written. A large
+    // paste echo (or a previously taller box) sits here beside the input.
+    crate::ui::layout::fill_blank(frame, chunks[0], palette.bg);
+
     let border_style = Style::default().fg(border_color);
 
     // ── Top: ╭──────────╮ ───────────────────────────────────────────
@@ -1050,6 +1054,51 @@ mod overflow_render_tests {
             let full = PREFIX_WIDTH as usize + w;
             let rect_w = (area_w - PAD_LEFT - PAD_RIGHT) as usize;
             assert!(full <= rect_w, "prefix+text {full} > rect {rect_w}");
+        }
+    }
+
+    #[test]
+    fn outer_gap_clears_stale_paste_glyphs() {
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        // Session layout (not the centered home box) — leftover paste sat
+        // in the 2-row gap above ╭─╮ after a long paste + continue.
+        app.add_message(crate::app::ChatRole::User, "hi");
+        let area = Rect {
+            x: 0,
+            y: 8,
+            width: 80,
+            height: 10,
+        };
+        terminal
+            .draw(|f| {
+                let stain: Vec<Line> = (0..20).map(|_| Line::from("W".repeat(80))).collect();
+                f.render_widget(Paragraph::new(Text::from(stain)), f.area());
+                render(f, area, &app, &app.config.palette());
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let mut top_y = None;
+        for y in 0..20u16 {
+            for x in 0..80u16 {
+                if buf[(x, y)].symbol() == "╭" {
+                    top_y = Some(y);
+                    break;
+                }
+            }
+        }
+        let top_y = top_y.expect("prompt ╭");
+        assert_eq!(
+            top_y,
+            area.y + OUTER_TOP_GAP,
+            "box should sit under the gap"
+        );
+        for y in area.y..top_y {
+            for x in area.x..area.x.saturating_add(area.width) {
+                assert_ne!(buf[(x, y)].symbol(), "W", "paste leftover in gap ({x},{y})");
+            }
         }
     }
 }
