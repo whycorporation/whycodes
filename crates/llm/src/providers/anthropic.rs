@@ -38,6 +38,144 @@ fn usage_from_message_delta(event: &Value) -> Option<(u64, u64)> {
     }
 }
 
+/// Map one SSE `data:` payload to zero or more stream events.
+///
+/// Extracted from `stream()` so wire-format handling stays unit-testable
+/// without a live HTTP response (same seam as codex `events_for_payload`).
+fn events_for_data(data: &str) -> Vec<whycode_core::Result<StreamEvent>> {
+    let Ok(event) = serde_json::from_str::<Value>(data) else {
+        return Vec::new();
+    };
+    let mut out: Vec<whycode_core::Result<StreamEvent>> = Vec::new();
+    match event["type"].as_str() {
+        Some("message_start") => {
+            if let Some(msg) = event["message"].as_object() {
+                let usage = &msg["usage"];
+                crate::usage_dump::dump_raw_usage("anthropic", usage);
+                out.push(Ok(StreamEvent::Usage {
+                    input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
+                    output_tokens: 0,
+                }));
+                // Cache tokens are billed separately from input_tokens
+                // and only Anthropic reports them, so they travel as
+                // their own event rather than as empty fields on every
+                // other provider's usage.
+                let created = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                let read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                if created > 0 || read > 0 {
+                    out.push(Ok(StreamEvent::CacheUsage {
+                        creation_input_tokens: created,
+                        read_input_tokens: read,
+                    }));
+                }
+            }
+        }
+        Some("message_delta") => {
+            if let Some(delta) = event["delta"].as_object()
+                && let Some(sr) = delta["stop_reason"].as_str()
+            {
+                out.push(Ok(StreamEvent::MessageDelta {
+                    delta: serde_json::json!({"stop_reason": sr}),
+                }));
+            }
+            // Official SSE puts `usage` as a sibling
+            // of `delta`; some proxies nest it inside.
+            if let Some((input, output)) = usage_from_message_delta(&event) {
+                out.push(Ok(StreamEvent::Usage {
+                    input_tokens: input,
+                    output_tokens: output,
+                }));
+            }
+        }
+        Some("content_block_start") => {
+            let block = &event["content_block"];
+            match block["type"].as_str() {
+                Some("tool_use") => {
+                    out.push(Ok(StreamEvent::ToolUse {
+                        id: block["id"].as_str().unwrap_or("").to_string(),
+                        name: block["name"].as_str().unwrap_or("").to_string(),
+                        input: block["input"].clone(),
+                    }));
+                }
+                Some("thinking") => {
+                    if let Some(thinking) = block["thinking"].as_str()
+                        && !thinking.is_empty()
+                    {
+                        out.push(Ok(StreamEvent::Thinking {
+                            text: thinking.to_string(),
+                        }));
+                    }
+                    if let Some(sig) = block["signature"].as_str()
+                        && !sig.is_empty()
+                    {
+                        out.push(Ok(StreamEvent::ThinkingSignature {
+                            signature: sig.to_string(),
+                        }));
+                    }
+                }
+                Some("redacted_thinking") => {
+                    if let Some(data) = block["data"].as_str() {
+                        out.push(Ok(StreamEvent::RedactedThinking {
+                            data: data.to_string(),
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some("content_block_delta") => {
+            let delta = &event["delta"];
+            match delta["type"].as_str() {
+                Some("text_delta") => {
+                    if let Some(text) = delta["text"].as_str() {
+                        out.push(Ok(StreamEvent::TextDelta {
+                            text: text.to_string(),
+                        }));
+                    }
+                }
+                Some("input_json_delta") => {
+                    if let Some(json) = delta["partial_json"].as_str() {
+                        out.push(Ok(StreamEvent::ToolUseDelta {
+                            id: String::new(),
+                            input_json_delta: json.to_string(),
+                        }));
+                    }
+                }
+                Some("thinking_delta") => {
+                    if let Some(thinking) = delta["thinking"].as_str() {
+                        out.push(Ok(StreamEvent::ThinkingDelta {
+                            text: thinking.to_string(),
+                        }));
+                    }
+                }
+                Some("signature_delta") => {
+                    if let Some(sig) = delta["signature"].as_str()
+                        && !sig.is_empty()
+                    {
+                        out.push(Ok(StreamEvent::ThinkingSignature {
+                            signature: sig.to_string(),
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Some("message_stop") => {
+            out.push(Ok(StreamEvent::MessageStop));
+        }
+        Some("error") => {
+            out.push(Err(whycode_core::Error::Llm(
+                event["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+                    .to_string(),
+            )));
+        }
+        _ => {}
+    }
+    out
+}
+
 fn content_block_to_anthropic(b: &ContentBlock) -> Value {
     match b {
         ContentBlock::Text { text } => serde_json::json!({"type": "text", "text": text}),
@@ -316,135 +454,8 @@ impl LlmProvider for AnthropicProvider {
                                 return;
                             }
 
-                            if let Ok(event) = serde_json::from_str::<Value>(data) {
-                                match event["type"].as_str() {
-                                    Some("message_start") => {
-                                        if let Some(msg) = event["message"].as_object() {
-                                            let usage = &msg["usage"];
-                                            crate::usage_dump::dump_raw_usage("anthropic", usage);
-                                            yield Ok(StreamEvent::Usage {
-                                                input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-                                                output_tokens: 0,
-                                            });
-                                            // Cache tokens are billed separately from input_tokens
-                                            // and only Anthropic reports them, so they travel as
-                                            // their own event rather than as empty fields on every
-                                            // other provider's usage.
-                                            let created = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
-                                            let read = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                                            if created > 0 || read > 0 {
-                                                yield Ok(StreamEvent::CacheUsage {
-                                                    creation_input_tokens: created,
-                                                    read_input_tokens: read,
-                                                });
-                                            }
-                                        }
-                                    }
-                                    Some("message_delta") => {
-                                        if let Some(delta) = event["delta"].as_object()
-                                            && let Some(sr) = delta["stop_reason"].as_str()
-                                        {
-                                            yield Ok(StreamEvent::MessageDelta {
-                                                delta: serde_json::json!({"stop_reason": sr}),
-                                            });
-                                        }
-                                        // Official SSE puts `usage` as a sibling
-                                        // of `delta`; some proxies nest it inside.
-                                        if let Some((input, output)) =
-                                            usage_from_message_delta(&event)
-                                        {
-                                            yield Ok(StreamEvent::Usage {
-                                                input_tokens: input,
-                                                output_tokens: output,
-                                            });
-                                        }
-                                    }
-                                    Some("content_block_start") => {
-                                        let block = &event["content_block"];
-                                        match block["type"].as_str() {
-                                            Some("tool_use") => {
-                                                yield Ok(StreamEvent::ToolUse {
-                                                    id: block["id"].as_str().unwrap_or("").to_string(),
-                                                    name: block["name"].as_str().unwrap_or("").to_string(),
-                                                    input: block["input"].clone(),
-                                                });
-                                            }
-                                            Some("thinking") => {
-                                                if let Some(thinking) = block["thinking"].as_str()
-                                                    && !thinking.is_empty()
-                                                {
-                                                    yield Ok(StreamEvent::Thinking {
-                                                        text: thinking.to_string(),
-                                                    });
-                                                }
-                                                if let Some(sig) = block["signature"].as_str()
-                                                    && !sig.is_empty()
-                                                {
-                                                    yield Ok(StreamEvent::ThinkingSignature {
-                                                        signature: sig.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            Some("redacted_thinking") => {
-                                                if let Some(data) = block["data"].as_str() {
-                                                    yield Ok(StreamEvent::RedactedThinking {
-                                                        data: data.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    Some("content_block_delta") => {
-                                        let delta = &event["delta"];
-                                        match delta["type"].as_str() {
-                                            Some("text_delta") => {
-                                                if let Some(text) = delta["text"].as_str() {
-                                                    yield Ok(StreamEvent::TextDelta {
-                                                        text: text.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            Some("input_json_delta") => {
-                                                if let Some(json) = delta["partial_json"].as_str() {
-                                                    yield Ok(StreamEvent::ToolUseDelta {
-                                                        id: String::new(),
-                                                        input_json_delta: json.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            Some("thinking_delta") => {
-                                                if let Some(thinking) = delta["thinking"].as_str() {
-                                                    yield Ok(StreamEvent::ThinkingDelta {
-                                                        text: thinking.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            Some("signature_delta") => {
-                                                if let Some(sig) = delta["signature"].as_str()
-                                                    && !sig.is_empty()
-                                                {
-                                                    yield Ok(StreamEvent::ThinkingSignature {
-                                                        signature: sig.to_string(),
-                                                    });
-                                                }
-                                            }
-                                            _ => {}
-                                        }
-                                    }
-                                    Some("message_stop") => {
-                                        yield Ok(StreamEvent::MessageStop);
-                                    }
-                                    Some("error") => {
-                                        yield Err(whycode_core::Error::Llm(
-                                            event["error"]["message"]
-                                                .as_str()
-                                                .unwrap_or("Unknown error")
-                                                .to_string(),
-                                        ));
-                                    }
-                                    _ => {}
-                                }
+                            for event in events_for_data(data) {
+                                yield event;
                             }
                         }
                     }
@@ -467,8 +478,9 @@ impl Default for AnthropicProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::usage_from_message_delta;
+    use super::{AnthropicProvider, events_for_data, usage_from_message_delta};
     use serde_json::json;
+    use whycode_core::types::StreamEvent;
 
     #[test]
     fn usage_sibling_of_delta_is_official_shape() {
@@ -506,5 +518,343 @@ mod tests {
             "delta": { "stop_reason": "end_turn" }
         });
         assert!(usage_from_message_delta(&event).is_none());
+    }
+
+    #[test]
+    fn data_message_start_emits_usage_and_cache_usage_when_present() {
+        let events = events_for_data(
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":25,"cache_creation_input_tokens":5,"cache_read_input_tokens":7}}}"#,
+        );
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(matches!(
+            &events[0],
+            Ok(StreamEvent::Usage {
+                input_tokens: 25,
+                output_tokens: 0
+            })
+        ));
+        assert!(matches!(
+            &events[1],
+            Ok(StreamEvent::CacheUsage {
+                creation_input_tokens: 5,
+                read_input_tokens: 7
+            })
+        ));
+    }
+
+    #[test]
+    fn data_message_start_without_cache_tokens_skips_cache_event() {
+        let events =
+            events_for_data(r#"{"type":"message_start","message":{"usage":{"input_tokens":11}}}"#);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(matches!(
+            &events[0],
+            Ok(StreamEvent::Usage {
+                input_tokens: 11,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn data_message_delta_emits_stop_reason_then_usage() {
+        let events = events_for_data(
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":40,"output_tokens":12}}"#,
+        );
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(matches!(&events[0], Ok(StreamEvent::MessageDelta { .. })));
+        assert!(matches!(
+            &events[1],
+            Ok(StreamEvent::Usage {
+                input_tokens: 40,
+                output_tokens: 12
+            })
+        ));
+    }
+
+    #[test]
+    fn data_content_block_start_tool_use_carries_id_name_input() {
+        let events = events_for_data(
+            r#"{"type":"content_block_start","content_block":{"type":"tool_use","id":"tu_1","name":"read_file","input":{"path":"a.rs"}}}"#,
+        );
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(matches!(
+            &events[0],
+            Ok(StreamEvent::ToolUse { id, name, .. }) if id == "tu_1" && name == "read_file"
+        ));
+    }
+
+    #[test]
+    fn data_content_block_start_thinking_emits_text_and_signature() {
+        let events = events_for_data(
+            r#"{"type":"content_block_start","content_block":{"type":"thinking","thinking":"hmm","signature":"sig9"}}"#,
+        );
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(matches!(&events[0], Ok(StreamEvent::Thinking { text } ) if text == "hmm"));
+        assert!(
+            matches!(&events[1], Ok(StreamEvent::ThinkingSignature { signature } ) if signature == "sig9")
+        );
+    }
+
+    #[test]
+    fn data_content_block_start_redacted_thinking_passes_data() {
+        let events = events_for_data(
+            r#"{"type":"content_block_start","content_block":{"type":"redacted_thinking","data":"opaque"}}"#,
+        );
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(
+            matches!(&events[0], Ok(StreamEvent::RedactedThinking { data } ) if data == "opaque")
+        );
+    }
+
+    #[test]
+    fn data_content_block_start_unknown_type_is_silent() {
+        let events = events_for_data(
+            r#"{"type":"content_block_start","content_block":{"type":"server_tool_use"}}"#,
+        );
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn data_content_block_delta_covers_all_four_delta_kinds() {
+        let text = events_for_data(
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}"#,
+        );
+        assert!(matches!(&text[0], Ok(StreamEvent::TextDelta { text }) if text == "hi"));
+
+        let json = events_for_data(
+            r#"{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":"{\"a\":1}"}}"#,
+        );
+        assert!(matches!(
+            &json[0],
+            Ok(StreamEvent::ToolUseDelta { input_json_delta, .. }) if input_json_delta == "{\"a\":1}"
+        ));
+
+        let think = events_for_data(
+            r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"t"}}"#,
+        );
+        assert!(matches!(&think[0], Ok(StreamEvent::ThinkingDelta { text }) if text == "t"));
+
+        let sig = events_for_data(
+            r#"{"type":"content_block_delta","delta":{"type":"signature_delta","signature":"s"}}"#,
+        );
+        assert!(
+            matches!(&sig[0], Ok(StreamEvent::ThinkingSignature { signature }) if signature == "s")
+        );
+    }
+
+    #[test]
+    fn data_message_stop_and_error_are_mapped() {
+        let stop = events_for_data(r#"{"type":"message_stop"}"#);
+        assert!(matches!(stop[0], Ok(StreamEvent::MessageStop)));
+
+        let err = events_for_data(r#"{"type":"error","error":{"message":"overloaded"}}"#);
+        assert!(err[0].is_err());
+        assert!(
+            err[0]
+                .as_ref()
+                .unwrap_err()
+                .to_string()
+                .contains("overloaded")
+        );
+    }
+
+    #[test]
+    fn data_invalid_json_and_unknown_types_yield_nothing() {
+        assert!(events_for_data("not json at all").is_empty());
+        assert!(events_for_data(r#"{"type":"ping"}"#).is_empty());
+    }
+
+    use std::sync::Arc;
+    use whycode_core::types::{
+        ContentBlock, ImageSource, LlmRequest, Message, MessageContent, Role, ToolDefinition,
+    };
+
+    fn base_request() -> LlmRequest {
+        LlmRequest {
+            system: String::new(),
+            messages: Arc::from(vec![]),
+            tools: vec![],
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        }
+    }
+
+    #[test]
+    fn prompt_cache_promotes_system_to_ephemeral_block() {
+        let provider = AnthropicProvider::new();
+        let mut req = base_request();
+        req.use_prompt_cache = true;
+        req.system = "sys".into();
+        let body = provider.build_body(&req, "m");
+        let system = body["system"].as_array().expect("cached system");
+        assert_eq!(system[0]["type"], "text");
+        assert_eq!(system[0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[test]
+    fn build_body_defaults_options_and_tool_shape() {
+        let provider = AnthropicProvider::new();
+        let mut req = base_request();
+        req.system = "sys".into();
+        req.max_tokens = Some(100);
+        req.temperature = Some(0.5);
+        req.top_p = Some(0.25);
+        req.tools = vec![ToolDefinition {
+            name: "read".into(),
+            description: "Read a file".into(),
+            parameters: json!({"type": "object"}),
+        }];
+
+        let body = provider.build_body(&req, "claude-sonnet-4");
+        assert_eq!(body["model"], "claude-sonnet-4");
+        assert_eq!(body["max_tokens"], 100);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["system"], "sys");
+        assert_eq!(body["temperature"], 0.5);
+        assert_eq!(body["top_p"], 0.25);
+
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "read");
+        assert_eq!(tools[0]["input_schema"], json!({"type": "object"}));
+    }
+
+    #[test]
+    fn build_body_omits_absent_optionals() {
+        let provider = AnthropicProvider::new();
+        let body = provider.build_body(&base_request(), "m");
+        assert_eq!(body["max_tokens"], 4096);
+        assert!(body.get("system").is_none());
+        assert!(body.get("tools").is_none());
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
+    }
+
+    #[test]
+    fn convert_messages_maps_roles_blocks_and_drops_empty() {
+        let provider = AnthropicProvider::new();
+        let mut req = base_request();
+        req.messages = Arc::from(vec![
+            Message {
+                role: Role::System,
+                content: MessageContent::Text("s".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+            Message {
+                role: Role::User,
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+                content: MessageContent::Blocks(vec![
+                    ContentBlock::Text { text: "hi".into() },
+                    ContentBlock::Image {
+                        source: ImageSource::Base64 {
+                            media_type: "image/png".into(),
+                            data: "AAAA".into(),
+                        },
+                    },
+                    ContentBlock::Image {
+                        source: ImageSource::Url {
+                            url: "https://x/y.png".into(),
+                        },
+                    },
+                    ContentBlock::ToolResult {
+                        tool_use_id: "t1".into(),
+                        content: "out".into(),
+                        is_error: None,
+                    },
+                ]),
+            },
+            Message {
+                role: Role::Assistant,
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+                content: MessageContent::Blocks(vec![
+                    ContentBlock::Thinking {
+                        text: "hmm".into(),
+                        signature: Some("sig".into()),
+                    },
+                    ContentBlock::RedactedThinking { data: "opq".into() },
+                    ContentBlock::ToolUse {
+                        id: "t1".into(),
+                        name: "read".into(),
+                        input: json!({"path": "a.rs"}),
+                    },
+                ]),
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::Text("result".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+            Message {
+                role: Role::Assistant,
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+                content: MessageContent::Blocks(vec![ContentBlock::Thinking {
+                    text: "only thinking".into(),
+                    signature: None,
+                }]),
+            },
+        ]);
+
+        let body = provider.build_body(&req, "m");
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 4, "{msgs:?}");
+
+        assert_eq!(msgs[0]["role"], "user");
+
+        let user_blocks = msgs[1]["content"].as_array().unwrap();
+        assert_eq!(user_blocks[0]["type"], "text");
+        assert_eq!(user_blocks[1]["type"], "image");
+        assert_eq!(user_blocks[1]["source"]["media_type"], "image/png");
+        assert_eq!(user_blocks[2]["type"], "text", "url image degrades to text");
+        assert_eq!(user_blocks[3]["type"], "tool_result");
+        assert_eq!(user_blocks[3]["is_error"], false);
+
+        let a_blocks = msgs[2]["content"].as_array().unwrap();
+        assert_eq!(a_blocks[0]["type"], "thinking");
+        assert_eq!(a_blocks[0]["signature"], "sig");
+        assert_eq!(a_blocks[1]["type"], "redacted_thinking");
+        assert_eq!(a_blocks[2]["type"], "tool_use");
+
+        assert_eq!(msgs[3]["role"], "user", "tool role maps to user");
+    }
+
+    #[test]
+    fn thinking_without_signature_omits_the_field() {
+        let provider = AnthropicProvider::new();
+        let mut req = base_request();
+        req.messages = Arc::from(vec![Message {
+            role: Role::Assistant,
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+            content: MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    text: "t".into(),
+                    signature: None,
+                },
+                ContentBlock::Text {
+                    text: "answer".into(),
+                },
+            ]),
+        }]);
+        let body = provider.build_body(&req, "m");
+        let block = &body["messages"][0]["content"][0];
+        assert_eq!(block["type"], "thinking");
+        assert!(block.get("signature").is_none());
     }
 }

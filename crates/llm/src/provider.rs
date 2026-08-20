@@ -98,3 +98,68 @@ impl Default for ProviderRegistry {
         registry
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whycode_config::Config;
+    use whycode_core::types::ProviderConfig;
+
+    fn config_entry(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.to_string(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn default_registry_exposes_builtin_providers() {
+        let registry = ProviderRegistry::default();
+        for name in [
+            "anthropic",
+            "openai",
+            "github-copilot",
+            "google",
+            "deepseek",
+            "openrouter",
+            "ollama",
+            "xai",
+            "mistral",
+            "together",
+            "groq",
+        ] {
+            assert!(registry.get(name).is_some(), "{name} missing");
+        }
+        assert!(registry.get("nope").is_none());
+    }
+
+    #[test]
+    fn register_from_config_adds_custom_and_keeps_builtin() {
+        let mut registry = ProviderRegistry::default();
+        let mut config = Config::default();
+        config
+            .providers
+            .insert("anthropic".to_string(), config_entry("anthropic"));
+        config
+            .providers
+            .insert("acme".to_string(), config_entry("acme"));
+
+        registry.register_from_config(&config);
+
+        assert!(registry.get("acme").is_some(), "custom provider not added");
+        assert_eq!(registry.get("anthropic").unwrap().name(), "anthropic");
+    }
+
+    #[test]
+    fn empty_config_registers_nothing_new() {
+        let mut registry = ProviderRegistry::new();
+        registry.register_from_config(&Config::default());
+        assert!(registry.get("anything").is_none());
+    }
+}
