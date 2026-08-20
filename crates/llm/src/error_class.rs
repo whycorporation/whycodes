@@ -472,4 +472,176 @@ mod tests {
         assert_eq!(extract_http_status("(403 Forbidden): nope"), Some(403));
         assert_eq!(extract_http_status("(next page)"), None);
     }
+
+    #[test]
+    fn extract_http_prefix_and_leading_forms() {
+        assert_eq!(extract_http_status("HTTP 502 bad gateway"), Some(502));
+        assert_eq!(extract_http_status("status: 503"), Some(503));
+        assert_eq!(extract_http_status("status 500 boom"), Some(500));
+        assert_eq!(extract_http_status("status code 500 boom"), Some(500));
+        assert_eq!(extract_http_status("500 Internal Server Error"), Some(500));
+        assert_eq!(
+            extract_http_status(r#""code":"internal_server_error""#),
+            None
+        );
+        assert_eq!(extract_http_status(r#""code":502"#), Some(502));
+    }
+
+    #[test]
+    fn retry_after_header_seconds_is_parsed() {
+        let c = classify_message("Provider API error (429): slow down; retry-after: 12");
+        assert_eq!(c.kind, ErrorKind::RateLimited);
+        assert_eq!(c.retry_after, Some(Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn retry_in_seconds_phrase_sets_wait() {
+        let c = classify_message("(429) rate limit hit, retry in 7 seconds");
+        assert_eq!(c.kind, ErrorKind::RateLimited);
+        assert_eq!(c.retry_after, Some(Duration::from_secs(7)));
+    }
+
+    #[test]
+    fn wait_ms_phrase_is_parsed_as_millis() {
+        let c = classify_message("(429) too many requests, wait 250ms");
+        assert_eq!(c.retry_after, Some(Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn rate_limit_without_hint_defaults_to_five_seconds() {
+        let c = classify_message("rate_limit_exceeded for model X");
+        assert_eq!(c.kind, ErrorKind::RateLimited);
+        assert_eq!(c.retry_after, Some(Duration::from_secs(5)));
+        assert_eq!(c.status, Some(429));
+    }
+
+    #[test]
+    fn timeout_copy() {
+        let c = classify_message("request timed out after 30s");
+        assert_eq!(c.kind, ErrorKind::Timeout);
+        assert!(c.retryable);
+        assert_eq!(c.user_message(), "Request timed out");
+    }
+
+    #[test]
+    fn deadline_exceeded_is_timeout() {
+        let c = classify_message("operation deadline exceeded while waiting");
+        assert_eq!(c.kind, ErrorKind::Timeout);
+        assert!(c.retryable);
+    }
+
+    #[test]
+    fn network_copy() {
+        let c = classify_message("tcp connect error: connection refused");
+        assert_eq!(c.kind, ErrorKind::Network);
+        assert!(c.retryable);
+        assert_eq!(c.user_message(), "Network error reaching the provider");
+    }
+
+    #[test]
+    fn cancelled_copy_in_both_spellings() {
+        let c = classify_message("stream cancelled by user");
+        assert_eq!(c.kind, ErrorKind::Cancelled);
+        assert!(!c.retryable);
+        assert_eq!(c.user_message(), "Cancelled");
+        let us = classify_message("request canceled");
+        assert_eq!(us.kind, ErrorKind::Cancelled);
+    }
+
+    #[test]
+    fn bad_gateway_is_server_with_status() {
+        let c = classify_message("502 bad gateway from proxy");
+        assert_eq!(c.kind, ErrorKind::Server);
+        assert!(c.retryable);
+        assert_eq!(c.status, Some(502));
+        assert_eq!(c.user_message(), "Provider server error (HTTP 502)");
+    }
+
+    #[test]
+    fn hard_client_status_wins_over_server_language() {
+        let c = classify_message("overloaded (422): validation failed");
+        assert_eq!(c.kind, ErrorKind::Client);
+        assert!(!c.retryable);
+        assert_eq!(c.user_message(), "Request rejected (HTTP 422)");
+    }
+
+    #[test]
+    fn authentication_language_is_auth_without_status() {
+        let c = classify_message("authentication failed for provider");
+        assert_eq!(c.kind, ErrorKind::Auth);
+        assert!(!c.retryable);
+    }
+
+    #[test]
+    fn unclassified_message_passes_through_compactly() {
+        let c = classify_message("something odd happened");
+        assert_eq!(c.kind, ErrorKind::Unknown);
+        assert_eq!(c.user_message(), "something odd happened");
+    }
+
+    #[test]
+    fn unknown_long_message_is_truncated_with_ellipsis() {
+        let m = format!("prefix {}", "x".repeat(200));
+        let u = classify_message(&m).user_message();
+        assert!(u.ends_with('…'), "{u}");
+        assert_eq!(u.chars().count(), 160);
+    }
+
+    #[test]
+    fn unknown_blank_message_gets_generic_copy() {
+        let u = classify_message("   ").user_message();
+        assert_eq!(u, "LLM request failed");
+    }
+
+    #[test]
+    fn server_without_status_copy() {
+        let ce = ClassifiedError {
+            kind: ErrorKind::Server,
+            retryable: true,
+            retry_after: None,
+            status: None,
+            message: "boom".into(),
+        };
+        assert_eq!(ce.user_message(), "Provider server error");
+    }
+
+    #[test]
+    fn client_without_status_copy() {
+        let ce = ClassifiedError {
+            kind: ErrorKind::Client,
+            retryable: false,
+            retry_after: None,
+            status: None,
+            message: "boom".into(),
+        };
+        assert_eq!(ce.user_message(), "Request rejected by the provider");
+    }
+
+    #[test]
+    fn rate_limited_copy_reflects_retry_after() {
+        let with_hint = ClassifiedError {
+            kind: ErrorKind::RateLimited,
+            retryable: true,
+            retry_after: Some(Duration::from_secs(9)),
+            status: Some(429),
+            message: String::new(),
+        };
+        assert_eq!(with_hint.user_message(), "Rate limited — retry in 9s");
+        let without = ClassifiedError {
+            kind: ErrorKind::RateLimited,
+            retryable: true,
+            retry_after: None,
+            status: None,
+            message: String::new(),
+        };
+        assert_eq!(without.user_message(), "Rate limited by the provider");
+    }
+
+    #[test]
+    fn classify_wraps_core_error_display() {
+        let err = whycode_core::Error::Llm("Provider API error (500): internal".into());
+        let c = classify(&err);
+        assert_eq!(c.kind, ErrorKind::Server);
+        assert_eq!(c.message, "LLM error: Provider API error (500): internal");
+    }
 }
