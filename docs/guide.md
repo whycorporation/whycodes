@@ -43,7 +43,10 @@ Options (global):
 ```
 
 The prompt is positional: `whycode generate "<prompt>"`, not `whycode -p`.
-`run` and `generate` also accept `-t, --max-turns <N>` (default 25).
+`generate` (and `run --format json|stream-json`) accept `-t, --max-turns <N>` as
+an optional cap with **no default**. Interactive TUI / `whycode run` ignores
+`--max-turns` (Grok parity): the agent runs until it finishes, you cancel, or
+the doom-loop guard trips.
 
 ```bash
 whycode -d ./my-project

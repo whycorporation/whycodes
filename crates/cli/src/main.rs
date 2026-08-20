@@ -86,9 +86,9 @@ pub enum Commands {
         /// Optional initial prompt (with --format json|stream-json this is one-shot CI mode)
         prompt: Option<String>,
 
-        /// Maximum conversation turns
-        #[arg(short = 't', long, default_value = "25")]
-        max_turns: usize,
+        /// Maximum agentic turns (headless only; ignored in the TUI)
+        #[arg(short = 't', long)]
+        max_turns: Option<usize>,
 
         /// Output format for headless / CI: text (default), json, or stream-json
         #[arg(
@@ -106,9 +106,9 @@ pub enum Commands {
         #[arg(required = true)]
         prompt: Vec<String>,
 
-        /// Maximum conversation turns
-        #[arg(short = 't', long, default_value = "25")]
-        max_turns: usize,
+        /// Maximum agentic turns before stopping (no default cap)
+        #[arg(short = 't', long)]
+        max_turns: Option<usize>,
 
         /// Parallel workers when multiple prompts are given
         #[arg(short = 'j', long, default_value = "1")]
@@ -594,7 +594,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             // No subcommand → interactive run
             let run_cmd = Commands::Run {
                 prompt: None,
-                max_turns: 25,
+                max_turns: None,
                 format: OutputFormat::Text,
             };
             dispatch_command(&run_cmd, &cli).await
@@ -671,6 +671,18 @@ pub(crate) fn is_tui_invoke(cli: &Cli) -> bool {
             &cli.command,
             None | Some(Commands::Run { .. }) | Some(Commands::Connect { .. })
         )
+}
+
+/// Grok parity: `--max-turns` is a headless cap. Interactive TUI/REPL
+/// ignores the flag (warning on stderr) so a long coding turn is not
+/// killed at 25 LLM steps.
+pub(crate) fn ignore_max_turns_interactive(max_turns: Option<usize>) -> Option<usize> {
+    if max_turns.is_some() {
+        eprintln!(
+            "whycode: --max-turns is headless-only (generate / --format json|stream-json); ignoring it in interactive mode"
+        );
+    }
+    None
 }
 
 async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
@@ -920,7 +932,7 @@ fn agent_info_for(cli: &Cli, config: &Config) -> AgentInfo {
 async fn cmd_run(
     cli: &Cli,
     prompt: Option<&str>,
-    max_turns: usize,
+    max_turns: Option<usize>,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     // Structured output is headless-only; needs a prompt.
@@ -976,6 +988,9 @@ async fn cmd_run(
         );
     }
     let resume_want = resolve_resume_want(cli);
+    // Grok parity: `--max-turns` is a headless cap. Interactive TUI/REPL
+    // runs until end-of-turn, cancel, or doom-loop.
+    let max_turns = ignore_max_turns_interactive(max_turns);
 
     if use_tui {
         return whycode_tui::run(whycode_tui::TuiRunOptions {
@@ -2302,7 +2317,7 @@ async fn run_init_agents_md(
     );
     tmp.add_user_message(&prompt);
     let content = agent
-        .run_turn(&mut tmp, provider, model, api_key, 5)
+        .run_turn(&mut tmp, provider, model, api_key, Some(5))
         .await
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
@@ -2320,7 +2335,7 @@ async fn run_init_agents_md(
 pub(crate) async fn cmd_generate(
     cli: &Cli,
     prompts: &[String],
-    max_turns: usize,
+    max_turns: Option<usize>,
     jobs: usize,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
@@ -2449,7 +2464,7 @@ pub(crate) async fn run_generate_parallel(
     model: &str,
     agent_name: &str,
     api_key: &str,
-    max_turns: usize,
+    max_turns: Option<usize>,
     jobs: usize,
     format: OutputFormat,
     project_dir: &std::path::Path,
@@ -2540,7 +2555,7 @@ pub(crate) async fn run_one_parallel_turn(
     model: &str,
     agent_name: &str,
     api_key: &str,
-    max_turns: usize,
+    max_turns: Option<usize>,
     format: OutputFormat,
     project_dir: &std::path::Path,
     structured: bool,
@@ -2717,7 +2732,7 @@ pub(crate) async fn run_headless_turn(
     model: &str,
     api_key: &str,
     agent_name: &str,
-    max_turns: usize,
+    max_turns: Option<usize>,
     format: OutputFormat,
 ) -> anyhow::Result<()> {
     let started = std::time::Instant::now();
@@ -3108,7 +3123,7 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
         model,
         api_key,
         agent_name,
-        max_turns: 25,
+        max_turns: None,
         initial_prompt: None,
         config,
         resume_session_id: None,
@@ -3180,7 +3195,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         config: Arc::new(config),
         project_dir,
         sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
-        max_turns: 25,
+        max_turns: None,
         mcp_warm: true,
         index_warm: true,
         started_at: std::time::Instant::now(),

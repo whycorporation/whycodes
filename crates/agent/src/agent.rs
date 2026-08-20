@@ -943,13 +943,17 @@ impl Agent {
     }
 
     /// Run a single conversation turn (no streaming UI events).
+    ///
+    /// `max_turns` is a headless safety cap (`None` = unlimited, Grok TUI
+    /// parity). Interactive sessions pass `None` and stop on end-of-turn,
+    /// cancel, or doom-loop instead.
     pub async fn run_turn(
         &self,
         session: &mut Session,
         provider_name: &str,
         model: &str,
         api_key: &str,
-        max_turns: usize,
+        max_turns: Option<usize>,
     ) -> whycode_core::Result<String> {
         self.run_turn_with_events(
             session,
@@ -971,7 +975,7 @@ impl Agent {
         provider_name: &str,
         model: &str,
         api_key: &str,
-        max_turns: usize,
+        max_turns: Option<usize>,
         events: Option<EventSink>,
         cancel: Option<CancelFlag>,
     ) -> whycode_core::Result<String> {
@@ -1068,10 +1072,11 @@ impl Agent {
             }
 
             turn_count += 1;
-            if turn_count > max_turns {
+            if let Some(max) = max_turns
+                && turn_count > max
+            {
                 return Err(whycode_core::Error::Agent(format!(
-                    "Exceeded maximum turns ({})",
-                    max_turns
+                    "Exceeded maximum turns ({max})"
                 )));
             }
 
