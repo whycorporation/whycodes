@@ -140,6 +140,25 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-20 — core 100% floor misses `save_todos` parent `if let`
+
+**Symptom:** `Coverage (line floor)` fails `whycode-core` with
+`Uncovered Lines: crates/core/src/todo.rs: 130` (closing `}` of
+`if let Some(parent) = path.parent()`). `Test (linux)` is green.
+
+**JSONL / crash:** none.
+
+**Root cause:** `todos_path` is always `working_dir/.whycode/...`, so
+`Path::parent()` is `Some`. llvm-cov attributes the unused `None` arm to
+the closing brace (same shape as the sandbox `SSH_AUTH_SOCK` miss).
+
+**Fix:** `create_dir_all(path.parent().unwrap_or(working_dir))` — no
+`if let`. Serde fallback extracted to `empty_todo_list_json` and unit-tested.
+
+**Prevention:** On 100% crates, do not `if let Some(parent) = path.parent()`
+when the path is constructed with a directory prefix. Prefer `unwrap_or`
+on a known fallback so there is no uncovered else brace.
+
 ### 2026-08-20 — TUI has no default max-turns cap (Grok parity)
 
 **Symptom:** After ~19 minutes / 25 LLM steps a TUI turn died with
