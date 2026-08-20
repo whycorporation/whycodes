@@ -135,7 +135,7 @@ jobs:
           # 100% crates: ignore *tests.rs (llvm-cov prints the basename)
           # so host-only test branches cannot sink the floor.
           CRATE_IGNORE="$IGNORE|tests\\.rs$"
-          cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --fail-under-lines 78 --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index
+          cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --fail-under-lines 82 --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index
           for crate in whycode-function whycode-schema whycode-skill whycode-sandbox whycode-protocol whycode-plugin whycode-command-risk whycode-storage whycode-core whycode-config whycode-format whycode-index; do
             cargo llvm-cov -p "$crate" --ignore-filename-regex "$CRATE_IGNORE" --fail-under-lines 100 --show-missing-lines --summary-only
           done
