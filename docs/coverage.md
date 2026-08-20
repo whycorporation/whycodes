@@ -41,7 +41,7 @@ toolchain, point `LLVM_COV` / `LLVM_PROFDATA` at the system binaries.
 
 | Gate | Floor | What it covers |
 |---|---|---|
-| Workspace | **78%** lines | Every crate, including tests in the same `.rs` files |
+| Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
 | `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `format`, `index` | **100%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
@@ -50,8 +50,8 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-08-17 (`cargo llvm-cov --workspace`, flags above).
-Workspace line coverage **81.30%**.
+Linux x86_64, 2026-08-21 (`cargo llvm-cov --workspace`, flags above).
+Workspace line coverage **82.82%**.
 
 Line coverage is the number CI gates on. Function and region rates are
 informational.
