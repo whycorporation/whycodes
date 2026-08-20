@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-20 — Long paste leftover sits beside the prompt
+
+**Symptom:** After pasting a long prompt (then submitting / continuing the turn), the first lines of the paste stay visible in the 2-row gap above the input box (`Workspace line coverage…` next to `…`).
+
+**JSONL / crash:** none.
+
+**Root cause:** Bracketed paste is echoed by the emulator onto the alt-screen (or scrolls it) before `Event::Paste` is handled. Ratatui only diffs its own buffers. The prompt's `OUTER_TOP_GAP` / `CHAT_GAP` / side pad are spaces in *both* frames, so the diff never overwrites the echo. `Block::style(bg)` also only tints cells — it does not replace the symbol.
+
+**Fix:** `terminal.clear()` on paste / resize / focus-gained before the next draw. `fill_blank` owns the full frame, the prompt gap, `CHAT_GAP`, and session side/bottom pads.
+
+**Prevention:** Unpainted breathing-room rows are a paste-ghost magnet. After any event that can write to the PTY outside ratatui, full-clear. Do not rely on `Block` to erase glyphs.
+
 ### 2026-08-19 — xAI OAuth tokens are rejected by api.x.ai
 
 **Symptom:** `whycode auth login xai` succeeds, then the first turn shows `Authentication failed — check API key`.

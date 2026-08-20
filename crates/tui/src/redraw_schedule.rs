@@ -67,6 +67,20 @@ pub fn event_is_user_interaction(ev: &Event) -> bool {
     }
 }
 
+/// Events that can dump glyphs onto the PTY *outside* ratatui's buffer diff.
+///
+/// Bracketed paste is the usual case: the emulator echoes the payload at the
+/// cursor (or scrolls the alt-screen) before `Event::Paste` is delivered.
+/// Breathing-room rows around the prompt stay spaces in both ratatui frames,
+/// so the diff never overwrites the echo. Resize and focus-restore desync
+/// the same way. The event loop must `terminal.clear()` before the next draw.
+pub fn event_needs_full_clear(ev: &Event) -> bool {
+    matches!(
+        ev,
+        Event::Paste(_) | Event::Resize(_, _) | Event::FocusGained
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +169,16 @@ mod tests {
         ))));
         assert!(event_is_user_interaction(&Event::Paste("x".into())));
         assert!(event_is_user_interaction(&Event::Resize(80, 24)));
+    }
+
+    #[test]
+    fn paste_resize_and_focus_need_a_full_terminal_clear() {
+        assert!(event_needs_full_clear(&Event::Paste("long\ntext".into())));
+        assert!(event_needs_full_clear(&Event::Resize(80, 24)));
+        assert!(event_needs_full_clear(&Event::FocusGained));
+        assert!(!event_needs_full_clear(&Event::FocusLost));
+        assert!(!event_needs_full_clear(&Event::Key(KeyEvent::from(
+            KeyCode::Char('a')
+        ))));
     }
 }
