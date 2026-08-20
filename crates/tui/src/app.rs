@@ -430,8 +430,6 @@ pub struct SidebarState {
     pub diagnostics: usize,
     /// MCP server status messages.
     pub mcp_status: Vec<String>,
-    /// TODO items.
-    pub todos: Vec<String>,
     /// Agent-pinned preview (file / diff / mermaid).
     pub preview: SidebarPreview,
 }
@@ -504,7 +502,6 @@ impl Default for SidebarState {
             file_tree: vec![],
             diagnostics: 0,
             mcp_status: vec![],
-            todos: vec![],
             preview: SidebarPreview::None,
         }
     }
@@ -1319,6 +1316,10 @@ pub struct TuiApp {
     pub turn_usage: Option<whycode_core::types::Usage>,
     /// Mouse `[stop]` (or future UI) requested cancel — run loop consumes this.
     pub pending_cancel: bool,
+    /// Active session id (todo file key; empty before the first session).
+    pub session_id: String,
+    /// Session todo list (sticky panel under the header).
+    pub todos: Vec<whycode_core::TodoItem>,
     /// Live + finished child sessions (Grok tasks pane / top strip).
     pub subagents: Vec<SubagentUi>,
     /// When set, the framed child transcript overlays the parent session.
@@ -1755,6 +1756,8 @@ impl TuiApp {
             turn_started_at: None,
             turn_usage: None,
             pending_cancel: false,
+            session_id: String::new(),
+            todos: Vec::new(),
             subagents: Vec::new(),
             open_subagent: None,
             subagent_strip_hit: Vec::new(),
@@ -2661,6 +2664,15 @@ impl TuiApp {
     pub fn load_messages_from_session(&mut self, session: &whycode_session::session::Session) {
         self.messages = chat_messages_from_session(session);
         self.session_title = session.title.clone();
+        self.session_id = session.id.clone();
+        self.todos = whycode_core::todo::load_todos(
+            &self.project_dir,
+            if session.id.is_empty() {
+                None
+            } else {
+                Some(session.id.as_str())
+            },
+        );
         self.scroll_offset = 0;
         self.auto_scroll = true;
         self.selected_msg = None;
@@ -2688,6 +2700,8 @@ impl TuiApp {
         view.turn_usage = self.turn_usage.clone();
         view.context_used = self.context_used;
         view.pending_suggestion = self.pending_suggestion.clone();
+        view.session_id = self.session_id.clone();
+        view.todos = self.todos.clone();
     }
 
     /// Restore a previously saved per-session view state (switching back).
@@ -2707,6 +2721,8 @@ impl TuiApp {
         self.turn_usage = view.turn_usage.clone();
         self.context_used = view.context_used;
         self.pending_suggestion = view.pending_suggestion.clone();
+        self.session_id = view.session_id.clone();
+        self.todos = view.todos.clone();
         self.dialogs.clear();
         self.mark_dirty();
     }
@@ -2730,6 +2746,8 @@ impl TuiApp {
         self.turn_usage = view.turn_usage.take();
         self.context_used = view.context_used;
         self.pending_suggestion = view.pending_suggestion.take();
+        self.session_id = std::mem::take(&mut view.session_id);
+        self.todos = std::mem::take(&mut view.todos);
     }
 
     /// Move this app's view fields back into `view` (no transcript clone).
@@ -2750,6 +2768,8 @@ impl TuiApp {
         view.turn_usage = self.turn_usage.take();
         view.context_used = self.context_used;
         view.pending_suggestion = self.pending_suggestion.take();
+        view.session_id = std::mem::take(&mut self.session_id);
+        view.todos = std::mem::take(&mut self.todos);
     }
 
     /// Add a message to the chat view.

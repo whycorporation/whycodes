@@ -27,6 +27,7 @@ fn repo_ctx() -> ToolContext {
         agent_label: None,
         file_index: None,
         panel: None,
+        todo_sink: None,
         swarm_hub: None,
     }
 }

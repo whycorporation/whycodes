@@ -473,6 +473,16 @@ impl Agent {
         }))
     }
 
+    /// Forward `todowrite` updates onto the turn event channel.
+    fn todo_sink(&self) -> Option<whycode_core::TodoSink> {
+        let tx = self.event_sink.clone()?;
+        Some(std::sync::Arc::new(move |todos| {
+            if let Err(e) = tx.send(TurnEvent::Todos { todos }) {
+                tracing::debug!(error = %e, "todo event dropped (listener closed)");
+            }
+        }))
+    }
+
     /// Attach a long-lived event sink (TUI) for background job notifications
     /// and scheduled prompt enqueue. Safe to call once after channel setup.
     pub fn wire_event_sink(&mut self, sink: EventSink) {
@@ -561,6 +571,7 @@ impl Agent {
             agent_label: self.session_claims.as_ref().map(|_| self.info.name.clone()),
             file_index: self.file_index.clone(),
             panel: self.panel_sink(),
+            todo_sink: self.todo_sink(),
             swarm_hub: self.swarm_hub.clone(),
         }
     }
@@ -3689,6 +3700,14 @@ mod permission_detail_tests {
             assert!(!p.is_empty(), "{name}");
             assert!(!p.contains("Today's date:"), "{name}");
         }
+        assert!(
+            Agent::system_prompt_for("build").contains("todowrite"),
+            "build prompt must instruct todo use"
+        );
+        assert!(
+            Agent::system_prompt_for("plan").contains("todowrite"),
+            "plan prompt must instruct todo use"
+        );
         assert_eq!(
             Agent::system_prompt_for("does-not-exist"),
             DEFAULT_SYSTEM_PROMPT

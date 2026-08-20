@@ -141,6 +141,7 @@ pub(crate) async fn handle_rpc(
                     agent_label: None,
                     file_index: None,
                     panel: None,
+                    todo_sink: None,
                     swarm_hub: None,
                 };
                 let result = executor.execute(&call, &ctx, permissions).await;

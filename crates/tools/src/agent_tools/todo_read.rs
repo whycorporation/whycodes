@@ -1,21 +1,10 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::path::Path;
 
 use crate::tool::{Tool, ToolContext};
+use whycode_core::todo::load_todos;
 use whycode_core::types::ToolResult;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TodoItem {
-    id: String,
-    content: String,
-    status: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct TodoList {
-    todos: Vec<TodoItem>,
-}
 
 /// Read the current session todo list — OpenCode `todoread` tool.
 pub struct TodoReadTool;
@@ -51,59 +40,71 @@ impl Tool for TodoReadTool {
     }
 
     async fn execute(&self, _args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let todos_path = std::path::Path::new(&ctx.working_dir)
-            .join(".whycode")
-            .join("todos.json");
-
-        if !todos_path.exists() {
+        let todos = load_todos(Path::new(&ctx.working_dir), ctx.session_id.as_deref());
+        if todos.is_empty() {
             return ToolResult {
                 tool_call_id: String::new(),
                 content: "No todos yet. Use todowrite to create a task list.".to_string(),
                 is_error: false,
             };
         }
-
-        match std::fs::read_to_string(&todos_path) {
-            Ok(content) => match serde_json::from_str::<TodoList>(&content) {
-                Ok(list) => {
-                    if list.todos.is_empty() {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: "Todo list is empty.".to_string(),
-                            is_error: false,
-                        };
-                    }
-                    let mut result = String::from("Todos:\n");
-                    for item in &list.todos {
-                        let icon = match item.status.as_str() {
-                            "pending" => "⏳",
-                            "in_progress" => "🔄",
-                            "completed" => "✅",
-                            "cancelled" => "❌",
-                            _ => "❓",
-                        };
-                        result.push_str(&format!(
-                            "  {} [{}] {} ({})\n",
-                            icon, item.id, item.content, item.status
-                        ));
-                    }
-                    ToolResult {
-                        tool_call_id: String::new(),
-                        content: result,
-                        is_error: false,
-                    }
-                }
-                Err(e) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Failed to parse todos: {}", e),
-                    is_error: true,
-                },
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Failed to read todos: {}", e),
-                is_error: true,
-            },
+        let mut result = String::from("Todos:\n");
+        for item in &todos {
+            result.push_str(&format!(
+                "  {} [{}] {} ({})\n",
+                item.status.mark(),
+                item.id,
+                item.content,
+                item.status.as_str()
+            ));
         }
+        ToolResult {
+            tool_call_id: String::new(),
+            content: result,
+            is_error: false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use whycode_core::todo::{TodoItem, TodoStatus, save_todos};
+
+    fn ctx(dir: &std::path::Path, session: Option<&str>) -> ToolContext {
+        let mut c = ToolContext::unsandboxed(dir.to_string_lossy().into_owned());
+        c.session_id = session.map(str::to_string);
+        c
+    }
+
+    #[tokio::test]
+    async fn empty_and_populated() {
+        let dir = tempfile::tempdir().unwrap();
+        let tool = TodoReadTool::new();
+        assert_eq!(tool.name(), "todoread");
+        let empty = tool.execute(json!({}), &ctx(dir.path(), None)).await;
+        assert!(!empty.is_error);
+        assert!(empty.content.contains("No todos yet"));
+
+        save_todos(
+            dir.path(),
+            Some("s1"),
+            &[
+                TodoItem::new("a", "one", TodoStatus::Pending),
+                TodoItem::new("b", "two", TodoStatus::InProgress),
+                TodoItem::new("c", "done", TodoStatus::Completed),
+                TodoItem::new("d", "skip", TodoStatus::Cancelled),
+            ],
+        )
+        .unwrap();
+        let list = tool.execute(json!({}), &ctx(dir.path(), Some("s1"))).await;
+        assert!(list.content.contains("☐ [a] one (pending)"));
+        assert!(list.content.contains("▶ [b] two (in_progress)"));
+        assert!(list.content.contains("☑ [c] done (completed)"));
+        assert!(list.content.contains("✗ [d] skip (cancelled)"));
+        let other = tool
+            .execute(json!({}), &ctx(dir.path(), Some("other")))
+            .await;
+        assert!(other.content.contains("No todos yet"));
     }
 }

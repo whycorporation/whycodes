@@ -28,6 +28,8 @@ pub struct ToolContext {
     pub file_index: Option<std::sync::Arc<whycode_index::WorkspaceIndex>>,
     /// Optional sink so the `panel` tool can pin a file / diff / mermaid.
     pub panel: Option<PanelSink>,
+    /// Optional sink so `todowrite` can update the host todo panel live.
+    pub todo_sink: Option<crate::todo::TodoSink>,
     /// Swarm mailbox (DM / broadcast).
     pub swarm_hub: Option<SwarmHub>,
 }
@@ -44,6 +46,7 @@ impl std::fmt::Debug for ToolContext {
             .field("agent_label", &self.agent_label)
             .field("file_index", &self.file_index.as_ref().map(|_| "Some"))
             .field("panel", &self.panel.as_ref().map(|_| "Some"))
+            .field("todo_sink", &self.todo_sink.as_ref().map(|_| "Some"))
             .field("swarm_hub", &self.swarm_hub)
             .finish()
     }
@@ -61,6 +64,7 @@ impl ToolContext {
             agent_label: None,
             file_index: None,
             panel: None,
+            todo_sink: None,
             swarm_hub: None,
         }
     }
@@ -76,6 +80,7 @@ impl ToolContext {
             agent_label: None,
             file_index: None,
             panel: None,
+            todo_sink: None,
             swarm_hub: None,
         }
     }

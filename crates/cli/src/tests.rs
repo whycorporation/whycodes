@@ -650,6 +650,17 @@ fn turn_event_to_ci_remaining_variants() {
             message: "panel mermaid".into()
         })
     );
+    assert_eq!(
+        turn_event_to_ci(TE::Todos {
+            todos: vec![
+                whycode_core::TodoItem::new("a", "one", whycode_core::TodoStatus::Completed),
+                whycode_core::TodoItem::new("b", "two", whycode_core::TodoStatus::Pending),
+            ]
+        }),
+        Some(CiEvent::Status {
+            message: "todos 1/2".into()
+        })
+    );
     let intent = turn_event_to_ci(TE::Intent {
         kind: "k".into(),
         confidence: 1.0,

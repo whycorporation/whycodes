@@ -2944,6 +2944,12 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         } => Some(CiEvent::Status {
             message: format!("subagent {id} {status} ({kind}): {description}"),
         }),
+        TurnEvent::Todos { todos } => {
+            let done = whycode_core::todo::terminal_count(&todos);
+            Some(CiEvent::Status {
+                message: format!("todos {done}/{}", todos.len()),
+            })
+        }
     }
 }
 
