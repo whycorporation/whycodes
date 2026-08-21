@@ -63,17 +63,18 @@ fn detect(raw: &str) -> ImportKind {
             return ImportKind::Whycode;
         }
     }
-    if let Some(first) = first_jsonl_object(raw) {
-        let ty = first.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        if ty == "session_meta" || ty.starts_with("event") || first.get("payload").is_some() {
-            return ImportKind::Codex;
-        }
-        if first.get("type").is_some() && first.get("message").is_some() {
-            return ImportKind::Claude;
-        }
-        if first.get("role").is_some() && first.get("content").is_some() {
-            return ImportKind::Pi;
-        }
+    let Some(first) = first_jsonl_object(raw) else {
+        return ImportKind::Whycode;
+    };
+    let ty = first.get("type").and_then(|t| t.as_str()).unwrap_or("");
+    if ty == "session_meta" || ty.starts_with("event") || first.get("payload").is_some() {
+        return ImportKind::Codex;
+    }
+    if first.get("type").is_some() && first.get("message").is_some() {
+        return ImportKind::Claude;
+    }
+    if first.get("role").is_some() && first.get("content").is_some() {
+        return ImportKind::Pi;
     }
     ImportKind::Whycode
 }
@@ -267,5 +268,135 @@ mod tests {
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].role, Role::User);
         assert_eq!(msgs[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn import_kind_parse_covers_aliases_and_fallback() {
+        assert_eq!(ImportKind::parse(" native "), ImportKind::Whycode);
+        assert_eq!(ImportKind::parse("CLAUDE-CODE"), ImportKind::Claude);
+        assert_eq!(ImportKind::parse("codex"), ImportKind::Codex);
+        assert_eq!(ImportKind::parse("opencode"), ImportKind::OpenCode);
+        assert_eq!(ImportKind::parse("pi"), ImportKind::Pi);
+        assert_eq!(ImportKind::parse("unknown"), ImportKind::Auto);
+    }
+
+    #[test]
+    fn explicit_import_kinds_and_empty_errors() {
+        let native = r#"[{"role":"user","content":"hello"}]"#;
+        assert_eq!(
+            import_messages(native, ImportKind::Whycode).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            import_messages(native, ImportKind::OpenCode).unwrap().len(),
+            1
+        );
+
+        let claude = "not json\n{\"role\":\"assistant\",\"content\":\"answer\"}";
+        assert_eq!(
+            import_messages(claude, ImportKind::Claude).unwrap().len(),
+            1
+        );
+        let pi = "\ninvalid\n{\"role\":\"user\",\"content\":\"question\"}";
+        assert_eq!(import_messages(pi, ImportKind::Pi).unwrap().len(), 1);
+
+        let err = import_messages(r#"{"messages":[]}"#, ImportKind::Whycode).unwrap_err();
+        assert!(err.to_string().contains("no user/assistant"));
+        assert!(import_messages("{}", ImportKind::Whycode).is_err());
+        assert!(import_messages("not json", ImportKind::Whycode).is_err());
+    }
+
+    #[test]
+    fn auto_detects_all_supported_shapes() {
+        let cases = [
+            (
+                r#"{"info":{},"messages":[{"role":"user","content":"o"}]}"#,
+                "o",
+            ),
+            (
+                r#"{"session":{},"messages":[{"role":"user","content":"w"}]}"#,
+                "w",
+            ),
+            (
+                "{\"type\":\"event_custom\",\"payload\":{}}\n{\"payload\":{\"type\":\"user_message\",\"text\":\"c\"}}",
+                "c",
+            ),
+            (
+                "{\"payload\":{}}\n{\"payload\":{\"type\":\"assistant_message\",\"message\":\"a\"}}",
+                "a",
+            ),
+            ("{\"role\":\"user\",\"content\":\"p\"}", "p"),
+        ];
+        for (raw, expected) in cases {
+            let messages = import_messages(raw, ImportKind::Auto).unwrap();
+            assert_eq!(messages[0].content.as_text(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn codex_skips_noise_and_accepts_native_payload_messages() {
+        let raw = r#"
+
+not-json
+{"type":"event_msg","payload":{"type":"irrelevant","message":"skip"}}
+{"type":"user_message","text":"direct user"}
+{"payload":{"role":"assistant","content":"native assistant"}}
+{"payload":{"role":"system","content":"hidden"}}
+"#;
+        let msgs = import_messages(raw, ImportKind::Codex).unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, Role::User);
+        assert_eq!(msgs[1].role, Role::Assistant);
+    }
+
+    #[test]
+    fn value_conversion_handles_roles_content_shapes_and_metadata() {
+        let raw = r#"[
+          {"role":"tool","content":[{"text":"one"},"two",{"other":1}],"tool_call_id":"call","name":"read"},
+          {"role":"assistant","content":[{"image":"x"}]},
+          {"role":"user","content":{"nested":true}},
+          {"role":"system","content":"skip"},
+          {"role":"unknown","content":"skip"},
+          {"content":"skip"},
+          {"role":"user"}
+        ]"#;
+        let msgs = import_messages(raw, ImportKind::Whycode).unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgs[0].role, Role::Tool);
+        assert_eq!(msgs[0].content.as_text(), Some("one\ntwo"));
+        assert_eq!(msgs[0].tool_call_id.as_deref(), Some("call"));
+        assert_eq!(msgs[0].name.as_deref(), Some("read"));
+        assert_eq!(msgs[1].content.as_text(), Some("[{\"image\":\"x\"}]"));
+        assert_eq!(msgs[2].content.as_text(), Some("{\"nested\":true}"));
+    }
+
+    #[test]
+    fn direct_parsers_cover_remaining_detection_and_loop_fallbacks() {
+        assert_eq!(detect("\ninvalid\n{}"), ImportKind::Whycode);
+        assert_eq!(
+            detect("{\"unrecognized\":true}\nnot-json"),
+            ImportKind::Whycode
+        );
+        assert_eq!(detect("{}\n"), ImportKind::Whycode);
+        assert_eq!(detect("not-json\n{}"), ImportKind::Whycode);
+        assert_eq!(detect("not-json-only"), ImportKind::Whycode);
+        assert!(first_jsonl_object("\ninvalid\nalso-invalid").is_none());
+        assert_eq!(
+            import_messages(
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"a\"}}",
+                ImportKind::Claude,
+            )
+            .unwrap()[0]
+                .role,
+            Role::Assistant
+        );
+        assert_eq!(
+            import_messages("{\"role\":\"tool\",\"content\":\"r\"}\n", ImportKind::Pi,).unwrap()[0]
+                .role,
+            Role::Tool
+        );
+        for kind in [ImportKind::Claude, ImportKind::Codex, ImportKind::Pi] {
+            assert!(import_messages("\ninvalid", kind).is_err());
+        }
     }
 }

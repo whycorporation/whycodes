@@ -263,9 +263,7 @@ mod tests {
 
     #[test]
     fn undo_with_stash_restores_tree_when_git_available() {
-        if !git_available() {
-            return;
-        }
+        assert!(git_available(), "git is required by the session test suite");
         let dir = tempfile::tempdir().expect("tempdir");
         assert!(run_git(dir.path(), &["init", "-q"]), "git init");
         let f = dir.path().join("a.txt");
@@ -298,5 +296,94 @@ mod tests {
         assert!(restored.is_some(), "undo proceeds even with git restore");
         let content = std::fs::read_to_string(&f).unwrap_or_default();
         assert_eq!(content, "v2", "undo checks out the pre-turn tree");
+    }
+
+    #[test]
+    fn mark_new_files_without_snapshot_is_a_noop() {
+        let mut history = SessionHistory::new();
+        history.mark_new_files(vec![PathBuf::from("unused")]);
+        assert!(!history.can_undo());
+    }
+
+    #[test]
+    fn changed_files_reports_porcelain_lines_in_repo() {
+        assert!(git_available(), "git is required by the session test suite");
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(run_git(dir.path(), &["init", "-q"]));
+        std::fs::write(dir.path().join("new.txt"), "new").unwrap();
+        let changed = git_changed_files(dir.path());
+        assert_eq!(changed, vec!["?? new.txt"]);
+    }
+
+    #[test]
+    fn redo_restores_its_stashed_tree_when_available() {
+        assert!(git_available(), "git is required by the session test suite");
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert!(run_git(dir.path(), &["init", "-q"]));
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, "v1").unwrap();
+        assert!(run_git(dir.path(), &["add", "a.txt"]));
+        assert!(run_git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init"
+            ]
+        ));
+
+        let mut history = SessionHistory::new();
+        history.push_before_turn(&[msg("before")], dir.path());
+        std::fs::write(&file, "after").unwrap();
+        let _ = history.undo(&[msg("after")], dir.path());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1");
+        let restored = history.redo(&[msg("before")], dir.path()).unwrap();
+        assert_eq!(restored[0].content.as_text(), Some("after"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "after");
+    }
+
+    #[test]
+    fn git_helpers_handle_disappearing_working_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        drop(dir);
+        assert!(git_stash_create(&path).is_none());
+        assert!(git_changed_files(&path).is_empty());
+
+        let mut history = SessionHistory::new();
+        history.push_before_turn(&[msg("before")], &path);
+        assert_eq!(history.undo(&[msg("after")], &path).unwrap().len(), 1);
+        assert_eq!(history.redo(&[msg("before")], &path).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn stash_creation_failure_in_damaged_repo_returns_none() {
+        assert!(git_available(), "git is required by the session test suite");
+        let dir = tempfile::tempdir().unwrap();
+        assert!(run_git(dir.path(), &["init", "-q"]));
+        std::fs::write(dir.path().join("tracked"), "data").unwrap();
+        assert!(run_git(dir.path(), &["add", "tracked"]));
+        assert!(run_git(
+            dir.path(),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "init"
+            ]
+        ));
+        std::fs::write(dir.path().join("tracked"), "changed").unwrap();
+        std::fs::remove_file(dir.path().join(".git/index")).unwrap();
+        std::fs::create_dir(dir.path().join(".git/index")).unwrap();
+        assert!(git_stash_create(dir.path()).is_none());
     }
 }

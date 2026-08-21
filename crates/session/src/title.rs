@@ -267,4 +267,55 @@ mod tests {
         assert!(!TitleSource::Manual.allows_llm());
         assert!(!TitleSource::Generated.allows_llm());
     }
+
+    #[test]
+    fn defaults_handle_unusual_paths_and_ids() {
+        assert_eq!(default_title(Path::new("/"), "x"), "session-00");
+        assert_eq!(default_title(Path::new("/tmp/!!!"), "AB"), "session-ab");
+        assert_eq!(
+            default_title(Path::new("/tmp/a name"), "--fZ3"),
+            "a-name-f3"
+        );
+        let long = "a".repeat(40);
+        assert_eq!(default_title(Path::new(&long), "12").len(), 35);
+    }
+
+    #[test]
+    fn heuristic_handles_empty_paths_and_multiline_prompts() {
+        assert_eq!(heuristic_title(" \n\t"), "");
+        assert_eq!(
+            heuristic_title("@src/lib.rs\nPlease fix login now"),
+            "fix login now"
+        );
+        assert_eq!(heuristic_title("@only.rs"), "@only.rs");
+        assert_eq!(heuristic_title("Hello help me repair it"), "repair it");
+    }
+
+    #[test]
+    fn sanitize_handles_quote_styles_punctuation_controls_and_caps() {
+        assert_eq!(sanitize_title("'Single title'"), "Single title");
+        assert_eq!(sanitize_title("Title!!!  "), "Title");
+        assert_eq!(sanitize_title("\"Double title\""), "Double title");
+        assert_eq!(sanitize_title("a\n\tb"), "a b");
+        let long = "é".repeat(70);
+        let cleaned = sanitize_title(&long);
+        assert_eq!(cleaned.chars().count(), 64);
+        assert!(cleaned.ends_with('…'));
+    }
+
+    #[test]
+    fn default_detection_and_source_inference_cover_false_shapes() {
+        let p = PathBuf::from("/tmp/my-app");
+        assert!(!looks_like_default_title("other-3f", &p));
+        assert!(!looks_like_default_title("my-app-z9", &p));
+        assert!(!looks_like_default_title("my-app-123", &p));
+        assert_eq!(
+            infer_source_from_title("my-app-af", &p),
+            TitleSource::Default
+        );
+        assert_eq!(
+            infer_source_from_title("Useful title", &p),
+            TitleSource::Generated
+        );
+    }
 }
