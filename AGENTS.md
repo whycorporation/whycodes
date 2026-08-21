@@ -58,25 +58,14 @@ The user should **not** have to say “commit and push” every time. This is th
 
 Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the user forbids commit for that turn; only secret or out-of-repo paths were touched.
 
-## Workspace map (short)
+## Workspace map
 
-| Crate | Path | Notes |
-|-------|------|--------|
-| `whycode-cli` | `crates/cli` | Binary entrypoint (`whycode`) |
-| `whycode-tui` | `crates/tui` | Terminal UI |
-| `whycode-agent` | `crates/agent` | Agent loop / tools orchestration |
-| `whycode-llm` | `crates/llm` | Providers (OpenAI-compat, Anthropic, …) |
-| `whycode-core` | `crates/core` | Leaf types, `Tool` trait, sandbox, errors, `paths` (`WHYCODE_HOME`); depends on `index` only |
-| `whycode-config` | `crates/config` | Config load/merge/validate (depends on core only) |
-| `whycode-session` | `crates/session` | Conversation session |
-| `whycode-tools` | `crates/tools` | Built-in tools (`file/`, `git/`, `github/`, `web/`, `agent_tools/`) |
-| `whycode-memory` | `crates/memory` | Cross-session semantic / auto memory (MEMORY.md + hash embed) |
-| `whycode-storage` | `crates/storage` | SQLite sessions + memories |
-| `whycode-index` | `crates/index` | Workspace file index: background `ignore`-walk → `nucleo` fuzzy + store; `notify` deltas. Powers TUI `@`-picker and glob/grep/list fast paths |
-| `whycode-protocol` | `crates/protocol` | CI envelopes + daemon protocol v1 (`SdkEvent`) |
-| `whycode-sdk` | `crates/sdk` | Thin HTTP client (`connect` / `launch`). TS twin: `sdk/typescript` |
+24 crates, one-way layering. Full map and allowed edges:
+[`docs/architecture.md`](docs/architecture.md).
 
-Package names use the `whycode-` prefix even when the directory is shorter (e.g. `crates/llm` → `-p whycode-llm`).
+Package names use the `whycode-` prefix even when the directory is shorter
+(e.g. `crates/llm` → `-p whycode-llm`). The TypeScript SDK lives at
+`sdk/typescript` (twin of `crates/sdk`), not under `crates/`.
 
 Dependency rule of thumb: **leaf types and traits stay in `core`**; I/O and policy trees that load user config live in `config`. Do not re-export `config` from `core` (cycle).
 

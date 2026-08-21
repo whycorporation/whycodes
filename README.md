@@ -32,7 +32,7 @@ brew install whycode
 cargo build --release -p whycode-cli
 ```
 
-Update with `whycode upgrade`. Notes and uninstall: [packaging/README.md](packaging/README.md).
+Update with `whycode upgrade`. Notes and uninstall: [docs/packaging.md](docs/packaging.md).
 
 ## Quick start
 
@@ -108,6 +108,7 @@ below **82%**. Method and how to re-measure:
 | [docs/benchmarks.md](docs/benchmarks.md) | How to measure startup, RSS, idle draws |
 | [docs/coverage.md](docs/coverage.md) | How to measure line coverage |
 | [docs/budgets.md](docs/budgets.md) | CI quality budgets |
+| [docs/packaging.md](docs/packaging.md) | Homebrew, installers, release artifacts |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Dev setup and required checks |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting |
 | [AGENTS.md](AGENTS.md) | Rules for coding agents in this repo |

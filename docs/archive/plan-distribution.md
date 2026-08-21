@@ -44,7 +44,7 @@ Out (full automation — partial scaffolding exists):
 - Dedicated Homebrew tap repo, AUR, winget, Nix. Each is ongoing maintenance.
   **Done (2026-08-14):** in-repo binary `Formula/whycode.rb` for `v0.1.0`;
   `release.yml` re-runs `scripts/update_homebrew_formula.sh` after each tag.
-  See `packaging/README.md`. Dedicated tap repo still later.
+  See [packaging.md](../packaging.md). Dedicated tap repo still later.
 - Code signing and notarization. macOS Gatekeeper will warn. Document it
   rather than pretending otherwise.
 - A hosted install domain. Use the raw GitHub URL until the rest works.
