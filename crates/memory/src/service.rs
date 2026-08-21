@@ -649,6 +649,17 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn open_test_service(
+        settings: MemorySettings,
+    ) -> (tempfile::TempDir, PathBuf, PathBuf, MemoryService) {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let svc = MemoryService::open(&project, &data, settings).unwrap();
+        (dir, data, project, svc)
+    }
+
     #[test]
     fn remember_search_delete() {
         let dir = tempdir().unwrap();
@@ -783,5 +794,282 @@ mod tests {
         let svc = MemoryService::open(&project, &data, MemorySettings::disabled()).unwrap();
         assert!(svc.build_inject_block(Some("x")).unwrap().is_empty());
         assert!(svc.remember("nope", None).is_err());
+    }
+
+    #[test]
+    fn remember_rejects_empty_and_duplicate_text() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        assert_eq!(
+            svc.remember("  \n ", None).unwrap_err().to_string(),
+            "memory text is empty"
+        );
+
+        svc.remember("use deterministic local memory tests", Some("session-a"))
+            .unwrap();
+        let error = svc
+            .remember("  use deterministic local memory tests  ", None)
+            .unwrap_err();
+        assert!(error.to_string().contains("duplicate memory"));
+        assert_eq!(svc.list(10).unwrap().len(), 1);
+        assert_eq!(
+            svc.list(10).unwrap()[0].source_session.as_deref(),
+            Some("session-a")
+        );
+    }
+
+    #[test]
+    fn delete_handles_missing_full_and_ambiguous_ids() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        let embedding = encode_blob(&svc.embed_text("shared prefix fact"));
+        db.insert_memory("shared-a", &svc.bank_key, "first", &embedding, None)
+            .unwrap();
+        db.insert_memory("shared-b", &svc.bank_key, "second", &embedding, None)
+            .unwrap();
+        db.insert_memory("other-bank", "unrelated", "third", &embedding, None)
+            .unwrap();
+
+        assert!(!svc.delete("").unwrap());
+        assert!(!svc.delete("missing").unwrap());
+        assert!(
+            svc.delete("shared")
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        assert!(svc.delete("shared-a").unwrap());
+        assert_eq!(svc.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn clear_removes_only_current_bank_and_resets_markdown() {
+        let (_dir, data, project, svc) = open_test_service(MemorySettings::default());
+        svc.remember("main bank clear target", None).unwrap();
+        let other = MemoryService::open(
+            project,
+            data,
+            MemorySettings {
+                agent_bank: Some("other".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        other.remember("other bank survives clear", None).unwrap();
+
+        assert_eq!(svc.clear().unwrap(), 1);
+        assert!(svc.list(10).unwrap().is_empty());
+        assert_eq!(other.list(10).unwrap().len(), 1);
+        assert_eq!(
+            std::fs::read_to_string(svc.memory_md_path()).unwrap(),
+            "# Whycode auto memory\n\n"
+        );
+    }
+
+    #[test]
+    fn search_skips_invalid_embeddings_and_keeps_one_when_top_k_is_zero() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        db.insert_memory("empty", &svc.bank_key, "empty vector", &[], None)
+            .unwrap();
+        db.insert_memory(
+            "wrong-dim",
+            &svc.bank_key,
+            "wrong vector",
+            &[0, 0, 0, 0],
+            None,
+        )
+        .unwrap();
+        svc.remember("matching vector fact", None).unwrap();
+
+        let hits = svc.search("matching vector fact", 0, -1.0).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.text, "matching vector fact");
+        assert!(svc.search("anything", 5, 2.0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn session_index_ignores_disabled_and_blank_turns_and_clips_long_text() {
+        let (_dir, _data, _project, disabled) = open_test_service(MemorySettings::disabled());
+        disabled
+            .index_session_turn("disabled", 0, "user", "assistant")
+            .unwrap();
+        assert!(
+            disabled
+                .search_sessions("user", 5, -1.0)
+                .unwrap()
+                .is_empty()
+        );
+
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.index_session_turn("blank", 0, " \n", "\t").unwrap();
+        svc.index_session_turn("long-session", 3, &"x".repeat(2500), "tail")
+            .unwrap();
+        let rows = svc
+            .open_db()
+            .unwrap()
+            .list_session_chunks(&svc.bank_key, 10)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].text.len(), 2000);
+        assert!(rows[0].text.starts_with("User: "));
+    }
+
+    #[test]
+    fn session_search_skips_invalid_vectors_and_honors_minimum_result_limit() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        db.insert_session_chunk("bad", &svc.bank_key, "s", 0, "bad", &[])
+            .unwrap();
+        svc.index_session_turn("good", 1, "local sqlite state", "stored")
+            .unwrap();
+
+        let hits = svc.search_sessions("local sqlite state", 0, -1.0).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.session_id, "good");
+    }
+
+    #[test]
+    fn retain_scheduling_and_limits_cover_skip_and_llm_paths() {
+        let settings = MemorySettings {
+            retain_every_n: 3,
+            retain_max_facts: 1,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        assert!(
+            svc.auto_retain("Always use local tests.", None, None, 2)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(!svc.should_run_llm_retain(0, 2));
+        assert!(svc.should_run_llm_retain(0, 3));
+        assert!(!svc.should_run_llm_retain(1, 3));
+
+        let saved = svc
+            .retain_llm_facts("- first retained fact\n- second retained fact", None)
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(svc.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn consolidate_noops_when_disabled_or_within_capacity() {
+        let (_dir, _data, _project, disabled) = open_test_service(MemorySettings::disabled());
+        assert_eq!(disabled.consolidate().unwrap(), 0);
+
+        let settings = MemorySettings {
+            consolidate: true,
+            consolidate_max: 0,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        svc.remember("single retained item", None).unwrap();
+        assert_eq!(svc.consolidate().unwrap(), 0);
+        assert_eq!(svc.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn inject_and_append_cover_index_recall_and_blank_query() {
+        let settings = MemorySettings {
+            code_inject: false,
+            session_inject: false,
+            recall_min_score: -1.0,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        svc.remember("inject this local fact", None).unwrap();
+
+        let index_only = svc.build_inject_block(Some("  ")).unwrap();
+        assert!(index_only.contains("# Auto Memory"));
+        assert!(!index_only.contains("# Recalled Memories"));
+        let prompt = svc.append_to_prompt("system  \n", Some("local fact"));
+        assert!(prompt.starts_with("system\n\n# Auto Memory"));
+        assert!(prompt.contains("# Recalled Memories"));
+        assert_eq!(
+            MemoryService::open(
+                svc.project_path.clone(),
+                svc.data_dir.clone(),
+                MemorySettings::disabled()
+            )
+            .unwrap()
+            .append_to_prompt("unchanged", Some("query")),
+            "unchanged"
+        );
+    }
+
+    #[test]
+    fn code_index_skips_disabled_and_existing_local_index() {
+        let (_dir, _data, _project, disabled) = open_test_service(MemorySettings::disabled());
+        assert_eq!(disabled.ensure_code_index().unwrap(), None);
+
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.open_db()
+            .unwrap()
+            .insert_code_chunk(
+                "chunk",
+                &svc.bank_key,
+                "src/lib.rs",
+                1,
+                1,
+                "fn local() {}",
+                &[],
+            )
+            .unwrap();
+        assert_eq!(svc.ensure_code_index().unwrap(), None);
+    }
+
+    #[test]
+    fn best_effort_wrappers_handle_disabled_and_open_failures() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let blocked_data = dir.path().join("not-a-directory");
+        std::fs::write(&blocked_data, "file").unwrap();
+        let enabled = MemorySettings::default();
+        let disabled = MemorySettings::disabled();
+
+        assert!(!settings_from_flags(false).enabled);
+        assert!(settings_from_flags(true).enabled);
+        assert_eq!(
+            apply_memory_prompt("base", &project, &blocked_data, &enabled, Some("q")),
+            "base"
+        );
+        assert_eq!(
+            apply_memory_prompt("base", &project, &blocked_data, &disabled, Some("q")),
+            "base"
+        );
+        assert!(
+            maybe_auto_retain(
+                &project,
+                &blocked_data,
+                &enabled,
+                "Always test locally.",
+                None,
+                None,
+                1
+            )
+            .is_empty()
+        );
+        assert!(maybe_auto_index(&project, &blocked_data, &enabled).is_none());
+        assert!(maybe_auto_index(&project, &blocked_data, &disabled).is_none());
+    }
+
+    #[test]
+    fn disabled_mutations_and_retention_are_rejected_or_skipped() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::disabled());
+        assert!(
+            svc.delete("id")
+                .unwrap_err()
+                .to_string()
+                .contains("disabled")
+        );
+        assert!(svc.clear().unwrap_err().to_string().contains("disabled"));
+        assert!(
+            svc.auto_retain("Always remember this.", None, None, 1)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(svc.retain_llm_facts("- fact", None).unwrap().is_empty());
+        assert!(!svc.should_run_llm_retain(0, 1));
     }
 }

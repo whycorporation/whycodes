@@ -8533,4 +8533,91 @@ mod tests {
         apply_remote_hydrate(&mut app, &mut session, &rem).await;
         assert_eq!(session.id, "sid-empty");
     }
+
+    #[test]
+    fn spinner_wraps_and_only_clears_generic_progress() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut frame = 9;
+        app.status_message = "Generating response".into();
+
+        tick_spinner(&mut app, &mut frame);
+
+        assert_eq!(frame, 0);
+        assert_eq!(app.spinner_frame, 0);
+        assert!(app.status_message.is_empty());
+
+        app.status_message = "⠴ waiting".into();
+        tick_spinner(&mut app, &mut frame);
+        assert!(app.status_message.is_empty());
+
+        app.status_message = "Running cargo test".into();
+        tick_spinner(&mut app, &mut frame);
+        assert_eq!(app.status_message, "Running cargo test");
+    }
+
+    #[test]
+    fn force_stop_requires_busy_cancel_and_timeout_or_pending_signal() {
+        let expired = Instant::now()
+            .checked_sub(CANCEL_FORCE_AFTER + Duration::from_millis(1))
+            .expect("force-stop duration fits in Instant");
+        let recent = Instant::now();
+
+        assert!(!should_force_stop(false, Some(expired), true));
+        assert!(!should_force_stop(true, None, true));
+        assert!(should_force_stop(true, Some(recent), true));
+        assert!(should_force_stop(true, Some(expired), false));
+        assert!(!should_force_stop(true, Some(recent), false));
+    }
+
+    #[test]
+    fn auto_prompts_are_fifo_and_do_not_replace_pending_work() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.pending_auto_prompts
+            .extend(["first".into(), "second".into()]);
+
+        queue_auto_prompt_if_idle(&mut app, true);
+        assert!(app.pending_prompt.is_none());
+        assert_eq!(app.pending_auto_prompts.len(), 2);
+
+        queue_auto_prompt_if_idle(&mut app, false);
+        assert_eq!(app.pending_prompt.as_deref(), Some("first"));
+        assert_eq!(
+            app.pending_auto_prompts.front().map(String::as_str),
+            Some("second")
+        );
+
+        queue_auto_prompt_if_idle(&mut app, false);
+        assert_eq!(app.pending_prompt.as_deref(), Some("first"));
+        assert_eq!(app.pending_auto_prompts.len(), 1);
+    }
+
+    #[test]
+    fn queued_dialogs_wait_for_idle_and_prioritize_permissions() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut rt = test_runtime();
+        let (permission_tx, _permission_rx) = tokio::sync::oneshot::channel();
+        rt.pending_perm_queue
+            .push_back(whycode_agent::PermissionRequest {
+                tool_name: "bash".into(),
+                detail: "cargo test".into(),
+                reply: permission_tx,
+            });
+        let (question_tx, _question_rx) = tokio::sync::oneshot::channel();
+        rt.pending_question_queue.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: question_tx,
+        });
+
+        app.current_agent_state = AgentState::WaitingForQuestion;
+        maybe_open_queued_dialog(&mut app, &rt);
+        assert!(app.dialogs.active().is_none());
+
+        app.current_agent_state = AgentState::Idle;
+        maybe_open_queued_dialog(&mut app, &rt);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Permission { tool_name, detail })
+                if tool_name == "bash" && detail == "cargo test"
+        ));
+    }
 }

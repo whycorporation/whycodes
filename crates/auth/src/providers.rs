@@ -1162,6 +1162,33 @@ mod tests {
     }
 
     #[test]
+    fn token_from_json_ignores_malformed_optional_fields() {
+        for json in [
+            serde_json::json!({
+                "access_token": "access",
+                "refresh_token": "",
+                "expires_in": "not-a-number"
+            }),
+            serde_json::json!({
+                "access_token": "access",
+                "refresh_token": 42,
+                "expires_in": null
+            }),
+        ] {
+            let token = token_from_json(&json).unwrap();
+            assert_eq!(token.access_token, "access");
+            assert!(token.refresh_token.is_none());
+            assert!(token.expires_at.is_none());
+        }
+
+        let err = token_from_json(&serde_json::json!({"access_token": 42})).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "token exchange failed: response missing access_token"
+        );
+    }
+
+    #[test]
     fn openai_account_id_is_extracted_from_id_token() {
         // Synthetic JWT payload with the Codex account claim.
         let payload = URL_SAFE_NO_PAD.encode(
@@ -1182,6 +1209,28 @@ mod tests {
         assert_eq!(
             t.extra.get("openai_account_id").and_then(Value::as_str),
             Some("acct_1")
+        );
+    }
+
+    #[test]
+    fn openai_account_id_rejects_malformed_or_wrongly_typed_claims() {
+        let jwt = |payload: &[u8]| format!("header.{}.sig", URL_SAFE_NO_PAD.encode(payload));
+
+        assert!(openai_account_id_from_jwt("header.%%%.sig").is_none());
+        assert!(openai_account_id_from_jwt(&jwt(b"not json")).is_none());
+        assert!(
+            openai_account_id_from_jwt(&jwt(&serde_json::to_vec(&serde_json::json!({
+                "https://api.openai.com/auth": {"chatgpt_account_id": 7}
+            }))
+            .unwrap()))
+            .is_none()
+        );
+        assert!(
+            openai_account_id_from_jwt(&jwt(&serde_json::to_vec(
+                &serde_json::json!({"sub": "user"})
+            )
+            .unwrap()))
+            .is_none()
         );
     }
 
@@ -1210,6 +1259,66 @@ mod tests {
             Value::String("old".to_string()),
         );
         assert_eq!(usable_token(&spec, &legacy).as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn usable_token_prefers_current_derived_key_and_checks_its_type() {
+        let derived = spec_for("github-copilot").unwrap();
+        let direct = spec_for("openai").unwrap();
+        let mut token = OAuthToken {
+            access_token: "oauth-access".to_string(),
+            refresh_token: None,
+            expires_at: None,
+            extra: serde_json::Map::from_iter([
+                (
+                    "derived_token".to_string(),
+                    Value::String("current".to_string()),
+                ),
+                (
+                    "copilot_token".to_string(),
+                    Value::String("legacy".to_string()),
+                ),
+            ]),
+        };
+
+        assert_eq!(usable_token(&derived, &token).as_deref(), Some("current"));
+        assert_eq!(
+            usable_token(&direct, &token).as_deref(),
+            Some("oauth-access")
+        );
+
+        token
+            .extra
+            .insert("derived_token".to_string(), Value::Bool(true));
+        assert!(usable_token(&derived, &token).is_none());
+    }
+
+    #[test]
+    fn set_derived_extra_replaces_values_in_canonical_keys() {
+        let mut token = OAuthToken {
+            access_token: "oauth-access".to_string(),
+            refresh_token: None,
+            expires_at: None,
+            extra: serde_json::Map::from_iter([
+                (
+                    "derived_token".to_string(),
+                    Value::String("old".to_string()),
+                ),
+                ("unrelated".to_string(), Value::Bool(true)),
+            ]),
+        };
+        let expiry = DateTime::parse_from_rfc3339("2030-01-02T03:04:05Z")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        set_derived_extra(&mut token, "new", expiry);
+
+        assert_eq!(token.extra["derived_token"], "new");
+        assert_eq!(
+            token.extra["derived_expires_at"],
+            "2030-01-02T03:04:05+00:00"
+        );
+        assert_eq!(token.extra["unrelated"], true);
     }
 
     // ── Conformance suite ────────────────────────────────────────────────
@@ -1336,6 +1445,95 @@ mod tests {
         broken.authorize_url = "http://insecure.example.com";
         let issues = validate(&broken);
         assert!(issues.len() >= 3, "expected >=3 issues, got: {issues:?}");
+    }
+
+    #[test]
+    fn validate_reports_each_flow_specific_error_branch() {
+        let mut loopback = spec_for("openai").unwrap();
+        loopback.callback_path = "callback";
+        loopback.redirect_uri = Some("https://example.com/callback");
+        loopback.loopback_host = Some("example.com");
+        let issues = validate(&loopback).join("\n");
+        assert!(issues.contains("callback_path starting with '/'"));
+        assert!(issues.contains("set redirect_uri = None"));
+        assert!(issues.contains("loopback_host must be"));
+
+        let mut paste = spec_for("anthropic").unwrap();
+        paste.redirect_uri = Some("http://insecure.example/callback");
+        paste.loopback_host = Some("localhost");
+        let issues = validate(&paste).join("\n");
+        assert!(issues.contains("registered https redirect_uri"));
+        assert!(issues.contains("loopback_host is only for LoopbackPkce"));
+
+        let mut device = spec_for("github-copilot").unwrap();
+        device.callback_path = "/callback";
+        device.redirect_uri = Some("https://example.com/callback");
+        let issues = validate(&device).join("\n");
+        assert!(issues.contains("device flow has no redirect"));
+    }
+
+    #[test]
+    fn validate_reports_metadata_extra_and_derived_errors() {
+        static BAD_EXTRAS: &[(&str, &str)] = &[("", "value"), ("same", "one"), ("same", "two")];
+        static BAD_HEADERS: &[(&str, &str)] = &[("", "value"), ("key", "")];
+        let mut spec = spec_for("github-copilot").unwrap();
+        spec.label = "";
+        spec.client_id = "client id";
+        spec.token_url = "relative";
+        spec.scopes = "  ";
+        spec.client_secret = Some("");
+        spec.extra_authorize = BAD_EXTRAS;
+        spec.derived = Some(DerivedCredential {
+            url: "http://insecure.example/token",
+            auth_scheme: "Basic",
+            headers: BAD_HEADERS,
+        });
+
+        let issues = validate(&spec).join("\n");
+        for expected in [
+            "label is empty",
+            "client_id is empty or contains whitespace",
+            "token_url must be an absolute https URL",
+            "scopes are empty",
+            "client_secret is Some(\"\")",
+            "extra_authorize[0] has an empty key or value",
+            "duplicate extra_authorize key `same`",
+            "derived.url must be an absolute https URL",
+            "derived.auth_scheme must be",
+            "derived header has an empty key or value",
+        ] {
+            assert!(
+                issues.contains(expected),
+                "missing `{expected}` in:\n{issues}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn access_token_resolves_fresh_direct_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::new(dir.path());
+        store
+            .set(
+                "openai",
+                ProviderAuth {
+                    method: "imported".to_string(),
+                    token: OAuthToken {
+                        access_token: "stored-access".to_string(),
+                        refresh_token: None,
+                        expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
+                        extra: Default::default(),
+                    },
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            access_token("openai", dir.path()).await.as_deref(),
+            Some("stored-access")
+        );
+        assert!(access_token("unknown", dir.path()).await.is_none());
+        assert!(access_token("google", dir.path()).await.is_none());
     }
 
     #[tokio::test]

@@ -543,6 +543,207 @@ fn read_ws_text(stream: &mut TcpStream) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+    use std::thread;
+
+    fn connected_streams() -> (TcpStream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let addr = listener.local_addr().expect("read listener address");
+        let client = TcpStream::connect(addr).expect("connect to loopback listener");
+        let (server, _) = listener.accept().expect("accept loopback connection");
+        (client, server)
+    }
+
+    #[test]
+    fn metadata_and_parameters_describe_the_public_contract() {
+        let tool = BrowserTool::new();
+        assert_eq!(tool.name(), "browser");
+        assert!(!tool.description().is_empty());
+
+        let schema = tool.parameters();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["required"], json!(["action"]));
+        assert_eq!(schema["properties"]["action"]["type"], "string");
+        assert_eq!(
+            schema["properties"]["action"]["enum"],
+            json!([
+                "status",
+                "open",
+                "snapshot",
+                "click",
+                "type",
+                "wait",
+                "screenshot",
+                "close"
+            ])
+        );
+        assert_eq!(schema["properties"]["url"]["type"], "string");
+        assert_eq!(schema["properties"]["selector"]["type"], "string");
+        assert_eq!(schema["properties"]["text"]["type"], "string");
+        assert_eq!(schema["properties"]["ms"]["type"], "integer");
+    }
+
+    #[tokio::test]
+    async fn invalid_actions_and_missing_arguments_are_rejected_locally() {
+        let tool = BrowserTool::new();
+        let ctx = ToolContext::unsandboxed(".");
+        let cases = [
+            (json!({}), "action must be"),
+            (json!({"action": "  "}), "action must be"),
+            (json!({"action": "unknown"}), "action must be"),
+            (json!({"action": "open"}), "open requires `url`"),
+            (json!({"action": "open", "url": 42}), "open requires `url`"),
+            (json!({"action": "click"}), "click requires `selector`"),
+            (
+                json!({"action": "click", "selector": false}),
+                "click requires `selector`",
+            ),
+            (json!({"action": "type"}), "type requires `selector`"),
+        ];
+
+        for (args, expected) in cases {
+            let result = tool.execute(args, &ctx).await;
+            assert!(result.is_error, "expected an error: {result:?}");
+            assert!(
+                result.content.contains(expected),
+                "expected {expected:?} in {:?}",
+                result.content
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn session_actions_fail_cleanly_without_a_browser() {
+        drop(close_browser());
+        let tool = BrowserTool::new();
+        let ctx = ToolContext::unsandboxed(".");
+
+        for args in [
+            json!({"action": "click", "selector": "#submit"}),
+            json!({"action": "type", "selector": "#name", "text": "Ada"}),
+            json!({"action": "screenshot"}),
+        ] {
+            let result = tool.execute(args, &ctx).await;
+            assert!(result.is_error, "expected an error: {result:?}");
+            assert_eq!(
+                result.content,
+                "no browser session — call browser open first"
+            );
+        }
+
+        let result = tool.execute(json!({"action": "wait", "ms": 0}), &ctx).await;
+        assert!(!result.is_error);
+        assert_eq!(result.content, "waited 0ms");
+
+        let result = tool.execute(json!({"action": "close"}), &ctx).await;
+        assert!(!result.is_error);
+        assert_eq!(result.content, "no browser session");
+    }
+
+    #[test]
+    fn protocol_helpers_reject_unsupported_url_schemes_before_io() {
+        assert_eq!(
+            http_get("https://example.test").unwrap_err(),
+            "bad url https://example.test"
+        );
+        assert_eq!(
+            ws_cdp_call("wss://example.test/devtools", "Page.enable", json!({})).unwrap_err(),
+            "need ws:// url, got wss://example.test/devtools"
+        );
+    }
+
+    #[test]
+    fn http_get_constructs_request_and_extracts_response_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock HTTP server");
+        let addr = listener.local_addr().expect("read mock HTTP address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept HTTP request");
+            let mut request = [0; 512];
+            let size = stream.read(&mut request).expect("read HTTP request");
+            let request = String::from_utf8_lossy(&request[..size]);
+            assert!(request.starts_with("GET /json/list HTTP/1.0\r\n"));
+            assert!(request.contains(&format!("Host: {addr}\r\n")));
+            assert!(request.contains("Connection: close\r\n"));
+            stream
+                .write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 7\r\n\r\n{\"x\":1}")
+                .expect("write HTTP response");
+        });
+
+        let body = http_get(&format!("http://{addr}/json/list")).expect("perform HTTP request");
+        assert_eq!(body, "{\"x\":1}");
+        server.join().expect("mock HTTP server completed");
+    }
+
+    #[test]
+    fn websocket_frames_round_trip_boundary_lengths() {
+        for payload in [vec![b'a'; 125], vec![b'b'; 126], vec![b'c'; 65_536]] {
+            let (mut writer, mut reader) = connected_streams();
+            write_ws_text(&mut writer, &payload).expect("write masked text frame");
+            let decoded = read_ws_text(&mut reader).expect("read masked text frame");
+            assert_eq!(decoded.as_bytes(), payload);
+        }
+    }
+
+    #[test]
+    fn websocket_reader_reports_close_and_invalid_utf8_frames() {
+        let (mut writer, mut reader) = connected_streams();
+        writer.write_all(&[0x88, 0]).expect("write close frame");
+        assert_eq!(
+            read_ws_text(&mut reader).unwrap_err(),
+            "cdp websocket closed"
+        );
+
+        let (mut writer, mut reader) = connected_streams();
+        writer
+            .write_all(&[0x81, 2, 0xc3, 0x28])
+            .expect("write invalid UTF-8 frame");
+        assert!(
+            read_ws_text(&mut reader)
+                .unwrap_err()
+                .contains("invalid utf-8 sequence")
+        );
+    }
+
+    #[test]
+    fn ws_cdp_call_builds_command_skips_events_and_parses_result() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock CDP server");
+        let addr = listener.local_addr().expect("read mock CDP address");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept CDP connection");
+            let mut handshake = [0; 1024];
+            let size = stream
+                .read(&mut handshake)
+                .expect("read WebSocket handshake");
+            let handshake = String::from_utf8_lossy(&handshake[..size]);
+            assert!(handshake.starts_with("GET /devtools/page/1 HTTP/1.1\r\n"));
+            assert!(handshake.contains(&format!("Host: {addr}\r\n")));
+            assert!(handshake.contains("Upgrade: websocket\r\n"));
+            assert!(handshake.contains("Sec-WebSocket-Key: d2h5Y29kZS1jZHAta2V5ISE=\r\n"));
+            stream
+                .write_all(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
+                .expect("write WebSocket handshake");
+
+            let command = read_ws_text(&mut stream).expect("read CDP command");
+            let command: Value = serde_json::from_str(&command).expect("parse CDP command");
+            assert_eq!(command["id"], 1);
+            assert_eq!(command["method"], "Runtime.evaluate");
+            assert_eq!(command["params"], json!({"expression": "2 + 2"}));
+
+            write_ws_text(&mut stream, br#"{"method":"Runtime.consoleAPICalled"}"#)
+                .expect("write unrelated event");
+            write_ws_text(&mut stream, br#"{"id":1,"result":{"value":4}}"#)
+                .expect("write CDP response");
+        });
+
+        let result = ws_cdp_call(
+            &format!("ws://{addr}/devtools/page/1"),
+            "Runtime.evaluate",
+            json!({"expression": "2 + 2"}),
+        )
+        .expect("perform CDP call");
+        assert_eq!(result, json!({"value": 4}));
+        server.join().expect("mock CDP server completed");
+    }
 
     #[tokio::test]
     async fn status_without_session() {

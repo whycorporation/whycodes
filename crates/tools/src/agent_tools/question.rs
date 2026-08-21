@@ -454,6 +454,37 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const WAVE4_QUESTIONNAIRE: &str = r#"
+    {
+      "questions": [
+        {
+          "question": "  Which storage?  ",
+          "multi_select": false,
+          "options": [
+            {
+              "label": "  SQLite  ",
+              "description": "  Simple local storage  ",
+              "preview": "One file"
+            },
+            " Postgres "
+          ]
+        },
+        {
+          "prompt": "Select features",
+          "multi_select": true,
+          "choices": ["Search", "  Export  ", ""]
+        },
+        {
+          "question": "Anything else?"
+        }
+      ]
+    }
+    "#;
+
+    fn fixture(source: &str) -> serde_json::Value {
+        serde_json::from_str(source).expect("test fixture must be valid JSON")
+    }
+
     #[test]
     fn parse_legacy_choices() {
         let q = parse_questions(&json!({
@@ -469,37 +500,169 @@ mod tests {
 
     #[test]
     fn parse_grok_style_questions() {
-        let q = parse_questions(&json!({
-            "questions": [{
-                "question": "Backend?",
-                "multi_select": false,
-                "options": [
-                    {"label": "SQLite", "description": "Simple local"},
-                    {"label": "Postgres", "description": "Multi-user"}
-                ]
-            }]
-        }))
-        .unwrap();
-        assert_eq!(q[0].options[1].description, "Multi-user");
+        let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();
+
+        assert_eq!(questions.len(), 3);
+        assert_eq!(questions[0].prompt, "Which storage?");
+        assert_eq!(questions[0].options[0].label, "SQLite");
+        assert_eq!(questions[0].options[0].description, "Simple local storage");
+        assert_eq!(questions[0].options[0].preview.as_deref(), Some("One file"));
+        assert_eq!(questions[0].options[1].label, "Postgres");
+        assert!(questions[0].options[1].description.is_empty());
+        assert!(!questions[0].multi_select);
+        assert_eq!(
+            questions[1]
+                .options
+                .iter()
+                .map(|o| o.label.as_str())
+                .collect::<Vec<_>>(),
+            ["Search", "Export"]
+        );
+        assert!(questions[1].multi_select);
+        assert!(questions[2].options.is_empty());
     }
 
     #[test]
-    fn format_result_lists_answers() {
-        let specs = vec![QuestionSpec {
-            prompt: "Go?".into(),
-            options: vec![QuestionOption {
-                label: "Yes".into(),
-                description: String::new(),
-                preview: None,
-            }],
-            multi_select: false,
-        }];
-        let answers = vec![QuestionAnswer {
-            selected: vec!["Yes".into()],
-            free_text: None,
-        }];
-        let s = format_question_result(&specs, &answers);
-        assert!(s.contains("Go?"));
-        assert!(s.contains("Yes"));
+    fn parameters_describe_preferred_and_legacy_schemas() {
+        let schema = QuestionTool::new().parameters();
+
+        assert_eq!(schema["type"], "object");
+        let properties = schema["properties"].as_object().unwrap();
+        for name in ["questions", "question", "choices", "multi_select"] {
+            assert!(properties.contains_key(name), "missing {name} schema");
+        }
+        let question = &schema["properties"]["questions"]["items"];
+        assert_eq!(question["required"], json!(["question"]));
+        assert_eq!(question["properties"]["options"]["type"], "array");
+        assert_eq!(
+            question["properties"]["options"]["items"]["required"],
+            json!(["label"])
+        );
+        assert_eq!(question["properties"]["multi_select"]["type"], "boolean");
+        assert_eq!(schema["properties"]["choices"]["items"]["type"], "string");
+    }
+
+    #[test]
+    fn validation_rejects_malformed_question_fixtures() {
+        let cases = [
+            (
+                r#"{}"#,
+                "provide `questions` or a non-empty `question` string",
+            ),
+            (
+                r#"{"question":"   "}"#,
+                "provide `questions` or a non-empty `question` string",
+            ),
+            (r#"{"questions":[]}"#, "questions array must not be empty"),
+            (
+                r#"{"questions":[{"options":["A"]}]}"#,
+                "questions[0]: missing question text",
+            ),
+            (
+                r#"{"questions":[{"question":"Pick","options":[]}] }"#,
+                "questions[0]: options must contain at least one entry",
+            ),
+            (
+                r#"{"questions":[{"question":"Pick","options":[{"description":"none"}]}]}"#,
+                "questions[0]: options[0]: missing label",
+            ),
+            (
+                r#"{"question":"Pick","choices":["",7]}"#,
+                "choices must contain at least one non-empty string",
+            ),
+        ];
+
+        for (source, expected) in cases {
+            let error = parse_questions(&fixture(source)).unwrap_err();
+            assert_eq!(error, expected, "fixture: {source}");
+        }
+    }
+
+    #[test]
+    fn answer_summary_and_result_render_all_states() {
+        let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();
+        let answers = [
+            QuestionAnswer {
+                selected: vec!["SQLite".into()],
+                free_text: None,
+            },
+            QuestionAnswer {
+                selected: vec!["Search".into(), "Export".into()],
+                free_text: Some("  Audit log  ".into()),
+            },
+            QuestionAnswer {
+                selected: vec![],
+                free_text: Some("  ".into()),
+            },
+        ];
+
+        assert_eq!(answers[0].summary(), "SQLite");
+        assert_eq!(answers[1].summary(), "Search; Export; Other: Audit log");
+        assert_eq!(answers[2].summary(), "(no selection)");
+        assert_eq!(
+            format_question_result(&questions, &answers),
+            "### Question 1\nQuestion: Which storage?\nAnswer: SQLite\n\n\
+             ### Question 2\nQuestion: Select features\nAnswer: Search; Export; Other: Audit log\n\n\
+             ### Question 3\nQuestion: Anything else?\nAnswer: (no selection)\n"
+        );
+        assert_eq!(format_question_result(&[], &[]), "No answers.");
+    }
+
+    #[test]
+    fn resolve_answer_tracks_single_multi_and_free_text_state() {
+        let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();
+
+        assert_eq!(
+            resolve_stdin_answer(&questions[0], "2", 3),
+            QuestionAnswer {
+                selected: vec!["Postgres".into()],
+                free_text: None,
+            }
+        );
+        assert_eq!(
+            resolve_stdin_answer(&questions[0], "sqlite", 3),
+            QuestionAnswer {
+                selected: vec!["SQLite".into()],
+                free_text: None,
+            }
+        );
+        assert_eq!(
+            resolve_stdin_answer(&questions[0], "custom", 3),
+            QuestionAnswer {
+                selected: vec![],
+                free_text: Some("custom".into()),
+            }
+        );
+        assert_eq!(
+            resolve_stdin_answer(&questions[1], "1, 2 extra", 3),
+            QuestionAnswer {
+                selected: vec!["Search".into(), "Export".into()],
+                free_text: Some("extra".into()),
+            }
+        );
+        assert_eq!(
+            resolve_stdin_answer(&questions[1], "99", 3),
+            QuestionAnswer {
+                selected: vec![],
+                free_text: Some("99".into()),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_reports_invalid_state_without_reading_stdin() {
+        let result = QuestionTool::new()
+            .execute(
+                fixture(r#"{"questions":[{"question":"Pick","options":[]}]}"#),
+                &ToolContext::unsandboxed("."),
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert!(result.tool_call_id.is_empty());
+        assert_eq!(
+            result.content,
+            "Invalid question arguments: questions[0]: options must contain at least one entry"
+        );
     }
 }

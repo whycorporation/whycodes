@@ -1906,3 +1906,181 @@ fn adopt_yield_view_moves_transcript_without_clone() {
     assert_eq!(app.messages.as_ptr(), ptr);
     assert_eq!(app.messages[0].content, "body");
 }
+
+#[test]
+fn question_dialog_covers_other_multi_and_rehydration() {
+    use crate::app::QuestionDialogState;
+    use whycode_tools::question::{QuestionOption, QuestionSpec};
+
+    let option = |label: &str| QuestionOption {
+        label: label.into(),
+        description: String::new(),
+        preview: None,
+    };
+    let mut state = QuestionDialogState::new(vec![
+        QuestionSpec {
+            prompt: "Features?".into(),
+            options: vec![option("Fast"), option("Safe")],
+            multi_select: true,
+        },
+        QuestionSpec {
+            prompt: "Notes?".into(),
+            options: vec![],
+            multi_select: false,
+        },
+    ]);
+
+    state.toggle_multi_at_cursor();
+    state.move_cursor(1);
+    state.toggle_multi_at_cursor();
+    state.move_cursor(1);
+    assert!(state.is_other_index(state.cursor));
+    state.toggle_multi_at_cursor();
+    assert!(state.free_text_focus);
+    state.free_text = " custom ".into();
+    assert!(state.confirm_current().is_none());
+    assert_eq!(state.index, 1);
+    let first = state.answers[0].as_ref().unwrap();
+    assert_eq!(first.selected.len(), 2);
+    assert_eq!(first.free_text.as_deref(), Some("custom"));
+
+    state.free_text = "ship it".into();
+    let answers = state.confirm_current().expect("all questions answered");
+    assert_eq!(answers[1].free_text.as_deref(), Some("ship it"));
+    assert!(state.go_prev_question());
+    assert_eq!(state.free_text, "custom");
+    assert_eq!(state.multi_selected.len(), 2);
+    let copied = state.clipboard_text();
+    assert!(copied.contains("Fast"), "{copied}");
+    assert!(copied.contains("Safe"), "{copied}");
+    assert!(copied.contains("custom"), "{copied}");
+}
+
+#[test]
+fn question_dialog_requires_an_answer_and_wraps_cursor() {
+    use crate::app::QuestionDialogState;
+    use whycode_tools::question::{QuestionOption, QuestionSpec};
+
+    let mut state = QuestionDialogState::new(vec![QuestionSpec {
+        prompt: "Pick".into(),
+        options: vec![QuestionOption {
+            label: "Known".into(),
+            description: String::new(),
+            preview: None,
+        }],
+        multi_select: false,
+    }]);
+    state.move_cursor(-1);
+    assert_eq!(state.cursor, 1);
+    assert!(state.confirm_current().is_none());
+    assert!(state.free_text_focus);
+    state.free_text = "Other value".into();
+    let done = state.confirm_current().unwrap();
+    assert_eq!(done[0].free_text.as_deref(), Some("Other value"));
+
+    let mut empty = QuestionDialogState::new(vec![]);
+    assert!(empty.current().is_none());
+    assert_eq!(empty.option_count(), 1);
+    assert!(empty.is_other_index(0));
+    assert!(empty.confirm_current().is_none());
+    assert!(!empty.go_prev_question());
+    assert!(!empty.go_next_question());
+}
+
+#[test]
+fn app_context_window_and_modal_geometry_follow_state() {
+    use crate::keymap::KeymapContext;
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    app.context_used = 250;
+    app.max_context_tokens = 1000;
+    assert_eq!(app.context_percent(), 25);
+    app.set_api_context_window("openai", "gpt-test", 8192, None, 4096);
+    assert_eq!(app.api_context_window, Some(8192));
+    assert_eq!(app.api_context_for.as_ref().unwrap().0, "openai");
+    app.set_api_context_window("openai", "gpt-test", 0, None, 4096);
+    assert_eq!(app.api_context_window, Some(8192), "zero is ignored");
+    app.clear_api_context_window();
+    assert!(app.api_context_window.is_none());
+
+    let modal = Rect::new(10, 5, 20, 8);
+    app.apply_modal_chrome(Some(Rect::new(27, 5, 3, 1)), modal, None);
+    assert!(app.dialog_modal_contains(10, 5));
+    assert!(!app.dialog_modal_contains(30, 5));
+    assert_eq!(app.clamp_to_dialog_modal(0, 99), (10, 12));
+    app.mouse_pos = Some((28, 5));
+    assert!(app.dialog_close_hovered());
+    app.key_context = KeymapContext::Dialog;
+    assert!(app.modal_is_open());
+    app.clear_dialog_hits();
+    assert!(!app.dialog_modal_contains(10, 5));
+    assert_eq!(app.clamp_to_dialog_modal(2, 3), (2, 3));
+}
+
+#[test]
+fn subagent_updates_reuse_rows_and_transcript_blocks() {
+    use crate::app::SubagentUpdate;
+
+    let mut app = TuiApp::new(test_config());
+    let update = |status: &str, output: &str| SubagentUpdate {
+        id: "child-1".into(),
+        kind: "review".into(),
+        description: "Review tests".into(),
+        status: status.into(),
+        activity: "reading".into(),
+        elapsed_ms: 50,
+        output: output.into(),
+    };
+    app.upsert_subagent(update("running", ""));
+    assert_eq!(app.running_subagent_count(), 1);
+    assert!(app.has_subagent_strip());
+    assert_eq!(app.subagents.len(), 1);
+    assert_eq!(app.messages.len(), 1);
+    app.open_subagent_view("missing");
+    assert!(app.open_subagent.is_none());
+    app.open_subagent_view("child-1");
+    assert_eq!(app.open_subagent.as_deref(), Some("child-1"));
+
+    app.upsert_subagent(update("completed", "all good"));
+    assert_eq!(app.subagents.len(), 1);
+    assert_eq!(app.messages.len(), 1);
+    assert_eq!(app.running_subagent_count(), 0);
+    assert_eq!(app.subagents[0].output, "all good");
+    app.close_subagent_view();
+    assert!(app.open_subagent.is_none());
+}
+
+#[test]
+fn tool_and_thinking_toggles_update_selected_message() {
+    use crate::app::{ChatToolCall, ThinkingBlock};
+
+    let mut app = TuiApp::new(test_config());
+    app.add_message(ChatRole::Assistant, "answer");
+    app.messages[0]
+        .blocks
+        .push(ChatBlock::Thinking(ThinkingBlock::new("reason")));
+    app.messages[0].tool_calls.push(ChatToolCall {
+        id: "t".into(),
+        name: "read".into(),
+        arguments: serde_json::json!({}),
+        collapsed: true,
+        result: None,
+        is_error: false,
+    });
+    app.selected_msg = Some(0);
+    app.toggle_selected_thinking();
+    assert!(matches!(&app.messages[0].blocks[0], ChatBlock::Thinking(t) if !t.collapsed));
+    app.toggle_selected_thinking();
+    assert!(matches!(&app.messages[0].blocks[0], ChatBlock::Thinking(t) if t.collapsed));
+    app.toggle_selected_tools();
+    assert!(app.messages[0].results_expanded);
+    assert!(!app.messages[0].tool_calls[0].collapsed);
+    app.finish_open_thinking();
+    assert!(matches!(&app.messages[0].blocks[0], ChatBlock::Thinking(t) if !t.is_running()));
+
+    app.add_message(ChatRole::User, "a long prompt");
+    app.selected_msg = Some(1);
+    app.toggle_selected_thinking();
+    assert!(app.messages[1].results_expanded);
+}

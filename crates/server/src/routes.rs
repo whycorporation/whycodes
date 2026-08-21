@@ -799,4 +799,64 @@ mod tests {
         assert_eq!(hit, a.join("abc.md"));
         assert!(find_share_file_in(&[a, b], "missing", "json").is_none());
     }
+
+    #[test]
+    fn turn_events_have_stable_api_payloads() {
+        let cases = [
+            (
+                TurnEvent::TextDelta("hello".into()),
+                serde_json::json!({"type": "text_delta", "text": "hello"}),
+            ),
+            (
+                TurnEvent::ToolStart {
+                    id: "call-1".into(),
+                    name: "read".into(),
+                    input: serde_json::json!({"path": "README.md"}),
+                },
+                serde_json::json!({
+                    "type": "tool_start",
+                    "id": "call-1",
+                    "name": "read",
+                    "input": {"path": "README.md"},
+                }),
+            ),
+            (
+                TurnEvent::PermissionAsk {
+                    request_id: "perm-1".into(),
+                    tool_name: "bash".into(),
+                    detail: "cargo test".into(),
+                },
+                serde_json::json!({
+                    "type": "permission_request",
+                    "request_id": "perm-1",
+                    "tool_name": "bash",
+                    "detail": "cargo test",
+                }),
+            ),
+            (
+                TurnEvent::Panel(whycode_core::PanelUpdate::File {
+                    path: "src/lib.rs".into(),
+                    text: "fn main() {}".into(),
+                }),
+                serde_json::json!({
+                    "type": "panel",
+                    "action": "file",
+                    "path": "src/lib.rs",
+                }),
+            ),
+        ];
+
+        for (event, expected) in cases {
+            assert_eq!(turn_event_json(&event), Some(expected));
+        }
+
+        assert_eq!(
+            turn_event_json(&TurnEvent::Status("error:provider unavailable".into())),
+            Some(serde_json::json!({
+                "type": "error",
+                "message": "provider unavailable",
+            }))
+        );
+        assert!(turn_event_json(&TurnEvent::Status("done:42chars".into())).is_none());
+    }
 }

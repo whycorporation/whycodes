@@ -3223,3 +3223,139 @@ pub(crate) fn git_output_timeout(
         }
     }
 }
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    use crate::config::TuiAppConfig;
+    use whycode_tools::question::QuestionOption;
+
+    fn app() -> TuiApp {
+        TuiApp::from_config(TuiAppConfig::default())
+    }
+
+    fn question(prompt: &str, labels: &[&str], multi_select: bool) -> QuestionSpec {
+        QuestionSpec {
+            prompt: prompt.into(),
+            options: labels
+                .iter()
+                .map(|label| QuestionOption {
+                    label: (*label).into(),
+                    description: String::new(),
+                    preview: None,
+                })
+                .collect(),
+            multi_select,
+        }
+    }
+
+    #[test]
+    fn question_answers_rehydrate_when_navigating_back_and_forward() {
+        let mut state = QuestionDialogState::new(vec![
+            question("Pick", &["A", "B"], false),
+            question("Explain", &[], false),
+        ]);
+
+        state.set_cursor(1);
+        assert!(state.confirm_current().is_none());
+        assert_eq!(state.index, 1);
+        assert!(state.free_text_focus);
+        state.free_text = "discarded draft".into();
+
+        assert!(state.go_prev_question());
+        assert_eq!(state.cursor, 1);
+        assert!(!state.free_text_focus);
+        assert!(state.go_next_question());
+        assert_eq!(state.free_text, "");
+        assert!(state.free_text_focus);
+
+        state.free_text = " because ".into();
+        let answers = state.confirm_current().expect("all questions answered");
+        assert_eq!(answers[0].selected, ["B"]);
+        assert_eq!(answers[1].free_text.as_deref(), Some("because"));
+    }
+
+    #[test]
+    fn multi_question_requires_a_choice_and_collects_selected_labels() {
+        let mut state =
+            QuestionDialogState::new(vec![question("Pick several", &["A", "B", "C"], true)]);
+
+        assert!(state.confirm_current().is_none());
+        state.set_cursor(2);
+        state.toggle_multi_at_cursor();
+        state.set_cursor(0);
+        state.toggle_multi_at_cursor();
+        let answers = state.confirm_current().expect("selection completes dialog");
+
+        let selected: HashSet<_> = answers[0].selected.iter().map(String::as_str).collect();
+        assert_eq!(selected, HashSet::from(["A", "C"]));
+        assert_eq!(answers[0].free_text, None);
+    }
+
+    #[test]
+    fn slash_suggestions_filter_wrap_hit_test_and_dismiss() {
+        let mut state = SlashSuggestState::default();
+        state.refresh("/he");
+        assert!(state.active);
+        assert_eq!(state.current().map(|cmd| cmd.name), Some("/help"));
+
+        state.step(-1);
+        assert_eq!(state.selected, state.matches.len() - 1);
+        state.list_hit = Some(Rect::new(4, 10, 12, 2));
+        state.list_scroll_start = state.matches.len().saturating_sub(1);
+        assert_eq!(state.row_index_at(5, 10), Some(state.matches.len() - 1));
+        assert_eq!(state.row_index_at(3, 10), None);
+        assert_eq!(state.row_index_at(5, 11), None);
+
+        state.dismiss();
+        assert!(!state.active);
+        assert!(state.matches.is_empty());
+        state.refresh("/help now");
+        assert!(!state.active, "arguments close command completion");
+    }
+
+    #[test]
+    fn focus_and_scroll_transitions_preserve_bottom_following_contract() {
+        let mut app = app();
+        app.toggle_focus();
+        assert_eq!(app.focus, FocusPane::Prompt, "empty chat cannot take focus");
+
+        app.add_message(ChatRole::User, "one");
+        app.add_message(ChatRole::Assistant, "two");
+        app.focus_scrollback();
+        assert_eq!(app.focus, FocusPane::Scrollback);
+        assert_eq!(app.selected_msg, Some(1));
+        assert!(!app.auto_scroll);
+
+        app.chat_scroll_total = 100;
+        app.chat_viewport_rows = 20;
+        app.scroll_rows(500);
+        assert_eq!(app.scroll_offset, 80);
+        app.scroll_page(false);
+        assert_eq!(app.scroll_offset, 60);
+        app.scroll_to_bottom();
+        assert_eq!(app.scroll_offset, 0);
+        assert!(app.auto_scroll);
+        assert_eq!(app.selected_msg, Some(1));
+    }
+
+    #[test]
+    fn prompt_draft_clear_expands_paste_and_resets_transient_state() {
+        let mut app = app();
+        let pasted = "one\ntwo\nthree\nfour";
+        app.insert_paste_text(pasted);
+        app.slash_suggest.active = true;
+        app.file_suggest.active = true;
+        app.esc_armed_at = Some(Instant::now());
+
+        app.clear_prompt_draft();
+
+        assert_eq!(app.input_history, [pasted]);
+        assert_eq!(app.input_history_idx, 1);
+        assert!(app.input_buffer.is_empty());
+        assert!(app.pending_pastes.is_empty());
+        assert!(!app.slash_suggest.active);
+        assert!(!app.file_suggest.active);
+        assert!(app.esc_armed_at.is_none());
+    }
+}

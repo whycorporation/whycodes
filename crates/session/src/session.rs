@@ -1383,6 +1383,65 @@ mod persist_tests {
         assert_eq!(totals.usage.input_tokens, 30);
         assert_eq!(totals.usage.output_tokens, 3);
     }
+
+    #[test]
+    fn load_missing_session_returns_none() {
+        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+
+        assert!(Session::load_from_db(&db, "missing").unwrap().is_none());
+    }
+
+    #[test]
+    fn load_rejects_invalid_session_timestamp() {
+        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        db.upsert_session(
+            "broken-time",
+            "Broken",
+            "/project",
+            "not-rfc3339",
+            "2026-08-21T12:00:00Z",
+            &Usage::default(),
+        )
+        .unwrap();
+
+        let error = Session::load_from_db(&db, "broken-time").unwrap_err();
+        assert!(
+            error.to_string().contains("premature end of input")
+                || error
+                    .to_string()
+                    .contains("input contains invalid characters"),
+            "unexpected timestamp error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn load_rejects_invalid_message_json() {
+        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        db.upsert_session(
+            "broken-message",
+            "Broken",
+            "/project",
+            "2026-08-21T12:00:00Z",
+            "2026-08-21T12:00:01Z",
+            &Usage::default(),
+        )
+        .unwrap();
+        db.insert_message(
+            "message-1",
+            "broken-message",
+            "user",
+            "{not json}",
+            None,
+            None,
+        )
+        .unwrap();
+
+        let error = Session::load_from_db(&db, "broken-message").unwrap_err();
+        assert!(
+            error.to_string().contains("key must be a string"),
+            "unexpected JSON error: {error:#}"
+        );
+    }
 }
 
 // Keep export methods on Session.
@@ -2203,6 +2262,87 @@ mod tests {
         assert_eq!(
             session.token_count(),
             estimate_tokens(&session.system_prompt)
+        );
+    }
+
+    #[test]
+    fn serde_round_trip_preserves_public_state_and_rebuilds_token_count() {
+        let mut session = Session::new(test_project_path(), "system prompt".into());
+        session.id = "session-fixed".into();
+        session.created_at = "2026-08-21T12:00:00Z".parse().unwrap();
+        session.updated_at = "2026-08-21T12:00:01Z".parse().unwrap();
+        session.set_title_manual("Stable title");
+        session.add_user_message("hello 🌍");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "deterministic reply".into(),
+        }]);
+        let expected_tokens = session.token_count();
+
+        let value = serde_json::to_value(&session).unwrap();
+        assert!(value.get("token_cache").is_none());
+
+        let restored: Session = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.id, "session-fixed");
+        assert_eq!(restored.title, "Stable title");
+        assert_eq!(restored.title_source, crate::title::TitleSource::Manual);
+        assert_eq!(restored.messages.len(), 2);
+        assert_eq!(restored.system_prompt, "system prompt");
+        assert_eq!(restored.project_path, test_project_path());
+        assert_eq!(restored.token_count(), expected_tokens);
+    }
+
+    #[test]
+    fn generated_and_manual_title_transitions_are_terminal() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        let generated = session.title.clone();
+
+        assert!(!session.apply_generated_title(generated));
+        assert_eq!(session.title_source, crate::title::TitleSource::Generated);
+        assert!(!session.apply_generated_title("another generated title"));
+
+        session.set_title_manual("   ");
+        assert_eq!(session.title_source, crate::title::TitleSource::Generated);
+        session.set_title_manual("  User title\n  ");
+        assert_eq!(session.title, "User title");
+        assert_eq!(session.title_source, crate::title::TitleSource::Manual);
+        assert!(!session.apply_heuristic_title("ignored heuristic"));
+    }
+
+    #[test]
+    fn export_share_writes_round_trippable_json_and_markdown_in_temp_project() {
+        let project = tempfile::tempdir().unwrap();
+        let mut session = Session::new(project.path().to_path_buf(), "system".into());
+        session.id = "export-fixed".into();
+        session.title = "Export title".into();
+        session.add_user_message("share this");
+
+        let json_path = PathBuf::from(session.export_share().unwrap());
+        let md_path = json_path.with_extension("md");
+        assert_eq!(
+            json_path,
+            project.path().join(".whycode/shares/export-fixed.json")
+        );
+        assert!(md_path.is_file());
+
+        let restored: Session =
+            serde_json::from_str(&std::fs::read_to_string(json_path).unwrap()).unwrap();
+        assert_eq!(restored.id, "export-fixed");
+        assert_eq!(restored.messages[0].content.as_text(), Some("share this"));
+        let markdown = std::fs::read_to_string(md_path).unwrap();
+        assert!(markdown.contains("# Export title"));
+        assert!(markdown.contains("### User\n\nshare this"));
+    }
+
+    #[test]
+    fn export_share_reports_directory_creation_error() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join(".whycode"), "not a directory").unwrap();
+        let session = Session::new(project.path().to_path_buf(), "system".into());
+
+        let error = session.export_share().unwrap_err();
+        assert!(
+            matches!(error.downcast_ref::<std::io::Error>(), Some(e) if e.kind() == std::io::ErrorKind::NotADirectory),
+            "unexpected export error: {error:#}"
         );
     }
 }

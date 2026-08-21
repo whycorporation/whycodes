@@ -815,14 +815,15 @@ mod tests {
         assert!(joined.contains("mermaid"), "{joined}");
         assert!(joined.contains("Build"), "{joined}");
         assert!(joined.contains("Deploy"), "{joined}");
-        assert!(
-            !joined.contains('┌') && !joined.contains('└'),
-            "mermaid uses the same band, not a box: {joined}"
-        );
         // With the `mermaid` feature, source keywords become a diagram.
         // Without it, the ship binary keeps source lines readable.
         #[cfg(feature = "mermaid")]
         assert!(!joined.contains("graph LR"), "{joined}");
+        #[cfg(not(feature = "mermaid"))]
+        assert!(
+            !joined.contains('┌') && !joined.contains('└'),
+            "mermaid source uses the same band, not a box: {joined}"
+        );
     }
 
     #[test]

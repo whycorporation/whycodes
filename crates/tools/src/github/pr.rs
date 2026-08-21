@@ -333,3 +333,108 @@ impl GitHubPrTool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_describes_supported_actions_and_required_repository() {
+        let tool = GitHubPrTool::new();
+        let parameters = tool.parameters();
+
+        assert_eq!(tool.name(), "github_pr");
+        assert_eq!(
+            parameters["properties"]["action"]["enum"],
+            json!(["create", "list", "view", "merge"])
+        );
+        assert_eq!(parameters["required"], json!(["action", "owner", "repo"]));
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_missing_repository_before_token_or_network() {
+        let result = GitHubPrTool::new()
+            .execute(
+                json!({ "action": "list", "owner": "owner" }),
+                &ToolContext::new("."),
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert_eq!(result.content, "Both 'owner' and 'repo' are required.");
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_unknown_action_without_requesting() {
+        let result = GitHubPrTool::new()
+            .execute(
+                json!({
+                    "action": "close",
+                    "owner": "owner",
+                    "repo": "repo",
+                    "token": "token"
+                }),
+                &ToolContext::new("."),
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content,
+            "Unknown action 'close'. Valid actions: create, list, view, merge."
+        );
+    }
+
+    #[tokio::test]
+    async fn create_validates_required_fields_before_requesting() {
+        let result = GitHubPrTool::create_pr(
+            &reqwest::Client::new(),
+            "token",
+            "owner",
+            "repo",
+            &json!({ "title": "Title", "head": "feature" }),
+        )
+        .await;
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content,
+            "For 'create' action, 'title', 'head', and 'base' are required."
+        );
+    }
+
+    #[tokio::test]
+    async fn view_and_merge_require_a_pull_request_number() {
+        let client = reqwest::Client::new();
+        let args = json!({});
+
+        let view = GitHubPrTool::view_pr(&client, "token", "owner", "repo", &args).await;
+        assert!(view.is_error);
+        assert_eq!(view.content, "For 'view' action, 'pr_number' is required.");
+
+        let merge = GitHubPrTool::merge_pr(&client, "token", "owner", "repo", &args).await;
+        assert!(merge.is_error);
+        assert_eq!(
+            merge.content,
+            "For 'merge' action, 'pr_number' is required."
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_rejects_an_invalid_method_before_requesting() {
+        let result = GitHubPrTool::merge_pr(
+            &reqwest::Client::new(),
+            "token",
+            "owner",
+            "repo",
+            &json!({ "pr_number": 7, "method": "fast-forward" }),
+        )
+        .await;
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content,
+            "Invalid merge method 'fast-forward'. Valid methods: merge, squash, rebase."
+        );
+    }
+}

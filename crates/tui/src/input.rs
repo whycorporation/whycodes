@@ -2985,4 +2985,55 @@ mod event_tests {
             assert!(!st.free_text_focus);
         }
     }
+
+    #[test]
+    fn coalesce_resizes_keeps_ordered_non_resize_events_and_last_size() {
+        let typed = key(KeyCode::Char('x'));
+        let moved = mouse(MouseEventKind::Moved, 2, 3);
+        let mut events = vec![
+            Event::Resize(80, 24),
+            typed.clone(),
+            Event::Resize(100, 30),
+            moved.clone(),
+            Event::Resize(120, 40),
+        ];
+
+        coalesce_resizes(&mut events);
+
+        assert_eq!(events, vec![typed, moved, Event::Resize(120, 40)]);
+        let mut unchanged = vec![Event::FocusGained, Event::FocusLost];
+        let expected = unchanged.clone();
+        coalesce_resizes(&mut unchanged);
+        assert_eq!(unchanged, expected);
+    }
+
+    #[test]
+    fn direct_input_actions_handle_invalid_utf8_cursor_and_history_edges() {
+        let mut a = app();
+        a.input_buffer = "şa".into();
+        a.input_cursor = 1;
+        handle_input_action(
+            &mut a,
+            crate::keymap::Action::InputDelete,
+            &KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+        );
+        assert_eq!(a.input_buffer, "a", "mid-codepoint cursor clamps backward");
+        assert_eq!(a.input_cursor, 0);
+
+        a.input_history = vec!["first".into(), "second".into()];
+        a.input_history_idx = 0;
+        handle_input_action(
+            &mut a,
+            crate::keymap::Action::InputHistoryPrev,
+            &KeyEvent::new(KeyCode::Up, KeyModifiers::NONE),
+        );
+        assert_eq!(a.input_history_idx, 0, "history does not underflow");
+        a.input_history_idx = a.input_history.len();
+        handle_input_action(
+            &mut a,
+            crate::keymap::Action::InputHistoryNext,
+            &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
+        );
+        assert_eq!(a.input_history_idx, 2, "history does not overflow");
+    }
 }

@@ -652,4 +652,140 @@ mod tests {
             "http://host/v1/models"
         );
     }
+
+    #[test]
+    fn context_window_field_priority_and_fallbacks() {
+        let m = json!({
+            "context_length": 64_000,
+            "context_window": 32_000,
+            "max_model_len": 16_000,
+            "max_input_tokens": 8_000,
+            "max_tokens": 4_000,
+            "top_provider": { "context_length": 2_000 },
+            "architecture": { "context_length": 1_000 }
+        });
+        assert_eq!(context_window_from_model_value(&m), Some(64_000));
+
+        let m = json!({
+            "context_length": 0,
+            "context_window": "bad",
+            "max_model_len": 16_000,
+            "max_input_tokens": 8_000
+        });
+        assert_eq!(context_window_from_model_value(&m), Some(16_000));
+
+        let m = json!({
+            "top_provider": { "context_length": 0 },
+            "architecture": { "context_length": "32768" }
+        });
+        assert_eq!(context_window_from_model_value(&m), Some(32_768));
+    }
+
+    #[test]
+    fn numeric_parsing_rejects_overflow_and_non_positive_values() {
+        for value in [
+            json!(u64::from(u32::MAX) + 1),
+            json!(-1),
+            json!(0.0),
+            json!(u32::MAX as f64),
+            json!(null),
+            json!(true),
+            json!("4294967296"),
+        ] {
+            assert_eq!(
+                context_window_from_model_value(&json!({"context_length": value})),
+                None,
+                "unexpectedly accepted {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_models_uses_completion_alias_and_rejects_zero_output() {
+        let cat = parse_models_json(
+            &json!({"data": [
+                {"id": "primary", "max_output_tokens": 2048, "max_completion_tokens": 1024},
+                {"id": "alias", "max_completion_tokens": "4096"},
+                {"id": "zero", "max_output_tokens": 0},
+                {"context_length": 8192},
+                "not-an-object"
+            ]}),
+            "source",
+        );
+
+        assert_eq!(cat.max_output_tokens.get("primary"), Some(&2_048));
+        assert_eq!(cat.max_output_tokens.get("alias"), Some(&4_096));
+        assert!(!cat.max_output_tokens.contains_key("zero"));
+        assert_eq!(cat.max_output_tokens.len(), 2);
+        assert!(cat.fetched_at.is_some());
+    }
+
+    #[test]
+    fn exact_model_id_wins_over_an_earlier_suffix_alias() {
+        let json = json!({"data": [
+            {"id": "provider/model", "context_length": 8_192},
+            {"id": "model", "context_length": 32_768}
+        ]});
+        assert_eq!(context_window_for_model_id(&json, "model"), Some(32_768));
+    }
+
+    #[test]
+    fn model_lookup_skips_invalid_candidates_and_keeps_first_suffix() {
+        let json = json!([
+            {"id": "model", "context_length": 0},
+            {"id": "first/model", "context_length": 8_192},
+            {"id": "second/model", "context_length": 16_384}
+        ]);
+        assert_eq!(context_window_for_model_id(&json, "model"), Some(8_192));
+        assert_eq!(
+            context_window_for_model_id(&json!({"data": {}}), "model"),
+            None
+        );
+    }
+
+    #[test]
+    fn catalog_request_filters_unknown_provider_and_uses_runtime_fallback() {
+        use whycode_config::Config;
+        use whycode_core::types::ProviderConfig;
+
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "configured".into(),
+            ProviderConfig {
+                name: "configured".into(),
+                api_key: Some("   ".into()),
+                api_base: Some(" http://gateway.example/v1 ".into()),
+                base_url: None,
+                headers: None,
+                models: vec![],
+                tool_arguments: None,
+                extra: Default::default(),
+            },
+        );
+
+        assert!(catalog_request_from_config(&cfg, "unknown", Some("runtime")).is_none());
+        let req = catalog_request_from_config(&cfg, "configured", Some(" runtime-key "))
+            .expect("configured provider should produce a request");
+        assert_eq!(req.provider_name, "configured");
+        assert_eq!(req.base_url, "http://gateway.example/v1");
+        assert_eq!(req.api_key.as_deref(), Some("runtime-key"));
+        assert!(req.headers.is_empty());
+    }
+
+    #[test]
+    fn base_url_does_not_fall_through_when_present_value_is_blank() {
+        use whycode_core::types::ProviderConfig;
+
+        let pc = ProviderConfig {
+            name: "p".into(),
+            api_key: None,
+            api_base: Some("http://fallback.example/v1".into()),
+            base_url: Some("   ".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        };
+        assert_eq!(base_url_from_provider_config(&pc), None);
+    }
 }

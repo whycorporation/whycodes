@@ -811,6 +811,20 @@ mod paint_tests {
     }
 
     #[test]
+    fn home_shell_renders_prompt_and_records_chat_viewport() {
+        let mut a = app();
+        a.input_buffer = "deterministic draft".into();
+        a.input_cursor = a.input_buffer.len();
+
+        let (buffer, text) = paint_full_shell(&mut a, 80, 24);
+
+        assert!(text.contains("deterministic draft"), "{text:?}");
+        assert!(text.contains('╭') && text.contains('╯'), "{text:?}");
+        assert!(a.chat_viewport_rows > 0);
+        assert_eq!(a.chat_content_width, buffer.area().width);
+    }
+
+    #[test]
     fn turn_status_generating_shows_spinner_label_tokens_and_stop() {
         let mut a = app();
         a.current_agent_state = AgentState::Generating;
