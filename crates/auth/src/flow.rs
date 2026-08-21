@@ -51,7 +51,7 @@ pub fn wait_for_callback(
 
     loop {
         if std::time::Instant::now() > deadline {
-            return Err(AuthError::FlowCancelled(
+            break Err(AuthError::FlowCancelled(
                 "timed out waiting for the browser redirect".to_string(),
             ));
         }
@@ -100,13 +100,10 @@ pub fn wait_for_callback(
             continue;
         }
 
-        const OK_HTML: &str = "<html><body><h2>whycode login complete</h2><p>You can close this tab and return to the terminal.</p></body></html>";
-        const ERR_HTML: &str = "<html><body><h2>whycode login failed</h2><p>The provider did not return a code. You can close this tab.</p></body></html>";
-        let body = [ERR_HTML, OK_HTML][usize::from(params.contains_key("code"))];
+        let body = callback_html(params.contains_key("code"));
         let response = format!(
-            "HTTP/1.1 200 OK\r\n{cors}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            "HTTP/1.1 200 OK\r\n{cors}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len(),
-            body
         );
         write_http_response(&mut stream, &response);
 
@@ -115,33 +112,35 @@ pub fn wait_for_callback(
                 .get("error_description")
                 .cloned()
                 .unwrap_or_else(|| error.clone());
-            return Err(AuthError::Provider(desc));
+            break Err(AuthError::Provider(desc));
         }
-        // The neither-code-nor-error case continued above, and `error` returned,
-        // so `code` is present.
-        let Some(code) = params.get("code").cloned() else {
-            continue;
-        };
+        let code = params.get("code").cloned().unwrap_or_default();
         let state = params
             .get("state")
             .cloned()
             .ok_or_else(|| AuthError::Provider("callback missing `state`".to_string()))?;
         if state != expected_state {
-            return Err(AuthError::Provider(
+            break Err(AuthError::Provider(
                 "state mismatch on OAuth callback (possible CSRF); aborting".to_string(),
             ));
         }
-        return Ok(CallbackResult { code, state });
+        break Ok(CallbackResult { code, state });
     }
+}
+
+fn callback_html(has_code: bool) -> &'static str {
+    if !has_code {
+        return "<html><body><h2>whycode login failed</h2><p>The provider did not return a code. You can close this tab.</p></body></html>";
+    }
+    "<html><body><h2>whycode login complete</h2><p>You can close this tab and return to the terminal.</p></body></html>"
 }
 
 fn origin_from_header(line: &str) -> Option<String> {
     let (name, value) = line.split_once(':')?;
-    if name.eq_ignore_ascii_case("origin") {
-        Some(value.trim().to_string())
-    } else {
-        None
+    if !name.eq_ignore_ascii_case("origin") {
+        return None;
     }
+    Some(value.trim().to_string())
 }
 
 fn accept_connection(

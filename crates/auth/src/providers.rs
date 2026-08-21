@@ -41,7 +41,12 @@ use crate::store::TokenStore;
 use crate::token::{OAuthToken, ProviderAuth};
 
 /// Bound on the whole browser step so a closed tab cannot hang login forever.
-const BROWSER_FLOW_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+/// Tests use a short window so unused `CliLoginUi` instantiations can finish.
+const BROWSER_FLOW_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_millis(400)
+} else {
+    Duration::from_secs(5 * 60)
+};
 /// Device-flow polls stop after the provider's own `expires_in` (15 min cap).
 const DEVICE_FLOW_MAX: Duration = Duration::from_secs(15 * 60);
 
@@ -289,23 +294,21 @@ fn read_pasted_code(input: &mut dyn BufRead) -> Result<String> {
 fn join_blocking_paste(
     joined: std::result::Result<Result<String>, tokio::task::JoinError>,
 ) -> Result<String> {
-    match joined {
-        Ok(result) => result,
-        Err(error) => Err(AuthError::FlowCancelled(format!(
+    joined.unwrap_or_else(|error| {
+        Err(AuthError::FlowCancelled(format!(
             "stdin task failed: {error}"
-        ))),
-    }
+        )))
+    })
 }
 
 fn join_blocking_callback(
     joined: std::result::Result<Result<flow::CallbackResult>, tokio::task::JoinError>,
 ) -> Result<flow::CallbackResult> {
-    match joined {
-        Ok(result) => result,
-        Err(error) => Err(AuthError::FlowCancelled(format!(
+    joined.unwrap_or_else(|error| {
+        Err(AuthError::FlowCancelled(format!(
             "callback task failed: {error}"
-        ))),
-    }
+        )))
+    })
 }
 
 /// Run the full login flow for `provider` and persist the credential.

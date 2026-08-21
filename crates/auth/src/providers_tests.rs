@@ -1201,6 +1201,52 @@ async fn cli_ui_prints_and_open_browser_fails_on_bad_url() {
     .await;
 }
 
+#[tokio::test]
+async fn cli_login_ui_instantiates_each_flow_kind() {
+    let spec = device_spec(mock_server(vec![
+        (200, r#"{"device_code":"dev","interval":1,"expires_in":30}"#),
+        (200, r#"{"access_token":"github"}"#),
+    ]));
+    assert_eq!(
+        device_login(&spec, false, &mut CliLoginUi)
+            .await
+            .unwrap()
+            .access_token,
+        "github"
+    );
+
+    let spec = local_spec(mock_server(vec![(200, r#"{}"#)]), TokenEncoding::Form);
+    let err = paste_code_login(&spec, false, &mut CliLoginUi)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AuthError::FlowCancelled(_)), "{err}");
+
+    let spec = loopback_spec("http://127.0.0.1:1".into());
+    let err = loopback_login(&spec, false, &mut CliLoginUi)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("timed out"), "{err}");
+}
+
+#[tokio::test]
+async fn join_helpers_map_cancelled_tasks() {
+    let paste = tokio::spawn(std::future::pending::<Result<String>>());
+    paste.abort();
+    let err = join_blocking_paste(paste.await).unwrap_err();
+    assert!(
+        matches!(err, AuthError::FlowCancelled(ref msg) if msg.contains("stdin task failed")),
+        "{err}"
+    );
+
+    let callback = tokio::spawn(std::future::pending::<Result<flow::CallbackResult>>());
+    callback.abort();
+    let err = join_blocking_callback(callback.await).unwrap_err();
+    assert!(
+        matches!(err, AuthError::FlowCancelled(ref msg) if msg.contains("callback task failed")),
+        "{err}"
+    );
+}
+
 struct FailRead;
 
 impl std::io::Read for FailRead {
