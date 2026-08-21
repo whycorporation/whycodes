@@ -106,6 +106,23 @@ fn wait_for_callback_error_without_description_uses_error_code() {
 }
 
 #[test]
+fn wait_for_callback_error_wins_when_code_is_also_present() {
+    let (listener, _) = bind_loopback().unwrap();
+    let addr = listener.local_addr().unwrap();
+    let handle =
+        thread::spawn(move || wait_for_callback(&listener, "state", Duration::from_secs(5)));
+    let page = send(
+        addr,
+        "GET /callback?code=tok&error=access_denied&error_description=Nope HTTP/1.1\r\nHost: localhost\r\n\r\n",
+    );
+    assert!(page.contains("whycode login complete"), "{page}");
+    assert_eq!(
+        handle.join().unwrap().unwrap_err().to_string(),
+        "OAuth provider returned an error: Nope"
+    );
+}
+
+#[test]
 fn open_browser_rejects_an_unopenable_url() {
     let err = open_browser("invalid URL\0").unwrap_err();
     assert!(matches!(err, AuthError::BrowserUnavailable(_)));
