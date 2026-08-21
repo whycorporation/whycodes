@@ -50,9 +50,7 @@ impl TokenStore {
     }
 
     fn write_file(&self, file: &StoreFile) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(self.path.parent().unwrap_or_else(|| Path::new(".")))?;
         let tmp = self.path.with_extension("json.tmp");
         let content = serde_json::to_string_pretty(file)?;
         std::fs::write(&tmp, content)?;
@@ -148,6 +146,32 @@ mod tests {
         assert!(store.remove("anthropic").unwrap());
         assert!(store.get("anthropic").unwrap().is_none());
         assert!(!store.remove("anthropic").unwrap());
+        store.set("openai", token()).unwrap();
+        store.set("anthropic", token()).unwrap();
+        let listed = store.list().unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].0, "anthropic");
+        assert!(store.path().ends_with("auth.json"));
+    }
+
+    #[test]
+    fn reports_io_and_json_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::new(dir.path());
+        std::fs::create_dir(store.path()).unwrap();
+        assert!(matches!(store.get("openai"), Err(AuthError::Io(_))));
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::new(dir.path());
+        std::fs::write(store.path(), "not json").unwrap();
+        #[cfg(unix)]
+        set_owner_only(store.path()).unwrap();
+        assert!(matches!(store.get("openai"), Err(AuthError::Json(_))));
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::new(&dir.path().join("nested/data"));
+        store.set("openai", token()).unwrap();
+        assert!(store.path().is_file());
     }
 
     #[cfg(unix)]

@@ -300,10 +300,19 @@ pub async fn login_with_ui<U: LoginUi>(
     ui: &mut U,
 ) -> Result<ProviderAuth> {
     let spec = spec_for(provider)?;
+    login_with_spec(&spec, store, open_browser, ui).await
+}
+
+async fn login_with_spec<U: LoginUi>(
+    spec: &ProviderSpec,
+    store: &TokenStore,
+    open_browser: bool,
+    ui: &mut U,
+) -> Result<ProviderAuth> {
     let token = match spec.flow {
-        FlowKind::LoopbackPkce => loopback_login(&spec, open_browser, ui).await?,
-        FlowKind::PasteCodePkce => paste_code_login(&spec, open_browser, ui).await?,
-        FlowKind::DeviceCode => device_login(&spec, open_browser, ui).await?,
+        FlowKind::LoopbackPkce => loopback_login(spec, open_browser, ui).await?,
+        FlowKind::PasteCodePkce => paste_code_login(spec, open_browser, ui).await?,
+        FlowKind::DeviceCode => device_login(spec, open_browser, ui).await?,
     };
     let auth = ProviderAuth {
         method: "oauth".to_string(),
@@ -342,11 +351,15 @@ pub async fn access_token(provider: &str, data_dir: &Path) -> Option<String> {
 /// deleted here, and the import method is preserved.
 pub async fn force_refresh(provider: &str, data_dir: &Path) -> Option<String> {
     let spec = spec_for(provider).ok()?;
+    force_refresh_with_spec(&spec, data_dir).await
+}
+
+async fn force_refresh_with_spec(spec: &ProviderSpec, data_dir: &Path) -> Option<String> {
     let store = TokenStore::new(data_dir);
     let auth = store.get(spec.name).ok()??;
     let method = auth.method.clone();
-    let token = force_fresh(&spec, &store, &method, auth.token).await.ok()?;
-    usable_token(&spec, &token)
+    let token = force_fresh(spec, &store, &method, auth.token).await.ok()?;
+    usable_token(spec, &token)
 }
 
 /// Like `ensure_fresh` but ignores the freshness window: always renew.
@@ -374,13 +387,7 @@ async fn force_fresh(
     let refreshed = refresh_grant(spec, &refresh)
         .await
         .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
-    store.set(
-        spec.name,
-        ProviderAuth {
-            method: method.to_string(),
-            token: refreshed.clone(),
-        },
-    )?;
+    persist_token(store, spec.name, method, &refreshed)?;
     Ok(refreshed)
 }
 
@@ -409,13 +416,7 @@ async fn ensure_fresh(
     let refreshed = refresh_grant(spec, &refresh)
         .await
         .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
-    store.set(
-        spec.name,
-        ProviderAuth {
-            method: method.to_string(),
-            token: refreshed.clone(),
-        },
-    )?;
+    persist_token(store, spec.name, method, &refreshed)?;
     Ok(refreshed)
 }
 
@@ -441,12 +442,8 @@ fn usable_token(spec: &ProviderSpec, token: &OAuthToken) -> Option<String> {
 
 /// Open `url` in the browser; `Ok(false)` = no browser available (the UI
 /// already has the URL for manual use).
-fn try_open_browser(url: &str) -> Result<bool> {
-    match flow::open_browser(url) {
-        Ok(()) => Ok(true),
-        Err(AuthError::BrowserUnavailable(_)) => Ok(false),
-        Err(e) => Err(e),
-    }
+fn try_open_browser(url: &str) -> bool {
+    flow::open_browser(url).is_ok()
 }
 
 async fn loopback_login(
@@ -476,7 +473,7 @@ async fn loopback_login(
         spec.extra_authorize,
     );
 
-    let opened = open_browser && try_open_browser(&url)?;
+    let opened = open_browser && try_open_browser(&url);
     ui.show_sign_in(spec.label, &url, opened);
     ui.note("Waiting for the sign-in to complete…");
 
@@ -517,7 +514,7 @@ async fn paste_code_login(
         spec.extra_authorize,
     );
 
-    let opened = open_browser && try_open_browser(&url)?;
+    let opened = open_browser && try_open_browser(&url);
     ui.show_sign_in(spec.label, &url, opened);
     let pasted = ui.prompt_pasted_code().await?;
     let pasted = pasted.trim();
@@ -571,7 +568,7 @@ async fn device_login(
     let mut interval = resp["interval"].as_u64().unwrap_or(5).max(1);
     let expires_in = resp["expires_in"].as_u64().unwrap_or(900);
 
-    let opened = open_browser && try_open_browser(&verification_uri)?;
+    let opened = open_browser && try_open_browser(&verification_uri);
     ui.show_device_code(&user_code, &verification_uri, opened);
     ui.note("Waiting for authorization…");
 
@@ -728,14 +725,21 @@ async fn reexchange_derived(
         .ok_or_else(|| AuthError::Provider(format!("{}: no derived credential spec", spec.name)))?;
     let (derived_token, expires) = exchange_derived_token(&derived, &token.access_token).await?;
     set_derived_extra(&mut token, &derived_token, expires);
-    store.set(
-        spec.name,
-        ProviderAuth {
-            method: method.to_string(),
-            token: token.clone(),
-        },
-    )?;
+    persist_token(store, spec.name, method, &token)?;
     Ok(token)
+}
+
+fn persist_token(
+    store: &TokenStore,
+    provider: &str,
+    method: &str,
+    token: &OAuthToken,
+) -> Result<()> {
+    let auth = ProviderAuth {
+        method: method.to_string(),
+        token: token.clone(),
+    };
+    store.set(provider, auth)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1087,483 +1091,5 @@ pub fn validate(spec: &ProviderSpec) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn specs_exist_for_all_advertised_providers() {
-        for name in OAUTH_PROVIDERS {
-            let spec = spec_for(name).expect(name);
-            assert_eq!(spec.name, *name);
-            assert!(!spec.client_id.is_empty());
-            assert!(spec.authorize_url.starts_with("https://"));
-            assert!(spec.token_url.starts_with("https://"));
-        }
-    }
-
-    #[test]
-    fn every_oauth_provider_suggests_at_least_one_model() {
-        for name in OAUTH_PROVIDERS {
-            assert!(
-                !suggested_models(name).is_empty(),
-                "{name}: a logged-in user must see a model in the picker"
-            );
-        }
-        assert!(suggested_models("ollama").is_empty());
-    }
-
-    #[test]
-    fn unknown_provider_is_rejected() {
-        assert!(matches!(
-            spec_for("mistral"),
-            Err(AuthError::UnsupportedProvider(_))
-        ));
-        assert!(!supports_oauth("mistral"));
-        assert!(supports_oauth("anthropic"));
-    }
-
-    #[test]
-    fn flow_kinds_match_registered_redirects() {
-        // These encode deployment facts about the public clients; if a
-        // provider changes its registration this test is the tripwire.
-        assert_eq!(spec_for("openai").unwrap().flow, FlowKind::LoopbackPkce);
-        assert_eq!(spec_for("openai").unwrap().loopback_port, Some(1455));
-        assert_eq!(spec_for("google").unwrap().flow, FlowKind::LoopbackPkce);
-        assert_eq!(spec_for("anthropic").unwrap().flow, FlowKind::PasteCodePkce);
-        assert_eq!(
-            spec_for("github-copilot").unwrap().flow,
-            FlowKind::DeviceCode
-        );
-        assert_eq!(spec_for("xai").unwrap().flow, FlowKind::LoopbackPkce);
-        assert_eq!(spec_for("xai").unwrap().loopback_host, Some("127.0.0.1"));
-        assert_eq!(spec_for("xai").unwrap().callback_path, "/callback");
-    }
-
-    #[test]
-    fn token_from_json_accepts_string_or_number_expires_in() {
-        let t = token_from_json(&serde_json::json!({
-            "access_token": "a", "refresh_token": "r", "expires_in": 3600
-        }))
-        .unwrap();
-        assert!(t.expires_at.is_some());
-        assert_eq!(t.refresh_token.as_deref(), Some("r"));
-        let t = token_from_json(&serde_json::json!({
-            "access_token": "a", "expires_in": "3600"
-        }))
-        .unwrap();
-        assert!(t.expires_at.is_some());
-        assert!(t.refresh_token.is_none());
-    }
-
-    #[test]
-    fn token_from_json_requires_access_token() {
-        let err = token_from_json(&serde_json::json!({"token_type": "Bearer"})).unwrap_err();
-        assert!(matches!(err, AuthError::TokenExchange(_)));
-    }
-
-    #[test]
-    fn token_from_json_ignores_malformed_optional_fields() {
-        for json in [
-            serde_json::json!({
-                "access_token": "access",
-                "refresh_token": "",
-                "expires_in": "not-a-number"
-            }),
-            serde_json::json!({
-                "access_token": "access",
-                "refresh_token": 42,
-                "expires_in": null
-            }),
-        ] {
-            let token = token_from_json(&json).unwrap();
-            assert_eq!(token.access_token, "access");
-            assert!(token.refresh_token.is_none());
-            assert!(token.expires_at.is_none());
-        }
-
-        let err = token_from_json(&serde_json::json!({"access_token": 42})).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "token exchange failed: response missing access_token"
-        );
-    }
-
-    #[test]
-    fn openai_account_id_is_extracted_from_id_token() {
-        // Synthetic JWT payload with the Codex account claim.
-        let payload = URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&serde_json::json!({
-                "https://api.openai.com/auth": {"chatgpt_account_id": "acct_1"}
-            }))
-            .unwrap(),
-        );
-        let jwt = format!("header.{payload}.sig");
-        assert_eq!(openai_account_id_from_jwt(&jwt).as_deref(), Some("acct_1"));
-        assert!(openai_account_id_from_jwt("not-a-jwt").is_none());
-
-        // token_from_json picks it up into `extra`.
-        let t = token_from_json(&serde_json::json!({
-            "access_token": "a", "id_token": jwt
-        }))
-        .unwrap();
-        assert_eq!(
-            t.extra.get("openai_account_id").and_then(Value::as_str),
-            Some("acct_1")
-        );
-    }
-
-    #[test]
-    fn openai_account_id_rejects_malformed_or_wrongly_typed_claims() {
-        let jwt = |payload: &[u8]| format!("header.{}.sig", URL_SAFE_NO_PAD.encode(payload));
-
-        assert!(openai_account_id_from_jwt("header.%%%.sig").is_none());
-        assert!(openai_account_id_from_jwt(&jwt(b"not json")).is_none());
-        assert!(
-            openai_account_id_from_jwt(&jwt(&serde_json::to_vec(&serde_json::json!({
-                "https://api.openai.com/auth": {"chatgpt_account_id": 7}
-            }))
-            .unwrap()))
-            .is_none()
-        );
-        assert!(
-            openai_account_id_from_jwt(&jwt(&serde_json::to_vec(
-                &serde_json::json!({"sub": "user"})
-            )
-            .unwrap()))
-            .is_none()
-        );
-    }
-
-    #[test]
-    fn derived_usable_token_comes_from_extra() {
-        let spec = spec_for("github-copilot").unwrap();
-        let mut token = OAuthToken {
-            access_token: "gh".to_string(),
-            refresh_token: None,
-            expires_at: None,
-            extra: Default::default(),
-        };
-        assert!(usable_token(&spec, &token).is_none());
-        set_derived_extra(&mut token, "cop", Utc::now() + chrono::Duration::hours(1));
-        assert_eq!(usable_token(&spec, &token).as_deref(), Some("cop"));
-
-        // Legacy "copilot_token" key (pre-rename stores) still resolves.
-        let mut legacy = OAuthToken {
-            access_token: "gh".to_string(),
-            refresh_token: None,
-            expires_at: None,
-            extra: Default::default(),
-        };
-        legacy.extra.insert(
-            "copilot_token".to_string(),
-            Value::String("old".to_string()),
-        );
-        assert_eq!(usable_token(&spec, &legacy).as_deref(), Some("old"));
-    }
-
-    #[test]
-    fn usable_token_prefers_current_derived_key_and_checks_its_type() {
-        let derived = spec_for("github-copilot").unwrap();
-        let direct = spec_for("openai").unwrap();
-        let mut token = OAuthToken {
-            access_token: "oauth-access".to_string(),
-            refresh_token: None,
-            expires_at: None,
-            extra: serde_json::Map::from_iter([
-                (
-                    "derived_token".to_string(),
-                    Value::String("current".to_string()),
-                ),
-                (
-                    "copilot_token".to_string(),
-                    Value::String("legacy".to_string()),
-                ),
-            ]),
-        };
-
-        assert_eq!(usable_token(&derived, &token).as_deref(), Some("current"));
-        assert_eq!(
-            usable_token(&direct, &token).as_deref(),
-            Some("oauth-access")
-        );
-
-        token
-            .extra
-            .insert("derived_token".to_string(), Value::Bool(true));
-        assert!(usable_token(&derived, &token).is_none());
-    }
-
-    #[test]
-    fn set_derived_extra_replaces_values_in_canonical_keys() {
-        let mut token = OAuthToken {
-            access_token: "oauth-access".to_string(),
-            refresh_token: None,
-            expires_at: None,
-            extra: serde_json::Map::from_iter([
-                (
-                    "derived_token".to_string(),
-                    Value::String("old".to_string()),
-                ),
-                ("unrelated".to_string(), Value::Bool(true)),
-            ]),
-        };
-        let expiry = DateTime::parse_from_rfc3339("2030-01-02T03:04:05Z")
-            .unwrap()
-            .with_timezone(&Utc);
-
-        set_derived_extra(&mut token, "new", expiry);
-
-        assert_eq!(token.extra["derived_token"], "new");
-        assert_eq!(
-            token.extra["derived_expires_at"],
-            "2030-01-02T03:04:05+00:00"
-        );
-        assert_eq!(token.extra["unrelated"], true);
-    }
-
-    // ── Conformance suite ────────────────────────────────────────────────
-    // Adding a provider must be *only* a new spec literal in `spec_for` +
-    // a name in `OAUTH_PROVIDERS`. These tests reject malformed literals,
-    // drift between the moving parts, and wrong grant encodings — with no
-    // network involved.
-
-    #[test]
-    fn conformance_every_advertised_provider_validates() {
-        for name in OAUTH_PROVIDERS {
-            let spec = spec_for(name).expect(name);
-            let issues = validate(&spec);
-            assert!(issues.is_empty(), "{name}: {}", issues.join("; "));
-        }
-    }
-
-    #[test]
-    fn conformance_error_message_lists_every_provider() {
-        // Tripwire against drift between error.rs and the registry.
-        let msg = AuthError::UnsupportedProvider("x".to_string()).to_string();
-        for name in OAUTH_PROVIDERS {
-            assert!(
-                msg.contains(name),
-                "UnsupportedProvider message misses {name}"
-            );
-        }
-    }
-
-    #[test]
-    fn conformance_authorize_url_has_required_pkce_params() {
-        for name in OAUTH_PROVIDERS {
-            let spec = spec_for(name).expect(name);
-            if spec.flow == FlowKind::DeviceCode {
-                continue; // device flow starts at the token endpoint family
-            }
-            let pkce = Pkce {
-                verifier: "v".to_string(),
-                challenge: "c".to_string(),
-                state: "s".to_string(),
-            };
-            let redirect = spec
-                .redirect_uri
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("http://localhost:9999{}", spec.callback_path));
-            let url = flow::authorize_url(
-                spec.authorize_url,
-                spec.client_id,
-                &redirect,
-                spec.scopes,
-                &pkce,
-                spec.extra_authorize,
-            );
-            for param in [
-                "response_type=code",
-                "client_id=",
-                "redirect_uri=",
-                "scope=",
-                "state=s",
-                "code_challenge=c",
-                "code_challenge_method=S256",
-            ] {
-                assert!(
-                    url.contains(param),
-                    "{name}: authorize URL missing `{param}`"
-                );
-            }
-            // The verifier must never appear in a URL.
-            assert!(
-                !url.contains("code_verifier"),
-                "{name}: verifier leaked into URL"
-            );
-        }
-    }
-
-    #[test]
-    fn conformance_grant_bodies_match_declared_encoding() {
-        let pkce = Pkce {
-            verifier: "ver".to_string(),
-            challenge: "ch".to_string(),
-            state: "st".to_string(),
-        };
-        for name in OAUTH_PROVIDERS {
-            let spec = spec_for(name).expect(name);
-            if spec.flow == FlowKind::DeviceCode {
-                continue;
-            }
-            match (
-                spec.token_encoding,
-                code_exchange_body(&spec, "code1", "http://localhost/cb", &pkce),
-                refresh_body(&spec, "ref1"),
-            ) {
-                (TokenEncoding::Json, GrantBody::Json(ex), GrantBody::Json(re)) => {
-                    assert_eq!(ex["grant_type"], "authorization_code");
-                    assert_eq!(ex["state"], "st");
-                    assert_eq!(ex["code_verifier"], "ver");
-                    assert_eq!(re["grant_type"], "refresh_token");
-                }
-                (TokenEncoding::Form, GrantBody::Form(ex), GrantBody::Form(re)) => {
-                    fn form_get<'a>(f: &'a [(&'static str, String)], k: &str) -> Option<&'a str> {
-                        f.iter().find(|(fk, _)| fk == &k).map(|(_, v)| v.as_str())
-                    }
-                    assert_eq!(form_get(&ex, "grant_type"), Some("authorization_code"));
-                    assert_eq!(form_get(&ex, "code_verifier"), Some("ver"));
-                    assert_eq!(form_get(&re, "refresh_token"), Some("ref1"));
-                    // client_secret present iff the spec declares one.
-                    assert_eq!(
-                        form_get(&ex, "client_secret").is_some(),
-                        spec.client_secret.is_some(),
-                        "{name}: client_secret / form mismatch"
-                    );
-                }
-                _ => panic!("{name}: grant body encoding does not match token_encoding"),
-            }
-        }
-    }
-
-    #[test]
-    fn conformance_validate_catches_broken_specs() {
-        // Guard the guard: a deliberately broken spec must produce issues.
-        let mut broken = spec_for("google").unwrap();
-        broken.client_id = "";
-        broken.flow = FlowKind::PasteCodePkce; // …but redirect_uri stays None
-        broken.authorize_url = "http://insecure.example.com";
-        let issues = validate(&broken);
-        assert!(issues.len() >= 3, "expected >=3 issues, got: {issues:?}");
-    }
-
-    #[test]
-    fn validate_reports_each_flow_specific_error_branch() {
-        let mut loopback = spec_for("openai").unwrap();
-        loopback.callback_path = "callback";
-        loopback.redirect_uri = Some("https://example.com/callback");
-        loopback.loopback_host = Some("example.com");
-        let issues = validate(&loopback).join("\n");
-        assert!(issues.contains("callback_path starting with '/'"));
-        assert!(issues.contains("set redirect_uri = None"));
-        assert!(issues.contains("loopback_host must be"));
-
-        let mut paste = spec_for("anthropic").unwrap();
-        paste.redirect_uri = Some("http://insecure.example/callback");
-        paste.loopback_host = Some("localhost");
-        let issues = validate(&paste).join("\n");
-        assert!(issues.contains("registered https redirect_uri"));
-        assert!(issues.contains("loopback_host is only for LoopbackPkce"));
-
-        let mut device = spec_for("github-copilot").unwrap();
-        device.callback_path = "/callback";
-        device.redirect_uri = Some("https://example.com/callback");
-        let issues = validate(&device).join("\n");
-        assert!(issues.contains("device flow has no redirect"));
-    }
-
-    #[test]
-    fn validate_reports_metadata_extra_and_derived_errors() {
-        static BAD_EXTRAS: &[(&str, &str)] = &[("", "value"), ("same", "one"), ("same", "two")];
-        static BAD_HEADERS: &[(&str, &str)] = &[("", "value"), ("key", "")];
-        let mut spec = spec_for("github-copilot").unwrap();
-        spec.label = "";
-        spec.client_id = "client id";
-        spec.token_url = "relative";
-        spec.scopes = "  ";
-        spec.client_secret = Some("");
-        spec.extra_authorize = BAD_EXTRAS;
-        spec.derived = Some(DerivedCredential {
-            url: "http://insecure.example/token",
-            auth_scheme: "Basic",
-            headers: BAD_HEADERS,
-        });
-
-        let issues = validate(&spec).join("\n");
-        for expected in [
-            "label is empty",
-            "client_id is empty or contains whitespace",
-            "token_url must be an absolute https URL",
-            "scopes are empty",
-            "client_secret is Some(\"\")",
-            "extra_authorize[0] has an empty key or value",
-            "duplicate extra_authorize key `same`",
-            "derived.url must be an absolute https URL",
-            "derived.auth_scheme must be",
-            "derived header has an empty key or value",
-        ] {
-            assert!(
-                issues.contains(expected),
-                "missing `{expected}` in:\n{issues}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn access_token_resolves_fresh_direct_credentials() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = TokenStore::new(dir.path());
-        store
-            .set(
-                "openai",
-                ProviderAuth {
-                    method: "imported".to_string(),
-                    token: OAuthToken {
-                        access_token: "stored-access".to_string(),
-                        refresh_token: None,
-                        expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
-                        extra: Default::default(),
-                    },
-                },
-            )
-            .unwrap();
-
-        assert_eq!(
-            access_token("openai", dir.path()).await.as_deref(),
-            Some("stored-access")
-        );
-        assert!(access_token("unknown", dir.path()).await.is_none());
-        assert!(access_token("google", dir.path()).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn force_refresh_without_login_is_none() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(force_refresh("anthropic", dir.path()).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn force_refresh_without_renewal_path_keeps_credential() {
-        // A stored credential with no refresh token (and no derived
-        // exchange) cannot be renewed: force_refresh must return None and
-        // must NOT delete the stored credential.
-        let dir = tempfile::tempdir().unwrap();
-        let store = TokenStore::new(dir.path());
-        store
-            .set(
-                "anthropic",
-                ProviderAuth {
-                    method: "oauth".to_string(),
-                    token: OAuthToken {
-                        access_token: "acc".to_string(),
-                        refresh_token: None,
-                        expires_at: None,
-                        extra: Default::default(),
-                    },
-                },
-            )
-            .unwrap();
-        assert!(force_refresh("anthropic", dir.path()).await.is_none());
-        assert!(store.get("anthropic").unwrap().is_some());
-    }
-}
+#[path = "providers_tests.rs"]
+mod tests;
