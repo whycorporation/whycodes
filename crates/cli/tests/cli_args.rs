@@ -590,7 +590,17 @@ fn test_session_import_share_rename_and_memory_files() {
     assert_ok(&["memory", "session-search"], &sess);
 
     let onnx = run_home(home.path(), &["memory", "onnx-smoke"]);
-    assert!(!onnx.status.success());
+    if onnx.status.success() {
+        assert!(
+            String::from_utf8_lossy(&onnx.stdout).contains("embedding dim="),
+            "successful ONNX smoke should report its embedding dimension"
+        );
+    } else {
+        assert!(
+            !onnx.stderr.is_empty(),
+            "failed ONNX smoke should explain why it could not run"
+        );
+    }
 
     let add_stdio = run_home(
         home.path(),
@@ -607,6 +617,84 @@ fn test_session_import_share_rename_and_memory_files() {
     assert_ok(&["provider", "add"], &add_p);
     let def = run_home(home.path(), &["provider", "default", "local"]);
     assert_ok(&["provider", "default", "local"], &def);
+}
+
+#[test]
+fn test_config_dispatch_roundtrips_supported_values_and_reports_errors() {
+    let home = tempfile::tempdir().unwrap();
+
+    for (key, value) in [("project_path", "/workspace/demo"), ("log_level", "trace")] {
+        let set = run_home(home.path(), &["config", "set", key, value]);
+        assert_ok(&["config", "set", key, value], &set);
+
+        let get = run_home(home.path(), &["config", "get", key]);
+        assert_ok(&["config", "get", key], &get);
+        assert_eq!(String::from_utf8_lossy(&get.stdout).trim(), value);
+    }
+
+    let show = run_home(home.path(), &["config", "show"]);
+    assert_ok(&["config", "show"], &show);
+    let shown = String::from_utf8_lossy(&show.stdout);
+    assert!(shown.contains("Config path:"), "{shown}");
+    assert!(
+        shown.contains("project_path = \"/workspace/demo\""),
+        "{shown}"
+    );
+    assert!(shown.contains("log_level = \"trace\""), "{shown}");
+
+    let rejected = run_home(home.path(), &["config", "set", "unknown", "value"]);
+    assert!(!rejected.status.success());
+    let error = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rejected.stderr),
+        String::from_utf8_lossy(&rejected.stdout)
+    );
+    assert!(error.contains("Unknown config key: unknown"), "{error}");
+    assert!(
+        error.contains("default_agent, project_path, log_level"),
+        "{error}"
+    );
+}
+
+#[test]
+fn test_mcp_dispatch_persists_remote_headers_and_lists_stdio_details() {
+    let home = tempfile::tempdir().unwrap();
+
+    let remote = run_home(
+        home.path(),
+        &[
+            "mcp",
+            "add",
+            "remote",
+            "--url",
+            "https://example.com/rpc",
+            "--type",
+            "streamable-http",
+            "--header",
+            "Authorization: Bearer test",
+        ],
+    );
+    assert_ok(&["mcp", "add", "remote"], &remote);
+
+    let local = run_home(
+        home.path(),
+        &["mcp", "add", "local", "node", "--args", "server.js --quiet"],
+    );
+    assert_ok(&["mcp", "add", "local"], &local);
+
+    let listed = run_home(home.path(), &["mcp", "list"]);
+    assert_ok(&["mcp", "list"], &listed);
+    let output = String::from_utf8_lossy(&listed.stdout);
+    assert!(output.contains("remote"), "{output}");
+    assert!(output.contains("http https://example.com/rpc"), "{output}");
+    assert!(output.contains("local"), "{output}");
+    assert!(output.contains("node server.js --quiet"), "{output}");
+
+    let config = std::fs::read_to_string(home.path().join("config.toml")).unwrap();
+    assert!(
+        config.contains("Authorization = \"Bearer test\""),
+        "{config}"
+    );
 }
 
 fn run_plain(home: &std::path::Path, stdin: &str) -> Output {

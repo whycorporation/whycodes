@@ -595,6 +595,87 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_primary_uses_partner() {
+        let primary = DelayProvider {
+            name: "p".into(),
+            delay: Duration::ZERO,
+            text: String::new(),
+            opens: Arc::new(AtomicUsize::new(0)),
+            fail_open: false,
+        };
+        let race = DelayProvider {
+            name: "r".into(),
+            delay: Duration::ZERO,
+            text: "backup".into(),
+            opens: Arc::new(AtomicUsize::new(0)),
+            fail_open: false,
+        };
+        let (s, outcome) = stream_raced(
+            &transport(),
+            StreamTarget {
+                provider: &primary,
+                api_key: "",
+                model: "sonnet",
+            },
+            Some(StreamTarget {
+                provider: &race,
+                api_key: "",
+                model: "haiku",
+            }),
+            &req(),
+            Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(collect_text(s).await, "backup");
+        assert_eq!(
+            outcome,
+            RaceOutcome::Race {
+                reason: "primary_empty"
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn immediate_race_keeps_primary_when_partner_open_fails() {
+        let primary = DelayProvider {
+            name: "p".into(),
+            delay: Duration::ZERO,
+            text: "primary".into(),
+            opens: Arc::new(AtomicUsize::new(0)),
+            fail_open: false,
+        };
+        let race = DelayProvider {
+            name: "r".into(),
+            delay: Duration::ZERO,
+            text: "unused".into(),
+            opens: Arc::new(AtomicUsize::new(0)),
+            fail_open: true,
+        };
+        let (s, outcome) = stream_raced(
+            &transport(),
+            StreamTarget {
+                provider: &primary,
+                api_key: "",
+                model: "sonnet",
+            },
+            Some(StreamTarget {
+                provider: &race,
+                api_key: "",
+                model: "haiku",
+            }),
+            &req(),
+            Duration::ZERO,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(collect_text(s).await, "primary");
+        assert_eq!(outcome, RaceOutcome::Primary);
+    }
+
+    #[tokio::test]
     async fn same_model_skips_race() {
         let opens = Arc::new(AtomicUsize::new(0));
         let p = DelayProvider {

@@ -3632,6 +3632,74 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
     }
 
     #[test]
+    fn selected_concat_slice_marks_first_content_across_halves() {
+        let area = Rect::new(0, 0, 8, 2);
+        let mut buf = Buffer::empty(area);
+        let row = super::ChatRowPaint {
+            x: 0,
+            width: area.width,
+            bg: Color::Black,
+            caret_style: Style::default().fg(Color::Yellow),
+        };
+        let prefix = [Line::from(""), Line::from(Span::raw("prefix"))];
+        let body = [Line::from(Span::raw("body"))];
+
+        let next = super::paint_concat_slices(&mut buf, 0, &row, &prefix, &body, 1..3, true);
+
+        assert_eq!(next, 2);
+        assert_eq!(buf.cell((0, 0)).map(|c| c.symbol()), Some("▌"));
+        assert_eq!(buf.cell((1, 0)).map(|c| c.symbol()), Some("p"));
+        assert_eq!(buf.cell((0, 1)).map(|c| c.symbol()), Some("b"));
+        assert_eq!(
+            super::paint_concat_slices(&mut buf, next, &row, &prefix, &body, 3..3, true),
+            next
+        );
+    }
+
+    #[test]
+    fn width_helpers_respect_unicode_and_tiny_budgets() {
+        use unicode_width::UnicodeWidthStr;
+
+        assert_eq!(super::truncate_home_title("session", 0), "");
+        assert_eq!(super::truncate_home_title("session", 1), "…");
+        assert_eq!(super::truncate_home_title("界面 title", 5), "界面…");
+        assert_eq!(
+            UnicodeWidthStr::width(super::cut_to_width("a界b", 3).as_str()),
+            3
+        );
+
+        let style = Style::default().fg(Color::Cyan);
+        let mut spans = vec![Span::styled("a界".to_string(), style), Span::raw("tail")];
+        super::truncate_spans_to(&mut spans, 2);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].content.as_ref(), "a");
+        assert_eq!(spans[0].style, style);
+    }
+
+    #[test]
+    fn image_only_prompt_renders_one_chip_between_band_padding() {
+        let palette = ThemeName::DefaultDark.palette();
+        let labels = vec!["diagram.png".to_string()];
+        let lines = super::user_prompt_lines(
+            "[Image: diagram.png]",
+            &labels,
+            Some("2:32 PM"),
+            &palette,
+            40,
+            false,
+            false,
+        );
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(line_text(&lines[0]), " ");
+        assert_eq!(line_text(&lines[2]), " ");
+        let chip = line_text(&lines[1]);
+        assert!(chip.contains("🖼 diagram.png"), "{chip:?}");
+        assert!(chip.contains("2:32 PM"), "{chip:?}");
+        assert!(!chip.contains("[Image:"), "{chip:?}");
+    }
+
+    #[test]
     fn visible_message_range_is_binary_search() {
         // starts = prefix sums: msg0@0 h=3, msg1@3 h=5, msg2@8 h=2, total=10
         let starts = [0usize, 3, 8];
@@ -3977,6 +4045,32 @@ with a short 12-hour stamp";
             .find(|s| s.content.contains("please"))
             .expect("args span");
         assert_eq!(rest.style.fg, Some(palette.fg));
+    }
+
+    #[test]
+    fn visible_range_clamps_bottom_anchored_scroll() {
+        assert_eq!(super::visible_range(0, 10, 0), (0, 0));
+        assert_eq!(super::visible_range(10, 0, 0), (0, 0));
+        assert_eq!(super::visible_range(100, 20, 0), (80, 100));
+        assert_eq!(super::visible_range(100, 20, 30), (50, 70));
+        assert_eq!(super::visible_range(10, 20, usize::MAX), (0, 10));
+    }
+
+    #[test]
+    fn json_and_grep_detection_reject_malformed_inputs() {
+        assert_eq!(super::prettify_tool_result(""), "");
+        assert_eq!(super::prettify_tool_result("not json"), "not json");
+        assert!(super::find_json_value_start("prefix {\"ok\":true}").is_some());
+        assert!(super::find_json_value_start("prefix {bad").is_none());
+        assert!(super::looks_like_json_body("[1,2]"));
+        assert!(!super::looks_like_json_body("[bad"));
+        assert!(super::looks_like_grep_body(
+            "src/a.rs:1:hit\nsrc/a.rs:2-context"
+        ));
+        assert!(!super::looks_like_grep_body("ordinary\ntext"));
+        assert!(super::parse_grep_hit(":12:no path").is_none());
+        assert!(super::parse_grep_hit("file:no:number").is_none());
+        assert!(super::split_read_line("not a numbered row").is_none());
     }
 }
 

@@ -459,7 +459,44 @@ pub async fn stream(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::types::{Message, ToolDefinition};
+    use whycode_core::types::{ImageSource, Message, ToolDefinition};
+
+    fn message(role: Role, content: MessageContent) -> Message {
+        Message {
+            role,
+            content,
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }
+    }
+
+    fn empty_request(messages: Vec<Message>) -> LlmRequest {
+        LlmRequest {
+            system: String::new(),
+            messages: std::sync::Arc::from(messages),
+            tools: Vec::new(),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        }
+    }
+
+    #[test]
+    fn client_metadata_matches_code_assist_contract() {
+        assert_eq!(
+            client_metadata(),
+            json!({
+                "ideType": "IDE_UNSPECIFIED",
+                "platform": "PLATFORM_UNSPECIFIED",
+                "pluginType": "GEMINI",
+            })
+        );
+    }
 
     #[test]
     fn token_shape_detection() {
@@ -538,6 +575,55 @@ mod tests {
     }
 
     #[test]
+    fn inner_request_omits_empty_optional_sections_and_unsupported_blocks() {
+        let request = empty_request(vec![
+            message(Role::System, MessageContent::Text("   ".to_string())),
+            message(
+                Role::Assistant,
+                MessageContent::Blocks(vec![
+                    ContentBlock::Image {
+                        source: ImageSource::Base64 {
+                            media_type: "image/png".to_string(),
+                            data: "AAAA".to_string(),
+                        },
+                    },
+                    ContentBlock::Thinking {
+                        text: "private".to_string(),
+                        signature: None,
+                    },
+                    ContentBlock::RedactedThinking {
+                        data: "opaque".to_string(),
+                    },
+                ]),
+            ),
+        ]);
+
+        assert_eq!(build_inner_request(&request), json!({"contents": []}));
+    }
+
+    #[test]
+    fn inner_request_uses_fallback_name_for_unmatched_tool_result() {
+        let request = empty_request(vec![message(
+            Role::Tool,
+            MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: "missing-call".to_string(),
+                content: "failed".to_string(),
+                is_error: Some(true),
+            }]),
+        )]);
+
+        let inner = build_inner_request(&request);
+        assert_eq!(inner["contents"][0]["role"], "user");
+        assert_eq!(
+            inner["contents"][0]["parts"][0]["functionResponse"],
+            json!({"name": "tool", "response": {"result": "failed"}})
+        );
+        assert!(inner.get("systemInstruction").is_none());
+        assert!(inner.get("tools").is_none());
+        assert!(inner.get("generationConfig").is_none());
+    }
+
+    #[test]
     fn chunk_maps_text_function_call_and_usage() {
         let mut seq = 0u64;
         let events = events_for_chunk(
@@ -574,6 +660,46 @@ mod tests {
     }
 
     #[test]
+    fn malformed_and_structurally_empty_chunks_are_ignored() {
+        let mut seq = 41u64;
+        assert!(events_for_chunk("not json", &mut seq).is_empty());
+        assert!(events_for_chunk(r#"{"candidates":null}"#, &mut seq).is_empty());
+        assert_eq!(seq, 41);
+    }
+
+    #[test]
+    fn chunk_defaults_missing_call_fields_and_usage_counts() {
+        let mut seq = 7u64;
+        let events = events_for_chunk(
+            r#"{"candidates":[{"content":{"parts":[{"functionCall":{}}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{}}"#,
+            &mut seq,
+        );
+
+        match &events[0] {
+            StreamEvent::ToolUse { id, name, input } => {
+                assert_eq!(id, "gcall_8");
+                assert!(name.is_empty());
+                assert!(input.is_null());
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+        assert!(matches!(
+            &events[1],
+            StreamEvent::MessageDelta { delta }
+                if delta == &json!({"finishReason": "MAX_TOKENS"})
+        ));
+        assert!(matches!(
+            events[2],
+            StreamEvent::Usage {
+                input_tokens: 0,
+                output_tokens: 0
+            }
+        ));
+        assert!(matches!(events[3], StreamEvent::MessageStop));
+        assert_eq!(seq, 8);
+    }
+
+    #[test]
     fn tier_picking() {
         let load = json!({"allowedTiers": [
             {"id": "free-tier", "userDefinedCloudaicompanionProject": false},
@@ -585,5 +711,13 @@ mod tests {
         let empty = json!({});
         assert_eq!(pick_tier(&empty, false), "free-tier");
         assert_eq!(pick_tier(&empty, true), "standard-tier");
+
+        // Matching entries without string ids are unusable and fall back.
+        let malformed = json!({"allowedTiers": [
+            {"id": null, "userDefinedCloudaicompanionProject": false},
+            {"id": 7, "userDefinedCloudaicompanionProject": true}
+        ]});
+        assert_eq!(pick_tier(&malformed, false), "free-tier");
+        assert_eq!(pick_tier(&malformed, true), "standard-tier");
     }
 }

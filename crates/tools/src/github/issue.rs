@@ -284,3 +284,110 @@ async fn issue_comment(
     let body = json!({ "body": comment_body });
     request(client, headers, reqwest::Method::POST, &path, Some(body)).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn client_and_headers() -> (reqwest::Client, reqwest::header::HeaderMap) {
+        (reqwest::Client::new(), reqwest::header::HeaderMap::new())
+    }
+
+    #[test]
+    fn metadata_describes_supported_actions_and_required_repository() {
+        let tool = GithubIssueTool::new();
+        let parameters = tool.parameters();
+
+        assert_eq!(tool.name(), "github_issue");
+        assert_eq!(
+            parameters["properties"]["action"]["enum"],
+            json!(["create", "list", "view", "close", "reopen", "comment"])
+        );
+        assert_eq!(parameters["required"], json!(["action", "owner", "repo"]));
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_missing_repository_before_token_or_network() {
+        let result = GithubIssueTool::new()
+            .execute(
+                json!({ "action": "list", "owner": "owner" }),
+                &ToolContext::new("."),
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert_eq!(result.content, "owner and repo are required.");
+    }
+
+    #[tokio::test]
+    async fn execute_rejects_unknown_action_without_requesting() {
+        let result = GithubIssueTool::new()
+            .execute(
+                json!({
+                    "action": "archive",
+                    "owner": "owner",
+                    "repo": "repo",
+                    "token": "token"
+                }),
+                &ToolContext::new("."),
+            )
+            .await;
+
+        assert!(result.is_error);
+        assert_eq!(
+            result.content,
+            "Unknown action: 'archive'. Valid: create, list, view, close, reopen, comment"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_requires_a_title_before_requesting() {
+        let (client, headers) = client_and_headers();
+        let error = issue_create(&client, &headers, "owner", "repo", &json!({}))
+            .await
+            .expect_err("missing title must fail");
+
+        assert_eq!(error, "title is required for create action.");
+    }
+
+    #[tokio::test]
+    async fn numbered_actions_validate_the_issue_number() {
+        let (client, headers) = client_and_headers();
+        let args = json!({});
+
+        assert_eq!(
+            issue_view(&client, &headers, "owner", "repo", &args)
+                .await
+                .expect_err("missing number must fail"),
+            "issue_number is required and must be an integer for view action."
+        );
+        assert_eq!(
+            issue_set_state(&client, &headers, "owner", "repo", &args, "closed")
+                .await
+                .expect_err("missing number must fail"),
+            "issue_number is required and must be an integer for closed action."
+        );
+        assert_eq!(
+            issue_comment(&client, &headers, "owner", "repo", &args)
+                .await
+                .expect_err("missing number must fail"),
+            "issue_number is required and must be an integer for comment action."
+        );
+    }
+
+    #[tokio::test]
+    async fn comment_requires_a_nonempty_body_before_requesting() {
+        let (client, headers) = client_and_headers();
+        let error = issue_comment(
+            &client,
+            &headers,
+            "owner",
+            "repo",
+            &json!({ "issue_number": 42, "body": "" }),
+        )
+        .await
+        .expect_err("empty comment must fail");
+
+        assert_eq!(error, "body is required for comment action.");
+    }
+}

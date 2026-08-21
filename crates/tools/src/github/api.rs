@@ -90,3 +90,60 @@ pub async fn make_request_with_policy(
 
     Ok((status, text))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_token_takes_precedence_without_environment_access() {
+        assert_eq!(
+            resolve_token(Some("explicit")),
+            Some("explicit".to_string())
+        );
+    }
+
+    #[test]
+    fn headers_include_github_requirements() {
+        let headers = github_headers("secret").expect("valid token should build headers");
+
+        assert_eq!(headers["Authorization"], "Bearer secret");
+        assert_eq!(headers["Accept"], "application/vnd.github+json");
+        assert_eq!(headers["X-GitHub-Api-Version"], "2022-11-28");
+        assert_eq!(headers["User-Agent"], "whycode");
+    }
+
+    #[test]
+    fn invalid_header_token_is_rejected() {
+        let error = github_headers("bad\ntoken").expect_err("newline must be rejected");
+        assert!(error.starts_with("Invalid token:"));
+    }
+
+    #[test]
+    fn api_url_preserves_the_requested_path() {
+        assert_eq!(
+            api_url("repos/whycode/whycode/issues?state=open"),
+            "https://api.github.com/repos/whycode/whycode/issues?state=open"
+        );
+    }
+
+    #[tokio::test]
+    async fn policy_rejection_happens_before_network_io() {
+        let policy = NetworkPolicy {
+            allowlist: vec!["example.com".to_string()],
+            denylist: Vec::new(),
+        };
+        let error = make_request_with_policy(
+            &reqwest::Client::new(),
+            reqwest::Method::GET,
+            "repos/owner/repo",
+            "token",
+            None,
+            &policy,
+        )
+        .await
+        .expect_err("GitHub should be blocked by policy");
+
+        assert!(error.contains("Network policy blocked host `api.github.com`"));
+    }
+}

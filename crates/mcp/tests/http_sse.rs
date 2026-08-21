@@ -13,6 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio::sync::{Mutex, mpsc};
 use whycode_mcp::McpClient;
+use whycode_mcp::http::StreamableHttpTransport;
 
 #[derive(Clone)]
 struct MockState {
@@ -73,6 +74,21 @@ fn handle_mcp_method(
             })
         }
         "ping" => serde_json::json!({}),
+        "resources/list" => serde_json::json!({
+            "resources": [{
+                "uri": "file:///guide.md",
+                "name": "guide",
+                "description": "Local guide",
+                "mimeType": "text/markdown"
+            }]
+        }),
+        "prompts/list" => serde_json::json!({
+            "prompts": [{
+                "name": "review",
+                "description": "Review code",
+                "arguments": [{"name": "path", "required": true}]
+            }]
+        }),
         other => serde_json::json!({ "error": format!("unknown method {other}"), "id": id }),
     }
 }
@@ -232,6 +248,16 @@ async fn spawn_sse_only_with_http_405() -> SocketAddr {
     addr
 }
 
+async fn spawn_app(app: Router) -> SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    tokio::task::yield_now().await;
+    addr
+}
+
 #[tokio::test]
 async fn streamable_http_initialize_list_and_call() {
     let (addr, state) = spawn_streamable_server().await;
@@ -257,6 +283,172 @@ async fn streamable_http_ping() {
         .await
         .unwrap();
     client.ping().await.expect("ping");
+}
+
+#[tokio::test]
+async fn client_lists_resources_and_prompts() {
+    let (addr, _) = spawn_streamable_server().await;
+    let mut client = McpClient::connect_http(&format!("http://{addr}/mcp"), &HashMap::new())
+        .await
+        .unwrap();
+
+    let resources = client.list_resources().await.unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0].uri, "file:///guide.md");
+    assert_eq!(resources[0].mime_type.as_deref(), Some("text/markdown"));
+
+    let prompts = client.list_prompts().await.unwrap();
+    assert_eq!(prompts.len(), 1);
+    assert_eq!(prompts[0].name, "review");
+    let arguments = prompts[0].arguments.as_ref().unwrap();
+    assert_eq!(arguments[0].name, "path");
+    assert_eq!(arguments[0].required, Some(true));
+}
+
+#[tokio::test]
+async fn streamable_transport_tracks_session_and_increments_request_ids() {
+    type RecordedRequests = Vec<(u64, Option<String>)>;
+
+    #[derive(Clone, Default)]
+    struct RequestState(Arc<Mutex<RecordedRequests>>);
+
+    async fn respond(
+        State(state): State<RequestState>,
+        headers: HeaderMap,
+        body: String,
+    ) -> Response {
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let id = value["id"].as_u64().unwrap();
+        let session = headers
+            .get("mcp-session-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        state.0.lock().await.push((id, session));
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header("mcp-session-id", "session-42")
+            .body(Body::from(json_rpc_result(
+                id,
+                serde_json::json!({"id": id}),
+            )))
+            .unwrap()
+    }
+
+    let state = RequestState::default();
+    let app = Router::new()
+        .route("/mcp", post(respond))
+        .with_state(state.clone());
+    let addr = spawn_app(app).await;
+    let mut transport =
+        StreamableHttpTransport::new(format!("http://{addr}/mcp"), &HashMap::new()).unwrap();
+
+    assert_eq!(transport.session_id(), None);
+    assert_eq!(
+        transport.send_request("first", None).await.unwrap()["id"],
+        1
+    );
+    assert_eq!(transport.session_id(), Some("session-42"));
+    assert_eq!(
+        transport.send_request("second", None).await.unwrap()["id"],
+        2
+    );
+    assert_eq!(
+        *state.0.lock().await,
+        vec![(1, None), (2, Some("session-42".to_string()))]
+    );
+}
+
+#[tokio::test]
+async fn streamable_transport_surfaces_http_rpc_parse_and_notification_errors() {
+    async fn fail(body: String) -> Response {
+        let value: serde_json::Value = serde_json::from_str(&body).unwrap();
+        match value["method"].as_str().unwrap() {
+            "http-error" => (StatusCode::BAD_GATEWAY, "upstream unavailable").into_response(),
+            "rpc-error" => Response::builder()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": value["id"],
+                        "error": {"code": -32602, "message": "bad params"}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+            "bad-json" => Response::builder()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("not json"))
+                .unwrap(),
+            "notify" => (StatusCode::FORBIDDEN, "notifications disabled").into_response(),
+            other => panic!("unexpected method {other}"),
+        }
+    }
+
+    let addr = spawn_app(Router::new().route("/mcp", post(fail))).await;
+    let mut transport =
+        StreamableHttpTransport::new(format!("http://{addr}/mcp"), &HashMap::new()).unwrap();
+
+    let error = transport
+        .send_request("http-error", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("MCP HTTP error 502 Bad Gateway"));
+    assert!(error.contains("upstream unavailable"));
+
+    let error = transport
+        .send_request("rpc-error", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "MCP error [-32602]: bad params");
+
+    let error = transport
+        .send_request("bad-json", None)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert_eq!(error, "failed to parse JSON-RPC response");
+
+    let error = transport
+        .send_notification("notify", Some(serde_json::json!({"ready": true})))
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("MCP notification 'notify' failed with 403 Forbidden"));
+    assert!(error.contains("notifications disabled"));
+}
+
+#[tokio::test]
+async fn client_reports_invalid_initialize_payload_and_non_fallback_http_errors() {
+    async fn invalid_initialize() -> Response {
+        Response::builder()
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_rpc_result(
+                1,
+                serde_json::json!({"wrong": true}),
+            )))
+            .unwrap()
+    }
+    let addr = spawn_app(Router::new().route("/mcp", post(invalid_initialize))).await;
+    let error = McpClient::connect_http(format!("http://{addr}/mcp"), &HashMap::new())
+        .await
+        .err()
+        .expect("invalid initialize payload should fail");
+    assert!(format!("{error:#}").contains("failed to parse initialize result"));
+
+    async fn unavailable() -> impl IntoResponse {
+        (StatusCode::INTERNAL_SERVER_ERROR, "broken")
+    }
+    let addr = spawn_app(Router::new().route("/mcp", post(unavailable))).await;
+    let error = McpClient::connect_auto(format!("http://{addr}/mcp"), &HashMap::new())
+        .await
+        .err()
+        .expect("500 must not trigger legacy SSE fallback");
+    let message = format!("{error:#}");
+    assert!(message.contains("Streamable HTTP connect failed"));
+    assert!(message.contains("500 Internal Server Error"));
 }
 
 #[tokio::test]

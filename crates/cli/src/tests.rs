@@ -173,6 +173,142 @@ fn parses_output_formats() {
 }
 
 #[test]
+fn cli_parser_maps_global_flags_and_nested_commands() {
+    let parsed = Cli::try_parse_from([
+        "whycode",
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-5",
+        "generate",
+        "fix it",
+        "--max-turns",
+        "7",
+        "--jobs",
+        "2",
+        "--output-format",
+        "ndjson",
+    ])
+    .unwrap();
+
+    assert_eq!(parsed.provider.as_deref(), Some("openai"));
+    assert_eq!(parsed.model.as_deref(), Some("gpt-5"));
+    match parsed.command {
+        Some(Commands::Generate {
+            prompt,
+            max_turns,
+            jobs,
+            format,
+        }) => {
+            assert_eq!(prompt, ["fix it"]);
+            assert_eq!(max_turns, Some(7));
+            assert_eq!(jobs, 2);
+            assert_eq!(format, OutputFormat::StreamJson);
+        }
+        other => panic!("unexpected parsed command: {other:?}"),
+    }
+
+    let nested = Cli::try_parse_from(["whycode", "github", "pr", "view", "42"]).unwrap();
+    assert!(matches!(
+        nested.command,
+        Some(Commands::Github {
+            cmd: GithubCmd::Pr {
+                action: Some(PrAction::View { number: 42 })
+            }
+        })
+    ));
+}
+
+#[test]
+fn cli_parser_rejects_invalid_commands_before_dispatch() {
+    use clap::error::ErrorKind;
+
+    for (args, kind) in [
+        (
+            vec!["whycode", "generate"],
+            ErrorKind::MissingRequiredArgument,
+        ),
+        (
+            vec!["whycode", "run", "--format", "yaml"],
+            ErrorKind::ValueValidation,
+        ),
+        (
+            vec!["whycode", "github", "pr", "view", "not-a-number"],
+            ErrorKind::ValueValidation,
+        ),
+        (
+            vec!["whycode", "not-a-command"],
+            ErrorKind::InvalidSubcommand,
+        ),
+    ] {
+        let error = Cli::try_parse_from(args).unwrap_err();
+        assert_eq!(error.kind(), kind);
+    }
+}
+
+#[test]
+fn cli_parser_maps_mcp_add_without_interpreting_values() {
+    let parsed = Cli::try_parse_from([
+        "whycode",
+        "mcp",
+        "add",
+        "docs",
+        "node",
+        "--args",
+        "server.js --quiet",
+        "--type",
+        "local",
+        "--header",
+        "Authorization: Bearer token",
+        "--header",
+        "X-Trace: test",
+    ])
+    .unwrap();
+
+    match parsed.command {
+        Some(Commands::Mcp {
+            cmd:
+                McpCmd::Add {
+                    name,
+                    command,
+                    args,
+                    url,
+                    transport,
+                    headers,
+                },
+        }) => {
+            assert_eq!(name, "docs");
+            assert_eq!(command.as_deref(), Some("node"));
+            assert_eq!(args.as_deref(), Some("server.js --quiet"));
+            assert_eq!(url, None);
+            assert_eq!(transport.as_deref(), Some("local"));
+            assert_eq!(headers, ["Authorization: Bearer token", "X-Trace: test"]);
+        }
+        other => panic!("unexpected parsed command: {other:?}"),
+    }
+}
+
+#[test]
+fn runtime_for_builds_the_selected_runtime_flavor() {
+    use tokio::runtime::RuntimeFlavor;
+
+    let interactive = runtime_for(&cli(None)).unwrap();
+    assert_eq!(
+        interactive.handle().runtime_flavor(),
+        RuntimeFlavor::MultiThread
+    );
+
+    let local = runtime_for(&cli(Some(Commands::Config {
+        cmd: ConfigCmd::Path,
+    })))
+    .unwrap();
+    assert_eq!(
+        local.handle().runtime_flavor(),
+        RuntimeFlavor::CurrentThread
+    );
+}
+
+#[test]
 fn truncate_str_short_and_long() {
     assert_eq!(truncate_str("hello", 10), "hello");
     assert_eq!(truncate_str("hello world", 8), "hello...");

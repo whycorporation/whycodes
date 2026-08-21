@@ -4,6 +4,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tower::ServiceExt;
+use whycode_core::types::ContentBlock;
+use whycode_session::session::Session;
 
 use crate::{create_router, test_state};
 
@@ -373,4 +375,133 @@ async fn v1_run_rejects_empty_and_streams_auth_error() {
         text.contains("Auth") || text.contains("No API key") || text.contains("error"),
         "{text}"
     );
+}
+
+#[tokio::test]
+async fn router_rejects_wrong_method_and_malformed_json() {
+    let app = create_router(test_state());
+
+    let (st, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/v1/health")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::METHOD_NOT_ALLOWED);
+
+    let (st, _) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/v1/sessions")
+            .header("content-type", "application/json")
+            .body(Body::from("{"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn v1_local_mutations_return_not_found_for_missing_session() {
+    let app = create_router(test_state());
+    let cases = [
+        ("rename", serde_json::json!({"title": "new title"})),
+        ("rewind", serde_json::json!({"index": 0})),
+        ("compact", serde_json::json!({"max_tokens": 100})),
+    ];
+
+    for (route, body) in cases {
+        let (st, _) = json_post(app.clone(), &format!("/v1/sessions/missing/{route}"), body).await;
+        assert_eq!(st, StatusCode::NOT_FOUND, "route: {route}");
+    }
+}
+
+#[tokio::test]
+async fn api_seeded_session_exposes_metadata_and_messages() {
+    let state = test_state();
+    let project = std::env::temp_dir().join("whycode-server-route-test");
+    let mut session = Session::new(project.clone(), "system prompt".into());
+    session.title = "seeded".into();
+    session.add_user_message("hello");
+    session.add_assistant_message(vec![ContentBlock::Text {
+        text: "world".into(),
+    }]);
+    let id = session.id.clone();
+    state.insert_session(session);
+    let app = create_router(state);
+
+    let (st, got) = json_get(app.clone(), &format!("/api/session/{id}")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(got["title"], "seeded");
+    assert_eq!(got["project"], project.display().to_string());
+    assert_eq!(got["messages"], 2);
+    assert!(got["token_estimate"].as_u64().is_some_and(|n| n > 0));
+
+    let (st, history) = json_get(app, &format!("/api/session/{id}/messages")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(history["messages"].as_array().map(Vec::len), Some(2));
+    assert_eq!(history["messages"][0]["role"], "user");
+    assert_eq!(history["messages"][1]["role"], "assistant");
+}
+
+#[tokio::test]
+async fn v1_history_limit_model_cancel_and_rewind_change_live_state() {
+    let state = test_state();
+    let mut session = Session::new(std::env::temp_dir(), "system prompt".into());
+    session.add_user_message("first");
+    session.add_assistant_message(vec![ContentBlock::Text {
+        text: "answer".into(),
+    }]);
+    session.add_user_message("last");
+    let id = session.id.clone();
+    let handle = state.insert_session(session);
+    let cancel = whycode_agent::events::new_cancel_flag();
+    state.register_cancel(&id, cancel.clone());
+    let app = create_router(state.clone());
+
+    let (st, history) = json_get(app.clone(), &format!("/v1/sessions/{id}/messages?limit=2")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(history["messages"].as_array().map(Vec::len), Some(2));
+    assert_eq!(history["messages"][0]["content"], "answer");
+    assert_eq!(history["messages"][1]["content"], "last");
+
+    let (st, body) = json_post(
+        app.clone(),
+        &format!("/v1/sessions/{id}/model"),
+        serde_json::json!({"provider": "test-provider", "model": "test-model"}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    assert_eq!(body, Value::Null);
+    assert_eq!(
+        state
+            .session_route
+            .lock()
+            .expect("session route lock")
+            .get(&id),
+        Some(&("test-provider".into(), "test-model".into()))
+    );
+
+    let (st, _) = json_post(
+        app.clone(),
+        &format!("/v1/sessions/{id}/cancel"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    assert!(whycode_agent::events::is_cancelled(&Some(cancel)));
+
+    let (st, rewound) = json_post(
+        app,
+        &format!("/v1/sessions/{id}/rewind"),
+        serde_json::json!({"index": 1}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(rewound["messages"].as_array().map(Vec::len), Some(2));
+    assert_eq!(handle.lock().await.messages.len(), 2);
 }

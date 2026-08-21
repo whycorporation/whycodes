@@ -867,10 +867,62 @@ mod wrap_tests {
 #[cfg(test)]
 mod overflow_render_tests {
     use super::*;
-    use crate::app::TuiApp;
+    use crate::app::{AppMode, TuiApp};
     use crate::config::TuiAppConfig;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    fn rendered_rows(app: &TuiApp, width: u16, height: u16) -> Vec<String> {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let palette = app.config.palette();
+        terminal
+            .draw(|frame| render(frame, frame.area(), app, &palette))
+            .expect("draw prompt");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn command_mode_renders_command_buffer_with_colon_prefix() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.mode = AppMode::Command;
+        app.input_buffer = "ignored prompt".into();
+        app.command.buffer = "provider anthropic".into();
+
+        let rows = rendered_rows(&app, 60, 8);
+        let input = rows
+            .iter()
+            .find(|row| row.contains("provider anthropic"))
+            .expect("command input row");
+        assert!(input.contains(": provider anthropic"), "{input:?}");
+        assert!(rows.iter().all(|row| !row.contains("ignored prompt")));
+    }
+
+    #[test]
+    fn staged_images_render_inside_an_extra_box_row() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.pending_images.push(crate::images::PromptImage {
+            path: "shot.png".into(),
+            label: "shot.png".into(),
+            media_type: "image/png".into(),
+        });
+
+        let rows = rendered_rows(&app, 60, 9);
+        let attachment = rows
+            .iter()
+            .find(|row| row.contains("shot.png"))
+            .expect("attachment row");
+        assert!(attachment.contains('│'), "{attachment:?}");
+        assert!(attachment.contains('⌫'), "{attachment:?}");
+        assert_eq!(attach_row_count(&app), 1);
+    }
 
     #[test]
     fn long_paste_stays_inside_box_edges() {

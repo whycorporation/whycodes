@@ -495,14 +495,7 @@ mod tests {
 
     #[test]
     fn runner_builders_set_state() {
-        let runner = SubagentRunner::new(
-            Arc::new(ProviderRegistry::default()),
-            Arc::new(ToolExecutor::new()),
-            make_info(),
-            std::path::PathBuf::from("/work/proj"),
-            SandboxSettings::off(),
-            NetworkPolicy::unrestricted(),
-        );
+        let runner = make_runner();
         let idx = whycode_index::WorkspaceIndex::start(Vec::new());
         let hub = whycode_core::SwarmHub::default();
         let runner = runner
@@ -520,6 +513,52 @@ mod tests {
         assert!(runner.file_claims.is_some());
         assert!(runner.file_index.is_some());
         assert!(!runner.memory.enabled);
+    }
+
+    #[tokio::test]
+    async fn run_returns_failed_result_for_preflight_errors() {
+        let cases = [
+            ("anthropic", 0, None, "exceeded maximum turns (0)"),
+            (
+                "missing-provider",
+                1,
+                Some("use this context".to_string()),
+                "Unknown provider: missing-provider",
+            ),
+        ];
+
+        for (provider, max_turns, context, expected) in cases {
+            let result = make_runner()
+                .run(
+                    SubagentTask {
+                        goal: "inspect the project".into(),
+                        context,
+                        tools: Some(vec!["read".into()]),
+                        max_turns,
+                    },
+                    provider,
+                    "test-model",
+                    "test-key",
+                )
+                .await
+                .expect("runner converts turn errors into a result");
+
+            assert_eq!(result.goal, "inspect the project");
+            assert!(!result.success);
+            assert!(result.output.contains(expected), "{}", result.output);
+            assert!(result.usage.is_empty());
+        }
+    }
+
+    fn make_runner() -> SubagentRunner {
+        SubagentRunner::new(
+            Arc::new(ProviderRegistry::default()),
+            Arc::new(ToolExecutor::new()),
+            make_info(),
+            std::path::PathBuf::from("/work/proj"),
+            SandboxSettings::off(),
+            NetworkPolicy::unrestricted(),
+        )
     }
 
     fn make_info() -> AgentInfo {

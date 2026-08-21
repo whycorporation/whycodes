@@ -230,12 +230,27 @@ async fn bind_with(mode: Mode) -> (String, tokio::task::JoinHandle<()>) {
         .route("/v1/sessions/:id/run", post(run))
         .route("/v1/models", get(list_models))
         .with_state(mode);
+    bind_app(app).await
+}
+
+async fn bind_app(app: Router) -> (String, tokio::task::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr: SocketAddr = listener.local_addr().unwrap();
     let handle = tokio::spawn(async move {
         axum::serve(listener, app).await.ok();
     });
     (format!("http://127.0.0.1:{}", addr.port()), handle)
+}
+
+async fn healthy() -> Json<Handshake> {
+    Json(Handshake {
+        protocol: PROTOCOL_MAJOR,
+        version: "test".into(),
+        healthy: true,
+        project: "/test".into(),
+        uptime_secs: 1,
+        sessions_in_memory: 0,
+    })
 }
 
 #[tokio::test]
@@ -359,6 +374,178 @@ async fn connect_refused_is_disconnected() {
         Ok(_) => panic!("expected disconnect"),
     };
     assert_eq!(err.code, ErrorCode::Disconnected);
+}
+
+#[tokio::test]
+async fn request_options_are_sent_as_protocol_json() {
+    async fn create(Json(body): Json<serde_json::Value>) -> impl IntoResponse {
+        assert_eq!(body, json!({"project":"/project","persist":true}));
+        Json(json!({
+            "id": "created",
+            "title": "new",
+            "project": "/project",
+            "messages": 0
+        }))
+    }
+
+    async fn model(Json(body): Json<serde_json::Value>) -> StatusCode {
+        assert_eq!(body, json!({"provider":"openai","model":"gpt-test"}));
+        StatusCode::NO_CONTENT
+    }
+
+    async fn compact_body(Json(body): Json<serde_json::Value>) -> Json<serde_json::Value> {
+        assert_eq!(body, json!({"max_tokens":321}));
+        Json(json!({"id":"s1","title":"compact","messages":[]}))
+    }
+
+    async fn run_body(
+        Json(body): Json<serde_json::Value>,
+    ) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
+        assert_eq!(
+            body,
+            json!({
+                "message": "hello",
+                "provider": "anthropic",
+                "model": "claude-test",
+                "max_turns": 4,
+                "auto_approve": false
+            })
+        );
+        let done = SdkEvent::TurnDone { text: "ok".into() };
+        Sse::new(futures::stream::once(async move {
+            Ok(Event::default().data(serde_json::to_string(&done).unwrap()))
+        }))
+    }
+
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions", post(create))
+        .route("/v1/sessions/:id/model", post(model))
+        .route("/v1/sessions/:id/compact", post(compact_body))
+        .route("/v1/sessions/:id/run", post(run_body));
+    let (base, _server) = bind_app(app).await;
+    let client = WhycodeClient::connect(base).await.unwrap();
+
+    assert_eq!(
+        client.create_session(Some("/project")).await.unwrap().id,
+        "created"
+    );
+    client.set_model("s1", "openai", "gpt-test").await.unwrap();
+    assert_eq!(client.compact("s1", Some(321)).await.unwrap().id, "s1");
+    let result = client
+        .run(
+            "s1",
+            "hello",
+            RunOptions {
+                provider: Some("anthropic".into()),
+                model: Some("claude-test".into()),
+                max_turns: Some(4),
+                auto_approve: Some(false),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.text, "ok");
+}
+
+#[tokio::test]
+async fn http_and_decode_failures_return_stable_error_codes() {
+    async fn unauthorized() -> StatusCode {
+        StatusCode::UNAUTHORIZED
+    }
+    async fn bad_request() -> StatusCode {
+        StatusCode::BAD_REQUEST
+    }
+    async fn server_error() -> StatusCode {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+    async fn invalid_json() -> &'static str {
+        "not json"
+    }
+
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions", get(unauthorized).post(bad_request))
+        .route("/v1/models", get(invalid_json))
+        .route("/v1/sessions/:id/cancel", post(server_error));
+    let (base, _server) = bind_app(app).await;
+    let client = WhycodeClient::connect(base).await.unwrap();
+
+    let auth = client.list_sessions().await.unwrap_err();
+    assert_eq!(auth.code, ErrorCode::Auth);
+    assert!(auth.message.contains("list sessions failed: 401"));
+
+    let invalid = client.create_session(None::<String>).await.unwrap_err();
+    assert_eq!(invalid.code, ErrorCode::InvalidRequest);
+    assert!(invalid.message.contains("create session failed: 400"));
+
+    let internal = client.cancel("s1").await.unwrap_err();
+    assert_eq!(internal.code, ErrorCode::Internal);
+    assert!(internal.message.contains("cancel failed: 503"));
+
+    let decode = client.list_models().await.unwrap_err();
+    assert_eq!(decode.code, ErrorCode::Disconnected);
+    assert!(decode.source.is_some());
+}
+
+#[tokio::test]
+async fn run_collects_cancel_and_error_event_branches() {
+    async fn events(
+        Path(id): Path<String>,
+    ) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
+        let events = if id == "error" {
+            vec![
+                SdkEvent::TextDelta {
+                    text: "partial".into(),
+                },
+                SdkEvent::Error {
+                    code: ErrorCode::Auth,
+                    message: "provider rejected credentials".into(),
+                },
+                SdkEvent::TurnDone {
+                    text: String::new(),
+                },
+            ]
+        } else {
+            vec![
+                SdkEvent::Cancelled,
+                SdkEvent::ToolEnd {
+                    id: "orphan".into(),
+                    content: "stopped".into(),
+                    is_error: true,
+                },
+                SdkEvent::TurnDone {
+                    text: "fallback".into(),
+                },
+            ]
+        };
+        Sse::new(futures::stream::iter(events.into_iter().map(|event| {
+            Ok(Event::default().data(serde_json::to_string(&event).unwrap()))
+        })))
+    }
+
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/:id/run", post(events));
+    let (base, _server) = bind_app(app).await;
+    let client = WhycodeClient::connect(base).await.unwrap();
+
+    let cancelled = client
+        .run("cancelled", "go", RunOptions::default())
+        .await
+        .unwrap();
+    assert!(cancelled.cancelled);
+    assert_eq!(cancelled.text, "fallback");
+    assert_eq!(cancelled.tool_calls[0].id, "orphan");
+    assert_eq!(cancelled.tool_calls[0].name, "");
+    assert!(cancelled.tool_calls[0].is_error);
+
+    let error = client
+        .run("error", "go", RunOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Auth);
+    assert_eq!(error.message, "provider rejected credentials");
 }
 
 #[test]

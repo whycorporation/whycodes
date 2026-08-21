@@ -478,6 +478,68 @@ fn looks_like_endpoint(data: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::JsonRpcError;
+
+    fn rpc_response(
+        id: u64,
+        result: Option<serde_json::Value>,
+        error: Option<JsonRpcError>,
+    ) -> JsonRpcResponse {
+        JsonRpcResponse {
+            jsonrpc: "2.0".to_string(),
+            id,
+            result,
+            error,
+        }
+    }
+
+    #[test]
+    fn header_map_rejects_invalid_names_and_values() {
+        let invalid_name = HashMap::from([("bad header".to_string(), "value".to_string())]);
+        let error = header_map(&invalid_name).unwrap_err().to_string();
+        assert!(error.contains("invalid header name: bad header"));
+
+        let invalid_value = HashMap::from([("x-test".to_string(), "bad\nvalue".to_string())]);
+        let error = header_map(&invalid_value).unwrap_err().to_string();
+        assert!(error.contains("invalid header value for x-test"));
+    }
+
+    #[test]
+    fn truncate_preserves_short_text_and_limits_long_text() {
+        assert_eq!(truncate("short", 5), "short");
+        assert_eq!(truncate("abcdef", 3), "abc…");
+    }
+
+    #[test]
+    fn unwrap_rpc_returns_results_and_protocol_errors() {
+        let result = unwrap_rpc(
+            rpc_response(9, Some(serde_json::json!({"ok": true})), None),
+            8,
+        )
+        .unwrap();
+        assert_eq!(result, serde_json::json!({"ok": true}));
+
+        let error = unwrap_rpc(
+            rpc_response(
+                1,
+                None,
+                Some(JsonRpcError {
+                    code: -32601,
+                    message: "unknown method".to_string(),
+                    data: None,
+                }),
+            ),
+            1,
+        )
+        .unwrap_err()
+        .to_string();
+        assert_eq!(error, "MCP error [-32601]: unknown method");
+
+        let error = unwrap_rpc(rpc_response(1, None, None), 1)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "MCP response has no result");
+    }
 
     #[test]
     fn resolve_absolute_endpoint() {
@@ -494,6 +556,25 @@ mod tests {
         let u =
             resolve_endpoint_url("http://localhost:3000/sse", "/messages?sessionId=abc").unwrap();
         assert_eq!(u, "http://localhost:3000/messages?sessionId=abc");
+    }
+
+    #[test]
+    fn resolve_endpoint_handles_relative_urls_and_clears_base_query() {
+        let relative = resolve_endpoint_url(
+            "http://localhost:3000/api/sse?old=1",
+            "messages?sessionId=abc",
+        )
+        .unwrap();
+        assert_eq!(relative, "http://localhost:3000/api/messages?sessionId=abc");
+
+        let rooted =
+            resolve_endpoint_url("http://localhost:3000/sse?old=1", " /messages ").unwrap();
+        assert_eq!(rooted, "http://localhost:3000/messages");
+
+        let error = resolve_endpoint_url("not a URL", "/messages")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("invalid SSE URL: not a URL"));
     }
 
     #[test]
@@ -519,5 +600,51 @@ mod tests {
         );
         let result = extract_jsonrpc_result_from_sse(body, 2).unwrap();
         assert!(result.get("tools").is_some());
+    }
+
+    #[test]
+    fn extract_result_accepts_plain_json_and_reports_rpc_error() {
+        let result = extract_jsonrpc_result_from_sse(
+            r#"{"jsonrpc":"2.0","id":3,"result":{"pong":true}}"#,
+            3,
+        )
+        .unwrap();
+        assert_eq!(result, serde_json::json!({"pong": true}));
+
+        let body = concat!(
+            "event: message\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32000,\"message\":\"denied\"}}\n",
+            "\n"
+        );
+        let error = extract_jsonrpc_result_from_sse(body, 4)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "MCP error [-32000]: denied");
+    }
+
+    #[test]
+    fn extract_result_falls_back_to_a_mismatched_response_and_describes_absence() {
+        let mismatched = concat!(
+            "event: message\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"value\":1}}\n",
+            "\n"
+        );
+        let result = extract_jsonrpc_result_from_sse(mismatched, 8).unwrap();
+        assert_eq!(result, serde_json::json!({"value": 1}));
+
+        let error = extract_jsonrpc_result_from_sse("event: ping\ndata: nope\n\n", 8)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no JSON-RPC response found in SSE body for id=8"));
+        assert!(error.contains("event: ping"));
+    }
+
+    #[test]
+    fn endpoint_detection_accepts_only_supported_url_forms() {
+        assert!(looks_like_endpoint(" /messages "));
+        assert!(looks_like_endpoint("https://example.test/messages"));
+        assert!(looks_like_endpoint("http://example.test/messages"));
+        assert!(!looks_like_endpoint("messages"));
+        assert!(!looks_like_endpoint(""));
     }
 }
