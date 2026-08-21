@@ -305,6 +305,40 @@ fn query_now_sorts_multiple_hits() {
 }
 
 #[test]
+fn blocking_query_merges_and_sorts_across_roots() {
+    let a = fixture();
+    let b = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![a.path().to_path_buf(), b.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+
+    // Distinct scores: the comparator's score branch runs on >=2 hits.
+    let hits = idx.query("rs", 20);
+    assert!(hits.len() >= 4, "{hits:?}");
+    for w in hits.windows(2) {
+        assert!(
+            w[0].score > w[1].score
+                || (w[0].score == w[1].score && w[0].rel.len() <= w[1].rel.len()),
+            "unsorted: {w:?}"
+        );
+    }
+
+    // Same file in both roots -> equal scores, exercising the rel-length
+    // tie-break in the sort comparator.
+    let tied = idx.query("main.rs", 10);
+    assert_eq!(tied.len(), 2, "{tied:?}");
+    assert_eq!(tied[0].score, tied[1].score);
+    assert!(tied.iter().any(|m| m.root == 0));
+    assert!(tied.iter().any(|m| m.root == 1));
+}
+
+#[test]
 fn recv_should_stop_only_on_disconnect() {
     assert!(!recv_should_stop(
         std::sync::mpsc::RecvTimeoutError::Timeout
