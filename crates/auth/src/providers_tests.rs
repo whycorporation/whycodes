@@ -1,5 +1,5 @@
 use super::*;
-use std::io::{BufRead as _, BufReader, Write};
+use std::io::{BufReader, Write};
 use std::net::TcpListener;
 use std::thread;
 
@@ -56,37 +56,42 @@ struct TestUi {
 
 struct LoopbackUi;
 
-impl LoginUi for LoopbackUi {
-    fn show_sign_in(&mut self, _: &str, url: &str, _: bool) {
-        let url = url::Url::parse(url).unwrap();
-        let state = url
-            .query_pairs()
+fn post_loopback_callback(url: &str, state_override: Option<&str>) {
+    let url = url::Url::parse(url).unwrap();
+    let state = state_override.map(str::to_string).unwrap_or_else(|| {
+        url.query_pairs()
             .find(|(key, _)| key == "state")
             .unwrap()
             .1
-            .into_owned();
-        let redirect = url
-            .query_pairs()
-            .find(|(key, _)| key == "redirect_uri")
-            .unwrap()
-            .1
-            .into_owned();
-        thread::spawn(move || {
-            let callback = url::Url::parse(&redirect).unwrap();
-            let addr = format!(
-                "{}:{}",
-                callback.host_str().unwrap(),
-                callback.port().unwrap()
-            );
-            let mut stream = std::net::TcpStream::connect(addr).unwrap();
-            write!(
-                stream,
-                "GET {}?code=loop&state={} HTTP/1.1\r\nHost: localhost\r\n\r\n",
-                callback.path(),
-                state
-            )
-            .unwrap();
-        });
+            .into_owned()
+    });
+    let redirect = url
+        .query_pairs()
+        .find(|(key, _)| key == "redirect_uri")
+        .unwrap()
+        .1
+        .into_owned();
+    thread::spawn(move || {
+        let callback = url::Url::parse(&redirect).unwrap();
+        let addr = format!(
+            "{}:{}",
+            callback.host_str().unwrap(),
+            callback.port().unwrap()
+        );
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        write!(
+            stream,
+            "GET {}?code=loop&state={} HTTP/1.1\r\nHost: localhost\r\n\r\n",
+            callback.path(),
+            state
+        )
+        .unwrap();
+    });
+}
+
+impl LoginUi for LoopbackUi {
+    fn show_sign_in(&mut self, _: &str, url: &str, _: bool) {
+        post_loopback_callback(url, None);
     }
     fn note(&mut self, _: &str) {}
     fn show_device_code(&mut self, _: &str, _: &str, _: bool) {}
@@ -801,6 +806,41 @@ async fn loopback_login_reports_busy_fixed_port() {
 }
 
 #[tokio::test]
+async fn loopback_login_binds_an_explicit_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let mut spec = loopback_spec(mock_server(vec![(200, r#"{"access_token":"p0"}"#)]));
+    spec.loopback_port = Some(0);
+    let auth = login_with_spec(&spec, &store, false, &mut LoopbackUi)
+        .await
+        .unwrap();
+    assert_eq!(auth.token.access_token, "p0");
+}
+
+struct MismatchLoopbackUi;
+
+impl LoginUi for MismatchLoopbackUi {
+    fn show_sign_in(&mut self, _: &str, url: &str, _: bool) {
+        post_loopback_callback(url, Some("nope"));
+    }
+    fn note(&mut self, _: &str) {}
+    fn show_device_code(&mut self, _: &str, _: &str, _: bool) {}
+    async fn prompt_pasted_code(&mut self) -> Result<String> {
+        Err(AuthError::FlowCancelled("no paste".into()))
+    }
+}
+
+#[tokio::test]
+async fn loopback_login_propagates_callback_errors() {
+    let mut spec = loopback_spec("http://127.0.0.1:1".into());
+    spec.loopback_port = Some(0);
+    let err = loopback_login(&spec, false, &mut MismatchLoopbackUi)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("state mismatch"), "{err}");
+}
+
+#[tokio::test]
 async fn device_flow_exchanges_oauth_and_derived_tokens() {
     let base = mock_server(vec![
         (
@@ -1126,4 +1166,139 @@ async fn login_with_ui_dispatches_a_known_provider() {
         .await
         .unwrap_err();
     assert!(matches!(error, AuthError::FlowCancelled(_)));
+}
+
+#[tokio::test]
+async fn cli_ui_prints_and_open_browser_fails_on_bad_url() {
+    let mut ui = CliLoginUi;
+    ui.show_sign_in("Provider", "https://example.com", true);
+    ui.show_sign_in("Provider", "https://example.com", false);
+    ui.note("note");
+    ui.show_device_code("CODE", "https://example.com/device", true);
+    ui.show_device_code("CODE", "https://example.com/device", false);
+    assert_eq!(
+        read_pasted_code(&mut std::io::Cursor::new("code#state\n")).unwrap(),
+        "code#state"
+    );
+    let err = read_pasted_code(&mut FailRead).unwrap_err();
+    assert!(matches!(err, AuthError::Io(_)));
+    assert!(!try_open_browser("invalid URL\0"));
+    assert!(!maybe_open_browser(false, "https://example.com"));
+    assert!(!maybe_open_browser(true, "invalid URL\0"));
+    assert_eq!(
+        join_blocking_paste(Ok(Ok(" pasted ".into()))).unwrap(),
+        " pasted "
+    );
+    assert!(matches!(
+        join_blocking_paste(Ok(Err(AuthError::Io(std::io::Error::other("e"))))),
+        Err(AuthError::Io(_))
+    ));
+    // Bound so a TTY cannot hang the suite; EOF (CI) returns immediately.
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        ui.prompt_pasted_code(),
+    )
+    .await;
+}
+
+struct FailRead;
+
+impl std::io::Read for FailRead {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("fail"))
+    }
+}
+
+impl std::io::BufRead for FailRead {
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        Err(std::io::Error::other("fail"))
+    }
+    fn consume(&mut self, _: usize) {}
+}
+
+#[tokio::test]
+async fn device_login_waits_through_pending_and_slow_down() {
+    let spec = device_spec(mock_server(vec![
+        (200, r#"{"device_code":"dev","interval":1,"expires_in":30}"#),
+        (200, r#"{"error":"authorization_pending"}"#),
+        (200, r#"{"error":"slow_down"}"#),
+        (200, r#"{"error":"denied"}"#),
+    ]));
+    let err = device_login(
+        &spec,
+        false,
+        &mut TestUi {
+            pasted: String::new(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("denied"), "{err}");
+}
+
+#[tokio::test]
+async fn device_login_defaults_missing_poll_fields_and_http_errors() {
+    let spec = device_spec(mock_server(vec![
+        (200, r#"{"device_code":"dev","interval":1,"expires_in":30}"#),
+        (200, r#"{"error":"authorization_pending"}"#),
+        (200, r#"{"access_token":"github"}"#),
+    ]));
+    assert_eq!(
+        device_login(
+            &spec,
+            false,
+            &mut TestUi {
+                pasted: String::new()
+            }
+        )
+        .await
+        .unwrap()
+        .access_token,
+        "github"
+    );
+
+    let spec = device_spec(mock_server(vec![(401, r#"{"message":"nope"}"#)]));
+    let err = device_login(
+        &spec,
+        false,
+        &mut TestUi {
+            pasted: String::new(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, AuthError::Http(_)), "{err}");
+}
+
+#[tokio::test]
+async fn force_fresh_without_refresh_token_is_not_logged_in() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let spec = local_spec("http://127.0.0.1:1".into(), TokenEncoding::Form);
+    assert!(matches!(
+        force_fresh(&spec, &store, "oauth", expired_token(None)).await,
+        Err(AuthError::NotLoggedIn(_))
+    ));
+}
+
+#[test]
+fn error_messages_cover_every_variant() {
+    let io = AuthError::from(std::io::Error::other("disk"));
+    let json = AuthError::from(serde_json::from_str::<i32>("nope").unwrap_err());
+    for err in [
+        AuthError::UnsupportedProvider("x".into()),
+        AuthError::NotLoggedIn("openai".into()),
+        AuthError::InsecureStorePermissions("/tmp/auth.json".into()),
+        AuthError::FlowCancelled("timeout".into()),
+        AuthError::Provider("denied".into()),
+        AuthError::TokenExchange("bad".into()),
+        AuthError::Refresh("openai".into(), "revoked".into()),
+        AuthError::ConsentRequired("/tmp/cred.json".into()),
+        AuthError::SymlinkRejected("/tmp/link".into()),
+        AuthError::BrowserUnavailable("https://example.com".into()),
+        io,
+        json,
+    ] {
+        assert!(!err.to_string().is_empty(), "{err:?}");
+    }
 }
