@@ -134,9 +134,7 @@ impl ConsentStore {
     }
 
     fn write(&self, file: &ConsentFile) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(self.path.parent().unwrap_or_else(|| Path::new(".")))?;
         let tmp = self.path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(file)?)?;
         crate::store::set_owner_only(&tmp)?;
@@ -209,7 +207,11 @@ pub fn scan_with_home(home: &Path, consent: &ConsentStore) -> Vec<FoundSource> {
 
 /// [`scan_with_home`] for the real user home directory.
 pub fn scan(consent: &ConsentStore) -> Vec<FoundSource> {
-    match home_dir() {
+    scan_from_home(home_dir(), consent)
+}
+
+fn scan_from_home(home: Option<PathBuf>, consent: &ConsentStore) -> Vec<FoundSource> {
+    match home {
         Some(home) => scan_with_home(&home, consent),
         None => Vec::new(),
     }
@@ -611,5 +613,107 @@ mod tests {
                 after_meta.permissions().mode()
             );
         }
+    }
+
+    #[test]
+    fn scan_reflects_consent_decision() {
+        let home = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let consent = ConsentStore::new(data.path());
+        assert!(consent.path().ends_with("auth-consent.json"));
+
+        let file = home.path().join(".claude/.credentials.json");
+        write(&file, r#"{"claudeAiOauth":{"accessToken":"a"}}"#);
+        consent.record(&file, true).unwrap();
+        assert!(matches!(
+            scan_with_home(home.path(), &consent)[0].state,
+            SourceState::Approved
+        ));
+        consent.record(&file, false).unwrap();
+        assert!(matches!(
+            scan_with_home(home.path(), &consent)[0].state,
+            SourceState::Denied
+        ));
+    }
+
+    #[test]
+    fn scan_skips_directories_at_known_paths() {
+        let home = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let consent = ConsentStore::new(data.path());
+        write(
+            &home.path().join(".claude/.credentials.json"),
+            r#"{"claudeAiOauth":{"accessToken":"a"}}"#,
+        );
+        std::fs::create_dir_all(home.path().join(".codex/auth.json")).unwrap();
+        assert_eq!(scan_with_home(home.path(), &consent).len(), 1);
+    }
+
+    #[test]
+    fn parse_claude_code_requires_access_token() {
+        assert!(parse_claude_code(&serde_json::json!({})).is_err());
+    }
+
+    #[test]
+    fn parse_grok_build_rejects_non_object() {
+        assert!(parse_grok_build(&serde_json::json!([])).is_err());
+    }
+
+    #[test]
+    fn parse_grok_build_skips_unusable_slots() {
+        assert!(parse_grok_build(&serde_json::json!({"other": {"key": ""}})).is_err());
+        assert!(parse_grok_build(&serde_json::json!({"other": {"value": 1}})).is_err());
+        assert!(
+            parse_grok_build(&serde_json::json!({
+                "other": {"key": "skip", "auth_mode": "api_key"}
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_grok_build_falls_back_to_first_oauth_slot() {
+        let token = parse_grok_build(&serde_json::json!({
+            "other": {"key": "fallback"}
+        }))
+        .unwrap();
+        assert_eq!(token.access_token, "fallback");
+    }
+
+    #[test]
+    fn ms_to_datetime_rejects_out_of_range() {
+        assert!(ms_to_datetime(i64::MAX).is_err());
+    }
+
+    #[test]
+    fn consent_read_reports_io_error() {
+        let data = tempfile::tempdir().unwrap();
+        let consent = ConsentStore::new(data.path());
+        std::fs::create_dir(consent.path()).unwrap();
+        assert!(matches!(consent.read(), Err(AuthError::Io(_))));
+    }
+
+    #[test]
+    fn consent_read_reports_json_error() {
+        let data = tempfile::tempdir().unwrap();
+        let consent = ConsentStore::new(data.path());
+        std::fs::write(consent.path(), "not json").unwrap();
+        assert!(matches!(consent.read(), Err(AuthError::Json(_))));
+        assert_eq!(consent.decision(Path::new("x")), None);
+    }
+
+    #[test]
+    fn consent_record_creates_parent_directories() {
+        let data = tempfile::tempdir().unwrap();
+        let consent = ConsentStore::new(&data.path().join("nested/data"));
+        consent.record(Path::new("x"), true).unwrap();
+        assert_eq!(consent.decision(Path::new("x")), Some(true));
+    }
+
+    #[test]
+    fn scan_without_a_home_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let consent = ConsentStore::new(dir.path());
+        assert!(scan_from_home(None, &consent).is_empty());
     }
 }

@@ -10,7 +10,11 @@ use crate::pkce::Pkce;
 /// Open the user's browser, falling back to an error that carries the URL so
 /// the caller can print it for manual use.
 pub fn open_browser(url: &str) -> Result<()> {
-    if open::that(url).is_ok() {
+    open_browser_with(url, |target| open::that(target))
+}
+
+fn open_browser_with(url: &str, opener: impl FnOnce(&str) -> std::io::Result<()>) -> Result<()> {
+    if opener(url).is_ok() {
         Ok(())
     } else {
         Err(AuthError::BrowserUnavailable(url.to_string()))
@@ -51,13 +55,9 @@ pub fn wait_for_callback(
                 "timed out waiting for the browser redirect".to_string(),
             ));
         }
-        let (mut stream, _) = match listener.accept() {
-            Ok(pair) => pair,
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(50));
-                continue;
-            }
-            Err(e) => return Err(AuthError::Io(e)),
+        let Some((mut stream, _)) = accept_connection(|| listener.accept())? else {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
         };
 
         let mut reader = BufReader::new(stream.try_clone().map_err(AuthError::Io)?);
@@ -147,13 +147,19 @@ pub fn wait_for_callback(
     }
 }
 
+fn accept_connection(
+    accept: impl FnOnce() -> std::io::Result<(std::net::TcpStream, std::net::SocketAddr)>,
+) -> Result<Option<(std::net::TcpStream, std::net::SocketAddr)>> {
+    match accept() {
+        Ok(pair) => Ok(Some(pair)),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error) => Err(AuthError::Io(error)),
+    }
+}
+
 fn write_http_response(stream: &mut impl Write, response: &str) {
-    if let Err(e) = stream.write_all(response.as_bytes()) {
-        tracing::debug!(error = %e, "oauth callback: write failed");
-    }
-    if let Err(e) = stream.flush() {
-        tracing::debug!(error = %e, "oauth callback: flush failed");
-    }
+    let _write_failed = stream.write_all(response.as_bytes()).is_err();
+    let _flush_failed = stream.flush().is_err();
 }
 
 fn cors_headers(origin: Option<&str>) -> String {
@@ -269,5 +275,69 @@ mod tests {
         );
         let err = handle.join().unwrap().unwrap_err();
         assert!(err.to_string().contains("state mismatch"), "{}", err);
+    }
+
+    #[test]
+    fn wait_for_callback_reports_provider_error() {
+        let (listener, _) = bind_loopback().unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle =
+            thread::spawn(move || wait_for_callback(&listener, "state", Duration::from_secs(5)));
+        let page = send(
+            addr,
+            "GET /callback?error=access_denied&error_description=Nope HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.example\r\n\r\n",
+        );
+        assert!(page.contains("whycode login failed"));
+        assert!(page.contains("https://accounts.x.ai"));
+        assert_eq!(
+            handle.join().unwrap().unwrap_err().to_string(),
+            "OAuth provider returned an error: Nope"
+        );
+    }
+
+    #[test]
+    fn wait_for_callback_requires_state() {
+        let (listener, _) = bind_loopback().unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle =
+            thread::spawn(move || wait_for_callback(&listener, "state", Duration::from_secs(5)));
+        let _page = send(
+            addr,
+            "GET /callback?code=tok HTTP/1.1\r\nHost: localhost\r\n\r\n",
+        );
+        assert!(
+            handle
+                .join()
+                .unwrap()
+                .unwrap_err()
+                .to_string()
+                .contains("missing `state`")
+        );
+    }
+
+    #[test]
+    fn wait_for_callback_times_out() {
+        let (listener, _) = bind_loopback().unwrap();
+        let err = wait_for_callback(&listener, "state", Duration::ZERO).unwrap_err();
+        assert!(err.to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn open_browser_with_maps_opener_result() {
+        open_browser_with("https://example.com", |_| Ok(())).unwrap();
+        let err = open_browser_with("https://example.com/login", |_| {
+            Err(std::io::Error::other("no browser"))
+        })
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            AuthError::BrowserUnavailable(url) if url == "https://example.com/login"
+        ));
+    }
+
+    #[test]
+    fn accept_connection_surfaces_io_errors() {
+        let err = accept_connection(|| Err(std::io::Error::other("accept failed"))).unwrap_err();
+        assert!(matches!(err, AuthError::Io(_)));
     }
 }

@@ -48,4 +48,12 @@ mod tests {
         assert!(!p.state.is_empty());
         assert_ne!(p.verifier, p.challenge);
     }
+
+    #[test]
+    fn default_generates_a_new_pair() {
+        let first = Pkce::default();
+        let second = Pkce::default();
+        assert_ne!(first.verifier, second.verifier);
+        assert_ne!(first.state, second.state);
+    }
 }
