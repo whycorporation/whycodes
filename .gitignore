@@ -4,16 +4,12 @@
 target/
 **/*.rs.bk
 
-# Local agent/session scratch (do not commit)
+# Local agent / session / ops scratch (do not commit)
 .omo/
-# Machine-local external-directory grants for the agent (absolute paths)
-.whycode/external_dirs_allowed
-# Swarm worker worktrees (created/removed per run; never commit)
-.whycode/swarm/
-# Machine-local notes / ops scrap (self-hosted runner, secrets, host facts)
+.whycode/
 local/
-.whycode/todos.json
-.whycode/todos/
+# Unexpanded editor env vars sometimes land as a literal directory name
+$JCODE_SCRATCH_DIR/
 
 # Python bytecode from scripts/ (never commit)
 __pycache__/
@@ -22,3 +18,14 @@ __pycache__/
 # TypeScript SDK
 node_modules/
 sdk/typescript/dist/
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+.env
+.env.*
+!.env.example

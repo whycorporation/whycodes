@@ -15,7 +15,7 @@ Start here, then pick the page you need.
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributors | Setup and required checks |
 | [../SECURITY.md](../SECURITY.md) | Everyone | Vulnerability reporting |
 | [../AGENTS.md](../AGENTS.md) | Agents | Build, commit, and crate rules |
-| [../packaging/README.md](../packaging/README.md) | Maintainers | Homebrew and release packaging |
+| [packaging.md](packaging.md) | Maintainers | Homebrew and release packaging |
 | [archive/](archive/README.md) | History | Completed plans — not open work |
 
 The product landing page is the [root README](../README.md).

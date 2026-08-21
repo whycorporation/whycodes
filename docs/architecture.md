@@ -45,5 +45,18 @@ Two rules keep the graph acyclic:
 Package names use the `whycode-` prefix even when the directory is shorter
 (`crates/llm` → `-p whycode-llm`).
 
+## Repository layout
+
+| Path | What |
+|---|---|
+| `crates/` | Rust workspace (24 crates above) |
+| `sdk/typescript/` | TypeScript SDK — protocol twin of `crates/sdk` |
+| `docs/` | User and contributor docs (this file, guide, know-how) |
+| `scripts/` | Installers, CI budget checks, benches |
+| `Formula/` | Homebrew formula — this repo *is* the tap, so the file must sit here |
+| `.github/workflows/` | CI and tagged-release packaging |
+
+Distribution notes: [packaging.md](packaging.md).
+
 Before changing the TUI event loop, mouse handling or terminal setup, read
 [knowhow.md](knowhow.md).
