@@ -821,7 +821,7 @@ mod paint_tests {
         assert!(text.contains("deterministic draft"), "{text:?}");
         assert!(text.contains('╭') && text.contains('╯'), "{text:?}");
         assert!(a.chat_viewport_rows > 0);
-        assert_eq!(a.chat_content_width, buffer.area().width);
+        assert_eq!(a.chat_content_width, buffer.area().width.saturating_sub(2));
     }
 
     #[test]
