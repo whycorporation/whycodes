@@ -71,30 +71,19 @@ pub fn wait_for_callback(
             if n == 0 || line == "\r\n" || line == "\n" {
                 break;
             }
-            if let Some((name, value)) = line.split_once(':')
-                && name.eq_ignore_ascii_case("origin")
-            {
-                origin = value.trim().to_string();
-            }
+            origin = origin_from_header(&line).unwrap_or(origin);
         }
 
-        let method = request_line
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_ascii_uppercase();
-        let target = request_line.split_whitespace().nth(1).unwrap_or("");
+        let mut parts = request_line.split_whitespace();
+        let method = parts.next().unwrap_or("").to_ascii_uppercase();
+        let target = parts.next().unwrap_or("");
         let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
         let params: std::collections::HashMap<String, String> =
             url::form_urlencoded::parse(query.as_bytes())
                 .into_owned()
                 .collect();
 
-        let cors = cors_headers(if origin.is_empty() {
-            None
-        } else {
-            Some(origin.as_str())
-        });
+        let cors = cors_headers((!origin.is_empty()).then_some(origin.as_str()));
 
         if method == "OPTIONS" {
             let response = format!(
@@ -111,11 +100,9 @@ pub fn wait_for_callback(
             continue;
         }
 
-        let body = if params.contains_key("code") {
-            "<html><body><h2>whycode login complete</h2><p>You can close this tab and return to the terminal.</p></body></html>"
-        } else {
-            "<html><body><h2>whycode login failed</h2><p>The provider did not return a code. You can close this tab.</p></body></html>"
-        };
+        const OK_HTML: &str = "<html><body><h2>whycode login complete</h2><p>You can close this tab and return to the terminal.</p></body></html>";
+        const ERR_HTML: &str = "<html><body><h2>whycode login failed</h2><p>The provider did not return a code. You can close this tab.</p></body></html>";
+        let body = [ERR_HTML, OK_HTML][usize::from(params.contains_key("code"))];
         let response = format!(
             "HTTP/1.1 200 OK\r\n{cors}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
             body.len(),
@@ -130,10 +117,11 @@ pub fn wait_for_callback(
                 .unwrap_or_else(|| error.clone());
             return Err(AuthError::Provider(desc));
         }
-        let code = params
-            .get("code")
-            .cloned()
-            .ok_or_else(|| AuthError::Provider("callback missing `code`".to_string()))?;
+        // The neither-code-nor-error case continued above, and `error` returned,
+        // so `code` is present.
+        let Some(code) = params.get("code").cloned() else {
+            continue;
+        };
         let state = params
             .get("state")
             .cloned()
@@ -144,6 +132,15 @@ pub fn wait_for_callback(
             ));
         }
         return Ok(CallbackResult { code, state });
+    }
+}
+
+fn origin_from_header(line: &str) -> Option<String> {
+    let (name, value) = line.split_once(':')?;
+    if name.eq_ignore_ascii_case("origin") {
+        Some(value.trim().to_string())
+    } else {
+        None
     }
 }
 
@@ -208,136 +205,5 @@ pub fn authorize_url(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Read;
-    use std::net::TcpStream;
-    use std::thread;
-
-    fn send(addr: std::net::SocketAddr, request: &str) -> String {
-        let mut stream = TcpStream::connect(addr).unwrap();
-        stream.write_all(request.as_bytes()).unwrap();
-        stream.shutdown(std::net::Shutdown::Write).ok();
-        let mut buf = String::new();
-        stream.read_to_string(&mut buf).ok();
-        buf
-    }
-
-    #[test]
-    fn wait_for_callback_skips_options_and_returns_code() {
-        let (listener, port) = bind_loopback().unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle =
-            thread::spawn(move || wait_for_callback(&listener, "st", Duration::from_secs(5)));
-
-        let preflight = send(
-            addr,
-            "OPTIONS /callback HTTP/1.1\r\n\
-             Host: 127.0.0.1\r\n\
-             Origin: https://accounts.x.ai\r\n\
-             Access-Control-Request-Method: GET\r\n\
-             Access-Control-Request-Private-Network: true\r\n\
-             \r\n",
-        );
-        assert!(
-            preflight.contains("Access-Control-Allow-Private-Network: true"),
-            "{preflight}"
-        );
-        assert!(preflight.contains("https://accounts.x.ai"), "{preflight}");
-
-        let _ = send(addr, "GET /favicon.ico HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
-
-        let page = send(
-            addr,
-            &format!(
-                "GET /callback?code=tok&state=st HTTP/1.1\r\n\
-                 Host: 127.0.0.1:{port}\r\n\
-                 Origin: https://accounts.x.ai\r\n\
-                 \r\n"
-            ),
-        );
-        assert!(page.contains("whycode login complete"), "{page}");
-
-        let result = handle.join().unwrap().unwrap();
-        assert_eq!(result.code, "tok");
-        assert_eq!(result.state, "st");
-    }
-
-    #[test]
-    fn wait_for_callback_rejects_state_mismatch() {
-        let (listener, _) = bind_loopback().unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle =
-            thread::spawn(move || wait_for_callback(&listener, "expected", Duration::from_secs(5)));
-        let _ = send(
-            addr,
-            "GET /callback?code=tok&state=other HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
-        );
-        let err = handle.join().unwrap().unwrap_err();
-        assert!(err.to_string().contains("state mismatch"), "{}", err);
-    }
-
-    #[test]
-    fn wait_for_callback_reports_provider_error() {
-        let (listener, _) = bind_loopback().unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle =
-            thread::spawn(move || wait_for_callback(&listener, "state", Duration::from_secs(5)));
-        let page = send(
-            addr,
-            "GET /callback?error=access_denied&error_description=Nope HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.example\r\n\r\n",
-        );
-        assert!(page.contains("whycode login failed"));
-        assert!(page.contains("https://accounts.x.ai"));
-        assert_eq!(
-            handle.join().unwrap().unwrap_err().to_string(),
-            "OAuth provider returned an error: Nope"
-        );
-    }
-
-    #[test]
-    fn wait_for_callback_requires_state() {
-        let (listener, _) = bind_loopback().unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle =
-            thread::spawn(move || wait_for_callback(&listener, "state", Duration::from_secs(5)));
-        let _page = send(
-            addr,
-            "GET /callback?code=tok HTTP/1.1\r\nHost: localhost\r\n\r\n",
-        );
-        assert!(
-            handle
-                .join()
-                .unwrap()
-                .unwrap_err()
-                .to_string()
-                .contains("missing `state`")
-        );
-    }
-
-    #[test]
-    fn wait_for_callback_times_out() {
-        let (listener, _) = bind_loopback().unwrap();
-        let err = wait_for_callback(&listener, "state", Duration::ZERO).unwrap_err();
-        assert!(err.to_string().contains("timed out"));
-    }
-
-    #[test]
-    fn open_browser_with_maps_opener_result() {
-        open_browser_with("https://example.com", |_| Ok(())).unwrap();
-        let err = open_browser_with("https://example.com/login", |_| {
-            Err(std::io::Error::other("no browser"))
-        })
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            AuthError::BrowserUnavailable(url) if url == "https://example.com/login"
-        ));
-    }
-
-    #[test]
-    fn accept_connection_surfaces_io_errors() {
-        let err = accept_connection(|| Err(std::io::Error::other("accept failed"))).unwrap_err();
-        assert!(matches!(err, AuthError::Io(_)));
-    }
-}
+#[path = "flow_tests.rs"]
+mod tests;

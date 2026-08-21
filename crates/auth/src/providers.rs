@@ -25,7 +25,7 @@
 //! challenge (never the verifier). The verifier and tokens stay in memory
 //! or in the 0600 store.
 
-use std::io::Write as _;
+use std::io::{BufRead, Write as _};
 use std::path::Path;
 use std::time::Duration;
 
@@ -272,14 +272,39 @@ impl LoginUi for CliLoginUi {
         println!("After signing in, the browser shows a code. Paste it here:");
         print!("> ");
         std::io::stdout().flush().ok();
-        let pasted = tokio::task::spawn_blocking(|| {
-            let mut line = String::new();
-            std::io::stdin().read_line(&mut line).map(|_| line)
-        })
-        .await
-        .map_err(|e| AuthError::FlowCancelled(format!("stdin task failed: {e}")))?
-        .map_err(AuthError::Io)?;
-        Ok(pasted.trim().to_string())
+        join_blocking_paste(
+            tokio::task::spawn_blocking(|| read_pasted_code(&mut std::io::stdin().lock())).await,
+        )
+    }
+}
+
+/// Trim a pasted `code#state` line. Separated from stdin so tests do not
+/// block on a TTY.
+fn read_pasted_code(input: &mut dyn BufRead) -> Result<String> {
+    let mut line = String::new();
+    input.read_line(&mut line).map_err(AuthError::Io)?;
+    Ok(line.trim().to_string())
+}
+
+fn join_blocking_paste(
+    joined: std::result::Result<Result<String>, tokio::task::JoinError>,
+) -> Result<String> {
+    match joined {
+        Ok(result) => result,
+        Err(error) => Err(AuthError::FlowCancelled(format!(
+            "stdin task failed: {error}"
+        ))),
+    }
+}
+
+fn join_blocking_callback(
+    joined: std::result::Result<Result<flow::CallbackResult>, tokio::task::JoinError>,
+) -> Result<flow::CallbackResult> {
+    match joined {
+        Ok(result) => result,
+        Err(error) => Err(AuthError::FlowCancelled(format!(
+            "callback task failed: {error}"
+        ))),
     }
 }
 
@@ -446,6 +471,10 @@ fn try_open_browser(url: &str) -> bool {
     flow::open_browser(url).is_ok()
 }
 
+fn maybe_open_browser(open: bool, url: &str) -> bool {
+    open && try_open_browser(url)
+}
+
 async fn loopback_login(
     spec: &ProviderSpec,
     open_browser: bool,
@@ -473,16 +502,16 @@ async fn loopback_login(
         spec.extra_authorize,
     );
 
-    let opened = open_browser && try_open_browser(&url);
+    let opened = maybe_open_browser(open_browser, &url);
     ui.show_sign_in(spec.label, &url, opened);
     ui.note("Waiting for the sign-in to complete…");
 
     let expected_state = pkce.state.clone();
-    let callback = tokio::task::spawn_blocking(move || {
+    let joined = tokio::task::spawn_blocking(move || {
         flow::wait_for_callback(&listener, &expected_state, BROWSER_FLOW_TIMEOUT)
     })
-    .await
-    .map_err(|e| AuthError::FlowCancelled(format!("callback task failed: {e}")))??;
+    .await;
+    let callback = join_blocking_callback(joined)?;
 
     exchange_code(spec, &callback.code, &redirect_uri, &pkce).await
 }
@@ -514,7 +543,7 @@ async fn paste_code_login(
         spec.extra_authorize,
     );
 
-    let opened = open_browser && try_open_browser(&url);
+    let opened = maybe_open_browser(open_browser, &url);
     ui.show_sign_in(spec.label, &url, opened);
     let pasted = ui.prompt_pasted_code().await?;
     let pasted = pasted.trim();
@@ -568,7 +597,7 @@ async fn device_login(
     let mut interval = resp["interval"].as_u64().unwrap_or(5).max(1);
     let expires_in = resp["expires_in"].as_u64().unwrap_or(900);
 
-    let opened = open_browser && try_open_browser(&verification_uri);
+    let opened = maybe_open_browser(open_browser, &verification_uri);
     ui.show_device_code(&user_code, &verification_uri, opened);
     ui.note("Waiting for authorization…");
 
