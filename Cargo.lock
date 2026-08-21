@@ -4304,6 +4304,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
+ "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
