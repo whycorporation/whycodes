@@ -1,17 +1,26 @@
 # Whycode
 
-A coding agent for the terminal, written in Rust. It reads, writes and edits
-files, runs commands, searches the workspace and drives an LLM through
-multi-turn tool use — in a full-screen TUI or as a one-shot CLI.
+A fast, provider-independent coding agent for the terminal, written in Rust.
+It reads, writes and edits files, runs commands, searches the workspace and
+drives an LLM through multi-turn tool use — in a full-screen TUI or as a
+machine-readable one-shot CLI.
 
-- Single binary, no runtime dependencies. Search is in-process (`ripgrep` is
-  not required).
-- Linux, macOS and Windows, all covered in CI.
-- Anthropic, OpenAI, Google, GitHub Copilot, Groq, xAI, DeepSeek, Ollama,
-  OpenRouter, Mistral, Together, and any OpenAI-compatible endpoint. API keys
-  or subscription login (`whycode auth login`).
-- Project `AGENTS.md`, MCP servers, and language servers over LSP.
-- Cross-session memory (`MEMORY.md`, semantic recall, optional code index).
+- Ship and run one native binary with no required runtime dependencies. Search
+  is in-process (`ripgrep` is not required); optional OS integrations such as
+  Linux bubblewrap strengthen sandboxing when available.
+- Use the same workflow on Linux, macOS and Windows. Linux runs on every CI
+  change; optional Windows and macOS jobs can be enabled through the multi-OS
+  CI matrix.
+- Choose Anthropic, OpenAI, Google, GitHub Copilot, Groq, xAI, DeepSeek,
+  Ollama, OpenRouter, Mistral, Together, or any OpenAI-compatible endpoint,
+  using an API key or subscription login (`whycode auth login`).
+- Bring project instructions from `AGENTS.md` and connect existing MCP tools
+  and language servers over LSP.
+- Resume previous work with persisted sessions and cross-session memory
+  (`MEMORY.md`, semantic recall, and an optional code index).
+
+Whycode focuses on a small native footprint, an idle-efficient TUI, and a
+provider-independent agent workflow.
 
 ## Install
 
@@ -32,7 +41,10 @@ brew install whycode
 cargo build --release -p whycode-cli
 ```
 
-Update with `whycode upgrade`. Notes and uninstall: [docs/packaging.md](docs/packaging.md).
+Update with `whycode upgrade`. The install scripts verify release artifacts
+against the published `SHA256SUMS`. For downloadable binaries, installation
+details and uninstall instructions, see
+[docs/packaging.md](docs/packaging.md).
 
 ## Quick start
 
@@ -76,24 +88,9 @@ not a frames-per-second race.
 ## Coverage
 
 Workspace line coverage **85.58%** (Linux x86_64, 2026-08-21). CI fails
-below **82%**. Method and how to re-measure:
-[docs/coverage.md](docs/coverage.md).
-
-| Crate | Lines |
-|---|---|
-| function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format, index | **100%** |
-| session | **100%** |
-| auth | **99.2%** |
-| memory | 87.7% |
-| tui | 86.3% |
-| tools | 86.0% |
-| llm | 83.6% |
-| mcp | 80.8% |
-| sdk | 80.4% |
-| server | 79.1% |
-| cli | 69.6% |
-| agent | 65.4% |
-| lsp | 64.1% |
+below **82%**, with twelve foundational crates held at **100%** production-code
+line coverage. See [docs/coverage.md](docs/coverage.md) for the current
+breakdown, measurement command and enforced floors.
 
 ## Documentation
 
