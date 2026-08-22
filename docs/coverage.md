@@ -56,6 +56,25 @@ Workspace line coverage **85.58%**.
 Line coverage is the number CI gates on. Function and region rates are
 informational.
 
-The crate table lives in the [README](../README.md#coverage). Re-measure and
-update both files together — a stale percentage in the README is worse than
-no percentage.
+### Crate breakdown
+
+| Crate | Lines |
+|---|---|
+| function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format, index | **100%** |
+| session | **100%** |
+| auth | **99.2%** |
+| memory | 87.7% |
+| tui | 86.3% |
+| tools | 86.0% |
+| llm | 83.6% |
+| mcp | 80.8% |
+| sdk | 80.4% |
+| server | 79.1% |
+| cli | 69.6% |
+| agent | 65.4% |
+| lsp | 64.1% |
+
+When re-measuring, update this breakdown and the dated workspace total here,
+then copy only the workspace total to the
+[README](../README.md#coverage). A stale percentage is worse than no
+percentage.
