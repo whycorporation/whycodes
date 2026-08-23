@@ -5,7 +5,7 @@ pub enum AuthError {
     // NOTE: the supported list is tripwire-tested against OAUTH_PROVIDERS
     // (conformance_error_message_lists_every_provider) — keep it in sync.
     #[error(
-        "provider `{0}` does not support OAuth login (supported: anthropic, openai, github-copilot, google, xai)"
+        "provider `{0}` does not support OAuth login (supported: anthropic, openai, github-copilot, google, xai, google-antigravity)"
     )]
     UnsupportedProvider(String),
 

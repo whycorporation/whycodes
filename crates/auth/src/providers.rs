@@ -229,6 +229,23 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             extra_authorize: &[("referrer", "whycode")],
             derived: None,
         }),
+        "google-antigravity" => Ok(ProviderSpec {
+            name: "google-antigravity",
+            label: "Antigravity (Gemini 3, Claude, GPT-OSS)",
+            flow: FlowKind::LoopbackPkce,
+            client_id: "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+            client_secret: Some("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"),
+            authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
+            token_url: "https://oauth2.googleapis.com/token",
+            scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+            token_encoding: TokenEncoding::Form,
+            redirect_uri: None,
+            loopback_port: Some(51121),
+            loopback_host: None,
+            callback_path: "/oauth-callback",
+            extra_authorize: &[("access_type", "offline"), ("prompt", "consent")],
+            derived: None,
+        }),
         other => Err(AuthError::UnsupportedProvider(other.to_string())),
     }
 }
@@ -337,18 +354,23 @@ async fn login_with_spec<U: LoginUi>(
     open_browser: bool,
     ui: &mut U,
 ) -> Result<ProviderAuth> {
-    let token = match spec.flow {
-        FlowKind::LoopbackPkce => loopback_login(spec, open_browser, ui).await?,
-        FlowKind::PasteCodePkce => paste_code_login(spec, open_browser, ui).await?,
-        FlowKind::DeviceCode => device_login(spec, open_browser, ui).await?,
+    let token = if spec.name == "google-antigravity" {
+        let oauth_token = loopback_login(spec, open_browser, ui).await?;
+        crate::cca::perform_antigravity_onboarding(oauth_token).await?
+    } else {
+        match spec.flow {
+            FlowKind::LoopbackPkce => loopback_login(spec, open_browser, ui).await?,
+            FlowKind::PasteCodePkce => paste_code_login(spec, open_browser, ui).await?,
+            FlowKind::DeviceCode => device_login(spec, open_browser, ui).await?,
+        }
     };
-    let auth = ProviderAuth {
+    persist_token(store, spec.name, "oauth", &token)?;
+    Ok(ProviderAuth {
         method: "oauth".to_string(),
         token,
-    };
-    store.set(spec.name, auth.clone())?;
-    Ok(auth)
+    })
 }
+
 
 /// Return a usable API credential for `provider` from the store under
 /// `data_dir`, refreshing it first when expired. `None` when not logged in
@@ -453,7 +475,6 @@ async fn ensure_fresh(
 fn usable_token(spec: &ProviderSpec, token: &OAuthToken) -> Option<String> {
     if spec.derived.is_some() {
         // "copilot_token" is the pre-rename key; read it so stores written
-        // by older builds keep working.
         return token
             .extra
             .get("derived_token")
@@ -463,6 +484,7 @@ fn usable_token(spec: &ProviderSpec, token: &OAuthToken) -> Option<String> {
     }
     Some(token.access_token.clone())
 }
+
 
 // ────────────────────────────────────────────────────────────────────────
 // Browser + localhost callback (OpenAI, Google)
@@ -957,6 +979,7 @@ pub fn suggested_models(provider: &str) -> &'static [&'static str] {
         "github-copilot" => &["gpt-4.1", "gpt-4o"],
         "google" => &["gemini-3.6-flash", "gemini-3.5-flash"],
         "xai" => &["grok-4.6", "grok-4.5", "grok-build-0.1"],
+        "google-antigravity" => &["gemini-3.1-pro", "gemini-3.1-flash", "claude-sonnet-4-6"],
         _ => &[],
     }
 }
