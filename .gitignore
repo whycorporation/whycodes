@@ -29,3 +29,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Claude/local agent worktrees
+.claude/
