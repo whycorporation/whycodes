@@ -13,6 +13,7 @@
 //! - `Debug` impls redact token material.
 
 pub mod discover;
+pub mod cca;
 pub mod error;
 pub mod flow;
 pub mod pkce;
@@ -25,4 +26,4 @@ pub use store::TokenStore;
 pub use token::{OAuthToken, ProviderAuth};
 
 /// Providers that support OAuth subscription login.
-pub const OAUTH_PROVIDERS: &[&str] = &["anthropic", "openai", "github-copilot", "google", "xai"];
+pub const OAUTH_PROVIDERS: &[&str] = &["anthropic", "openai", "github-copilot", "google", "xai", "google-antigravity"];
