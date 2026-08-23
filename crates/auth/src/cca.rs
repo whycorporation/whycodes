@@ -45,9 +45,28 @@ async fn post(suffix: &str, token: &str, body: &Value) -> Result<Value> {
     let status = resp.status();
     let value: Value = resp.json().await.map_err(AuthError::from)?;
     if !status.is_success() {
+        // The Code Assist control plane surfaces the actionable reason under
+        // `error.message`, but its "Your account is not eligible …" copy can
+        // be truncated (or replaced with a bare "unknown error") when the
+        // body shape differs. Favor `error.message`, then the message-only
+        // variant, and only then fall back to a keyword so the user still
+        // learns why sign-in was refused.
         let msg = value["error"]["message"]
             .as_str()
+            .or_else(|| value["message"].as_str())
+            .or_else(|| value["error"].as_str())
+            .filter(|s| !s.is_empty())
             .unwrap_or("unknown error");
+        // Detect the free-tier ineligibility reason even when the provider is
+        // terse, so the auth failure matches whycode-llm's actionable copy.
+        if status.as_u16() == 403
+            && (msg.to_ascii_lowercase().contains("eligib")
+                || msg.eq_ignore_ascii_case("unknown error"))
+        {
+            return Err(AuthError::Provider(format!(
+                "Code Assist request (`{suffix}`) failed ({status}): your Google account is not eligible for Gemini Code Assist for individuals (free tier) — use an AI Studio API key (GOOGLE_API_KEY) or a different account"
+            )));
+        }
         return Err(AuthError::Provider(format!(
             "Code Assist request (`{suffix}`) failed ({status}): {msg}"
         )));
