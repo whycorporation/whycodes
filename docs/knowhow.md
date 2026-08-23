@@ -140,6 +140,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-23 — `String::truncate` panics mid-UTF-8 in session memory
+
+**Symptom:** TUI abort: `assertion failed: self.is_char_boundary(new_len)` at
+`crates/memory/src/service.rs` while indexing a turn. Crash file
+`crash-20260823T214444.033.txt`.
+
+**JSONL / crash:** panic in `tokio-rt-worker`; location is the 2000-byte clip
+in `MemoryService::index_session_turn`.
+
+**Root cause:** `clip.truncate(2000)` is a **byte** cap. A 2-byte char
+(`ç`, emoji, CJK) that straddles offset 2000 is not a char boundary;
+`String::truncate` asserts.
+
+**Fix:** `clip.truncate(clip.floor_char_boundary(MAX))`. Test uses a
+payload whose 2000th byte sits inside `ç`.
+
+**Prevention:** Never `String::truncate(n)` / `&s[..n]` on user text
+without `is_char_boundary` / `floor_char_boundary`. Byte length ≠ char
+length.
+
 ### 2026-08-20 — core 100% floor misses `save_todos` parent `if let`
 
 **Symptom:** `Coverage (line floor)` fails `whycode-core` with

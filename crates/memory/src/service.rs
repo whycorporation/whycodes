@@ -220,7 +220,8 @@ impl MemoryService {
         }
         const MAX: usize = 2000;
         if clip.len() > MAX {
-            clip.truncate(MAX);
+            // Byte cap can land inside a multibyte char; String::truncate panics.
+            clip.truncate(clip.floor_char_boundary(MAX));
         }
         let vec = self.embed_text(&clip);
         let blob = encode_blob(&vec);
@@ -904,14 +905,32 @@ mod tests {
         svc.index_session_turn("blank", 0, " \n", "\t").unwrap();
         svc.index_session_turn("long-session", 3, &"x".repeat(2500), "tail")
             .unwrap();
+        // "User: " (6) + 1993 ASCII + 2-byte `ç` + `\n` = 2002. Byte 2000 sits
+        // inside `ç`; String::truncate(2000) used to panic (crash-20260823).
+        svc.index_session_turn("utf8-session", 4, &format!("{}ç", "a".repeat(1993)), "")
+            .unwrap();
         let rows = svc
             .open_db()
             .unwrap()
             .list_session_chunks(&svc.bank_key, 10)
             .unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].text.len(), 2000);
-        assert!(rows[0].text.starts_with("User: "));
+        assert_eq!(rows.len(), 2);
+        let ascii = rows
+            .iter()
+            .find(|r| r.session_id == "long-session")
+            .unwrap();
+        assert_eq!(ascii.text.len(), 2000);
+        assert!(ascii.text.starts_with("User: "));
+        let utf8 = rows
+            .iter()
+            .find(|r| r.session_id == "utf8-session")
+            .unwrap();
+        assert!(utf8.text.is_char_boundary(utf8.text.len()));
+        assert!(utf8.text.len() <= 2000);
+        assert!(
+            !utf8.text.contains('ç'),
+            "multibyte tail must be dropped rather than splitting the char"
+        );
     }
 
     #[test]
