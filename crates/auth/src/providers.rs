@@ -371,7 +371,6 @@ async fn login_with_spec<U: LoginUi>(
     })
 }
 
-
 /// Return a usable API credential for `provider` from the store under
 /// `data_dir`, refreshing it first when expired. `None` when not logged in
 /// or refresh fails (the caller then falls back to its normal error path).
@@ -484,7 +483,6 @@ fn usable_token(spec: &ProviderSpec, token: &OAuthToken) -> Option<String> {
     }
     Some(token.access_token.clone())
 }
-
 
 // ────────────────────────────────────────────────────────────────────────
 // Browser + localhost callback (OpenAI, Google)
