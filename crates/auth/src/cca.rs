@@ -106,38 +106,58 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
         return Ok(token);
     }
 
-    // 2. Not onboarded: pick the free/managed tier and run onboardUser,
-    // polling the long-running operation until it yields a project id.
+    // 2. Not onboarded: run onboardUser on the allowed tier and poll the
+    // long-running operation until it yields a project id. Provisioning can
+    // take a couple of minutes (project creation server-side), so poll well
+    // past a few seconds — bailing early surfaces as "no project id".
     let tier = pick_tier(&load);
-    let onboard = post(
-        ":onboardUser",
-        &token.access_token,
-        &json!({ "tierId": tier, "metadata": client_metadata() }),
-    )
-    .await?;
+    let mut body = json!({ "tierId": tier, "metadata": client_metadata() });
+    // Tiers flagged `userDefinedCloudaicompanionProject` (standard-tier for
+    // Pro accounts) expect the caller's own Cloud project in this field —
+    // same shape Gemini CLI sends. Harmless when absent.
+    if let Some(project) = explicit_project(&token) {
+        body["cloudaicompanionProject"] = Value::String(project);
+    }
+    let onboard = post(":onboardUser", &token.access_token, &body).await?;
     let mut operation = onboard;
-    for _ in 0..10 {
+    for _ in 0..60 {
         if operation["done"].as_bool().unwrap_or(false) {
             break;
         }
         let Some(name) = operation["name"].as_str().map(str::to_string) else {
             break;
         };
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         operation = post(&format!("/{name}"), &token.access_token, &json!({})).await?;
     }
 
-    match operation["response"]["cloudaicompanionProject"]["id"].as_str() {
+    match yielded_project(&operation) {
         Some(id) => {
             token
                 .extra
-                .insert(PROJECT_ID_KEY.to_string(), Value::String(id.to_string()));
+                .insert(PROJECT_ID_KEY.to_string(), Value::String(id));
             Ok(token)
         }
-        None => Err(AuthError::Provider(
-            "Code Assist onboarding did not yield a project id".into(),
-        )),
+        None => {
+            let done = operation["done"].as_bool().unwrap_or(false);
+            Err(AuthError::Provider(format!(
+                "Code Assist onboarding did not yield a project id \
+                 (operation done={done}, tier={tier}) — set GOOGLE_CLOUD_PROJECT \
+                 to your Cloud project id and retry"
+            )))
+        }
     }
+}
+
+/// Pull the provisioned project id out of a finished `onboardUser` LRO.
+/// The service has shipped both shapes: an object (`{"id": …}`) and a bare
+/// project-id string, so accept either.
+fn yielded_project(operation: &Value) -> Option<String> {
+    let proj = &operation["response"]["cloudaicompanionProject"];
+    if let Some(id) = proj["id"].as_str().filter(|s| !s.is_empty()) {
+        return Some(id.to_string());
+    }
+    proj.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
 /// The tier to pass to `onboardUser`, from the `allowedTiers` the account
@@ -204,5 +224,26 @@ mod tests {
 
         let empty = json!({});
         assert_eq!(pick_tier(&empty), "free-tier");
+    }
+
+    #[test]
+    fn yielded_project_reads_object_and_string_shapes() {
+        let object = json!({
+            "done": true,
+            "response": {"cloudaicompanionProject": {"id": "gen-lang-client-123"}}
+        });
+        assert_eq!(
+            yielded_project(&object).as_deref(),
+            Some("gen-lang-client-123")
+        );
+
+        let plain = json!({
+            "done": true,
+            "response": {"cloudaicompanionProject": "my-project-456"}
+        });
+        assert_eq!(yielded_project(&plain).as_deref(), Some("my-project-456"));
+
+        let pending = json!({"done": false});
+        assert_eq!(yielded_project(&pending), None);
     }
 }

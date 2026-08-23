@@ -1202,3 +1202,23 @@ static-suffix route on the same path pattern is rejected.
 **Fix:** one route `/s/:id` and dispatch on whether `id` ends with `.json` / `.md`
 (`share_dispatch` in `crates/server/src/routes.rs`).
 
+
+## Code Assist onboarding: LRO polling and response shapes
+
+**Date:** 2026-08-24 · **Area:** `crates/auth/src/cca.rs` (google-antigravity OAuth)
+
+Two silent-failure traps when onboarding a fresh Google token via
+`:onboardUser` (`cloudcode-pa.googleapis.com/v1internal`):
+
+1. **Tier choice.** Pro/paid accounts report only the
+   `userDefinedCloudaicompanionProject: true` tier (`standard-tier`) in
+   `loadCodeAssist.allowedTiers`. Forcing `free-tier` returns **403 Forbidden**
+   ("not eligible for individuals"). Pick the user-defined-project tier first.
+2. **LRO result.** The operation can take minutes; polling for ~10 s then
+   reading `response.cloudaicompanionProject.id` fails with "no project id"
+   even though provisioning would succeed. Also, `cloudaicompanionProject`
+   ships as **both** an object (`{"id": …}`) and a bare string — accept both.
+   Standard-tier calls should pass `cloudaicompanionProject` in the request
+   body when the caller has one.
+
+Debugged 2026-08-24 after real-world 403 → "did not yield a project id" reports.
