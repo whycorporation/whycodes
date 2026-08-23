@@ -60,7 +60,7 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
     let url = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist";
     let request = CloudCodeRequest {
         context: CloudCodeContext {
-            project_id: "projects/-".to_string(), // Try wildcard
+            project_id: "projects/whycodes".to_string(), // Try full project resource name
             metadata: AntigravityMetadata::default(),
         },
         payload: serde_json::json!({}), // Actual payload
