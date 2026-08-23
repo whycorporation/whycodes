@@ -85,7 +85,8 @@ async fn project_id(api_key: &str) -> whycode_core::Result<String> {
     }
     let env_project = std::env::var("GOOGLE_CLOUD_PROJECT")
         .ok()
-        .filter(|p| !p.is_empty());
+        .filter(|p| !p.is_empty())
+        .or(Some("whycodes".to_string()));
 
     // 1. loadCodeAssist: an already-onboarded account reports its project.
     let mut load_body = json!({ "metadata": client_metadata() });

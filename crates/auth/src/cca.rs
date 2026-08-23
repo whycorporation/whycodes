@@ -3,8 +3,8 @@
 //! Handles request construction, signing, and response parsing for
 //! CCA-specific SSE endpoints.
 
-use serde::{Deserialize, Serialize};
 use crate::error::Result;
+use serde::{Deserialize, Serialize};
 
 /// Metadata sent by native Antigravity control-plane requests.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -49,7 +49,10 @@ where
         .error_for_status()
         .map_err(crate::error::AuthError::from)?;
 
-    response.json::<R>().await.map_err(crate::error::AuthError::from)
+    response
+        .json::<R>()
+        .await
+        .map_err(crate::error::AuthError::from)
 }
 use crate::token::OAuthToken;
 
@@ -63,20 +66,27 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
         payload: serde_json::json!({}), // Actual payload
     };
 
-    let response: LoadCodeAssistResponse = request_cloud_code_assist(url, &token.access_token, &request).await?;
-    
+    let response: LoadCodeAssistResponse =
+        request_cloud_code_assist(url, &token.access_token, &request).await?;
+
     // Store project id if returned
     if let Some(project_id) = extract_project_id(&response) {
-        token.extra.insert("project_id".to_string(), serde_json::json!(project_id));
+        token
+            .extra
+            .insert("project_id".to_string(), serde_json::json!(project_id));
     }
-    
+
     Ok(token)
 }
 
 fn extract_project_id(response: &LoadCodeAssistResponse) -> Option<String> {
     // According to oh-my-pi, project_id is often nested in the response structure
     // We'll look for a plausible location or return None if it's missing
-    response.allowed_tiers.as_ref()?.first().map(|t| t.id.clone())
+    response
+        .allowed_tiers
+        .as_ref()?
+        .first()
+        .map(|t| t.id.clone())
 }
 
 /// Context for Cloud Code requests.
