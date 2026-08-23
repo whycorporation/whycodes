@@ -141,8 +141,12 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
 }
 
 /// The tier to pass to `onboardUser`, from the `allowedTiers` the account
-/// reported in its `loadCodeAssist` response. Falls back to the free
-/// (managed-project) tier when the list is absent.
+/// reported in its `loadCodeAssist` response.
+///
+/// A Pro/paid account's tier list only carries `"standard-tier"` (which
+/// accepts a user-defined `cloudaicompanionProject`); forcing `"free-tier"`
+/// makes `onboardUser` reject the call with 403. Prefer the paid tier when
+/// present, and only fall back to the managed-project (free) tier otherwise.
 fn pick_tier(load_response: &Value) -> String {
     let find = |want_user_project: bool| {
         load_response["allowedTiers"].as_array().and_then(|tiers| {
@@ -158,7 +162,9 @@ fn pick_tier(load_response: &Value) -> String {
                 .map(str::to_string)
         })
     };
-    find(false).unwrap_or_else(|| "free-tier".to_string())
+    // Pro customers cannot onboard into the free tier; pick the one that
+    // takes a user-defined project when the account reports it.
+    find(true).unwrap_or_else(|| find(false).unwrap_or_else(|| "free-tier".to_string()))
 }
 
 /// A caller-supplied project: the stored token extra first, then the env.
@@ -174,4 +180,29 @@ fn explicit_project(token: &OAuthToken) -> Option<String> {
                 .ok()
                 .filter(|p| !p.is_empty())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pick_tier_prefers_user_defined_project() {
+        let load = json!({"allowedTiers": [
+            {"id": "free-tier", "userDefinedCloudaicompanionProject": false},
+            {"id": "standard-tier", "userDefinedCloudaicompanionProject": true}
+        ]});
+        assert_eq!(pick_tier(&load), "standard-tier");
+    }
+
+    #[test]
+    fn pick_tier_falls_back_to_free_tier() {
+        let free = json!({"allowedTiers": [
+            {"id": "free-tier", "userDefinedCloudaicompanionProject": false}
+        ]});
+        assert_eq!(pick_tier(&free), "free-tier");
+
+        let empty = json!({});
+        assert_eq!(pick_tier(&empty), "free-tier");
+    }
 }
