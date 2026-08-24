@@ -379,7 +379,27 @@ fn build_inner_request(request: &LlmRequest) -> Value {
                             }));
                         }
                         ContentBlock::Image { .. } => {}
-                        ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. } => {}
+                        ContentBlock::Thinking { text, signature } => {
+                            // Claude-via-Antigravity 400s if thinking is
+                            // dropped and later replayed as `text`. Echo the
+                            // Gemini thought part (and signature when we have
+                            // one) so the converted Anthropic history stays valid.
+                            let mut part = json!({ "text": text, "thought": true });
+                            if let Some(sig) = signature
+                                && !sig.is_empty()
+                            {
+                                part["thoughtSignature"] = json!(sig);
+                            }
+                            parts.push(part);
+                        }
+                        ContentBlock::RedactedThinking { data } => {
+                            if !data.is_empty() {
+                                parts.push(json!({
+                                    "text": data,
+                                    "thought": true,
+                                }));
+                            }
+                        }
                     }
                 }
             }
@@ -474,6 +494,37 @@ fn wrap_envelope(
     }
 }
 
+fn code_assist_http_error(
+    status: impl std::fmt::Display,
+    model: &str,
+    json: &Value,
+    raw_body: &str,
+) -> String {
+    let from_field = json
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let reason = crate::error_class::extract_provider_reason(from_field)
+        .or_else(|| crate::error_class::extract_provider_reason(raw_body))
+        .or_else(|| {
+            let t = from_field.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        })
+        .unwrap_or_else(|| {
+            let t = raw_body.trim();
+            if t.is_empty() {
+                "Unknown error".into()
+            } else {
+                t.chars().take(240).collect()
+            }
+        });
+    format!("Code Assist error ({status}) model={model}: {reason}")
+}
+
 /// Map one Code Assist SSE chunk (a GenerateContentResponse, tolerating a
 /// `{"response": …}` wrapper) to whycode stream events. Pure for tests.
 /// `call_seq` mints ids for function calls — Gemini does not send any, but
@@ -492,6 +543,24 @@ fn events_for_chunk(data: &str, call_seq: &mut u64) -> Vec<StreamEvent> {
         for c in candidates {
             if let Some(parts) = c["content"]["parts"].as_array() {
                 for part in parts {
+                    if let Some(sig) = part["thoughtSignature"].as_str()
+                        && !sig.is_empty()
+                    {
+                        events.push(StreamEvent::ThinkingSignature {
+                            signature: sig.to_string(),
+                        });
+                    }
+                    let thought = part["thought"].as_bool().unwrap_or(false);
+                    if thought {
+                        if let Some(text) = part["text"].as_str()
+                            && !text.is_empty()
+                        {
+                            events.push(StreamEvent::Thinking {
+                                text: text.to_string(),
+                            });
+                        }
+                        continue;
+                    }
                     if let Some(text) = part["text"].as_str() {
                         events.push(StreamEvent::TextDelta {
                             text: text.to_string(),
@@ -567,9 +636,11 @@ async fn complete_with(
         .await
         .map_err(|e| whycode_core::Error::Llm(format!("Code Assist parse: {e}")))?;
     if !status.is_success() {
-        let msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-        return Err(whycode_core::Error::Llm(format!(
-            "Code Assist error ({status}) model={model}: {msg}"
+        return Err(whycode_core::Error::Llm(code_assist_http_error(
+            status,
+            model,
+            &json,
+            &json.to_string(),
         )));
     }
     let json = if json["response"].is_object() {
@@ -658,9 +729,9 @@ async fn stream_with(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        let trimmed: String = text.chars().take(500).collect();
-        return Err(whycode_core::Error::Llm(format!(
-            "Code Assist error ({status}) model={model}: {trimmed}"
+        let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        return Err(whycode_core::Error::Llm(code_assist_http_error(
+            status, model, &json, &text,
         )));
     }
 
@@ -906,7 +977,37 @@ mod tests {
             ),
         ]);
 
-        assert_eq!(build_inner_request(&request), json!({"contents": []}));
+        let inner = build_inner_request(&request);
+        let parts = &inner["contents"][0]["parts"];
+        assert_eq!(parts[0]["thought"], true);
+        assert_eq!(parts[0]["text"], "private");
+        assert_eq!(parts[1]["thought"], true);
+        assert_eq!(parts[1]["text"], "opaque");
+        assert_eq!(inner["contents"][0]["role"], "model");
+    }
+
+    #[test]
+    fn inner_request_echoes_thought_signature() {
+        let request = empty_request(vec![message(
+            Role::Assistant,
+            MessageContent::Blocks(vec![
+                ContentBlock::Thinking {
+                    text: "plan".to_string(),
+                    signature: Some("sig-9".to_string()),
+                },
+                ContentBlock::Text {
+                    text: "ok".to_string(),
+                },
+            ]),
+        )]);
+        let inner = build_inner_request(&request);
+        assert_eq!(inner["contents"][0]["parts"][0]["thought"], true);
+        assert_eq!(
+            inner["contents"][0]["parts"][0]["thoughtSignature"],
+            "sig-9"
+        );
+        assert_eq!(inner["contents"][0]["parts"][1]["text"], "ok");
+        assert!(inner["contents"][0]["parts"][1].get("thought").is_none());
     }
 
     #[test]
@@ -955,6 +1056,40 @@ mod tests {
             }
         ));
         assert!(matches!(events[3], StreamEvent::MessageStop));
+    }
+
+    #[test]
+    fn chunk_maps_thought_parts_not_visible_text() {
+        let mut seq = 0u64;
+        let events = events_for_chunk(
+            r#"{"candidates":[{"content":{"parts":[{"text":"hmm","thought":true,"thoughtSignature":"sig"},{"text":"hi"}]}}]}"#,
+            &mut seq,
+        );
+        assert!(
+            matches!(&events[0], StreamEvent::ThinkingSignature { signature } if signature == "sig")
+        );
+        assert!(matches!(&events[1], StreamEvent::Thinking { text } if text == "hmm"));
+        assert!(matches!(&events[2], StreamEvent::TextDelta { text } if text == "hi"));
+    }
+
+    #[test]
+    fn http_error_unwraps_nested_anthropic_message() {
+        let json = json!({
+            "error": {
+                "code": 400,
+                "message": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.2: The final block in an assistant message cannot be `thinking`.\"}}",
+                "status": "INVALID_ARGUMENT"
+            }
+        });
+        let s = code_assist_http_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            "claude-sonnet-4-6",
+            &json,
+            &json.to_string(),
+        );
+        assert!(s.contains("claude-sonnet-4-6"), "{s}");
+        assert!(s.contains("cannot be `thinking`"), "{s}");
+        assert!(!s.contains("INVALID_ARGUMENT"), "{s}");
     }
 
     #[test]
