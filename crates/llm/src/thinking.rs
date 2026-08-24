@@ -266,6 +266,26 @@ impl ThinkingConfig {
     }
 }
 
+fn grok_version_at_least(model: &str, min_major: u32, min_minor: u32) -> bool {
+    let Some(rest) = model.find("grok-").map(|i| &model[i + "grok-".len()..]) else {
+        return false;
+    };
+    let ver = rest.split(['-', '_']).next().unwrap_or(rest);
+    if let Some((maj, min)) = ver.split_once('.') {
+        let major = maj.parse::<u32>().unwrap_or(0);
+        let minor = min
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0);
+        return major > min_major || (major == min_major && minor >= min_minor);
+    }
+    ver.parse::<u32>()
+        .map(|major| major > min_major || (major == min_major && min_minor == 0))
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,24 +398,4 @@ mod tests {
         );
         assert!(ThinkingConfig::supported_efforts("anthropic", "claude-sonnet-4").is_empty());
     }
-}
-
-fn grok_version_at_least(model: &str, min_major: u32, min_minor: u32) -> bool {
-    let Some(rest) = model.find("grok-").map(|i| &model[i + "grok-".len()..]) else {
-        return false;
-    };
-    let ver = rest.split(['-', '_']).next().unwrap_or(rest);
-    if let Some((maj, min)) = ver.split_once('.') {
-        let major = maj.parse::<u32>().unwrap_or(0);
-        let minor = min
-            .chars()
-            .take_while(|c| c.is_ascii_digit())
-            .collect::<String>()
-            .parse::<u32>()
-            .unwrap_or(0);
-        return major > min_major || (major == min_major && minor >= min_minor);
-    }
-    ver.parse::<u32>()
-        .map(|major| major > min_major || (major == min_major && min_minor == 0))
-        .unwrap_or(false)
 }
