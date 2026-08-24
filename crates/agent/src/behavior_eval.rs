@@ -474,25 +474,23 @@ fn semantic_policy_corpus_is_valid() {
 fn semantic_policy_baseline_is_explicit() {
     let report = evaluate_corpus(SCENARIOS);
 
-    // Phase 1 freezes the measured pre-policy-change baseline. Phase 2 must
-    // improve these explicit shortfalls rather than silently weakening the
-    // desired scenario contracts above.
+    // Clarification policy: plan/question turns do not silently mutate, and
+    // plan-shaped asks (roadmap, best approach, write a plan) classify as Plan.
     assert_eq!(
         report.metrics,
         EvalMetrics {
             total: 32,
-            intent_matches: 29,
-            authorization_matches: 28,
-            passed: 26,
+            intent_matches: 32,
+            authorization_matches: 32,
+            passed: 32,
         },
         "semantic baseline changed; review every changed scenario:\n{}",
         report.failures.join("\n")
     );
-    assert_eq!(report.failures.len(), 6);
+    assert!(report.failures.is_empty(), "{}", report.failures.join("\n"));
 }
 
 #[test]
-#[ignore = "desired contract ratchet; enable after clarification policy is implemented"]
 fn semantic_policy_corpus_meets_desired_contract() {
     let report = evaluate_corpus(SCENARIOS);
     assert_eq!(
