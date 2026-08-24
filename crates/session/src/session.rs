@@ -512,6 +512,21 @@ pub struct Session {
     /// Incremental char/4 estimate (system + per-message). Not persisted.
     #[serde(skip)]
     token_cache: SessionTokenCache,
+    /// Active exploratory checkpoint (conversation only; not a file snapshot).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointState>,
+    /// Last rewind report, used to reject a second rewind with no new checkpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_rewind_report: Option<String>,
+}
+
+/// Boundary recorded by the `checkpoint` tool for a later `rewind`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CheckpointState {
+    /// Inclusive last message index to keep when rewinding.
+    pub keep_until: usize,
+    pub goal: String,
+    pub started_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Session {
@@ -559,6 +574,8 @@ impl Session {
             updated_at: now,
             usage: Default::default(),
             token_cache,
+            checkpoint: None,
+            last_rewind_report: None,
         }
     }
 
@@ -1298,7 +1315,41 @@ impl Session {
             updated_at,
             usage: row.usage,
             token_cache,
+            checkpoint: None,
+            last_rewind_report: None,
         }))
+    }
+
+    /// Record a conversation checkpoint after the current last message.
+    pub fn mark_checkpoint(&mut self, goal: impl Into<String>) {
+        let keep_until = self.messages.len().saturating_sub(1);
+        self.checkpoint = Some(CheckpointState {
+            keep_until,
+            goal: goal.into(),
+            started_at: chrono::Utc::now(),
+        });
+        self.last_rewind_report = None;
+        self.touch();
+    }
+
+    /// Collapse messages after the active checkpoint and keep `report`.
+    ///
+    /// Returns `false` when no checkpoint is active.
+    pub fn apply_rewind(&mut self, report: &str) -> bool {
+        let Some(cp) = self.checkpoint.take() else {
+            return false;
+        };
+        let _removed = self.revert_to(cp.keep_until);
+        let report = report.trim();
+        let body = format!(
+            "Checkpoint completed. Exploratory context was collapsed.\n\
+             Goal: {}\n\nReport:\n{report}\n\n\
+             Continue from this report. Do not call rewind again until you create a new checkpoint.",
+            cp.goal
+        );
+        self.add_user_message(&body);
+        self.last_rewind_report = Some(report.to_string());
+        true
     }
 }
 
@@ -2240,6 +2291,47 @@ mod tests {
         assert_eq!(removed, 2);
         assert!(session.messages.is_empty());
         assert_eq!(session.undo_last_turn(), 0);
+    }
+
+    #[test]
+    fn checkpoint_rewind_collapses_exploratory_turns() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("investigate leak");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "checkpointing".into(),
+        }]);
+        session.mark_checkpoint("find the leak");
+        assert!(session.checkpoint.is_some());
+        assert_eq!(session.checkpoint.as_ref().unwrap().goal, "find the leak");
+
+        session.add_user_message("dead end A");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "noise".into(),
+        }]);
+        let before = session.messages.len();
+        assert!(before > 2);
+
+        assert!(session.apply_rewind("root cause is X"));
+        assert!(session.checkpoint.is_none());
+        assert_eq!(
+            session.last_rewind_report.as_deref(),
+            Some("root cause is X")
+        );
+        let text = session.conversation_text();
+        assert!(text.contains("root cause is X"));
+        assert!(!text.contains("dead end A"));
+        assert!(session.messages.len() < before);
+
+        assert!(!session.apply_rewind("again"));
+    }
+
+    #[test]
+    fn rewind_without_checkpoint_is_false() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("hi");
+        assert!(!session.apply_rewind("nope"));
+        assert!(session.last_rewind_report.is_none());
+        assert_eq!(session.messages.len(), 1);
     }
 
     #[test]

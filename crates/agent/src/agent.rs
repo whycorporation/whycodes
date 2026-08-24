@@ -185,6 +185,10 @@ pub struct Agent {
     memory: whycode_memory::MemorySettings,
     /// Heuristic intent posture for build turns (`auto` / `off` / `always`).
     intent_guidance: crate::intent::IntentGuidanceMode,
+    /// Hidden per-turn notices for standalone prose keywords.
+    magic_keywords: whycode_config::MagicKeywordsConfig,
+    /// `/fresh`: skip provider prompt cache (and local response cache) once.
+    skip_prompt_cache_once: std::sync::atomic::AtomicBool,
     /// Parallel multi-agent swarm (config-driven).
     swarm_enabled: bool,
     swarm_max_agents: usize,
@@ -216,6 +220,80 @@ const MAX_CONSECUTIVE_COMPACT_FAILURES: u32 = 3;
 
 /// Identical tool name+args this many times in a row → refuse (OpenCode doom_loop).
 const DOOM_LOOP_THRESHOLD: usize = 3;
+
+/// Validate checkpoint/rewind tool results and return pending side effects.
+///
+/// Side effects run after `add_tool_results` so the checkpoint boundary includes
+/// the successful checkpoint tool result.
+fn settle_checkpoint_rewind(
+    session: &Session,
+    tool_calls: &[ToolCall],
+    results: &mut [ToolResult],
+) -> (Option<String>, Option<String>) {
+    let mut checkpoint_goal = None;
+    let mut rewind_report = None;
+    for (tc, r) in tool_calls.iter().zip(results.iter_mut()) {
+        if r.is_error {
+            continue;
+        }
+        match tc.name.as_str() {
+            "checkpoint" => {
+                if session.checkpoint.is_some() {
+                    r.is_error = true;
+                    r.content = "Checkpoint already active.".into();
+                } else if let Some(goal) = tc
+                    .arguments
+                    .get("goal")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    checkpoint_goal = Some(goal.to_string());
+                }
+            }
+            "rewind" => {
+                if session.checkpoint.is_none() {
+                    r.is_error = true;
+                    r.content = if session.last_rewind_report.is_some() {
+                        "Checkpoint already completed; continue from the retained rewind report \
+                         instead of calling rewind again."
+                            .into()
+                    } else {
+                        "No active checkpoint. Create a checkpoint before calling rewind.".into()
+                    };
+                } else if let Some(report) = tc
+                    .arguments
+                    .get("report")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                {
+                    rewind_report = Some(report.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    (checkpoint_goal, rewind_report)
+}
+
+fn append_request_user_suffix(request: &mut whycode_core::types::LlmRequest, suffix: &str) {
+    use whycode_core::types::{MessageContent, Role};
+    for msg in request.messages_mut().iter_mut().rev() {
+        if msg.role != Role::User {
+            continue;
+        }
+        match &mut msg.content {
+            MessageContent::Text(t) => t.push_str(suffix),
+            MessageContent::Blocks(blocks) => {
+                blocks.push(ContentBlock::Text {
+                    text: suffix.to_string(),
+                });
+            }
+        }
+        break;
+    }
+}
 
 fn tool_call_signature(tc: &ToolCall) -> String {
     let args = serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into());
@@ -322,6 +400,8 @@ impl Agent {
             response_cache: true,
             memory: whycode_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
+            magic_keywords: whycode_config::MagicKeywordsConfig::default(),
+            skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             swarm_enabled: true,
             swarm_max_agents: 4,
             swarm_worktrees: true,
@@ -373,6 +453,12 @@ impl Agent {
     pub fn with_question_prompter(mut self, prompter: Arc<dyn QuestionPrompter>) -> Self {
         self.question_prompter = prompter;
         self
+    }
+
+    /// Next LLM turn skips the provider prompt cache (stale cache / wedged stream).
+    pub fn skip_prompt_cache_next(&self) {
+        self.skip_prompt_cache_once
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Load custom providers from config and merge global permission rules.
@@ -427,6 +513,7 @@ impl Agent {
         self.memory = memory_settings_from_config(config);
         self.intent_guidance =
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
+        self.magic_keywords = config.session.magic_keywords.clone();
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config
             .swarm
@@ -783,30 +870,12 @@ impl Agent {
         )
     }
 
-    /// Append project AGENTS.md (OpenCode rules file) and runtime context to a system prompt.
+    /// Append project instruction files (AGENTS.md and sibling conventions)
+    /// plus runtime context to a system prompt.
     pub fn with_agents_md(system_prompt: &str, project_path: &std::path::Path) -> String {
-        let candidates = [
-            project_path.join("AGENTS.md"),
-            project_path.join("agents.md"),
-            project_path.join(".whycode").join("AGENTS.md"),
-        ];
-        let with_agents = {
-            let mut out = None;
-            for path in &candidates {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    let trimmed = content.trim();
-                    if !trimmed.is_empty() {
-                        out = Some(format!(
-                            "{}\n\n# Project Instructions (AGENTS.md)\n\n{}",
-                            system_prompt, trimmed
-                        ));
-                        break;
-                    }
-                }
-            }
-            out.unwrap_or_else(|| system_prompt.to_string())
-        };
-        Self::with_runtime_context(&with_agents)
+        let with_files =
+            crate::context_files::append_project_instructions(system_prompt, project_path);
+        Self::with_runtime_context(&with_files)
     }
 
     /// Resolve provider + model + key for a title refine call, or `None` if
@@ -988,6 +1057,10 @@ impl Agent {
             .find(|m| m.role == whycode_core::types::Role::User)
             .and_then(|m| m.content.as_text().map(|s| s.to_string()))
             .unwrap_or_default();
+        let magic = crate::magic_keywords::scan(&last_user, &self.magic_keywords);
+        let skip_cache = self
+            .skip_prompt_cache_once
+            .swap(false, std::sync::atomic::Ordering::Relaxed);
         let tools_free_chat = crate::title::is_trivial_title_seed(&last_user)
             && session.user_message_count() <= 1
             && !session.messages.iter().any(|m| {
@@ -1141,13 +1214,16 @@ impl Agent {
 
             let mut request =
                 session.build_request(&tools, None, self.info.temperature, Some(true));
-            request.use_prompt_cache = self.use_prompt_cache;
+            request.use_prompt_cache = self.use_prompt_cache && !skip_cache;
             crate::thinking_acc::attach_thinking_request(
                 &mut request,
                 provider_name,
                 model,
                 self.info.model.as_ref(),
             );
+            if magic.ultrathink {
+                crate::thinking_acc::apply_ultrathink(&mut request);
+            }
 
             // First LLM step: ephemeral intent posture (not stored in session;
             // keeps system prompt cache-stable). Notice is already on Intent event.
@@ -1155,28 +1231,22 @@ impl Agent {
                 && crate::intent::should_inject(self.intent_guidance, &turn_intent)
                 && let Some(suffix) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
             {
-                // Append to last user message in the request only.
-                use whycode_core::types::{MessageContent, Role};
-                for msg in request.messages_mut().iter_mut().rev() {
-                    if msg.role != Role::User {
-                        continue;
-                    }
-                    match &mut msg.content {
-                        MessageContent::Text(t) => t.push_str(&suffix),
-                        MessageContent::Blocks(blocks) => {
-                            blocks.push(ContentBlock::Text {
-                                text: suffix.clone(),
-                            });
-                        }
-                    }
-                    tracing::debug!(
-                        intent = turn_intent.intent.as_str(),
-                        confidence = turn_intent.confidence,
-                        agent = %self.info.name,
-                        "intent posture injected into request"
-                    );
-                    break;
-                }
+                append_request_user_suffix(&mut request, &suffix);
+                tracing::debug!(
+                    intent = turn_intent.intent.as_str(),
+                    confidence = turn_intent.confidence,
+                    agent = %self.info.name,
+                    "intent posture injected into request"
+                );
+            }
+            if turn_count == 1 && magic.any() {
+                let notice = magic.notice();
+                append_request_user_suffix(&mut request, &notice);
+                tracing::debug!(
+                    ultrathink = magic.ultrathink,
+                    orchestrate = magic.orchestrate,
+                    "magic keyword notice injected into request"
+                );
             }
 
             let mut accumulated_text = String::new();
@@ -1217,7 +1287,7 @@ impl Agent {
                     },
                     &request,
                     whycode_llm::StreamTurnOpts {
-                        cache: self.response_cache && request.tools.is_empty(),
+                        cache: self.response_cache && request.tools.is_empty() && !skip_cache,
                         race: race_target,
                         race_after: self.race_after,
                     },
@@ -1537,6 +1607,10 @@ impl Agent {
                 results
             };
 
+            let mut results = results;
+            let (checkpoint_goal, rewind_report) =
+                settle_checkpoint_rewind(session, &tool_calls, &mut results);
+
             // Capture failures before move — avoid cloning large tool bodies.
             let failed_tools: Vec<String> = results
                 .iter()
@@ -1550,6 +1624,16 @@ impl Agent {
                 .collect();
 
             session.add_tool_results(results);
+            if let Some(goal) = checkpoint_goal {
+                session.mark_checkpoint(goal);
+            }
+            if let Some(report) = rewind_report {
+                if session.apply_rewind(&report) {
+                    tracing::debug!("collapsed exploratory context after rewind");
+                } else {
+                    tracing::debug!("rewind requested with no active checkpoint");
+                }
+            }
 
             // Fold subagent tokens into this turn + parent session (plan-performance).
             if let Ok(mut pending) = self.subagent_usage_pending.lock()
@@ -3773,6 +3857,84 @@ mod permission_detail_tests {
             whycode_memory::MemoryScope::parse(&config.memory.scope)
         );
         assert_eq!(m.agent_bank, None);
+    }
+
+    #[test]
+    fn skip_prompt_cache_next_is_oneshot() {
+        let a = test_agent();
+        assert!(
+            !a.skip_prompt_cache_once
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        a.skip_prompt_cache_next();
+        assert!(
+            a.skip_prompt_cache_once
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+        assert!(
+            a.skip_prompt_cache_once
+                .swap(false, std::sync::atomic::Ordering::Relaxed)
+        );
+        assert!(
+            !a.skip_prompt_cache_once
+                .load(std::sync::atomic::Ordering::Relaxed)
+        );
+    }
+
+    #[test]
+    fn settle_checkpoint_rewind_guards_and_extracts() {
+        let mut session = Session::new(std::path::PathBuf::from("/p"), "s".into());
+        let calls = [tc("rewind", serde_json::json!({"report": "findings"}))];
+        let mut results = [ToolResult {
+            tool_call_id: "t1".into(),
+            content: "ok".into(),
+            is_error: false,
+        }];
+        let (goal, report) = settle_checkpoint_rewind(&session, &calls, &mut results);
+        assert!(goal.is_none());
+        assert!(report.is_none());
+        assert!(results[0].is_error);
+        assert!(results[0].content.contains("No active checkpoint"));
+
+        session.mark_checkpoint("look");
+        results[0].is_error = false;
+        results[0].content = "ok".into();
+        let (goal, report) = settle_checkpoint_rewind(&session, &calls, &mut results);
+        assert!(goal.is_none());
+        assert_eq!(report.as_deref(), Some("findings"));
+        assert!(!results[0].is_error);
+
+        let cp_calls = [tc("checkpoint", serde_json::json!({"goal": "again"}))];
+        let mut cp_results = [ToolResult {
+            tool_call_id: "t1".into(),
+            content: "ok".into(),
+            is_error: false,
+        }];
+        let (goal, report) = settle_checkpoint_rewind(&session, &cp_calls, &mut cp_results);
+        assert!(goal.is_none() && report.is_none());
+        assert!(cp_results[0].is_error);
+        assert!(cp_results[0].content.contains("already active"));
+
+        let mut fresh = Session::new(std::path::PathBuf::from("/p"), "s".into());
+        fresh.last_rewind_report = Some("old".into());
+        let mut again = [ToolResult {
+            tool_call_id: "t1".into(),
+            content: "ok".into(),
+            is_error: false,
+        }];
+        let (_g, _r) = settle_checkpoint_rewind(&fresh, &calls, &mut again);
+        assert!(again[0].content.contains("already completed"));
+
+        let empty = Session::new(std::path::PathBuf::from("/p"), "s".into());
+        let mk = [tc("checkpoint", serde_json::json!({"goal": "scan"}))];
+        let mut mk_r = [ToolResult {
+            tool_call_id: "t1".into(),
+            content: "ok".into(),
+            is_error: false,
+        }];
+        let (goal, _) = settle_checkpoint_rewind(&empty, &mk, &mut mk_r);
+        assert_eq!(goal.as_deref(), Some("scan"));
+        assert!(!mk_r[0].is_error);
     }
 
     fn test_agent() -> Agent {

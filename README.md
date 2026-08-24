@@ -46,6 +46,14 @@ against the published `SHA256SUMS`. For downloadable binaries, installation
 details and uninstall instructions, see
 [docs/packaging.md](docs/packaging.md).
 
+Shell completions are generated from the live CLI:
+
+```bash
+eval "$(whycode completions zsh)"    # ~/.zshrc
+eval "$(whycode completions bash)"   # ~/.bashrc
+whycode completions fish > ~/.config/fish/completions/whycode.fish
+```
+
 ## Quick start
 
 ```bash

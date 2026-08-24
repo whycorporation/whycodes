@@ -936,6 +936,34 @@ pub struct SessionConfig {
     /// `"off"` is the local stub only.
     #[serde(default = "default_compaction_llm")]
     pub compaction_llm: String,
+    /// Standalone prose keywords (`ultrathink`, `orchestrate`) that inject a
+    /// hidden per-turn instruction. Default on.
+    #[serde(default)]
+    pub magic_keywords: MagicKeywordsConfig,
+}
+
+/// Per-turn hidden notices when the user writes a magic keyword in prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MagicKeywordsConfig {
+    /// Master switch. Default on.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// `ultrathink` — careful multi-step reasoning + highest thinking effort.
+    #[serde(default = "default_true")]
+    pub ultrathink: bool,
+    /// `orchestrate` — parallel subagent contract until the request is done.
+    #[serde(default = "default_true")]
+    pub orchestrate: bool,
+}
+
+impl Default for MagicKeywordsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ultrathink: true,
+            orchestrate: true,
+        }
+    }
 }
 
 impl Default for SessionConfig {
@@ -954,6 +982,7 @@ impl Default for SessionConfig {
             response_cache: default_response_cache(),
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
+            magic_keywords: MagicKeywordsConfig::default(),
         }
     }
 }
@@ -1461,6 +1490,9 @@ impl Config {
         }
         if other.session.intent_guidance != default_intent_guidance() {
             merged.session.intent_guidance = other.session.intent_guidance.clone();
+        }
+        if other.session.magic_keywords != MagicKeywordsConfig::default() {
+            merged.session.magic_keywords = other.session.magic_keywords.clone();
         }
 
         // TUI

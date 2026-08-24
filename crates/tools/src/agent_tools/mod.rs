@@ -1,4 +1,5 @@
 pub mod background;
+pub mod checkpoint;
 pub mod code_mode;
 pub mod memory;
 pub mod panel;

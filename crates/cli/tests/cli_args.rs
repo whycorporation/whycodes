@@ -29,6 +29,10 @@ fn test_cli_help() {
     assert!(s.contains("run") && s.contains("generate"), "help: {}", s);
     assert!(s.contains("connect"), "help should list connect: {s}");
     assert!(
+        s.contains("completions"),
+        "help should list completions: {s}"
+    );
+    assert!(
         s.contains("--continue") || s.contains("-c"),
         "help should document --continue: {s}"
     );
@@ -51,6 +55,17 @@ fn test_version_includes_semver_and_build_meta() {
     assert!(
         s.contains('(') && s.contains(')'),
         "version should include (git-hash build-date): {s}"
+    );
+}
+
+#[test]
+fn test_completions_bash_emits_script() {
+    let o = run(&["completions", "bash"]);
+    assert_ok(&["completions", "bash"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("whycode") && (s.contains("_whycode") || s.contains("complete")),
+        "bash completions should mention whycode: {s}"
     );
 }
 
@@ -741,6 +756,7 @@ fn test_plain_repl_slash_commands_without_api_key() {
          /new\n\
          /share\n\
          /compact\n\
+         /fresh\n\
          /diff\n\
          /cost\n\
          /context\n\

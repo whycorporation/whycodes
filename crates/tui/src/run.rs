@@ -4276,6 +4276,13 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.mark_dirty();
             }
         }
+        "/fresh" => {
+            ctx.agent.skip_prompt_cache_next();
+            ctx.app.toasts.push(
+                crate::toast::ToastKind::Info,
+                "Next turn skips the provider prompt cache",
+            );
+        }
         "/bg" => {
             let rest = rest.trim();
             if rest.is_empty() || rest == "list" {
@@ -6688,6 +6695,15 @@ mod tests {
             h.app.status_message.contains("Compacting conversation"),
             "{}",
             h.app.status_message
+        );
+        h.run("/fresh").await;
+        assert!(
+            h.app
+                .toasts
+                .visible()
+                .iter()
+                .any(|t| t.message.contains("prompt cache")),
+            "expected /fresh toast"
         );
         assert_eq!(
             h.pending_compact.as_deref(),

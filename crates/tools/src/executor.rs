@@ -3,10 +3,10 @@ use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
 use crate::{
-    apply_patch, background, blame, browser, code_mode, commit, diff, edit, external_directory,
-    fetch, glob, grep, issue, list, log, lsp, memory, panel, plan, pr, question, read, schedule,
-    search, shell, skill, status, swarm, swarm_message, task, todo_read, todo_write, tool_search,
-    truncate, worktree, write,
+    apply_patch, background, blame, browser, checkpoint, code_mode, commit, diff, edit,
+    external_directory, fetch, glob, grep, issue, list, log, lsp, memory, panel, plan, pr,
+    question, read, schedule, search, shell, skill, status, swarm, swarm_message, task, todo_read,
+    todo_write, tool_search, truncate, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -53,6 +53,8 @@ impl ToolExecutor {
         executor.register(Box::new(todo_write::TodoWriteTool::new()));
         executor.register(Box::new(todo_read::TodoReadTool::new()));
         executor.register(Box::new(memory::MemoryTool::new()));
+        executor.register(Box::new(checkpoint::CheckpointTool::new()));
+        executor.register(Box::new(checkpoint::RewindTool::new()));
         executor.register(Box::new(question::QuestionTool::new()));
         executor.register(Box::new(panel::PanelTool::new()));
         executor.register(Box::new(plan::PlanTool::new()));
@@ -328,6 +330,8 @@ mod tests {
             "lsp",
             "panel",
             "plan",
+            "checkpoint",
+            "rewind",
         ] {
             assert!(names.contains(&n.to_string()), "missing {n}");
         }
