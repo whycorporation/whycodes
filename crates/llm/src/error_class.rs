@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use serde::Deserialize;
 use whycode_core::Error;
 
 use crate::rate_limit::parse_retry_after;
@@ -85,9 +86,6 @@ impl ClassifiedError {
                 if lower.contains("xai") {
                     return "xAI authentication failed — run `whycode auth login xai` (or set XAI_API_KEY)".into();
                 }
-                if lower.contains("code assist") && !lower.contains("not eligible") {
-                    return "Google authentication failed — run `whycode auth login google-antigravity` (or `google`)".into();
-                }
                 if lower.contains("not eligible") && lower.contains("code assist") {
                     // Gemini Code Assist free-tier eligibility is account-based;
                     // the credential is fine, so "check API key" misleads.
@@ -95,30 +93,48 @@ impl ClassifiedError {
                 }
                 if self.status == Some(403) {
                     // A 403 usually carries the actionable reason (plan, region,
-                    // eligibility) in the provider body — surface it.
+                    // eligibility) in the provider body — surface it before
+                    // the generic "run login" hint.
                     let m = self.message.trim().trim_start_matches("LLM error:").trim();
-                    let snippet = if m.len() > 160 {
-                        format!("{}…", m.chars().take(159).collect::<String>())
-                    } else {
-                        m.to_string()
-                    };
-                    return format!("Forbidden by the provider (HTTP 403): {snippet}");
+                    let reason = extract_provider_reason(m)
+                        .map(|r| compact_reason(&r, 160))
+                        .unwrap_or_else(|| {
+                            if m.len() > 160 {
+                                format!("{}…", m.chars().take(159).collect::<String>())
+                            } else {
+                                m.to_string()
+                            }
+                        });
+                    return format!("Forbidden by the provider (HTTP 403): {reason}");
+                }
+                if lower.contains("code assist") {
+                    return "Google authentication failed — run `whycode auth login google-antigravity` (or `google`)".into();
                 }
                 "Authentication failed — check API key".into()
             }
             ErrorKind::Client => {
                 if let Some(s) = self.status {
-                    // Surface model/host from Code Assist 404s so "unknown
-                    // family id" is distinguishable from a dead endpoint.
+                    // Code Assist wraps Anthropic JSON in `error.message`.
+                    // Dumping the first 80 chars after `model=` produced
+                    // `model=claude-sonnet-4-6: {"error":{"message":"{\"type`
+                    // instead of the actual rejection reason.
                     let m = self.message.trim();
-                    if let Some(idx) = m.find("model=") {
-                        let rest: String = m[idx..].chars().take(80).collect();
-                        return format!("Request rejected (HTTP {s}): {rest}");
-                    }
-                    format!("Request rejected (HTTP {s})")
-                } else {
-                    "Request rejected by the provider".into()
+                    let model = extract_model_label(m);
+                    let reason = extract_provider_reason(m).map(|r| compact_reason(&r, 180));
+                    return match (model, reason) {
+                        (Some(model), Some(reason)) => {
+                            format!("Request rejected (HTTP {s}) · {model}: {reason}")
+                        }
+                        (Some(model), None) => {
+                            format!("Request rejected (HTTP {s}): model={model}")
+                        }
+                        (None, Some(reason)) => {
+                            format!("Request rejected (HTTP {s}): {reason}")
+                        }
+                        (None, None) => format!("Request rejected (HTTP {s})"),
+                    };
                 }
+                "Request rejected by the provider".into()
             }
             ErrorKind::Cancelled => "Cancelled".into(),
             ErrorKind::Unknown => {
@@ -352,6 +368,60 @@ pub fn extract_http_status(msg: &str) -> Option<u16> {
     }
 
     None
+}
+
+/// `model=claude-sonnet-4-6` from a Code Assist error line.
+fn extract_model_label(msg: &str) -> Option<String> {
+    let idx = msg.find("model=")?;
+    let rest = &msg[idx + "model=".len()..];
+    let label: String = rest
+        .chars()
+        .take_while(|c| !c.is_whitespace() && *c != ':' && *c != ',' && *c != '"' && *c != '{')
+        .collect();
+    let label = label.trim().trim_matches(['.', ';']);
+    if label.is_empty() {
+        None
+    } else {
+        Some(label.to_string())
+    }
+}
+
+/// Innermost provider `message` from Google / Anthropic JSON, if any.
+pub fn extract_provider_reason(raw: &str) -> Option<String> {
+    let mut current = first_json_value(raw)?;
+    for _ in 0..4 {
+        let msg = current
+            .pointer("/error/error/message")
+            .or_else(|| current.pointer("/error/message"))
+            .or_else(|| current.pointer("/message"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())?;
+        if msg.starts_with('{')
+            && let Some(nested) = first_json_value(msg)
+        {
+            current = nested;
+            continue;
+        }
+        return Some(msg.to_string());
+    }
+    None
+}
+
+fn first_json_value(s: &str) -> Option<serde_json::Value> {
+    let start = s.find('{')?;
+    let mut de = serde_json::Deserializer::from_str(&s[start..]);
+    Deserialize::deserialize(&mut de).ok()
+}
+
+fn compact_reason(s: &str, max_chars: usize) -> String {
+    let squashed: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if squashed.chars().count() <= max_chars {
+        return squashed;
+    }
+    let mut out: String = squashed.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('…');
+    out
 }
 
 fn extract_retry_after(msg: &str) -> Option<Duration> {
@@ -593,7 +663,27 @@ mod tests {
         assert_eq!(c.status, Some(404));
         let msg = c.user_message();
         assert!(msg.contains("404"), "{msg}");
-        assert!(msg.contains("model=gemini-3.1-pro"), "{msg}");
+        assert!(msg.contains("gemini-3.1-pro"), "{msg}");
+        assert!(!msg.contains('{'), "{msg}");
+    }
+
+    #[test]
+    fn code_assist_400_unwraps_nested_anthropic_json() {
+        let raw = r#"LLM error: Code Assist error (400 Bad Request) model=claude-sonnet-4-6: {"error":{"code":400,"message":"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.2: The final block in an assistant message cannot be `thinking`.\"}}","status":"INVALID_ARGUMENT"}}"#;
+        let c = classify_message(raw);
+        assert_eq!(c.kind, ErrorKind::Client);
+        assert_eq!(c.status, Some(400));
+        let msg = c.user_message();
+        assert!(msg.contains("400"), "{msg}");
+        assert!(msg.contains("claude-sonnet-4-6"), "{msg}");
+        assert!(
+            msg.contains("cannot be `thinking`"),
+            "expected inner Anthropic reason, got {msg}"
+        );
+        assert!(
+            !msg.contains("{\"type"),
+            "must not dump the nested JSON blob: {msg}"
+        );
     }
 
     #[test]

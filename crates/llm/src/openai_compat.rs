@@ -469,7 +469,14 @@ pub fn reasoning_text_from_delta(delta: &Value) -> Option<String> {
 /// JSON Schema keywords that strict OpenAI-compatible endpoints reject
 /// (regression: jcode#687 `uniqueItems`, jcode#754 `propertyNames`). One bad
 /// tool fails the *whole* request there, so these are stripped recursively.
-const OPENAI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &["uniqueItems", "propertyNames"];
+const OPENAI_UNSUPPORTED_SCHEMA_KEYS: &[&str] = &[
+    "uniqueItems",
+    "propertyNames",
+    // Code Assist proto-JSON rejects `$schema` / `$id` on tool parameters
+    // (Claude-via-Antigravity 400: Unknown name "$schema").
+    "$schema",
+    "$id",
+];
 
 /// The full JSON type union, used when a schema omits `type` entirely: legal
 /// JSON Schema (accepts anything) but rejected by OpenAI's narrower subset
@@ -988,6 +995,14 @@ mod tests {
         let out = sanitize_schema_for_openai(&schema);
         assert!(out.pointer("/properties/ids/uniqueItems").is_none());
         assert!(out.pointer("/properties/data/propertyNames").is_none());
+        let with_meta = sanitize_schema_for_openai(&json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$id": "urn:example",
+            "type": "object",
+        }));
+        assert!(with_meta.get("$schema").is_none());
+        assert!(with_meta.get("$id").is_none());
+        assert_eq!(with_meta["type"], json!("object"));
         // Everything else is preserved.
         assert_eq!(
             out.pointer("/properties/ids/items/type"),
