@@ -86,6 +86,9 @@ impl Default for ProviderRegistry {
         registry.register(Box::new(super::providers::openai::OpenAiProvider::new()));
         registry.register(Box::new(super::providers::copilot::CopilotProvider::new()));
         registry.register(Box::new(super::providers::google::GoogleProvider::new()));
+        registry.register(Box::new(
+            super::providers::antigravity::AntigravityProvider::new(),
+        ));
         registry.register(Box::new(super::providers::deepseek::DeepSeekProvider::new()));
         registry.register(Box::new(
             super::providers::openrouter::OpenRouterProvider::new(),
@@ -126,6 +129,7 @@ mod tests {
             "openai",
             "github-copilot",
             "google",
+            "google-antigravity",
             "deepseek",
             "openrouter",
             "ollama",

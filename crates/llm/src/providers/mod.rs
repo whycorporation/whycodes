@@ -1,6 +1,7 @@
 //! Built-in LLM provider implementations.
 
 pub mod anthropic;
+pub mod antigravity;
 pub mod codeassist;
 pub mod codex;
 pub mod copilot;
@@ -161,6 +162,16 @@ mod tests {
         assert_eq!(
             p.default_base_url(),
             "https://api.githubcopilot.com/chat/completions"
+        );
+    }
+
+    #[test]
+    fn antigravity_identity() {
+        let p = antigravity::AntigravityProvider::new();
+        assert_eq!(p.name(), "google-antigravity");
+        assert_eq!(
+            p.default_base_url(),
+            "https://daily-cloudcode-pa.googleapis.com/v1internal"
         );
     }
 }

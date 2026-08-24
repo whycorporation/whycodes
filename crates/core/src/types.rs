@@ -402,6 +402,7 @@ impl ProviderConfig {
             "groq" => "https://api.groq.com/openai/v1",
             "deepseek" => "https://api.deepseek.com/v1",
             "google" | "gemini" => "https://generativelanguage.googleapis.com/v1beta",
+            "google-antigravity" => "https://daily-cloudcode-pa.googleapis.com/v1internal",
             "azure" | "azure_openai" => "https://{resource}.openai.azure.com/openai",
             "openrouter" => "https://openrouter.ai/api/v1",
             "together" | "together_ai" => "https://api.together.xyz/v1",

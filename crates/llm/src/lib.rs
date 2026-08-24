@@ -20,8 +20,8 @@ pub mod types;
 pub mod usage_dump;
 
 pub use providers::{
-    anthropic, codeassist, codex, copilot, custom, deepseek, google, groq, mistral, ollama, openai,
-    openrouter, together, xai,
+    anthropic, antigravity, codeassist, codex, copilot, custom, deepseek, google, groq, mistral,
+    ollama, openai, openrouter, together, xai,
 };
 
 pub use cache::{CacheConfig, CachePolicy, apply_anthropic_cache_policy};

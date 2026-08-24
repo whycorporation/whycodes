@@ -1797,6 +1797,7 @@ mod types_tests {
             "groq",
             "deepseek",
             "google",
+            "google-antigravity",
             "gemini",
             "azure",
             "openrouter",

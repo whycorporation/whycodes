@@ -1697,6 +1697,7 @@ fn open_provider_dialog(app: &mut TuiApp) {
         "anthropic",
         "openai",
         "google",
+        "google-antigravity",
         "groq",
         "deepseek",
         "mistral",
