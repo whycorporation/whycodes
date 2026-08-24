@@ -240,7 +240,7 @@ impl SubagentRunner {
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
             whycode_core::Error::Llm(format!(
-                "Unknown provider: {}. Available: anthropic, openai, google",
+                "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity",
                 provider_name
             ))
         })?;

@@ -1033,7 +1033,7 @@ impl Agent {
             .get(provider_name)
             .ok_or_else(|| {
                 whycode_core::Error::Llm(format!(
-                    "Unknown provider: {}. Available: anthropic, openai, google, and configured custom providers",
+                    "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity, and configured custom providers",
                     provider_name
                 ))
             })?;

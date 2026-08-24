@@ -7,21 +7,52 @@
 //! envelope. `GoogleProvider` delegates here when the credential is an
 //! OAuth access token (`ya29.…`); `AIza…` API keys keep the old path.
 //!
+//! Antigravity subscription tokens (`whycode auth login google-antigravity`)
+//! use the same RPC shape against `daily-cloudcode-pa.googleapis.com` with
+//! the native hub User-Agent and `{ ideType: ANTIGRAVITY }` metadata.
+//!
 //! Code Assist needs a Cloud project id. Resolution order:
-//! `GOOGLE_CLOUD_PROJECT` env → `loadCodeAssist` (an already-onboarded
-//! account returns its managed project) → `onboardUser` on the free tier
-//! (long-running operation, polled). The result is cached process-wide.
+//! stored OAuth extra `project_id` → `GOOGLE_CLOUD_PROJECT` env →
+//! `loadCodeAssist` (an already-onboarded account returns its managed
+//! project) → `onboardUser` on the free tier (long-running operation,
+//! polled). The result is cached process-wide per OAuth provider.
 
 use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{OnceLock, RwLock};
 use whycode_core::types::{
     ContentBlock, LlmRequest, LlmResponse, MessageContent, Role, StreamEvent, Usage,
 };
 
-const BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+const GEMINI_CLI_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+const ANTIGRAVITY_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+const ANTIGRAVITY_USER_AGENT: &str =
+    "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)";
+
+#[derive(Clone, Copy)]
+struct Profile {
+    oauth_provider: &'static str,
+    base: &'static str,
+    user_agent: Option<&'static str>,
+    antigravity: bool,
+}
+
+const GEMINI_CLI: Profile = Profile {
+    oauth_provider: "google",
+    base: GEMINI_CLI_BASE,
+    user_agent: None,
+    antigravity: false,
+};
+
+const ANTIGRAVITY: Profile = Profile {
+    oauth_provider: "google-antigravity",
+    base: ANTIGRAVITY_BASE,
+    user_agent: Some(ANTIGRAVITY_USER_AGENT),
+    antigravity: true,
+};
 
 /// Client metadata the Code Assist service expects (Gemini CLI sends the
 /// same shape; the values label an unspecified IDE on the current platform).
@@ -33,67 +64,120 @@ fn client_metadata() -> Value {
     })
 }
 
+fn metadata_for(profile: &Profile) -> Value {
+    if profile.antigravity {
+        json!({ "ideType": "ANTIGRAVITY" })
+    } else {
+        client_metadata()
+    }
+}
+
 /// True when `key` is a Google OAuth access token rather than an API key
 /// (`AIza…`). OAuth tokens are rejected by the generativelanguage route.
 pub fn is_google_oauth_token(key: &str) -> bool {
     key.starts_with("ya29.")
 }
 
-/// Process-wide cache for the resolved Code Assist project id.
-fn project_cache() -> &'static RwLock<Option<String>> {
-    static CACHE: OnceLock<RwLock<Option<String>>> = OnceLock::new();
-    CACHE.get_or_init(|| RwLock::new(None))
+/// Process-wide cache for the resolved Code Assist project id, keyed by
+/// OAuth provider (`google` vs `google-antigravity`).
+fn project_cache() -> &'static RwLock<HashMap<String, String>> {
+    static CACHE: OnceLock<RwLock<HashMap<String, String>>> = OnceLock::new();
+    CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-fn cached_project() -> Option<String> {
-    project_cache().read().ok()?.clone()
+fn cached_project(provider: &str) -> Option<String> {
+    project_cache().read().ok()?.get(provider).cloned()
 }
 
-fn cache_project(id: &str) {
+fn cache_project(provider: &str, id: &str) {
     if let Ok(mut guard) = project_cache().write() {
-        *guard = Some(id.to_string());
+        guard.insert(provider.to_string(), id.to_string());
     }
 }
 
-/// POST `{BASE}{path}` with the OAuth bearer token; a 401 force-renews the
-/// stored credential once via `oauth_refresh` (Google tokens last 1h, so a
+fn authorize(
+    profile: &Profile,
+    req: reqwest::RequestBuilder,
+    key: &str,
+) -> reqwest::RequestBuilder {
+    let req = req.header("Authorization", format!("Bearer {key}"));
+    if let Some(ua) = profile.user_agent {
+        req.header("User-Agent", ua)
+    } else {
+        crate::client_identity::with_identity(req)
+    }
+}
+
+/// POST `{profile.base}{path}` with the OAuth bearer token; a 401 force-renews
+/// the stored credential once via `oauth_refresh` (Google tokens last 1h, so a
 /// revoked or early-expired token is the common failure).
-async fn post(path: &str, api_key: &str, body: &Value) -> whycode_core::Result<reqwest::Response> {
-    crate::oauth_refresh::send_with_refresh_retry("google", api_key, |key| {
-        crate::client_identity::post(format!("{BASE}{path}").as_str())
-            .header("Authorization", format!("Bearer {key}"))
-            .json(body)
+async fn post(
+    profile: &Profile,
+    path: &str,
+    api_key: &str,
+    body: &Value,
+) -> whycode_core::Result<reqwest::Response> {
+    let url = format!("{}{path}", profile.base);
+    crate::oauth_refresh::send_with_refresh_retry(profile.oauth_provider, api_key, |key| {
+        authorize(
+            profile,
+            crate::client_identity::http_client().post(&url),
+            key,
+        )
+        .header("Content-Type", "application/json")
+        .json(body)
     })
     .await
 }
 
-/// GET an LRO status (`GET {BASE}/{operation_name}`) with the same retry.
-async fn get(path: &str, api_key: &str) -> whycode_core::Result<reqwest::Response> {
-    crate::oauth_refresh::send_with_refresh_retry("google", api_key, |key| {
-        crate::client_identity::http_client()
-            .get(format!("{BASE}{path}").as_str())
-            .header("Authorization", format!("Bearer {key}"))
+/// GET an LRO status (`GET {profile.base}/{operation_name}`) with the same retry.
+async fn get(
+    profile: &Profile,
+    path: &str,
+    api_key: &str,
+) -> whycode_core::Result<reqwest::Response> {
+    let url = format!("{}{path}", profile.base);
+    crate::oauth_refresh::send_with_refresh_retry(profile.oauth_provider, api_key, |key| {
+        authorize(
+            profile,
+            crate::client_identity::http_client().get(&url),
+            key,
+        )
     })
     .await
 }
 
 /// Resolve the Code Assist project id for this credential, cached
-/// process-wide. See the module docs for the resolution order.
-async fn project_id(api_key: &str) -> whycode_core::Result<String> {
-    if let Some(cached) = cached_project() {
+/// process-wide per OAuth provider. See the module docs for the resolution
+/// order.
+async fn project_id(profile: &Profile, api_key: &str) -> whycode_core::Result<String> {
+    if let Some(cached) = cached_project(profile.oauth_provider) {
         return Ok(cached);
+    }
+    if let Some(id) = crate::oauth_refresh::stored_extra(profile.oauth_provider, "project_id")
+        .await
+        .filter(|p| !p.is_empty())
+    {
+        cache_project(profile.oauth_provider, &id);
+        return Ok(id);
     }
     let env_project = std::env::var("GOOGLE_CLOUD_PROJECT")
         .ok()
         .filter(|p| !p.is_empty())
-        .or(Some("whycodes".to_string()));
+        .or_else(|| {
+            if profile.antigravity {
+                None
+            } else {
+                Some("whycodes".to_string())
+            }
+        });
 
     // 1. loadCodeAssist: an already-onboarded account reports its project.
-    let mut load_body = json!({ "metadata": client_metadata() });
+    let mut load_body = json!({ "metadata": metadata_for(profile) });
     if let Some(p) = &env_project {
         load_body["cloudaicompanionProject"] = Value::String(p.clone());
     }
-    let resp = post(":loadCodeAssist", api_key, &load_body).await?;
+    let resp = post(profile, ":loadCodeAssist", api_key, &load_body).await?;
     let status = resp.status();
     let json: Value = resp
         .json()
@@ -106,25 +190,25 @@ async fn project_id(api_key: &str) -> whycode_core::Result<String> {
         )));
     }
     if let Some(id) = json["cloudaicompanionProject"].as_str() {
-        cache_project(id);
+        cache_project(profile.oauth_provider, id);
         return Ok(id.to_string());
     }
     if json["currentTier"].is_object()
         && let Some(p) = &env_project
     {
         // Paid tier without a reported project: the env project is the one.
-        cache_project(p);
+        cache_project(profile.oauth_provider, p);
         return Ok(p.clone());
     }
 
     // 2. Not onboarded: pick a tier (free tier unless the user brought a
     // project) and run onboardUser, polling the long-running operation.
     let tier = pick_tier(&json, env_project.is_some());
-    let mut onboard = json!({ "tierId": tier, "metadata": client_metadata() });
+    let mut onboard = json!({ "tierId": tier, "metadata": metadata_for(profile) });
     if let Some(p) = &env_project {
         onboard["cloudaicompanionProject"] = Value::String(p.clone());
     }
-    let resp = post(":onboardUser", api_key, &onboard).await?;
+    let resp = post(profile, ":onboardUser", api_key, &onboard).await?;
     let status = resp.status();
     let op: Value = resp
         .json()
@@ -146,7 +230,7 @@ async fn project_id(api_key: &str) -> whycode_core::Result<String> {
             break;
         };
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        let resp = get(&format!("/{name}"), api_key).await?;
+        let resp = get(profile, &format!("/{name}"), api_key).await?;
         operation = resp
             .json()
             .await
@@ -162,7 +246,7 @@ async fn project_id(api_key: &str) -> whycode_core::Result<String> {
                     .to_string(),
             )
         })?;
-    cache_project(project);
+    cache_project(profile.oauth_provider, project);
     Ok(project.to_string())
 }
 
@@ -280,6 +364,42 @@ fn build_inner_request(request: &LlmRequest) -> Value {
     inner
 }
 
+fn apply_antigravity_inner(inner: &mut Value, request: &LlmRequest) {
+    if let Some(si) = inner.get_mut("systemInstruction") {
+        si["role"] = json!("user");
+    }
+    if !request.tools.is_empty() {
+        inner["toolConfig"] = json!({
+            "functionCallingConfig": { "mode": "VALIDATED" }
+        });
+    }
+}
+
+fn wrap_envelope(
+    profile: &Profile,
+    model: &str,
+    project: &str,
+    mut inner: Value,
+    request: &LlmRequest,
+) -> Value {
+    if profile.antigravity {
+        apply_antigravity_inner(&mut inner, request);
+        json!({
+            "model": model,
+            "project": project,
+            "request": inner,
+            "userAgent": "antigravity",
+            "requestType": "agent",
+        })
+    } else {
+        json!({
+            "model": model,
+            "project": project,
+            "request": inner,
+        })
+    }
+}
+
 /// Map one Code Assist SSE chunk (a GenerateContentResponse, tolerating a
 /// `{"response": …}` wrapper) to whycode stream events. Pure for tests.
 /// `call_seq` mints ids for function calls — Gemini does not send any, but
@@ -335,13 +455,33 @@ pub async fn complete(
     api_key: &str,
     model: &str,
 ) -> whycode_core::Result<LlmResponse> {
-    let project = project_id(api_key).await?;
-    let body = json!({
-        "model": model,
-        "project": project,
-        "request": build_inner_request(request),
-    });
-    let resp = post(":generateContent", api_key, &body).await?;
+    complete_with(&GEMINI_CLI, request, api_key, model).await
+}
+
+/// Antigravity subscription path (`google-antigravity` OAuth).
+pub async fn complete_antigravity(
+    request: &LlmRequest,
+    api_key: &str,
+    model: &str,
+) -> whycode_core::Result<LlmResponse> {
+    complete_with(&ANTIGRAVITY, request, api_key, model).await
+}
+
+async fn complete_with(
+    profile: &Profile,
+    request: &LlmRequest,
+    api_key: &str,
+    model: &str,
+) -> whycode_core::Result<LlmResponse> {
+    let project = project_id(profile, api_key).await?;
+    let body = wrap_envelope(
+        profile,
+        model,
+        &project,
+        build_inner_request(request),
+        request,
+    );
+    let resp = post(profile, ":generateContent", api_key, &body).await?;
     let status = resp.status();
     let json: Value = resp
         .json()
@@ -403,13 +543,33 @@ pub async fn stream(
     api_key: &str,
     model: &str,
 ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
-    let project = project_id(api_key).await?;
-    let body = json!({
-        "model": model,
-        "project": project,
-        "request": build_inner_request(request),
-    });
-    let resp = post(":streamGenerateContent?alt=sse", api_key, &body).await?;
+    stream_with(&GEMINI_CLI, request, api_key, model).await
+}
+
+/// Antigravity subscription path (`google-antigravity` OAuth).
+pub async fn stream_antigravity(
+    request: &LlmRequest,
+    api_key: &str,
+    model: &str,
+) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
+    stream_with(&ANTIGRAVITY, request, api_key, model).await
+}
+
+async fn stream_with(
+    profile: &Profile,
+    request: &LlmRequest,
+    api_key: &str,
+    model: &str,
+) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
+    let project = project_id(profile, api_key).await?;
+    let body = wrap_envelope(
+        profile,
+        model,
+        &project,
+        build_inner_request(request),
+        request,
+    );
+    let resp = post(profile, ":streamGenerateContent?alt=sse", api_key, &body).await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -497,6 +657,41 @@ mod tests {
                 "pluginType": "GEMINI",
             })
         );
+        assert_eq!(
+            metadata_for(&ANTIGRAVITY),
+            json!({ "ideType": "ANTIGRAVITY" })
+        );
+    }
+
+    #[test]
+    fn antigravity_envelope_tags_native_client() {
+        let request = empty_request(vec![message(
+            Role::User,
+            MessageContent::Text("hi".to_string()),
+        )]);
+        let mut inner = build_inner_request(&history_with_tool_call());
+        apply_antigravity_inner(&mut inner, &history_with_tool_call());
+        assert_eq!(inner["systemInstruction"]["role"], "user");
+        assert_eq!(
+            inner["toolConfig"]["functionCallingConfig"]["mode"],
+            "VALIDATED"
+        );
+
+        let body = wrap_envelope(&ANTIGRAVITY, "gemini-3.1-pro", "proj", inner, &request);
+        assert_eq!(body["userAgent"], "antigravity");
+        assert_eq!(body["requestType"], "agent");
+        assert_eq!(body["project"], "proj");
+        assert_eq!(body["model"], "gemini-3.1-pro");
+
+        let gemini = wrap_envelope(
+            &GEMINI_CLI,
+            "gemini-2.5-pro",
+            "g",
+            build_inner_request(&request),
+            &request,
+        );
+        assert!(gemini.get("userAgent").is_none());
+        assert!(gemini.get("requestType").is_none());
     }
 
     #[test]
