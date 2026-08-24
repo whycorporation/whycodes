@@ -83,6 +83,57 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     app.esc_armed_at = None;
 }
 
+/// Hosts without bracketed paste deliver a long paste as a flood of `Key`
+/// events. Fold that flood into one `Event::Paste` so the prompt collapses
+/// it to a chip instead of wrapping a wall of text out of the box.
+pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
+    if app.modal_is_open() {
+        return;
+    }
+    if app.mode != AppMode::Normal && app.mode != AppMode::Session {
+        return;
+    }
+    if events.iter().any(|e| matches!(e, Event::Paste(_))) {
+        return;
+    }
+
+    let mut text = String::new();
+    for ev in events.iter() {
+        match ev {
+            Event::Key(k)
+                if (k.kind == KeyEventKind::Press || k.kind == KeyEventKind::Repeat)
+                    && !k.modifiers.intersects(
+                        crossterm::event::KeyModifiers::CONTROL
+                            | crossterm::event::KeyModifiers::ALT
+                            | crossterm::event::KeyModifiers::SUPER,
+                    ) =>
+            {
+                match k.code {
+                    KeyCode::Char(c) => text.push(c),
+                    KeyCode::Enter => text.push('\n'),
+                    _ => return,
+                }
+            }
+            Event::Mouse(m) if matches!(m.kind, MouseEventKind::Moved) => {}
+            Event::Resize(_, _) | Event::FocusGained | Event::FocusLost => {}
+            _ => return,
+        }
+    }
+    if !crate::paste::should_collapse(&text) {
+        return;
+    }
+    events.retain(|e| {
+        matches!(
+            e,
+            Event::Mouse(m) if matches!(m.kind, MouseEventKind::Moved)
+        ) || matches!(
+            e,
+            Event::Resize(_, _) | Event::FocusGained | Event::FocusLost
+        )
+    });
+    events.push(Event::Paste(text));
+}
+
 fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
     // Windows (and enhanced keyboard) emits Press + Release for every key.
     // Without this filter each character is inserted twice.
@@ -1633,6 +1684,7 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             ConfirmAction::ClearSession => {
                 app.messages.clear();
                 app.status_message = "Session cleared".into();
+                app.request_full_clear(2);
             }
             ConfirmAction::DeleteProvider(name) => {
                 app.status_message = format!("Provider '{name}' would be deleted");
@@ -3193,6 +3245,52 @@ mod event_tests {
         let expected = unchanged.clone();
         coalesce_resizes(&mut unchanged);
         assert_eq!(unchanged, expected);
+    }
+
+    #[test]
+    fn coalesce_unbracketed_paste_folds_a_long_key_flood() {
+        let a = app();
+        let mut events: Vec<Event> = "hello\nworld\nmore"
+            .chars()
+            .map(|c| {
+                if c == '\n' {
+                    key(KeyCode::Enter)
+                } else {
+                    key(KeyCode::Char(c))
+                }
+            })
+            .collect();
+        coalesce_unbracketed_paste(&a, &mut events);
+        assert_eq!(events, vec![Event::Paste("hello\nworld\nmore".into())]);
+
+        let mut with_resize: Vec<Event> = "hello\nworld\nmore"
+            .chars()
+            .map(|c| {
+                if c == '\n' {
+                    key(KeyCode::Enter)
+                } else {
+                    key(KeyCode::Char(c))
+                }
+            })
+            .collect();
+        with_resize.push(Event::Resize(80, 24));
+        coalesce_unbracketed_paste(&a, &mut with_resize);
+        assert_eq!(
+            with_resize,
+            vec![
+                Event::Resize(80, 24),
+                Event::Paste("hello\nworld\nmore".into())
+            ]
+        );
+    }
+
+    #[test]
+    fn coalesce_unbracketed_paste_leaves_short_typing_alone() {
+        let a = app();
+        let mut events: Vec<Event> = "hi there".chars().map(|c| key(KeyCode::Char(c))).collect();
+        let before = events.clone();
+        coalesce_unbracketed_paste(&a, &mut events);
+        assert_eq!(events, before);
     }
 
     #[test]

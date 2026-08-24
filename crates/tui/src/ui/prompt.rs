@@ -1412,12 +1412,27 @@ mod overflow_render_tests {
         let box_x = box_x.expect("prompt ╭");
         let box_y = box_y.expect("prompt ╭");
         assert!(box_x > 0, "home prompt should be inset, box_x={box_x}");
+        let mut box_right = None;
+        for x in (0..100u16).rev() {
+            if buf[(x, box_y)].symbol() == "╮" {
+                box_right = Some(x);
+                break;
+            }
+        }
+        let box_right = box_right.expect("prompt ╮");
         for y in box_y..box_y.saturating_add(3) {
             for x in 0..box_x {
                 assert_ne!(
                     buf[(x, y)].symbol(),
                     "W",
                     "paste leftover left of prompt ({x},{y})"
+                );
+            }
+            for x in box_right.saturating_add(1)..100 {
+                assert_ne!(
+                    buf[(x, y)].symbol(),
+                    "W",
+                    "paste leftover right of prompt ({x},{y})"
                 );
             }
         }
