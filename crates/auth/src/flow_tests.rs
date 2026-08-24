@@ -189,6 +189,32 @@ fn accept_connection_surfaces_io_errors() {
 }
 
 #[test]
+fn callback_html_uses_the_dark_whycode_theme() {
+    let ok = callback_html(true);
+    assert!(ok.contains("whycode login complete"), "{ok}");
+    assert!(
+        ok.contains("You can close this tab and return to the terminal."),
+        "{ok}"
+    );
+    assert!(ok.contains("color-scheme"), "{ok}");
+    assert!(ok.contains("only dark"), "{ok}");
+    assert!(ok.contains("#0a0a0a"), "{ok}");
+    assert!(ok.contains("#fab283"), "{ok}");
+    assert!(ok.contains("#7fd88f"), "{ok}");
+    assert!(ok.contains("body class=\"ok\""), "{ok}");
+
+    let fail = callback_html(false);
+    assert!(fail.contains("whycode login failed"), "{fail}");
+    assert!(
+        fail.contains("The provider did not return a code. You can close this tab."),
+        "{fail}"
+    );
+    assert!(fail.contains("#0a0a0a"), "{fail}");
+    assert!(fail.contains("#e06c75"), "{fail}");
+    assert!(fail.contains("body class=\"err\""), "{fail}");
+}
+
+#[test]
 fn origin_from_header_parses_origin_and_skips_other_lines() {
     assert_eq!(
         origin_from_header("Origin: https://accounts.x.ai\r\n").as_deref(),

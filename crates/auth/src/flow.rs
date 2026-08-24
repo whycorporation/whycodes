@@ -129,11 +129,50 @@ pub fn wait_for_callback(
 }
 
 fn callback_html(has_code: bool) -> &'static str {
-    if !has_code {
-        return "<html><body><h2>whycode login failed</h2><p>The provider did not return a code. You can close this tab.</p></body></html>";
+    if has_code {
+        CALLBACK_SUCCESS_HTML
+    } else {
+        CALLBACK_FAILED_HTML
     }
-    "<html><body><h2>whycode login complete</h2><p>You can close this tab and return to the terminal.</p></body></html>"
 }
+
+const CALLBACK_SUCCESS_HTML: &str = concat!(
+    "<!DOCTYPE html>\n",
+    "<html lang=\"en\">\n",
+    "<head>\n",
+    "<meta charset=\"utf-8\">\n",
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n",
+    "<meta name=\"color-scheme\" content=\"only dark\">\n",
+    "<meta name=\"theme-color\" content=\"#0a0a0a\">\n",
+    "<title>whycode login complete</title>\n",
+    "<style>\n",
+    include_str!("callback.css"),
+    "</style>\n",
+    "</head>\n",
+    "<body class=\"ok\">\n",
+    include_str!("callback_success.html"),
+    "</body>\n",
+    "</html>\n",
+);
+
+const CALLBACK_FAILED_HTML: &str = concat!(
+    "<!DOCTYPE html>\n",
+    "<html lang=\"en\">\n",
+    "<head>\n",
+    "<meta charset=\"utf-8\">\n",
+    "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n",
+    "<meta name=\"color-scheme\" content=\"only dark\">\n",
+    "<meta name=\"theme-color\" content=\"#0a0a0a\">\n",
+    "<title>whycode login failed</title>\n",
+    "<style>\n",
+    include_str!("callback.css"),
+    "</style>\n",
+    "</head>\n",
+    "<body class=\"err\">\n",
+    include_str!("callback_failed.html"),
+    "</body>\n",
+    "</html>\n",
+);
 
 fn origin_from_header(line: &str) -> Option<String> {
     let (name, value) = line.split_once(':')?;
