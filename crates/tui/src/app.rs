@@ -33,6 +33,8 @@ pub enum AppMode {
 pub enum DialogKind {
     Provider,
     Model,
+    /// Primary-agent picker (prompt footer click / `/agent` with no args).
+    Agent,
     Help,
     Alert {
         title: String,
@@ -1254,6 +1256,10 @@ pub struct TuiApp {
     pub bg_running_count: usize,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
+    /// Agent switch from the picker dialog (prompt footer click / `/agent`).
+    pub pending_agent: Option<String>,
+    /// Cursor in the agent picker (list is `primary_agents`).
+    pub agent_picker_selected: usize,
     /// `/login` picker result: provider id awaiting an OAuth flow spawn.
     pub pending_login_provider: Option<String>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
@@ -1296,6 +1302,10 @@ pub struct TuiApp {
     pub context_hit: crate::hit_area::HitArea,
     /// Turn-status `[stop]` control (click → cancel turn).
     pub turn_stop_hit: crate::hit_area::HitArea,
+    /// Prompt-footer agent name (click → agent picker).
+    pub agent_hit: crate::hit_area::HitArea,
+    /// Prompt-footer provider/model (click → model picker).
+    pub model_hit: crate::hit_area::HitArea,
     /// Last known mouse cell (for hover tooltips).
     pub mouse_pos: Option<(u16, u16)>,
 
@@ -1353,6 +1363,34 @@ impl MouseSelection {
 pub struct ModelSelectionState {
     pub models: Vec<(String, String)>, // (provider_name, model_id)
     pub selected: usize,
+}
+
+/// Every provider/model pair the config knows about, for the model picker.
+///
+/// OAuth subscription logins (`/login`) bypass config, so their providers
+/// would never appear here: merge in the suggested models for any provider
+/// with a credential in the token store.
+pub fn catalog_models(config: &whycode_config::Config) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = config
+        .providers
+        .values()
+        .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
+        .collect();
+    if let Ok(dir) = whycode_config::Config::data_dir() {
+        let store = whycode_auth::TokenStore::new(&dir);
+        for name in whycode_auth::OAUTH_PROVIDERS {
+            if store.get(name).ok().flatten().is_some() {
+                out.extend(
+                    whycode_auth::providers::suggested_models(name)
+                        .iter()
+                        .map(|m| ((*name).to_string(), (*m).to_string())),
+                );
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// One row of the session list dialog.
@@ -1501,7 +1539,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "/agent",
-        hint: "[args] Switch the primary agent (e.g. /agent plan)",
+        hint: "[args] Switch agent (picker if no name, e.g. /agent plan)",
     },
     SlashCommand {
         name: "/connect",
@@ -1728,6 +1766,8 @@ impl TuiApp {
             auth_code_sink: None,
             bg_running_count: 0,
             pending_model: None,
+            pending_agent: None,
+            agent_picker_selected: 0,
             pending_login_provider: None,
             pending_session_id: None,
             sessions_cursor: 0,
@@ -1748,6 +1788,8 @@ impl TuiApp {
             cwd_hit: crate::hit_area::HitArea::default(),
             context_hit: crate::hit_area::HitArea::default(),
             turn_stop_hit: crate::hit_area::HitArea::default(),
+            agent_hit: crate::hit_area::HitArea::default(),
+            model_hit: crate::hit_area::HitArea::default(),
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
@@ -1901,12 +1943,22 @@ impl TuiApp {
                 self.turn_stop_hit.hovered = false;
                 changed = true;
             }
+            if self.agent_hit.hovered {
+                self.agent_hit.hovered = false;
+                changed = true;
+            }
+            if self.model_hit.hovered {
+                self.model_hit.hovered = false;
+                changed = true;
+            }
             return changed;
         };
         let mut changed = false;
         changed |= self.context_hit.update_hover(c, r);
         changed |= self.cwd_hit.update_hover(c, r);
         changed |= self.turn_stop_hit.update_hover(c, r);
+        changed |= self.agent_hit.update_hover(c, r);
+        changed |= self.model_hit.update_hover(c, r);
         // Slash dropdown hover row (index into matches, not absolute cmd).
         if self.slash_suggest.active {
             if let Some(idx) = self.slash_suggest.row_index_at(c, r) {

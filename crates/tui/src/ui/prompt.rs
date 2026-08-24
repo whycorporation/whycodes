@@ -99,7 +99,7 @@ fn content_width(app: &TuiApp, area_width: u16) -> u16 {
     area_width.saturating_sub(CHROME_H).max(8)
 }
 
-pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
+pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     // Center prompt on home (empty messages) with max width cap
     let area = if app.messages.is_empty() {
         center_prompt_area(area)
@@ -108,6 +108,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     };
 
     if area.height == 0 || area.width < 6 {
+        app.agent_hit.set_rect(None);
+        app.model_hit.set_rect(None);
         return;
     }
 
@@ -316,6 +318,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     if bottom.height > 0 {
         paint_h_border(frame, bottom, border_style, false);
         paint_bottom_meta(frame, bottom, app, palette);
+    } else {
+        app.agent_hit.set_rect(None);
+        app.model_hit.set_rect(None);
     }
 
     // Home rotating hint under the box.
@@ -433,7 +438,10 @@ fn paint_side_borders(frame: &mut Frame, text_area: Rect, full: Rect, style: Sty
 ///
 /// Agent and model pick up theme / `[tui.agent_colors]` so the caption is
 /// not a dim grey smear — same identity color as the header chip.
-fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, palette: &ThemePalette) {
+/// Hover underlines each name; click opens the matching picker.
+fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+    app.agent_hit.set_rect(None);
+    app.model_hit.set_rect(None);
     if row.width < 8 {
         return;
     }
@@ -452,10 +460,16 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, palette: &Theme
         .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
     let model_color = app.config.model_color(palette);
     let sep_style = Style::default().fg(palette.dim);
-    let agent_style = Style::default()
+    let mut agent_style = Style::default()
         .fg(agent_color)
         .add_modifier(Modifier::BOLD);
-    let model_style = Style::default().fg(model_color);
+    if app.agent_hit.hovered {
+        agent_style = agent_style.add_modifier(Modifier::UNDERLINED);
+    }
+    let mut model_style = Style::default().fg(model_color);
+    if app.model_hit.hovered {
+        model_style = model_style.add_modifier(Modifier::UNDERLINED);
+    }
     let badge_style = match app.intent_kind.as_deref() {
         Some("question") => Style::default()
             .fg(palette.info)
@@ -495,6 +509,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, palette: &Theme
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(badge.clone(), badge_style));
     }
+    let model_shown_w = UnicodeWidthStr::width(model_shown.as_str()) as u16;
     if !model_shown.is_empty() {
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(model_shown, model_style));
@@ -513,6 +528,17 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, palette: &Theme
             return;
         }
         let x = row.x + row.width.saturating_sub(2 + w);
+        // Hit the inner name, not the padding spaces.
+        let name_w = UnicodeWidthStr::width(app.agent_name.as_str()) as u16;
+        let hit_w = name_w.min(w.saturating_sub(2));
+        if hit_w > 0 {
+            app.agent_hit.set_rect(Some(Rect {
+                x: x.saturating_add(1),
+                y: row.y,
+                width: hit_w,
+                height: 1,
+            }));
+        }
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(trunc, agent_style))),
             Rect {
@@ -533,6 +559,31 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &TuiApp, palette: &Theme
         width: label_w,
         height: 1,
     };
+    // Record clickable spans: skip leading space, then agent, optional badge, model.
+    let mut col = x.saturating_add(1);
+    let agent_w = UnicodeWidthStr::width(app.agent_name.as_str()) as u16;
+    if agent_w > 0 {
+        app.agent_hit.set_rect(Some(Rect {
+            x: col,
+            y: row.y,
+            width: agent_w,
+            height: 1,
+        }));
+        col = col.saturating_add(agent_w);
+    }
+    if let Some(ref badge) = app.intent_badge {
+        col = col.saturating_add(3); // ` · `
+        col = col.saturating_add(UnicodeWidthStr::width(badge.as_str()) as u16);
+    }
+    if model_shown_w > 0 {
+        col = col.saturating_add(3); // ` · `
+        app.model_hit.set_rect(Some(Rect {
+            x: col,
+            y: row.y,
+            width: model_shown_w,
+            height: 1,
+        }));
+    }
     frame.render_widget(Paragraph::new(Line::from(spans)), meta_rect);
 }
 
@@ -870,7 +921,7 @@ mod overflow_render_tests {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
 
-    fn rendered_rows(app: &TuiApp, width: u16, height: u16) -> Vec<String> {
+    fn rendered_rows(app: &mut TuiApp, width: u16, height: u16) -> Vec<String> {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         let palette = app.config.palette();
@@ -894,7 +945,7 @@ mod overflow_render_tests {
         app.input_buffer = "ignored prompt".into();
         app.command.buffer = "provider anthropic".into();
 
-        let rows = rendered_rows(&app, 60, 8);
+        let rows = rendered_rows(&mut app, 60, 8);
         let input = rows
             .iter()
             .find(|row| row.contains("provider anthropic"))
@@ -912,7 +963,7 @@ mod overflow_render_tests {
             media_type: "image/png".into(),
         });
 
-        let rows = rendered_rows(&app, 60, 9);
+        let rows = rendered_rows(&mut app, 60, 9);
         let attachment = rows
             .iter()
             .find(|row| row.contains("shot.png"))
@@ -935,6 +986,7 @@ mod overflow_render_tests {
             "expected inline paste under threshold"
         );
 
+        let palette = app.config.palette();
         terminal
             .draw(|f| {
                 let area = f.area();
@@ -946,8 +998,8 @@ mod overflow_render_tests {
                         width: area.width,
                         height: 20,
                     },
-                    &app,
-                    &app.config.palette(),
+                    &mut app,
+                    &palette,
                 );
             })
             .unwrap();
@@ -1004,7 +1056,7 @@ mod overflow_render_tests {
                         width: area.width,
                         height: 8,
                     },
-                    &app,
+                    &mut app,
                     &palette,
                 );
             })
@@ -1036,6 +1088,64 @@ mod overflow_render_tests {
             Some(palette.dim),
             "agent must not be the dim caption color"
         );
+        assert!(
+            app.agent_hit.rect.is_some(),
+            "agent name must be a click target"
+        );
+        assert!(
+            app.model_hit.rect.is_some(),
+            "model name must be a click target"
+        );
+    }
+
+    #[test]
+    fn bottom_meta_hover_underlines_agent_and_model() {
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "anthropic".into();
+        app.model_name = "sonnet".into();
+        app.agent_hit.hovered = true;
+        app.model_hit.hovered = true;
+        let palette = app.config.palette();
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(
+                    f,
+                    Rect {
+                        x: 0,
+                        y: 8,
+                        width: area.width,
+                        height: 8,
+                    },
+                    &mut app,
+                    &palette,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let mut agent_mod = None;
+        let mut model_mod = None;
+        for y in 0..16u16 {
+            if let Some(col) = cell_seq_col(buf, y, 80, "build") {
+                agent_mod = Some(buf[(col, y)].modifier);
+            }
+            if let Some(col) = cell_seq_col(buf, y, 80, "sonnet") {
+                model_mod = Some(buf[(col, y)].modifier);
+            }
+        }
+        assert!(
+            agent_mod.is_some_and(|m| m.contains(Modifier::UNDERLINED)),
+            "hovered agent should be underlined: {agent_mod:?}"
+        );
+        assert!(
+            model_mod.is_some_and(|m| m.contains(Modifier::UNDERLINED)),
+            "hovered model should be underlined: {model_mod:?}"
+        );
     }
 
     #[test]
@@ -1061,7 +1171,7 @@ mod overflow_render_tests {
                         width: area.width,
                         height: 8,
                     },
-                    &app,
+                    &mut app,
                     &palette,
                 );
             })
@@ -1174,11 +1284,12 @@ mod overflow_render_tests {
             width: 80,
             height: 10,
         };
+        let palette = app.config.palette();
         terminal
             .draw(|f| {
                 let stain: Vec<Line> = (0..20).map(|_| Line::from("W".repeat(80))).collect();
                 f.render_widget(Paragraph::new(Text::from(stain)), f.area());
-                render(f, area, &app, &app.config.palette());
+                render(f, area, &mut app, &palette);
             })
             .unwrap();
 

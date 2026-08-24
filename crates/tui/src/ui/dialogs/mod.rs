@@ -39,6 +39,39 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     match active {
         crate::app::DialogKind::Provider => render_provider_dialog(frame, app, palette),
         crate::app::DialogKind::Model => render_model_dialog(frame, app, palette),
+        crate::app::DialogKind::Agent => {
+            let items: Vec<SelectItem> = app
+                .primary_agents
+                .iter()
+                .map(|name| {
+                    let mark = if name == &app.agent_name {
+                        " · current"
+                    } else {
+                        ""
+                    };
+                    SelectItem::with_detail(name.clone(), format!("agent{mark}"))
+                })
+                .collect();
+            let selected = app.agent_picker_selected.min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                " Agent  ·  Enter to switch ",
+                &items,
+                selected,
+                "No agents configured.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         crate::app::DialogKind::Help => render_help_overlay(frame, app, palette),
         crate::app::DialogKind::Confirm { title, message, .. } => {
             let chrome = render_confirm_dialog(frame, &title, &message, palette, mouse);

@@ -303,7 +303,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             true
         }
         Some(Action::OpenModelDialog) => {
-            open_dialog(app, DialogKind::Model);
+            open_model_dialog(app);
             true
         }
         Some(Action::ToggleAutoScroll) => {
@@ -750,6 +750,17 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 app.mouse_sel = None;
                 return true;
             }
+            // Prompt footer: click agent / model name to open the picker.
+            if app.agent_hit.contains(mouse.column, mouse.row) {
+                open_agent_dialog(app);
+                app.mouse_sel = None;
+                return true;
+            }
+            if app.model_hit.contains(mouse.column, mouse.row) {
+                open_model_dialog(app);
+                app.mouse_sel = None;
+                return true;
+            }
             // Slash dropdown: click a row to select + apply.
             if app.slash_suggest.active
                 && let Some(idx) = app.slash_suggest.row_index_at(mouse.column, mouse.row)
@@ -1151,6 +1162,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.model_selection.selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Agent => {
+                        app.agent_picker_selected = idx;
+                        confirm_dialog(app, active);
+                    }
                     DialogKind::Theme => {
                         app.theme_selected = idx;
                         confirm_dialog(app, active);
@@ -1412,6 +1427,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.model_selection.selected = idx.min(len - 1);
             }
         }
+        DialogKind::Agent => {
+            let len = app.primary_agents.len();
+            if len > 0 {
+                app.agent_picker_selected = idx.min(len - 1);
+            }
+        }
         DialogKind::SessionList => {
             let len = app.session_list.sessions.len();
             if len > 0 {
@@ -1603,6 +1624,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_model = Some((p, m));
             }
         }
+        DialogKind::Agent => {
+            if let Some(name) = app.primary_agents.get(app.agent_picker_selected).cloned() {
+                app.pending_agent = Some(name);
+            }
+        }
         DialogKind::SessionList => {
             if let Some(entry) = app.session_list.sessions.get(app.session_list.selected) {
                 match entry.live {
@@ -1665,9 +1691,7 @@ fn execute_command(app: &mut TuiApp, cmd: &str) {
             open_provider_dialog(app);
         }
         Some(":model") => {
-            app.mode = AppMode::Dialog;
-            app.key_context = KeymapContext::Dialog;
-            app.dialogs.push(DialogKind::Model);
+            open_model_dialog(app);
         }
         Some(":theme") => {
             app.mode = AppMode::Dialog;
@@ -1728,6 +1752,37 @@ pub fn open_dialog(app: &mut TuiApp, dialog: DialogKind) {
     app.dialogs.push(dialog);
 }
 
+/// Open the primary-agent picker, highlighting the current agent.
+pub fn open_agent_dialog(app: &mut TuiApp) {
+    app.agent_picker_selected = app
+        .primary_agents
+        .iter()
+        .position(|n| n == &app.agent_name)
+        .unwrap_or(app.agent_cycle_idx);
+    open_dialog(app, DialogKind::Agent);
+}
+
+/// Open the model picker, highlighting the active provider/model.
+pub fn open_model_dialog(app: &mut TuiApp) {
+    if app.model_selection.models.is_empty() {
+        fill_model_catalog_from_disk(app);
+    }
+    app.model_selection.selected = app
+        .model_selection
+        .models
+        .iter()
+        .position(|(p, m)| p == &app.provider_name && m == &app.model_name)
+        .unwrap_or(0);
+    open_dialog(app, DialogKind::Model);
+}
+
+fn fill_model_catalog_from_disk(app: &mut TuiApp) {
+    let Ok(config) = whycode_config::Config::load() else {
+        return;
+    };
+    app.model_selection.models = crate::app::catalog_models(&config);
+}
+
 /// Move the cursor within whichever dialog is showing a list.
 ///
 /// The provider dialog has two modes and only one of them is a list: in
@@ -1752,6 +1807,10 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
                 app.model_selection.models.len(),
                 delta,
             );
+        }
+        DialogKind::Agent => {
+            app.agent_picker_selected =
+                move_selection(app.agent_picker_selected, app.primary_agents.len(), delta);
         }
         DialogKind::SessionList => {
             app.session_list.selected = move_selection(
@@ -2242,6 +2301,18 @@ mod event_tests {
         );
 
         let mut a = app();
+        a.primary_agents = vec!["build".into(), "plan".into()];
+        a.agent_name = "build".into();
+        open_agent_dialog(&mut a);
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Agent)));
+        assert_eq!(a.agent_picker_selected, 0);
+        handle_event(&mut a, key(KeyCode::Down));
+        assert_eq!(a.agent_picker_selected, 1);
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert_eq!(a.pending_agent.as_deref(), Some("plan"));
+        assert_eq!(a.mode, AppMode::Normal);
+
+        let mut a = app();
         a.session_list.sessions = vec![crate::app::SessionEntry {
             id: "abc".into(),
             title: "t".into(),
@@ -2296,6 +2367,42 @@ mod event_tests {
         handle_event(&mut a, key(KeyCode::Esc));
         assert!(a.auth_code_sink.is_none());
         assert!(a.status_message.contains("cancelled"));
+    }
+
+    #[test]
+    fn mouse_click_prompt_meta_opens_agent_and_model_pickers() {
+        let mut a = app();
+        a.agent_hit.set_rect(Some(Rect {
+            x: 40,
+            y: 20,
+            width: 5,
+            height: 1,
+        }));
+        a.primary_agents = vec!["build".into(), "plan".into()];
+        a.agent_name = "build".into();
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 42, 20),
+        );
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Agent)));
+        assert_eq!(a.agent_picker_selected, 0);
+
+        let mut a = app();
+        a.model_hit.set_rect(Some(Rect {
+            x: 50,
+            y: 20,
+            width: 12,
+            height: 1,
+        }));
+        a.model_selection.models = vec![("acme".into(), "m1".into())];
+        a.provider_name = "acme".into();
+        a.model_name = "m1".into();
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 52, 20),
+        );
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+        assert_eq!(a.model_selection.selected, 0);
     }
 
     #[test]
@@ -2926,6 +3033,10 @@ mod event_tests {
         a.model_selection.models = vec![("p".into(), "m".into())];
         move_in_dialog_to(&mut a, &DialogKind::Model, 9);
         assert_eq!(a.model_selection.selected, 0);
+
+        a.primary_agents = vec!["build".into(), "plan".into()];
+        move_in_dialog_to(&mut a, &DialogKind::Agent, 9);
+        assert_eq!(a.agent_picker_selected, 1);
 
         a.session_list.sessions = vec![crate::app::SessionEntry {
             id: "x".into(),
