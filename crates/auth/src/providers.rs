@@ -981,7 +981,11 @@ pub fn suggested_models(provider: &str) -> &'static [&'static str] {
         "github-copilot" => &["gpt-4.1", "gpt-4o"],
         "google" => &["gemini-3.6-flash", "gemini-3.5-flash"],
         "xai" => &["grok-4.6", "grok-4.5", "grok-build-0.1"],
-        "google-antigravity" => &["gemini-3.1-pro", "gemini-3.1-flash", "claude-sonnet-4-6"],
+        "google-antigravity" => &[
+            "gemini-3.1-pro-low",
+            "gemini-3.5-flash-low",
+            "claude-sonnet-4-6",
+        ],
         _ => &[],
     }
 }
