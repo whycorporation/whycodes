@@ -1,5 +1,7 @@
 pub mod agent;
 pub mod background;
+#[cfg(test)]
+mod behavior_eval;
 pub mod events;
 pub mod intent;
 pub mod mcp_load;

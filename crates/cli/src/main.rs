@@ -327,7 +327,7 @@ pub enum ProviderCmd {
 pub enum AuthCmd {
     /// Log in with a provider subscription (opens a browser)
     Login {
-        /// Provider: anthropic | openai | github-copilot | google | xai
+        /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
         provider: String,
         /// Print the sign-in URL instead of opening a browser
         #[arg(long)]
@@ -335,7 +335,7 @@ pub enum AuthCmd {
     },
     /// Remove stored OAuth credentials for a provider
     Logout {
-        /// Provider: anthropic | openai | github-copilot | google | xai
+        /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
         provider: String,
     },
     /// Show which providers have stored OAuth credentials (never prints tokens)

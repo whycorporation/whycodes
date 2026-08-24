@@ -12,6 +12,7 @@
 //! - Secrets never appear in logs at any tracing level.
 //! - `Debug` impls redact token material.
 
+pub mod cca;
 pub mod discover;
 pub mod error;
 pub mod flow;
@@ -25,4 +26,11 @@ pub use store::TokenStore;
 pub use token::{OAuthToken, ProviderAuth};
 
 /// Providers that support OAuth subscription login.
-pub const OAUTH_PROVIDERS: &[&str] = &["anthropic", "openai", "github-copilot", "google", "xai"];
+pub const OAUTH_PROVIDERS: &[&str] = &[
+    "anthropic",
+    "openai",
+    "github-copilot",
+    "google",
+    "xai",
+    "google-antigravity",
+];
