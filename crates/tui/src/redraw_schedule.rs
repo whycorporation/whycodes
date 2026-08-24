@@ -12,7 +12,7 @@
 
 use std::time::Duration;
 
-use crossterm::event::{Event, MouseEventKind};
+use crossterm::event::{Event, KeyCode, KeyEventKind, MouseEventKind};
 
 /// Quiet session: prune toasts, adopt fuzzy results.
 pub const REDRAW_IDLE: Duration = Duration::from_millis(500);
@@ -79,6 +79,30 @@ pub fn event_needs_full_clear(ev: &Event) -> bool {
         ev,
         Event::Paste(_) | Event::Resize(_, _) | Event::FocusGained
     )
+}
+
+/// True when a drained batch looks like a paste delivered as a flood of
+/// `Key` events (no `Event::Paste` — hosts that skip bracketed paste).
+///
+/// The emulator still echoes the payload at the cursor, so the leftover
+/// sits left of the centered home prompt. A handful of typed chars must
+/// not trip this (that would `terminal.clear()` on every word).
+pub fn batch_looks_like_unbracketed_paste(batch: &[Event]) -> bool {
+    const MIN_CHARS: usize = 24;
+    if batch.iter().any(|e| matches!(e, Event::Paste(_))) {
+        return false;
+    }
+    let chars = batch
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                Event::Key(k)
+                    if k.kind == KeyEventKind::Press && matches!(k.code, KeyCode::Char(_))
+            )
+        })
+        .count();
+    chars >= MIN_CHARS
 }
 
 #[cfg(test)]
@@ -180,5 +204,22 @@ mod tests {
         assert!(!event_needs_full_clear(&Event::Key(KeyEvent::from(
             KeyCode::Char('a')
         ))));
+    }
+
+    #[test]
+    fn unbracketed_paste_is_a_char_flood_not_a_few_keys() {
+        let few: Vec<Event> = (0..8)
+            .map(|_| Event::Key(KeyEvent::from(KeyCode::Char('a'))))
+            .collect();
+        assert!(!batch_looks_like_unbracketed_paste(&few));
+        let many: Vec<Event> = (0..24)
+            .map(|_| Event::Key(KeyEvent::from(KeyCode::Char('a'))))
+            .collect();
+        assert!(batch_looks_like_unbracketed_paste(&many));
+        let mixed = vec![
+            Event::Paste("x".into()),
+            Event::Key(KeyEvent::from(KeyCode::Char('a'))),
+        ];
+        assert!(!batch_looks_like_unbracketed_paste(&mixed));
     }
 }
