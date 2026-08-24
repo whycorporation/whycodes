@@ -14,6 +14,8 @@ pub const TOOL_RESULT_MAX_CHARS: usize = 32_768;
 /// Recent tool dumps stay at [`TOOL_RESULT_MAX_CHARS`] so the model can still
 /// use the last step's output; older steps shrink hard for TTFT.
 pub const TOOL_RESULT_PRUNE_CHARS: usize = 2_048;
+/// Harder shake when the session is still over ~¾ of the compact threshold.
+pub const TOOL_RESULT_SHAKE_CHARS: usize = 512;
 
 /// How many recent tool-role messages keep the large cap when pruning.
 const PRUNE_KEEP_RECENT_TOOLS: usize = 4;
@@ -973,6 +975,57 @@ impl Session {
                         {
                             let before = text.len();
                             *text = cap_tool_text_to(std::mem::take(text), TOOL_RESULT_PRUNE_CHARS);
+                            if text.len() != before {
+                                n += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if n > 0 {
+            self.token_cache.invalidate();
+            self.touch();
+        }
+        n
+    }
+
+    /// Shrink older tool results to [`TOOL_RESULT_SHAKE_CHARS`] when prune was
+    /// not enough to relieve context pressure.
+    pub fn shake_old_tool_results(&mut self) -> usize {
+        let tool_indices: Vec<usize> = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == Role::Tool)
+            .map(|(i, _)| i)
+            .collect();
+        if tool_indices.len() <= PRUNE_KEEP_RECENT_TOOLS {
+            return 0;
+        }
+        let keep_from = tool_indices.len() - PRUNE_KEEP_RECENT_TOOLS;
+        let prune_set: std::collections::HashSet<usize> =
+            tool_indices[..keep_from].iter().copied().collect();
+        let mut n = 0;
+        for (i, msg) in self.messages.iter_mut().enumerate() {
+            if !prune_set.contains(&i) {
+                continue;
+            }
+            match &mut msg.content {
+                MessageContent::Text(t) => {
+                    let before = t.len();
+                    *t = cap_tool_text_to(std::mem::take(t), TOOL_RESULT_SHAKE_CHARS);
+                    if t.len() != before {
+                        n += 1;
+                    }
+                }
+                MessageContent::Blocks(blocks) => {
+                    for block in blocks.iter_mut() {
+                        if let ContentBlock::Text { text }
+                        | ContentBlock::ToolResult { content: text, .. } = block
+                        {
+                            let before = text.len();
+                            *text = cap_tool_text_to(std::mem::take(text), TOOL_RESULT_SHAKE_CHARS);
                             if text.len() != before {
                                 n += 1;
                             }
@@ -2205,6 +2258,41 @@ mod tests {
             is_error: false,
         }]);
         assert_eq!(small.prune_old_tool_results(), 0);
+    }
+
+    #[test]
+    fn shake_old_tool_results_cuts_harder_than_prune() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("start");
+        for i in 0..6 {
+            session.add_tool_results(vec![whycode_core::types::ToolResult {
+                tool_call_id: format!("t{i}"),
+                content: "z".repeat(10_000),
+                is_error: false,
+            }]);
+        }
+        let shaken = session.shake_old_tool_results();
+        assert!(shaken > 0);
+        let old = session.messages[1].content.as_text().unwrap();
+        // Cap plus the `[... N characters truncated …]` notice.
+        assert!(
+            old.chars().count() <= TOOL_RESULT_SHAKE_CHARS + 80,
+            "{}",
+            old.chars().count()
+        );
+        assert!(old.contains("truncated"));
+        let last = session.messages.last().unwrap().content.as_text().unwrap();
+        assert!(
+            last.chars().count() > TOOL_RESULT_SHAKE_CHARS,
+            "recent kept larger than shake cap"
+        );
+        let mut small = Session::new(test_project_path(), test_system_prompt());
+        small.add_tool_results(vec![whycode_core::types::ToolResult {
+            tool_call_id: "a".into(),
+            content: "tiny".into(),
+            is_error: false,
+        }]);
+        assert_eq!(small.shake_old_tool_results(), 0);
     }
 
     #[test]

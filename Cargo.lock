@@ -3987,6 +3987,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -4003,6 +4004,7 @@ dependencies = [
  "whycode-plugin",
  "whycode-sandbox",
  "whycode-session",
+ "whycode-skill",
  "whycode-tools",
 ]
 

@@ -16,24 +16,11 @@ impl SkillRegistry {
         Self { skills: Vec::new() }
     }
 
-    /// Load skills from the project `.skills/` directory and the global
-    /// user config directory, globbing for `*.skill.md` files.
+    /// Load skills from the process cwd (`.skills/`) and the global user
+    /// config directory. Prefer [`Self::load_for_project`] when a project
+    /// root is known — this path exists for callers without a working dir.
     pub fn load() -> anyhow::Result<Self> {
-        let mut registry = Self::new();
-
-        // 1. Project-local skills directory:  .skills/
-        let project_dir = Path::new(".skills");
-        if project_dir.is_dir() {
-            registry.load_from_dir(project_dir)?;
-        }
-
-        // 2. Global user config directory
-        let global_dir = global_skills_dir();
-        if global_dir.is_dir() {
-            registry.load_from_dir(&global_dir)?;
-        }
-
-        Ok(registry)
+        Self::load_for_project(Path::new("."))
     }
 
     /// Load all `*.skill.md` files from a directory.
@@ -70,6 +57,95 @@ impl SkillRegistry {
     /// Find a skill by name.
     pub fn get(&self, name: &str) -> Option<&Skill> {
         self.skills.iter().find(|s| s.name == name)
+    }
+
+    /// Case-insensitive name lookup (`skill://Rust-Dev` → `rust-dev`).
+    pub fn get_ignore_ascii_case(&self, name: &str) -> Option<&Skill> {
+        self.skills
+            .iter()
+            .find(|s| s.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Project-local skills only (no user-global dir). Safe for tests and
+    /// for the compact system-prompt catalog.
+    pub fn load_project(project: &Path) -> anyhow::Result<Self> {
+        let mut registry = Self::new();
+        for dir in [
+            project.join(".skills"),
+            project.join("skills"),
+            project.join(".whycode").join("skills"),
+        ] {
+            if dir.is_dir() {
+                registry.load_from_dir(&dir)?;
+                load_skill_md_tree(&mut registry, &dir);
+            }
+        }
+        load_skill_md_tree(&mut registry, &project.join(".claude").join("skills"));
+        Ok(registry)
+    }
+
+    /// Project skills plus the user-global `$CONFIG/skills` tree.
+    pub fn load_for_project(project: &Path) -> anyhow::Result<Self> {
+        let mut registry = Self::load_project(project)?;
+        let global = global_skills_dir();
+        if global.is_dir() {
+            registry.load_from_dir(&global)?;
+            load_skill_md_tree(&mut registry, &global);
+        }
+        Ok(registry)
+    }
+
+    /// Compact catalog for the system prompt: names and descriptions only.
+    pub fn catalog_markdown(&self) -> String {
+        if self.skills.is_empty() {
+            return String::new();
+        }
+        let mut out = String::from(
+            "# Skills\n\n\
+             Available skills (name + description). Load the body with \
+             `read skill://<name>` or the `skill` tool (`action=load`). \
+             Do not guess a skill's contents.\n\n",
+        );
+        for skill in &self.skills {
+            let desc = if skill.description.is_empty() {
+                "(no description)"
+            } else {
+                skill.description.as_str()
+            };
+            out.push_str("- `");
+            out.push_str(&skill.name);
+            out.push_str("`: ");
+            out.push_str(desc);
+            out.push('\n');
+        }
+        out
+    }
+}
+
+/// Load Claude-style `<dir>/<name>/SKILL.md` trees. Duplicate names are skipped.
+fn load_skill_md_tree(registry: &mut SkillRegistry, root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let skill_md = path.join("SKILL.md");
+        if !skill_md.is_file() {
+            continue;
+        }
+        match Skill::from_file(&skill_md) {
+            Ok(skill) => {
+                if registry.get(&skill.name).is_none() {
+                    registry.skills.push(skill);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to load skill {:?}: {}", skill_md, e);
+            }
+        }
     }
 }
 
@@ -308,6 +384,103 @@ description = "d"
         std::env::set_current_dir(prev_cwd).unwrap();
         restore_home(prev_home);
         assert!(loaded.unwrap().skills.is_empty());
+    }
+
+    #[test]
+    fn catalog_and_case_insensitive_lookup() {
+        let mut reg = SkillRegistry::new();
+        assert!(reg.catalog_markdown().is_empty());
+        assert!(reg.get_ignore_ascii_case("x").is_none());
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("demo.skill.md"),
+            "---\nname: Demo\ndescription: does a thing\n---\n\nbody here\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("bare.skill.md"),
+            "---\nname: bare\n---\n\njust a body\n",
+        )
+        .unwrap();
+        reg.load_from_dir(dir.path()).unwrap();
+        assert!(reg.get_ignore_ascii_case("demo").is_some());
+        let catalog = reg.catalog_markdown();
+        assert!(catalog.contains("`Demo`"));
+        assert!(catalog.contains("does a thing"));
+        assert!(catalog.contains("`bare`"));
+        assert!(catalog.contains("(no description)"));
+        assert!(catalog.contains("skill://"));
+    }
+
+    #[test]
+    fn load_project_reads_skill_md_and_dot_skills() {
+        let root = tempfile::tempdir().unwrap();
+        let skills = root.path().join(".skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::fs::write(
+            skills.join("local.skill.md"),
+            "---\nname: local\ndescription: from dot-skills\n---\n\nL\n",
+        )
+        .unwrap();
+        let alt = root.path().join("skills");
+        std::fs::create_dir_all(&alt).unwrap();
+        std::fs::write(
+            alt.join("extra.skill.md"),
+            "---\nname: extra\ndescription: from skills/\n---\n\nE\n",
+        )
+        .unwrap();
+        let nested = root.path().join(".whycode").join("skills").join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(
+            nested.join("SKILL.md"),
+            "---\nname: nested\ndescription: skill md\n---\n\nN\n",
+        )
+        .unwrap();
+        let claude = root.path().join(".claude").join("skills").join("fmt");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(
+            claude.join("SKILL.md"),
+            "---\nname: fmt\ndescription: formatter\n---\n\nF\n",
+        )
+        .unwrap();
+        // Duplicate name in SKILL.md tree is skipped.
+        let dup = root.path().join(".whycode").join("skills").join("dup");
+        std::fs::create_dir_all(&dup).unwrap();
+        std::fs::write(
+            dup.join("SKILL.md"),
+            "---\nname: local\ndescription: shadowed\n---\n\nX\n",
+        )
+        .unwrap();
+        // Broken SKILL.md is ignored.
+        let bad = root.path().join(".whycode").join("skills").join("bad");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("SKILL.md"), "not a skill\n").unwrap();
+
+        let loaded = SkillRegistry::load_project(root.path()).unwrap();
+        assert!(loaded.get("local").is_some());
+        assert!(loaded.get("extra").is_some());
+        assert!(loaded.get("nested").is_some());
+        assert!(loaded.get("fmt").is_some());
+        assert_eq!(loaded.get("local").unwrap().description, "from dot-skills");
+    }
+
+    #[test]
+    fn load_for_project_includes_global_skills() {
+        let _guard = env_lock();
+        let home = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODE_HOME");
+        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        let global = home.path().join("skills");
+        std::fs::create_dir_all(&global).unwrap();
+        std::fs::write(
+            global.join("g.skill.md"),
+            "---\nname: global-skill\ndescription: g\n---\n\nG\n",
+        )
+        .unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let loaded = SkillRegistry::load_for_project(project.path()).unwrap();
+        restore_home(prev);
+        assert!(loaded.get("global-skill").is_some());
     }
 
     #[test]

@@ -26,6 +26,8 @@ pub enum ErrorKind {
     Auth,
     /// HTTP 400 / 404 / 422 — do not retry.
     Client,
+    /// Prompt/context window exceeded — do not retry the same payload.
+    ContextOverflow,
     /// User or agent cancelled the turn.
     Cancelled,
     /// Unclassified.
@@ -41,6 +43,7 @@ impl ErrorKind {
             Self::Timeout => "timeout",
             Self::Auth => "auth",
             Self::Client => "client",
+            Self::ContextOverflow => "context_overflow",
             Self::Cancelled => "cancelled",
             Self::Unknown => "unknown",
         }
@@ -135,6 +138,9 @@ impl ClassifiedError {
                     };
                 }
                 "Request rejected by the provider".into()
+            }
+            ErrorKind::ContextOverflow => {
+                "Context window exceeded — compacting history and retrying".into()
             }
             ErrorKind::Cancelled => "Cancelled".into(),
             ErrorKind::Unknown => {
@@ -278,6 +284,17 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         };
     }
 
+    // Context window / prompt too large — never retry the same payload.
+    if looks_context_overflow(&lower) {
+        return ClassifiedError {
+            kind: ErrorKind::ContextOverflow,
+            retryable: false,
+            retry_after: None,
+            status,
+            message,
+        };
+    }
+
     // Other 4xx.
     if matches!(status, Some(s) if (400..500).contains(&s)) {
         return ClassifiedError {
@@ -296,6 +313,18 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         status,
         message,
     }
+}
+
+fn looks_context_overflow(lower: &str) -> bool {
+    lower.contains("context_length_exceeded")
+        || lower.contains("context length")
+        || lower.contains("maximum context")
+        || lower.contains("prompt is too long")
+        || lower.contains("prompt too long")
+        || lower.contains("input is too long")
+        || lower.contains("request too large")
+        || (lower.contains("too many tokens") && !lower.contains("rate"))
+        || (lower.contains("token limit") && lower.contains("exceed"))
 }
 
 /// Extract an HTTP status code from common wire formats.
@@ -645,6 +674,25 @@ mod tests {
         assert!(c.retryable);
         assert_eq!(c.status, Some(502));
         assert_eq!(c.user_message(), "Provider server error (HTTP 502)");
+    }
+
+    #[test]
+    fn context_overflow_is_not_retryable() {
+        for msg in [
+            "invalid_request_error (400): context_length_exceeded",
+            "prompt is too long for this model",
+            "maximum context length exceeded",
+            "input is too long",
+            "request too large",
+            "too many tokens in the prompt",
+            "token limit exceeded",
+        ] {
+            let c = classify_message(msg);
+            assert_eq!(c.kind, ErrorKind::ContextOverflow, "{msg}");
+            assert!(!c.retryable, "{msg}");
+            assert!(c.user_message().contains("Context window"), "{msg}");
+        }
+        assert_eq!(ErrorKind::ContextOverflow.as_str(), "context_overflow");
     }
 
     #[test]

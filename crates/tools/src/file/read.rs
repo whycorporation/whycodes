@@ -39,6 +39,8 @@ impl Tool for ReadTool {
     fn description(&self) -> &str {
         "Read a text file (line-numbered). Prefer project-relative paths. \
          Use offset/limit for large files instead of reading everything. \
+         `skill://<name>` loads a skill body; `agent://<id>` re-reads a finished \
+         task/swarm artifact (empty id lists them). \
          For directories use `list`; for finding files use `glob`/`grep`. \
          Do not read cargo registry, node_modules, or target/ artifacts."
     }
@@ -68,6 +70,10 @@ impl Tool for ReadTool {
         let path_str = args["path"].as_str().unwrap_or("").trim();
         if path_str.is_empty() {
             return err("Missing required parameter `path`.");
+        }
+
+        if let Some(internal) = super::internal::read_internal(path_str, ctx) {
+            return internal;
         }
 
         let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;

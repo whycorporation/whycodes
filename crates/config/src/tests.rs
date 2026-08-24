@@ -477,6 +477,13 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.prompt_cache = "none".into();
     overlay.session.compaction_llm = "off".into();
     overlay.session.model_fast = Some("flash".into());
+    overlay.session.model_smol = Some("haiku".into());
+    overlay.session.model_plan = Some("sonnet".into());
+    overlay.session.stream_rules = vec![crate::StreamRuleConfig {
+        name: "no-leak".into(),
+        pattern: "Box::leak".into(),
+        hint: "don't".into(),
+    }];
     overlay.session.model_race = "auto".into();
     overlay.session.race_after_ms = 1500;
     overlay.session.response_cache = "off".into();
@@ -499,6 +506,10 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.prompt_cache, "none");
     assert_eq!(merged.session.compaction_llm, "off");
     assert_eq!(merged.session.model_fast.as_deref(), Some("flash"));
+    assert_eq!(merged.session.model_smol.as_deref(), Some("haiku"));
+    assert_eq!(merged.session.model_plan.as_deref(), Some("sonnet"));
+    assert_eq!(merged.session.stream_rules.len(), 1);
+    assert_eq!(merged.session.stream_rules[0].name, "no-leak");
     assert_eq!(merged.session.model_race, "auto");
     assert_eq!(merged.session.race_after_ms, 1500);
     assert_eq!(merged.session.response_cache, "off");
@@ -520,6 +531,33 @@ fn magic_keywords_toml_partial_uses_field_defaults() {
     assert!(cfg.session.magic_keywords.enabled);
     assert!(!cfg.session.magic_keywords.ultrathink);
     assert!(cfg.session.magic_keywords.orchestrate);
+}
+
+#[test]
+fn model_roles_and_stream_rules_from_toml() {
+    let cfg: Config = toml::from_str(
+        r#"
+[session]
+model_smol = "anthropic/claude-haiku-4-5-20251001"
+model_plan = "claude-opus-4-6"
+
+[[session.stream_rules]]
+name = "no-leak"
+pattern = "Box::leak"
+hint = "Don't use Box::leak"
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        cfg.session.model_smol.as_deref(),
+        Some("anthropic/claude-haiku-4-5-20251001")
+    );
+    assert_eq!(cfg.session.model_plan.as_deref(), Some("claude-opus-4-6"));
+    assert_eq!(cfg.session.stream_rules.len(), 1);
+    assert_eq!(cfg.session.stream_rules[0].pattern, "Box::leak");
+    let empty: Config = toml::from_str("[session]\n").unwrap();
+    assert!(empty.session.stream_rules.is_empty());
+    assert!(empty.session.model_smol.is_none());
 }
 
 #[test]

@@ -913,6 +913,13 @@ pub struct SessionConfig {
     /// Empty = auto-pick small sibling of the session model (haiku/mini/flash).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_fast: Option<String>,
+    /// Cheap model for `task` / `swarm` fan-out (`provider/model` or bare id).
+    /// Empty = auto-pick the small sibling of the session model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_smol: Option<String>,
+    /// Model used while the `plan` agent is active (`provider/model` or bare id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_plan: Option<String>,
     /// First-token race partner: `off` (default), `auto` (small sibling), or
     /// `provider/model`. When set, a slow primary TTFT starts the partner.
     #[serde(default = "default_model_race")]
@@ -940,6 +947,21 @@ pub struct SessionConfig {
     /// hidden per-turn instruction. Default on.
     #[serde(default)]
     pub magic_keywords: MagicKeywordsConfig,
+    /// Regexes matched against streamed assistant text. A hit aborts the
+    /// current LLM request and injects `hint` before the next step.
+    #[serde(default)]
+    pub stream_rules: Vec<StreamRuleConfig>,
+}
+
+/// One time-traveling stream rule (abort + inject).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct StreamRuleConfig {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub pattern: String,
+    #[serde(default)]
+    pub hint: String,
 }
 
 /// Per-turn hidden notices when the user writes a magic keyword in prose.
@@ -977,12 +999,15 @@ impl Default for SessionConfig {
             tool_profile: default_tool_profile(),
             prompt_cache: default_prompt_cache(),
             model_fast: None,
+            model_smol: None,
+            model_plan: None,
             model_race: default_model_race(),
             race_after_ms: default_race_after_ms(),
             response_cache: default_response_cache(),
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
             magic_keywords: MagicKeywordsConfig::default(),
+            stream_rules: Vec::new(),
         }
     }
 }
@@ -1478,6 +1503,15 @@ impl Config {
         }
         if other.session.model_fast.is_some() {
             merged.session.model_fast = other.session.model_fast.clone();
+        }
+        if other.session.model_smol.is_some() {
+            merged.session.model_smol = other.session.model_smol.clone();
+        }
+        if other.session.model_plan.is_some() {
+            merged.session.model_plan = other.session.model_plan.clone();
+        }
+        if !other.session.stream_rules.is_empty() {
+            merged.session.stream_rules = other.session.stream_rules.clone();
         }
         if other.session.model_race != default_model_race() {
             merged.session.model_race = other.session.model_race.clone();

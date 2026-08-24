@@ -189,6 +189,12 @@ pub struct Agent {
     magic_keywords: whycode_config::MagicKeywordsConfig,
     /// `/fresh`: skip provider prompt cache (and local response cache) once.
     skip_prompt_cache_once: std::sync::atomic::AtomicBool,
+    /// Cheap model for task/swarm (`provider/model` or bare id).
+    model_smol: Option<String>,
+    /// Model used while the `plan` agent is active.
+    model_plan: Option<String>,
+    /// Compiled stream-interrupt rules (name, regex, hint).
+    stream_rules: Vec<(String, regex::Regex, String)>,
     /// Parallel multi-agent swarm (config-driven).
     swarm_enabled: bool,
     swarm_max_agents: usize,
@@ -275,6 +281,69 @@ fn settle_checkpoint_rewind(
         }
     }
     (checkpoint_goal, rewind_report)
+}
+
+fn persist_agent_artifact(project: &std::path::Path, id: &str, body: &str) {
+    let id: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if id.is_empty() {
+        return;
+    }
+    let dir = project.join(".whycode").join("agents");
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::debug!(error = %e, "agent artifact dir");
+        return;
+    }
+    let path = dir.join(format!("{id}.md"));
+    if let Err(e) = std::fs::write(&path, body) {
+        tracing::debug!(error = %e, path = %path.display(), "agent artifact write");
+    }
+}
+
+fn compile_stream_rules(
+    rules: &[whycode_config::StreamRuleConfig],
+) -> Vec<(String, regex::Regex, String)> {
+    let mut out = Vec::new();
+    for rule in rules {
+        let name = rule.name.trim();
+        let pattern = rule.pattern.trim();
+        let hint = rule.hint.trim();
+        if name.is_empty() || pattern.is_empty() || hint.is_empty() {
+            continue;
+        }
+        match regex::Regex::new(pattern) {
+            Ok(re) => out.push((name.to_string(), re, hint.to_string())),
+            Err(e) => {
+                tracing::warn!(name, pattern, error = %e, "invalid stream rule regex");
+            }
+        }
+    }
+    out
+}
+
+fn first_stream_rule_hit<'a>(
+    rules: &'a [(String, regex::Regex, String)],
+    text: &str,
+) -> Option<(&'a str, &'a str)> {
+    for (name, re, hint) in rules {
+        if re.is_match(text) {
+            return Some((name.as_str(), hint.as_str()));
+        }
+    }
+    None
+}
+
+fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
+    let Ok(reg) = whycode_skill::SkillRegistry::load_project(project_path) else {
+        return system_prompt.to_string();
+    };
+    let catalog = reg.catalog_markdown();
+    if catalog.is_empty() {
+        return system_prompt.to_string();
+    }
+    format!("{system_prompt}\n\n{catalog}")
 }
 
 fn append_request_user_suffix(request: &mut whycode_core::types::LlmRequest, suffix: &str) {
@@ -402,6 +471,9 @@ impl Agent {
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
             magic_keywords: whycode_config::MagicKeywordsConfig::default(),
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
+            model_smol: None,
+            model_plan: None,
+            stream_rules: Vec::new(),
             swarm_enabled: true,
             swarm_max_agents: 4,
             swarm_worktrees: true,
@@ -514,6 +586,9 @@ impl Agent {
         self.intent_guidance =
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
         self.magic_keywords = config.session.magic_keywords.clone();
+        self.model_smol = config.session.model_smol.clone();
+        self.model_plan = config.session.model_plan.clone();
+        self.stream_rules = compile_stream_rules(&config.session.stream_rules);
         self.swarm_enabled = config.swarm.enabled;
         self.swarm_max_agents = config
             .swarm
@@ -875,7 +950,8 @@ impl Agent {
     pub fn with_agents_md(system_prompt: &str, project_path: &std::path::Path) -> String {
         let with_files =
             crate::context_files::append_project_instructions(system_prompt, project_path);
-        Self::with_runtime_context(&with_files)
+        let with_skills = append_skills_catalog(&with_files, project_path);
+        Self::with_runtime_context(&with_skills)
     }
 
     /// Resolve provider + model + key for a title refine call, or `None` if
@@ -1061,6 +1137,14 @@ impl Agent {
         let skip_cache = self
             .skip_prompt_cache_once
             .swap(false, std::sync::atomic::Ordering::Relaxed);
+        let (role_provider, role_model) = crate::routing::resolve_agent_model(
+            provider_name,
+            model,
+            &self.info.name,
+            self.model_plan.as_deref(),
+        );
+        let provider_name = role_provider.as_str();
+        let model = role_model.as_str();
         let tools_free_chat = crate::title::is_trivial_title_seed(&last_user)
             && session.user_message_count() <= 1
             && !session.messages.iter().any(|m| {
@@ -1121,6 +1205,7 @@ impl Agent {
         // Autocompact circuit breaker: stop retrying after N ineffective passes.
         let mut compact_failures: u32 = 0;
         let mut compact_paused = false;
+        let mut overflow_retries: u32 = 0;
 
         loop {
             // Rebuild each step so tool_search activations and worktree cwd apply.
@@ -1154,10 +1239,19 @@ impl Agent {
             }
 
             // Always shrink oversized / old tool dumps before prefill (cheap).
+            // When still hot, shake older tool bodies harder so overflow is less likely.
             // Full-replace compact when over the configured token threshold —
             // and only while the circuit breaker has not tripped.
             let _ = session.truncate_large_tool_results();
             let _ = session.prune_old_tool_results();
+            if self.compaction_threshold > 0
+                && session.token_count() > self.compaction_threshold.saturating_mul(3) / 4
+            {
+                let shaken = session.shake_old_tool_results();
+                if shaken > 0 {
+                    tracing::debug!(shaken, "shook old tool results before LLM step");
+                }
+            }
             if self.compaction_threshold > 0 && !compact_paused {
                 let before = session.token_count();
                 if before > self.compaction_threshold {
@@ -1273,7 +1367,7 @@ impl Agent {
                 }),
                 _ => None,
             };
-            let turn = tokio::select! {
+            let opened = tokio::select! {
                 biased;
                 _ = wait_until_cancelled(&cancel) => {
                     emit(&events, TurnEvent::Cancelled);
@@ -1291,7 +1385,32 @@ impl Agent {
                         race: race_target,
                         race_after: self.race_after,
                     },
-                ) => opened?,
+                ) => opened,
+            };
+            let turn = match opened {
+                Ok(t) => t,
+                Err(e)
+                    if whycode_llm::classify(&e).kind
+                        == whycode_llm::ErrorKind::ContextOverflow
+                        && overflow_retries < 1 =>
+                {
+                    overflow_retries = overflow_retries.saturating_add(1);
+                    emit(
+                        &events,
+                        TurnEvent::Status(
+                            "Context overflow — compacting and retrying this step…".into(),
+                        ),
+                    );
+                    let outcome = self
+                        .compact_session(session, provider_name, model, api_key, None)
+                        .await;
+                    tracing::info!(
+                        after_tokens = outcome.tokens_after,
+                        "compacted after context overflow"
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e),
             };
             let cache_hit = turn.cache_hit;
             let race_tag = turn.race.as_str();
@@ -1305,6 +1424,7 @@ impl Agent {
                 );
             }
             let mut event_stream = turn.events;
+            let mut stream_rule_retry = false;
 
             // Stream body: check cancel between tokens *and* while idle waiting
             // for the next SSE line (select! with wait_until_cancelled).
@@ -1333,7 +1453,38 @@ impl Agent {
                     break;
                 };
 
-                match event? {
+                let event = match event {
+                    Ok(ev) => ev,
+                    Err(e)
+                        if whycode_llm::classify(&e).kind
+                            == whycode_llm::ErrorKind::ContextOverflow
+                            && overflow_retries < 1 =>
+                    {
+                        crate::speculative_read::abort_all(&mut speculative_reads);
+                        overflow_retries = overflow_retries.saturating_add(1);
+                        emit(
+                            &events,
+                            TurnEvent::Status(
+                                "Context overflow — compacting and retrying this step…".into(),
+                            ),
+                        );
+                        let outcome = self
+                            .compact_session(session, provider_name, model, api_key, None)
+                            .await;
+                        tracing::info!(
+                            after_tokens = outcome.tokens_after,
+                            "compacted after streamed context overflow"
+                        );
+                        stream_rule_retry = true;
+                        break;
+                    }
+                    Err(e) => {
+                        crate::speculative_read::abort_all(&mut speculative_reads);
+                        return Err(e);
+                    }
+                };
+
+                match event {
                     StreamEvent::TextDelta { text } => {
                         thinking_acc.flush();
                         if ttft_ms.is_none() {
@@ -1341,6 +1492,24 @@ impl Agent {
                         }
                         emit(&events, TurnEvent::TextDelta(text.clone()));
                         accumulated_text.push_str(&text);
+                        if let Some((name, hint)) =
+                            first_stream_rule_hit(&self.stream_rules, &accumulated_text)
+                        {
+                            crate::speculative_read::abort_all(&mut speculative_reads);
+                            emit(
+                                &events,
+                                TurnEvent::Status(format!(
+                                    "Stream rule `{name}` interrupted the draft"
+                                )),
+                            );
+                            session.add_user_message(&format!(
+                                "<whycode_rule name=\"{name}\">\n{hint}\n\
+                                 The previous draft was discarded. Continue without violating this rule.\n\
+                                 </whycode_rule>"
+                            ));
+                            stream_rule_retry = true;
+                            break;
+                        }
                     }
                     StreamEvent::ToolUse { id, name, input } => {
                         thinking_acc.flush();
@@ -1421,9 +1590,36 @@ impl Agent {
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
                     StreamEvent::Error { message } => {
+                        if whycode_llm::classify_message(&message).kind
+                            == whycode_llm::ErrorKind::ContextOverflow
+                            && overflow_retries < 1
+                        {
+                            crate::speculative_read::abort_all(&mut speculative_reads);
+                            overflow_retries = overflow_retries.saturating_add(1);
+                            emit(
+                                &events,
+                                TurnEvent::Status(
+                                    "Context overflow — compacting and retrying this step…".into(),
+                                ),
+                            );
+                            let outcome = self
+                                .compact_session(session, provider_name, model, api_key, None)
+                                .await;
+                            tracing::info!(
+                                after_tokens = outcome.tokens_after,
+                                "compacted after streamed context overflow"
+                            );
+                            stream_rule_retry = true;
+                            break;
+                        }
+                        crate::speculative_read::abort_all(&mut speculative_reads);
                         return Err(whycode_core::Error::Llm(message));
                     }
                 }
+            }
+
+            if stream_rule_retry {
+                continue;
             }
 
             // Merge streamed argument fragments into parsed JSON objects.
@@ -2918,8 +3114,10 @@ impl Agent {
         }
 
         let sem = std::sync::Arc::new(Semaphore::new(max_concurrent));
-        let provider_name: std::sync::Arc<str> = provider_name.into();
-        let model: std::sync::Arc<str> = model.into();
+        let (worker_provider, worker_model) =
+            crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
+        let provider_name: std::sync::Arc<str> = worker_provider.into();
+        let model: std::sync::Arc<str> = worker_model.into();
         let api_key: std::sync::Arc<str> = api_key.into();
         let project_path = session.project_path.clone();
         let registry = Arc::clone(&self.provider_registry);
@@ -3151,6 +3349,9 @@ impl Agent {
                         whycode_core::types::Usage::default(),
                     ),
                 };
+                if success {
+                    persist_agent_artifact(&project_path, &worker_id, &body);
+                }
                 if let Some(ref tx) = events_tx
                     && let Err(e) = tx.send(TurnEvent::Subagent {
                         id: worker_id.clone(),
@@ -3402,7 +3603,12 @@ impl Agent {
             },
         );
 
-        match runner.run(task, provider_name, model, api_key).await {
+        let (worker_provider, worker_model) =
+            crate::routing::resolve_worker_model(provider_name, model, self.model_smol.as_deref());
+        match runner
+            .run(task, &worker_provider, &worker_model, api_key)
+            .await
+        {
             Ok(result) => {
                 if !result.usage.is_empty()
                     && let Ok(mut pending) = self.subagent_usage_pending.lock()
@@ -3425,7 +3631,7 @@ impl Agent {
                 emit(
                     &events.cloned(),
                     TurnEvent::Subagent {
-                        id: child_id,
+                        id: child_id.clone(),
                         kind: subagent_type.to_string(),
                         description: goal.clone(),
                         status: status.into(),
@@ -3434,11 +3640,14 @@ impl Agent {
                         output: result.output.clone(),
                     },
                 );
+                if result.success {
+                    persist_agent_artifact(&session.project_path, &child_id, &result.output);
+                }
                 ToolResult {
                     tool_call_id: call.id.clone(),
                     content: if result.success {
                         format!(
-                            "Subagent ({}) completed in {:.1}s:\n\n{}{usage_note}",
+                            "Subagent ({}) completed in {:.1}s. Re-read with `read agent://{child_id}`.\n\n{}{usage_note}",
                             subagent_type,
                             result.duration.as_secs_f64(),
                             result.output
@@ -3842,6 +4051,71 @@ mod permission_detail_tests {
         std::fs::write(dir3.path().join(".whycode/AGENTS.md"), "nested rules").unwrap();
         let with3 = Agent::with_agents_md("base", dir3.path());
         assert!(with3.contains("nested rules"), "{with3}");
+    }
+
+    #[test]
+    fn skills_catalog_is_appended_without_bodies() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join(".skills");
+        std::fs::create_dir(&skills).unwrap();
+        std::fs::write(
+            skills.join("demo.skill.md"),
+            "---\nname: demo\ndescription: short desc\n---\n\nSECRET BODY MUST NOT LEAK\n",
+        )
+        .unwrap();
+        let with = Agent::with_agents_md("base", dir.path());
+        assert!(with.contains("# Skills"), "{with}");
+        assert!(with.contains("`demo`"), "{with}");
+        assert!(with.contains("short desc"), "{with}");
+        assert!(with.contains("skill://"), "{with}");
+        assert!(!with.contains("SECRET BODY MUST NOT LEAK"), "{with}");
+    }
+
+    #[test]
+    fn stream_rules_compile_and_match() {
+        use whycode_config::StreamRuleConfig;
+        let rules = [
+            StreamRuleConfig {
+                name: String::new(),
+                pattern: "x".into(),
+                hint: "h".into(),
+            },
+            StreamRuleConfig {
+                name: "bad".into(),
+                pattern: "(".into(),
+                hint: "h".into(),
+            },
+            StreamRuleConfig {
+                name: "no-leak".into(),
+                pattern: "Box::leak".into(),
+                hint: "use Arc".into(),
+            },
+        ];
+        let compiled = compile_stream_rules(&rules);
+        assert_eq!(compiled.len(), 1);
+        let hit = first_stream_rule_hit(&compiled, "please Box::leak this");
+        assert_eq!(hit, Some(("no-leak", "use Arc")));
+        assert!(first_stream_rule_hit(&compiled, "Arc::from").is_none());
+    }
+
+    #[test]
+    fn persist_agent_artifact_sanitizes_id() {
+        let dir = tempfile::tempdir().unwrap();
+        persist_agent_artifact(dir.path(), "task-ok", "hello");
+        persist_agent_artifact(dir.path(), "../evil", "nope");
+        persist_agent_artifact(dir.path(), "", "ignored");
+        let agents = dir.path().join(".whycode").join("agents");
+        assert_eq!(
+            std::fs::read_to_string(agents.join("task-ok.md")).unwrap(),
+            "hello"
+        );
+        assert!(!dir.path().join("evil.md").exists());
+        assert!(!dir.path().join("evil").exists());
+        // `../evil` strips to `evil` and stays inside the agents dir.
+        assert_eq!(
+            std::fs::read_to_string(agents.join("evil.md")).unwrap(),
+            "nope"
+        );
     }
 
     #[test]
