@@ -53,7 +53,7 @@ pub struct SlashContext<'a> {
     pub session: &'a mut Session,
     pub history: &'a mut SessionHistory,
     pub agent: &'a mut Agent,
-    pub config: &'a Config,
+    pub config: &'a mut Config,
     pub project_dir: &'a std::path::Path,
     pub provider: &'a mut String,
     pub model: &'a mut String,
@@ -303,6 +303,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 
     app.provider_name = opts.provider.clone();
     app.model_name = opts.model.clone();
+    app.reasoning_effort = opts.config.session.reasoning_effort.clone();
     app.agent_name = opts.agent_name.clone();
     app.project_dir = opts
         .project_dir
@@ -566,7 +567,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     let boot = prepare_tui_boot(&opts).await;
     let mut app = boot.app;
-    let config = boot.config;
+    let mut config = boot.config;
     let file_index = boot.file_index;
     let mut agent = boot.agent;
     let session = boot.session;
@@ -1003,6 +1004,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         catalog_tx.clone(),
                     );
                 }
+            }
+
+            if let Some(effort) = app.pending_effort.take() {
+                apply_reasoning_effort(&mut app, &mut rt.agent, &mut config, &effort);
             }
 
             // ── `/login` picker selection → start OAuth sign-in ──
@@ -1540,7 +1545,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                                 session: &mut rt.session,
                                 history: &mut rt.history,
                                 agent: &mut rt.agent,
-                                config: &config,
+                                config: &mut config,
                                 project_dir: &project_dir,
                                 provider: &mut provider,
                                 model: &mut model,
@@ -3210,6 +3215,53 @@ fn apply_model_choice(
     );
 }
 
+fn apply_reasoning_effort(app: &mut TuiApp, agent: &mut Agent, config: &mut Config, raw: &str) {
+    let Some(parsed) = whycode_llm::ReasoningEffort::parse(raw) else {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            format!("Unknown effort '{raw}' (low, medium, high, xhigh)"),
+        );
+        return;
+    };
+    let resolved = whycode_llm::ThinkingConfig::resolve_effort(
+        &app.provider_name,
+        &app.model_name,
+        Some(parsed.as_str()),
+    );
+    let Some(resolved) = resolved else {
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "This model has no reasoning-effort levels",
+        );
+        return;
+    };
+    let value = resolved.as_str().to_string();
+    app.reasoning_effort = Some(value.clone());
+    config.session.reasoning_effort = Some(value.clone());
+    agent.set_reasoning_effort(Some(value.clone()));
+    if let Err(e) = persist_session_reasoning_effort(&value) {
+        tracing::warn!(error = %e, "failed to persist session.reasoning_effort");
+    }
+    let note = if parsed != resolved {
+        format!(" (clamped from {})", parsed.as_str())
+    } else {
+        String::new()
+    };
+    app.status_message = format!("Reasoning effort → {}{note}", resolved.label());
+    app.mark_dirty();
+}
+
+fn persist_session_reasoning_effort(value: &str) -> anyhow::Result<()> {
+    // Tests must not rewrite the developer's user config.toml.
+    if cfg!(test) {
+        return Ok(());
+    }
+    let mut disk = Config::load()?;
+    disk.session.reasoning_effort = Some(value.to_string());
+    disk.save()?;
+    Ok(())
+}
+
 fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
     const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     *spinner_frame = (*spinner_frame + 1) % FRAMES.len();
@@ -4591,6 +4643,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             ctx.app.model_selection.models = configured_models(ctx.config);
             crate::input::open_model_dialog(ctx.app);
         }
+        "/effort" if rest.is_empty() => {
+            crate::input::open_effort_dialog(ctx.app);
+        }
+        "/effort" => apply_reasoning_effort(ctx.app, ctx.agent, ctx.config, rest),
         "/models" => {
             if rest.is_empty() {
                 let src = if ctx
@@ -6661,7 +6717,7 @@ mod tests {
                 session: &mut self.session,
                 history: &mut self.history,
                 agent: &mut self.agent,
-                config: &self.config,
+                config: &mut self.config,
                 project_dir: &project_dir,
                 provider: &mut self.provider,
                 model: &mut self.model,
@@ -6805,6 +6861,19 @@ mod tests {
         h.run("/models acme/m3").await;
         assert_eq!(h.provider, "acme");
         assert_eq!(h.model, "m3");
+
+        h.provider = "xai".into();
+        h.model = "grok-4".into();
+        h.app.provider_name = "xai".into();
+        h.app.model_name = "grok-4".into();
+        h.run("/effort").await;
+        assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Effort)));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+        h.run("/effort high").await;
+        assert_eq!(h.app.reasoning_effort.as_deref(), Some("high"));
+        h.run("/effort xhigh").await;
+        assert_eq!(h.app.reasoning_effort.as_deref(), Some("high"));
 
         h.run("/tools").await;
         h.run("/info").await;

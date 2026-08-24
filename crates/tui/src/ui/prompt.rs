@@ -1,12 +1,12 @@
 // ── ui/prompt.rs: boxed prompt ─────────────────────────────────────────
-// Rounded box ╭─╮│╰─╯, ❯ prefix, agent/model on the bottom border.
+// Rounded box ╭─╮│╰─╯, ❯ prefix, agent/model/effort on the bottom border.
 // No panel fill — sits on the canvas background.
 //
 // Layout:
 //   (blank gap above the box)
 //   ╭─────────────────────────╮   top border
 //   │ ❯ text…                 │   1..MAX_INPUT_ROWS
-//   ╰──── agent · model ──────╯   bottom border / info
+//   ╰──── agent · model · Med ─╯   bottom border / info
 //   hint (home only)
 //
 // The input block grows upward as text wraps, capped at MAX_INPUT_ROWS.
@@ -433,7 +433,7 @@ fn paint_side_borders(frame: &mut Frame, text_area: Rect, full: Rect, style: Sty
     }
 }
 
-/// Right-aligned ` agent · provider/model ` on the bottom border, with
+/// Right-aligned ` agent · provider/model · effort ` on the bottom border, with
 /// leading/trailing spaces blanking adjacent `─` (Grok chrome caption).
 ///
 /// Agent and model pick up theme / `[tui.agent_colors]` so the caption is
@@ -442,6 +442,7 @@ fn paint_side_borders(frame: &mut Frame, text_area: Rect, full: Rect, style: Sty
 fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     app.agent_hit.set_rect(None);
     app.model_hit.set_rect(None);
+    app.effort_hit.set_rect(None);
     if row.width < 8 {
         return;
     }
@@ -469,6 +470,16 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     let mut model_style = Style::default().fg(model_color);
     if app.model_hit.hovered {
         model_style = model_style.add_modifier(Modifier::UNDERLINED);
+    }
+    let effort = whycode_llm::ThinkingConfig::resolve_effort(
+        &app.provider_name,
+        &app.model_name,
+        app.reasoning_effort.as_deref(),
+    );
+    let effort_shown = effort.map(|e| e.label().to_string()).unwrap_or_default();
+    let mut effort_style = Style::default().fg(palette.dim);
+    if app.effort_hit.hovered {
+        effort_style = effort_style.add_modifier(Modifier::UNDERLINED);
     }
     let badge_style = match app.intent_kind.as_deref() {
         Some("question") => Style::default()
@@ -513,6 +524,11 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     if !model_shown.is_empty() {
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(model_shown, model_style));
+    }
+    let effort_shown_w = UnicodeWidthStr::width(effort_shown.as_str()) as u16;
+    if !effort_shown.is_empty() {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(effort_shown, effort_style));
     }
     spans.push(Span::styled(" ", sep_style));
 
@@ -559,7 +575,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         width: label_w,
         height: 1,
     };
-    // Record clickable spans: skip leading space, then agent, optional badge, model.
+    // Record clickable spans: skip leading space, then agent, optional badge, model, effort.
     let mut col = x.saturating_add(1);
     let agent_w = UnicodeWidthStr::width(app.agent_name.as_str()) as u16;
     if agent_w > 0 {
@@ -581,6 +597,16 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
             x: col,
             y: row.y,
             width: model_shown_w,
+            height: 1,
+        }));
+        col = col.saturating_add(model_shown_w);
+    }
+    if effort_shown_w > 0 {
+        col = col.saturating_add(3); // ` · `
+        app.effort_hit.set_rect(Some(Rect {
+            x: col,
+            y: row.y,
+            width: effort_shown_w,
             height: 1,
         }));
     }

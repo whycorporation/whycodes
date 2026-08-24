@@ -761,6 +761,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 app.mouse_sel = None;
                 return true;
             }
+            if app.effort_hit.contains(mouse.column, mouse.row) {
+                open_effort_dialog(app);
+                app.mouse_sel = None;
+                return true;
+            }
             // Slash dropdown: click a row to select + apply.
             if app.slash_suggest.active
                 && let Some(idx) = app.slash_suggest.row_index_at(mouse.column, mouse.row)
@@ -1174,6 +1179,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.login_dialog.selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Effort => {
+                        app.effort_picker_selected = idx;
+                        confirm_dialog(app, active);
+                    }
                     DialogKind::Provider
                         if app.provider_dialog.mode == crate::app::ProviderDialogMode::Select =>
                     {
@@ -1457,6 +1466,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.login_dialog.selected = idx.min(len - 1);
             }
         }
+        DialogKind::Effort => {
+            let len = effort_levels(app).len();
+            if len > 0 {
+                app.effort_picker_selected = idx.min(len - 1);
+            }
+        }
         DialogKind::Question(_) => {
             if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
                 st.set_cursor(idx);
@@ -1672,6 +1687,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_login_provider = Some(row.provider.clone());
             }
         }
+        DialogKind::Effort => {
+            if let Some(level) = effort_levels(app).get(app.effort_picker_selected) {
+                app.pending_effort = Some(level.as_str().to_string());
+            }
+        }
         _ => {}
     }
     dismiss_dialog(app);
@@ -1776,6 +1796,31 @@ pub fn open_model_dialog(app: &mut TuiApp) {
     open_dialog(app, DialogKind::Model);
 }
 
+pub fn open_effort_dialog(app: &mut TuiApp) {
+    let levels = effort_levels(app);
+    if levels.is_empty() {
+        app.toasts.push(
+            crate::toast::ToastKind::Info,
+            "This model has no reasoning-effort levels",
+        );
+        app.mark_dirty();
+        return;
+    }
+    let current = whycode_llm::ThinkingConfig::resolve_effort(
+        &app.provider_name,
+        &app.model_name,
+        app.reasoning_effort.as_deref(),
+    );
+    app.effort_picker_selected = current
+        .and_then(|cur| levels.iter().position(|e| *e == cur))
+        .unwrap_or(0);
+    open_dialog(app, DialogKind::Effort);
+}
+
+fn effort_levels(app: &TuiApp) -> &'static [whycode_llm::ReasoningEffort] {
+    whycode_llm::ThinkingConfig::supported_efforts(&app.provider_name, &app.model_name)
+}
+
 fn fill_model_catalog_from_disk(app: &mut TuiApp) {
     let Ok(config) = whycode_config::Config::load() else {
         return;
@@ -1836,6 +1881,10 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
                 app.login_dialog.rows.len(),
                 delta,
             );
+        }
+        DialogKind::Effort => {
+            app.effort_picker_selected =
+                move_selection(app.effort_picker_selected, effort_levels(app).len(), delta);
         }
         DialogKind::Question(_) => {
             if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
@@ -2403,6 +2452,21 @@ mod event_tests {
         );
         assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
         assert_eq!(a.model_selection.selected, 0);
+
+        let mut a = app();
+        a.provider_name = "xai".into();
+        a.model_name = "grok-4".into();
+        a.effort_hit.set_rect(Some(Rect {
+            x: 64,
+            y: 20,
+            width: 3,
+            height: 1,
+        }));
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 65, 20),
+        );
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Effort)));
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub enum DialogKind {
     Workspace,
     /// OAuth sign-in picker (`/login`): one row per subscription provider.
     Login,
+    /// OpenAI-compat / xAI reasoning effort (`low`/`medium`/`high`/`xhigh`).
+    Effort,
 }
 
 /// One row in the `/login` provider picker.
@@ -1256,6 +1258,12 @@ pub struct TuiApp {
     pub bg_running_count: usize,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
+    /// Reasoning effort from the picker / `/effort` (`low`/`medium`/`high`/`xhigh`).
+    pub pending_effort: Option<String>,
+    /// Cursor in the effort picker (`ThinkingConfig::supported_efforts`).
+    pub effort_picker_selected: usize,
+    /// Last chosen `reasoning_effort` (`None` = family default).
+    pub reasoning_effort: Option<String>,
     /// Agent switch from the picker dialog (prompt footer click / `/agent`).
     pub pending_agent: Option<String>,
     /// Cursor in the agent picker (list is `primary_agents`).
@@ -1306,6 +1314,8 @@ pub struct TuiApp {
     pub agent_hit: crate::hit_area::HitArea,
     /// Prompt-footer provider/model (click → model picker).
     pub model_hit: crate::hit_area::HitArea,
+    /// Prompt-footer reasoning effort (click → effort picker).
+    pub effort_hit: crate::hit_area::HitArea,
     /// Last known mouse cell (for hover tooltips).
     pub mouse_pos: Option<(u16, u16)>,
 
@@ -1546,6 +1556,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "[args] Switch agent (picker if no name, e.g. /agent plan)",
     },
     SlashCommand {
+        name: "/effort",
+        hint: "[low|medium|high|xhigh] Reasoning effort (picker if no arg)",
+    },
+    SlashCommand {
         name: "/connect",
         hint: "Provider / API key help",
     },
@@ -1770,6 +1784,9 @@ impl TuiApp {
             auth_code_sink: None,
             bg_running_count: 0,
             pending_model: None,
+            pending_effort: None,
+            effort_picker_selected: 0,
+            reasoning_effort: None,
             pending_agent: None,
             agent_picker_selected: 0,
             pending_login_provider: None,
@@ -1794,6 +1811,7 @@ impl TuiApp {
             turn_stop_hit: crate::hit_area::HitArea::default(),
             agent_hit: crate::hit_area::HitArea::default(),
             model_hit: crate::hit_area::HitArea::default(),
+            effort_hit: crate::hit_area::HitArea::default(),
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
@@ -1963,6 +1981,7 @@ impl TuiApp {
         changed |= self.turn_stop_hit.update_hover(c, r);
         changed |= self.agent_hit.update_hover(c, r);
         changed |= self.model_hit.update_hover(c, r);
+        changed |= self.effort_hit.update_hover(c, r);
         // Slash dropdown hover row (index into matches, not absolute cmd).
         if self.slash_suggest.active {
             if let Some(idx) = self.slash_suggest.row_index_at(c, r) {

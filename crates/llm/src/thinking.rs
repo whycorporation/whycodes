@@ -16,9 +16,72 @@ pub struct ThinkingConfig {
     /// Whether extended thinking is enabled.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// OpenAI / Grok / o-series: `low` | `medium` | `high`.
+    /// OpenAI / Grok / o-series: `low` | `medium` | `high` | `xhigh`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+}
+
+/// OpenAI-compat / xAI `reasoning_effort` levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReasoningEffort {
+    Low,
+    Medium,
+    High,
+    /// grok-4.6+ only (`xhigh` / Max).
+    XHigh,
+}
+
+impl ReasoningEffort {
+    pub const ALL: [Self; 4] = [Self::Low, Self::Medium, Self::High, Self::XHigh];
+    pub const STANDARD: [Self; 3] = [Self::Low, Self::Medium, Self::High];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "low" | "minimal" => Some(Self::Low),
+            "medium" | "med" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" | "max" | "ultra" => Some(Self::XHigh),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+        }
+    }
+
+    /// Compact chrome label (`Med`, `Max`).
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Med",
+            Self::High => "High",
+            Self::XHigh => "Max",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Low => "Fast — some reasoning, best for latency",
+            Self::Medium => "Balanced — complex analysis, long context",
+            Self::High => "Deeper thinking — hard problems, multi-step",
+            Self::XHigh => "Maximum depth — grok-4.6+ only",
+        }
+    }
+
+    /// `xhigh` is documented for grok-4.6 and newer.
+    pub fn model_allows_xhigh(provider: &str, model: &str) -> bool {
+        let p = provider.to_ascii_lowercase();
+        let m = model.to_ascii_lowercase();
+        if p != "xai" && !m.contains("grok") {
+            return false;
+        }
+        grok_version_at_least(&m, 4, 6)
+    }
 }
 
 fn default_enabled() -> bool {
@@ -103,13 +166,45 @@ impl ThinkingConfig {
         let reasoning_effort = value
             .get("reasoning_effort")
             .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_ascii_lowercase())
-            .filter(|s| matches!(s.as_str(), "low" | "medium" | "high" | "minimal"));
+            .and_then(ReasoningEffort::parse)
+            .map(|e| e.as_str().to_string());
         Some(Self {
             budget_tokens: budget,
             enabled,
             reasoning_effort,
         })
+    }
+
+    /// Levels this provider/model accepts (`[]` = no `reasoning_effort` field).
+    pub fn supported_efforts(provider: &str, model: &str) -> &'static [ReasoningEffort] {
+        if Self::default_effort(provider, model).is_none() {
+            return &[];
+        }
+        if ReasoningEffort::model_allows_xhigh(provider, model) {
+            &ReasoningEffort::ALL
+        } else {
+            &ReasoningEffort::STANDARD
+        }
+    }
+
+    /// User override, else the family default, clamped to what the model allows.
+    pub fn resolve_effort(
+        provider: &str,
+        model: &str,
+        override_effort: Option<&str>,
+    ) -> Option<ReasoningEffort> {
+        let levels = Self::supported_efforts(provider, model);
+        if levels.is_empty() {
+            return None;
+        }
+        let want = override_effort
+            .and_then(ReasoningEffort::parse)
+            .unwrap_or(ReasoningEffort::Medium);
+        if want == ReasoningEffort::XHigh && !levels.contains(&ReasoningEffort::XHigh) {
+            Some(ReasoningEffort::High)
+        } else {
+            Some(want)
+        }
     }
 
     /// Default `reasoning_effort` for OpenAI-compat families that accept it.
@@ -254,4 +349,53 @@ mod tests {
             None
         );
     }
+
+    #[test]
+    fn from_structured_reads_xhigh() {
+        let v = serde_json::json!({"enabled": true, "reasoning_effort": "xhigh"});
+        let cfg = ThinkingConfig::from_request_value(Some(&v)).unwrap();
+        assert_eq!(cfg.reasoning_effort.as_deref(), Some("xhigh"));
+    }
+
+    #[test]
+    fn grok_46_offers_xhigh_older_does_not() {
+        assert!(ReasoningEffort::model_allows_xhigh("xai", "grok-4.6"));
+        assert!(ReasoningEffort::model_allows_xhigh("xai", "grok-4.6-beta"));
+        assert!(!ReasoningEffort::model_allows_xhigh("xai", "grok-4"));
+        assert!(!ReasoningEffort::model_allows_xhigh("xai", "grok-4.5"));
+        assert_eq!(
+            ThinkingConfig::supported_efforts("xai", "grok-4.6").len(),
+            4
+        );
+        assert_eq!(ThinkingConfig::supported_efforts("xai", "grok-4").len(), 3);
+        assert_eq!(
+            ThinkingConfig::resolve_effort("xai", "grok-4", Some("xhigh")),
+            Some(ReasoningEffort::High)
+        );
+        assert_eq!(
+            ThinkingConfig::resolve_effort("xai", "grok-4.6", Some("max")),
+            Some(ReasoningEffort::XHigh)
+        );
+        assert!(ThinkingConfig::supported_efforts("anthropic", "claude-sonnet-4").is_empty());
+    }
+}
+
+fn grok_version_at_least(model: &str, min_major: u32, min_minor: u32) -> bool {
+    let Some(rest) = model.find("grok-").map(|i| &model[i + "grok-".len()..]) else {
+        return false;
+    };
+    let ver = rest.split(['-', '_']).next().unwrap_or(rest);
+    if let Some((maj, min)) = ver.split_once('.') {
+        let major = maj.parse::<u32>().unwrap_or(0);
+        let minor = min
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse::<u32>()
+            .unwrap_or(0);
+        return major > min_major || (major == min_major && minor >= min_minor);
+    }
+    ver.parse::<u32>()
+        .map(|major| major > min_major || (major == min_major && min_minor == 0))
+        .unwrap_or(false)
 }
