@@ -3612,7 +3612,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             if matches!(name.as_str(), "todowrite" | "todo")
                 && let Some(next) = whycode_core::todo::apply_todowrite_args(&app.todos, &input)
             {
-                app.todos = next;
+                app.replace_todos(next);
             }
             app.add_tool_call(id, name, input);
         }
@@ -3763,8 +3763,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             apply_panel_update(app, update);
         }
         TurnEvent::Todos { todos } => {
-            app.todos = todos;
-            app.mark_dirty();
+            app.replace_todos(todos);
         }
         TurnEvent::Subagent {
             id,
@@ -3864,14 +3863,14 @@ fn refresh_sidebar(
 }
 
 fn load_app_todos(app: &mut TuiApp) {
-    app.todos = whycode_core::todo::load_todos(
+    app.replace_todos(whycode_core::todo::load_todos(
         &app.project_dir,
         if app.session_id.is_empty() {
             None
         } else {
             Some(app.session_id.as_str())
         },
-    );
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4274,7 +4273,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             );
             ctx.app.session_title = ctx.session.title.clone();
             ctx.app.session_id = ctx.session.id.clone();
-            ctx.app.todos.clear();
+            ctx.app.replace_todos(Vec::new());
             ctx.app.messages.clear();
             ctx.app.sync_context_estimate(ctx.session);
             ctx.app.turn_usage = None;

@@ -262,6 +262,8 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     }
     if let Some(area) = todo_area {
         todos::render_panel(frame, area, app, palette);
+    } else {
+        app.todos_hit.clear();
     }
 
     if app.messages.is_empty() {

@@ -458,6 +458,34 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
 }
 
 #[test]
+fn todo_panel_click_toggles_collapse() {
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    app.replace_todos(vec![whycode_core::TodoItem::new(
+        "a",
+        "open work",
+        whycode_core::TodoStatus::Pending,
+    )]);
+    assert!(!app.todos_collapsed);
+    app.todos_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 2,
+        width: 40,
+        height: 1,
+    }));
+    let click = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: 2,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, click));
+    assert!(app.todos_collapsed);
+}
+
+#[test]
 fn prompt_meta_hover_marks_dirty_on_enter_leave() {
     use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;

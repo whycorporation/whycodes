@@ -1340,6 +1340,11 @@ pub struct TuiApp {
     pub session_id: String,
     /// Session todo list (sticky panel under the header).
     pub todos: Vec<whycode_core::TodoItem>,
+    /// Fold the sticky todo list to a single header row (Grok chevron).
+    /// Auto-collapses when every item is done; click / `t` reopens it.
+    pub todos_collapsed: bool,
+    /// Header row of the sticky todo panel (click to fold).
+    pub todos_hit: crate::hit_area::HitArea,
     /// Live + finished child sessions (Grok tasks pane / top strip).
     pub subagents: Vec<SubagentUi>,
     /// When set, the framed child transcript overlays the parent session.
@@ -1822,6 +1827,8 @@ impl TuiApp {
             pending_cancel: false,
             session_id: String::new(),
             todos: Vec::new(),
+            todos_collapsed: false,
+            todos_hit: crate::hit_area::HitArea::default(),
             subagents: Vec::new(),
             open_subagent: None,
             subagent_strip_hit: Vec::new(),
@@ -1973,6 +1980,10 @@ impl TuiApp {
                 self.model_hit.hovered = false;
                 changed = true;
             }
+            if self.todos_hit.hovered {
+                self.todos_hit.hovered = false;
+                changed = true;
+            }
             return changed;
         };
         let mut changed = false;
@@ -1982,6 +1993,7 @@ impl TuiApp {
         changed |= self.agent_hit.update_hover(c, r);
         changed |= self.model_hit.update_hover(c, r);
         changed |= self.effort_hit.update_hover(c, r);
+        changed |= self.todos_hit.update_hover(c, r);
         // Slash dropdown hover row (index into matches, not absolute cmd).
         if self.slash_suggest.active {
             if let Some(idx) = self.slash_suggest.row_index_at(c, r) {
@@ -2740,14 +2752,14 @@ impl TuiApp {
         self.messages = chat_messages_from_session(session);
         self.session_title = session.title.clone();
         self.session_id = session.id.clone();
-        self.todos = whycode_core::todo::load_todos(
+        self.replace_todos(whycode_core::todo::load_todos(
             &self.project_dir,
             if session.id.is_empty() {
                 None
             } else {
                 Some(session.id.as_str())
             },
-        );
+        ));
         self.scroll_offset = 0;
         self.auto_scroll = true;
         self.selected_msg = None;
@@ -2777,6 +2789,7 @@ impl TuiApp {
         view.pending_suggestion = self.pending_suggestion.clone();
         view.session_id = self.session_id.clone();
         view.todos = self.todos.clone();
+        view.todos_collapsed = self.todos_collapsed;
     }
 
     /// Restore a previously saved per-session view state (switching back).
@@ -2798,6 +2811,7 @@ impl TuiApp {
         self.pending_suggestion = view.pending_suggestion.clone();
         self.session_id = view.session_id.clone();
         self.todos = view.todos.clone();
+        self.todos_collapsed = view.todos_collapsed;
         self.dialogs.clear();
         self.mark_dirty();
     }
@@ -2823,6 +2837,7 @@ impl TuiApp {
         self.pending_suggestion = view.pending_suggestion.take();
         self.session_id = std::mem::take(&mut view.session_id);
         self.todos = std::mem::take(&mut view.todos);
+        self.todos_collapsed = view.todos_collapsed;
     }
 
     /// Move this app's view fields back into `view` (no transcript clone).
@@ -2845,6 +2860,35 @@ impl TuiApp {
         view.pending_suggestion = self.pending_suggestion.take();
         view.session_id = std::mem::take(&mut self.session_id);
         view.todos = std::mem::take(&mut self.todos);
+        view.todos_collapsed = self.todos_collapsed;
+    }
+
+    /// Replace the session todo list. Auto-collapses when every item is
+    /// terminal; unfolds again when new open work arrives.
+    pub fn replace_todos(&mut self, todos: Vec<whycode_core::TodoItem>) {
+        let was_all_done = whycode_core::todo::all_terminal(&self.todos);
+        let all_done = whycode_core::todo::all_terminal(&todos);
+        self.todos = todos;
+        if self.todos.is_empty() {
+            self.todos_collapsed = false;
+            self.todos_hit.clear();
+        } else if all_done && !was_all_done {
+            // Just finished (or loaded a completed list) — fold to the header.
+            self.todos_collapsed = true;
+        } else if !all_done && was_all_done {
+            // New open work after a completed list — show the items.
+            self.todos_collapsed = false;
+        }
+        self.mark_dirty();
+    }
+
+    /// Fold / unfold the sticky todo panel (header click or `t`).
+    pub fn toggle_todos_panel(&mut self) {
+        if self.todos.is_empty() {
+            return;
+        }
+        self.todos_collapsed = !self.todos_collapsed;
+        self.mark_dirty();
     }
 
     /// Add a message to the chat view.

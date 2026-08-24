@@ -246,6 +246,10 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             app.copy_selected_message();
             true
         }
+        Some(Action::ToggleTodosPanel) => {
+            app.toggle_todos_panel();
+            true
+        }
         Some(Action::ToggleThinking) => {
             app.toggle_selected_thinking();
             true
@@ -727,6 +731,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             return true;
         }
         MouseEventKind::Down(MouseButton::Left) => {
+            if app.todos_hit.contains(mouse.column, mouse.row) {
+                app.toggle_todos_panel();
+                app.mouse_sel = None;
+                return true;
+            }
             if let Some(id) = app
                 .subagent_strip_hit
                 .iter()
