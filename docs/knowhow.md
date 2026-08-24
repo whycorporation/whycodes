@@ -140,6 +140,18 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-25 — Paste overflow returns on new-session home (grey boxes)
+
+**Symptom:** A long paste paints outside the boxed prompt. Enter/submit cleans it up, but opening a new session (home) brings the leftover text back. Grey boxes sit on the right of the home screen.
+
+**JSONL / crash:** none.
+
+**Root cause:** (1) Hosts without bracketed paste deliver the payload as a flood of `Key::Char`, so collapse-to-chip never runs and the box wraps a wall of text. (2) Home side gutters / session→home cells are spaces in *both* ratatui frames. Skip-diff therefore never overwrites the emulator's paste echo (or leftover session sidebar chrome) on the PTY. Submit changes enough cells to hide it; a fresh empty home does not.
+
+**Fix:** `coalesce_unbracketed_paste` folds a key-flood that `should_collapse` into one `Event::Paste`. `request_full_clear(2)` on submit, session switch, new session, and clear-session.
+
+**Prevention:** Any layout jump onto a screen whose unused cells are spaces (home gutters) needs `terminal.clear()`, not just `fill_blank`. Unbracketed paste is not `Event::Paste`.
+
 ### 2026-08-24 — model picker keeps the previous provider's API key
 
 **Symptom:** Logged in to `google-antigravity`, footer shows

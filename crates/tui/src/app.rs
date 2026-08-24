@@ -2834,6 +2834,7 @@ impl TuiApp {
         self.todos_collapsed = view.todos_collapsed;
         self.dialogs.clear();
         self.mark_dirty();
+        self.request_full_clear(2);
     }
 
     /// Move `view` into this app (no transcript clone). Pair with
@@ -3114,6 +3115,9 @@ impl TuiApp {
         self.scroll_offset = 0;
         self.focus_prompt();
         self.esc_armed_at = None;
+        // Layout jumps (home → session). Paste echo in the old gutters is
+        // not in ratatui's buffer, so skip-diff would leave it on the PTY.
+        self.request_full_clear(2);
     }
 }
 
@@ -3506,5 +3510,16 @@ mod state_tests {
         app.insert_paste_text(&"x".repeat(200));
         assert_eq!(app.pending_full_clears, 2);
         assert!(app.needs_redraw);
+    }
+
+    #[test]
+    fn submit_input_requests_full_clear_for_layout_jump() {
+        let mut app = app();
+        app.pending_full_clears = 0;
+        app.input_buffer = "hello".into();
+        app.input_cursor = 5;
+        app.submit_input();
+        assert_eq!(app.pending_full_clears, 2);
+        assert!(app.messages.iter().any(|m| m.content == "hello"));
     }
 }

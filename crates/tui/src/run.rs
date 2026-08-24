@@ -1343,6 +1343,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 }
                 input::coalesce_chat_wheels(&mut app, &mut batch);
                 input::coalesce_resizes(&mut batch);
+                input::coalesce_unbracketed_paste(&app, &mut batch);
                 if let Some(Event::Resize(w, h)) = batch
                     .iter()
                     .rev()
@@ -2344,6 +2345,7 @@ fn switch_to_runtime(
     app.dialogs.clear();
     app.mark_dirty();
     app.focus = FocusPane::Prompt;
+    app.request_full_clear(2);
 }
 
 /// Drain a background (inactive) runtime: prompter requests into its queues,
@@ -3345,6 +3347,9 @@ fn adopt_fresh_runtime(
     app.restore_view(&rt.view);
     app.session_title = rt.session.title.clone();
     app.focus = FocusPane::Prompt;
+    // Home gutters are spaces in both ratatui frames; skip-diff will not
+    // erase a paste echo (or session sidebar chrome) left on the PTY.
+    app.request_full_clear(2);
     app.toasts.push(
         crate::toast::ToastKind::Info,
         format!("New session ({} live)", runtimes.len() + 1),
@@ -6119,6 +6124,10 @@ mod tests {
         seed.yield_view(&mut parked.view);
         let mut runtimes = vec![parked];
         switch_to_runtime(&mut app, &mut active, &mut runtimes, 0);
+        assert!(
+            app.pending_full_clears >= 2,
+            "session switch must wipe PTY ghosts (home gutters / sidebar)"
+        );
         assert_eq!(app.messages[0].content, "from-parked");
         assert_eq!(runtimes[0].view.messages[0].content, "from-active");
         assert!(
