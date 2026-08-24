@@ -27,32 +27,48 @@ use whycode_core::types::{
     ContentBlock, LlmRequest, LlmResponse, MessageContent, Role, StreamEvent, Usage,
 };
 
-const GEMINI_CLI_BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
-const ANTIGRAVITY_BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+const GEMINI_CLI_BASES: &[&str] = &["https://cloudcode-pa.googleapis.com/v1internal"];
+const ANTIGRAVITY_BASES: &[&str] = &[
+    "https://daily-cloudcode-pa.googleapis.com/v1internal",
+    "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
+];
 const ANTIGRAVITY_USER_AGENT: &str =
     "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)";
 
 #[derive(Clone, Copy)]
 struct Profile {
     oauth_provider: &'static str,
-    base: &'static str,
+    bases: &'static [&'static str],
     user_agent: Option<&'static str>,
     antigravity: bool,
 }
 
 const GEMINI_CLI: Profile = Profile {
     oauth_provider: "google",
-    base: GEMINI_CLI_BASE,
+    bases: GEMINI_CLI_BASES,
     user_agent: None,
     antigravity: false,
 };
 
 const ANTIGRAVITY: Profile = Profile {
     oauth_provider: "google-antigravity",
-    base: ANTIGRAVITY_BASE,
+    bases: ANTIGRAVITY_BASES,
     user_agent: Some(ANTIGRAVITY_USER_AGENT),
     antigravity: true,
 };
+
+/// Logical picker ids collapse to a wire id on `daily-cloudcode-pa`. Sending
+/// the family name (`gemini-3.1-pro`) 404s; the hub uses the effort member.
+fn antigravity_wire_model(model: &str) -> &str {
+    match model {
+        "gemini-3.1-pro" => "gemini-3.1-pro-low",
+        "gemini-3.1-pro-high" => "gemini-pro-agent",
+        "gemini-3.1-flash" | "gemini-3-flash" | "gemini-3.5-flash" => "gemini-3.5-flash-low",
+        "gemini-3.6-flash" => "gemini-3.6-flash-low",
+        "gemini-3.7-flash" => "gemini-3.7-flash-low",
+        other => other,
+    }
+}
 
 /// Client metadata the Code Assist service expects (Gemini CLI sends the
 /// same shape; the values label an unspecified IDE on the current platform).
@@ -108,16 +124,21 @@ fn authorize(
     }
 }
 
-/// POST `{profile.base}{path}` with the OAuth bearer token; a 401 force-renews
+fn failover_http(status: u16) -> bool {
+    matches!(status, 404 | 408 | 429 | 500 | 502 | 503 | 504)
+}
+
+/// POST `{base}{path}` with the OAuth bearer token; a 401 force-renews
 /// the stored credential once via `oauth_refresh` (Google tokens last 1h, so a
 /// revoked or early-expired token is the common failure).
-async fn post(
+async fn post_at(
     profile: &Profile,
+    base: &str,
     path: &str,
     api_key: &str,
     body: &Value,
 ) -> whycode_core::Result<reqwest::Response> {
-    let url = format!("{}{path}", profile.base);
+    let url = format!("{base}{path}");
     crate::oauth_refresh::send_with_refresh_retry(profile.oauth_provider, api_key, |key| {
         authorize(
             profile,
@@ -130,13 +151,44 @@ async fn post(
     .await
 }
 
-/// GET an LRO status (`GET {profile.base}/{operation_name}`) with the same retry.
+async fn post(
+    profile: &Profile,
+    path: &str,
+    api_key: &str,
+    body: &Value,
+) -> whycode_core::Result<reqwest::Response> {
+    post_at(profile, profile.bases[0], path, api_key, body).await
+}
+
+/// Like [`post`], but Antigravity generate/stream calls try the sandbox host
+/// when daily answers a failover status (404 is the common "this RPC isn't
+/// on this frontend" miss).
+async fn post_generate(
+    profile: &Profile,
+    path: &str,
+    api_key: &str,
+    body: &Value,
+) -> whycode_core::Result<reqwest::Response> {
+    let last = profile.bases.len() - 1;
+    for (i, base) in profile.bases.iter().enumerate() {
+        let resp = post_at(profile, base, path, api_key, body).await?;
+        if resp.status().is_success() || i == last || !failover_http(resp.status().as_u16()) {
+            return Ok(resp);
+        }
+        if let Err(error) = resp.bytes().await {
+            tracing::debug!(%error, "discarding Antigravity failover response body");
+        }
+    }
+    unreachable!("post_generate always returns inside the loop")
+}
+
+/// GET an LRO status (`GET {base}/{operation_name}`) with the same retry.
 async fn get(
     profile: &Profile,
     path: &str,
     api_key: &str,
 ) -> whycode_core::Result<reqwest::Response> {
-    let url = format!("{}{path}", profile.base);
+    let url = format!("{}{path}", profile.bases[0]);
     crate::oauth_refresh::send_with_refresh_retry(profile.oauth_provider, api_key, |key| {
         authorize(
             profile,
@@ -375,6 +427,18 @@ fn apply_antigravity_inner(inner: &mut Value, request: &LlmRequest) {
     }
 }
 
+fn antigravity_ids() -> (String, String, String) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(1);
+    let agent = format!("{now:016x}");
+    let traj = format!("{:016x}", now.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 8);
+    let request_id = format!("agent/{agent}/{now}/{traj}/2");
+    let session = format!("-{}", now & ((1u128 << 63) - 1));
+    (session, request_id, traj)
+}
+
 fn wrap_envelope(
     profile: &Profile,
     model: &str,
@@ -384,12 +448,22 @@ fn wrap_envelope(
 ) -> Value {
     if profile.antigravity {
         apply_antigravity_inner(&mut inner, request);
+        let (session, request_id, traj) = antigravity_ids();
+        let claude = model.to_ascii_lowercase().contains("claude");
+        inner["sessionId"] = json!(session);
+        inner["labels"] = json!({
+            "last_step_index": "1",
+            "trajectory_id": traj,
+            "used_claude": claude.to_string(),
+            "used_claude_conservative": claude.to_string(),
+        });
         json!({
             "model": model,
             "project": project,
             "request": inner,
             "userAgent": "antigravity",
             "requestType": "agent",
+            "requestId": request_id,
         })
     } else {
         json!({
@@ -474,6 +548,11 @@ async fn complete_with(
     model: &str,
 ) -> whycode_core::Result<LlmResponse> {
     let project = project_id(profile, api_key).await?;
+    let model = if profile.antigravity {
+        antigravity_wire_model(model)
+    } else {
+        model
+    };
     let body = wrap_envelope(
         profile,
         model,
@@ -481,7 +560,7 @@ async fn complete_with(
         build_inner_request(request),
         request,
     );
-    let resp = post(profile, ":generateContent", api_key, &body).await?;
+    let resp = post_generate(profile, ":generateContent", api_key, &body).await?;
     let status = resp.status();
     let json: Value = resp
         .json()
@@ -490,7 +569,7 @@ async fn complete_with(
     if !status.is_success() {
         let msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
         return Err(whycode_core::Error::Llm(format!(
-            "Code Assist error ({status}): {msg}"
+            "Code Assist error ({status}) model={model}: {msg}"
         )));
     }
     let json = if json["response"].is_object() {
@@ -562,6 +641,11 @@ async fn stream_with(
     model: &str,
 ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
     let project = project_id(profile, api_key).await?;
+    let model = if profile.antigravity {
+        antigravity_wire_model(model)
+    } else {
+        model
+    };
     let body = wrap_envelope(
         profile,
         model,
@@ -569,14 +653,14 @@ async fn stream_with(
         build_inner_request(request),
         request,
     );
-    let resp = post(profile, ":streamGenerateContent?alt=sse", api_key, &body).await?;
+    let resp = post_generate(profile, ":streamGenerateContent?alt=sse", api_key, &body).await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let trimmed: String = text.chars().take(500).collect();
         return Err(whycode_core::Error::Llm(format!(
-            "Code Assist error ({status}): {trimmed}"
+            "Code Assist error ({status}) model={model}: {trimmed}"
         )));
     }
 
@@ -677,11 +761,19 @@ mod tests {
             "VALIDATED"
         );
 
-        let body = wrap_envelope(&ANTIGRAVITY, "gemini-3.1-pro", "proj", inner, &request);
+        let body = wrap_envelope(&ANTIGRAVITY, "gemini-3.1-pro-low", "proj", inner, &request);
         assert_eq!(body["userAgent"], "antigravity");
         assert_eq!(body["requestType"], "agent");
         assert_eq!(body["project"], "proj");
-        assert_eq!(body["model"], "gemini-3.1-pro");
+        assert_eq!(body["model"], "gemini-3.1-pro-low");
+        assert!(
+            body["requestId"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("agent/")),
+            "requestId={}",
+            body["requestId"]
+        );
+        assert!(body["request"]["sessionId"].as_str().is_some());
 
         let gemini = wrap_envelope(
             &GEMINI_CLI,
@@ -692,6 +784,26 @@ mod tests {
         );
         assert!(gemini.get("userAgent").is_none());
         assert!(gemini.get("requestType").is_none());
+    }
+
+    #[test]
+    fn antigravity_wire_model_collapses_family_ids() {
+        assert_eq!(
+            antigravity_wire_model("gemini-3.1-pro"),
+            "gemini-3.1-pro-low"
+        );
+        assert_eq!(
+            antigravity_wire_model("gemini-3.1-flash"),
+            "gemini-3.5-flash-low"
+        );
+        assert_eq!(
+            antigravity_wire_model("claude-sonnet-4-6"),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            antigravity_wire_model("gemini-3.1-pro-low"),
+            "gemini-3.1-pro-low"
+        );
     }
 
     #[test]

@@ -48,7 +48,7 @@ fn small_model_for(provider: &str, model: &str) -> Option<&'static str> {
         "anthropic" => Some("claude-haiku-4-5-20251001"),
         "openai" => Some("gpt-4o-mini"),
         "google" => Some("gemini-2.0-flash"),
-        "google-antigravity" => Some("gemini-3.1-flash"),
+        "google-antigravity" => Some("gemini-3.5-flash-low"),
         "xai" => Some("grok-3-mini"),
         "groq" => Some("llama-3.1-8b-instant"),
         "mistral" => Some("mistral-small-latest"),
