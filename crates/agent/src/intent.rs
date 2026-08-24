@@ -132,13 +132,26 @@ pub fn classify_user_intent(text: &str) -> IntentAssessment {
         + if has_qmark { 1.2 } else { 0.0 }
         + if starts_question { 1.0 } else { 0.0 };
     let c = c_score as f32 + if imperative { 1.4 } else { 0.0 };
-    let p = p_score as f32 + if sprawl && p_score > 0 { 0.8 } else { 0.0 };
+    let mut p = p_score as f32 + if sprawl && p_score > 0 { 0.8 } else { 0.0 };
 
     // "can we fix" / "shall we" — question form about a change: treat as
     // clarification-first (Claude auto-mode: not a hard directive).
     if has_qmark && c_score > 0 && q_score == 0 {
         q += 0.8;
         reasons.push("question_about_change");
+    }
+
+    // "create a roadmap" / "write a plan": create/write describe the plan
+    // document, not an implementation request.
+    if p_score > 0 && c_score > 0 {
+        p += 1.6;
+        reasons.push("plan_artifact");
+    }
+
+    // "what's the best approach?" is planning, not a mere explanation.
+    if p_score > 0 && (has_qmark || starts_question) {
+        p += 1.4;
+        reasons.push("planning_question");
     }
 
     // Pure explain requests without fix verbs.
@@ -535,9 +548,12 @@ fn shell_head_readonly_ok(command: &str) -> bool {
 ///
 /// - **ask/plan agents**: mutating tools should already be denied by permission;
 ///   this is a second line of defence.
-/// - **build + Question/Plan (high)**: escalate mutators to Confirm so the model
+/// - **build + Question (high)**: escalate mutators to Confirm so the model
 ///   cannot silently implement a question.
-/// - **Change / Ambiguous / Off mode**: allow (shell risk gate still applies).
+/// - **build + Plan (any confidence)**: escalate mutators — a plan request is
+///   not permission to start implementation.
+/// - **Always guidance + Ambiguous**: confirm mutating tools.
+/// - **Change / Auto Ambiguous / Off mode**: allow (shell risk gate still applies).
 pub fn authorize_tool(
     assessment: &IntentAssessment,
     agent_name: &str,
@@ -571,21 +587,15 @@ pub fn authorize_tool(
         };
     }
 
-    // Only escalate when we are confident the user did not authorize mutation.
+    // Escalate when the user did not clearly authorize mutation.
     let escalate = match assessment.intent {
         UserIntent::Question
             if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) =>
         {
             Some("question")
         }
-        UserIntent::Plan
-            if assessment.is_high() || matches!(guidance, IntentGuidanceMode::Always) =>
-        {
-            Some("plan")
-        }
-        UserIntent::Ambiguous
-            if matches!(guidance, IntentGuidanceMode::Always) && assessment.confidence >= 0.4 =>
-        {
+        UserIntent::Plan => Some("plan"),
+        UserIntent::Ambiguous if matches!(guidance, IntentGuidanceMode::Always) => {
             Some("ambiguous")
         }
         _ => None,
@@ -755,6 +765,8 @@ const PLAN_MARKERS: &[&str] = &[
     "planla",
     "plan çıkar",
     "plan cikar",
+    "yol haritası",
+    "yol haritasi",
     "mimari",
     "nasıl ilerleyelim",
     "nasil ilerleyelim",
@@ -849,6 +861,24 @@ mod tests {
             matches!(a.intent, UserIntent::Question | UserIntent::Ambiguous),
             "expected question-ish, got {a:?}"
         );
+    }
+
+    #[test]
+    fn create_roadmap_is_plan_not_change() {
+        let a = classify_user_intent("Create a roadmap for provider parity");
+        assert_eq!(a.intent, UserIntent::Plan, "{a:?}");
+    }
+
+    #[test]
+    fn best_approach_question_is_plan() {
+        let a = classify_user_intent("What's the best approach for session resume?");
+        assert_eq!(a.intent, UserIntent::Plan, "{a:?}");
+    }
+
+    #[test]
+    fn write_migration_plan_is_plan() {
+        let a = classify_user_intent("Write a migration plan");
+        assert_eq!(a.intent, UserIntent::Plan, "{a:?}");
     }
 
     #[test]
@@ -1012,5 +1042,27 @@ mod tests {
         let a = classify_user_intent("How does auth work?");
         let d = authorize_tool(&a, "build", "edit", None, IntentGuidanceMode::Off);
         assert_eq!(d, ToolAuthDecision::Allow);
+    }
+
+    #[test]
+    fn authorize_confirms_plan_write_without_high_confidence() {
+        let a = IntentAssessment {
+            intent: UserIntent::Plan,
+            confidence: 0.5,
+            reasons: vec!["plan_marker"],
+        };
+        let d = authorize_tool(&a, "build", "write", None, IntentGuidanceMode::Auto);
+        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
+    }
+
+    #[test]
+    fn authorize_always_confirms_ambiguous_write() {
+        let a = IntentAssessment {
+            intent: UserIntent::Ambiguous,
+            confidence: 0.35,
+            reasons: vec![],
+        };
+        let d = authorize_tool(&a, "build", "write", None, IntentGuidanceMode::Always);
+        assert!(matches!(d, ToolAuthDecision::Confirm { .. }), "{d:?}");
     }
 }
