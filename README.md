@@ -61,10 +61,12 @@ whycode -P openai -m gpt-4o generate "Refactor this module"
 Or sign in with a subscription instead of an API key:
 
 ```bash
-whycode auth login anthropic        # Claude Pro/Max
-whycode auth login openai           # ChatGPT Plus/Pro
+whycode auth login anthropic              # Claude Pro/Max
+whycode auth login openai                 # ChatGPT Plus/Pro
 whycode auth login github-copilot
-whycode auth login google           # Gemini
+whycode auth login google                 # Gemini
+whycode auth login google-antigravity     # Antigravity (Gemini 3, Claude, GPT-OSS)
+whycode auth login xai                    # SuperGrok / X Premium
 ```
 
 Full CLI, TUI keys, slash commands, agents, tools and configuration:

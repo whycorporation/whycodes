@@ -47,6 +47,13 @@ impl ProviderRegistry {
         self.providers.get(name).map(|p| p.as_ref())
     }
 
+    /// Sorted built-in (and later config-registered) provider ids.
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<_> = self.providers.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
     /// Register a custom provider from config.
     /// This enables dynamically-added providers from config.toml.
     pub fn register_from_config(&mut self, config: &whycode_config::Config) {
@@ -141,6 +148,11 @@ mod tests {
             assert!(registry.get(name).is_some(), "{name} missing");
         }
         assert!(registry.get("nope").is_none());
+        let names = registry.names();
+        assert!(names.contains(&"google-antigravity".to_string()));
+        let mut sorted = names.clone();
+        sorted.sort();
+        assert_eq!(names, sorted);
     }
 
     #[test]
