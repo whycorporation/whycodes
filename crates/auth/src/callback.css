@@ -1,0 +1,383 @@
+:root {
+  color-scheme: only dark;
+  --bg: #0a0a0a;
+  --border: #484848;
+  --primary: #fab283;
+  --secondary: #5c9cf5;
+  --accent: #9d7cd8;
+  --ok: #7fd88f;
+  --err: #e06c75;
+  --text: #eeeeee;
+  --muted: #808080;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+.stage {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.45;
+  animation: drift 16s ease-in-out infinite;
+}
+
+.orb-a {
+  width: 42vw;
+  height: 42vw;
+  left: -12vw;
+  top: -18vw;
+  background: var(--primary);
+  opacity: 0.16;
+}
+
+.orb-b {
+  width: 38vw;
+  height: 38vw;
+  right: -10vw;
+  bottom: -16vw;
+  background: var(--accent);
+  opacity: 0.14;
+  animation-delay: -6s;
+}
+
+.orb-c {
+  width: 28vw;
+  height: 28vw;
+  right: 18vw;
+  top: 12vh;
+  background: var(--secondary);
+  opacity: 0.1;
+  animation-delay: -11s;
+}
+
+.grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(238, 238, 238, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(238, 238, 238, 0.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse at center, #000 15%, transparent 72%);
+}
+
+.scan {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 3px,
+    rgba(0, 0, 0, 0.18) 3px,
+    rgba(0, 0, 0, 0.18) 4px
+  );
+  opacity: 0.35;
+}
+
+.card {
+  position: relative;
+  width: min(420px, 100%);
+  padding: 44px 40px 36px;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgba(30, 30, 30, 0.92) 0%, rgba(20, 20, 20, 0.92) 100%);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  box-shadow:
+    0 0 0 1px rgba(250, 178, 131, 0.06),
+    0 30px 80px rgba(0, 0, 0, 0.55),
+    0 0 120px var(--glow);
+  animation: rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--primary), var(--accent), transparent);
+  opacity: 0.85;
+}
+
+.brand {
+  display: flex;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0;
+  margin: 0 0 32px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  text-transform: lowercase;
+}
+
+.brand .why {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.brand .code {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.mark {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  margin: 0 auto;
+}
+
+.mark .pulse {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  animation: ping 1.8s cubic-bezier(0.16, 1, 0.3, 1) 0.9s both;
+}
+
+body.ok .mark .pulse {
+  border: 1px solid rgba(127, 216, 143, 0.45);
+}
+
+body.err .mark .pulse {
+  border: 1px solid rgba(224, 108, 117, 0.45);
+}
+
+.mark svg {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  display: block;
+}
+
+body.ok .mark svg {
+  filter: drop-shadow(0 0 18px rgba(127, 216, 143, 0.45));
+}
+
+body.err .mark svg {
+  filter: drop-shadow(0 0 18px rgba(224, 108, 117, 0.45));
+}
+
+.fill {
+  opacity: 0;
+  animation: fade 0.5s ease 0.45s forwards;
+}
+
+body.ok .fill {
+  fill: rgba(127, 216, 143, 0.12);
+}
+
+body.err .fill {
+  fill: rgba(224, 108, 117, 0.12);
+}
+
+.ring {
+  fill: none;
+  stroke: var(--status);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-dasharray: 188.5;
+  stroke-dashoffset: 188.5;
+  animation: draw 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.22s forwards;
+}
+
+.glyph {
+  fill: none;
+  stroke: var(--status);
+  stroke-width: 3.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 56;
+  stroke-dashoffset: 56;
+  animation: draw 0.45s ease 0.68s forwards;
+}
+
+h1 {
+  margin: 28px 0 10px;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+  animation: fade 0.5s ease 0.75s both;
+}
+
+p {
+  margin: 0 auto 28px;
+  max-width: 32ch;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.card > p:not(.brand) {
+  animation: fade 0.5s ease 0.9s both;
+}
+
+.shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--bg);
+  border: 1px solid #3c3c3c;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  animation: fade 0.5s ease 1s both;
+}
+
+.shell .prompt {
+  color: var(--primary);
+}
+
+.shell .ok {
+  color: var(--ok);
+}
+
+.shell .err {
+  color: var(--err);
+}
+
+.cursor {
+  flex: 0 0 7px;
+  width: 7px;
+  height: 13px;
+  border-radius: 1px;
+  background: var(--primary);
+  animation: blink 1.15s steps(1) infinite;
+}
+
+body.ok {
+  --status: var(--ok);
+  --glow: rgba(127, 216, 143, 0.1);
+}
+
+body.err {
+  --status: var(--err);
+  --glow: rgba(224, 108, 117, 0.1);
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(6%, -5%, 0) scale(1.08);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ping {
+  0% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+
+@keyframes blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 480px) {
+  .card {
+    padding: 36px 24px 28px;
+    border-radius: 16px;
+  }
+
+  h1 {
+    font-size: 24px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  .ring,
+  .glyph {
+    stroke-dashoffset: 0;
+  }
+
+  .fill,
+  .shell,
+  .card,
+  h1,
+  .card > p:not(.brand) {
+    opacity: 1;
+  }
+}
