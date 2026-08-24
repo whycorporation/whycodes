@@ -237,7 +237,11 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             client_secret: Some("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"),
             authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
-            scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+            // Native Antigravity also requests `cclog` + `experimentsandconfigs`.
+            // Without them `loadCodeAssist` classifies the session as Gemini
+            // Code Assist (sunset for consumer accounts on 2026-06-18) and
+            // returns "This client is no longer supported".
+            scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs",
             token_encoding: TokenEncoding::Form,
             redirect_uri: None,
             loopback_port: Some(51121),
