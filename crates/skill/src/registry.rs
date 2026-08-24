@@ -455,6 +455,10 @@ description = "d"
         let bad = root.path().join(".whycode").join("skills").join("bad");
         std::fs::create_dir_all(&bad).unwrap();
         std::fs::write(bad.join("SKILL.md"), "not a skill\n").unwrap();
+        // Directory without SKILL.md is skipped (not treated as a skill).
+        let empty = root.path().join(".whycode").join("skills").join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::write(empty.join("README.md"), "not a skill file\n").unwrap();
 
         let loaded = SkillRegistry::load_project(root.path()).unwrap();
         assert!(loaded.get("local").is_some());
