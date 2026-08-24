@@ -341,6 +341,13 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     {
         app.agent_cycle_idx = idx;
     }
+    app.model_selection.models = configured_models(&config);
+    app.model_selection.selected = app
+        .model_selection
+        .models
+        .iter()
+        .position(|(p, m)| p == &opts.provider && m == &opts.model)
+        .unwrap_or(0);
 
     let missing_key = opts.api_key.is_empty();
     app.status_message = if missing_key {
@@ -946,6 +953,30 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     &project_dir,
                     &config,
                 );
+            }
+
+            // ── Apply agent picker selection ──────────────────────────
+            if let Some(name) = app.pending_agent.take() {
+                if rt.agent_busy {
+                    app.toasts.push(
+                        crate::toast::ToastKind::Warning,
+                        "Can't switch agent while a turn is running",
+                    );
+                } else {
+                    switch_to_agent(
+                        &mut app,
+                        &mut rt.agent,
+                        &mut rt.session,
+                        &config,
+                        &project_dir,
+                        Arc::clone(&rt.perm_prompter),
+                        Arc::clone(&rt.question_prompter),
+                        &rt.event_tx,
+                        &name,
+                        false,
+                    )
+                    .await;
+                }
             }
 
             // ── Apply model picker selection ──────────────────────────
@@ -3807,20 +3838,53 @@ async fn cycle_agent(
     }
     app.agent_cycle_idx = (app.agent_cycle_idx + 1) % app.primary_agents.len();
     let name = app.primary_agents[app.agent_cycle_idx].clone();
+    switch_to_agent(
+        app,
+        agent,
+        session,
+        config,
+        project_dir,
+        perm_prompter,
+        question_prompter,
+        event_tx,
+        &name,
+        true,
+    )
+    .await;
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn switch_to_agent(
+    app: &mut TuiApp,
+    agent: &mut Agent,
+    session: &mut Session,
+    config: &Config,
+    project_dir: &std::path::Path,
+    perm_prompter: Arc<ChannelPermissionPrompter>,
+    question_prompter: Arc<ChannelQuestionPrompter>,
+    event_tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>,
+    name: &str,
+    from_cycle: bool,
+) {
+    if let Some(idx) = app.primary_agents.iter().position(|n| n == name) {
+        app.agent_cycle_idx = idx;
+    }
     // Always update agent_name so colors/header reflect the switch
-    app.agent_name = name.clone();
+    app.agent_name = name.to_string();
     app.intent_badge = None;
     app.intent_kind = None;
     app.status_message = format!("Agent → {name}");
-    app.toasts.push(
-        crate::toast::ToastKind::Info,
-        format!("Agent → {name}  (Ctrl+T)"),
-    );
-    if let Some(info) = config.get_agent(&name).cloned() {
+    let toast = if from_cycle {
+        format!("Agent → {name}  (Ctrl+T)")
+    } else {
+        format!("Agent → {name}")
+    };
+    app.toasts.push(crate::toast::ToastKind::Info, toast);
+    if let Some(info) = config.get_agent(name).cloned() {
         let base = info
             .system_prompt
             .clone()
-            .unwrap_or_else(|| Agent::system_prompt_for(&name));
+            .unwrap_or_else(|| Agent::system_prompt_for(name));
         let prompt = with_project_memory(
             &Agent::with_agents_md(&base, project_dir),
             project_dir,
@@ -4467,10 +4531,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/agent" => {
             if rest.is_empty() {
-                ctx.app.status_message = format!(
-                    "Agent: {} — Tab cycles {:?}",
-                    ctx.agent.info.name, ctx.app.primary_agents
-                );
+                crate::input::open_agent_dialog(ctx.app);
             } else if let Some(info) = ctx.config.get_agent(rest).cloned() {
                 let base = info
                     .system_prompt
@@ -4521,14 +4582,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/models" if rest.is_empty() => {
             ctx.app.model_selection.models = configured_models(ctx.config);
-            ctx.app.model_selection.selected = ctx
-                .app
-                .model_selection
-                .models
-                .iter()
-                .position(|(p, m)| p == ctx.provider && m == ctx.model)
-                .unwrap_or(0);
-            crate::input::open_dialog(ctx.app, DialogKind::Model);
+            crate::input::open_model_dialog(ctx.app);
         }
         "/models" => {
             if rest.is_empty() {
@@ -4875,31 +4929,8 @@ fn spawn_model_context_fetch(
 }
 
 /// Every provider/model pair the config knows about, for the model picker.
-///
-/// OAuth subscription logins (`/login`) bypass config, so their providers
-/// would never appear here: merge in the suggested models for any provider
-/// with a credential in the token store.
 fn configured_models(config: &Config) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = config
-        .providers
-        .values()
-        .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
-        .collect();
-    if let Ok(dir) = Config::data_dir() {
-        let store = whycode_auth::TokenStore::new(&dir);
-        for name in whycode_auth::OAUTH_PROVIDERS {
-            if store.get(name).ok().flatten().is_some() {
-                out.extend(
-                    whycode_auth::providers::suggested_models(name)
-                        .iter()
-                        .map(|m| ((*name).to_string(), (*m).to_string())),
-                );
-            }
-        }
-    }
-    out.sort();
-    out.dedup();
-    out
+    crate::app::catalog_models(config)
 }
 
 fn parse_session_rfc3339(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -6691,7 +6722,9 @@ mod tests {
         h.run("/memory").await;
 
         h.run("/agent").await;
-        assert!(h.app.status_message.contains("Agent"));
+        assert!(matches!(h.app.dialogs.active(), Some(DialogKind::Agent)));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
         h.run("/agent no-such-agent").await;
         assert!(
             h.app

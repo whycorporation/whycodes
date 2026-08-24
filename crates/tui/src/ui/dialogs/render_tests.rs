@@ -608,6 +608,16 @@ fn render_dispatches_all_dialog_kinds() {
     let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
     assert!(app.dialog_list_hit.is_some());
 
+    // Agent
+    app.dialogs.clear();
+    app.primary_agents = vec!["build".into(), "plan".into()];
+    app.agent_name = "build".into();
+    app.dialogs.push(DialogKind::Agent);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("build"), "{text}");
+    assert!(text.contains("plan"), "{text}");
+
     // Help
     app.dialogs.clear();
     app.dialogs.push(DialogKind::Help);

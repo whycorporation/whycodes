@@ -458,6 +458,53 @@ fn context_meter_hover_marks_dirty_on_enter_leave() {
 }
 
 #[test]
+fn prompt_meta_hover_marks_dirty_on_enter_leave() {
+    use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    app.agent_hit.set_rect(Some(Rect {
+        x: 40,
+        y: 22,
+        width: 5,
+        height: 1,
+    }));
+    app.needs_redraw = false;
+    assert!(!app.agent_hit.hovered);
+
+    let enter = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 42,
+        row: 22,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, enter));
+    assert!(app.agent_hit.hovered);
+    assert!(app.needs_redraw, "enter agent name must mark_dirty");
+
+    app.needs_redraw = false;
+    app.model_hit.set_rect(Some(Rect {
+        x: 50,
+        y: 22,
+        width: 10,
+        height: 1,
+    }));
+    let onto_model = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Moved,
+        column: 52,
+        row: 22,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, onto_model));
+    assert!(!app.agent_hit.hovered);
+    assert!(app.model_hit.hovered);
+    assert!(
+        app.needs_redraw,
+        "leave agent / enter model must mark_dirty"
+    );
+}
+
+#[test]
 fn turn_stop_click_sets_pending_cancel() {
     use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
