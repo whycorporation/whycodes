@@ -14,19 +14,22 @@ use crate::error::{AuthError, Result};
 use crate::token::OAuthToken;
 use serde_json::{Value, json};
 
-const BASE: &str = "https://cloudcode-pa.googleapis.com/v1internal";
+const BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
+
+/// User-Agent identifying as the native Antigravity client (captured from the
+/// real 2.8.0 `antigravity/hub` release). The backend gates the control plane
+/// on this header.
+const ANTIGRAVITY_USER_AGENT: &str =
+    "antigravity/hub/2.8.0 (aidev_client; os_type=linux; arch=x86_64; cl=963137146)";
 
 /// Canonical `extra` key used to persist a resolved Google Cloud project id.
 pub const PROJECT_ID_KEY: &str = "project_id";
 
-/// Client metadata the Code Assist service expects (Gemini CLI sends the
-/// same shape; the values identify an Antigravity IDE).
+/// Client metadata the Code Assist service expects. The native Antigravity
+/// client sends only `ideType` — the extra `platform`/`pluginType` keys from
+/// the Gemini CLI provider are not part of this control plane's schema.
 fn client_metadata() -> Value {
-    json!({
-        "ideType": "ANTIGRAVITY",
-        "platform": "PLATFORM_UNSPECIFIED",
-        "pluginType": "GEMINI",
-    })
+    json!({ "ideType": "ANTIGRAVITY" })
 }
 
 /// POST a JSON body to the Code Assist control plane and decode the JSON
@@ -38,6 +41,7 @@ async fn post(suffix: &str, token: &str, body: &Value) -> Result<Value> {
         .post(&url)
         .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
+        .header("User-Agent", ANTIGRAVITY_USER_AGENT)
         .json(body)
         .send()
         .await
