@@ -85,6 +85,9 @@ impl ClassifiedError {
                 if lower.contains("xai") {
                     return "xAI authentication failed — run `whycode auth login xai` (or set XAI_API_KEY)".into();
                 }
+                if lower.contains("code assist") && !lower.contains("not eligible") {
+                    return "Google authentication failed — run `whycode auth login google-antigravity` (or `google`)".into();
+                }
                 if lower.contains("not eligible") && lower.contains("code assist") {
                     // Gemini Code Assist free-tier eligibility is account-based;
                     // the credential is fine, so "check API key" misleads.
@@ -445,6 +448,16 @@ mod tests {
         let c = classify_message("xAI API error (401): Unauthorized");
         let msg = c.user_message();
         assert!(msg.contains("auth login xai"), "{msg}");
+        assert!(!msg.contains("check API key"), "{msg}");
+    }
+
+    #[test]
+    fn code_assist_401_points_at_login_not_api_key() {
+        let c = classify_message(
+            "LLM error: Code Assist loadCodeAssist (401 Unauthorized): Request had invalid authentication credentials.",
+        );
+        let msg = c.user_message();
+        assert!(msg.contains("auth login google-antigravity"), "{msg}");
         assert!(!msg.contains("check API key"), "{msg}");
     }
 
