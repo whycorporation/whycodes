@@ -77,12 +77,14 @@ async fn post(suffix: &str, token: &str, body: &Value) -> Result<Value> {
 /// Attach a Cloud project to `token` by discovering or creating one on the
 /// Code Assist control plane.
 ///
-/// Resolution order matches `whycode-llm`'s Code Assist provider: an explicit
-/// `token.extra[PROJECT_ID_KEY]` (or `GOOGLE_CLOUD_PROJECT`) is used as-is;
-/// otherwise `loadCodeAssist` returns the managed project of an
-/// already-onboarded account, and a fallback runs `onboardUser` on the tier
-/// the account is allowed, polling the long-running operation until it
-/// yields a project id. On success the project id is stored on the token.
+/// Resolution order mirrors the native Antigravity control-plane flow: an
+/// explicit `token.extra[PROJECT_ID_KEY]` (or `GOOGLE_CLOUD_PROJECT`) is used
+/// as-is; otherwise `loadCodeAssist` reports the project of an
+/// already-onboarded account — accounts with a bound tier skip provisioning
+/// entirely. Only fresh accounts run `onboardUser` (on the tier they are
+/// allowed), and the project is read back from a **fresh** `loadCodeAssist`,
+/// because the finished long-running operation frequently ships no project in
+/// its response body.
 pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAuthToken> {
     if let Some(project) = explicit_project(&token) {
         token
@@ -91,62 +93,127 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
         return Ok(token);
     }
 
-    // 1. Already onboarded? loadCodeAssist reports the managed project (or
-    // the tiers the account may onboard into).
-    let load = post(
-        ":loadCodeAssist",
-        &token.access_token,
-        &json!({ "metadata": client_metadata() }),
-    )
-    .await?;
-    if let Some(id) = load["cloudaicompanionProject"].as_str() {
-        token
-            .extra
-            .insert(PROJECT_ID_KEY.to_string(), Value::String(id.to_string()));
-        return Ok(token);
-    }
+    // 1. Account status (with the bind-and-confirm double call).
+    let load = load_code_assist(&token.access_token).await?;
 
-    // 2. Not onboarded: run onboardUser on the allowed tier and poll the
-    // long-running operation until it yields a project id. Provisioning can
-    // take a couple of minutes (project creation server-side), so poll well
-    // past a few seconds — bailing early surfaces as "no project id".
-    let tier = pick_tier(&load);
-    let mut body = json!({ "tierId": tier, "metadata": client_metadata() });
-    // Tiers flagged `userDefinedCloudaicompanionProject` (standard-tier for
-    // Pro accounts) expect the caller's own Cloud project in this field —
-    // same shape Gemini CLI sends. Harmless when absent.
-    if let Some(project) = explicit_project(&token) {
-        body["cloudaicompanionProject"] = Value::String(project);
-    }
-    let onboard = post(":onboardUser", &token.access_token, &body).await?;
-    let mut operation = onboard;
-    for _ in 0..60 {
-        if operation["done"].as_bool().unwrap_or(false) {
-            break;
+    // 2. Provisioning is only for accounts without a bound tier yet; calling
+    //    `onboardUser` on an already-onboarded (e.g. paid) account fails.
+    let mut operation: Option<Value> = None;
+    if load.get("currentTier").is_none_or(Value::is_null) {
+        surface_free_tier_ineligibility(&load)?;
+        let tier = pick_tier(&load);
+        let mut body = json!({ "tierId": tier, "metadata": client_metadata() });
+        // Tiers flagged `userDefinedCloudaicompanionProject` expect the
+        // caller's own Cloud project in this field — same shape Gemini CLI
+        // sends. Harmless when absent.
+        if let Some(project) = explicit_project(&token) {
+            body["cloudaicompanionProject"] = Value::String(project);
         }
-        let Some(name) = operation["name"].as_str().map(str::to_string) else {
-            break;
-        };
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        operation = post(&format!("/{name}"), &token.access_token, &json!({})).await?;
+        let onboard = post(":onboardUser", &token.access_token, &body).await?;
+        let mut current = onboard;
+        for _ in 0..60 {
+            if current["done"].as_bool().unwrap_or(false) {
+                break;
+            }
+            let Some(name) = current["name"].as_str().map(str::to_string) else {
+                break;
+            };
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            current = post(&format!("/{name}"), &token.access_token, &json!({})).await?;
+        }
+        if current["done"].as_bool().unwrap_or(false)
+            && let Some(err) = current["error"]["message"].as_str()
+        {
+            return Err(AuthError::Provider(format!(
+                "Code Assist onboarding operation failed: {err}"
+            )));
+        }
+        operation = Some(current);
     }
 
-    match yielded_project(&operation) {
+    // 3. Resolve the project: the authoritative fresh load first, then the
+    //    finished operation's body, and only then give up with guidance.
+    let refreshed = load_code_assist(&token.access_token).await?;
+    let resolved =
+        load_project(&refreshed).or_else(|| operation.as_ref().and_then(yielded_project));
+    match resolved {
         Some(id) => {
             token
                 .extra
                 .insert(PROJECT_ID_KEY.to_string(), Value::String(id));
             Ok(token)
         }
-        None => {
-            let done = operation["done"].as_bool().unwrap_or(false);
-            Err(AuthError::Provider(format!(
-                "Code Assist onboarding did not yield a project id \
-                 (operation done={done}, tier={tier}) — set GOOGLE_CLOUD_PROJECT \
-                 to your Cloud project id and retry"
-            )))
-        }
+        None => Err(AuthError::Provider(
+            "Code Assist onboarding did not yield a project id \
+             (loadCodeAssist returned no cloudaicompanionProject) — set \
+             GOOGLE_CLOUD_PROJECT to your Cloud project id and retry"
+                .into(),
+        )),
     }
+}
+
+/// POST `:loadCodeAssist`. When the first response reports a project without a
+/// paid-tier binding, repeat the call WITH that project handle (native
+/// Antigravity behavior) so the service binds it before reporting state.
+async fn load_code_assist(token: &str) -> Result<Value> {
+    let mut load = post(
+        ":loadCodeAssist",
+        token,
+        &json!({ "metadata": client_metadata() }),
+    )
+    .await?;
+    if let Some(project) = load_project(&load)
+        && load.get("paidTier").is_none_or(Value::is_null)
+    {
+        load = post(
+            ":loadCodeAssist",
+            token,
+            &json!({
+                "cloudaicompanionProject": project,
+                "metadata": client_metadata(),
+            }),
+        )
+        .await?;
+    }
+    Ok(load)
+}
+
+/// The plain-string project handle from a `loadCodeAssist` payload (the field
+/// ships as a bare string, not an object).
+fn load_project(payload: &Value) -> Option<String> {
+    payload["cloudaicompanionProject"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Surface Google's own reason when the free tier is explicitly ineligible
+/// (`ineligibleTiers[].reasonMessage`) instead of tripping a raw 403 on
+/// `onboardUser` later.
+fn surface_free_tier_ineligibility(load: &Value) -> Result<()> {
+    let free_entry = || {
+        load["ineligibleTiers"].as_array().and_then(|tiers| {
+            tiers
+                .iter()
+                .find(|t| t["tierId"].as_str() == Some("free-tier"))
+        })
+    };
+    let eligible = load["allowedTiers"]
+        .as_array()
+        .is_some_and(|tiers| tiers.iter().any(|t| t["id"].as_str() == Some("free-tier")));
+    if eligible {
+        return Ok(());
+    }
+    if let Some(reason) = free_entry().and_then(|t| t["reasonMessage"].as_str()) {
+        let url = free_entry()
+            .and_then(|t| t["validationUrl"].as_str())
+            .map(|u| format!("\n{u}"))
+            .unwrap_or_default();
+        return Err(AuthError::Provider(format!(
+            "Google Code Assist: {reason}{url}"
+        )));
+    }
+    Ok(())
 }
 
 /// Pull the provisioned project id out of a finished `onboardUser` LRO.
@@ -245,5 +312,41 @@ mod tests {
 
         let pending = json!({"done": false});
         assert_eq!(yielded_project(&pending), None);
+    }
+
+    #[test]
+    fn load_project_reads_bare_string_field() {
+        let payload = json!({"cloudaicompanionProject": "proj-789"});
+        assert_eq!(load_project(&payload).as_deref(), Some("proj-789"));
+
+        let absent = json!({});
+        assert_eq!(load_project(&absent), None);
+
+        let empty = json!({"cloudaicompanionProject": ""});
+        assert_eq!(load_project(&empty), None);
+    }
+
+    #[test]
+    fn ineligibility_reason_is_surfaced() {
+        let ineligible = json!({
+            "allowedTiers": [{"id": "standard-tier"}],
+            "ineligibleTiers": [{
+                "tierId": "free-tier",
+                "reasonMessage": "not eligible for individuals",
+                "validationUrl": "https://example.com/fix"
+            }]
+        });
+        let err = surface_free_tier_ineligibility(&ineligible)
+            .expect_err("should surface Google's reason");
+        assert!(err.to_string().contains("not eligible for individuals"));
+        assert!(err.to_string().contains("https://example.com/fix"));
+
+        let eligible = json!({"allowedTiers": [
+            {"id": "free-tier"}, {"id": "standard-tier"}
+        ]});
+        assert!(surface_free_tier_ineligibility(&eligible).is_ok());
+
+        let silent = json!({});
+        assert!(surface_free_tier_ineligibility(&silent).is_ok());
     }
 }
