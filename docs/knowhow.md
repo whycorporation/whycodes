@@ -224,6 +224,18 @@ their own default (15).
 **Prevention:** Do not put a default numeric turn cap on the interactive
 agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
+### 2026-08-25 — Long paste leftover sits *left of* the home prompt
+
+**Symptom:** Pasting a long prompt on the home screen leaves the first lines of the paste visible to the left of the boxed input. Backspace / delete does not erase the ghost.
+
+**JSONL / crash:** none.
+
+**Root cause:** Home prompt is centered (`center_prompt_area`, ~70% / 75-col cap). Bracketed paste (or a key-flood paste) is echoed by the emulator at column 0. Ratatui skip-diffs spaces, so the side gutters never rewrite. `terminal.clear()` ran only on `Event::Paste`; typing Backspace after that is a Key event, so the leftover stayed.
+
+**Fix:** `fill_blank` the left/right gutters before painting the centered box. `TuiApp::pending_full_clears` + `request_full_clear(n)` so paste requests two frames (echo can land *after* `Event::Paste`) and backspace/delete/clear request one. Detect unbracketed paste as a flood of ≥24 `Key::Char` in one drained batch.
+
+**Prevention:** Centered widgets must own the unused columns. Any PTY write outside ratatui (paste echo) needs `terminal.clear()` *and* a follow-up frame. Editing the prompt after a paste is not a Paste event.
+
 ### 2026-08-20 — Long paste leftover sits beside the prompt
 
 **Symptom:** After pasting a long prompt (then submitting / continuing the turn), the first lines of the paste stay visible in the 2-row gap above the input box (`Workspace line coverage…` next to `…`).

@@ -557,6 +557,7 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 app.input_cursor = start;
                 crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
             }
+            app.request_full_clear(1);
             app.slash_suggest.refresh(&app.input_buffer);
             app.file_suggest
                 .refresh(&app.input_buffer, app.input_cursor);
@@ -586,6 +587,7 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 app.input_cursor = start;
                 crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
             }
+            app.request_full_clear(1);
             app.slash_suggest.refresh(&app.input_buffer);
             app.file_suggest
                 .refresh(&app.input_buffer, app.input_cursor);
@@ -597,6 +599,7 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.pending_pastes.clear();
             app.slash_suggest.dismiss();
             app.file_suggest.dismiss();
+            app.request_full_clear(1);
         }
         Action::InputLeft => {
             let pos = clamp_cursor(&app.input_buffer, app.input_cursor);

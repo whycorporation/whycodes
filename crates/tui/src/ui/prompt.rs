@@ -100,9 +100,39 @@ fn content_width(app: &TuiApp, area_width: u16) -> u16 {
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    // Center prompt on home (empty messages) with max width cap
+    // Center prompt on home (empty messages) with max width cap.
+    // Own the leftover columns first: a long paste echo lands at x=0 while
+    // the box sits at ~15% — those side gutters stay spaces in both ratatui
+    // frames, so skip-diff never overwrites the ghost.
     let area = if app.messages.is_empty() {
-        center_prompt_area(area)
+        let boxed = center_prompt_area(area);
+        if boxed.x > area.x {
+            crate::ui::layout::fill_blank(
+                frame,
+                Rect {
+                    x: area.x,
+                    y: area.y,
+                    width: boxed.x.saturating_sub(area.x),
+                    height: area.height,
+                },
+                palette.bg,
+            );
+        }
+        let right = boxed.x.saturating_add(boxed.width);
+        let end = area.x.saturating_add(area.width);
+        if right < end {
+            crate::ui::layout::fill_blank(
+                frame,
+                Rect {
+                    x: right,
+                    y: area.y,
+                    width: end.saturating_sub(right),
+                    height: area.height,
+                },
+                palette.bg,
+            );
+        }
+        boxed
     } else {
         area
     };
@@ -1338,6 +1368,57 @@ mod overflow_render_tests {
         for y in area.y..top_y {
             for x in area.x..area.x.saturating_add(area.width) {
                 assert_ne!(buf[(x, y)].symbol(), "W", "paste leftover in gap ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
+    fn home_side_gutters_clear_stale_paste_glyphs() {
+        use crate::config::TuiAppConfig;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        assert!(app.messages.is_empty(), "home layout");
+        let area = Rect {
+            x: 0,
+            y: 0,
+            width: 100,
+            height: 12,
+        };
+        let palette = app.config.palette();
+        terminal
+            .draw(|f| {
+                let stain: Vec<Line> = (0..12).map(|_| Line::from("W".repeat(100))).collect();
+                f.render_widget(Paragraph::new(Text::from(stain)), f.area());
+                render(f, area, &mut app, &palette);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let mut box_x = None;
+        let mut box_y = None;
+        for y in 0..12u16 {
+            for x in 0..100u16 {
+                if buf[(x, y)].symbol() == "╭" {
+                    box_x = Some(x);
+                    box_y = Some(y);
+                    break;
+                }
+            }
+        }
+        let box_x = box_x.expect("prompt ╭");
+        let box_y = box_y.expect("prompt ╭");
+        assert!(box_x > 0, "home prompt should be inset, box_x={box_x}");
+        for y in box_y..box_y.saturating_add(3) {
+            for x in 0..box_x {
+                assert_ne!(
+                    buf[(x, y)].symbol(),
+                    "W",
+                    "paste leftover left of prompt ({x},{y})"
+                );
             }
         }
     }

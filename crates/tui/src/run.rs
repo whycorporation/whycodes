@@ -753,8 +753,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut first_frame = true;
     // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
     // diff. Clear the terminal on the next paint so leftover text cannot sit
-    // in the unpainted rows beside the prompt.
-    let mut force_full_clear = false;
+    // in the unpainted rows beside the prompt. `app.pending_full_clears`
+    // covers backspace after a paste (the ghost is not an Event::Paste).
     // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
     let mut last_user_input = Instant::now();
     let mut idle_trim_armed = true;
@@ -789,7 +789,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // full frames per notice when they pulled the loop to 40 ms.
             let animate = rt.agent_busy || app.running_subagent_count() > 0;
             if app.needs_redraw || animate || first_frame {
-                if force_full_clear {
+                if app.pending_full_clears > 0 {
                     if let Err(e) = terminal.clear() {
                         whycode_core::logging::emit(
                             "whycode_tui",
@@ -798,7 +798,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             Some(serde_json::json!({ "error": e.to_string() })),
                         );
                     }
-                    force_full_clear = false;
+                    app.pending_full_clears = app.pending_full_clears.saturating_sub(1);
                 }
                 let completed = match terminal.draw(|f| render::render(f, &mut app)) {
                     Ok(c) => c,
@@ -843,9 +843,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 crate::bench::record_draw();
                 // Grok: never malloc_trim inside the paint; drain after flush.
                 crate::heap::run_deferred_release();
-                // Stay dirty while animation is live; otherwise clear so the
-                // next idle poll does not repaint an unchanged screen.
-                app.needs_redraw = animate;
+                // Stay dirty while animation is live or a follow-up full
+                // clear is still owed (paste echo can land after this frame).
+                app.needs_redraw = animate || app.pending_full_clears > 0;
             }
 
             if let Some(ref bench) = bench
@@ -1363,8 +1363,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     .iter()
                     .any(crate::redraw_schedule::event_needs_full_clear)
                 {
-                    force_full_clear = true;
-                    app.mark_dirty();
+                    // Two frames: some emulators echo the paste *after*
+                    // Event::Paste, so one clear is overwritten by the ghost.
+                    app.request_full_clear(2);
+                }
+                if crate::redraw_schedule::batch_looks_like_unbracketed_paste(&batch) {
+                    app.request_full_clear(2);
                 }
 
                 for ev in batch {

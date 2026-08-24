@@ -1144,6 +1144,13 @@ pub struct TuiApp {
     /// Paint when true. Cleared after a successful draw unless animation
     /// (spinner / live toast) still needs frames. See the TUI event loop.
     pub needs_redraw: bool,
+    /// Extra `terminal.clear()` paints. Bracketed-paste echo (and key-flood
+    /// paste on hosts without bracketed paste) writes onto the PTY outside
+    /// ratatui's diff; breathing-room cells stay spaces in both frames so
+    /// the leftover sits left of the centered home prompt until we force a
+    /// full rewrite. Backspace/delete must request this too — otherwise the
+    /// ghost cannot be erased.
+    pub pending_full_clears: u8,
 
     // ── input ──
     pub input_buffer: String,
@@ -1712,6 +1719,15 @@ impl TuiApp {
         self.needs_redraw = true;
     }
 
+    /// Force `terminal.clear()` on the next `n` paints (at least one).
+    ///
+    /// Use 2 after a paste so an emulator that echoes *after* `Event::Paste`
+    /// is still wiped on the follow-up frame.
+    pub fn request_full_clear(&mut self, frames: u8) {
+        self.pending_full_clears = self.pending_full_clears.max(frames.max(1));
+        self.needs_redraw = true;
+    }
+
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
         config.theme.apply_syntax_theme();
         Self::from_config(config)
@@ -1731,6 +1747,7 @@ impl TuiApp {
             status_message: String::from("Ready — /help for keybindings"),
             spinner_frame: 0,
             needs_redraw: true,
+            pending_full_clears: 0,
             input_buffer: String::new(),
             input_lines: vec![],
             input_history: vec![],
@@ -2376,6 +2393,7 @@ impl TuiApp {
         self.slash_suggest.dismiss();
         self.file_suggest.dismiss();
         self.esc_armed_at = None;
+        self.request_full_clear(1);
     }
 
     /// Insert text at the cursor. Large pastes become a collapsed `[pasted #N ~ L lines]`
@@ -2412,7 +2430,8 @@ impl TuiApp {
             self.input_cursor = pos + text.len();
         }
         crate::paste::prune_unused(&mut self.pending_pastes, &self.input_buffer);
-        self.mark_dirty();
+        // Two frames: some hosts echo the payload after delivering Paste.
+        self.request_full_clear(2);
     }
 
     /// Expand collapsed paste tokens for the agent / history.
@@ -2429,6 +2448,7 @@ impl TuiApp {
         self.pending_pastes.retain(|b| b.id != id);
         self.input_cursor = start;
         crate::paste::prune_unused(&mut self.pending_pastes, &self.input_buffer);
+        self.request_full_clear(1);
     }
 
     /// Attach an image path to the prompt (deduped by path). Returns true if added.
@@ -3476,5 +3496,15 @@ mod state_tests {
         assert!(!app.slash_suggest.active);
         assert!(!app.file_suggest.active);
         assert!(app.esc_armed_at.is_none());
+        assert!(app.pending_full_clears >= 1);
+    }
+
+    #[test]
+    fn insert_paste_requests_two_full_clears() {
+        let mut app = app();
+        app.pending_full_clears = 0;
+        app.insert_paste_text(&"x".repeat(200));
+        assert_eq!(app.pending_full_clears, 2);
+        assert!(app.needs_redraw);
     }
 }
