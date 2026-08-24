@@ -116,6 +116,10 @@ pub fn spawn_speculative_read(
     limit: usize,
     ctx: &ToolContext,
 ) -> Option<SpeculativeRead> {
+    // Virtual `skill://` / `agent://` paths are not files on disk.
+    if path.contains("://") {
+        return None;
+    }
     let full_path = resolve_path(&ctx.working_dir, &path);
     // Only speculate on paths that already exist as files — avoids racing
     // permission / missing-file noise for half-typed names.
@@ -316,6 +320,15 @@ mod tests {
         let mut jobs = Vec::new();
         abort_all(&mut jobs);
         assert!(jobs.is_empty());
+    }
+
+    #[test]
+    fn spawn_skips_internal_schemes() {
+        let ctx = whycode_core::ToolContext::new("/tmp");
+        assert!(spawn_speculative_read("c1".into(), "skill://demo".into(), 1, 10, &ctx).is_none());
+        assert!(
+            spawn_speculative_read("c1".into(), "agent://task-1".into(), 1, 10, &ctx).is_none()
+        );
     }
 
     #[test]

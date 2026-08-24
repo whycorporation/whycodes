@@ -39,5 +39,7 @@ pub use question::{
     AutoAnswerPrompter, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
     StdinQuestionPrompter, default_question_prompter, run_question_tool,
 };
-pub use routing::resolve_turn_model;
+pub use routing::{
+    resolve_agent_model, resolve_override, resolve_turn_model, resolve_worker_model,
+};
 pub use title::{generate_title, is_trivial_title_seed, resolve_title_model, should_refine_title};

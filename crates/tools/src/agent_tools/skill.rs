@@ -26,7 +26,8 @@ impl Tool for SkillTool {
     }
 
     fn description(&self) -> &str {
-        "Load and manage skills"
+        "List or load project/user skills. Prefer `read skill://<name>` for the body; \
+         `action=list` shows names and descriptions only."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -47,12 +48,13 @@ impl Tool for SkillTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
+    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let action = args["action"].as_str().unwrap_or("");
+        let project = std::path::Path::new(&ctx.working_dir);
 
         match action {
             "list" => {
-                let registry = match SkillRegistry::load() {
+                let registry = match SkillRegistry::load_for_project(project) {
                     Ok(r) => r,
                     Err(e) => {
                         return ToolResult {
@@ -100,7 +102,7 @@ impl Tool for SkillTool {
                     };
                 }
 
-                let registry = match SkillRegistry::load() {
+                let registry = match SkillRegistry::load_for_project(project) {
                     Ok(r) => r,
                     Err(e) => {
                         return ToolResult {
@@ -111,7 +113,7 @@ impl Tool for SkillTool {
                     }
                 };
 
-                match registry.get(name) {
+                match registry.get_ignore_ascii_case(name) {
                     Some(skill) => ToolResult {
                         tool_call_id: String::new(),
                         content: format!(
@@ -136,5 +138,37 @@ impl Tool for SkillTool {
                 is_error: true,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::ToolContext;
+
+    #[tokio::test]
+    async fn list_and_load_use_project_working_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join(".skills");
+        std::fs::create_dir(&skills).unwrap();
+        std::fs::write(
+            skills.join("demo.skill.md"),
+            "---\nname: Demo\ndescription: d\n---\n\nTHE BODY\n",
+        )
+        .unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy());
+        let tool = SkillTool::new();
+        let listed = tool.execute(json!({"action": "list"}), &ctx).await;
+        assert!(!listed.is_error, "{}", listed.content);
+        assert!(listed.content.contains("Demo"), "{}", listed.content);
+        let loaded = tool
+            .execute(json!({"action": "load", "name": "demo"}), &ctx)
+            .await;
+        assert!(!loaded.is_error, "{}", loaded.content);
+        assert!(loaded.content.contains("THE BODY"), "{}", loaded.content);
+        let missing = tool
+            .execute(json!({"action": "load", "name": "nope"}), &ctx)
+            .await;
+        assert!(missing.is_error);
     }
 }

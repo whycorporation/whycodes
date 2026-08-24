@@ -3,6 +3,7 @@ pub mod edit;
 pub mod external_directory;
 pub mod glob;
 pub mod grep;
+pub mod internal;
 pub mod list;
 pub mod paths;
 pub mod read;

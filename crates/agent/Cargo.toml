@@ -21,6 +21,8 @@ whycode-command-risk = { path = "../command-risk" }
 whycode-sandbox = { path = "../sandbox" }
 whycode-plugin = { path = "../plugin" }
 whycode-memory = { path = "../memory" }
+whycode-skill = { path = "../skill" }
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

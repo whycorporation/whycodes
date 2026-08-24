@@ -264,7 +264,7 @@ model answers instead of over-eager edits. Set
 
 | Category | Tools |
 |---|---|
-| Files | `read`, `write`, `edit`, `apply_patch` |
+| Files | `read` (also `skill://`, `agent://`), `write`, `edit`, `apply_patch` |
 | Search | `grep`, `glob`, `list` |
 | Execution | `bash` (alias `shell`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
@@ -381,6 +381,13 @@ checkout so you do not have to migrate them: `CLAUDE.md`, `GEMINI.md`,
 is skipped. In a git repo, parent directories up to the repository root are
 included.
 
+Skills are listed in the system prompt by **name and description only**. The
+body is loaded with `read skill://<name>` or `skill` (`action=load`). Project
+trees: `.skills/*.skill.md`, `.whycode/skills/`, `.claude/skills/*/SKILL.md`.
+
+Finished `task` / `swarm` workers also write `.whycode/agents/<id>.md`,
+readable as `read agent://<id>` (`read agent://` lists them).
+
 Standalone lowercase words in a prompt can change that turn only (the word
 stays visible; a hidden notice is added to the LLM request):
 
@@ -392,6 +399,28 @@ stays visible; a hidden notice is added to the LLM request):
 Disable with `[session.magic_keywords] enabled = false`, or per keyword
 (`ultrathink = false`). Paths, identifiers, code spans, and fences do not
 match (`orchestrate.ts`, `Ultrathink`, `` `ultrathink` ``).
+
+Model roles (optional; empty = auto small sibling of the session model):
+
+```toml
+[session]
+model_smol = "anthropic/claude-haiku-4-5-20251001"   # task + swarm workers
+model_plan = "anthropic/claude-opus-4-6"            # while /agent plan
+```
+
+Context-window errors are classified separately from 429s: the same request is
+not retried; whycode compacts once and retries the step. Older tool dumps are
+shaken to 512 characters when the session is still hot.
+
+Stream rules abort a draft mid-token when the assistant text matches a regex,
+then inject the hint:
+
+```toml
+[[session.stream_rules]]
+name = "no-box-leak"
+pattern = "Box::leak"
+hint = "Don't use Box::leak on production paths; prefer Arc."
+```
 
 ### Subscription login
 

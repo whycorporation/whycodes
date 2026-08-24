@@ -5478,6 +5478,20 @@ fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config
     } else {
         out.push_str("  model_fast: (auto small sibling on trivial chat)\n");
     }
+    if let Some(ref smol) = config.session.model_smol {
+        out.push_str(&format!("  model_smol: {smol}\n"));
+    } else {
+        out.push_str("  model_smol: (auto small sibling for task/swarm)\n");
+    }
+    if let Some(ref plan) = config.session.model_plan {
+        out.push_str(&format!("  model_plan: {plan}\n"));
+    }
+    if !config.session.stream_rules.is_empty() {
+        out.push_str(&format!(
+            "  stream_rules: {}\n",
+            config.session.stream_rules.len()
+        ));
+    }
     out.push_str(&format!(
         "  model_race: {} (after {}ms)\n  response_cache: {}\n",
         config.session.model_race, config.session.race_after_ms, config.session.response_cache
@@ -5899,6 +5913,8 @@ mod tests {
         assert!(out.contains("messages:  1"), "{out}");
         assert!(out.contains("estimated"), "{out}");
         assert!(out.contains("prompt_cache:"), "{out}");
+        assert!(out.contains("model_fast:"), "{out}");
+        assert!(out.contains("model_smol:"), "{out}");
         assert!(out.contains("model_race:"), "{out}");
         assert!(out.contains("swarm:"), "{out}");
 
