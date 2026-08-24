@@ -140,6 +140,30 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-24 — model picker keeps the previous provider's API key
+
+**Symptom:** Logged in to `google-antigravity`, footer shows
+`google-antigravity/gemini-3.5-flash-low`, new process / new session
+fails on first turn: `Code Assist loadCodeAssist (401 Unauthorized):
+Expected OAuth 2 access token`. Displayed as "check API key".
+
+**JSONL:** `turn.error` after `tui.starting` with a *different* default
+provider (e.g. `tektik`). Token `expires_at` still in the future.
+
+**Root cause:** `apply_model_choice` only overwrote `api_key` when the
+*new* provider had a config/env key. Switching from a key-bearing
+default to an OAuth-only provider left the previous bearer in place.
+Code Assist then got a non-Google token. `/new` does not reload
+credentials, so the stale key survived.
+
+**Fix:** on provider change, drop the old key (and unregister
+`oauth_refresh` for the previous provider); load env/config for the
+new one, else OAuth. Same rebind on `/models provider/model`, `/connect`,
+and first-turn lazy fill. Code Assist 401 copy points at `auth login`.
+
+**Prevention:** never reuse `api_key` across providers. A picker change
+that only updates the chrome (footer) is not a credential switch.
+
 ### 2026-08-23 — `String::truncate` panics mid-UTF-8 in session memory
 
 **Symptom:** TUI abort: `assertion failed: self.is_char_boundary(new_len)` at
