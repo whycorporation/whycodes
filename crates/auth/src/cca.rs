@@ -1,10 +1,10 @@
 //! Cloud Code Assist (CCA) transport logic for Antigravity integration.
 //!
 //! Handles onboarding a fresh Google OAuth token onto the Code Assist
-//! control plane (`cloudcode-pa.googleapis.com`) so subsequent chat calls
-//! resolve a Cloud project. The wire schema mirrors what Gemini CLI sends:
+//! control plane (`daily-cloudcode-pa.googleapis.com`) so subsequent chat
+//! calls resolve a Cloud project. The wire schema mirrors native Antigravity:
 //! camelCase fields, `cloudaicompanionProject` for the project handle, and a
-//! `metadata` object carrying `ideType` / `platform` / `pluginType`.
+//! `metadata` object carrying `ideType: ANTIGRAVITY`.
 //!
 //! The resolved project id is stored back on the token under
 //! `extra["project_id"]` (the same canonical key the LLM provider reads), so
@@ -191,10 +191,22 @@ fn load_project(payload: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Surface Google's own reason when the free tier is explicitly ineligible
-/// (`ineligibleTiers[].reasonMessage`) instead of tripping a raw 403 on
-/// `onboardUser` later.
+/// Surface Google's own reason when the account cannot onboard.
+///
+/// After Gemini Code Assist for individuals shut down (2026-06-18), Antigravity
+/// tokens often report `free-tier` as ineligible with "This client is no longer
+/// supported for Gemini Code Assist". That is expected and **not** fatal when
+/// another tier is in `allowedTiers` — `pick_tier` will onboard onto that one.
+/// Only fail when there is no allowed tier at all.
 fn surface_free_tier_ineligibility(load: &Value) -> Result<()> {
+    let has_allowed_tier = load["allowedTiers"].as_array().is_some_and(|tiers| {
+        tiers
+            .iter()
+            .any(|t| t["id"].as_str().is_some_and(|id| !id.is_empty()))
+    });
+    if has_allowed_tier {
+        return Ok(());
+    }
     let free_entry = || {
         load["ineligibleTiers"].as_array().and_then(|tiers| {
             tiers
@@ -202,12 +214,6 @@ fn surface_free_tier_ineligibility(load: &Value) -> Result<()> {
                 .find(|t| t["tierId"].as_str() == Some("free-tier"))
         })
     };
-    let eligible = load["allowedTiers"]
-        .as_array()
-        .is_some_and(|tiers| tiers.iter().any(|t| t["id"].as_str() == Some("free-tier")));
-    if eligible {
-        return Ok(());
-    }
     if let Some(reason) = free_entry().and_then(|t| t["reasonMessage"].as_str()) {
         let url = free_entry()
             .and_then(|t| t["validationUrl"].as_str())
@@ -332,8 +338,20 @@ mod tests {
 
     #[test]
     fn ineligibility_reason_is_surfaced() {
-        let ineligible = json!({
+        // A paid/Antigravity tier in allowedTiers means free-tier ineligibility
+        // is expected after the Gemini Code Assist consumer sunset — keep going.
+        let paid_allowed = json!({
             "allowedTiers": [{"id": "standard-tier"}],
+            "ineligibleTiers": [{
+                "tierId": "free-tier",
+                "reasonMessage": "This client is no longer supported for Gemini Code Assist",
+                "validationUrl": "https://example.com/fix"
+            }]
+        });
+        assert!(surface_free_tier_ineligibility(&paid_allowed).is_ok());
+
+        let ineligible = json!({
+            "allowedTiers": [],
             "ineligibleTiers": [{
                 "tierId": "free-tier",
                 "reasonMessage": "not eligible for individuals",

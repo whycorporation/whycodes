@@ -1203,6 +1203,24 @@ static-suffix route on the same path pattern is rejected.
 (`share_dispatch` in `crates/server/src/routes.rs`).
 
 
+## Antigravity OAuth: missing scopes look like Gemini Code Assist sunset
+
+**Date:** 2026-08-24 · **Area:** `crates/auth/src/providers.rs`, `crates/auth/src/cca.rs`
+
+**Symptom:** `google-antigravity` browser sign-in succeeds, then fails with
+`Google Code Assist: This client is no longer supported for Gemini Code Assist`.
+
+**Cause:** Native Antigravity requests `cclog` + `experimentsandconfigs` in
+addition to `cloud-platform` / userinfo. Without those scopes,
+`loadCodeAssist` classifies the session as Gemini Code Assist for individuals
+(sunset 2026-06-18) and puts `free-tier` in `ineligibleTiers`. A second trap:
+that ineligibility is expected even for a valid Antigravity account that still
+has `standard-tier` (or another paid tier) in `allowedTiers` — aborting on
+the free-tier reason skips the working onboard path.
+
+**Fix:** request the native five-scope set; only surface free-tier
+ineligibility when `allowedTiers` is empty.
+
 ## Code Assist onboarding: LRO polling and response shapes
 
 **Date:** 2026-08-24 · **Area:** `crates/auth/src/cca.rs` (google-antigravity OAuth)
