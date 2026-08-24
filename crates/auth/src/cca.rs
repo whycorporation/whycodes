@@ -16,11 +16,12 @@ use serde_json::{Value, json};
 
 const BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 
-/// User-Agent identifying as the native Antigravity client (captured from the
-/// real 2.8.0 `antigravity/hub` release). The backend gates the control plane
-/// on this header.
+/// User-Agent identifying as the native Antigravity client. Captured from the
+/// real 2.8.0 `antigravity/hub` release and pinned to that reference client's
+/// `os_type`/`arch` (darwin/arm64), independent of the host — the control plane
+/// gates on this header matching the reference, not the machine running whycode.
 const ANTIGRAVITY_USER_AGENT: &str =
-    "antigravity/hub/2.8.0 (aidev_client; os_type=linux; arch=x86_64; cl=963137146)";
+    "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)";
 
 /// Canonical `extra` key used to persist a resolved Google Cloud project id.
 pub const PROJECT_ID_KEY: &str = "project_id";
@@ -36,16 +37,30 @@ fn client_metadata() -> Value {
 /// response. Non-success statuses surface the provider's `error.message`
 /// body rather than a bare "400 Bad Request".
 async fn post(suffix: &str, token: &str, body: &Value) -> Result<Value> {
+    send(reqwest::Method::POST, suffix, token, Some(body)).await
+}
+
+/// GET an LRO status. Native Antigravity / oh-my-pi poll `:onboardUser`
+/// operations with GET, not POST.
+async fn get(suffix: &str, token: &str) -> Result<Value> {
+    send(reqwest::Method::GET, suffix, token, None).await
+}
+
+async fn send(
+    method: reqwest::Method,
+    suffix: &str,
+    token: &str,
+    body: Option<&Value>,
+) -> Result<Value> {
     let url = format!("{BASE}{suffix}");
-    let resp = reqwest::Client::new()
-        .post(&url)
+    let mut req = reqwest::Client::new()
+        .request(method, &url)
         .header("Authorization", format!("Bearer {token}"))
-        .header("Content-Type", "application/json")
-        .header("User-Agent", ANTIGRAVITY_USER_AGENT)
-        .json(body)
-        .send()
-        .await
-        .map_err(AuthError::from)?;
+        .header("User-Agent", ANTIGRAVITY_USER_AGENT);
+    if let Some(body) = body {
+        req = req.header("Content-Type", "application/json").json(body);
+    }
+    let resp = req.send().await.map_err(AuthError::from)?;
     let status = resp.status();
     let value: Value = resp.json().await.map_err(AuthError::from)?;
     if !status.is_success() {
@@ -123,7 +138,7 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
                 break;
             };
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            current = post(&format!("/{name}"), &token.access_token, &json!({})).await?;
+            current = get(&format!("/{name}"), &token.access_token).await?;
         }
         if current["done"].as_bool().unwrap_or(false)
             && let Some(err) = current["error"]["message"].as_str()
@@ -282,6 +297,14 @@ fn explicit_project(token: &OAuthToken) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_agent_matches_native_reference_client() {
+        assert_eq!(
+            ANTIGRAVITY_USER_AGENT,
+            "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)"
+        );
+    }
 
     #[test]
     fn pick_tier_prefers_user_defined_project() {

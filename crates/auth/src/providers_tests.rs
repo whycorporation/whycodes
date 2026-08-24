@@ -165,6 +165,7 @@ fn antigravity_requests_native_client_scopes() {
     let spec = spec_for("google-antigravity").unwrap();
     assert_eq!(spec.flow, FlowKind::LoopbackPkce);
     assert_eq!(spec.loopback_port, Some(51121));
+    assert_eq!(spec.loopback_host, Some("127.0.0.1"));
     assert_eq!(spec.callback_path, "/oauth-callback");
     for scope in [
         "https://www.googleapis.com/auth/cloud-platform",

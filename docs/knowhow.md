@@ -1210,16 +1210,20 @@ static-suffix route on the same path pattern is rejected.
 **Symptom:** `google-antigravity` browser sign-in succeeds, then fails with
 `Google Code Assist: This client is no longer supported for Gemini Code Assist`.
 
-**Cause:** Native Antigravity requests `cclog` + `experimentsandconfigs` in
-addition to `cloud-platform` / userinfo. Without those scopes,
+**Cause:** Native Antigravity (and oh-my-pi's working client) request
+`cclog` + `experimentsandconfigs` in addition to `cloud-platform` / userinfo,
+identify as `antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64;
+cl=963137146)` regardless of host OS, and poll `:onboardUser` LROs with GET.
+Without the extra scopes or with a Linux/x86_64 User-Agent,
 `loadCodeAssist` classifies the session as Gemini Code Assist for individuals
 (sunset 2026-06-18) and puts `free-tier` in `ineligibleTiers`. A second trap:
 that ineligibility is expected even for a valid Antigravity account that still
 has `standard-tier` (or another paid tier) in `allowedTiers` — aborting on
 the free-tier reason skips the working onboard path.
 
-**Fix:** request the native five-scope set; only surface free-tier
-ineligibility when `allowedTiers` is empty.
+**Fix:** request the native five-scope set; pin the darwin/arm64 User-Agent;
+poll operations with GET; only surface free-tier ineligibility when
+`allowedTiers` is empty.
 
 ## Code Assist onboarding: LRO polling and response shapes
 

@@ -245,7 +245,7 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             token_encoding: TokenEncoding::Form,
             redirect_uri: None,
             loopback_port: Some(51121),
-            loopback_host: None,
+            loopback_host: Some("127.0.0.1"),
             callback_path: "/oauth-callback",
             extra_authorize: &[("access_type", "offline"), ("prompt", "consent")],
             derived: None,
