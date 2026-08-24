@@ -118,16 +118,14 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let prompt_focused =
         app.focus == crate::app::FocusPane::Prompt || matches!(app.mode, AppMode::Command);
 
-    // Subtle chrome like Grok: dimmer idle, brighter when focused.
+    // Box chrome matches the agent identity (same color as the footer
+    // name / header chip). Prefix stays bright when focused, dim idle.
     // No panel fill — canvas bg shows through.
-    let border_color = if prompt_focused {
-        palette.dim
-    } else {
-        palette.border
-    };
+    let agent_color = app
+        .config
+        .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
     let accent = if prompt_focused {
-        app.config
-            .agent_color(&app.agent_name, app.agent_cycle_idx, palette)
+        agent_color
     } else {
         palette.dim
     };
@@ -184,7 +182,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     // paste echo (or a previously taller box) sits here beside the input.
     crate::ui::layout::fill_blank(frame, chunks[0], palette.bg);
 
-    let border_style = Style::default().fg(border_color);
+    let border_style = Style::default().fg(agent_color);
 
     // ── Top: ╭──────────╮ ───────────────────────────────────────────
     let top_border = chunks[1];
@@ -1037,6 +1035,59 @@ mod overflow_render_tests {
             agent_fg,
             Some(palette.dim),
             "agent must not be the dim caption color"
+        );
+    }
+
+    #[test]
+    fn prompt_box_border_uses_agent_color() {
+        let backend = TestBackend::new(80, 16);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.focus = crate::app::FocusPane::Prompt;
+        let palette = app.config.palette();
+        let expected = app
+            .config
+            .agent_color(&app.agent_name, app.agent_cycle_idx, &palette);
+
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(
+                    f,
+                    Rect {
+                        x: 0,
+                        y: 8,
+                        width: area.width,
+                        height: 8,
+                    },
+                    &app,
+                    &palette,
+                );
+            })
+            .expect("draw prompt");
+
+        let buf = terminal.backend().buffer();
+        let mut corner_fg = None;
+        let mut side_fg = None;
+        for y in 0..16u16 {
+            for x in 0..80u16 {
+                match buf[(x, y)].symbol() {
+                    "╭" | "╮" | "╰" | "╯" => corner_fg = Some(buf[(x, y)].fg),
+                    "│" => side_fg = Some(buf[(x, y)].fg),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(
+            corner_fg,
+            Some(expected),
+            "box corners should use the agent color"
+        );
+        assert_eq!(
+            side_fg,
+            Some(expected),
+            "box side borders should use the agent color"
         );
     }
 
