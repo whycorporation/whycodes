@@ -57,6 +57,8 @@ pub enum Action {
     ToggleToolCall,
     ToggleThinking,
     ToggleToolResult,
+    /// Fold / unfold the sticky todo panel (`t` in scrollback).
+    ToggleTodosPanel,
     /// Cycle primary agents (Ctrl+T; Tab is focus toggle — Grok)
     SwitchAgent,
     /// Tab: Prompt ↔ Scrollback
@@ -234,6 +236,7 @@ impl Keymap {
                             Some(Action::JumpNextTurn)
                         }
                         (false, false, KeyCode::Char('y')) => Some(Action::CopySelection),
+                        (false, false, KeyCode::Char('t')) => Some(Action::ToggleTodosPanel),
                         (false, false, KeyCode::Char('e')) => Some(Action::ToggleThinking),
                         (false, false, KeyCode::Char('h')) => Some(Action::ToggleThinking),
                         (false, false, KeyCode::Char('l')) => Some(Action::ToggleToolResult),
@@ -303,6 +306,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Shift+←/→", "Prev / next user turn", KeymapContext::Normal),
         KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
         KeyBinding::new("e / h", "Toggle thinking fold", KeymapContext::Normal),
+        KeyBinding::new("t", "Toggle todo panel (scrollback)", KeymapContext::Normal),
         KeyBinding::new("l", "Toggle tool results", KeymapContext::Normal),
         KeyBinding::new(
             "Space / i",
@@ -499,6 +503,10 @@ mod tests {
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('y'))),
             Some(Action::CopySelection)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('t'))),
+            Some(Action::ToggleTodosPanel)
         );
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('e'))),

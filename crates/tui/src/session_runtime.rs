@@ -100,6 +100,7 @@ pub struct ViewSnapshot {
     pub pending_suggestion: Option<String>,
     pub session_id: String,
     pub todos: Vec<whycode_core::TodoItem>,
+    pub todos_collapsed: bool,
 }
 
 impl Default for ViewSnapshot {
@@ -122,6 +123,7 @@ impl Default for ViewSnapshot {
             pending_suggestion: None,
             session_id: String::new(),
             todos: Vec::new(),
+            todos_collapsed: false,
         }
     }
 }
