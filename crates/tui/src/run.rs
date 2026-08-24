@@ -950,24 +950,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
             // ── Apply model picker selection ──────────────────────────
             if let Some((p, m)) = app.pending_model.take() {
-                let oauth = whycode_auth::providers::supports_oauth(&p);
                 apply_model_choice(
                     &mut app,
                     &mut provider,
                     &mut model,
                     &mut api_key,
-                    p.clone(),
+                    p,
                     m,
                     &config,
                 );
-                if api_key.is_empty()
-                    && oauth
-                    && let Ok(dir) = Config::data_dir()
-                    && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
-                {
-                    whycode_llm::oauth_refresh::register(&p, dir);
-                    api_key = tok;
-                }
+                fill_oauth_credential(&mut api_key, &provider).await;
                 if rt.agent_busy {
                     catalog_fetch_pending = true;
                 } else {
@@ -1150,8 +1142,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     continue;
                 }
 
-                // Lazy-load API key from env/config when user first chats
+                // Lazy-load API key from env/config/OAuth when user first chats
                 try_fill_api_key(&mut api_key, &provider);
+                if api_key.is_empty() {
+                    fill_oauth_credential(&mut api_key, &provider).await;
+                }
                 if api_key.is_empty() {
                     warn_missing_api_key(&mut app, &provider);
                     // Images already shown on the user bubble; don't re-queue.
@@ -3038,24 +3033,39 @@ fn arm_generating(
     flag
 }
 
+fn explicit_provider_key(config: &Config, provider: &str) -> Option<String> {
+    config
+        .get_provider(provider)
+        .and_then(|pc| pc.api_key.clone())
+        .filter(|k| !k.is_empty())
+        .or_else(|| {
+            std::env::var(format!("{}_API_KEY", provider.to_uppercase()))
+                .ok()
+                .filter(|k| !k.is_empty())
+        })
+}
+
 fn try_fill_api_key(api_key: &mut String, provider: &str) {
     if !api_key.is_empty() {
         return;
     }
-    if let Ok(cfg) = Config::load()
-        && let Some(pc) = cfg.get_provider(provider)
-        && let Some(k) = &pc.api_key
-        && !k.is_empty()
-    {
-        *api_key = k.clone();
+    let cfg = Config::load().unwrap_or_default();
+    if let Some(k) = explicit_provider_key(&cfg, provider) {
+        *api_key = k;
+        whycode_llm::oauth_refresh::unregister(provider);
     }
-    if api_key.is_empty() {
-        let env_name = format!("{}_API_KEY", provider.to_uppercase());
-        if let Ok(k) = std::env::var(&env_name)
-            && !k.is_empty()
-        {
-            *api_key = k;
-        }
+}
+
+async fn fill_oauth_credential(api_key: &mut String, provider: &str) {
+    if !api_key.is_empty() || !whycode_auth::providers::supports_oauth(provider) {
+        return;
+    }
+    let Ok(dir) = Config::data_dir() else {
+        return;
+    };
+    if let Some(tok) = whycode_auth::providers::access_token(provider, &dir).await {
+        whycode_llm::oauth_refresh::register(provider, dir);
+        *api_key = tok;
     }
 }
 
@@ -3146,18 +3156,21 @@ fn apply_model_choice(
     m: String,
     config: &Config,
 ) {
+    if provider.as_str() != p {
+        // Never send the previous backend's credential to the new one
+        // (e.g. tektik API key as a Code Assist bearer → 401).
+        whycode_llm::oauth_refresh::unregister(provider);
+        if let Some(k) = explicit_provider_key(config, &p) {
+            *api_key = k;
+            whycode_llm::oauth_refresh::unregister(&p);
+        } else {
+            api_key.clear();
+        }
+    }
     *provider = p.clone();
     *model = m.clone();
     app.provider_name = p.clone();
     app.model_name = m.clone();
-    if let Some(k) = config
-        .get_provider(&p)
-        .and_then(|pc| pc.api_key.clone())
-        .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
-    {
-        *api_key = k;
-        whycode_llm::oauth_refresh::unregister(&p);
-    }
     app.clear_api_context_window();
     refresh_context_window(app, config, &p, &m);
     app.status_message = format!(
@@ -4371,30 +4384,20 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             };
         }
         "/connect" => {
-            // Reload key from env / config
-            if let Ok(cfg) = Config::load()
-                && let Some(pc) = cfg.get_provider(ctx.provider)
-                && let Some(k) = &pc.api_key
-                && !k.is_empty()
-            {
-                *ctx.api_key = k.clone();
+            // Re-resolve for the *current* provider; a leftover key from a
+            // previous picker selection must not block OAuth.
+            let from_live = explicit_provider_key(ctx.config, ctx.provider);
+            let from_disk = Config::load()
+                .ok()
+                .and_then(|cfg| explicit_provider_key(&cfg, ctx.provider));
+            if let Some(k) = from_live.or(from_disk) {
+                *ctx.api_key = k;
+                whycode_llm::oauth_refresh::unregister(ctx.provider);
+            } else {
+                ctx.api_key.clear();
+                fill_oauth_credential(ctx.api_key, ctx.provider).await;
             }
             let env_name = format!("{}_API_KEY", ctx.provider.to_uppercase());
-            if ctx.api_key.is_empty()
-                && let Ok(k) = std::env::var(&env_name)
-                && !k.is_empty()
-            {
-                *ctx.api_key = k;
-            }
-            // OAuth subscription login (`whycode auth login <provider>`).
-            if ctx.api_key.is_empty()
-                && whycode_auth::providers::supports_oauth(ctx.provider)
-                && let Ok(dir) = Config::data_dir()
-                && let Some(tok) = whycode_auth::providers::access_token(ctx.provider, &dir).await
-            {
-                whycode_llm::oauth_refresh::register(ctx.provider, dir);
-                *ctx.api_key = tok;
-            }
             if ctx.api_key.is_empty() {
                 ctx.app.status_message = format!("no API key · set {env_name}");
                 let oauth_supported = whycode_auth::providers::supports_oauth(ctx.provider);
@@ -4547,34 +4550,17 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     crate::app::format_token_count(ctx.app.max_context_tokens),
                 );
             } else if let Some((p, m)) = rest.split_once('/') {
-                let provider_changed = p != ctx.provider.as_str();
-                *ctx.provider = p.to_string();
-                *ctx.model = m.to_string();
-                ctx.app.provider_name = p.to_string();
-                ctx.app.model_name = m.to_string();
-                if let Some(k) = ctx
-                    .config
-                    .get_provider(p)
-                    .and_then(|pc| pc.api_key.clone())
-                    .or_else(|| std::env::var(format!("{}_API_KEY", p.to_uppercase())).ok())
-                {
-                    *ctx.api_key = k;
-                }
-                if provider_changed {
-                    ctx.app.clear_api_context_window();
-                    ctx.app.pending_catalog_refresh = true;
-                } else {
-                    // Model-only change: still need a fresh window for the new id.
-                    ctx.app.clear_api_context_window();
-                    ctx.app.pending_catalog_refresh = true;
-                }
-                refresh_context_window(ctx.app, ctx.config, p, m);
-                ctx.app.status_message = format!(
-                    "Model → {}/{}  ·  window {}",
+                apply_model_choice(
+                    ctx.app,
                     ctx.provider,
                     ctx.model,
-                    crate::app::format_token_count(ctx.app.max_context_tokens),
+                    ctx.api_key,
+                    p.to_string(),
+                    m.to_string(),
+                    ctx.config,
                 );
+                fill_oauth_credential(ctx.api_key, ctx.provider).await;
+                ctx.app.pending_catalog_refresh = true;
             } else {
                 *ctx.model = rest.to_string();
                 ctx.app.model_name = rest.to_string();
@@ -7475,7 +7461,20 @@ mod tests {
             "default N=3 → 2 queued"
         );
 
-        h.api_key = "sk-test".into();
+        h.config.providers.insert(
+            "acme".into(),
+            whycode_core::types::ProviderConfig {
+                name: "acme".into(),
+                api_key: Some("sk-test".into()),
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: vec!["m1".into()],
+                tool_arguments: None,
+                extra: Default::default(),
+            },
+        );
+        h.api_key.clear();
         h.run("/connect").await;
         assert!(
             h.app
@@ -8152,6 +8151,38 @@ mod tests {
         assert_eq!(model, "m1");
         assert_eq!(key, "sk-from-cfg");
         assert!(app.status_message.contains("acme/m1"));
+
+        // Switching to an OAuth-only provider must drop the previous key.
+        let mut leftover = "sk-from-previous-backend".into();
+        apply_model_choice(
+            &mut app,
+            &mut provider,
+            &mut model,
+            &mut leftover,
+            "google-antigravity".into(),
+            "gemini-3.5-flash-low".into(),
+            &config,
+        );
+        assert_eq!(provider, "google-antigravity");
+        assert!(
+            leftover.is_empty(),
+            "must not keep previous provider credential"
+        );
+
+        leftover = "ya29-oauth".into();
+        apply_model_choice(
+            &mut app,
+            &mut provider,
+            &mut model,
+            &mut leftover,
+            "google-antigravity".into(),
+            "gemini-3.1-pro-low".into(),
+            &config,
+        );
+        assert_eq!(
+            leftover, "ya29-oauth",
+            "same-provider model change keeps the credential"
+        );
 
         let mut key = String::new();
         try_fill_api_key(&mut key, "nope");

@@ -1534,11 +1534,10 @@ async fn cmd_run(
                     if !rest.is_empty() {
                         // /models provider/model
                         if let Some((p, m)) = rest.split_once('/') {
+                            whycode_llm::oauth_refresh::unregister(&provider);
                             provider = p.to_string();
                             model = m.to_string();
-                            if let Some(k) = get_api_key(&provider, &config).await {
-                                api_key = k;
-                            }
+                            api_key = get_api_key(&provider, &config).await.unwrap_or_default();
                             println!(
                                 "{} Switched model to {}/{}",
                                 "✓".green(),
