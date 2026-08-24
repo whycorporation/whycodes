@@ -1043,6 +1043,7 @@ fn default_prompt_suggestions() -> String {
 pub struct GeneralConfig {
     pub project_path: Option<PathBuf>,
     pub log_level: Option<String>,
+    pub default_gcp_project: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

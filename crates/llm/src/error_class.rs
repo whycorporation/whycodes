@@ -105,6 +105,13 @@ impl ClassifiedError {
             }
             ErrorKind::Client => {
                 if let Some(s) = self.status {
+                    // Surface model/host from Code Assist 404s so "unknown
+                    // family id" is distinguishable from a dead endpoint.
+                    let m = self.message.trim();
+                    if let Some(idx) = m.find("model=") {
+                        let rest: String = m[idx..].chars().take(80).collect();
+                        return format!("Request rejected (HTTP {s}): {rest}");
+                    }
                     format!("Request rejected (HTTP {s})")
                 } else {
                     "Request rejected by the provider".into()
@@ -563,6 +570,17 @@ mod tests {
         assert_eq!(c.kind, ErrorKind::Client);
         assert!(!c.retryable);
         assert_eq!(c.user_message(), "Request rejected (HTTP 422)");
+    }
+
+    #[test]
+    fn code_assist_404_surfaces_the_model() {
+        let c =
+            classify_message("LLM error: Code Assist error (404) model=gemini-3.1-pro: Not Found");
+        assert_eq!(c.kind, ErrorKind::Client);
+        assert_eq!(c.status, Some(404));
+        let msg = c.user_message();
+        assert!(msg.contains("404"), "{msg}");
+        assert!(msg.contains("model=gemini-3.1-pro"), "{msg}");
     }
 
     #[test]

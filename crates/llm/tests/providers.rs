@@ -1,5 +1,7 @@
 /// Integration tests for LLM provider body building, retry, and fallback.
-use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+use whycode_core::types::{
+    ContentBlock, LlmRequest, Message, MessageContent, Role, ToolDefinition,
+};
 use whycode_llm::anthropic::AnthropicProvider;
 use whycode_llm::deepseek::DeepSeekProvider;
 use whycode_llm::fallback::FallbackChain;
@@ -27,6 +29,133 @@ fn make_basic_request() -> LlmRequest {
         thinking: None,
         use_prompt_cache: true,
     }
+}
+
+const CANONICAL_CALL_ID: &str = "call_weather_1";
+
+fn make_canonical_tool_semantics_request() -> LlmRequest {
+    LlmRequest {
+        system: String::new(),
+        messages: std::sync::Arc::from(vec![
+            Message {
+                role: Role::User,
+                content: MessageContent::Text("What is the weather in Paris?".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
+                    id: CANONICAL_CALL_ID.into(),
+                    name: "get_weather".into(),
+                    input: serde_json::json!({"city": "Paris"}),
+                }]),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
+                    tool_use_id: CANONICAL_CALL_ID.into(),
+                    content: "21 C".into(),
+                    is_error: None,
+                }]),
+                tool_call_id: Some(CANONICAL_CALL_ID.into()),
+                name: None,
+                created_at: None,
+            },
+        ]),
+        tools: vec![ToolDefinition {
+            name: "get_weather".into(),
+            description: "Get the current weather for a city.".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {"city": {"type": "string"}},
+                "required": ["city"],
+                "additionalProperties": false
+            }),
+        }],
+        max_tokens: None,
+        temperature: None,
+        top_p: None,
+        top_k: None,
+        stop_sequences: None,
+        thinking: None,
+        use_prompt_cache: false,
+    }
+}
+
+#[test]
+fn test_public_provider_bodies_preserve_canonical_tool_semantics() {
+    let request = make_canonical_tool_semantics_request();
+    let expected_schema = serde_json::json!({
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"],
+        "additionalProperties": false
+    });
+
+    let anthropic = AnthropicProvider::new().build_body(&request, "claude");
+    let openai = OpenAiProvider::new().build_body(&request, "gpt-4o");
+
+    let anthropic_tool = &anthropic["tools"][0];
+    assert_eq!(anthropic_tool["name"], "get_weather");
+    assert_eq!(
+        anthropic_tool["description"],
+        "Get the current weather for a city."
+    );
+    assert_eq!(anthropic_tool["input_schema"], expected_schema);
+
+    let anthropic_call = &anthropic["messages"][1]["content"][0];
+    let anthropic_result = &anthropic["messages"][2]["content"][0];
+    assert_eq!(anthropic_call["type"], "tool_use");
+    assert_eq!(anthropic_call["id"], CANONICAL_CALL_ID);
+    assert_eq!(anthropic_call["name"], anthropic_tool["name"]);
+    assert_eq!(
+        anthropic_call["input"],
+        serde_json::json!({"city": "Paris"})
+    );
+    assert_eq!(anthropic_result["type"], "tool_result");
+    assert_eq!(anthropic_result["tool_use_id"], anthropic_call["id"]);
+    assert_eq!(anthropic_result["content"], "21 C");
+
+    let openai_tool = &openai["tools"][0];
+    assert_eq!(openai_tool["type"], "function");
+    assert_eq!(openai_tool["function"]["name"], "get_weather");
+    assert_eq!(
+        openai_tool["function"]["description"],
+        "Get the current weather for a city."
+    );
+    assert_eq!(openai_tool["function"]["parameters"], expected_schema);
+
+    let openai_assistant = &openai["messages"][1];
+    let openai_call = &openai_assistant["tool_calls"][0];
+    assert_eq!(openai_assistant["role"], "assistant");
+    assert!(openai_assistant["content"].is_null());
+    assert_eq!(openai_call["id"], CANONICAL_CALL_ID);
+    assert_eq!(openai_call["type"], "function");
+    assert_eq!(
+        openai_call["function"]["name"],
+        openai_tool["function"]["name"]
+    );
+
+    let openai_arguments: serde_json::Value = serde_json::from_str(
+        openai_call["function"]["arguments"]
+            .as_str()
+            .expect("OpenAI function arguments should be a JSON string"),
+    )
+    .expect("OpenAI function arguments should contain valid JSON");
+    assert_eq!(openai_arguments, serde_json::json!({"city": "Paris"}));
+
+    let openai_result = &openai["messages"][2];
+    assert_eq!(openai_result["role"], "tool");
+    assert_eq!(openai_result["tool_call_id"], openai_call["id"]);
+    assert_eq!(
+        openai_result["content"],
+        "[tool_result call_weather_1] 21 C"
+    );
 }
 
 // ─── Anthropic body building ───────────────────────────────────────────────

@@ -87,6 +87,7 @@ pub fn detect_capabilities(provider: &str, model: &str) -> ModelCapabilities {
         "openai"
             | "anthropic"
             | "google"
+            | "google-antigravity"
             | "gemini"
             | "deepseek"
             | "openrouter"
@@ -599,6 +600,7 @@ mod tests {
         let cases = [
             ("gateway", "custom-gpt-4-32k-endpoint", 32_000),
             ("google", "gemini-flash-experimental", 128_000),
+            ("google-antigravity", "gemini-3.1-pro", 128_000),
             ("anthropic", "claude-future", 200_000),
             ("deepseek", "deepseek-coder-v2", 64_000),
             ("mistral", "mistral-medium-latest", 32_000),

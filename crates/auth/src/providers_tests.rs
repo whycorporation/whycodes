@@ -161,6 +161,27 @@ fn flow_kinds_match_registered_redirects() {
 }
 
 #[test]
+fn antigravity_requests_native_client_scopes() {
+    let spec = spec_for("google-antigravity").unwrap();
+    assert_eq!(spec.flow, FlowKind::LoopbackPkce);
+    assert_eq!(spec.loopback_port, Some(51121));
+    assert_eq!(spec.loopback_host, Some("127.0.0.1"));
+    assert_eq!(spec.callback_path, "/oauth-callback");
+    for scope in [
+        "https://www.googleapis.com/auth/cloud-platform",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+        "https://www.googleapis.com/auth/cclog",
+        "https://www.googleapis.com/auth/experimentsandconfigs",
+    ] {
+        assert!(
+            spec.scopes.split_whitespace().any(|s| s == scope),
+            "google-antigravity missing native scope {scope}"
+        );
+    }
+}
+
+#[test]
 fn token_from_json_accepts_string_or_number_expires_in() {
     let t = token_from_json(&serde_json::json!({
         "access_token": "a", "refresh_token": "r", "expires_in": 3600

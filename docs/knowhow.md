@@ -140,6 +140,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-23 — `String::truncate` panics mid-UTF-8 in session memory
+
+**Symptom:** TUI abort: `assertion failed: self.is_char_boundary(new_len)` at
+`crates/memory/src/service.rs` while indexing a turn. Crash file
+`crash-20260823T214444.033.txt`.
+
+**JSONL / crash:** panic in `tokio-rt-worker`; location is the 2000-byte clip
+in `MemoryService::index_session_turn`.
+
+**Root cause:** `clip.truncate(2000)` is a **byte** cap. A 2-byte char
+(`ç`, emoji, CJK) that straddles offset 2000 is not a char boundary;
+`String::truncate` asserts.
+
+**Fix:** `clip.truncate(clip.floor_char_boundary(MAX))`. Test uses a
+payload whose 2000th byte sits inside `ç`.
+
+**Prevention:** Never `String::truncate(n)` / `&s[..n]` on user text
+without `is_char_boundary` / `floor_char_boundary`. Byte length ≠ char
+length.
+
 ### 2026-08-20 — core 100% floor misses `save_todos` parent `if let`
 
 **Symptom:** `Coverage (line floor)` fails `whycode-core` with
@@ -1182,3 +1202,50 @@ static-suffix route on the same path pattern is rejected.
 **Fix:** one route `/s/:id` and dispatch on whether `id` ends with `.json` / `.md`
 (`share_dispatch` in `crates/server/src/routes.rs`).
 
+
+## Antigravity OAuth: missing scopes look like Gemini Code Assist sunset
+
+**Date:** 2026-08-24 · **Area:** `crates/auth/src/providers.rs`, `crates/auth/src/cca.rs`
+
+**Symptom:** `google-antigravity` browser sign-in succeeds, then fails with
+`Google Code Assist: This client is no longer supported for Gemini Code Assist`.
+
+**Cause:** Native Antigravity (and oh-my-pi's working client) request
+`cclog` + `experimentsandconfigs` in addition to `cloud-platform` / userinfo,
+identify as `antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64;
+cl=963137146)` regardless of host OS, and poll `:onboardUser` LROs with GET.
+Without the extra scopes or with a Linux/x86_64 User-Agent,
+`loadCodeAssist` classifies the session as Gemini Code Assist for individuals
+(sunset 2026-06-18) and puts `free-tier` in `ineligibleTiers`. A second trap:
+that ineligibility is expected even for a valid Antigravity account that still
+has `standard-tier` (or another paid tier) in `allowedTiers` — aborting on
+the free-tier reason skips the working onboard path.
+
+**Fix:** request the native five-scope set; pin the darwin/arm64 User-Agent;
+poll operations with GET; only surface free-tier ineligibility when
+`allowedTiers` is empty.
+
+## Code Assist onboarding: LRO polling and response shapes
+
+**Date:** 2026-08-24 · **Area:** `crates/auth/src/cca.rs` (google-antigravity OAuth)
+
+Two silent-failure traps when onboarding a fresh Google token via
+`:onboardUser` (`cloudcode-pa.googleapis.com/v1internal`):
+
+1. **Tier choice.** Pro/paid accounts report only the
+   `userDefinedCloudaicompanionProject: true` tier (`standard-tier`) in
+   `loadCodeAssist.allowedTiers`. Forcing `free-tier` returns **403 Forbidden**
+   ("not eligible for individuals"). Pick the user-defined-project tier first.
+2. **LRO result & project resolution.** The operation can take minutes;
+   polling for ~10 s then reading `response.cloudaicompanionProject.id` fails
+   with "no project id". Two subtleties confirmed by diffing oh-my-pi's proven
+   implementation (`packages/ai/src/registry/oauth/google-antigravity.ts`):
+   accounts whose `loadCodeAssist` response carries a `currentTier` are ALREADY
+   onboarded — never call `onboardUser` for them; and the authoritative source
+   of the project is a **fresh** `:loadCodeAssist` call after provisioning,
+   where `cloudaicompanionProject` ships as a bare **string** (the LRO body
+   frequently carries no project at all). Also surface
+   `ineligibleTiers[].reasonMessage` before attempting free-tier onboarding —
+   it is Google's own explanation for the 403.
+
+Debugged 2026-08-24 after real-world 403 → "did not yield a project id" reports.

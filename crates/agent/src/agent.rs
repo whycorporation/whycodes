@@ -1033,7 +1033,7 @@ impl Agent {
             .get(provider_name)
             .ok_or_else(|| {
                 whycode_core::Error::Llm(format!(
-                    "Unknown provider: {}. Available: anthropic, openai, google, and configured custom providers",
+                    "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity, and configured custom providers",
                     provider_name
                 ))
             })?;
@@ -1922,8 +1922,8 @@ impl Agent {
             }
         }
 
-        // Intent authorization (Claude-style): question/plan turns must not
-        // silently mutate. Runs after blast-radius risk, before permission map.
+        // Intent authorization (Claude-style): question/plan/ambiguous-always
+        // turns must not silently mutate. After blast-radius, before permission.
         if let Some(intent) = turn_intent {
             let command = tc.arguments.get("command").and_then(|v| v.as_str());
             match crate::intent::authorize_tool(
