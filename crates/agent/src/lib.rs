@@ -2,8 +2,10 @@ pub mod agent;
 pub mod background;
 #[cfg(test)]
 mod behavior_eval;
+pub mod context_files;
 pub mod events;
 pub mod intent;
+pub mod magic_keywords;
 pub mod mcp_load;
 pub mod memory_retain;
 pub mod permission;

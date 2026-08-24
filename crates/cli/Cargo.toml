@@ -44,6 +44,7 @@ whycode-protocol = { path = "../protocol" }
 whycode-tui = { path = "../tui" }
 whycode-format = { path = "../format" }
 clap = { workspace = true, features = ["derive"] }
+clap_complete.workspace = true
 toml.workspace = true
 serde_json.workspace = true
 serde.workspace = true

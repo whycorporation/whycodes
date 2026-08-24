@@ -229,6 +229,12 @@ pub enum Commands {
     #[cfg(feature = "self-update")]
     #[command(name = "upgrade")]
     Upgrade,
+
+    /// Generate shell completion scripts (bash, zsh, fish, powershell, elvish)
+    Completions {
+        /// Target shell
+        shell: clap_complete::Shell,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -576,7 +582,8 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Session { .. }
             | Commands::Memory { .. }
             | Commands::Stats
-            | Commands::Debug => false,
+            | Commands::Debug
+            | Commands::Completions { .. } => false,
         },
     }
 }
@@ -718,7 +725,15 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
         Commands::Debug => cmd_debug().await,
         #[cfg(feature = "self-update")]
         Commands::Upgrade => cmd_upgrade().await,
+        Commands::Completions { shell } => cmd_completions(*shell),
     }
+}
+
+fn cmd_completions(shell: clap_complete::Shell) -> anyhow::Result<()> {
+    use clap::CommandFactory;
+    let mut cmd = Cli::command();
+    clap_complete::generate(shell, &mut cmd, "whycode", &mut std::io::stdout());
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1390,6 +1405,14 @@ async fn cmd_run(
                     }
                     continue;
                 }
+                "/fresh" => {
+                    agent.skip_prompt_cache_next();
+                    println!(
+                        "{} Next turn will skip the provider prompt cache.",
+                        "✓".green()
+                    );
+                    continue;
+                }
                 "/compact" | "/summarize" => {
                     if session.messages.is_empty() {
                         println!("{} Nothing to compact.", "ℹ".cyan());
@@ -1873,6 +1896,7 @@ fn print_slash_help() {
     println!("  /share, /export        — Export session JSON");
     println!("  /compact [context]     — Compact conversation (LLM summary)");
     println!("  /summarize             — Alias for /compact");
+    println!("  /fresh                 — Skip provider prompt cache on the next turn");
     println!("  /diff                  — Git status + diff --stat");
     println!("  /context               — Context window breakdown");
     println!("  /review                — AI review of git changes");

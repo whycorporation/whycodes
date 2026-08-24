@@ -29,6 +29,7 @@ Commands:
   stats     Show usage statistics
   debug     Show debug information
   upgrade   Self-update
+  completions  Shell completion scripts (bash, zsh, fish, powershell, elvish)
 
 Options (global):
   -P, --provider <PROVIDER>  Provider to use
@@ -147,6 +148,7 @@ Both TUI and `--plain`:
 | `/redo` | Redo the last undone turn |
 | `/share` `/export` | Export the session and print its local share URL |
 | `/compact [context]` `/summarize` | Compact the conversation (LLM full-replace; optional note of what to keep) |
+| `/fresh` | Skip the provider prompt cache on the next turn (stale cache / wedged stream) |
 | `/context` | Context window breakdown |
 | `/cost` `/usage` | Session + last-turn token usage |
 | `/sessions` | Session picker (Enter to resume) |
@@ -268,8 +270,8 @@ model answers instead of over-eager edits. Set
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` |
 | Web | `webfetch`, `websearch`, `browser` |
-| Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel` |
-| Memory | `memory` |
+| Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel`, `checkpoint`, `rewind` |
+| Memory | `memory` (`write` / `list` / `search` / `delete` / `learn` / `code_search` / `index`) |
 | Extensions | `skill`, `lsp`, `code_mode`, `external_directory`, `truncate`, `tool_search`, `plugin_*` |
 
 `grep` is in-process (`regex` crate). It skips dot directories, common build
@@ -280,6 +282,10 @@ directories and binary files. MCP server tools bind as `{server}_{tool}`.
 profile (`tool_search` or `session.tool_profile = "full"`). Permission
 defaults to `ask`. The OS sandbox and HTTP domain allowlist do **not** apply
 inside the real browser. Set `WHYCODE_BROWSER` if Chrome is not on `PATH`.
+
+`checkpoint` / `rewind` (deferred; `tool_search` or `session.tool_profile = "full"`)
+mark conversation state before a speculative investigation and later collapse
+that exploratory context into a short report. They do not snapshot files.
 
 `panel` pins a file, unified diff, or mermaid diagram on the TUI sidebar
 Preview tab (`action`: `show_file` / `show_diff` / `show_mermaid` / `clear`).
@@ -368,7 +374,24 @@ prints the resolved paths. Isolated SDK `launch({ inherit_logins: false })`
 sets this automatically.
 
 Project instructions belong in `AGENTS.md` at the repository root (`/init`
-generates one). It is injected into the system prompt automatically.
+generates one). Whycode also loads sibling instruction files already in the
+checkout so you do not have to migrate them: `CLAUDE.md`, `GEMINI.md`,
+`.github/copilot-instructions.md`, `.cursorrules`, `.cursor/rules/*.mdc`,
+`.clinerules`, `.windsurfrules`, and `.whycode/AGENTS.md`. Duplicate content
+is skipped. In a git repo, parent directories up to the repository root are
+included.
+
+Standalone lowercase words in a prompt can change that turn only (the word
+stays visible; a hidden notice is added to the LLM request):
+
+- `ultrathink` — careful multi-step reasoning, and the highest thinking
+  effort the model supports
+- `orchestrate` — fan work out through `task` / `swarm`, verify each phase,
+  and finish the request
+
+Disable with `[session.magic_keywords] enabled = false`, or per keyword
+(`ultrathink = false`). Paths, identifiers, code spans, and fences do not
+match (`orchestrate.ts`, `Ultrathink`, `` `ultrathink` ``).
 
 ### Subscription login
 
@@ -594,7 +617,7 @@ the session cwd. Config `[hooks]` stay the hook path — `hooks` in
 
 | Convention | Where |
 |---|---|
-| `AGENTS.md` project instructions | Repository root |
+| `AGENTS.md` project instructions | Repository root (also `CLAUDE.md`, `GEMINI.md`, Copilot, Cursor, Cline, Windsurf) |
 | Markdown slash commands | `.whycode/commands/`, also `.opencode/commands/` |
 | MCP servers | `[mcp_servers]` in `config.toml`, tools as `{server}_{tool}` |
 | Shell plugins | `plugins.toml` or `plugins/*/plugin.json` → `plugin_<name>` |

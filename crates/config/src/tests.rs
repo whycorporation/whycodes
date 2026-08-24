@@ -76,6 +76,9 @@ fn test_default_config() {
     assert_eq!(cfg.session.model_race, "off");
     assert_eq!(cfg.session.race_after_ms, 800);
     assert_eq!(cfg.session.response_cache, "auto");
+    assert!(cfg.session.magic_keywords.enabled);
+    assert!(cfg.session.magic_keywords.ultrathink);
+    assert!(cfg.session.magic_keywords.orchestrate);
 
     // Primary: build / plan / ask; subagents: general / explore / scout
     let names: Vec<&str> = cfg.agents.iter().map(|a| a.name.as_str()).collect();
@@ -478,6 +481,8 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.race_after_ms = 1500;
     overlay.session.response_cache = "off".into();
     overlay.session.intent_guidance = "off".into();
+    overlay.session.magic_keywords.enabled = false;
+    overlay.session.magic_keywords.ultrathink = false;
     overlay.tui.theme = Some("dark".into());
     overlay.tui.show_sidebar = true;
 
@@ -498,8 +503,23 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.race_after_ms, 1500);
     assert_eq!(merged.session.response_cache, "off");
     assert_eq!(merged.session.intent_guidance, "off");
+    assert!(!merged.session.magic_keywords.enabled);
+    assert!(!merged.session.magic_keywords.ultrathink);
+    assert!(merged.session.magic_keywords.orchestrate);
     assert_eq!(merged.tui.theme.as_deref(), Some("dark"));
     assert!(merged.tui.show_sidebar);
+}
+
+#[test]
+fn magic_keywords_toml_partial_uses_field_defaults() {
+    let cfg: Config = toml::from_str(
+        "[session.magic_keywords]\n\
+         ultrathink = false\n",
+    )
+    .unwrap();
+    assert!(cfg.session.magic_keywords.enabled);
+    assert!(!cfg.session.magic_keywords.ultrathink);
+    assert!(cfg.session.magic_keywords.orchestrate);
 }
 
 #[test]

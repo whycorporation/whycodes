@@ -696,6 +696,11 @@ fn runtime_choice_covers_remaining_commands() {
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Stats))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Debug))));
+    assert!(!command_needs_multi_thread(&cli(Some(
+        Commands::Completions {
+            shell: clap_complete::Shell::Bash,
+        }
+    ))));
 }
 
 #[test]

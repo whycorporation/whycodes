@@ -55,8 +55,8 @@ impl Tool for MemoryTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["write", "list", "search", "delete", "code_search", "index"],
-                    "description": "write/list/search/delete facts; code_search over indexed code; index the codebase for RAG"
+                    "enum": ["write", "list", "search", "delete", "code_search", "index", "learn"],
+                    "description": "write/list/search/delete facts; learn a reusable lesson; code_search over indexed code; index the codebase for RAG"
                 },
                 "text": {
                     "type": "string",
@@ -216,11 +216,33 @@ impl Tool for MemoryTool {
                 Ok(n) => Ok(format!("Indexed {n} code chunks for this project.")),
                 Err(e) => Err(e.to_string()),
             },
+            "learn" => {
+                let text = args
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim();
+                if text.is_empty() {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: "learn requires non-empty `text` (the reusable lesson)".into(),
+                        is_error: true,
+                    };
+                }
+                let lesson = format!("Lesson: {text}");
+                match svc.remember(&lesson, ctx.session_id.as_deref()) {
+                    Ok(id) => Ok(format!(
+                        "Lesson stored {}:\n{lesson}",
+                        &id[..8.min(id.len())]
+                    )),
+                    Err(e) => Err(e.to_string()),
+                }
+            }
             _ => {
                 return ToolResult {
                     tool_call_id: String::new(),
                     content: format!(
-                        "unknown action '{action}'; use write|list|search|delete|code_search|index"
+                        "unknown action '{action}'; use write|list|search|delete|code_search|index|learn"
                     ),
                     is_error: true,
                 };

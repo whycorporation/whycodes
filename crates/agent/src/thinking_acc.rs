@@ -109,6 +109,26 @@ pub fn attach_thinking_request(
     request.thinking = Some(payload);
 }
 
+/// Raise thinking budget / reasoning effort for an `ultrathink` turn.
+pub fn apply_ultrathink(request: &mut whycode_core::types::LlmRequest) {
+    let mut payload = request.thinking.take().unwrap_or_else(|| {
+        serde_json::json!({
+            "enabled": true,
+            "budget_tokens": 4000,
+        })
+    });
+    payload["enabled"] = serde_json::json!(true);
+    let budget = payload
+        .get("budget_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4000);
+    if budget < 16_000 {
+        payload["budget_tokens"] = serde_json::json!(16_000);
+    }
+    payload["reasoning_effort"] = serde_json::json!("high");
+    request.thinking = Some(payload);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,9 +175,36 @@ mod tests {
             use_prompt_cache: false,
         };
         attach_thinking_request(&mut req, "xai", "grok-4", None);
+        {
+            let t = req.thinking.as_ref().unwrap();
+            assert_eq!(t["enabled"], true);
+            assert_eq!(t["budget_tokens"], 4000);
+            assert_eq!(t["reasoning_effort"], "medium");
+        }
+        apply_ultrathink(&mut req);
+        let t = req.thinking.as_ref().unwrap();
+        assert_eq!(t["budget_tokens"], 16_000);
+        assert_eq!(t["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn ultrathink_enables_thinking_when_absent() {
+        let mut req = whycode_core::types::LlmRequest {
+            system: String::new(),
+            messages: std::sync::Arc::from(Vec::new()),
+            tools: vec![],
+            max_tokens: Some(1024),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        };
+        apply_ultrathink(&mut req);
         let t = req.thinking.unwrap();
         assert_eq!(t["enabled"], true);
-        assert_eq!(t["budget_tokens"], 4000);
-        assert_eq!(t["reasoning_effort"], "medium");
+        assert_eq!(t["budget_tokens"], 16_000);
+        assert_eq!(t["reasoning_effort"], "high");
     }
 }

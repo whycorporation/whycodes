@@ -19,8 +19,8 @@ pub mod web;
 
 // Flat re-exports (stable paths)
 pub use agent_tools::{
-    background, code_mode, memory, panel, plan, question, schedule, skill, swarm, swarm_message,
-    task, todo_read, todo_write, tool_search, worktree,
+    background, checkpoint, code_mode, memory, panel, plan, question, schedule, skill, swarm,
+    swarm_message, task, todo_read, todo_write, tool_search, worktree,
 };
 pub use file::{
     apply_patch, edit, external_directory, glob, grep, list, read, truncate, truncation_dir, write,

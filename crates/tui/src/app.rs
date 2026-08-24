@@ -1482,6 +1482,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "[context] Compact the conversation (LLM summary)",
     },
     SlashCommand {
+        name: "/fresh",
+        hint: "Skip provider prompt cache on the next turn",
+    },
+    SlashCommand {
         name: "/remember",
         hint: "[text] Save a durable project memory",
     },
