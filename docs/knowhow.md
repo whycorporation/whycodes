@@ -1214,11 +1214,16 @@ Two silent-failure traps when onboarding a fresh Google token via
    `userDefinedCloudaicompanionProject: true` tier (`standard-tier`) in
    `loadCodeAssist.allowedTiers`. Forcing `free-tier` returns **403 Forbidden**
    ("not eligible for individuals"). Pick the user-defined-project tier first.
-2. **LRO result.** The operation can take minutes; polling for ~10 s then
-   reading `response.cloudaicompanionProject.id` fails with "no project id"
-   even though provisioning would succeed. Also, `cloudaicompanionProject`
-   ships as **both** an object (`{"id": …}`) and a bare string — accept both.
-   Standard-tier calls should pass `cloudaicompanionProject` in the request
-   body when the caller has one.
+2. **LRO result & project resolution.** The operation can take minutes;
+   polling for ~10 s then reading `response.cloudaicompanionProject.id` fails
+   with "no project id". Two subtleties confirmed by diffing oh-my-pi's proven
+   implementation (`packages/ai/src/registry/oauth/google-antigravity.ts`):
+   accounts whose `loadCodeAssist` response carries a `currentTier` are ALREADY
+   onboarded — never call `onboardUser` for them; and the authoritative source
+   of the project is a **fresh** `:loadCodeAssist` call after provisioning,
+   where `cloudaicompanionProject` ships as a bare **string** (the LRO body
+   frequently carries no project at all). Also surface
+   `ineligibleTiers[].reasonMessage` before attempting free-tier onboarding —
+   it is Google's own explanation for the 403.
 
 Debugged 2026-08-24 after real-world 403 → "did not yield a project id" reports.
