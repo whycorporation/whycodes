@@ -372,9 +372,10 @@ generates one). It is injected into the system prompt automatically.
 
 ### Subscription login
 
-`whycode auth login` signs in with an existing subscription. Resolution
-order is env var → config `api_key` → OAuth store, so an explicit key
-always wins. Details: [auth.md](auth.md).
+`whycode auth login` signs in with an existing subscription
+(`anthropic`, `openai`, `github-copilot`, `google`, `google-antigravity`,
+`xai`). Resolution order is env var → config `api_key` → OAuth store, so
+an explicit key always wins. Details: [auth.md](auth.md).
 
 ### Themes
 

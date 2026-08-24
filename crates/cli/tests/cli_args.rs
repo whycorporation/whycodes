@@ -160,6 +160,12 @@ fn test_provider_list() {
     assert_ok(&["provider", "list"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(!s.is_empty(), "provider list output empty");
+    if s.contains("Built-in providers supported:") {
+        assert!(
+            s.contains("google-antigravity"),
+            "empty provider list should name google-antigravity: {s}"
+        );
+    }
 }
 
 #[test]

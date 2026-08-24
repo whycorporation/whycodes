@@ -3426,7 +3426,8 @@ async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 println!("  whycode provider add <name> --api-key <key> --base-url <url>");
                 println!();
                 println!(
-                    "Built-in providers supported: openai, anthropic, deepseek, google, groq, xai"
+                    "Built-in providers supported: {}",
+                    whycode_llm::ProviderRegistry::default().names().join(", ")
                 );
             } else {
                 println!("{} Configured providers:", "🔑".bold());
