@@ -1574,6 +1574,51 @@ async fn cmd_run(
                     }
                     continue;
                 }
+                "/effort" => {
+                    if rest.is_empty() {
+                        let current = config
+                            .session
+                            .reasoning_effort
+                            .as_deref()
+                            .unwrap_or("medium (default)");
+                        println!("Reasoning effort: {}", current.cyan());
+                        println!("Set with /effort low|medium|high|xhigh");
+                    } else if let Some(parsed) = whycode_llm::ReasoningEffort::parse(rest) {
+                        let resolved = whycode_llm::ThinkingConfig::resolve_effort(
+                            &provider,
+                            &model,
+                            Some(parsed.as_str()),
+                        );
+                        match resolved {
+                            Some(level) => {
+                                let value = level.as_str().to_string();
+                                config.session.reasoning_effort = Some(value.clone());
+                                agent.set_reasoning_effort(Some(value.clone()));
+                                if let Err(e) = config.save() {
+                                    eprintln!("{} Could not persist: {e}", "✗".red());
+                                }
+                                println!(
+                                    "{} Reasoning effort → {}",
+                                    "✓".green(),
+                                    level.label().cyan()
+                                );
+                            }
+                            None => {
+                                println!(
+                                    "{} This model has no reasoning-effort levels",
+                                    "·".dimmed()
+                                );
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "{} Unknown effort '{}' (low, medium, high, xhigh)",
+                            "✗".red(),
+                            rest
+                        );
+                    }
+                    continue;
+                }
                 "/agent" | "/agents" => {
                     if rest.is_empty() {
                         let _ = cmd_agent(None).await;
@@ -1910,6 +1955,7 @@ fn print_slash_help() {
     println!("  /resume [id]           — Resume a session (list if no id)");
     println!("  /continue              — Resume the most recent session");
     println!("  /models [provider/id]  — List or switch models");
+    println!("  /effort [low|medium|high|xhigh] — Reasoning effort");
     println!("  /agent [name]          — List or switch agents (build|plan|…)");
     println!("  /connect               — Provider setup help");
     println!("  /login [provider]      — Subscription sign-in (list if none)");

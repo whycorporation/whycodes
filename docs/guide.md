@@ -155,6 +155,7 @@ Both TUI and `--plain`:
 | `/resume [id]` | Resume by id/prefix, or open the picker |
 | `/continue` | Resume the most recently updated session |
 | `/models [provider/id]` | Show or switch the model |
+| `/effort [low\|medium\|high\|xhigh]` | Reasoning effort (TUI: click the chip next to the model) |
 | `/agent [name]` | Show or switch the agent |
 | `/connect` | Provider and API key setup (starts OAuth when missing) |
 | `/login [provider]` | Subscription sign-in |
@@ -406,7 +407,14 @@ Model roles (optional; empty = auto small sibling of the session model):
 [session]
 model_smol = "anthropic/claude-haiku-4-5-20251001"   # task + swarm workers
 model_plan = "anthropic/claude-opus-4-6"            # while /agent plan
+reasoning_effort = "medium"                         # low | medium | high | xhigh
 ```
+
+OpenAI-compat and xAI Grok send `reasoning_effort` on thinking models. Default
+is `medium`. `xhigh` (Max) is grok-4.6+ only; older Grok models clamp to
+`high`. In the TUI the current level sits next to the model name on the prompt
+border — click it (or `/effort`) to pick. `ultrathink` in a prompt still
+raises that turn to `high`.
 
 Context-window errors are classified separately from 429s: the same request is
 not retried; whycode compacts once and retries the step. Older tool dumps are

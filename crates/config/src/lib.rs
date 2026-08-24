@@ -943,6 +943,11 @@ pub struct SessionConfig {
     /// `"off"` is the local stub only.
     #[serde(default = "default_compaction_llm")]
     pub compaction_llm: String,
+    /// OpenAI-compat / xAI `reasoning_effort`: `low` | `medium` | `high` | `xhigh`.
+    /// Empty = family default (`medium` when the model supports effort).
+    /// `xhigh` (Max) is grok-4.6+ only; older models clamp to `high`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
     /// Standalone prose keywords (`ultrathink`, `orchestrate`) that inject a
     /// hidden per-turn instruction. Default on.
     #[serde(default)]
@@ -1006,6 +1011,7 @@ impl Default for SessionConfig {
             response_cache: default_response_cache(),
             intent_guidance: default_intent_guidance(),
             compaction_llm: default_compaction_llm(),
+            reasoning_effort: None,
             magic_keywords: MagicKeywordsConfig::default(),
             stream_rules: Vec::new(),
         }
@@ -1500,6 +1506,9 @@ impl Config {
         }
         if other.session.compaction_llm != default_compaction_llm() {
             merged.session.compaction_llm = other.session.compaction_llm.clone();
+        }
+        if other.session.reasoning_effort.is_some() {
+            merged.session.reasoning_effort = other.session.reasoning_effort.clone();
         }
         if other.session.model_fast.is_some() {
             merged.session.model_fast = other.session.model_fast.clone();

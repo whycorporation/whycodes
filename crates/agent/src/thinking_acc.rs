@@ -88,6 +88,7 @@ pub fn attach_thinking_request(
     provider: &str,
     model: &str,
     model_cfg: Option<&whycode_core::types::ModelConfig>,
+    effort_override: Option<&str>,
 ) {
     let want = match model_cfg.and_then(|m| m.thinking) {
         Some(flag) => flag,
@@ -103,8 +104,10 @@ pub fn attach_thinking_request(
         "enabled": true,
         "budget_tokens": 4000,
     });
-    if let Some(effort) = whycode_llm::thinking::ThinkingConfig::default_effort(provider, model) {
-        payload["reasoning_effort"] = serde_json::Value::String(effort.to_string());
+    if let Some(effort) =
+        whycode_llm::thinking::ThinkingConfig::resolve_effort(provider, model, effort_override)
+    {
+        payload["reasoning_effort"] = serde_json::Value::String(effort.as_str().to_string());
     }
     request.thinking = Some(payload);
 }
@@ -174,13 +177,19 @@ mod tests {
             thinking: None,
             use_prompt_cache: false,
         };
-        attach_thinking_request(&mut req, "xai", "grok-4", None);
+        attach_thinking_request(&mut req, "xai", "grok-4", None, None);
         {
             let t = req.thinking.as_ref().unwrap();
             assert_eq!(t["enabled"], true);
             assert_eq!(t["budget_tokens"], 4000);
             assert_eq!(t["reasoning_effort"], "medium");
         }
+        req.thinking = None;
+        attach_thinking_request(&mut req, "xai", "grok-4.6", None, Some("xhigh"));
+        assert_eq!(req.thinking.as_ref().unwrap()["reasoning_effort"], "xhigh");
+        req.thinking = None;
+        attach_thinking_request(&mut req, "xai", "grok-4", None, Some("xhigh"));
+        assert_eq!(req.thinking.as_ref().unwrap()["reasoning_effort"], "high");
         apply_ultrathink(&mut req);
         let t = req.thinking.as_ref().unwrap();
         assert_eq!(t["budget_tokens"], 16_000);

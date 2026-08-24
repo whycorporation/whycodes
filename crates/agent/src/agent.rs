@@ -187,6 +187,8 @@ pub struct Agent {
     intent_guidance: crate::intent::IntentGuidanceMode,
     /// Hidden per-turn notices for standalone prose keywords.
     magic_keywords: whycode_config::MagicKeywordsConfig,
+    /// Session `reasoning_effort` (`low`/`medium`/`high`/`xhigh`). Empty = family default.
+    reasoning_effort: Option<String>,
     /// `/fresh`: skip provider prompt cache (and local response cache) once.
     skip_prompt_cache_once: std::sync::atomic::AtomicBool,
     /// Cheap model for task/swarm (`provider/model` or bare id).
@@ -470,6 +472,7 @@ impl Agent {
             memory: whycode_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
             magic_keywords: whycode_config::MagicKeywordsConfig::default(),
+            reasoning_effort: None,
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             model_smol: None,
             model_plan: None,
@@ -533,6 +536,11 @@ impl Agent {
             .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
+    /// Session-level OpenAI-compat / xAI `reasoning_effort` (`low`/`medium`/`high`/`xhigh`).
+    pub fn set_reasoning_effort(&mut self, effort: Option<String>) {
+        self.reasoning_effort = effort;
+    }
+
     /// Load custom providers from config and merge global permission rules.
     pub fn with_config(mut self, config: &whycode_config::Config) -> Self {
         let mut registry = ProviderRegistry::default();
@@ -586,6 +594,7 @@ impl Agent {
         self.intent_guidance =
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
         self.magic_keywords = config.session.magic_keywords.clone();
+        self.reasoning_effort = config.session.reasoning_effort.clone();
         self.model_smol = config.session.model_smol.clone();
         self.model_plan = config.session.model_plan.clone();
         self.stream_rules = compile_stream_rules(&config.session.stream_rules);
@@ -1314,6 +1323,7 @@ impl Agent {
                 provider_name,
                 model,
                 self.info.model.as_ref(),
+                self.reasoning_effort.as_deref(),
             );
             if magic.ultrathink {
                 crate::thinking_acc::apply_ultrathink(&mut request);

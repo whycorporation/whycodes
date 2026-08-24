@@ -488,6 +488,7 @@ fn merge_with_session_and_tui_fields() {
     overlay.session.race_after_ms = 1500;
     overlay.session.response_cache = "off".into();
     overlay.session.intent_guidance = "off".into();
+    overlay.session.reasoning_effort = Some("high".into());
     overlay.session.magic_keywords.enabled = false;
     overlay.session.magic_keywords.ultrathink = false;
     overlay.tui.theme = Some("dark".into());
@@ -514,6 +515,7 @@ fn merge_with_session_and_tui_fields() {
     assert_eq!(merged.session.race_after_ms, 1500);
     assert_eq!(merged.session.response_cache, "off");
     assert_eq!(merged.session.intent_guidance, "off");
+    assert_eq!(merged.session.reasoning_effort.as_deref(), Some("high"));
     assert!(!merged.session.magic_keywords.enabled);
     assert!(!merged.session.magic_keywords.ultrathink);
     assert!(merged.session.magic_keywords.orchestrate);

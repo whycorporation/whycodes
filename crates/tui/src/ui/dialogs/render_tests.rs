@@ -645,6 +645,14 @@ fn render_dispatches_all_dialog_kinds() {
     let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
     assert!(app.dialog_list_hit.is_some());
 
+    // Reasoning effort
+    app.dialogs.clear();
+    app.provider_name = "xai".into();
+    app.model_name = "grok-4".into();
+    app.dialogs.push(DialogKind::Effort);
+    let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+
     // Close all — renders as no-op without panic.
     app.dialogs.clear();
     let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));

@@ -39,6 +39,7 @@ pub use race::{RaceOutcome, StreamTarget, stream_raced};
 pub use response_cache::{CachedText, ResponseCache, text_only_response};
 pub use retry::{RetryPolicy, execute_with_policy, retry_with_backoff};
 pub use scripted::{ScriptedProvider, ScriptedStep};
+pub use thinking::{ReasoningEffort, ThinkingConfig};
 pub use transport::{
     LlmTransport, StreamTurn, StreamTurnOpts, default_transport, format_turn_error,
     user_facing_error,
