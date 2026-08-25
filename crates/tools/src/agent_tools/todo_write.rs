@@ -3,8 +3,8 @@ use serde_json::json;
 use std::path::Path;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::todo::{TodoItem, apply_todo_update, load_todos, save_todos};
-use whycode_core::types::ToolResult;
+use whycodes_core::todo::{TodoItem, apply_todo_update, load_todos, save_todos};
+use whycodes_core::types::ToolResult;
 
 pub struct TodoWriteTool {
     name: &'static str,
@@ -131,7 +131,7 @@ fn format_todo_result(todos: &[TodoItem], working: &Path, session_id: Option<&st
     result.push_str(&format!(
         "\nStored {} todos in {}",
         todos.len(),
-        whycode_core::todo::todos_path(working, session_id).display()
+        whycodes_core::todo::todos_path(working, session_id).display()
     ));
     result
 }
@@ -140,7 +140,7 @@ fn format_todo_result(todos: &[TodoItem], working: &Path, session_id: Option<&st
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-    use whycode_core::todo::TodoStatus;
+    use whycodes_core::todo::TodoStatus;
 
     fn ctx(dir: &std::path::Path, session: Option<&str>) -> ToolContext {
         let mut c = ToolContext::unsandboxed(dir.to_string_lossy().into_owned());
@@ -225,8 +225,8 @@ mod tests {
                 &without,
             )
             .await;
-        let sess = whycode_core::todo::load_todos(dir.path(), Some("s1"));
-        let fb = whycode_core::todo::load_todos(dir.path(), None);
+        let sess = whycodes_core::todo::load_todos(dir.path(), Some("s1"));
+        let fb = whycodes_core::todo::load_todos(dir.path(), None);
         assert_eq!(sess[0].content, "sess");
         assert_eq!(fb[0].content, "fb");
     }

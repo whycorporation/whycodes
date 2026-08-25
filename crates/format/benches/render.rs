@@ -12,7 +12,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
-use whycode_format::markdown::{highlight_code_spans, parse_markdown, render_markdown};
+use whycodes_format::markdown::{highlight_code_spans, parse_markdown, render_markdown};
 
 /// A response of the shape a model actually produces: prose, a list, inline
 /// emphasis and a fenced block.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure memory for whycode: peak RSS of short CLI runs, and multi-session PSS.
+"""Measure memory for whycodes: peak RSS of short CLI runs, and multi-session PSS.
 
 Two things are measured, for different reasons:
 
@@ -57,13 +57,13 @@ SESSION_HOLD_MS = 60_000
 
 
 def default_binary() -> Path:
-    name = "whycode.exe" if IS_WINDOWS else "whycode"
+    name = "whycodes.exe" if IS_WINDOWS else "whycodes"
     for profile in ("release", "debug"):
         candidate = ROOT / "target" / profile / name
         if candidate.exists():
             return candidate
     raise SystemExit(
-        "no whycode binary found — build one first:\n  cargo build --release -p whycode-cli"
+        "no whycodes binary found — build one first:\n  cargo build --release -p whycodes-cli"
     )
 
 
@@ -186,10 +186,10 @@ def session_env(home: Path, project: Path) -> dict[str, str]:
     # Offline, deterministic: no provider call; TUI still draws its first frame.
     env["ANTHROPIC_API_KEY"] = ""
     env["OPENAI_API_KEY"] = ""
-    env["WHYCODE_AUTO_DENY"] = "1"
+    env["WHYCODES_AUTO_DENY"] = "1"
     # Hold the session open long enough to sample; harness kills after.
-    env["WHYCODE_BENCH"] = str(home / "bench-hold.json")
-    env["WHYCODE_BENCH_DURATION_MS"] = str(SESSION_HOLD_MS)
+    env["WHYCODES_BENCH"] = str(home / "bench-hold.json")
+    env["WHYCODES_BENCH_DURATION_MS"] = str(SESSION_HOLD_MS)
     # Avoid inheriting a weird cwd-dependent project path for config layering.
     env["PWD"] = str(project)
     return env
@@ -289,7 +289,7 @@ def multi_session_pss_mb(
     binary: Path, n_sessions: int, settle_s: float
 ) -> dict:
     """Spawn N idle TUI sessions, settle, sum tree PSS, tear down."""
-    with tempfile.TemporaryDirectory(prefix="whycode-pss-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="whycodes-pss-") as tmp:
         root = Path(tmp)
         project = root / "project"
         project.mkdir()

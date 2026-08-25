@@ -1,12 +1,12 @@
 # User guide
 
-How to run whycode, drive the TUI, and configure it. Authentication details
+How to run whycodes, drive the TUI, and configure it. Authentication details
 live in [auth.md](auth.md). Crate layout is in [architecture.md](architecture.md).
 
 ## Command line
 
 ```
-Usage: whycode [OPTIONS] [COMMAND]
+Usage: whycodes [OPTIONS] [COMMAND]
 
 Commands:
   run       Start an interactive session (default)
@@ -43,24 +43,24 @@ Options (global):
       --no-memory            Disable cross-session memory for this process
 ```
 
-The prompt is positional: `whycode generate "<prompt>"`, not `whycode -p`.
+The prompt is positional: `whycodes generate "<prompt>"`, not `whycodes -p`.
 `generate` (and `run --format json|stream-json`) accept `-t, --max-turns <N>` as
-an optional cap with **no default**. Interactive TUI / `whycode run` ignores
+an optional cap with **no default**. Interactive TUI / `whycodes run` ignores
 `--max-turns` (Grok parity): the agent runs until it finishes, you cancel, or
 the doom-loop guard trips.
 
 ```bash
-whycode -d ./my-project
-whycode generate "Explain the error handling in main.rs" -d ./my-project
-whycode run "Where is the retry logic?" -d ./my-project
-whycode --continue
-whycode --resume a1b2c3d4
-whycode session import ./transcript.jsonl --from auto
-whycode -P openai -m gpt-4o generate "Refactor this module"
+whycodes -d ./my-project
+whycodes generate "Explain the error handling in main.rs" -d ./my-project
+whycodes run "Where is the retry logic?" -d ./my-project
+whycodes --continue
+whycodes --resume a1b2c3d4
+whycodes session import ./transcript.jsonl --from auto
+whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
 
-`session import` accepts `--from auto|whycode|claude|codex|opencode|pi`. Tools do
-not replay; resume with `whycode --resume <id>`.
+`session import` accepts `--from auto|whycodes|claude|codex|opencode|pi`. Tools do
+not replay; resume with `whycodes --resume <id>`.
 
 ### Output formats (headless / CI)
 
@@ -73,13 +73,13 @@ not replay; resume with `whycode --resume <id>`.
 | `stream-json` | NDJSON events | Live progress, long tasks |
 
 ```bash
-whycode generate "List open TODOs" --format json | jq '{result, usage, session_id}'
+whycodes generate "List open TODOs" --format json | jq '{result, usage, session_id}'
 
-whycode run "Migrate the auth module" --format stream-json -t 20 \
+whycodes run "Migrate the auth module" --format stream-json -t 20 \
   | jq -r 'select(.type=="result") | .result'
 
 # N prompts, each in its own session, capped at -j workers
-whycode generate "Summarize src/" "Summarize tests/" -j 2 --format json
+whycodes generate "Summarize src/" "Summarize tests/" -j 2 --format json
 ```
 
 With multiple prompts, `generate` runs each concurrently (semaphore at `-j`).
@@ -171,37 +171,37 @@ TUI only: `/theme [name]`, `/unshare`, `/bg` (list or `kill <id>`),
 
 `--plain` only: `/thinking` toggles thinking output.
 
-Project commands under `.whycode/commands/` are available alongside these;
+Project commands under `.whycodes/commands/` are available alongside these;
 see [Custom commands](#custom-commands).
 
 ### Sharing a session
 
 `/share` exports the session and prints `http://127.0.0.1:3030/s/<id>`.
-Serve it with `whycode serve` (`WHYCODE_SHARE_PORT` overrides the port).
+Serve it with `whycodes serve` (`WHYCODES_SHARE_PORT` overrides the port).
 Nothing leaves the machine. `/unshare` removes the exported files.
 
 Attach another TUI to that daemon (turns run on the server; tools are
 auto-approved there). This is **not** `/connect` (OAuth login):
 
 ```bash
-whycode serve
-whycode connect                 # new session on 127.0.0.1:3030
-whycode connect 127.0.0.1:3030 --session <id>
+whycodes serve
+whycodes connect                 # new session on 127.0.0.1:3030
+whycodes connect 127.0.0.1:3030 --session <id>
 ```
 
 ## Embed via the SDK (protocol v1)
 
-`whycode-sdk` is a **thin HTTP client**. It does not link the agent loop.
+`whycodes-sdk` is a **thin HTTP client**. It does not link the agent loop.
 The daemon is the product; the crate speaks `/v1/*`.
 
 ```rust
-use whycode_sdk::{LaunchOptions, RunOptions, WhycodeClient};
+use whycodes_sdk::{LaunchOptions, RunOptions, WhyCodesClient};
 
-// Attach to `whycode serve` already running:
-let client = WhycodeClient::connect("127.0.0.1:3030").await?;
+// Attach to `whycodes serve` already running:
+let client = WhyCodesClient::connect("127.0.0.1:3030").await?;
 
 // Or spawn a private instance (inherits this process's env / API keys):
-let client = WhycodeClient::launch(LaunchOptions::default()).await?;
+let client = WhyCodesClient::launch(LaunchOptions::default()).await?;
 
 let session = client.create_session(None::<String>).await?;
 let turn = client
@@ -215,7 +215,7 @@ Events on `/v1/sessions/:id/run` are tagged `ev` (`text_delta`, `tool_start`,
 `permission_request`, `turn_done`, …). Unknown tags become `Unknown`.
 `run()` auto-approves tool `Ask`s and `question`; `run_events()` does not —
 answer with `respond_to_permission` / `respond_to_question`.
-`launch({ inherit_logins: false })` uses a private `WHYCODE_HOME`
+`launch({ inherit_logins: false })` uses a private `WHYCODES_HOME`
 (config, sessions, auth, memory, skills, browser profile).
 `get_history` / `peek`, `list_models` / `set_model`, `rename` / `rewind` /
 `compact` are on `/v1`. `run_structured` retries until the reply matches a
@@ -224,18 +224,18 @@ JSON Schema subset. Branch on `SdkError.code`.
 Same protocol from Node (zero runtime deps, Node 18+):
 
 ```ts
-import { WhycodeClient } from "@whycorporation/whycode-sdk";
+import { WhyCodesClient } from "@whycorporation/whycodes-sdk";
 
-const client = await WhycodeClient.connect("127.0.0.1:3030");
+const client = await WhyCodesClient.connect("127.0.0.1:3030");
 const session = await client.createSession();
 const turn = await client.run(session.id, "summarize this repo");
 console.log(turn.text);
 ```
 
-Package source: `sdk/typescript`. `WhycodeClient.launch()` spawns a private
-`whycode serve`.
+Package source: `sdk/typescript`. `WhyCodesClient.launch()` spawns a private
+`whycodes serve`.
 
-`/api/*` remains for TUI attach (`whycode connect`). New integrations should
+`/api/*` remains for TUI attach (`whycodes connect`). New integrations should
 use `/v1`.
 
 ## Agents
@@ -282,7 +282,7 @@ directories and binary files. MCP server tools bind as `{server}_{tool}`.
 `click`, `type`, `wait`, `screenshot`, `close`). It is **not** in the core
 profile (`tool_search` or `session.tool_profile = "full"`). Permission
 defaults to `ask`. The OS sandbox and HTTP domain allowlist do **not** apply
-inside the real browser. Set `WHYCODE_BROWSER` if Chrome is not on `PATH`.
+inside the real browser. Set `WHYCODES_BROWSER` if Chrome is not on `PATH`.
 
 `checkpoint` / `rewind` (deferred; `tool_search` or `session.tool_profile = "full"`)
 mark conversation state before a speculative investigation and later collapse
@@ -302,11 +302,11 @@ On by default, per project:
 - **Auto memory** — a human-editable `MEMORY.md`.
 - **Semantic facts** — durable facts in SQLite with embeddings. Top hits are
   injected into the system prompt; new facts are retained after each turn.
-- **Code RAG** — chunk index via `whycode memory index`, searched with
-  `whycode memory code-search`.
+- **Code RAG** — chunk index via `whycodes memory index`, searched with
+  `whycodes memory code-search`.
 
-Manage it with `whycode memory …`, `/remember` / `/memory`, or the agent's
-`memory` tool. Project scope: `.whycode/memory`. User scope: the data dir.
+Manage it with `whycodes memory …`, `/remember` / `/memory`, or the agent's
+`memory` tool. Project scope: `.whycodes/memory`. User scope: the data dir.
 
 ```toml
 [memory]
@@ -315,19 +315,19 @@ auto_inject = true
 auto_retain = true
 ```
 
-`whycode --no-memory` disables the subsystem for one run. The default
+`whycodes --no-memory` disables the subsystem for one run. The default
 embedder is a local hashing model; `--features onnx` adds MiniLM
-(`whycode memory onnx-smoke` verifies the download).
+(`whycodes memory onnx-smoke` verifies the download).
 
 Past turns are embedded after each turn. Search them with
-`whycode memory session-search "<query>"`; matching excerpts are also
+`whycodes memory session-search "<query>"`; matching excerpts are also
 injected as `# Past sessions`. After retain, the fact bank is capped
 (`memory.consolidate_max`, default 80) by dropping the least-recalled
 entries.
 
 ## Configuration
 
-`config.toml` in the platform config directory. `whycode debug` prints the
+`config.toml` in the platform config directory. `whycodes debug` prints the
 exact path.
 
 ```toml
@@ -365,28 +365,28 @@ mode = "primary"
 Layers, each overriding the one above:
 
 1. Built-in defaults
-2. Global `config.toml` (platform config dir, or `$WHYCODE_HOME/config.toml`)
-3. Project `.whycode/config.toml`
-4. `WHYCODE_*` environment variables
+2. Global `config.toml` (platform config dir, or `$WHYCODES_HOME/config.toml`)
+3. Project `.whycodes/config.toml`
+4. `WHYCODES_*` environment variables
 
-`WHYCODE_HOME`, when set, is the instance root: config, sessions, auth,
-memory, skills and the browser profile all live under it. `whycode debug`
+`WHYCODES_HOME`, when set, is the instance root: config, sessions, auth,
+memory, skills and the browser profile all live under it. `whycodes debug`
 prints the resolved paths. Isolated SDK `launch({ inherit_logins: false })`
 sets this automatically.
 
 Project instructions belong in `AGENTS.md` at the repository root (`/init`
-generates one). Whycode also loads sibling instruction files already in the
+generates one). WhyCodes also loads sibling instruction files already in the
 checkout so you do not have to migrate them: `CLAUDE.md`, `GEMINI.md`,
 `.github/copilot-instructions.md`, `.cursorrules`, `.cursor/rules/*.mdc`,
-`.clinerules`, `.windsurfrules`, and `.whycode/AGENTS.md`. Duplicate content
+`.clinerules`, `.windsurfrules`, and `.whycodes/AGENTS.md`. Duplicate content
 is skipped. In a git repo, parent directories up to the repository root are
 included.
 
 Skills are listed in the system prompt by **name and description only**. The
 body is loaded with `read skill://<name>` or `skill` (`action=load`). Project
-trees: `.skills/*.skill.md`, `.whycode/skills/`, `.claude/skills/*/SKILL.md`.
+trees: `.skills/*.skill.md`, `.whycodes/skills/`, `.claude/skills/*/SKILL.md`.
 
-Finished `task` / `swarm` workers also write `.whycode/agents/<id>.md`,
+Finished `task` / `swarm` workers also write `.whycodes/agents/<id>.md`,
 readable as `read agent://<id>` (`read agent://` lists them).
 
 Standalone lowercase words in a prompt can change that turn only (the word
@@ -417,7 +417,7 @@ border — click it (or `/effort`) to pick. `ultrathink` in a prompt still
 raises that turn to `high`.
 
 Context-window errors are classified separately from 429s: the same request is
-not retried; whycode compacts once and retries the step. Older tool dumps are
+not retried; whycodes compacts once and retries the step. Older tool dumps are
 shaken to 512 characters when the session is still hot.
 
 Stream rules abort a draft mid-token when the assistant text matches a regex,
@@ -432,7 +432,7 @@ hint = "Don't use Box::leak on production paths; prefer Arc."
 
 ### Subscription login
 
-`whycode auth login` signs in with an existing subscription
+`whycodes auth login` signs in with an existing subscription
 (`anthropic`, `openai`, `github-copilot`, `google`, `google-antigravity`,
 `xai`). Resolution order is env var → config `api_key` → OAuth store, so
 an explicit key always wins. Details: [auth.md](auth.md).
@@ -490,8 +490,8 @@ the TUI, a stdin prompt in `--plain` — unless overridden:
 
 | Condition | Result for `ask` |
 |---|---|
-| `WHYCODE_AUTO_APPROVE=1` | auto-allow |
-| `WHYCODE_AUTO_DENY=1` | auto-deny |
+| `WHYCODES_AUTO_APPROVE=1` | auto-allow |
+| `WHYCODES_AUTO_DENY=1` | auto-deny |
 | stdin is not a terminal | auto-deny |
 
 ### Shell command risk
@@ -548,11 +548,11 @@ sandbox_fallback = "allow"            # allow | deny (when bwrap is missing)
 
 | Env | Effect |
 |---|---|
-| `WHYCODE_SANDBOX` | `off` or `workspace` |
-| `WHYCODE_SANDBOX_NETWORK` | `0`/`1` |
-| `WHYCODE_SANDBOX_FALLBACK` | `allow` or `deny` |
-| `WHYCODE_NETWORK_ALLOWLIST` | comma/space-separated host patterns |
-| `WHYCODE_NETWORK_DENYLIST` | comma/space-separated host patterns |
+| `WHYCODES_SANDBOX` | `off` or `workspace` |
+| `WHYCODES_SANDBOX_NETWORK` | `0`/`1` |
+| `WHYCODES_SANDBOX_FALLBACK` | `allow` or `deny` |
+| `WHYCODES_NETWORK_ALLOWLIST` | comma/space-separated host patterns |
+| `WHYCODES_NETWORK_DENYLIST` | comma/space-separated host patterns |
 
 If `bwrap` is missing (or you are on macOS/Windows), `sandbox_fallback =
 "allow"` warns and runs on the host; `"deny"` fails the tool call.
@@ -581,26 +581,26 @@ search, include the provider hosts (`serpapi.com` and/or
 [[hooks]]
 event = "pre_tool"
 match = "bash"              # tool name; `*`, `prefix*`, or `*suffix`
-command = "echo checking $WHYCODE_TOOL_NAME"
+command = "echo checking $WHYCODES_TOOL_NAME"
 block_on_failure = true     # non-zero exit refuses the tool (pre only)
 timeout_secs = 30
 
 [[hooks]]
 event = "post_tool"
 match = "*"
-command = "logger -t whycode \"done $WHYCODE_TOOL_NAME err=$WHYCODE_TOOL_IS_ERROR\""
+command = "logger -t whycodes \"done $WHYCODES_TOOL_NAME err=$WHYCODES_TOOL_IS_ERROR\""
 ```
 
-Environment: `WHYCODE_HOOK_EVENT`, `WHYCODE_TOOL_NAME`, `WHYCODE_TOOL_ID`,
-`WHYCODE_TOOL_INPUT` (JSON), `WHYCODE_SESSION_ID`, `WHYCODE_WORKING_DIR`.
-Post-tool also sets `WHYCODE_TOOL_IS_ERROR` (`0`/`1`) and
-`WHYCODE_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
+Environment: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`, `WHYCODES_TOOL_ID`,
+`WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_SESSION_ID`, `WHYCODES_WORKING_DIR`.
+Post-tool also sets `WHYCODES_TOOL_IS_ERROR` (`0`/`1`) and
+`WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
 permission prompt, before execution. Subagent loops do not invoke hooks yet.
 
 ### Custom commands
 
 Markdown files become slash commands named after the file, from
-`.whycode/commands/` and from a `commands/` directory next to the global
+`.whycodes/commands/` and from a `commands/` directory next to the global
 `config.toml`.
 
 ```markdown
@@ -620,8 +620,8 @@ Focus on $ARGUMENTS.
 External commands register as `plugin_<name>` (full profile or
 `tool_search`). Two layouts, merged last-wins by tool name:
 
-**TOML** — `~/.config/com.whycorporation.whycode/plugins.toml` or
-`.whycode/plugins.toml`:
+**TOML** — `~/.config/com.whycorporation.whycodes/plugins.toml` or
+`.whycodes/plugins.toml`:
 
 ```toml
 [[plugins]]
@@ -631,7 +631,7 @@ description = "Demo plugin"
 ```
 
 **Directory** — `$CONFIG/plugins/<id>/plugin.json` or
-`.whycode/plugins/<id>/plugin.json` (`manifest.json` is also accepted):
+`.whycodes/plugins/<id>/plugin.json` (`manifest.json` is also accepted):
 
 ```json
 {
@@ -644,7 +644,7 @@ description = "Demo plugin"
 Relative commands resolve against the plugin directory; the child starts
 there. If `command` is omitted, `run` / `run.sh` / `plugin.sh` is used
 when present. A `tools` array exposes several commands (`plugin_<name>_<tool>`
-when there is more than one). `whycode plugins` lists the merged set.
+when there is more than one). `whycodes plugins` lists the merged set.
 
 Args become `PLUGIN_ARG_<KEY>` environment variables. `PLUGIN_WORKSPACE` is
 the session cwd. Config `[hooks]` stay the hook path — `hooks` in
@@ -655,7 +655,7 @@ the session cwd. Config `[hooks]` stay the hook path — `hooks` in
 | Convention | Where |
 |---|---|
 | `AGENTS.md` project instructions | Repository root (also `CLAUDE.md`, `GEMINI.md`, Copilot, Cursor, Cline, Windsurf) |
-| Markdown slash commands | `.whycode/commands/`, also `.opencode/commands/` |
+| Markdown slash commands | `.whycodes/commands/`, also `.opencode/commands/` |
 | MCP servers | `[mcp_servers]` in `config.toml`, tools as `{server}_{tool}` |
 | Shell plugins | `plugins.toml` or `plugins/*/plugin.json` → `plugin_<name>` |
 | `allow` / `ask` / `deny` | `[permission]` in `config.toml` |

@@ -1,8 +1,8 @@
 //! Internal `://` paths (`skill://`, `agent://`) resolved by FS-shaped tools.
 
 use crate::tool::ToolContext;
-use whycode_core::types::ToolResult;
-use whycode_skill::SkillRegistry;
+use whycodes_core::types::ToolResult;
+use whycodes_skill::SkillRegistry;
 
 fn ok(msg: impl Into<String>) -> ToolResult {
     ToolResult {
@@ -53,7 +53,7 @@ fn read_skill(name: &str, ctx: &ToolContext) -> ToolResult {
 
 fn read_agent(id: &str, ctx: &ToolContext) -> ToolResult {
     let dir = std::path::Path::new(&ctx.working_dir)
-        .join(".whycode")
+        .join(".whycodes")
         .join("agents");
     let id = id.trim().trim_start_matches('/');
     if id.is_empty() {
@@ -70,7 +70,7 @@ fn read_agent(id: &str, ctx: &ToolContext) -> ToolResult {
         Ok(body) if !body.trim().is_empty() => ok(format!("# agent://{id}\n\n{body}")),
         Ok(_) => err(format!("agent://{id} is empty.")),
         Err(_) => err(format!(
-            "No agent artifact '{id}'. Finished task/swarm workers write `.whycode/agents/<id>.md`."
+            "No agent artifact '{id}'. Finished task/swarm workers write `.whycodes/agents/<id>.md`."
         )),
     }
 }
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn agent_url_lists_and_reads() {
         let dir = tempfile::tempdir().unwrap();
-        let agents = dir.path().join(".whycode").join("agents");
+        let agents = dir.path().join(".whycodes").join("agents");
         std::fs::create_dir_all(&agents).unwrap();
         std::fs::write(agents.join("task-1.md"), "findings here").unwrap();
         let ctx = ToolContext::new(dir.path().to_string_lossy());

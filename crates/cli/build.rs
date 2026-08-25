@@ -1,4 +1,4 @@
-//! Embed short git hash + build date into the binary for `whycode --version`.
+//! Embed short git hash + build date into the binary for `whycodes --version`.
 //!
 //! Release artifacts should report more than the crate version so installers
 //! and bug reports can pin an exact build. Missing `.git` (source tarball,
@@ -10,8 +10,8 @@ fn main() {
     let hash = git_short_hash().unwrap_or_else(|| "unknown".into());
     let date = build_date_utc();
 
-    println!("cargo:rustc-env=WHYCODE_GIT_HASH={hash}");
-    println!("cargo:rustc-env=WHYCODE_BUILD_DATE={date}");
+    println!("cargo:rustc-env=WHYCODES_GIT_HASH={hash}");
+    println!("cargo:rustc-env=WHYCODES_BUILD_DATE={date}");
 
     // Rebuild when HEAD moves (best-effort; ignored if .git is absent).
     println!("cargo:rerun-if-changed=../../.git/HEAD");

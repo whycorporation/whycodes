@@ -1,6 +1,6 @@
 //! Accumulate streamed thinking + Anthropic signatures into persistable blocks.
 
-use whycode_core::types::ContentBlock;
+use whycodes_core::types::ContentBlock;
 
 #[derive(Default)]
 pub struct ThinkingAccumulator {
@@ -84,15 +84,15 @@ impl ThinkingAccumulator {
 
 /// Enable extended thinking on the request when the model/config supports it.
 pub fn attach_thinking_request(
-    request: &mut whycode_core::types::LlmRequest,
+    request: &mut whycodes_core::types::LlmRequest,
     provider: &str,
     model: &str,
-    model_cfg: Option<&whycode_core::types::ModelConfig>,
+    model_cfg: Option<&whycodes_core::types::ModelConfig>,
     effort_override: Option<&str>,
 ) {
     let want = match model_cfg.and_then(|m| m.thinking) {
         Some(flag) => flag,
-        None => whycode_llm::capabilities::detect_capabilities(provider, model).thinking,
+        None => whycodes_llm::capabilities::detect_capabilities(provider, model).thinking,
     };
     if !want {
         return;
@@ -105,7 +105,7 @@ pub fn attach_thinking_request(
         "budget_tokens": 4000,
     });
     if let Some(effort) =
-        whycode_llm::thinking::ThinkingConfig::resolve_effort(provider, model, effort_override)
+        whycodes_llm::thinking::ThinkingConfig::resolve_effort(provider, model, effort_override)
     {
         payload["reasoning_effort"] = serde_json::Value::String(effort.as_str().to_string());
     }
@@ -113,7 +113,7 @@ pub fn attach_thinking_request(
 }
 
 /// Raise thinking budget / reasoning effort for an `ultrathink` turn.
-pub fn apply_ultrathink(request: &mut whycode_core::types::LlmRequest) {
+pub fn apply_ultrathink(request: &mut whycodes_core::types::LlmRequest) {
     let mut payload = request.thinking.take().unwrap_or_else(|| {
         serde_json::json!({
             "enabled": true,
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn attach_sets_budget_and_effort_for_grok() {
-        let mut req = whycode_core::types::LlmRequest {
+        let mut req = whycodes_core::types::LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(Vec::new()),
             tools: vec![],
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn ultrathink_enables_thinking_when_absent() {
-        let mut req = whycode_core::types::LlmRequest {
+        let mut req = whycodes_core::types::LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(Vec::new()),
             tools: vec![],

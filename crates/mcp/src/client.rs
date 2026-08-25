@@ -143,7 +143,7 @@ impl McpClient {
             protocol_version: PROTOCOL_VERSION.to_string(),
             capabilities: Default::default(),
             client_info: crate::types::ClientInfo {
-                name: "whycode".to_string(),
+                name: "whycodes".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
         })?;

@@ -12,7 +12,7 @@
 **Default embedder remains hashing** (zero RSS). MiniLM ONNX is opt-in:
 
 ```bash
-cargo build -p whycode-cli --features onnx
+cargo build -p whycodes-cli --features onnx
 # config:
 # [memory]
 # embed_backend = "onnx"
@@ -31,10 +31,10 @@ Model files download on first use to `{data_dir}/models/minilm/`.
 ## What shipped
 
 ### Facts / auto memory
-- `whycode-memory` crate
+- `whycodes-memory` crate
 - SQLite `memories` + dual-write `MEMORY.md`
 - Auto-inject (index + top-k cosine) on user turns
-- `/remember`, `/memory`, `memory` tool, `whycode memory …`
+- `/remember`, `/memory`, `memory` tool, `whycodes memory …`
 - **Auto-retain** after successful turns inside `Agent::run_turn`:
   - heuristic always (when enabled)
   - optional **LLM extract** via small/fast sibling model when heuristic is empty
@@ -42,23 +42,23 @@ Model files download on first use to `{data_dir}/models/minilm/`.
 - Dedupe on write (cosine ≥ 0.92)
 
 ### Cross-machine sync
-- `scope = "user"` (default, data_dir) or `"project"` (`.whycode/memory`, git-shareable)
-- `whycode memory export|import` JSON snapshots
+- `scope = "user"` (default, data_dir) or `"project"` (`.whycodes/memory`, git-shareable)
+- `whycodes memory export|import` JSON snapshots
 
 ### Codebase RAG
 - SQLite `code_chunks` table
-- `whycode memory index` / `memory` tool `action=index`
-- `whycode memory code-search` / tool `code_search`
+- `whycodes memory index` / `memory` tool `action=index`
+- `whycodes memory code-search` / tool `code_search`
 - Auto-inject code hits when `code_inject = true` and index exists
 
 ### ONNX MiniLM
-- Feature `onnx` on `whycode-memory` (+ `whycode-cli --features onnx`)
+- Feature `onnx` on `whycodes-memory` (+ `whycodes-cli --features onnx`)
 - `embed_backend = "onnx"` with download + SHA-256 sidecar verify + tract inference
-- `whycode memory onnx-smoke` end-to-end probe
+- `whycodes memory onnx-smoke` end-to-end probe
 
 ### Subagent banks
 - `project_key::agent_name` bank isolation when `[memory] subagent_banks = true`
-- Threaded from config through `Agent` → `SubagentRunner` (env `WHYCODE_SUBAGENT_BANKS=0` override)
+- Threaded from config through `Agent` → `SubagentRunner` (env `WHYCODES_SUBAGENT_BANKS=0` override)
 
 ### Session auto-index
 - On TUI/plain session start: if code_chunks empty for bank, index once
@@ -92,17 +92,17 @@ auto_index_max_files = 1500
 auto_index_max_chunks = 4000
 ```
 
-Flags: `--no-memory`, `WHYCODE_NO_MEMORY=1`, `WHYCODE_SUBAGENT_BANKS=0`.
+Flags: `--no-memory`, `WHYCODES_NO_MEMORY=1`, `WHYCODES_SUBAGENT_BANKS=0`.
 
 ## CLI
 
 ```text
-whycode memory list|search|add|delete|clear|path
-whycode memory export [-o file.json]
-whycode memory import file.json
-whycode memory index
-whycode memory code-search "query"
-whycode memory onnx-smoke   # needs --features onnx
+whycodes memory list|search|add|delete|clear|path
+whycodes memory export [-o file.json]
+whycodes memory import file.json
+whycodes memory index
+whycodes memory code-search "query"
+whycodes memory onnx-smoke   # needs --features onnx
 ```
 
 ## Acceptance

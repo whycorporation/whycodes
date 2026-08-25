@@ -1,16 +1,16 @@
-//! Thin client for the whycode local daemon (`whycode serve`).
+//! Thin client for the whycodes local daemon (`whycodes serve`).
 //!
 //! This crate does **not** embed the agent loop. It speaks protocol v1 over
-//! HTTP. Use [`WhycodeClient::connect`] for a running daemon or
-//! [`WhycodeClient::launch`] to spawn one.
+//! HTTP. Use [`WhyCodesClient::connect`] for a running daemon or
+//! [`WhyCodesClient::launch`] to spawn one.
 
 pub mod client;
 
 #[cfg(test)]
 mod mock_tests;
 
-pub use client::{EventStream, LaunchOptions, RunOptions, WhycodeClient};
-pub use whycode_protocol::sdk::{
+pub use client::{EventStream, LaunchOptions, RunOptions, WhyCodesClient};
+pub use whycodes_protocol::sdk::{
     CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelInfo,
     ModelList, PROTOCOL_MAJOR, PermissionDecision, PermissionResponse, QuestionAnswerWire,
     QuestionResponse, RenameRequest, RewindRequest, RunRequest, SdkEvent, SessionHistory,

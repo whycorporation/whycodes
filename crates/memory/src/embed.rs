@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn related_texts_score_higher() {
         let a = embed(
-            "use cargo check -p whycode-cli after Rust edits",
+            "use cargo check -p whycodes-cli after Rust edits",
             DEFAULT_DIM,
         );
         let b = embed("remember to run cargo check for the cli crate", DEFAULT_DIM);

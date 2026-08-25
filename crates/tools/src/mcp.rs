@@ -3,11 +3,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use super::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Trait for calling an MCP tool on a remote server.
 ///
-/// Implementors wrap an MCP client (e.g. `McpClient` from `whycode-mcp`)
+/// Implementors wrap an MCP client (e.g. `McpClient` from `whycodes-mcp`)
 /// and delegate `tools/call` requests.
 #[async_trait]
 pub trait McpCaller: Send + Sync {
@@ -20,7 +20,7 @@ pub trait McpCaller: Send + Sync {
     ) -> Result<String, String>;
 }
 
-/// A `Tool` that bridges an MCP server's tool into the whycode tool system.
+/// A `Tool` that bridges an MCP server's tool into the whycodes tool system.
 ///
 /// Each instance wraps one MCP tool advertised by a server.  It is not
 /// auto-registered — callers create one `McpToolBridge` per MCP tool they
@@ -36,7 +36,7 @@ impl McpToolBridge {
     /// Create a new bridge for a single MCP tool.
     ///
     /// * `caller` — something that can forward `call_mcp_tool` requests.
-    /// * `mcp_tool` — an MCP tool definition (e.g. `whycode_mcp::McpTool`),
+    /// * `mcp_tool` — an MCP tool definition (e.g. `whycodes_mcp::McpTool`),
     ///   from which the bridge derives its name, description, and parameter
     ///   schema.
     pub fn new(

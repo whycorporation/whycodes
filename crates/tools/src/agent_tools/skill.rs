@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
-use whycode_skill::registry::SkillRegistry;
+use whycodes_core::types::ToolResult;
+use whycodes_skill::registry::SkillRegistry;
 
 pub struct SkillTool;
 

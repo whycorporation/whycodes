@@ -4,7 +4,7 @@ use std::io::Write;
 use std::process::Command;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 pub struct ApplyPatchTool;
 
@@ -81,7 +81,7 @@ impl Tool for ApplyPatchTool {
             Some(d) => d.to_string(),
             None => "/tmp".to_string(),
         };
-        let temp_file = format!("{}/whycode_patch_{}.diff", temp_dir, std::process::id());
+        let temp_file = format!("{}/whycodes_patch_{}.diff", temp_dir, std::process::id());
 
         let mut file = match std::fs::File::create(&temp_file) {
             Ok(f) => f,

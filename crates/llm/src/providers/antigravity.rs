@@ -2,14 +2,14 @@
 //!
 //! Always routes through the Antigravity Code Assist control plane
 //! (`daily-cloudcode-pa.googleapis.com`). OAuth tokens come from
-//! `whycode auth login google-antigravity`.
+//! `whycodes auth login google-antigravity`.
 
 use super::codeassist;
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
 use futures::stream::Stream;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 pub struct AntigravityProvider {
     name: String,
@@ -38,7 +38,7 @@ impl LlmProvider for AntigravityProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         codeassist::complete_antigravity(request, api_key, model).await
     }
 
@@ -47,7 +47,7 @@ impl LlmProvider for AntigravityProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         codeassist::stream_antigravity(request, api_key, model).await
     }

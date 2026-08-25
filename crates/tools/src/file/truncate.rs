@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 pub struct TruncateTool;
 
@@ -54,7 +54,7 @@ impl Tool for TruncateTool {
         let max_lines = args["max_lines"].as_u64().unwrap_or(200) as usize;
         let max_chars = args["max_chars"].as_u64().unwrap_or(8000) as usize;
 
-        let result = whycode_format::truncate::truncate(text, max_lines, max_chars);
+        let result = whycodes_format::truncate::truncate(text, max_lines, max_chars);
 
         ToolResult {
             tool_call_id: String::new(),

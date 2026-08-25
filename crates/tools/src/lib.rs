@@ -1,7 +1,7 @@
-//! Built-in tools for Whycode.
+//! Built-in tools for WhyCodes.
 //!
 //! Domain modules group related tools; crate-root re-exports keep short
-//! paths (`whycode_tools::read`, `whycode_tools::blame`, …) for callers.
+//! paths (`whycodes_tools::read`, `whycodes_tools::blame`, …) for callers.
 
 pub mod agent_tools;
 pub mod display;

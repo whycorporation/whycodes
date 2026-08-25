@@ -6,7 +6,7 @@ use super::paths::{
     display_path, glob_match, human_size, is_skip_dir, list_dir_entries, resolve_path,
 };
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Default max entries returned for a single list call.
 const DEFAULT_MAX_ENTRIES: usize = 200;
@@ -210,7 +210,7 @@ struct WalkState<'a> {
 /// touching the filesystem. Returns None when the index is cold / out of
 /// scope (caller falls back to the walk).
 fn list_recursive_index(
-    index: &whycode_index::WorkspaceIndex,
+    index: &whycodes_index::WorkspaceIndex,
     root: &Path,
     ignore: &[String],
     max_depth: usize,
@@ -340,14 +340,14 @@ mod tests {
     use super::*;
     use crate::tool::ToolContext;
     use std::time::Duration;
-    use whycode_index::IndexOptions;
+    use whycodes_index::IndexOptions;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext::new(dir.to_string_lossy().into_owned())
     }
 
     fn ctx_with_index(dir: &std::path::Path) -> ToolContext {
-        let idx = whycode_index::WorkspaceIndex::start_with(
+        let idx = whycodes_index::WorkspaceIndex::start_with(
             vec![dir.to_path_buf()],
             IndexOptions {
                 watch: false,

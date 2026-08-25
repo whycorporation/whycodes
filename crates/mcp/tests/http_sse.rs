@@ -12,8 +12,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tokio::sync::{Mutex, mpsc};
-use whycode_mcp::McpClient;
-use whycode_mcp::http::StreamableHttpTransport;
+use whycodes_mcp::McpClient;
+use whycodes_mcp::http::StreamableHttpTransport;
 
 #[derive(Clone)]
 struct MockState {

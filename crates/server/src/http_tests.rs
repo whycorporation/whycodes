@@ -4,8 +4,8 @@ use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
 use tower::ServiceExt;
-use whycode_core::types::ContentBlock;
-use whycode_session::session::Session;
+use whycodes_core::types::ContentBlock;
+use whycodes_session::session::Session;
 
 use crate::{create_router, test_state};
 
@@ -423,7 +423,7 @@ async fn v1_local_mutations_return_not_found_for_missing_session() {
 #[tokio::test]
 async fn api_seeded_session_exposes_metadata_and_messages() {
     let state = test_state();
-    let project = std::env::temp_dir().join("whycode-server-route-test");
+    let project = std::env::temp_dir().join("whycodes-server-route-test");
     let mut session = Session::new(project.clone(), "system prompt".into());
     session.title = "seeded".into();
     session.add_user_message("hello");
@@ -459,7 +459,7 @@ async fn v1_history_limit_model_cancel_and_rewind_change_live_state() {
     session.add_user_message("last");
     let id = session.id.clone();
     let handle = state.insert_session(session);
-    let cancel = whycode_agent::events::new_cancel_flag();
+    let cancel = whycodes_agent::events::new_cancel_flag();
     state.register_cancel(&id, cancel.clone());
     let app = create_router(state.clone());
 
@@ -493,7 +493,7 @@ async fn v1_history_limit_model_cancel_and_rewind_change_live_state() {
     )
     .await;
     assert_eq!(st, StatusCode::ACCEPTED);
-    assert!(whycode_agent::events::is_cancelled(&Some(cancel)));
+    assert!(whycodes_agent::events::is_cancelled(&Some(cancel)));
 
     let (st, rewound) = json_post(
         app,

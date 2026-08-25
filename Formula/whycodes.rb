@@ -7,32 +7,32 @@
 #
 # Install:
 #   brew tap whycorporation/whycode https://github.com/whycorporation/whycode
-#   brew install whycode
+#   brew install whycodes
 #
 # Source tip (needs a Rust toolchain):
-#   brew install --HEAD whycode
+#   brew install --HEAD whycodes
 
-class Whycode < Formula
+class Whycodes < Formula
   desc "Terminal coding agent written in Rust"
-  homepage "https://github.com/whycorporation/whycode"
+  homepage "https://why.codes"
   version "0.1.0"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/whycorporation/whycode/releases/download/v0.1.0/whycode-aarch64-apple-darwin.tar.gz"
+      url "https://github.com/whycorporation/whycode/releases/download/v0.1.0/whycodes-aarch64-apple-darwin.tar.gz"
       sha256 "12f1a5121123285b98a1b2a6b499fe77394e650ce44c1e5ec235859185117cc5"
     end
 
     on_intel do
-      url "https://github.com/whycorporation/whycode/releases/download/v0.1.0/whycode-x86_64-apple-darwin.tar.gz"
+      url "https://github.com/whycorporation/whycode/releases/download/v0.1.0/whycodes-x86_64-apple-darwin.tar.gz"
       sha256 "89fa63db6daa6155e997178060e34714be4d4f9b7e91facef4e648fc75f3104d"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/whycorporation/whycode/releases/download/v0.1.0/whycode-x86_64-unknown-linux-gnu.tar.gz"
+      url "https://github.com/whycorporation/whycode/releases/download/v0.1.0/whycodes-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "d6dfa58784c03302645fbd836aedcddc0e0f7f4652582a0476b78256de76d7c7"
     end
   end
@@ -46,11 +46,11 @@ class Whycode < Formula
     if build.head?
       system "cargo", "install", *std_cargo_args(path: "crates/cli")
     else
-      bin.install "whycode"
+      bin.install "whycodes"
     end
   end
 
   test do
-    assert_match "whycode", shell_output("#{bin}/whycode --version")
+    assert_match "whycodes", shell_output("#{bin}/whycodes --version")
   end
 end

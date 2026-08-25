@@ -5,7 +5,7 @@
 
 Feature comparison of terminal coding agents.
 
-**Terminal / harness:** whycode · Grok Build · OpenCode · jcode · Codex CLI · Gemini CLI · Pi  
+**Terminal / harness:** whycodes · Grok Build · OpenCode · jcode · Codex CLI · Gemini CLI · Pi  
 
 **Product surface:** Claude Code · Cursor
 
@@ -21,15 +21,15 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 | ❌ | No / roadmap |
 | ★ | Notable strength in this area |
 
-† whycode ACP: deliberately **post-product** (`status.md`, 2026-08-04).  
+† whycodes ACP: deliberately **post-product** (`status.md`, 2026-08-04).  
 ‡ Gemini CLI: **Antigravity CLI** migration announced for free / Google One users (2026-06-18); the matrix still follows the Gemini CLI documentation.  
-§ whycode OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google`, `xai` (`whycode auth login` or in-TUI `/connect`); API-call routing live for all five (openai → Codex backend, google → Code Assist, xAI OAuth → `cli-chat-proxy.grok.com`). Credential import: `whycode auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([../auth.md](../auth.md), [plan-oauth](plan-oauth.md)).
+§ whycodes OAuth: login/store/refresh for `anthropic`, `openai`, `github-copilot`, `google`, `xai` (`whycodes auth login` or in-TUI `/connect`); API-call routing live for all five (openai → Codex backend, google → Code Assist, xAI OAuth → `cli-chat-proxy.grok.com`). Credential import: `whycodes auth import` — consent-based, per-path persisted, symlink-refusing, read-only ([../auth.md](../auth.md), [plan-oauth](plan-oauth.md)).
 
 ---
 
 ## Product summary
 
-| | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
+| | whycodes | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Type** | Terminal agent | Terminal agent | Multi-surface | Agent harness | First-party product agent | Terminal agent | Terminal agent | Minimal harness | AI IDE + agent |
 | **Surface** | TUI, CLI | TUI, CLI, ACP | TUI, desktop, IDE | TUI, serve | TUI, web, desktop, IDE, CI | TUI, CLI, IDE, app, cloud | TUI, CLI, IDE companion | TUI, CLI, SDK/RPC | IDE, CLI, cloud agents |
@@ -41,7 +41,7 @@ Sources are listed at the end of the file. Cells are at “yes / partial / no”
 
 | Product | Position |
 |---|---|
-| **whycode** | Shell safety, latency stack, mouse TUI, Windows CI |
+| **whycodes** | Shell safety, latency stack, mouse TUI, Windows CI |
 | **Grok Build** | Rich TUI; skills / plugins / hooks; ACP |
 | **OpenCode** | Broad OSS ecosystem; TUI + desktop + IDE |
 | **jcode** | Low RAM / boot; swarm; semantic memory |
@@ -202,7 +202,7 @@ Short names: **why** · **Grok** · **OC** OpenCode · **jc** jcode · **CC** Cl
 
 ---
 
-## 10. Latency / agent loop (whycode focus)
+## 10. Latency / agent loop (whycodes focus)
 
 | Feature | why | Grok | OC | jc | CC | Codex | Gem | Pi | Cur |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -235,27 +235,27 @@ Details: [plan-latency-competitors.md](plan-latency-competitors.md) (archived).
 
 ## 12. Performance (published / measured)
 
-Different machines / dates; orders of magnitude only. jcode README bench table (Linux, 10× PTY) + whycode [benchmarks.md](benchmarks.md).
+Different machines / dates; orders of magnitude only. jcode README bench table (Linux, 10× PTY) + whycodes [benchmarks.md](benchmarks.md).
 
-| Metric | whycode | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
+| Metric | whycodes | Grok Build | OpenCode | jcode | Claude Code | Codex CLI | Gemini CLI | Pi | Cursor |
 |---|---|---|---|---|---|---|---|---|---|
 | Boot / TTFF | **~1.0 ms** `--version` (Linux; Win baseline was ~21 ms) | — | ~1036 ms | **~14 ms** | ~3437 ms | ~883 ms | — | ~591 ms | IDE (order of seconds) |
 | 1 session PSS | **~4.1 MB** idle TUI | — | ~372 MB | **~28 MB** (embed off) | ~387 MB | ~140 MB | — | ~144 MB | IDE (hundreds of MB+) |
 | 10 session PSS | **~16.8 MB** | — | ~3.2 GB | **~117 MB** | ~2.3 GB | ~335 MB | — | ~833 MB | — |
-| Source | whycode benches | — | jcode bench | jcode README | jcode bench | jcode bench | public free-tier docs | jcode bench | product class |
+| Source | whycodes benches | — | jcode bench | jcode README | jcode bench | jcode bench | public free-tier docs | jcode bench | product class |
 
-whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. No comparable PSS table published for Grok Build / Gemini CLI (—).
+whycodes: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. No comparable PSS table published for Grok Build / Gemini CLI (—).
 
 ---
 
-## 13. whycode-specific strengths
+## 13. whycodes-specific strengths
 
 | Area | Detail |
 |---|---|
 | **Shell risk gate** | `safe` → `caution` → `destructive` → `catastrophic` (last is never approvable) |
 | **Latency stack** | Core tools, prompt cache, parallel reads, doom-loop, fast-route, race, text cache |
 | **Mouse TUI** | HitArea: context %, stop, scrollbar, slash hover |
-| **LSP crate** | Separate `whycode-lsp` |
+| **LSP crate** | Separate `whycodes-lsp` |
 | **Windows CI** | Linux + macOS + Windows full suite |
 | **Small codebase** | ~50k LOC Rust |
 | **OpenCode interop** | Theme JSON, AGENTS.md, `.opencode/commands` |
@@ -264,12 +264,12 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 
 ---
 
-## 14. Missing / weak in whycode (vs competitors)
+## 14. Missing / weak in whycodes (vs competitors)
 
 | Gap | Who has it | Note |
 |---|---|---|
-| Semantic memory | whycode ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [archive/plan-memory](archive/plan-memory.md) |
-| Swarm | jcode★ / whycode `swarm` | git worktrees + 3-way merge + claims toast |
+| Semantic memory | whycodes ✅ v2 (retain+RAG+sync+ONNX opt), jcode★, Grok, Claude | [archive/plan-memory](archive/plan-memory.md) |
+| Swarm | jcode★ / whycodes `swarm` | git worktrees + 3-way merge + claims toast |
 | Browser automation | jcode, Claude, Cursor★ | None |
 | Desktop / IDE | OpenCode, Claude, Codex app/IDE, **Cursor★** | `web` + `acp` stub |
 | Plugin marketplace | Grok, OpenCode, Cursor, Gemini ext, Pi packages | Config hooks ✅ |
@@ -294,7 +294,7 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 | Free tier + Search + plan mode | **Gemini CLI** |
 | Minimal, extension-first harness | **Pi** |
 | IDE-first + Tab + cloud agents | **Cursor** |
-| Shell safety + latency + mouse TUI + Windows CI | **whycode** |
+| Shell safety + latency + mouse TUI + Windows CI | **whycodes** |
 
 ### Competitor notes (short)
 
@@ -307,7 +307,7 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 
 ---
 
-## 16. whycode feature inventory (standalone)
+## 16. whycodes feature inventory (standalone)
 
 ### CLI
 
@@ -326,7 +326,7 @@ whycode: process startup + criterion hot-path; agent TTFT via JSONL `ttft_ms`. N
 
 ### Slash commands (TUI)
 
-`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`/`/login`, `/tools`, `/info`, `/theme`/`/themes` (picker + apply by name) — custom: `.whycode/commands/*.md` and `.opencode/commands`. Extra plain: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
+`/help`, `/exit`, `/new`, `/init`, `/undo`, `/redo`, `/share`, `/unshare`, `/compact`, `/sessions`, `/resume`, `/continue`, `/rename`, `/models`, `/agent`, `/connect`/`/login`, `/tools`, `/info`, `/theme`/`/themes` (picker + apply by name) — custom: `.whycodes/commands/*.md` and `.opencode/commands`. Extra plain: `/thinking` (REPL). Command mode: `:` → `:theme`, `:q`, …
 
 ### Built-in tools
 
@@ -378,7 +378,7 @@ sandbox_fallback = "allow"           # allow | deny (when bwrap is missing)
 # [[hooks]]
 # event = "pre_tool"   # or post_tool
 # match = "bash"
-# command = "echo $WHYCODE_TOOL_NAME"
+# command = "echo $WHYCODES_TOOL_NAME"
 # block_on_failure = true
 ```
 
@@ -394,7 +394,7 @@ sandbox_fallback = "allow"           # allow | deny (when bwrap is missing)
 
 ## Sources
 
-- whycode: [README.md](../../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](../benchmarks.md)
+- whycodes: [README.md](../../README.md), [comparison.md](comparison.md), [status.md](status.md), [benchmarks.md](../benchmarks.md)
 - OpenCode: <https://opencode.ai/> · <https://github.com/anomalyco/opencode>
 - jcode: <https://github.com/1jehuang/jcode> · <https://jcode.sh>
 - Grok Build: <https://docs.x.ai/build/overview> · <https://github.com/xai-org/grok-build>
@@ -404,6 +404,6 @@ sandbox_fallback = "allow"           # allow | deny (when bwrap is missing)
 - Pi: <https://pi.dev/> · <https://github.com/earendil-works/pi>
 - Cursor: <https://cursor.com/> · <https://cursor.com/docs>
 
-Performance rows (TTFF/PSS): jcode README comparison table + whycode `docs/benchmarks.md` (different machines).
+Performance rows (TTFF/PSS): jcode README comparison table + whycodes `docs/benchmarks.md` (different machines).
 
 This table is a living snapshot. Update it in the same PR when a major feature or competitor position changes.

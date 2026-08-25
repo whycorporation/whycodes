@@ -6,10 +6,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use whycode_config::{Config, McpServerConfig, McpTransportKind};
-use whycode_mcp::client::McpClient;
-use whycode_tools::executor::ToolExecutor;
-use whycode_tools::mcp::{McpCaller, McpToolBridge};
+use whycodes_config::{Config, McpServerConfig, McpTransportKind};
+use whycodes_mcp::client::McpClient;
+use whycodes_tools::executor::ToolExecutor;
+use whycodes_tools::mcp::{McpCaller, McpToolBridge};
 
 struct SharedMcpCaller {
     client: Arc<Mutex<McpClient>>,

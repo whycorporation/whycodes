@@ -184,7 +184,7 @@ const SCENARIOS: &[BehaviorScenario] = &[
         Change,
         "build",
         "bash",
-        Some("cargo test -p whycode-agent"),
+        Some("cargo test -p whycodes-agent"),
         Allow
     ),
     case!(

@@ -3,8 +3,8 @@ use serde_json::json;
 
 use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
-use whycode_format::diff::format_write_preview;
+use whycodes_core::types::ToolResult;
+use whycodes_format::diff::format_write_preview;
 
 pub struct WriteTool;
 
@@ -102,7 +102,7 @@ impl Tool for WriteTool {
 mod tests {
     use super::*;
     use crate::tool::ToolContext;
-    use whycode_core::file_claims::FileClaimRegistry;
+    use whycodes_core::file_claims::FileClaimRegistry;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext::new(dir.to_string_lossy().into_owned())
@@ -172,7 +172,7 @@ mod tests {
         let claims = FileClaimRegistry::new();
         assert!(matches!(
             claims.try_claim("other", "other-agent", &target),
-            whycode_core::file_claims::ClaimResult::Acquired
+            whycodes_core::file_claims::ClaimResult::Acquired
         ));
 
         let mut c = ctx(dir.path());

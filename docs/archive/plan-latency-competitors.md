@@ -1,4 +1,4 @@
-# Plan — Competitive latency research & whycode roadmap
+# Plan — Competitive latency research & whycodes roadmap
 
 **Status:** P0+P1+P2 done · **Priority:** complete · **Last review:** 2026-08-13  
 **Related:** [plan-perf-hotpath.md](plan-perf-hotpath.md), [plan-perf-context-tui.md](plan-perf-context-tui.md), [comparison.md](comparison.md), [features.md](features.md), [../knowhow.md](../knowhow.md)  
@@ -45,7 +45,7 @@ jcode architecture signals. Several backlog rows were wrong or stale.
 | **`packages/llm` + `cache-policy.ts`** | Default `cache: "auto"` injects Anthropic/Bedrock breakpoints | Production-grade prompt cache |
 | **`SessionCompaction`** | Overflow detect → dedicated compaction agent + **LLM summary** + prune tool outputs | Context stays usable; smarter than drop-only |
 | **`doom_loop` permission** | Same tool + same args N times → ask user | Stops silent infinite tool loops (wall-clock killer) |
-| **Tool surface** | Core set similar to whycode (`read`/`write`/`edit`/`grep`/`glob`/`bash`/`task`/`lsp`/…) | Same order of schema cost |
+| **Tool surface** | Core set similar to whycodes (`read`/`write`/`edit`/`grep`/`glob`/`bash`/`task`/`lsp`/…) | Same order of schema cost |
 | **Shell prompt** | Explicitly tells model to emit **multiple bash calls in one message** when independent | Encourages parallel *intent* |
 | **Instruction load** | `Effect.forEach(..., { concurrency: 8 })` for AGENTS/instruction files | Parallel I/O at session build |
 | **Subagents / task** | Task tool can spawn sessions; historically **pop one-at-a-time** (issues #14195, #29638) | Parallel *agents* still a weak spot |
@@ -62,7 +62,7 @@ From `packages/llm/src/cache-policy.ts` (verbatim intent):
 - Protocols that ignore inline hints (OpenAI implicit, Gemini) skip the pass.
 - Rationale: during one user turn the agent does many assistant/tool round-trips; caching at the **user message** boundary makes every *intra-turn* API call a cache hit on the prefix.
 
-**Whycode vs OpenCode (cache):** system + last tool + **latest user message** are marked when `session.prompt_cache = "auto"` (default). `crates/llm/src/cache.rs` (`CachePolicy::Auto`) is wired into Anthropic (and compatible) request building via `LlmRequest.use_prompt_cache`.
+**WhyCodes vs OpenCode (cache):** system + last tool + **latest user message** are marked when `session.prompt_cache = "auto"` (default). `crates/llm/src/cache.rs` (`CachePolicy::Auto`) is wired into Anthropic (and compatible) request building via `LlmRequest.use_prompt_cache`.
 
 ### OpenCode parallel tools — status nuance
 
@@ -70,7 +70,7 @@ From `packages/llm/src/cache-policy.ts` (verbatim intent):
 - Shell *prompt* asks for parallel bash calls; runtime fan-out is **not** clearly universal for all tools (tool-runtime `dispatch` is one-call).
 - Subtasks often still serial (queue / `pop`).
 
-**Implication:** whycode’s **safe parallel fan-out** (read-class tools) is already competitive; do not assume OpenCode is “done” here. Keep mutators/shell serial (they do).
+**Implication:** whycodes’s **safe parallel fan-out** (read-class tools) is already competitive; do not assume OpenCode is “done” here. Keep mutators/shell serial (they do).
 
 ### OpenCode session-loop perf ideas (#20285 class)
 
@@ -81,21 +81,21 @@ Issue themes (not all merged; treat as backlog inspiration):
 - Summary **debounce** (don’t compact thrash)
 - Parallel plugin events
 
-### OpenCode → whycode takeaways
+### OpenCode → whycodes takeaways
 
 | Take | Action |
 |------|--------|
 | Cache `auto` = tools + system + **latest user** | **P0** wire into Anthropic body builder |
 | Compaction agent + prune tool dumps | P1: optional LLM summary compact (we only drop+stub) |
 | Doom-loop gate | P0/P1: detect N identical tool calls → refuse or ask |
-| Warm server process | P2: optional `whycode serve` long-lived (exists partially) |
+| Warm server process | P2: optional `whycodes serve` long-lived (exists partially) |
 | Parallel subagents | Keep phase-7 drop unless product needs swarm |
 
 ---
 
 ## Deep dive: jcode
 
-**Sources:** local binary `jcode` **v0.64.2** (`2026-07-30`), `~/.jcode/config.toml` (features: `memory`, `swarm`), public GitHub issues dump (`/tmp/opencode/jcode_*.json`), whycode docs ([comparison.md](comparison.md), [features.md](features.md), [phase-7-multi-agent.md](phase-7-multi-agent.md)).
+**Sources:** local binary `jcode` **v0.64.2** (`2026-07-30`), `~/.jcode/config.toml` (features: `memory`, `swarm`), public GitHub issues dump (`/tmp/opencode/jcode_*.json`), whycodes docs ([comparison.md](comparison.md), [features.md](features.md), [phase-7-multi-agent.md](phase-7-multi-agent.md)).
 
 ### Architecture (latency-relevant)
 
@@ -116,10 +116,10 @@ Issue themes (not all merged; treat as backlog inspiration):
 | Claim | Treatment |
 |-------|-----------|
 | 14 ms TTFT frame / 27.8 MB RSS | **Unverified** (comparison.md). Our release floor is different metric family (CLI/`--version`, TUI first paint). |
-| Swarm “faster” | Only when work decomposes; whycode phase-7 **dropped** for same reason on ~25k LOC projects. |
+| Swarm “faster” | Only when work decomposes; whycodes phase-7 **dropped** for same reason on ~25k LOC projects. |
 | Memory always on | Latency + correctness tradeoff; embeddings add load. |
 
-### jcode pain → whycode avoid-list
+### jcode pain → whycodes avoid-list
 
 From open issues (latency/correctness adjacency):
 
@@ -129,7 +129,7 @@ From open issues (latency/correctness adjacency):
 - Swarm spawn mid-turn races / ignored `swarm_model`
 - Model list / context window **wrong** → wrong compact budget
 
-### jcode → whycode takeaways
+### jcode → whycodes takeaways
 
 | Take | Action |
 |------|--------|
@@ -144,7 +144,7 @@ From open issues (latency/correctness adjacency):
 
 ## Comparison matrix (revised)
 
-| Technique | Claude Code | OpenCode | jcode | Codex | Whycode now |
+| Technique | Claude Code | OpenCode | jcode | Codex | WhyCodes now |
 |-----------|:-----------:|:--------:|:-----:|:-----:|:-----------:|
 | Streaming UI | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Prompt cache system+tools | ✅ | ✅ `auto` | ⚠️ OAuth curated | ✅/implicit | ✅ Anthropic partial |
@@ -208,7 +208,7 @@ compaction_threshold = 150000
 
 1. LLM-summary compact agent — **shipped** (local summary includes goals/paths; LLM uses *dropped* transcript; runs when messages were dropped, not only when still over budget)  
 2. Speculative stream-arg early `read` — **shipped** (`crates/agent/src/speculative_read.rs`; path closes mid-stream → I/O overlaps remaining tokens)  
-3. Long-lived daemon multi-session warm — **shipped** (`whycode serve`: MCP + index + plugins at boot; in-memory sessions + SQLite; real SSE chat)  
+3. Long-lived daemon multi-session warm — **shipped** (`whycodes serve`: MCP + index + plugins at boot; in-memory sessions + SQLite; real SSE chat)  
 4. Cross-session memory — **shipped** ([archive/plan-memory.md](archive/plan-memory.md))  
 5. Swarm — **shipped lightweight** (worktrees + 3-way merge + claims). Full product swarm stays out of the latency plan.  
 6. First-token race failover / semantic response cache — **shipped** (`llm/race.rs`, `llm/response_cache.rs`; `session.model_race` / `response_cache`)

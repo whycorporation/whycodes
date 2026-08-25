@@ -4,14 +4,14 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Process-wide client so TLS/connection pool stays warm across fetches.
 fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()
-            .user_agent(concat!("whycode-webfetch/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("whycodes-webfetch/", env!("CARGO_PKG_VERSION")))
             .pool_max_idle_per_host(4)
             .tcp_nodelay(true)
             .connect_timeout(std::time::Duration::from_secs(10))
@@ -266,7 +266,7 @@ fn truncate_chars(s: &str, max_length: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::NetworkPolicy;
+    use whycodes_core::NetworkPolicy;
 
     #[tokio::test]
     async fn network_allowlist_blocks_disallowed_host() {

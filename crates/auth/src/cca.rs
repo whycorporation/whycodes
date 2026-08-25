@@ -19,7 +19,7 @@ const BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 /// User-Agent identifying as the native Antigravity client. Captured from the
 /// real 2.8.0 `antigravity/hub` release and pinned to that reference client's
 /// `os_type`/`arch` (darwin/arm64), independent of the host — the control plane
-/// gates on this header matching the reference, not the machine running whycode.
+/// gates on this header matching the reference, not the machine running whycodes.
 const ANTIGRAVITY_USER_AGENT: &str =
     "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)";
 
@@ -77,7 +77,7 @@ async fn send(
             .filter(|s| !s.is_empty())
             .unwrap_or("unknown error");
         // Detect the free-tier ineligibility reason even when the provider is
-        // terse, so the auth failure matches whycode-llm's actionable copy.
+        // terse, so the auth failure matches whycodes-llm's actionable copy.
         if status.as_u16() == 403
             && (msg.to_ascii_lowercase().contains("eligib")
                 || msg.eq_ignore_ascii_case("unknown error"))

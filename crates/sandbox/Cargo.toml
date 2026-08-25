@@ -1,5 +1,5 @@
 [package]
-name = "whycode-sandbox"
+name = "whycodes-sandbox"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ repository.workspace = true
 description = "OS sandbox for shell tool execution (bubblewrap on Linux)"
 
 [dependencies]
-whycode-core = { path = "../core" }
+whycodes-core = { path = "../core" }
 thiserror.workspace = true
 tracing.workspace = true
 

@@ -138,7 +138,7 @@ fn resume_flag_wins_over_continue() {
     cont.continue_session = true;
     assert_eq!(
         resolve_resume_want(&cont),
-        Some(whycode_tui::RESUME_LATEST.to_string())
+        Some(whycodes_tui::RESUME_LATEST.to_string())
     );
 
     let mut both = cli(None);
@@ -188,7 +188,7 @@ fn parses_output_formats() {
 #[test]
 fn cli_parser_maps_global_flags_and_nested_commands() {
     let parsed = Cli::try_parse_from([
-        "whycode",
+        "whycodes",
         "--provider",
         "openai",
         "--model",
@@ -221,7 +221,7 @@ fn cli_parser_maps_global_flags_and_nested_commands() {
         other => panic!("unexpected parsed command: {other:?}"),
     }
 
-    let nested = Cli::try_parse_from(["whycode", "github", "pr", "view", "42"]).unwrap();
+    let nested = Cli::try_parse_from(["whycodes", "github", "pr", "view", "42"]).unwrap();
     assert!(matches!(
         nested.command,
         Some(Commands::Github {
@@ -238,19 +238,19 @@ fn cli_parser_rejects_invalid_commands_before_dispatch() {
 
     for (args, kind) in [
         (
-            vec!["whycode", "generate"],
+            vec!["whycodes", "generate"],
             ErrorKind::MissingRequiredArgument,
         ),
         (
-            vec!["whycode", "run", "--format", "yaml"],
+            vec!["whycodes", "run", "--format", "yaml"],
             ErrorKind::ValueValidation,
         ),
         (
-            vec!["whycode", "github", "pr", "view", "not-a-number"],
+            vec!["whycodes", "github", "pr", "view", "not-a-number"],
             ErrorKind::ValueValidation,
         ),
         (
-            vec!["whycode", "not-a-command"],
+            vec!["whycodes", "not-a-command"],
             ErrorKind::InvalidSubcommand,
         ),
     ] {
@@ -262,7 +262,7 @@ fn cli_parser_rejects_invalid_commands_before_dispatch() {
 #[test]
 fn cli_parser_maps_mcp_add_without_interpreting_values() {
     let parsed = Cli::try_parse_from([
-        "whycode",
+        "whycodes",
         "mcp",
         "add",
         "docs",
@@ -391,7 +391,7 @@ fn expand_user_input_bare_at_and_multiple() {
 
 #[test]
 fn turn_event_to_ci_maps_all_variants() {
-    use whycode_agent::events::TurnEvent as TE;
+    use whycodes_agent::events::TurnEvent as TE;
 
     assert_eq!(
         turn_event_to_ci(TE::TextDelta("hi".into())),
@@ -425,7 +425,7 @@ fn turn_event_to_ci_maps_all_variants() {
         })
     );
 
-    let usage = turn_event_to_ci(TE::Usage(whycode_core::types::Usage {
+    let usage = turn_event_to_ci(TE::Usage(whycodes_core::types::Usage {
         input_tokens: 10,
         output_tokens: 20,
         cache_creation_input_tokens: Some(30),
@@ -457,7 +457,7 @@ fn turn_event_to_ci_maps_all_variants() {
     );
 
     // panel updates collapse to status lines
-    let panel = turn_event_to_ci(TE::Panel(whycode_core::PanelUpdate::File {
+    let panel = turn_event_to_ci(TE::Panel(whycodes_core::PanelUpdate::File {
         path: "x.rs".into(),
         text: "...".into(),
     }));
@@ -542,14 +542,14 @@ fn get_and_set_config_value_roundtrip() {
 
 #[test]
 fn auth_expiry_labels() {
-    use whycode_auth::token::ProviderAuth;
-    let auth = |token: whycode_auth::token::OAuthToken| ProviderAuth {
+    use whycodes_auth::token::ProviderAuth;
+    let auth = |token: whycodes_auth::token::OAuthToken| ProviderAuth {
         method: "oauth".into(),
         token,
     };
 
     // no expiry
-    let none = auth(whycode_auth::token::OAuthToken {
+    let none = auth(whycodes_auth::token::OAuthToken {
         access_token: "a".into(),
         refresh_token: None,
         expires_at: None,
@@ -559,7 +559,7 @@ fn auth_expiry_labels() {
 
     // future expiry → "expires <at>"
     let future = chrono::Utc::now() + chrono::Duration::days(30);
-    let tok = whycode_auth::token::OAuthToken {
+    let tok = whycodes_auth::token::OAuthToken {
         access_token: "a".into(),
         refresh_token: None,
         expires_at: Some(future),
@@ -571,7 +571,7 @@ fn auth_expiry_labels() {
 
     // past expiry → "expired <at> (refreshes...)"
     let past = chrono::Utc::now() - chrono::Duration::days(1);
-    let tok = whycode_auth::token::OAuthToken {
+    let tok = whycodes_auth::token::OAuthToken {
         access_token: "a".into(),
         refresh_token: None,
         expires_at: Some(past),
@@ -582,7 +582,7 @@ fn auth_expiry_labels() {
     assert!(label.contains("refreshes on next use"), "{label}");
 
     // derived expiry wins over access-token expiry
-    let tok = whycode_auth::token::OAuthToken {
+    let tok = whycodes_auth::token::OAuthToken {
         access_token: "a".into(),
         refresh_token: None,
         expires_at: Some(future),
@@ -595,7 +595,7 @@ fn auth_expiry_labels() {
     assert_eq!(label, "derived API token expires 2030-01-01T00:00:00Z");
 
     // legacy copilot key still resolves
-    let tok = whycode_auth::token::OAuthToken {
+    let tok = whycodes_auth::token::OAuthToken {
         access_token: "a".into(),
         refresh_token: None,
         expires_at: None,
@@ -718,7 +718,7 @@ fn runtime_choice_covers_remaining_commands() {
 
 #[test]
 fn turn_event_to_ci_remaining_variants() {
-    use whycode_agent::events::TurnEvent as TE;
+    use whycodes_agent::events::TurnEvent as TE;
     assert_eq!(
         turn_event_to_ci(TE::ToolEnd {
             id: "t".into(),
@@ -789,13 +789,13 @@ fn turn_event_to_ci_remaining_variants() {
         })
     );
     assert_eq!(
-        turn_event_to_ci(TE::Panel(whycode_core::PanelUpdate::Clear)),
+        turn_event_to_ci(TE::Panel(whycodes_core::PanelUpdate::Clear)),
         Some(CiEvent::Status {
             message: "panel clear".into()
         })
     );
     assert_eq!(
-        turn_event_to_ci(TE::Panel(whycode_core::PanelUpdate::Diff {
+        turn_event_to_ci(TE::Panel(whycodes_core::PanelUpdate::Diff {
             path: "d.rs".into(),
             unified: String::new(),
         })),
@@ -804,7 +804,7 @@ fn turn_event_to_ci_remaining_variants() {
         })
     );
     assert_eq!(
-        turn_event_to_ci(TE::Panel(whycode_core::PanelUpdate::Mermaid {
+        turn_event_to_ci(TE::Panel(whycodes_core::PanelUpdate::Mermaid {
             source: "graph TD".into(),
         })),
         Some(CiEvent::Status {
@@ -814,8 +814,8 @@ fn turn_event_to_ci_remaining_variants() {
     assert_eq!(
         turn_event_to_ci(TE::Todos {
             todos: vec![
-                whycode_core::TodoItem::new("a", "one", whycode_core::TodoStatus::Completed),
-                whycode_core::TodoItem::new("b", "two", whycode_core::TodoStatus::Pending),
+                whycodes_core::TodoItem::new("a", "one", whycodes_core::TodoStatus::Completed),
+                whycodes_core::TodoItem::new("b", "two", whycodes_core::TodoStatus::Pending),
             ]
         }),
         Some(CiEvent::Status {
@@ -948,7 +948,7 @@ fn dummy_meta() -> ResultMeta {
         provider: "p".into(),
         model: "m".into(),
         agent: "a".into(),
-        usage: whycode_core::types::Usage::default(),
+        usage: whycodes_core::types::Usage::default(),
         duration_ms: 1,
     }
 }
@@ -1040,12 +1040,12 @@ fn fold_parallel_joins_ok_fail_and_panic() {
 #[tokio::test]
 async fn headless_turn_with_scripted_provider() {
     let dir = tempfile::tempdir().unwrap();
-    let mut registry = whycode_llm::ProviderRegistry::new();
-    registry.register(Box::new(whycode_llm::ScriptedProvider::text("hello")));
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::text("hello")));
     let agent =
         Agent::new(agent_info_for(&cli(None), &Config::default())).with_provider_registry(registry);
     let mut session =
-        whycode_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
     session.add_user_message("hi");
     run_headless_turn(
         &agent,
@@ -1060,14 +1060,14 @@ async fn headless_turn_with_scripted_provider() {
     .await
     .unwrap();
 
-    let mut registry = whycode_llm::ProviderRegistry::new();
-    registry.register(Box::new(whycode_llm::ScriptedProvider::new([
-        whycode_llm::ScriptedStep::FailOpen("cancelled by test".into()),
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::new([
+        whycodes_llm::ScriptedStep::FailOpen("cancelled by test".into()),
     ])));
     let agent =
         Agent::new(agent_info_for(&cli(None), &Config::default())).with_provider_registry(registry);
     let mut session =
-        whycode_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
     session.add_user_message("please fail");
     assert!(
         run_headless_turn(
@@ -1096,9 +1096,9 @@ fn generate_prompt_helpers() {
 #[tokio::test]
 async fn cmd_generate_single_and_parallel_unknown_provider() {
     let dir = tempfile::tempdir().unwrap();
-    let prev_home = std::env::var_os("WHYCODE_HOME");
+    let prev_home = std::env::var_os("WHYCODES_HOME");
     let prev_key = std::env::var_os("SCRIPT_API_KEY");
-    unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     unsafe { std::env::set_var("SCRIPT_API_KEY", "k") };
     let mut c = cli(None);
     c.provider = Some("script".into());
@@ -1114,8 +1114,8 @@ async fn cmd_generate_single_and_parallel_unknown_provider() {
     )
     .await;
     match prev_home {
-        Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-        None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
     }
     match prev_key {
         Some(v) => unsafe { std::env::set_var("SCRIPT_API_KEY", v) },
@@ -1203,10 +1203,10 @@ mod upgrade_helpers {
     fn find_asset_id_and_release_version() {
         let body = serde_json::json!({
             "tag_name": "v1.2.3",
-            "assets": [{"name": "whycode.tgz", "id": 9}]
+            "assets": [{"name": "whycodes.tgz", "id": 9}]
         });
         assert_eq!(release_version(&body).unwrap(), "1.2.3");
-        assert_eq!(find_asset_id(&body, "whycode.tgz").unwrap(), 9);
+        assert_eq!(find_asset_id(&body, "whycodes.tgz").unwrap(), 9);
         assert!(find_asset_id(&body, "missing").is_err());
         assert!(find_asset_id(&serde_json::json!({}), "x").is_err());
         assert!(find_asset_id(&serde_json::json!({"assets": [{"name": "x"}]}), "x").is_err());
@@ -1225,7 +1225,7 @@ mod upgrade_helpers {
                 let mut h = tar::Header::new_gnu();
                 h.set_size(3);
                 h.set_cksum();
-                b.append_data(&mut h, "whycode", &b"bin"[..]).unwrap();
+                b.append_data(&mut h, "whycodes", &b"bin"[..]).unwrap();
                 b.finish().unwrap();
             }
             let mut gz = Vec::new();
@@ -1234,20 +1234,20 @@ mod upgrade_helpers {
             enc.finish().unwrap();
             gz
         };
-        assert_eq!(extract(&tar_bytes, "whycode.tar.gz").unwrap(), b"bin");
-        assert!(extract(b"not-a-tar", "whycode.tar.gz").is_err());
+        assert_eq!(extract(&tar_bytes, "whycodes.tar.gz").unwrap(), b"bin");
+        assert!(extract(b"not-a-tar", "whycodes.tar.gz").is_err());
 
         let zip_bytes = {
             let mut buf = Vec::new();
             let cursor = std::io::Cursor::new(&mut buf);
             let mut zip = zip::ZipWriter::new(cursor);
-            zip.start_file("whycode.exe", zip::write::SimpleFileOptions::default())
+            zip.start_file("whycodes.exe", zip::write::SimpleFileOptions::default())
                 .unwrap();
             zip.write_all(b"exe").unwrap();
             zip.finish().unwrap();
             buf
         };
-        assert_eq!(extract(&zip_bytes, "whycode.zip").unwrap(), b"exe");
+        assert_eq!(extract(&zip_bytes, "whycodes.zip").unwrap(), b"exe");
         let empty_zip = {
             let mut buf = Vec::new();
             let cursor = std::io::Cursor::new(&mut buf);
@@ -1258,8 +1258,8 @@ mod upgrade_helpers {
             zip.finish().unwrap();
             buf
         };
-        assert!(extract(&empty_zip, "whycode.zip").is_err());
-        assert!(extract(b"nope", "whycode.zip").is_err());
+        assert!(extract(&empty_zip, "whycodes.zip").is_err());
+        assert!(extract(b"nope", "whycodes.zip").is_err());
         assert!(
             extract(&tar_bytes, "other.tar.gz").is_ok()
                 || extract(
@@ -1280,7 +1280,7 @@ mod upgrade_helpers {
                         enc.finish().unwrap();
                         gz
                     },
-                    "whycode.tar.gz"
+                    "whycodes.tar.gz"
                 )
                 .is_err()
         );
@@ -1304,14 +1304,14 @@ mod upgrade_helpers {
         assert!(!is_newer("0.1.0-rc1", "0.1.0"));
         assert_eq!(
             expected_digest(
-                "abc123  whycode-x86_64-unknown-linux-gnu.tar.gz\ndef456  whycode-x86_64-pc-windows-msvc.zip\n",
-                "whycode-x86_64-pc-windows-msvc.zip"
+                "abc123  whycodes-x86_64-unknown-linux-gnu.tar.gz\ndef456  whycodes-x86_64-pc-windows-msvc.zip\n",
+                "whycodes-x86_64-pc-windows-msvc.zip"
             ),
             Some("def456".into())
         );
         assert_eq!(expected_digest("abc", "x"), None);
         assert_eq!(
-            expected_digest("abc123 *whycode.tar.gz", "whycode.tar.gz"),
+            expected_digest("abc123 *whycodes.tar.gz", "whycodes.tar.gz"),
             Some("abc123".into())
         );
         assert_eq!(
@@ -1323,18 +1323,18 @@ mod upgrade_helpers {
     #[test]
     fn replace_binary_fresh_and_existing() {
         let dir = tempfile::tempdir().unwrap();
-        let target = dir.path().join("whycode");
+        let target = dir.path().join("whycodes");
         replace_binary(&target, b"fresh").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"fresh");
         replace_binary(&target, b"new").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"new");
-        assert!(!dir.path().join(".whycode.new").exists());
-        assert!(!dir.path().join(".whycode.old").exists());
+        assert!(!dir.path().join(".whycodes.new").exists());
+        assert!(!dir.path().join(".whycodes.old").exists());
     }
 
     #[test]
     fn decide_upgrade_up_to_date_mismatch_and_install() {
-        let name = "whycode.tar.gz";
+        let name = "whycodes.tar.gz";
         let tar_bytes = {
             let mut raw = Vec::new();
             {
@@ -1342,7 +1342,7 @@ mod upgrade_helpers {
                 let mut h = tar::Header::new_gnu();
                 h.set_size(3);
                 h.set_cksum();
-                b.append_data(&mut h, "whycode", &b"bin"[..]).unwrap();
+                b.append_data(&mut h, "whycodes", &b"bin"[..]).unwrap();
                 b.finish().unwrap();
             }
             let mut gz = Vec::new();
@@ -1362,7 +1362,7 @@ mod upgrade_helpers {
             decide_upgrade(
                 "0.1.0",
                 "0.2.0",
-                "deadbeef  whycode.tar.gz\n",
+                "deadbeef  whycodes.tar.gz\n",
                 name,
                 &tar_bytes
             )

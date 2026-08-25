@@ -3,7 +3,7 @@ use serde_json::json;
 
 use super::search::WebSearchTool;
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// MCP-accessible web search tool.
 ///

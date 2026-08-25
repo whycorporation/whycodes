@@ -9,10 +9,10 @@ stays out. `plugins.toml` → `plugin_*` and config hooks already shipped.
 
 | # | Slice | Status |
 |---|---|---|
-| 1 | Discover `$CONFIG/plugins/*/plugin.json` and `.whycode/plugins/*/plugin.json` | [x] |
+| 1 | Discover `$CONFIG/plugins/*/plugin.json` and `.whycodes/plugins/*/plugin.json` | [x] |
 | 2 | Register as `plugin_*` (relative command + cwd; infer `run.sh`) | [x] |
 | 3 | Last-wins merge: toml then json; project over global | [x] |
-| 4 | `whycode plugins` lists both sources | [x] |
+| 4 | `whycodes plugins` lists both sources | [x] |
 
 ## Non-goals
 

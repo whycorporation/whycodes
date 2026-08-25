@@ -5,7 +5,7 @@
 **2026-08-07 update:** Lightweight swarm + worktree isolation shipped:
 
 - `swarm` tool (parallel subagents, max 8, config `[swarm]`)
-- Git worktrees under `.whycode/swarm/<run>/worker-N` (`swarm.worktrees = true`)
+- Git worktrees under `.whycodes/swarm/<run>/worker-N` (`swarm.worktrees = true`)
 - Three-way merge back into main; conflicts toast as `FileConflict`
 - In-process `FileClaimRegistry` for same-checkout mode / pre-claims
 - Long worker reports get a synthetic `TLDR:` when over 2k chars
@@ -25,11 +25,11 @@ situation changes.
 
 > What task is actually faster with three agents than with one?
 
-**For whycode today: none that we have.**
+**For whycodes today: none that we have.**
 
 Parallel agents pay off when work decomposes into independent pieces that each
 need their own context — a wide audit, a mechanical migration across hundreds of
-files, separate investigations of unrelated subsystems. whycode is 26k lines
+files, separate investigations of unrelated subsystems. whycodes is 26k lines
 across 19 crates. A change here touches one or two crates, and the coordination
 overhead plus merge conflicts would exceed the gain on every task carried out in
 this repository so far, including the phases in this plan.
@@ -56,7 +56,7 @@ The design notes below are left intact for whoever revisits this.
 
 ## Problem
 
-whycode has subagents: the `task` tool spawns `general`, `explore` or `scout`,
+whycodes has subagents: the `task` tool spawns `general`, `explore` or `scout`,
 each runs to completion and reports back. One at a time, one conversation.
 
 jcode's "swarm" runs several agents on one repository concurrently with

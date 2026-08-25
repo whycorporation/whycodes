@@ -9,7 +9,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::path::Path;
-use whycode_command_risk::assess_with_home;
+use whycodes_command_risk::assess_with_home;
 
 fn project() -> &'static Path {
     Path::new("/work/proj")

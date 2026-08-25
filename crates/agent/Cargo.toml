@@ -1,5 +1,5 @@
 [package]
-name = "whycode-agent"
+name = "whycodes-agent"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,21 +7,21 @@ repository.workspace = true
 
 [features]
 default = []
-onnx = ["whycode-memory/onnx"]
+onnx = ["whycodes-memory/onnx"]
 
 [dependencies]
-whycode-core = { path = "../core" }
-whycode-index = { path = "../index" }
-whycode-config = { path = "../config" }
-whycode-llm = { path = "../llm" }
-whycode-tools = { path = "../tools" }
-whycode-session = { path = "../session" }
-whycode-mcp = { path = "../mcp" }
-whycode-command-risk = { path = "../command-risk" }
-whycode-sandbox = { path = "../sandbox" }
-whycode-plugin = { path = "../plugin" }
-whycode-memory = { path = "../memory" }
-whycode-skill = { path = "../skill" }
+whycodes-core = { path = "../core" }
+whycodes-index = { path = "../index" }
+whycodes-config = { path = "../config" }
+whycodes-llm = { path = "../llm" }
+whycodes-tools = { path = "../tools" }
+whycodes-session = { path = "../session" }
+whycodes-mcp = { path = "../mcp" }
+whycodes-command-risk = { path = "../command-risk" }
+whycodes-sandbox = { path = "../sandbox" }
+whycodes-plugin = { path = "../plugin" }
+whycodes-memory = { path = "../memory" }
+whycodes-skill = { path = "../skill" }
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

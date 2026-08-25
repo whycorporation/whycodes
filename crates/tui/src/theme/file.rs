@@ -129,7 +129,7 @@ impl ThemeFile {
 
     /// Build a palette for one variant.
     ///
-    /// whycode's palette has 27 fields against the schema's 49 roles, so
+    /// whycodes's palette has 27 fields against the schema's 49 roles, so
     /// several roles go unused and several fields are derived from a related
     /// role. Only the roles listed in `REQUIRED` must be present; everything
     /// else falls back to the built-in dark or light theme, which keeps a
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn loading_a_directory_yields_a_dark_and_a_light_theme_per_file() {
-        let dir = std::env::temp_dir().join(format!("whycode-themes-{}", uuid_like()));
+        let dir = std::env::temp_dir().join(format!("whycodes-themes-{}", uuid_like()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("sample.json"), SAMPLE).unwrap();
         std::fs::write(dir.join("broken.json"), "{not json").unwrap();

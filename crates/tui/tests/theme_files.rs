@@ -7,7 +7,7 @@
 
 use ratatui::style::Color;
 use std::path::PathBuf;
-use whycode_tui::theme_file::{ThemeFile, load_dir};
+use whycodes_tui::theme_file::{ThemeFile, load_dir};
 
 fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -87,7 +87,7 @@ trait PaletteExt {
 }
 
 impl PaletteExt
-    for Result<whycode_tui::theme::ThemePalette, whycode_tui::theme_file::ThemeFileError>
+    for Result<whycodes_tui::theme::ThemePalette, whycodes_tui::theme_file::ThemeFileError>
 {
     fn bg_or_panic(self) -> Color {
         self.expect("palette should resolve").bg

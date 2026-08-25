@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn auto_marks_system_tools_and_latest_user() {
         let mut body = serde_json::json!({
-            "system": "You are Whycode.",
+            "system": "You are WhyCodes.",
             "tools": [
                 {"name": "read", "description": "r", "input_schema": {"type": "object"}},
                 {"name": "grep", "description": "g", "input_schema": {"type": "object"}},

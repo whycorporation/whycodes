@@ -4,7 +4,7 @@
 
 use super::*;
 use std::path::PathBuf;
-use whycode_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
 #[test]
 fn off_mode_prepares_host_bash() {
@@ -170,7 +170,7 @@ fn run_off_mode_captures_stdout() {
 
 #[test]
 fn missing_working_dir_still_prepares() {
-    let missing = PathBuf::from("/no/such/whycode-sandbox-cwd");
+    let missing = PathBuf::from("/no/such/whycodes-sandbox-cwd");
     let req = SandboxRequest {
         command: "true".into(),
         working_dir: missing.clone(),
@@ -281,7 +281,7 @@ fn prepare_with_forced_bwrap_hits_prepare_bwrap() {
 #[test]
 fn canonicalize_missing_path_is_bad_working_dir() {
     let err =
-        crate::policy::canonicalize_or_bad(std::path::Path::new("/no/such/whycode-sandbox-canon"));
+        crate::policy::canonicalize_or_bad(std::path::Path::new("/no/such/whycodes-sandbox-canon"));
     assert!(matches!(err, Err(SandboxError::BadWorkingDir(_))));
 }
 
@@ -348,7 +348,7 @@ fn prepare_bwrap_without_home_and_root_auth_sock() {
     let prev_home = std::env::var_os("HOME");
     let prev_sock = std::env::var_os("SSH_AUTH_SOCK");
     unsafe { std::env::set_var("HOME", tempfile::tempdir().unwrap().path()) };
-    unsafe { std::env::set_var("SSH_AUTH_SOCK", "/no/such/whycode-ssh-dir/agent.sock") };
+    unsafe { std::env::set_var("SSH_AUTH_SOCK", "/no/such/whycodes-ssh-dir/agent.sock") };
     let dir = tempfile::tempdir().unwrap();
     let prepared = crate::bwrap::prepare_bwrap_bin(Some(stub_bwrap()), "true", dir.path(), true);
     restore_os("HOME", prev_home);
@@ -414,10 +414,10 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 
 #[test]
 fn restore_os_both_branches() {
-    let prev = std::env::var_os("WHYCODE_SANDBOX_COV");
-    restore_os("WHYCODE_SANDBOX_COV", Some(std::ffi::OsString::from("1")));
-    restore_os("WHYCODE_SANDBOX_COV", None);
-    restore_os("WHYCODE_SANDBOX_COV", prev);
+    let prev = std::env::var_os("WHYCODES_SANDBOX_COV");
+    restore_os("WHYCODES_SANDBOX_COV", Some(std::ffi::OsString::from("1")));
+    restore_os("WHYCODES_SANDBOX_COV", None);
+    restore_os("WHYCODES_SANDBOX_COV", prev);
 }
 
 #[test]
@@ -453,7 +453,7 @@ fn sandbox_error_display() {
 #[test]
 fn spawn_capture_missing_program_is_io_error() {
     let err = crate::policy::spawn_capture(&PreparedCommand {
-        program: "/no/such/whycode-sandbox-bin".into(),
+        program: "/no/such/whycodes-sandbox-bin".into(),
         args: vec![],
         working_dir: PathBuf::from("/tmp"),
         backend: Backend::Host,

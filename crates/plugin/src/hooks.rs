@@ -3,7 +3,7 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use whycode_config::{HookConfig, HookEvent};
+use whycodes_config::{HookConfig, HookEvent};
 
 /// Truncate long tool output before stuffing it into an env var.
 const OUTPUT_ENV_MAX: usize = 8_192;
@@ -150,20 +150,20 @@ pub async fn run_hook(hook: &HookConfig, ctx: &HookContext) -> HookRunResult {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
-        .env("WHYCODE_HOOK_EVENT", event_env(ctx.event))
-        .env("WHYCODE_TOOL_NAME", &ctx.tool_name)
-        .env("WHYCODE_TOOL_ID", &ctx.tool_id)
-        .env("WHYCODE_TOOL_INPUT", &ctx.tool_input)
-        .env("WHYCODE_WORKING_DIR", &ctx.working_dir);
+        .env("WHYCODES_HOOK_EVENT", event_env(ctx.event))
+        .env("WHYCODES_TOOL_NAME", &ctx.tool_name)
+        .env("WHYCODES_TOOL_ID", &ctx.tool_id)
+        .env("WHYCODES_TOOL_INPUT", &ctx.tool_input)
+        .env("WHYCODES_WORKING_DIR", &ctx.working_dir);
 
     if let Some(ref sid) = ctx.session_id {
-        cmd.env("WHYCODE_SESSION_ID", sid);
+        cmd.env("WHYCODES_SESSION_ID", sid);
     }
     if let Some(is_err) = ctx.tool_is_error {
-        cmd.env("WHYCODE_TOOL_IS_ERROR", if is_err { "1" } else { "0" });
+        cmd.env("WHYCODES_TOOL_IS_ERROR", if is_err { "1" } else { "0" });
     }
     if let Some(ref out) = ctx.tool_output {
-        cmd.env("WHYCODE_TOOL_OUTPUT", out);
+        cmd.env("WHYCODES_TOOL_OUTPUT", out);
     }
 
     let child = match cmd.spawn() {
@@ -313,7 +313,7 @@ fn format_failure(hook: &HookConfig, result: &HookRunResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_config::HookConfig;
+    use whycodes_config::HookConfig;
 
     fn work_dir() -> String {
         std::env::temp_dir().to_str().unwrap_or(".").to_string()
@@ -513,7 +513,7 @@ mod tests {
             "id",
             "{}",
             None,
-            "/this/path/does/not/exist/whycode-plugin-hooks",
+            "/this/path/does/not/exist/whycodes-plugin-hooks",
         );
         let result = run_hook(&cfg, &ctx).await;
         assert!(!result.success());

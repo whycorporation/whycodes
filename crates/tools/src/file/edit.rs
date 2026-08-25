@@ -3,8 +3,8 @@ use serde_json::json;
 
 use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
-use whycode_format::diff::{first_line_number, format_edit_preview_at};
+use whycodes_core::types::ToolResult;
+use whycodes_format::diff::{first_line_number, format_edit_preview_at};
 
 pub struct EditTool;
 

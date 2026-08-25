@@ -1,6 +1,6 @@
 //! Replace the running binary with the newest published release.
 //!
-//! `whycode upgrade` previously printed instructions to re-clone and
+//! `whycodes upgrade` previously printed instructions to re-clone and
 //! `cargo install`, while `--help` advertised it as "Self-update". This does
 //! what it says.
 //!
@@ -15,7 +15,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 const REPO: &str = "whycorporation/whycode";
-const USER_AGENT: &str = concat!("whycode/", env!("CARGO_PKG_VERSION"));
+const USER_AGENT: &str = concat!("whycodes/", env!("CARGO_PKG_VERSION"));
 
 /// The release-artifact name for the platform this binary was built for.
 ///
@@ -27,10 +27,10 @@ pub fn target_archive() -> Result<&'static str> {
 
 pub(crate) fn archive_for(os: &str, arch: &str) -> Result<&'static str> {
     Ok(match (os, arch) {
-        ("linux", "x86_64") => "whycode-x86_64-unknown-linux-gnu.tar.gz",
-        ("macos", "aarch64") => "whycode-aarch64-apple-darwin.tar.gz",
-        ("macos", "x86_64") => "whycode-x86_64-apple-darwin.tar.gz",
-        ("windows", "x86_64") => "whycode-x86_64-pc-windows-msvc.zip",
+        ("linux", "x86_64") => "whycodes-x86_64-unknown-linux-gnu.tar.gz",
+        ("macos", "aarch64") => "whycodes-aarch64-apple-darwin.tar.gz",
+        ("macos", "x86_64") => "whycodes-x86_64-apple-darwin.tar.gz",
+        ("windows", "x86_64") => "whycodes-x86_64-pc-windows-msvc.zip",
         (os, arch) => bail!(
             "no published binary for {os}/{arch} — build from source with `cargo build --release`"
         ),
@@ -216,20 +216,20 @@ async fn latest_release_json(client: &reqwest::Client) -> Result<serde_json::Val
         .context("parsing latest release JSON")
 }
 
-/// Extract the `whycode` executable from a downloaded archive.
+/// Extract the `whycodes` executable from a downloaded archive.
 pub(crate) fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
     if name.ends_with(".zip") {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
             .context("the downloaded archive is not a valid zip")?;
         for i in 0..zip.len() {
             let mut entry = zip.by_index(i)?;
-            if entry.name().ends_with("whycode.exe") {
+            if entry.name().ends_with("whycodes.exe") {
                 let mut out = Vec::new();
                 entry.read_to_end(&mut out)?;
                 return Ok(out);
             }
         }
-        bail!("the archive did not contain whycode.exe");
+        bail!("the archive did not contain whycodes.exe");
     }
 
     let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
@@ -238,14 +238,14 @@ pub(crate) fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
         let is_binary = entry
             .path()
             .ok()
-            .is_some_and(|p| p.file_name().is_some_and(|n| n == "whycode"));
+            .is_some_and(|p| p.file_name().is_some_and(|n| n == "whycodes"));
         if is_binary {
             let mut out = Vec::new();
             entry.read_to_end(&mut out)?;
             return Ok(out);
         }
     }
-    bail!("the archive did not contain a whycode binary");
+    bail!("the archive did not contain a whycodes binary");
 }
 
 /// Put `bytes` in place of the binary at `target`.
@@ -256,8 +256,8 @@ pub(crate) fn extract(archive: &[u8], name: &str) -> Result<Vec<u8>> {
 /// next upgrade.
 pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
     let dir = target.parent().context("binary has no parent directory")?;
-    let staged = dir.join(".whycode.new");
-    let displaced = dir.join(".whycode.old");
+    let staged = dir.join(".whycodes.new");
+    let displaced = dir.join(".whycodes.old");
 
     std::fs::write(&staged, bytes).with_context(|| format!("writing {}", staged.display()))?;
 
@@ -271,7 +271,7 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
     if target.exists() && std::fs::rename(target, &displaced).is_err() {
         let _ = std::fs::remove_file(&staged);
         bail!(
-            "could not move the current binary aside at {} — close any running whycode and retry",
+            "could not move the current binary aside at {} — close any running whycodes and retry",
             target.display()
         );
     }

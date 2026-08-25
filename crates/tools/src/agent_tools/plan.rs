@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 pub struct PlanTool;
 
@@ -45,16 +45,16 @@ impl Tool for PlanTool {
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let action = args["action"].as_str().unwrap_or("");
 
-        let whycode_dir = std::path::Path::new(&ctx.working_dir).join(".whycode");
-        let plan_mode_file = whycode_dir.join("plan_mode");
+        let whycodes_dir = std::path::Path::new(&ctx.working_dir).join(".whycodes");
+        let plan_mode_file = whycodes_dir.join("plan_mode");
 
         match action {
             "enter" => {
-                // Create .whycode directory if it doesn't exist
-                if let Err(e) = std::fs::create_dir_all(&whycode_dir) {
+                // Create .whycodes directory if it doesn't exist
+                if let Err(e) = std::fs::create_dir_all(&whycodes_dir) {
                     return ToolResult {
                         tool_call_id: String::new(),
-                        content: format!("Error creating .whycode directory: {}", e),
+                        content: format!("Error creating .whycodes directory: {}", e),
                         is_error: true,
                     };
                 }

@@ -73,7 +73,7 @@ impl SkillRegistry {
         for dir in [
             project.join(".skills"),
             project.join("skills"),
-            project.join(".whycode").join("skills"),
+            project.join(".whycodes").join("skills"),
         ] {
             if dir.is_dir() {
                 registry.load_from_dir(&dir)?;
@@ -188,10 +188,10 @@ impl PluginRegistry {
         Self::parse_toml(&content)
     }
 
-    /// Merge project-level `.whycode/plugins.toml` (later entries override by name).
+    /// Merge project-level `.whycodes/plugins.toml` (later entries override by name).
     pub fn load_layered(project_dir: &std::path::Path) -> anyhow::Result<Self> {
         let mut reg = Self::load_from_config().unwrap_or_default();
-        let path = project_dir.join(".whycode").join("plugins.toml");
+        let path = project_dir.join(".whycodes").join("plugins.toml");
         if path.exists() {
             let content = std::fs::read_to_string(&path)?;
             let project = Self::parse_toml(&content)?;
@@ -227,19 +227,19 @@ impl PluginRegistry {
     }
 }
 
-/// Return the global user config directory for whycode.
-fn whycode_config_dir() -> PathBuf {
-    whycode_core::paths::config_dir()
+/// Return the global user config directory for whycodes.
+fn whycodes_config_dir() -> PathBuf {
+    whycodes_core::paths::config_dir()
 }
 
 /// Return the global skills directory:  `$CONFIG_DIR/skills/`
 fn global_skills_dir() -> PathBuf {
-    whycode_config_dir().join("skills")
+    whycodes_config_dir().join("skills")
 }
 
 /// Return the global plugins config file:  `$CONFIG_DIR/plugins.toml`
 fn global_plugins_path() -> PathBuf {
-    whycode_config_dir().join("plugins.toml")
+    whycodes_config_dir().join("plugins.toml")
 }
 
 #[cfg(test)]
@@ -358,9 +358,9 @@ description = "d"
         )
         .unwrap();
 
-        let prev_home = std::env::var_os("WHYCODE_HOME");
+        let prev_home = std::env::var_os("WHYCODES_HOME");
         let prev_cwd = std::env::current_dir().unwrap();
-        unsafe { std::env::set_var("WHYCODE_HOME", &home) };
+        unsafe { std::env::set_var("WHYCODES_HOME", &home) };
         std::env::set_current_dir(root.path()).unwrap();
         let loaded = SkillRegistry::load();
         std::env::set_current_dir(prev_cwd).unwrap();
@@ -376,9 +376,9 @@ description = "d"
         let root = tempfile::tempdir().unwrap();
         let home = root.path().join("empty-home");
         std::fs::create_dir_all(&home).unwrap();
-        let prev_home = std::env::var_os("WHYCODE_HOME");
+        let prev_home = std::env::var_os("WHYCODES_HOME");
         let prev_cwd = std::env::current_dir().unwrap();
-        unsafe { std::env::set_var("WHYCODE_HOME", &home) };
+        unsafe { std::env::set_var("WHYCODES_HOME", &home) };
         std::env::set_current_dir(root.path()).unwrap();
         let loaded = SkillRegistry::load();
         std::env::set_current_dir(prev_cwd).unwrap();
@@ -429,7 +429,7 @@ description = "d"
             "---\nname: extra\ndescription: from skills/\n---\n\nE\n",
         )
         .unwrap();
-        let nested = root.path().join(".whycode").join("skills").join("nested");
+        let nested = root.path().join(".whycodes").join("skills").join("nested");
         std::fs::create_dir_all(&nested).unwrap();
         std::fs::write(
             nested.join("SKILL.md"),
@@ -444,7 +444,7 @@ description = "d"
         )
         .unwrap();
         // Duplicate name in SKILL.md tree is skipped.
-        let dup = root.path().join(".whycode").join("skills").join("dup");
+        let dup = root.path().join(".whycodes").join("skills").join("dup");
         std::fs::create_dir_all(&dup).unwrap();
         std::fs::write(
             dup.join("SKILL.md"),
@@ -452,11 +452,11 @@ description = "d"
         )
         .unwrap();
         // Broken SKILL.md is ignored.
-        let bad = root.path().join(".whycode").join("skills").join("bad");
+        let bad = root.path().join(".whycodes").join("skills").join("bad");
         std::fs::create_dir_all(&bad).unwrap();
         std::fs::write(bad.join("SKILL.md"), "not a skill\n").unwrap();
         // Directory without SKILL.md is skipped (not treated as a skill).
-        let empty = root.path().join(".whycode").join("skills").join("empty");
+        let empty = root.path().join(".whycodes").join("skills").join("empty");
         std::fs::create_dir_all(&empty).unwrap();
         std::fs::write(empty.join("README.md"), "not a skill file\n").unwrap();
 
@@ -472,8 +472,8 @@ description = "d"
     fn load_for_project_includes_global_skills() {
         let _guard = env_lock();
         let home = tempfile::tempdir().unwrap();
-        let prev = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
         let global = home.path().join("skills");
         std::fs::create_dir_all(&global).unwrap();
         std::fs::write(
@@ -492,9 +492,9 @@ description = "d"
         let _guard = env_lock();
         let home = tempfile::tempdir().unwrap();
         // Ensure the restore-Some branch runs even when the process had no home set.
-        unsafe { std::env::set_var("WHYCODE_HOME", "/tmp/whycode-cov-sentinel") };
-        let prev_home = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", "/tmp/whycodes-cov-sentinel") };
+        let prev_home = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
 
         let empty = PluginRegistry::load_from_config().unwrap();
         assert!(empty.plugins.is_empty());
@@ -521,8 +521,8 @@ description = "d"
         let _guard = env_lock();
         let home = tempfile::tempdir().unwrap();
         std::fs::create_dir(home.path().join("plugins.toml")).unwrap();
-        let prev_home = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        let prev_home = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
         let err = PluginRegistry::load_from_config();
         restore_home(prev_home);
         assert!(err.is_err());
@@ -533,8 +533,8 @@ description = "d"
         let _guard = env_lock();
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join("plugins.toml"), "[[plugins]]\nname = [").unwrap();
-        let prev_home = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        let prev_home = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
         let err = PluginRegistry::load_from_config();
         restore_home(prev_home);
         assert!(err.is_err());
@@ -558,11 +558,11 @@ description = "g"
 "#,
         )
         .unwrap();
-        let prev_home = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        let prev_home = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
 
         let project = tempfile::tempdir().unwrap();
-        let why = project.path().join(".whycode");
+        let why = project.path().join(".whycodes");
         std::fs::create_dir_all(&why).unwrap();
         std::fs::write(
             why.join("plugins.toml"),
@@ -599,8 +599,8 @@ description = "p"
 
     fn restore_home(prev: Option<std::ffi::OsString>) {
         match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
         }
     }
 
@@ -609,8 +609,8 @@ description = "p"
         let _guard = env_lock();
         let home = tempfile::tempdir().unwrap();
         std::fs::write(home.path().join("plugins.toml"), "[[plugins]]\nname = [").unwrap();
-        let prev_home = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        let prev_home = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
         let project = tempfile::tempdir().unwrap();
         let layered = PluginRegistry::load_layered(project.path());
         restore_home(prev_home);
@@ -620,7 +620,7 @@ description = "p"
     #[test]
     fn restore_home_both_branches() {
         let _guard = env_lock();
-        let prev = std::env::var_os("WHYCODE_HOME");
+        let prev = std::env::var_os("WHYCODES_HOME");
         restore_home(Some(std::ffi::OsString::from("/tmp")));
         restore_home(None);
         restore_home(prev);

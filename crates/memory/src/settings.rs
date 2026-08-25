@@ -6,7 +6,7 @@ pub enum MemoryScope {
     /// Machine-local under data_dir (default; Claude auto-memory parity).
     #[default]
     User,
-    /// Project-local under `.whycode/memory/` (git-shareable cross-machine).
+    /// Project-local under `.whycodes/memory/` (git-shareable cross-machine).
     Project,
 }
 

@@ -31,7 +31,7 @@ import {
   validateSchema,
 } from "./types.js";
 
-export class WhycodeClient {
+export class WhyCodesClient {
   readonly baseUrl: string;
   #child: ChildProcess | undefined;
   #ephemeralHome: string | undefined;
@@ -41,18 +41,18 @@ export class WhycodeClient {
     this.#child = child;
   }
 
-  /** Attach to an already-running daemon (`whycode serve`). */
-  static async connect(base: string): Promise<WhycodeClient> {
-    const client = new WhycodeClient(normalizeBase(base));
+  /** Attach to an already-running daemon (`whycodes serve`). */
+  static async connect(base: string): Promise<WhyCodesClient> {
+    const client = new WhyCodesClient(normalizeBase(base));
     await client.health();
     return client;
   }
 
   /**
-   * Spawn `whycode serve` as a private instance and connect to it.
+   * Spawn `whycodes serve` as a private instance and connect to it.
    * The child inherits this process's environment (API keys, `HOME`).
    */
-  static async launch(opts: LaunchOptions = {}): Promise<WhycodeClient> {
+  static async launch(opts: LaunchOptions = {}): Promise<WhyCodesClient> {
     const workingDir = opts.workingDir ?? process.cwd();
     const startupTimeoutMs = opts.startupTimeoutMs ?? 15_000;
     const port = opts.port ?? (await ephemeralPort());
@@ -61,9 +61,9 @@ export class WhycodeClient {
     const env: NodeJS.ProcessEnv = { ...process.env };
     let ephemeralHome: string | undefined;
     if (!inheritLogins || opts.home) {
-      const home = opts.home ?? (await mkdtemp(join(tmpdir(), "whycode-sdk-")));
+      const home = opts.home ?? (await mkdtemp(join(tmpdir(), "whycodes-sdk-")));
       if (!opts.home) ephemeralHome = home;
-      env.WHYCODE_HOME = home;
+      env.WHYCODES_HOME = home;
       if (!inheritLogins) {
         for (const key of [
           "ANTHROPIC_API_KEY",
@@ -90,7 +90,7 @@ export class WhycodeClient {
     });
 
     const baseUrl = `http://127.0.0.1:${port}`;
-    const client = new WhycodeClient(baseUrl, child);
+    const client = new WhyCodesClient(baseUrl, child);
     client.#ephemeralHome = ephemeralHome;
     const deadline = Date.now() + startupTimeoutMs;
 
@@ -108,7 +108,7 @@ export class WhycodeClient {
           const stderr = Buffer.concat(stderrChunks).toString("utf8").trim();
           throw new SdkError(
             "startup_failed",
-            `whycode serve exited (${exit}).${stderr ? ` stderr: ${stderr}` : ""}`,
+            `whycodes serve exited (${exit}).${stderr ? ` stderr: ${stderr}` : ""}`,
           );
         }
         try {
@@ -132,7 +132,7 @@ export class WhycodeClient {
     if (res.status === 404) {
       throw new SdkError(
         "unsupported_version",
-        `${this.baseUrl} has no /v1/health — upgrade whycode serve (need protocol ${PROTOCOL_MAJOR})`,
+        `${this.baseUrl} has no /v1/health — upgrade whycodes serve (need protocol ${PROTOCOL_MAJOR})`,
       );
     }
     if (!res.ok) {
@@ -514,10 +514,10 @@ export function normalizeBase(addr: string): string {
 
 function resolveBinary(explicit?: string): string {
   if (explicit) return explicit;
-  if (process.env.WHYCODE) return process.env.WHYCODE;
-  const sibling = process.platform === "win32" ? "whycode.exe" : "whycode";
+  if (process.env.WHYCODES) return process.env.WHYCODES;
+  const sibling = process.platform === "win32" ? "whycodes.exe" : "whycodes";
   if (existsSync(sibling)) return sibling;
-  return onPath("whycode") ?? "whycode";
+  return onPath("whycodes") ?? "whycodes";
 }
 
 function onPath(name: string): string | undefined {

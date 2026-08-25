@@ -143,9 +143,9 @@ fn project_roots_without_allowlist() {
 fn project_roots_reads_allowlist() {
     let dir = fixture();
     let ext = tempfile::TempDir::new().unwrap();
-    fs::create_dir_all(dir.path().join(".whycode")).unwrap();
+    fs::create_dir_all(dir.path().join(".whycodes")).unwrap();
     fs::write(
-        dir.path().join(".whycode/external_dirs_allowed"),
+        dir.path().join(".whycodes/external_dirs_allowed"),
         format!("# comment\n{}\n\n", ext.path().display()),
     )
     .unwrap();

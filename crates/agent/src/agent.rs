@@ -1,27 +1,27 @@
 use futures::StreamExt;
 use std::sync::Arc;
-use whycode_core::SandboxSettings;
-use whycode_core::network::NetworkPolicy;
-use whycode_core::tool::ToolContext;
-use whycode_core::types::{
+use whycodes_core::SandboxSettings;
+use whycodes_core::network::NetworkPolicy;
+use whycodes_core::tool::ToolContext;
+use whycodes_core::types::{
     AgentInfo, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
 };
-use whycode_llm::provider::ProviderRegistry;
-use whycode_tools::executor::ToolExecutor;
-use whycode_tools::profile::ToolProfile;
+use whycodes_llm::provider::ProviderRegistry;
+use whycodes_tools::executor::ToolExecutor;
+use whycodes_tools::profile::ToolProfile;
 
 use std::collections::VecDeque;
 use std::time::Instant;
-use whycode_session::session::Session;
+use whycodes_session::session::Session;
 
 use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
 use super::permission::{PermissionPrompter, default_prompter};
 use super::question::{QuestionPrompter, default_question_prompter, run_question_tool};
 use super::subagent::{SubagentRunner, SubagentTask};
 use super::tool_stream::ToolCallAssembler;
-use whycode_command_risk::{Decision, RiskThreshold, assess, decide};
-use whycode_config::HookConfig;
-use whycode_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
+use whycodes_command_risk::{Decision, RiskThreshold, assess, decide};
+use whycodes_config::HookConfig;
+use whycodes_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
 
 /// Tool names that run an arbitrary shell command string.
 const SHELL_TOOLS: &[&str] = &["bash", "shell"];
@@ -144,7 +144,7 @@ const SERIAL_TOOLS: &[&str] = &[
 ///
 /// Industry pattern (OpenCode issue #24764, Codex parallel function calls):
 /// fan out independent reads; keep mutators and permission-gated tools serial.
-fn is_parallel_safe_tool(name: &str, _permission: &whycode_core::types::PermissionSet) -> bool {
+fn is_parallel_safe_tool(name: &str, _permission: &whycodes_core::types::PermissionSet) -> bool {
     // Mutators/shell stay serial. Permission Ask is fine in parallel now that
     // the TUI queues permission dialogs (VecDeque), not a single slot.
     !SERIAL_TOOLS.contains(&name)
@@ -182,11 +182,11 @@ pub struct Agent {
     /// Process-local text-only response cache.
     response_cache: bool,
     /// Cross-session memory settings (from config).
-    memory: whycode_memory::MemorySettings,
+    memory: whycodes_memory::MemorySettings,
     /// Heuristic intent posture for build turns (`auto` / `off` / `always`).
     intent_guidance: crate::intent::IntentGuidanceMode,
     /// Hidden per-turn notices for standalone prose keywords.
-    magic_keywords: whycode_config::MagicKeywordsConfig,
+    magic_keywords: whycodes_config::MagicKeywordsConfig,
     /// Session `reasoning_effort` (`low`/`medium`/`high`/`xhigh`). Empty = family default.
     reasoning_effort: Option<String>,
     /// `/fresh`: skip provider prompt cache (and local response cache) once.
@@ -213,14 +213,14 @@ pub struct Agent {
     /// Optional tool cwd override (`worktree enter`).
     cwd_override: Arc<std::sync::Mutex<Option<std::path::PathBuf>>>,
     /// Subagent token usage waiting to be folded into the parent session.
-    subagent_usage_pending: Arc<std::sync::Mutex<whycode_core::types::Usage>>,
+    subagent_usage_pending: Arc<std::sync::Mutex<whycodes_core::types::Usage>>,
     /// Resident workspace file index shared with file tools (warm fast path
     /// for glob/grep/list enumeration). Started by the host (TUI/CLI).
-    file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
+    file_index: Option<Arc<whycodes_index::WorkspaceIndex>>,
     /// Process-wide claims for parallel TUI sessions (Ctrl+N).
-    session_claims: Option<whycode_core::FileClaimRegistry>,
+    session_claims: Option<whycodes_core::FileClaimRegistry>,
     /// Swarm mailbox when this agent is a worker (or parent mid-swarm).
-    swarm_hub: Option<whycode_core::SwarmHub>,
+    swarm_hub: Option<whycodes_core::SwarmHub>,
 }
 
 /// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
@@ -293,7 +293,7 @@ fn persist_agent_artifact(project: &std::path::Path, id: &str, body: &str) {
     if id.is_empty() {
         return;
     }
-    let dir = project.join(".whycode").join("agents");
+    let dir = project.join(".whycodes").join("agents");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::debug!(error = %e, "agent artifact dir");
         return;
@@ -305,7 +305,7 @@ fn persist_agent_artifact(project: &std::path::Path, id: &str, body: &str) {
 }
 
 fn compile_stream_rules(
-    rules: &[whycode_config::StreamRuleConfig],
+    rules: &[whycodes_config::StreamRuleConfig],
 ) -> Vec<(String, regex::Regex, String)> {
     let mut out = Vec::new();
     for rule in rules {
@@ -338,7 +338,7 @@ fn first_stream_rule_hit<'a>(
 }
 
 fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) -> String {
-    let Ok(reg) = whycode_skill::SkillRegistry::load_project(project_path) else {
+    let Ok(reg) = whycodes_skill::SkillRegistry::load_project(project_path) else {
         return system_prompt.to_string();
     };
     let catalog = reg.catalog_markdown();
@@ -348,8 +348,8 @@ fn append_skills_catalog(system_prompt: &str, project_path: &std::path::Path) ->
     format!("{system_prompt}\n\n{catalog}")
 }
 
-fn append_request_user_suffix(request: &mut whycode_core::types::LlmRequest, suffix: &str) {
-    use whycode_core::types::{MessageContent, Role};
+fn append_request_user_suffix(request: &mut whycodes_core::types::LlmRequest, suffix: &str) {
+    use whycodes_core::types::{MessageContent, Role};
     for msg in request.messages_mut().iter_mut().rev() {
         if msg.role != Role::User {
             continue;
@@ -469,9 +469,9 @@ impl Agent {
             model_race: "off".into(),
             race_after: std::time::Duration::from_millis(800),
             response_cache: true,
-            memory: whycode_memory::MemorySettings::default(),
+            memory: whycodes_memory::MemorySettings::default(),
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
-            magic_keywords: whycode_config::MagicKeywordsConfig::default(),
+            magic_keywords: whycodes_config::MagicKeywordsConfig::default(),
             reasoning_effort: None,
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             model_smol: None,
@@ -486,7 +486,7 @@ impl Agent {
             activated_tools: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             cwd_override: Arc::new(std::sync::Mutex::new(None)),
             subagent_usage_pending: Arc::new(std::sync::Mutex::new(
-                whycode_core::types::Usage::default(),
+                whycodes_core::types::Usage::default(),
             )),
             file_index: None,
             session_claims: None,
@@ -505,18 +505,18 @@ impl Agent {
     }
 
     /// Share the workspace file index with this agent's file tools.
-    pub fn with_file_index(mut self, index: Arc<whycode_index::WorkspaceIndex>) -> Self {
+    pub fn with_file_index(mut self, index: Arc<whycodes_index::WorkspaceIndex>) -> Self {
         self.file_index = Some(index);
         self
     }
 
     /// Share a process-wide claim registry (parallel TUI sessions).
-    pub fn with_session_claims(mut self, claims: whycode_core::FileClaimRegistry) -> Self {
+    pub fn with_session_claims(mut self, claims: whycodes_core::FileClaimRegistry) -> Self {
         self.session_claims = Some(claims);
         self
     }
 
-    pub fn session_claims(&self) -> Option<whycode_core::FileClaimRegistry> {
+    pub fn session_claims(&self) -> Option<whycodes_core::FileClaimRegistry> {
         self.session_claims.clone()
     }
 
@@ -542,7 +542,7 @@ impl Agent {
     }
 
     /// Load custom providers from config and merge global permission rules.
-    pub fn with_config(mut self, config: &whycode_config::Config) -> Self {
+    pub fn with_config(mut self, config: &whycodes_config::Config) -> Self {
         let mut registry = ProviderRegistry::default();
         registry.register_from_config(config);
         self.provider_registry = Arc::new(registry);
@@ -614,7 +614,7 @@ impl Agent {
         // agent switches / re-config.
         self.background.set_max_jobs(self.max_background_jobs);
         tracing::debug!(
-            sandbox = %whycode_sandbox::describe_backend(&self.sandbox),
+            sandbox = %whycodes_sandbox::describe_backend(&self.sandbox),
             network_allow = self.network.allowlist.len(),
             network_deny = self.network.denylist.len(),
             hooks = self.hooks.len(),
@@ -635,7 +635,7 @@ impl Agent {
     }
 
     /// Forward `panel` tool updates onto the turn event channel.
-    fn panel_sink(&self) -> Option<whycode_core::PanelSink> {
+    fn panel_sink(&self) -> Option<whycodes_core::PanelSink> {
         let tx = self.event_sink.clone()?;
         Some(std::sync::Arc::new(move |update| {
             if let Err(e) = tx.send(TurnEvent::Panel(update)) {
@@ -645,7 +645,7 @@ impl Agent {
     }
 
     /// Forward `todowrite` updates onto the turn event channel.
-    fn todo_sink(&self) -> Option<whycode_core::TodoSink> {
+    fn todo_sink(&self) -> Option<whycodes_core::TodoSink> {
         let tx = self.event_sink.clone()?;
         Some(std::sync::Arc::new(move |todos| {
             if let Err(e) = tx.send(TurnEvent::Todos { todos }) {
@@ -680,7 +680,7 @@ impl Agent {
     }
 
     /// Memory settings loaded from config (for CLI/TUI helpers).
-    pub fn memory_settings(&self) -> &whycode_memory::MemorySettings {
+    pub fn memory_settings(&self) -> &whycodes_memory::MemorySettings {
         &self.memory
     }
 
@@ -762,11 +762,11 @@ impl Agent {
         model: &str,
         api_key: &str,
         user_context: Option<&str>,
-    ) -> whycode_session::CompactOutcome {
+    ) -> whycodes_session::CompactOutcome {
         session.truncate_large_tool_results();
         session.prune_old_tool_results();
         if session.messages.is_empty() {
-            return whycode_session::CompactOutcome::default();
+            return whycodes_session::CompactOutcome::default();
         }
 
         let transcript = session.transcript_for_full_summary(0);
@@ -796,7 +796,7 @@ impl Agent {
             return None;
         }
         let provider = self.provider_registry.get(provider_name)?;
-        use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+        use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
         let request = LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(vec![Message {
@@ -818,9 +818,9 @@ impl Agent {
             thinking: None,
             use_prompt_cache: false,
         };
-        let transport = whycode_llm::LlmTransport {
+        let transport = whycodes_llm::LlmTransport {
             complete_timeout: Some(std::time::Duration::from_secs(60)),
-            retry: whycode_llm::RetryPolicy {
+            retry: whycodes_llm::RetryPolicy {
                 max_retries: 2,
                 initial_backoff: std::time::Duration::from_millis(200),
                 max_backoff: std::time::Duration::from_secs(3),
@@ -871,13 +871,13 @@ impl Agent {
     ///
     /// Always reloads built-ins; adds `plugin_*` from `plugins.toml` and
     /// `plugin.json` trees, then MCP server tools when configured.
-    pub async fn with_mcp(mut self, config: &whycode_config::Config) -> Self {
+    pub async fn with_mcp(mut self, config: &whycodes_config::Config) -> Self {
         self.load_mcp(config).await;
         self
     }
 
     /// Like [`Self::with_mcp`] but for an already-owned agent (TUI deferred load).
-    pub async fn load_mcp(&mut self, config: &whycode_config::Config) {
+    pub async fn load_mcp(&mut self, config: &whycodes_config::Config) {
         let project = config.general.project_path.as_deref();
         let mut full = ToolExecutor::new();
         let n_plug = full.register_config_plugins(project);
@@ -1108,7 +1108,7 @@ impl Agent {
         model: &str,
         api_key: &str,
         max_turns: Option<usize>,
-    ) -> whycode_core::Result<String> {
+    ) -> whycodes_core::Result<String> {
         self.run_turn_with_events(
             session,
             provider_name,
@@ -1132,14 +1132,14 @@ impl Agent {
         max_turns: Option<usize>,
         events: Option<EventSink>,
         cancel: Option<CancelFlag>,
-    ) -> whycode_core::Result<String> {
+    ) -> whycodes_core::Result<String> {
         // Trivial chit-chat: omit tools entirely (huge prefill savings).
         // Only on short single-user sessions — once tools were used, keep them.
         let last_user = session
             .messages
             .iter()
             .rev()
-            .find(|m| m.role == whycode_core::types::Role::User)
+            .find(|m| m.role == whycodes_core::types::Role::User)
             .and_then(|m| m.content.as_text().map(|s| s.to_string()))
             .unwrap_or_default();
         let magic = crate::magic_keywords::scan(&last_user, &self.magic_keywords);
@@ -1157,10 +1157,10 @@ impl Agent {
         let tools_free_chat = crate::title::is_trivial_title_seed(&last_user)
             && session.user_message_count() <= 1
             && !session.messages.iter().any(|m| {
-                matches!(m.role, whycode_core::types::Role::Tool)
+                matches!(m.role, whycodes_core::types::Role::Tool)
                     || matches!(
                         &m.content,
-                        whycode_core::types::MessageContent::Blocks(b)
+                        whycodes_core::types::MessageContent::Blocks(b)
                             if b.iter().any(|x| matches!(x, ContentBlock::ToolUse { .. }))
                     )
             });
@@ -1198,7 +1198,7 @@ impl Agent {
             .provider_registry
             .get(provider_name)
             .ok_or_else(|| {
-                whycode_core::Error::Llm(format!(
+                whycodes_core::Error::Llm(format!(
                     "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity, and configured custom providers",
                     provider_name
                 ))
@@ -1235,14 +1235,14 @@ impl Agent {
             let tool_ctx = self.tool_context(session);
             if is_cancelled(&cancel) {
                 emit(&events, TurnEvent::Cancelled);
-                return Err(whycode_core::Error::Agent("Cancelled".into()));
+                return Err(whycodes_core::Error::Agent("Cancelled".into()));
             }
 
             turn_count += 1;
             if let Some(max) = max_turns
                 && turn_count > max
             {
-                return Err(whycode_core::Error::Agent(format!(
+                return Err(whycodes_core::Error::Agent(format!(
                     "Exceeded maximum turns ({max})"
                 )));
             }
@@ -1355,7 +1355,7 @@ impl Agent {
 
             let mut accumulated_text = String::new();
             let mut thinking_acc = crate::thinking_acc::ThinkingAccumulator::new();
-            let mut turn_usage = whycode_core::types::Usage::default();
+            let mut turn_usage = whycodes_core::types::Usage::default();
             let mut assembler = ToolCallAssembler::new();
             let mut speculative_reads: Vec<crate::speculative_read::SpeculativeRead> = Vec::new();
             let step_t0 = Instant::now();
@@ -1364,13 +1364,13 @@ impl Agent {
             // Only the HTTP open is retried — mid-stream drops stay single-shot.
             // Race the open against cancel so a hung gateway cannot ignore Esc.
             // Bind transport so `stream()`'s future is not tied to a temporary.
-            let transport = whycode_llm::default_transport();
+            let transport = whycodes_llm::default_transport();
             let race_ids = self.race_partner(provider_name, model);
             let race_provider = race_ids
                 .as_ref()
                 .and_then(|(p, _)| self.provider_registry.get(p.as_str()));
             let race_target = match (race_ids.as_ref(), race_provider) {
-                (Some((_, m)), Some(rp)) => Some(whycode_llm::StreamTarget {
+                (Some((_, m)), Some(rp)) => Some(whycodes_llm::StreamTarget {
                     provider: rp,
                     api_key,
                     model: m.as_str(),
@@ -1381,16 +1381,16 @@ impl Agent {
                 biased;
                 _ = wait_until_cancelled(&cancel) => {
                     emit(&events, TurnEvent::Cancelled);
-                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                    return Err(whycodes_core::Error::Agent("Cancelled".into()));
                 }
                 opened = transport.stream_turn(
-                    whycode_llm::StreamTarget {
+                    whycodes_llm::StreamTarget {
                         provider,
                         api_key,
                         model,
                     },
                     &request,
-                    whycode_llm::StreamTurnOpts {
+                    whycodes_llm::StreamTurnOpts {
                         cache: self.response_cache && request.tools.is_empty() && !skip_cache,
                         race: race_target,
                         race_after: self.race_after,
@@ -1400,8 +1400,8 @@ impl Agent {
             let turn = match opened {
                 Ok(t) => t,
                 Err(e)
-                    if whycode_llm::classify(&e).kind
-                        == whycode_llm::ErrorKind::ContextOverflow
+                    if whycodes_llm::classify(&e).kind
+                        == whycodes_llm::ErrorKind::ContextOverflow
                         && overflow_retries < 1 =>
                 {
                     overflow_retries = overflow_retries.saturating_add(1);
@@ -1454,7 +1454,7 @@ impl Agent {
                             session.add_assistant_message(blocks);
                         }
                         emit(&events, TurnEvent::Cancelled);
-                        return Err(whycode_core::Error::Agent("Cancelled".into()));
+                        return Err(whycodes_core::Error::Agent("Cancelled".into()));
                     }
                     next = event_stream.next() => next,
                 };
@@ -1466,8 +1466,8 @@ impl Agent {
                 let event = match event {
                     Ok(ev) => ev,
                     Err(e)
-                        if whycode_llm::classify(&e).kind
-                            == whycode_llm::ErrorKind::ContextOverflow
+                        if whycodes_llm::classify(&e).kind
+                            == whycodes_llm::ErrorKind::ContextOverflow
                             && overflow_retries < 1 =>
                     {
                         crate::speculative_read::abort_all(&mut speculative_reads);
@@ -1490,7 +1490,7 @@ impl Agent {
                     }
                     Err(e) => {
                         crate::speculative_read::abort_all(&mut speculative_reads);
-                        whycode_core::logging::emit_sid(
+                        whycodes_core::logging::emit_sid(
                             "agent",
                             "error",
                             "turn.stream_error",
@@ -1524,9 +1524,9 @@ impl Agent {
                                 )),
                             );
                             session.add_user_message(&format!(
-                                "<whycode_rule name=\"{name}\">\n{hint}\n\
+                                "<whycodes_rule name=\"{name}\">\n{hint}\n\
                                  The previous draft was discarded. Continue without violating this rule.\n\
-                                 </whycode_rule>"
+                                 </whycodes_rule>"
                             ));
                             stream_rule_retry = true;
                             break;
@@ -1611,8 +1611,8 @@ impl Agent {
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
                     StreamEvent::Error { message } => {
-                        if whycode_llm::classify_message(&message).kind
-                            == whycode_llm::ErrorKind::ContextOverflow
+                        if whycodes_llm::classify_message(&message).kind
+                            == whycodes_llm::ErrorKind::ContextOverflow
                             && overflow_retries < 1
                         {
                             crate::speculative_read::abort_all(&mut speculative_reads);
@@ -1634,7 +1634,7 @@ impl Agent {
                             break;
                         }
                         crate::speculative_read::abort_all(&mut speculative_reads);
-                        return Err(whycode_core::Error::Llm(message));
+                        return Err(whycodes_core::Error::Llm(message));
                     }
                 }
             }
@@ -1653,7 +1653,7 @@ impl Agent {
                 && tool_calls.is_empty()
                 && !accumulated_text.trim().is_empty()
             {
-                whycode_llm::ResponseCache::global().store(&request, model, &accumulated_text);
+                whycodes_llm::ResponseCache::global().store(&request, model, &accumulated_text);
             }
 
             // Emit ToolStart with final parsed arguments (not the empty first chunk).
@@ -1704,7 +1704,7 @@ impl Agent {
 
             if tool_calls.is_empty() {
                 crate::speculative_read::abort_all(&mut speculative_reads);
-                whycode_core::logging::emit_sid(
+                whycodes_core::logging::emit_sid(
                     "agent",
                     "info",
                     "turn.step",
@@ -1800,7 +1800,7 @@ impl Agent {
                         recent_tool_sigs.pop_front();
                     }
                 }
-                whycode_core::logging::emit_sid(
+                whycodes_core::logging::emit_sid(
                     "agent",
                     "info",
                     "turn.step",
@@ -1872,7 +1872,7 @@ impl Agent {
             }
         }
 
-        whycode_core::logging::emit_sid(
+        whycodes_core::logging::emit_sid(
             "agent",
             "info",
             "turn.done",
@@ -1926,7 +1926,7 @@ impl Agent {
         cancel: &Option<CancelFlag>,
         turn_intent: Option<&crate::intent::IntentAssessment>,
         speculative: &mut Vec<crate::speculative_read::SpeculativeRead>,
-    ) -> whycode_core::Result<Vec<ToolResult>> {
+    ) -> whycodes_core::Result<Vec<ToolResult>> {
         if tool_calls.is_empty() {
             return Ok(Vec::new());
         }
@@ -1936,7 +1936,7 @@ impl Agent {
             let tc = &tool_calls[0];
             if is_cancelled(cancel) {
                 emit(events, TurnEvent::Cancelled);
-                return Err(whycode_core::Error::Agent("Cancelled".into()));
+                return Err(whycodes_core::Error::Agent("Cancelled".into()));
             }
             emit(
                 events,
@@ -1950,7 +1950,7 @@ impl Agent {
                         biased;
                         _ = wait_until_cancelled(cancel) => {
                             emit(events, TurnEvent::Cancelled);
-                            return Err(whycode_core::Error::Agent("Cancelled".into()));
+                            return Err(whycodes_core::Error::Agent("Cancelled".into()));
                         }
                         r = self.execute_with_permission(
                             tc,
@@ -2023,7 +2023,7 @@ impl Agent {
                 biased;
                 _ = wait_until_cancelled(cancel) => {
                     emit(events, TurnEvent::Cancelled);
-                    return Err(whycode_core::Error::Agent("Cancelled".into()));
+                    return Err(whycodes_core::Error::Agent("Cancelled".into()));
                 }
                 r = futures::future::join_all(futs) => r,
             };
@@ -2045,7 +2045,7 @@ impl Agent {
         for tc in tool_calls {
             if is_cancelled(cancel) {
                 emit(events, TurnEvent::Cancelled);
-                return Err(whycode_core::Error::Agent("Cancelled".into()));
+                return Err(whycodes_core::Error::Agent("Cancelled".into()));
             }
             emit(
                 events,
@@ -2059,7 +2059,7 @@ impl Agent {
                         biased;
                         _ = wait_until_cancelled(cancel) => {
                             emit(events, TurnEvent::Cancelled);
-                            return Err(whycode_core::Error::Agent("Cancelled".into()));
+                            return Err(whycodes_core::Error::Agent("Cancelled".into()));
                         }
                         r = self.execute_with_permission(
                             tc,
@@ -2743,7 +2743,7 @@ impl Agent {
 
         let root = crate::swarm_worktree::git_toplevel(&session.project_path)
             .unwrap_or_else(|| session.project_path.clone());
-        let base = root.join(".whycode").join("worktrees");
+        let base = root.join(".whycodes").join("worktrees");
 
         match action {
             "list" => {
@@ -2993,11 +2993,11 @@ impl Agent {
         model: &str,
         api_key: &str,
         events: Option<&EventSink>,
-    ) -> whycode_core::types::ToolResult {
+    ) -> whycodes_core::types::ToolResult {
         use std::time::Instant;
         use tokio::sync::Semaphore;
-        use whycode_core::types::{AgentInfo, AgentMode, PermissionSet, ToolResult};
-        use whycode_core::{ClaimResult, FileClaimRegistry};
+        use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet, ToolResult};
+        use whycodes_core::{ClaimResult, FileClaimRegistry};
 
         if !self.swarm_enabled {
             return ToolResult {
@@ -3042,7 +3042,7 @@ impl Agent {
         let swarm_run_dir = crate::swarm_worktree::run_dir(&repo_root, &run_id);
 
         let claims = FileClaimRegistry::new();
-        let hub = whycode_core::SwarmHub::new();
+        let hub = whycodes_core::SwarmHub::new();
         hub.ensure("parent");
         if let Some(tx) = events {
             let tx_c = tx.clone();
@@ -3191,7 +3191,7 @@ impl Agent {
                             false,
                             0.0,
                             "Semaphore closed".to_string(),
-                            whycode_core::types::Usage::default(),
+                            whycodes_core::types::Usage::default(),
                             None,
                             project_path,
                             events_tx,
@@ -3225,7 +3225,7 @@ impl Agent {
                                 false,
                                 0.0,
                                 format!("Failed to create git worktree: {e}"),
-                                whycode_core::types::Usage::default(),
+                                whycodes_core::types::Usage::default(),
                                 None,
                                 project_path,
                                 events_tx,
@@ -3367,7 +3367,7 @@ impl Agent {
                     Err(e) => (
                         false,
                         format!("Swarm worker error: {e}"),
-                        whycode_core::types::Usage::default(),
+                        whycodes_core::types::Usage::default(),
                     ),
                 };
                 if success {
@@ -3506,8 +3506,8 @@ impl Agent {
         model: &str,
         api_key: &str,
         events: Option<&EventSink>,
-    ) -> whycode_core::types::ToolResult {
-        use whycode_core::types::{AgentMode, PermissionSet, ToolResult};
+    ) -> whycodes_core::types::ToolResult {
+        use whycodes_core::types::{AgentMode, PermissionSet, ToolResult};
 
         let goal = call
             .arguments
@@ -3719,7 +3719,7 @@ impl Agent {
         model: &str,
         api_key: &str,
         project_path: std::path::PathBuf,
-    ) -> whycode_core::Result<String> {
+    ) -> whycodes_core::Result<String> {
         let task = SubagentTask {
             goal: goal.clone(),
             context,
@@ -3757,7 +3757,7 @@ impl Agent {
         model: &str,
         api_key: &str,
         project_path: std::path::PathBuf,
-    ) -> whycode_core::Result<Vec<String>> {
+    ) -> whycodes_core::Result<Vec<String>> {
         use tokio::sync::Semaphore;
 
         let sem = Arc::new(Semaphore::new(max_concurrent.max(1)));
@@ -3807,12 +3807,12 @@ impl Agent {
     }
 }
 
-/// Map config memory table → whycode-memory settings bag.
+/// Map config memory table → whycodes-memory settings bag.
 pub fn memory_settings_from_config(
-    config: &whycode_config::Config,
-) -> whycode_memory::MemorySettings {
+    config: &whycodes_config::Config,
+) -> whycodes_memory::MemorySettings {
     let m = &config.memory;
-    whycode_memory::MemorySettings {
+    whycodes_memory::MemorySettings {
         enabled: m.enabled,
         auto_inject: m.auto_inject,
         auto_retain: m.auto_retain,
@@ -3826,8 +3826,8 @@ pub fn memory_settings_from_config(
         recall_min_score: m.recall_min_score,
         recall_token_budget: m.recall_token_budget,
         embed_dim: m.embed_dim,
-        scope: whycode_memory::MemoryScope::parse(&m.scope),
-        embed_backend: whycode_memory::EmbedBackend::parse(&m.embed_backend),
+        scope: whycodes_memory::MemoryScope::parse(&m.scope),
+        embed_backend: whycodes_memory::EmbedBackend::parse(&m.embed_backend),
         agent_bank: None,
         code_inject: m.code_inject,
         code_top_k: m.code_top_k,
@@ -3848,7 +3848,7 @@ pub fn memory_settings_from_config(
 mod permission_detail_tests {
     use super::*;
     use serde_json::json;
-    use whycode_core::types::PermissionSet;
+    use whycodes_core::types::PermissionSet;
 
     #[test]
     fn single_command_is_plain_string() {
@@ -4066,10 +4066,10 @@ mod permission_detail_tests {
         let with2 = Agent::with_agents_md("base", dir2.path());
         assert!(with2.contains("lowercase rules"), "{with2}");
 
-        // .whycode/AGENTS.md is the fallback candidate
+        // .whycodes/AGENTS.md is the fallback candidate
         let dir3 = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir3.path().join(".whycode")).unwrap();
-        std::fs::write(dir3.path().join(".whycode/AGENTS.md"), "nested rules").unwrap();
+        std::fs::create_dir(dir3.path().join(".whycodes")).unwrap();
+        std::fs::write(dir3.path().join(".whycodes/AGENTS.md"), "nested rules").unwrap();
         let with3 = Agent::with_agents_md("base", dir3.path());
         assert!(with3.contains("nested rules"), "{with3}");
     }
@@ -4094,7 +4094,7 @@ mod permission_detail_tests {
 
     #[test]
     fn stream_rules_compile_and_match() {
-        use whycode_config::StreamRuleConfig;
+        use whycodes_config::StreamRuleConfig;
         let rules = [
             StreamRuleConfig {
                 name: String::new(),
@@ -4125,7 +4125,7 @@ mod permission_detail_tests {
         persist_agent_artifact(dir.path(), "task-ok", "hello");
         persist_agent_artifact(dir.path(), "../evil", "nope");
         persist_agent_artifact(dir.path(), "", "ignored");
-        let agents = dir.path().join(".whycode").join("agents");
+        let agents = dir.path().join(".whycodes").join("agents");
         assert_eq!(
             std::fs::read_to_string(agents.join("task-ok.md")).unwrap(),
             "hello"
@@ -4141,7 +4141,7 @@ mod permission_detail_tests {
 
     #[test]
     fn memory_settings_map_from_config() {
-        let config = whycode_config::Config::default();
+        let config = whycodes_config::Config::default();
         let m = memory_settings_from_config(&config);
         assert_eq!(m.enabled, config.memory.enabled);
         assert_eq!(m.auto_inject, config.memory.auto_inject);
@@ -4149,7 +4149,7 @@ mod permission_detail_tests {
         assert_eq!(m.retain_every_n, config.memory.retain_every_n);
         assert_eq!(
             m.scope,
-            whycode_memory::MemoryScope::parse(&config.memory.scope)
+            whycodes_memory::MemoryScope::parse(&config.memory.scope)
         );
         assert_eq!(m.agent_bank, None);
     }
@@ -4233,10 +4233,10 @@ mod permission_detail_tests {
     }
 
     fn test_agent() -> Agent {
-        Agent::new(whycode_core::types::AgentInfo {
+        Agent::new(whycodes_core::types::AgentInfo {
             name: "build".into(),
             description: "t".into(),
-            mode: whycode_core::types::AgentMode::Primary,
+            mode: whycodes_core::types::AgentMode::Primary,
             permission: PermissionSet {
                 allow_file_writes: true,
                 allow_network: true,
@@ -4285,7 +4285,7 @@ mod permission_detail_tests {
     fn tool_context_uses_session_cwd_and_strips_network() {
         let mut a = test_agent();
         a.info.permission.allow_network = false;
-        let session = whycode_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
         let ctx = a.tool_context(&session);
         assert_eq!(ctx.working_dir, "/tmp/proj");
         assert!(!ctx.sandbox.network);
@@ -4369,7 +4369,7 @@ mod permission_detail_tests {
         let a = test_agent();
         let dir = tempfile::tempdir().unwrap();
         let session =
-            whycode_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
 
         let unk = a.execute_worktree_tool(&tc("worktree", json!({"action": "nope"})), &session);
         assert!(unk.is_error);
@@ -4411,10 +4411,10 @@ mod permission_detail_tests {
 
     #[test]
     fn builder_chain_sets_profile_and_fast_model() {
-        let mut config = whycode_config::Config::default();
+        let mut config = whycodes_config::Config::default();
         config.session.model_fast = Some("haiku".into());
         let a = test_agent()
-            .with_tool_profile(whycode_tools::ToolProfile::Full)
+            .with_tool_profile(whycodes_tools::ToolProfile::Full)
             .with_config(&config);
         assert_eq!(a.model_fast(), Some("haiku"));
         assert!(a.activated_tools_snapshot().is_empty());
@@ -4425,13 +4425,13 @@ mod permission_detail_tests {
     #[test]
     fn title_refine_target_needs_user_and_key() {
         let a = test_agent();
-        let empty = whycode_session::session::Session::new("/tmp".into(), "sys".into());
+        let empty = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         assert!(
             a.title_refine_target(&empty, "anthropic", "claude", "k", None)
                 .is_none()
         );
 
-        let mut s = whycode_session::session::Session::new("/tmp".into(), "sys".into());
+        let mut s = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         s.add_user_message("please explain the retry loop in crates/llm");
         assert!(
             a.title_refine_target(&s, "anthropic", "claude", "", None)

@@ -20,7 +20,7 @@ fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
         .connect_timeout(Duration::from_secs(15))
-        .user_agent(format!("whycode-mcp/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("whycodes-mcp/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .context("failed to build HTTP client")
 }

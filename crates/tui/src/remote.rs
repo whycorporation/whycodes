@@ -1,12 +1,12 @@
-//! HTTP client for `whycode serve` (TUI attach).
+//! HTTP client for `whycodes serve` (TUI attach).
 
 use std::time::Duration;
 
 use futures::StreamExt;
-use whycode_agent::TurnEvent;
-use whycode_core::types::Message;
+use whycodes_agent::TurnEvent;
+use whycodes_core::types::Message;
 
-/// How the TUI talks to a warm `whycode serve` process.
+/// How the TUI talks to a warm `whycodes serve` process.
 #[derive(Debug, Clone)]
 pub struct RemoteAttach {
     pub base_url: String,
@@ -118,7 +118,7 @@ pub async fn stream_chat(
     remote: &RemoteAttach,
     message: &str,
     event_tx: tokio::sync::mpsc::UnboundedSender<TurnEvent>,
-    cancel: Option<whycode_agent::CancelFlag>,
+    cancel: Option<whycodes_agent::CancelFlag>,
 ) -> anyhow::Result<String> {
     let url = format!("{}/api/session/{}/chat", remote.base_url, remote.session_id);
     let res = client()?
@@ -134,7 +134,7 @@ pub async fn stream_chat(
     let mut buf = String::new();
     let mut text = String::new();
     while let Some(chunk) = stream.next().await {
-        if whycode_agent::is_cancelled(&cancel) {
+        if whycodes_agent::is_cancelled(&cancel) {
             anyhow::bail!("cancelled");
         }
         let chunk = chunk?;
@@ -469,8 +469,8 @@ mod tests {
         let base = spawn_router().await;
         let remote = RemoteAttach::new(&base, "sess-1");
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-        let flag = whycode_agent::new_cancel_flag();
-        whycode_agent::request_cancel(&flag);
+        let flag = whycodes_agent::new_cancel_flag();
+        whycodes_agent::request_cancel(&flag);
         let err = stream_chat(&remote, "hello", tx, Some(flag))
             .await
             .expect_err("cancelled");

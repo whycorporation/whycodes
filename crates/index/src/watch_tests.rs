@@ -131,7 +131,7 @@ fn spawn_watches_a_temp_root() {
 #[test]
 fn spawn_missing_root_returns_none() {
     let (tx, _rx) = std::sync::mpsc::channel();
-    let w = spawn(&[PathBuf::from("/no/such/whycode-index-root")], tx);
+    let w = spawn(&[PathBuf::from("/no/such/whycodes-index-root")], tx);
     assert!(w.is_none());
     log_watcher_unavailable(&"boom");
 }

@@ -1,7 +1,7 @@
 //! Incremental markdown for a growing assistant bubble.
 //!
 //! Grok Build's `StreamingMarkdownRenderer`: freeze output up to the last
-//! [`whycode_format::markdown::last_checkpoint`] and only re-parse the tail.
+//! [`whycodes_format::markdown::last_checkpoint`] and only re-parse the tail.
 //! A streamed reply is O(new bytes) per frame instead of O(whole message).
 //!
 //! Open fenced code is a special tail: `last_checkpoint` cannot freeze inside
@@ -57,7 +57,7 @@ impl IncrementalMarkdown {
             self.width = width;
         }
 
-        let cp = whycode_format::markdown::last_checkpoint(text);
+        let cp = whycodes_format::markdown::last_checkpoint(text);
         if cp > self.frozen_bytes && cp <= text.len() && text.is_char_boundary(cp) {
             // Checkpoint advanced: the previous open fence (if any) is now
             // closed inside `chunk`. Drop the incremental fence rows and

@@ -1,6 +1,6 @@
 # Benchmarks
 
-How to measure whycode. Residual notes:
+How to measure whycodes. Residual notes:
 [archive/plan-performance.md](archive/plan-performance.md).
 
 ## Running them
@@ -8,7 +8,7 @@ How to measure whycode. Residual notes:
 Process level:
 
 ```bash
-cargo build --release -p whycode-cli
+cargo build --release -p whycodes-cli
 python scripts/bench_startup.py --runs 20
 python scripts/bench_memory.py --runs 5                  # peak RSS + multi-session PSS
 python scripts/bench_memory.py --skip-cli --sessions 1 10  # just the 1 / 10 session PSS table
@@ -20,9 +20,9 @@ and does not need psutil. Both accept `--json out.json` so a run can be recorded
 Function level, for the two paths that run on a hot loop:
 
 ```bash
-cargo bench -p whycode-format        # markdown + highlighting, per frame
-cargo bench -p whycode-command-risk  # shell risk gate, per tool call
-cargo bench -p whycode-index         # workspace walk + @-picker query path
+cargo bench -p whycodes-format        # markdown + highlighting, per frame
+cargo bench -p whycodes-command-risk  # shell risk gate, per tool call
+cargo bench -p whycodes-index         # workspace walk + @-picker query path
 ```
 
 These use criterion. They are not run in CI — criterion's own comparison against
@@ -52,7 +52,7 @@ filesystem cache rather than the program.
    the process runs and takes the peak. A tight loop is necessary because these
    processes live for tens of milliseconds; a slower sample misses the peak.
 2. **Multi-session PSS** of concurrent idle TUI sessions. Spawns N
-   `whycode run` processes under ptys, answers terminal capability probes so
+   `whycodes run` processes under ptys, answers terminal capability probes so
    the first frame actually paints, settles, then sums Proportional Set Size
    from `/proc/<pid>/smaps_rollup` across each process tree. PSS is what the
    comparison table uses for "10 session" figures (shared pages are not
@@ -64,7 +64,7 @@ came from, because a debug number is not worth quoting.
 
 ## First measurements
 
-Taken 2026-07-31 on Windows 11, AMD64, release profile, whycode 0.1.0
+Taken 2026-07-31 on Windows 11, AMD64, release profile, whycodes 0.1.0
 (pre-optimisation baseline).
 
 | Case | Startup median | Startup p95 | Peak RSS |
@@ -95,7 +95,7 @@ string. Everything else sits above it. The Windows ~21 ms figure above was
 dominated by paging a larger binary; re-run `bench_startup.py` there after a
 release rebuild to refresh that row.
 
-Slim extras: `cargo build --release -p whycode-cli --features full` re-enables
+Slim extras: `cargo build --release -p whycodes-cli --features full` re-enables
 Unicode mermaid + bat/two-face languages.
 
 These are single-machine numbers on a developer laptop, not a controlled
@@ -275,10 +275,10 @@ are stable; cold highlight is noisier (syntect + memo seed).
 | typical response | 1.36 ms |
 | 200-line Rust fence | 43.2 ms |
 
-### Index (`whycode-index`, 2026-08-13)
+### Index (`whycodes-index`, 2026-08-13)
 
 Workspace file index powers the `@`-picker and tool fast paths. Criterion
-target: `cargo bench -p whycode-index --bench scan`.
+target: `cargo bench -p whycodes-index --bench scan`.
 
 | Case | time |
 |---|---|
@@ -319,7 +319,7 @@ python scripts/bench_first_frame.py --runs 12 --idle-ms 0      # first frame
 python scripts/bench_first_frame.py --runs 10 --idle-ms 3000   # idle redraws
 ```
 
-The binary reports on itself when `WHYCODE_BENCH` is set — see
+The binary reports on itself when `WHYCODES_BENCH` is set — see
 `crates/tui/src/bench.rs`. It is inert otherwise: two atomic loads per frame.
 The harness allocates a pty on Unix; Windows has no stdlib ConPTY, so the child
 inherits the console and the screen flickers briefly during a run.
@@ -423,7 +423,7 @@ turn with tool output will cost more private memory per session.
 Reproduce:
 
 ```bash
-cargo build --release -p whycode-cli
+cargo build --release -p whycodes-cli
 python scripts/bench_memory.py --skip-cli --sessions 1 10 --runs 3 --settle 2
 ```
 
@@ -438,18 +438,18 @@ though it covered them.
 ## Token accounting reconciliation (2026-08-14)
 
 Providers report usage; we persist those numbers (not the char/4 heuristic)
-on the session and surface them in `/info`, `/cost`, and `whycode stats`.
+on the session and surface them in `/info`, `/cost`, and `whycodes stats`.
 
 Live check: last raw `usage` object vs stored session usage, ≤1%.
 
 ```bash
-cargo build -p whycode-cli
+cargo build -p whycodes-cli
 python scripts/reconcile_token_usage.py --self-test
-python scripts/reconcile_token_usage.py --live --whycode target/debug/whycode
+python scripts/reconcile_token_usage.py --live --whycodes target/debug/whycodes
 ```
 
 `--live` needs a configured provider. It dumps raw objects via
-`WHYCODE_USAGE_DUMP` and compares them to `generate --format json`. A single
+`WHYCODES_USAGE_DUMP` and compares them to `generate --format json`. A single
 no-tool turn (`-t 1`, ask agent) is the intended shape — multi-step totals
 are the sum of per-step snapshots.
 
@@ -502,7 +502,7 @@ strip-only.
 
 | Use | Hash | Why |
 |-----|------|-----|
-| `whycode upgrade` integrity (`SHA256SUMS`) | **SHA-256** (`sha2`) | Cryptographic; do not replace |
+| `whycodes upgrade` integrity (`SHA256SUMS`) | **SHA-256** (`sha2`) | Cryptographic; do not replace |
 | Highlight / mermaid memo keys; tool & provider registries | **FxHash** (`rustc-hash`) | Trusted local keys; SipHash was paying DoS resistance every TUI frame |
 
 Memo keys are hashed on every render of a visible code/mermaid block even when
@@ -512,5 +512,5 @@ the cache hits, so the hasher cost is on the frame budget.
 `chars.div_ceil(4).max(1)` so short Unicode strings are not under-counted as
 zero. Tiktoken uses the crate's process-wide BPE singletons
 (`cl100k_base_singleton` / `o200k_base_singleton`) so vocab load is paid once.
-`token_counter` is exported from `whycode-llm` (it was previously orphaned).
+`token_counter` is exported from `whycodes-llm` (it was previously orphaned).
 

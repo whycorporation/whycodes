@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 pub struct ExternalDirectoryTool;
 
@@ -18,11 +18,11 @@ impl ExternalDirectoryTool {
     }
 
     /// Check if a path is allowed for external access.
-    /// Reads the .whycode/external_dirs_allowed file (relative to `working_dir`)
+    /// Reads the .whycodes/external_dirs_allowed file (relative to `working_dir`)
     /// and checks if the given path (or any of its parent directories) is listed.
     fn is_path_allowed(path: &str, working_dir: &str) -> bool {
         let allowed_file = std::path::Path::new(working_dir)
-            .join(".whycode")
+            .join(".whycodes")
             .join("external_dirs_allowed");
 
         let allowed_content = match std::fs::read_to_string(&allowed_file) {
@@ -110,7 +110,7 @@ impl Tool for ExternalDirectoryTool {
                 tool_call_id: String::new(),
                 content: format!(
                     "Access denied: '{}' is not in the allowed external directories list. \
-                     Add the directory to .whycode/external_dirs_allowed to grant access.",
+                     Add the directory to .whycodes/external_dirs_allowed to grant access.",
                     path_str
                 ),
                 is_error: true,
@@ -200,8 +200,8 @@ mod tests {
     }
 
     fn allow(dir: &std::path::Path, lines: &str) {
-        let why = dir.join(".whycode");
-        std::fs::create_dir_all(&why).expect("mkdir .whycode");
+        let why = dir.join(".whycodes");
+        std::fs::create_dir_all(&why).expect("mkdir .whycodes");
         std::fs::write(why.join("external_dirs_allowed"), lines).expect("write allowlist");
     }
 

@@ -1,5 +1,5 @@
 [package]
-name = "whycode-command-risk"
+name = "whycodes-command-risk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

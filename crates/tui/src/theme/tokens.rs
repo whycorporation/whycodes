@@ -25,7 +25,7 @@ pub mod dark {
     pub const TEXT_MUTED: Color = Color::Rgb(0x80, 0x80, 0x80);
 }
 
-/// Home screen block logo: Whycode as one word (`WHY` + `CODE`, no gap).
+/// Home screen block logo: WhyCodes as one word (`WHY` + `CODES`, no gap).
 pub const HOME_LOGO_WHY: &[&str] = &[
     "                 ",
     "█   █ █   █ █   █",
@@ -34,10 +34,10 @@ pub const HOME_LOGO_WHY: &[&str] = &[
 ];
 
 pub const HOME_LOGO_CODE: &[&str] = &[
-    "             ▄     ",
-    "█▀▀▀ █▀▀█ █▀▀█ █▀▀█",
-    "█    █  █ █  █ █▀▀ ",
-    "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
+    "             ▄          ",
+    "█▀▀▀ █▀▀█ █▀▀█ █▀▀█ █▀▀▀",
+    "█    █  █ █  █ █▀▀  ▀▀▀█",
+    "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
 ];
 
 /// Spacing and chrome metrics shared by home / session shells.
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn home_logo_is_one_word() {
-        // Letter rows: last WHY glyph sits flush against first CODE glyph.
+        // Letter rows: last WHY glyph sits flush against first CODES glyph.
         let why = HOME_LOGO_WHY[1];
         let code = HOME_LOGO_CODE[1];
         assert!(
@@ -218,7 +218,7 @@ mod tests {
         );
         assert!(
             code.starts_with('█'),
-            "CODE must start on the next cell: {code:?}"
+            "CODES must start on the next cell: {code:?}"
         );
         let joined: Vec<String> = HOME_LOGO_WHY
             .iter()
@@ -228,7 +228,7 @@ mod tests {
         let widths: Vec<usize> = joined.iter().map(|l| l.chars().count()).collect();
         assert!(
             widths.windows(2).all(|w| w[0] == w[1]),
-            "joined Whycode rows must stay aligned: {widths:?}"
+            "joined WhyCodes rows must stay aligned: {widths:?}"
         );
     }
 

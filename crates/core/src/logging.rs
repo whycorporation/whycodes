@@ -5,13 +5,13 @@
 //! <data_dir>/
 //!   logs/unified.jsonl    # structured events (append-only)
 //!   crash/crash-*.txt     # panic reports
-//!   debug/whycode-*.log   # --debug / WHYCODE_LOG_FILE human logs
+//!   debug/whycodes-*.log   # --debug / WHYCODES_LOG_FILE human logs
 //!   debug/latest.log      # symlink (or copy) of the active debug log
 //! ```
 //!
 //! Environment:
-//! - `RUST_LOG` / `WHYCODE_LOG_LEVEL` — filter (e.g. `debug`, `info,whycode_agent=debug`)
-//! - `WHYCODE_LOG_FILE` — extra human-readable log path (verbatim)
+//! - `RUST_LOG` / `WHYCODES_LOG_LEVEL` — filter (e.g. `debug`, `info,whycodes_agent=debug`)
+//! - `WHYCODES_LOG_FILE` — extra human-readable log path (verbatim)
 //! - `RUST_BACKTRACE` — included in crash reports when set
 
 use std::fs::{self, File, OpenOptions};
@@ -202,7 +202,7 @@ pub struct InitOptions {
     pub data_dir: PathBuf,
     /// Level / filter string (`info`, `debug`, module filters).
     pub log_level: Option<String>,
-    /// Optional human log file (`WHYCODE_LOG_FILE`).
+    /// Optional human log file (`WHYCODES_LOG_FILE`).
     pub log_file: Option<PathBuf>,
     /// When true, also write a debug log under `data_dir/debug/`.
     pub debug: bool,
@@ -300,7 +300,7 @@ pub fn init(opts: InitOptions) -> crate::Result<LoggingHandle> {
     install_panic_hook_inner(dirs.clone());
 
     emit(
-        "whycode",
+        "whycodes",
         "info",
         "logging.init",
         Some(json!({
@@ -327,7 +327,7 @@ pub(crate) fn resolve_debug_log_path(
         let stamp = Utc::now().format("%Y%m%dT%H%M%S");
         let path = dirs
             .debug
-            .join(format!("whycode-{}-{}.log", std::process::id(), stamp));
+            .join(format!("whycodes-{}-{}.log", std::process::id(), stamp));
         // Touch file so latest link has a target.
         let _ = OpenOptions::new()
             .create(true)
@@ -408,7 +408,7 @@ pub(crate) fn emit_panic_report(result: io::Result<PathBuf>, payload: &str) {
         return;
     };
     emit(
-        "whycode",
+        "whycodes",
         "error",
         "panic",
         Some(json!({
@@ -424,8 +424,8 @@ pub(crate) fn format_location(loc: Option<&std::panic::Location<'_>>) -> Option<
 
 pub(crate) fn crash_user_message(result: &io::Result<PathBuf>) -> String {
     match result {
-        Ok(path) => format!("\nwhycode crashed — report written to {}", path.display()),
-        Err(e) => format!("\nwhycode crashed — failed to write crash report: {e}"),
+        Ok(path) => format!("\nwhycodes crashed — report written to {}", path.display()),
+        Err(e) => format!("\nwhycodes crashed — failed to write crash report: {e}"),
     }
 }
 
@@ -437,7 +437,7 @@ pub(crate) fn clean_debug_value(s: String) -> String {
 }
 
 pub(crate) fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
-    // Priority: RUST_LOG → explicit (config / WHYCODE_LOG_LEVEL) → info
+    // Priority: RUST_LOG → explicit (config / WHYCODES_LOG_LEVEL) → info
     if let Ok(filter) = EnvFilter::try_from_default_env() {
         return filter;
     }
@@ -446,7 +446,7 @@ pub(crate) fn build_env_filter(explicit: Option<&str>) -> EnvFilter {
     {
         return f;
     }
-    if let Ok(level) = std::env::var("WHYCODE_LOG_LEVEL")
+    if let Ok(level) = std::env::var("WHYCODES_LOG_LEVEL")
         && let Ok(f) = EnvFilter::try_new(&level)
     {
         return f;
@@ -569,7 +569,7 @@ pub fn write_crash_report(
 /// Build crash report text (no I/O). Public for tests.
 pub fn format_crash_report(info: &std::panic::PanicHookInfo<'_>) -> String {
     let mut out = String::new();
-    out.push_str("whycode crash report\n");
+    out.push_str("whycodes crash report\n");
     out.push_str(&format!("version: {VERSION}\n"));
     out.push_str(&format!("pid: {}\n", std::process::id()));
     out.push_str(&format!(

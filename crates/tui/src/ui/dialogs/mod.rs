@@ -118,7 +118,7 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 " Resume  ·  Enter open  ·  type to filter  ·  Ctrl+W close live ",
                 &items,
                 selected,
-                "No sessions yet — they are recorded as you use whycode.",
+                "No sessions yet — they are recorded as you use whycodes.",
                 palette,
                 mouse,
             );
@@ -194,9 +194,11 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
             );
         }
         crate::app::DialogKind::Effort => {
-            let levels =
-                whycode_llm::ThinkingConfig::supported_efforts(&app.provider_name, &app.model_name);
-            let current = whycode_llm::ThinkingConfig::resolve_effort(
+            let levels = whycodes_llm::ThinkingConfig::supported_efforts(
+                &app.provider_name,
+                &app.model_name,
+            );
+            let current = whycodes_llm::ThinkingConfig::resolve_effort(
                 &app.provider_name,
                 &app.model_name,
                 app.reasoning_effort.as_deref(),

@@ -6,37 +6,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Read `AGENTS.md` before changing code. It contains the repository's required build-after-edit workflow, CI budget rules, and TUI/terminal pitfalls. `CONTRIBUTING.md` is the authoritative short pre-PR checklist. For terminal event-loop, mouse, clipboard, `/dev/tty`, or signal changes, read `docs/knowhow.md` first and run the manual checks in `docs/tui-term-matrix.md`.
 
-This is a Rust 2024 workspace. Cargo package names have the `whycode-` prefix even when their directories do not (`crates/llm` is `whycode-llm`). Run commands below from the repository root unless a command changes directories explicitly.
+This is a Rust 2024 workspace. Cargo package names have the `whycodes-` prefix even when their directories do not (`crates/llm` is `whycodes-llm`). Run commands below from the repository root unless a command changes directories explicitly.
 
 ## Build, run, and test
 
 ```bash
 # Day-to-day CLI build and run
-cargo build -p whycode-cli
-cargo run -p whycode-cli -- -d .
+cargo build -p whycodes-cli
+cargo run -p whycodes-cli -- -d .
 
 # Compilation checks: start narrow, widen for cross-crate changes
-cargo check -p whycode-<crate>
+cargo check -p whycodes-<crate>
 cargo check --workspace
 
 # Tests
 cargo test --workspace
-cargo test -p whycode-<crate>
-cargo test -p whycode-<crate> --lib
+cargo test -p whycodes-<crate>
+cargo test -p whycodes-<crate> --lib
 
 # One test by name
-cargo test -p whycode-<crate> <test-name>
+cargo test -p whycodes-<crate> <test-name>
 
 # One integration test exactly
-cargo test -p whycode-<crate> --test <integration-target> <test-name> -- --exact
+cargo test -p whycodes-<crate> --test <integration-target> <test-name> -- --exact
 # Example:
-cargo test -p whycode-cli --test cli_args test_cli_help -- --exact
+cargo test -p whycodes-cli --test cli_args test_cli_help -- --exact
 
 # Formatting and linting
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 # Faster targeted Clippy while iterating
-cargo clippy -p whycode-<crate> --all-targets -- -D warnings
+cargo clippy -p whycodes-<crate> --all-targets -- -D warnings
 ```
 
 After edits to Rust or Cargo manifests, run a targeted `cargo check` (or build the CLI when its binary path changed), the relevant crate tests, formatting, targeted Clippy, and the repository ratchets:
@@ -86,7 +86,7 @@ The complete crate map and rationale are in `docs/architecture.md`; allowed inte
 - **Foundations** own narrow infrastructure and leaf concepts: `core`, `auth`, `config`, `storage`, `protocol`, `format`, `schema`, `sandbox`, `lsp`, `skill`, `function`, `command-risk`, and `index`.
 - **Services** add domain behavior: `llm`, `session`, `memory`, `plugin`, `tools`, and `mcp`.
 - **Orchestration** lives in `agent`: the model/tool loop, context compaction, permission and sandbox gates, subagents, and tool execution scheduling.
-- **Applications** are `cli`, `tui`, `server`, and the Rust `sdk`. `whycode-cli` is the composition root and produces the repository's only executable, `whycode`; the server and self-update features are enabled by default.
+- **Applications** are `cli`, `tui`, `server`, and the Rust `sdk`. `whycodes-cli` is the composition root and produces the repository's only executable, `whycodes`; the server and self-update features are enabled by default.
 
 Keep leaf types, traits, shared errors, logging, and path concepts in `core`. User-loaded configuration and policy belong in `config`. `config` may depend on `core`, but `core` must never depend on or re-export `config`.
 
@@ -96,13 +96,13 @@ Keep leaf types, traits, shared errors, logging, and path concepts in `core`. Us
 2. Interactive execution enters either the ratatui TUI or plain REPL; one-shot commands use the same lower-level services.
 3. `crates/agent/src/agent.rs` owns each turn: build context and visible tools, stream the LLM response, assemble tool calls, execute them through risk/intent/path/permission/sandbox/hook gates, append results, and repeat until no tool calls remain.
 4. Read-only tool calls may run concurrently. Mutating, shell, and interactive calls are serialized.
-5. Session and message persistence is best-effort around the turn loop; storage behavior and SQLite migrations remain inside `whycode-storage`.
+5. Session and message persistence is best-effort around the turn loop; storage behavior and SQLite migrations remain inside `whycodes-storage`.
 
 ### Authentication, persistence, and protocols
 
-- `whycode-auth` owns provider definitions, OAuth/PKCE/device-code flows, credential discovery, refresh data, and the protected `auth.json` token store. The CLI coordinates provider-specific credential precedence and registers refresh behavior with `whycode-llm`.
-- `whycode-storage` is the SQLite boundary for sessions, messages, state, memories, session chunks, and code chunks. The CLI selects `<Config::data_dir()>/whycode.db`; other crates should use storage APIs rather than access SQLite directly.
-- `whycode-protocol` owns stream/CI envelopes and daemon protocol v1 (`SdkEvent`). `whycode-server` exposes `/api/*` for TUI attachment and `/v1/*` for SDK clients. The Rust and TypeScript SDKs are deliberately thin clients over that protocol.
-- `whycode-mcp` binds remote tools as `{server}_{tool}`. Agent-facing tool string names are stable product API and should not be renamed merely to match Rust module names.
+- `whycodes-auth` owns provider definitions, OAuth/PKCE/device-code flows, credential discovery, refresh data, and the protected `auth.json` token store. The CLI coordinates provider-specific credential precedence and registers refresh behavior with `whycodes-llm`.
+- `whycodes-storage` is the SQLite boundary for sessions, messages, state, memories, session chunks, and code chunks. The CLI selects `<Config::data_dir()>/whycodes.db`; other crates should use storage APIs rather than access SQLite directly.
+- `whycodes-protocol` owns stream/CI envelopes and daemon protocol v1 (`SdkEvent`). `whycodes-server` exposes `/api/*` for TUI attachment and `/v1/*` for SDK clients. The Rust and TypeScript SDKs are deliberately thin clients over that protocol.
+- `whycodes-mcp` binds remote tools as `{server}_{tool}`. Agent-facing tool string names are stable product API and should not be renamed merely to match Rust module names.
 
 Tests live with their owning crates (inline unit tests and crate-local `tests/` integration targets), not in a central test package. Prefer the narrowest relevant test during iteration, then widen based on dependency impact.

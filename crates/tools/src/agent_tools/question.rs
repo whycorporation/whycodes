@@ -12,7 +12,7 @@ use serde_json::json;
 use std::io::{self, Write};
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 // ── Public types (shared by agent prompter + TUI) ──────────────────────
 

@@ -203,7 +203,7 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePa
         }
         SidebarPreview::Mermaid { source } => {
             let rendered =
-                whycode_format::mermaid::render_mermaid(source, Some(area.width as usize))
+                whycodes_format::mermaid::render_mermaid(source, Some(area.width as usize))
                     .unwrap_or_else(|_| {
                         std::sync::Arc::new(source.lines().map(str::to_string).collect())
                     });
@@ -360,8 +360,8 @@ mod tests {
 
         let mut app = app_with_tab(SidebarTab::Todos);
         app.todos = vec![
-            whycode_core::TodoItem::new("a", "first", whycode_core::TodoStatus::Pending),
-            whycode_core::TodoItem::new("b", "done", whycode_core::TodoStatus::Completed),
+            whycodes_core::TodoItem::new("a", "first", whycodes_core::TodoStatus::Pending),
+            whycodes_core::TodoItem::new("b", "done", whycodes_core::TodoStatus::Completed),
         ];
         let palette = app.config.palette();
         let text = paint(60, 12, |f| render(f, f.area(), &app, &palette));

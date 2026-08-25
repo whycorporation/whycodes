@@ -1,6 +1,6 @@
-# @whycorporation/whycode-sdk
+# @whycorporation/whycodes-sdk
 
-Thin TypeScript client for [`whycode serve`](../../docs/guide.md). Same protocol v1 as the Rust `whycode-sdk` crate. Does **not** embed the agent loop.
+Thin TypeScript client for [`whycodes serve`](../../docs/guide.md). Same protocol v1 as the Rust `whycodes-sdk` crate. Does **not** embed the agent loop.
 
 Requires Node 18+. Zero runtime dependencies.
 
@@ -10,21 +10,21 @@ Not on the public npm registry yet. From a clone:
 cd sdk/typescript && npm ci && npm run build
 # or npm pack / npm publish when the @whycorporation scope is ready
 # daemon
-whycode serve
+whycodes serve
 ```
 
 ```ts
-import { WhycodeClient } from "@whycorporation/whycode-sdk";
+import { WhyCodesClient } from "@whycorporation/whycodes-sdk";
 
-const client = await WhycodeClient.connect("127.0.0.1:3030");
+const client = await WhyCodesClient.connect("127.0.0.1:3030");
 const session = await client.createSession();
 const turn = await client.run(session.id, "summarize this repo");
 console.log(turn.text);
 await client.close();
 ```
 
-`WhycodeClient.launch()` spawns a private `whycode serve`. Pass
-`inheritLogins: false` for a private `WHYCODE_HOME` (no user API keys).
+`WhyCodesClient.launch()` spawns a private `whycodes serve`. Pass
+`inheritLogins: false` for a private `WHYCODES_HOME` (no user API keys).
 `getHistory` / `peek`, `listModels` / `setModel`, `renameSession` /
 `rewind` / `compact` are first-class. Branch on `SdkError.code`.
 Unknown `ev` values become `{ ev: "unknown" }`.

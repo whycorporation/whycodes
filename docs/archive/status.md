@@ -45,8 +45,8 @@ Last updated: **2026-08-14** (plugins depth shipped; living tracker is roadmap.m
 | CC research A1–A7 | [archive/plan-cc-a1-a7.md](archive/plan-cc-a1-a7.md) | shipped 2026-08-07 — PromptCommands, /context, LLM compact, path globs, mcp serve, image read, idle suggestions |
 | Parallel multi-session | [archive/plan-parallel-multi-session.md](archive/plan-parallel-multi-session.md) | shipped S1–S6 — dashboard (Ctrl+O), Ctrl+N, Ctrl+Tab, per-runtime DB |
 | Semantic memory | [archive/plan-memory.md](archive/plan-memory.md) | shipped v1+v2 — retain, sync, code RAG, subagent banks, optional ONNX |
-| whycode-shaped surface | [archive/plan-surface-2026-08.md](archive/plan-surface-2026-08.md) | shipped 2026-08-14 — bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser |
-| Plugins depth | [archive/plan-plugins-depth.md](archive/plan-plugins-depth.md) | shipped 2026-08-14 — `plugin.json` discovery, last-wins merge, `whycode plugins` |
+| whycodes-shaped surface | [archive/plan-surface-2026-08.md](archive/plan-surface-2026-08.md) | shipped 2026-08-14 — bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser |
+| Plugins depth | [archive/plan-plugins-depth.md](archive/plan-plugins-depth.md) | shipped 2026-08-14 — `plugin.json` discovery, last-wins merge, `whycodes plugins` |
 
 Index of archives: [archive/README.md](archive/README.md).
 
@@ -54,7 +54,7 @@ Index of archives: [archive/README.md](archive/README.md).
 
 | Item | Status | Notes |
 |---|---|---|
-| ACP — Agent Client Protocol | deferred | Editor ↔ agent (JSON-RPC). `whycode acp` stub only. Not agent-to-agent. |
+| ACP — Agent Client Protocol | deferred | Editor ↔ agent (JSON-RPC). `whycodes acp` stub only. Not agent-to-agent. |
 | `web` surface | stub | Same band as ACP; not blocking launch. |
 
 ## Current focus
@@ -64,7 +64,7 @@ Priority (owner: **public install / repo visibility last**):
 1. **Public release (last)** — repo public, Windows install smoke. Homebrew formula auto-bumps from `release.yml`. Assets already cut as `v0.1.0` ([plan-distribution.md](plan-distribution.md)).
 2. **ACP / web** — deferred post product launch.
 
-Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-08.md](plan-surface-2026-08.md).
+Shipped this cycle: whycodes-shaped surface (2026-08-14). See [plan-surface-2026-08.md](plan-surface-2026-08.md).
 
 ## Decision log
 
@@ -87,7 +87,7 @@ Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-
 | 2026-08-05 | Latency P0/P1 shipped | OpenCode-parity cache, core tools, routing, doom-loop, prune; see plan-latency-competitors. |
 | 2026-08-05 | FEATURES.md rewritten | Mouse/resume/latency rows fixed; no stale ❌ for shipped TUI. |
 | 2026-08-07 | Swarm + conflict notify (lightweight) | `swarm` tool, shared `FileClaimRegistry`, write/edit/apply_patch gate, TUI toast. |
-| 2026-08-07 | Swarm git worktrees | Detached worktrees under `.whycode/swarm/`, three-way merge into main, force-remove on finish; config `swarm.worktrees`. |
+| 2026-08-07 | Swarm git worktrees | Detached worktrees under `.whycodes/swarm/`, three-way merge into main, force-remove on finish; config `swarm.worktrees`. |
 | 2026-08-07 | Background + schedule (Claude Code–inspired) | Process-local bg jobs (`bash background=true`, `bg`, `/bg`), delayed `schedule` + `/loop`, risk-gated; no persistent cron. |
 | 2026-08-07 | Process-sub + dynamic interpreter risk | `<(…)` `>(…)` `=(…)` and `python -c "$(…)"` → Destructive prompt. |
 | 2026-08-07 | `/doctor` | Env/key/sandbox/git/bg diagnostics (CC doctor idea). |
@@ -101,7 +101,7 @@ Shipped this cycle: whycode-shaped surface (2026-08-14). See [plan-surface-2026-
 | 2026-08-07 | Perf residual + plugins | Subagent usage fold into parent; bench-results + CI ceilings; shell plugins as tools. |
 | 2026-08-13 | Latency P2 closed | First-token race (`model_race`) + process-local exact/semantic text cache (`response_cache`). |
 | 2026-08-14 | Surface cycle closed | Bench numbers, sidebar/`panel`, session RAG, swarm mailbox, `connect`, foreign import, CDP browser. Archived as [plan-surface-2026-08.md](plan-surface-2026-08.md). |
-| 2026-08-14 | Token reconcile closed | `Usage::absorb_stream` + `WHYCODE_USAGE_DUMP` + `scripts/reconcile_token_usage.py`. Anthropic `message_delta.usage` sibling path. |
+| 2026-08-14 | Token reconcile closed | `Usage::absorb_stream` + `WHYCODES_USAGE_DUMP` + `scripts/reconcile_token_usage.py`. Anthropic `message_delta.usage` sibling path. |
 | 2026-08-14 | Plugins depth closed | `plugin.json` / `manifest.json` discovery into `plugin_*`; toml+json last-wins; marketplace still out. |
 
 ## Verification commands

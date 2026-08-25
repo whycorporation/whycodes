@@ -3,7 +3,7 @@ use crate::models::{
     CodeChunkRow, MemoryRow, MessageRow, SessionChunkRow, SessionRow, UsageTotals,
 };
 use rusqlite::Connection;
-use whycode_core::types::Usage;
+use whycodes_core::types::Usage;
 
 /// Core database wrapper
 pub struct Database {
@@ -23,7 +23,7 @@ pub type MessageInsert = (
 
 /// How long to wait for another process to release a database lock before
 /// giving up. Without this SQLite returns SQLITE_BUSY immediately, so two
-/// whycode processes touching the same database can fail spuriously.
+/// whycodes processes touching the same database can fail spuriously.
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Database {
@@ -583,10 +583,10 @@ mod tests {
     /// Opening a database while another connection holds a write transaction
     /// must succeed. `PRAGMA journal_mode=WAL` returns SQLITE_BUSY in that
     /// state without consulting the busy handler, and treating that as fatal
-    /// made concurrent whycode processes fail with "database is locked".
+    /// made concurrent whycodes processes fail with "database is locked".
     #[test]
     fn test_open_while_another_connection_holds_a_write_transaction() {
-        let path = std::env::temp_dir().join(format!("whycode-test-{}.db", uuid::Uuid::new_v4()));
+        let path = std::env::temp_dir().join(format!("whycodes-test-{}.db", uuid::Uuid::new_v4()));
         let path_str = path.to_string_lossy().to_string();
 
         // Seed the schema with a plain connection, leaving the journal mode at
@@ -777,7 +777,7 @@ mod tests {
     #[test]
     fn test_open_file_roundtrip_and_bad_paths() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("whycode.db");
+        let path = tmp.path().join("whycodes.db");
         let path_str = path.to_str().unwrap();
         let db = Database::open(path_str).unwrap();
         db.create_session("s1", "File", "/proj").unwrap();
@@ -787,7 +787,7 @@ mod tests {
         assert_eq!(db.get_session("s1").unwrap().unwrap().title, "File");
 
         assert!(Database::open(tmp.path().to_str().unwrap()).is_err());
-        assert!(Database::open("/no/such/whycode-storage-dir/db.sqlite").is_err());
+        assert!(Database::open("/no/such/whycodes-storage-dir/db.sqlite").is_err());
     }
 
     #[test]

@@ -17,6 +17,7 @@ pub use file_claims::{
 };
 pub use network::NetworkPolicy;
 pub use panel::{PanelSink, PanelUpdate};
+pub use paths::project_dir;
 pub use sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 pub use swarm_hub::{SwarmHub, SwarmMessage, SwarmMessageListener};
 pub use todo::{

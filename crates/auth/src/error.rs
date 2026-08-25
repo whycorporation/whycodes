@@ -9,7 +9,7 @@ pub enum AuthError {
     )]
     UnsupportedProvider(String),
 
-    #[error("not logged in for provider `{0}` — run `whycode auth login {0}`")]
+    #[error("not logged in for provider `{0}` — run `whycodes auth login {0}`")]
     NotLoggedIn(String),
 
     #[error("token store has insecure permissions; expected 0600 on {0}")]

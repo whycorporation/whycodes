@@ -515,6 +515,6 @@ mod tests {
     #[test]
     fn command_available_known_and_missing() {
         assert!(command_available("sh") || command_available("true"));
-        assert!(!command_available("whycode-definitely-not-on-path-xyz"));
+        assert!(!command_available("whycodes-definitely-not-on-path-xyz"));
     }
 }

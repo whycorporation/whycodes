@@ -3,14 +3,14 @@
 /// The Copilot API is OpenAI-compatible (`api.githubcopilot.com`), so this
 /// reuses the shared `openai_compat` helpers; the differences are the base
 /// URL and the editor-identity headers Copilot expects. The credential is
-/// the short-lived Copilot API token obtained via `whycode auth login
+/// the short-lived Copilot API token obtained via `whycodes auth login
 /// github-copilot` (device flow → token exchange); refresh is handled by
-/// `whycode-auth` before the token reaches this provider.
+/// `whycodes-auth` before the token reaches this provider.
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
@@ -51,7 +51,7 @@ impl LlmProvider for CopilotProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         // Same request shape as OpenAI chat completions.
         let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
@@ -65,11 +65,11 @@ impl LlmProvider for CopilotProvider {
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Copilot API error ({}): {}",
                 status, err_msg
             )));
@@ -93,7 +93,7 @@ impl LlmProvider for CopilotProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
         crate::openai_compat::attach_stream_usage_option(&mut body);
@@ -105,7 +105,7 @@ impl LlmProvider for CopilotProvider {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Copilot API error: {}",
                 text
             )));

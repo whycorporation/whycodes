@@ -3,7 +3,7 @@
 //! Tool-using agent turns are never stored: they depend on live workspace
 //! state. Title, compact, retain, and tools-free chat can replay.
 //!
-//! Semantic match uses the same hashed n-gram embed as `whycode-memory`
+//! Semantic match uses the same hashed n-gram embed as `whycodes-memory`
 //! (no ONNX). Same system + tool-name set is required so a similar question
 //! in a different project cannot leak.
 
@@ -13,7 +13,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rustc_hash::FxHasher;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, MessageContent, Role, Usage};
+use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, MessageContent, Role, Usage};
 
 const DIM: usize = 64;
 const TTL: Duration = Duration::from_secs(600);
@@ -351,7 +351,7 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::types::{Message, ToolDefinition};
+    use whycodes_core::types::{Message, ToolDefinition};
 
     fn req(system: &str, user: &str) -> LlmRequest {
         LlmRequest {

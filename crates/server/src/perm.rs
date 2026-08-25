@@ -10,11 +10,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::oneshot;
-use whycode_agent::events::{EventSink, TurnEvent};
-use whycode_agent::permission::PermissionPrompter;
-use whycode_agent::question::{AutoAnswerPrompter, QuestionError, QuestionPrompter};
-use whycode_protocol::sdk::{PermissionDecision, QuestionAnswerWire};
-use whycode_tools::question::{QuestionAnswer, QuestionSpec};
+use whycodes_agent::events::{EventSink, TurnEvent};
+use whycodes_agent::permission::PermissionPrompter;
+use whycodes_agent::question::{AutoAnswerPrompter, QuestionError, QuestionPrompter};
+use whycodes_protocol::sdk::{PermissionDecision, QuestionAnswerWire};
+use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
 
 tokio::task_local! {
     pub static RUN: RunScope;
@@ -306,8 +306,8 @@ impl QuestionPrompter for ServeQuestionPrompter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_agent::events::TurnEvent;
-    use whycode_tools::question::{QuestionAnswer, QuestionOption, QuestionSpec};
+    use whycodes_agent::events::TurnEvent;
+    use whycodes_tools::question::{QuestionAnswer, QuestionOption, QuestionSpec};
 
     fn scope(session_id: &str, auto_approve: bool, hub: Arc<PermHub>) -> RunScope {
         RunScope {

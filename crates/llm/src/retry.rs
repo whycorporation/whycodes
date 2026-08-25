@@ -104,10 +104,10 @@ pub async fn retry_with_backoff<F, Fut, T>(
     f: F,
     max_retries: usize,
     base_delay_ms: u64,
-) -> whycode_core::Result<T>
+) -> whycodes_core::Result<T>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = whycode_core::Result<T>>,
+    Fut: Future<Output = whycodes_core::Result<T>>,
 {
     let policy = RetryPolicy {
         max_retries,
@@ -124,10 +124,10 @@ pub async fn execute_with_policy<F, Fut, T>(
     policy: &RetryPolicy,
     op: &str,
     f: F,
-) -> whycode_core::Result<T>
+) -> whycodes_core::Result<T>
 where
     F: Fn() -> Fut,
-    Fut: Future<Output = whycode_core::Result<T>>,
+    Fut: Future<Output = whycodes_core::Result<T>>,
 {
     let started = Instant::now();
     let mut attempt: usize = 0;
@@ -196,7 +196,7 @@ where
 }
 
 /// Whether an error should be retried (delegates to classification).
-pub fn is_retryable(err: &whycode_core::Error) -> bool {
+pub fn is_retryable(err: &whycodes_core::Error) -> bool {
     classify(err).retryable
 }
 
@@ -248,7 +248,7 @@ mod tests {
             async move {
                 let i = c.fetch_add(1, Ordering::SeqCst);
                 if i < 2 {
-                    Err(whycode_core::Error::Llm(
+                    Err(whycodes_core::Error::Llm(
                         "API error (503): unavailable".into(),
                     ))
                 } else {
@@ -271,7 +271,7 @@ mod tests {
             let c = c.clone();
             async move {
                 c.fetch_add(1, Ordering::SeqCst);
-                Err::<(), _>(whycode_core::Error::Llm(
+                Err::<(), _>(whycodes_core::Error::Llm(
                     "API error (400): bad request".into(),
                 ))
             }

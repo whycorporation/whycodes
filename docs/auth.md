@@ -1,9 +1,9 @@
 # Authentication — API keys and OAuth subscription login
 
-whycode accepts two credential kinds per provider:
+whycodes accepts two credential kinds per provider:
 
 1. **API keys** — env var (`ANTHROPIC_API_KEY`, …) or `api_key` in `config.toml`.
-2. **OAuth subscription login** — `whycode auth login <provider>` stores a
+2. **OAuth subscription login** — `whycodes auth login <provider>` stores a
    token from an existing subscription (Claude Pro/Max, ChatGPT Plus/Pro,
    GitHub Copilot, Google/Gemini, Google Antigravity, xAI SuperGrok / X
    Premium).
@@ -14,18 +14,18 @@ An explicit key therefore never loses to a stored subscription login.
 ## Commands
 
 ```bash
-whycode auth login anthropic              # browser sign-in (Claude Pro/Max)
-whycode auth login openai                 # browser sign-in (ChatGPT Plus/Pro)
-whycode auth login github-copilot         # device code on github.com
-whycode auth login google                 # browser sign-in (Gemini)
-whycode auth login google-antigravity     # browser sign-in (Antigravity)
-whycode auth login xai                    # browser sign-in (SuperGrok / X Premium)
-whycode auth login <p> --no-browser   # print the URL instead of opening it
-whycode auth status                   # who is logged in (never prints tokens)
-whycode auth logout <provider>        # remove stored credential
+whycodes auth login anthropic              # browser sign-in (Claude Pro/Max)
+whycodes auth login openai                 # browser sign-in (ChatGPT Plus/Pro)
+whycodes auth login github-copilot         # device code on github.com
+whycodes auth login google                 # browser sign-in (Gemini)
+whycodes auth login google-antigravity     # browser sign-in (Antigravity)
+whycodes auth login xai                    # browser sign-in (SuperGrok / X Premium)
+whycodes auth login <p> --no-browser   # print the URL instead of opening it
+whycodes auth status                   # who is logged in (never prints tokens)
+whycodes auth logout <provider>        # remove stored credential
 ```
 
-`whycode debug` also lists stored logins (method + expiry only).
+`whycodes debug` also lists stored logins (method + expiry only).
 
 In the TUI, `/connect` reloads the credential for the active provider; when
 none exists and the provider supports OAuth, it starts the login flow
@@ -36,7 +36,7 @@ picker annotated with which subscriptions are already connected, and starts
 the same flow for the chosen one. Subscription backends do not expose a
 listable `/models` endpoint, so after a login the `/models` picker offers
 each connected provider's suggested models
-(`whycode_auth::providers::suggested_models`).
+(`whycodes_auth::providers::suggested_models`).
 
 ## What is stored, and where
 
@@ -45,15 +45,15 @@ each connected provider's suggested models
 | `<data_dir>/auth.json` | OAuth access/refresh tokens per provider | `0600` (owner-only; a looser file is refused) |
 | `<data_dir>/auth-consent.json` | Per-path approve/deny decisions for credential import | `0600` |
 
-`<data_dir>` is the platform data dir (`~/.local/share/whycode` on Linux,
-`~/Library/Application Support/com.whycorporation.whycode` on macOS).
+`<data_dir>` is the platform data dir (`~/.local/share/whycodes` on Linux,
+`~/Library/Application Support/com.whycorporation.whycodes` on macOS).
 Writes are atomic (temp file + rename). Tokens never appear in logs or
 `Debug` output at any level.
 
 ## Flow per provider
 
 The flows use the public OAuth client ids that ship in the first-party /
-community CLIs — whycode has no registered client of its own.
+community CLIs — whycodes has no registered client of its own.
 
 | Provider | Flow | Works for API calls |
 |----------|------|---------------------|
@@ -72,7 +72,7 @@ credential is force-renewed and the request retried exactly once; a second
 
 ## Credential import (discovery)
 
-`whycode auth import` scans for credential files written by other CLIs and
+`whycodes auth import` scans for credential files written by other CLIs and
 imports them **only after explicit per-path approval**:
 
 | Source | File read | Provider |
@@ -96,7 +96,7 @@ The consent model (mirroring jcode's `OAUTH.md`):
   Codex imports also carry `account_id` so the Codex backend route gets
   its `chatgpt-account-id` header.
 - macOS Keychain entries (Claude Code's store on that platform) are out of
-  scope; use `whycode auth login anthropic` there.
+  scope; use `whycodes auth login anthropic` there.
 
 To reset a decision, delete `auth-consent.json` (or edit out the path).
 
@@ -104,7 +104,7 @@ To reset a decision, delete `auth-consent.json` (or edit out the path).
 
 The design goal: adding a provider is **only** adding one `ProviderSpec`
 literal plus one registry entry — no branches in flow code. The conformance
-suite (`cargo test -p whycode-auth`) rejects a malformed spec before it can
+suite (`cargo test -p whycodes-auth`) rejects a malformed spec before it can
 misbehave at runtime.
 
 Checklist:

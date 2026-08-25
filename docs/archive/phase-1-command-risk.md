@@ -20,7 +20,7 @@ converges on `allow`. jcode hit exactly this: their issue #604 records a user
 losing their home directory, and their `jcode-command-risk` crate exists as the
 response.
 
-There is a second problem specific to whycode: when stdin is not a terminal the
+There is a second problem specific to whycodes: when stdin is not a terminal the
 prompter auto-denies, so in CI or a pipe `ask` silently degrades to `deny`. That
 is safe but makes `ask` useless for automation.
 

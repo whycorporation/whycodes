@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Remove the whycode binary.
+    Remove the whycodes binary.
 
 .DESCRIPTION
     Config and session data are left alone unless -Purge is given: a user
@@ -9,14 +9,14 @@
 
 [CmdletBinding()]
 param(
-    [string] $InstallDir = "$env:LOCALAPPDATA\Programs\whycode",
+    [string] $InstallDir = "$env:LOCALAPPDATA\Programs\whycodes",
     [switch] $Purge
 )
 
 $ErrorActionPreference = "Stop"
 $removed = $false
 
-foreach ($name in @("whycode.exe", "whycode.exe.old")) {
+foreach ($name in @("whycodes.exe", "whycodes.exe.old")) {
     $path = Join-Path $InstallDir $name
     if (Test-Path $path) {
         Remove-Item $path -Force
@@ -30,7 +30,9 @@ if (-not $removed) {
 
 if ($Purge) {
     foreach ($dir in @(
+        "$env:APPDATA\whycorporation\whycodes",
         "$env:APPDATA\whycorporation\whycode",
+        "$env:LOCALAPPDATA\whycorporation\whycodes",
         "$env:LOCALAPPDATA\whycorporation\whycode"
     )) {
         if (Test-Path $dir) {

@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use whycode_core::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::tool::{Tool, ToolContext};
+use whycodes_core::types::ToolResult;
 
 use crate::client::{self, LspClient};
 use crate::types::Position;
@@ -282,7 +282,7 @@ impl Tool for LspTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::tool::ToolContext;
+    use whycodes_core::tool::ToolContext;
 
     #[test]
     fn describes_itself() {

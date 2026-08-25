@@ -214,7 +214,7 @@ pub struct CatalogFetchRequest {
 /// `{PROVIDER}_API_KEY` env. Headers come from `ProviderConfig.headers`
 /// (may already include `Authorization` / `x-api-key`).
 pub fn catalog_request_from_config(
-    config: &whycode_config::Config,
+    config: &whycodes_config::Config,
     provider_name: &str,
     runtime_api_key: Option<&str>,
 ) -> Option<CatalogFetchRequest> {
@@ -251,7 +251,7 @@ pub fn catalog_request_from_config(
 /// Fetch `GET {base}/models` using a config-derived request.
 pub async fn fetch_model_catalog_from_request(
     req: &CatalogFetchRequest,
-) -> whycode_core::Result<ModelCatalog> {
+) -> whycodes_core::Result<ModelCatalog> {
     fetch_model_catalog(&req.base_url, req.api_key.as_deref(), &req.headers).await
 }
 
@@ -262,7 +262,7 @@ pub async fn fetch_model_catalog_from_request(
 pub async fn fetch_model_context_window(
     req: &CatalogFetchRequest,
     model: &str,
-) -> whycode_core::Result<Option<u32>> {
+) -> whycodes_core::Result<Option<u32>> {
     let url = normalize_models_url(&req.base_url);
     let mut http =
         super::client_identity::with_identity(super::client_identity::http_client().get(&url));
@@ -291,7 +291,7 @@ pub async fn fetch_model_context_window(
         .timeout(Duration::from_secs(3))
         .send()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("models list HTTP: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("models list HTTP: {e}")))?;
 
     let status = resp.status();
     // Hard cap so a runaway gateway cannot OOM the agent (typical catalog ~1–2 MB).
@@ -299,22 +299,22 @@ pub async fn fetch_model_context_window(
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("models list body: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("models list body: {e}")))?;
     if bytes.len() > MAX_BODY {
-        return Err(whycode_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::Llm(format!(
             "models list too large ({} bytes > {MAX_BODY})",
             bytes.len()
         )));
     }
     if !status.is_success() {
         let snippet: String = String::from_utf8_lossy(&bytes).chars().take(200).collect();
-        return Err(whycode_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::Llm(format!(
             "models list {status}: {snippet}"
         )));
     }
 
     let json: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| whycode_core::Error::Llm(format!("models list JSON: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("models list JSON: {e}")))?;
     Ok(context_window_for_model_id(&json, model))
 }
 
@@ -329,7 +329,7 @@ pub async fn fetch_model_catalog(
     base_url: &str,
     api_key: Option<&str>,
     extra_headers: &HashMap<String, String>,
-) -> whycode_core::Result<ModelCatalog> {
+) -> whycodes_core::Result<ModelCatalog> {
     let url = normalize_models_url(base_url);
     let mut req =
         super::client_identity::with_identity(super::client_identity::http_client().get(&url));
@@ -353,29 +353,29 @@ pub async fn fetch_model_catalog(
         .timeout(Duration::from_secs(20))
         .send()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("models list HTTP: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("models list HTTP: {e}")))?;
 
     let status = resp.status();
     let body = resp
         .text()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("models list body: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("models list body: {e}")))?;
 
     if !status.is_success() {
         let snippet: String = body.chars().take(200).collect();
-        return Err(whycode_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::Llm(format!(
             "models list {status}: {snippet}"
         )));
     }
 
     let json: Value = serde_json::from_str(&body)
-        .map_err(|e| whycode_core::Error::Llm(format!("models list JSON: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("models list JSON: {e}")))?;
 
     Ok(parse_models_json(&json, &url))
 }
 
 /// Resolve base URL for listing models from provider config fields only.
-pub fn base_url_from_provider_config(pc: &whycode_core::types::ProviderConfig) -> Option<String> {
+pub fn base_url_from_provider_config(pc: &whycodes_core::types::ProviderConfig) -> Option<String> {
     pc.base_url
         .as_ref()
         .or(pc.api_base.as_ref())
@@ -410,8 +410,8 @@ mod tests {
 
     #[test]
     fn catalog_request_requires_config_base_url() {
-        use whycode_config::Config;
-        use whycode_core::types::ProviderConfig;
+        use whycodes_config::Config;
+        use whycodes_core::types::ProviderConfig;
 
         let mut cfg = Config::default();
         // No base → no fetch request (do not invent hosts).
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn base_url_from_provider_config_prefers_base_url() {
-        use whycode_core::types::ProviderConfig;
+        use whycodes_core::types::ProviderConfig;
         let pc = ProviderConfig {
             name: "p".into(),
             api_key: None,
@@ -745,8 +745,8 @@ mod tests {
 
     #[test]
     fn catalog_request_filters_unknown_provider_and_uses_runtime_fallback() {
-        use whycode_config::Config;
-        use whycode_core::types::ProviderConfig;
+        use whycodes_config::Config;
+        use whycodes_core::types::ProviderConfig;
 
         let mut cfg = Config::default();
         cfg.providers.insert(
@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn base_url_does_not_fall_through_when_present_value_is_blank() {
-        use whycode_core::types::ProviderConfig;
+        use whycodes_core::types::ProviderConfig;
 
         let pc = ProviderConfig {
             name: "p".into(),

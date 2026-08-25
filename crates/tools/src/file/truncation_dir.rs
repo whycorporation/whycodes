@@ -3,7 +3,7 @@ use serde_json::json;
 
 use super::paths::{display_path, human_size, list_dir_entries, resolve_path};
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Tool that lists a directory and truncates the output to fit context.
 /// In-process (no shell `ls`) — consistent with `list`.

@@ -1,20 +1,20 @@
 //! Client identity headers for LLM HTTP requests.
 //!
 //! Gateways (OmniRoute, OpenRouter, LiteLLM, etc.) use these to label traffic
-//! as coming from whycode rather than a generic HTTP client.
+//! as coming from whycodes rather than a generic HTTP client.
 
 use std::sync::OnceLock;
 
 use reqwest::RequestBuilder;
 
-/// `User-Agent` value, e.g. `whycode/0.1.0`.
-pub const USER_AGENT: &str = concat!("whycode/", env!("CARGO_PKG_VERSION"));
+/// `User-Agent` value, e.g. `whycodes/0.1.0`.
+pub const USER_AGENT: &str = concat!("whycodes/", env!("CARGO_PKG_VERSION"));
 
 /// OpenRouter-style app title (`X-Title`).
-pub const X_TITLE: &str = "whycode";
+pub const X_TITLE: &str = "whycodes";
 
 /// App / project URL (`HTTP-Referer`).
-pub const HTTP_REFERER: &str = "https://github.com/whycorporation/whycode";
+pub const HTTP_REFERER: &str = "https://why.codes";
 
 /// TCP connect budget. Without this, a dead Tailscale/VPN hop can sit in SYN
 /// retries for 20–75s and inflate "Worked for Xs" far above gateway Duration.
@@ -42,14 +42,14 @@ fn shared_client() -> &'static reqwest::Client {
     })
 }
 
-/// Shared HTTP client with the whycode `User-Agent` as the default.
+/// Shared HTTP client with the whycodes `User-Agent` as the default.
 ///
 /// Always returns a clone of the process-wide client (cheap; Arc under the hood).
 pub fn http_client() -> reqwest::Client {
     shared_client().clone()
 }
 
-/// Attach whycode identity headers used by OpenRouter, OmniRoute, and similar gateways.
+/// Attach whycodes identity headers used by OpenRouter, OmniRoute, and similar gateways.
 ///
 /// Callers that need to override (e.g. custom provider `headers`, OpenRouter
 /// `with_site`) should set their headers *after* this.
@@ -59,7 +59,7 @@ pub fn with_identity(req: RequestBuilder) -> RequestBuilder {
         .header("HTTP-Referer", HTTP_REFERER)
 }
 
-/// Start a POST with whycode identity headers already applied.
+/// Start a POST with whycodes identity headers already applied.
 pub fn post(url: &str) -> RequestBuilder {
     with_identity(shared_client().post(url))
 }
@@ -69,19 +69,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_agent_starts_with_whycode() {
+    fn user_agent_starts_with_whycodes() {
         assert!(
-            USER_AGENT.starts_with("whycode/"),
+            USER_AGENT.starts_with("whycodes/"),
             "USER_AGENT={USER_AGENT}"
         );
         assert!(!USER_AGENT.ends_with('/'));
-        assert!(USER_AGENT.len() > "whycode/".len());
+        assert!(USER_AGENT.len() > "whycodes/".len());
     }
 
     #[test]
     fn identity_constants() {
-        assert_eq!(X_TITLE, "whycode");
-        assert!(HTTP_REFERER.contains("whycode"));
+        assert_eq!(X_TITLE, "whycodes");
+        assert!(HTTP_REFERER.contains("why.codes"));
     }
 
     #[test]

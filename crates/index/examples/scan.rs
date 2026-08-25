@@ -1,11 +1,11 @@
 //! Smoke/bench helper: scan the cwd, print timing + a sample query.
 //!
 //! ```sh
-//! cargo run -p whycode-index --example scan --release
+//! cargo run -p whycodes-index --example scan --release
 //! ```
 
 use std::time::Instant;
-use whycode_index::WorkspaceIndex;
+use whycodes_index::WorkspaceIndex;
 
 fn vmrss_kb() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;

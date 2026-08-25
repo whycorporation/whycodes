@@ -1,4 +1,4 @@
-//! In-process axum stand-in for `whycode serve` — covers the HTTP client
+//! In-process axum stand-in for `whycodes serve` — covers the HTTP client
 //! without spawning the binary.
 
 use std::net::SocketAddr;
@@ -13,11 +13,11 @@ use axum::routing::{get, post};
 use axum::{Json, response::IntoResponse};
 use serde_json::json;
 use tokio::net::TcpListener;
-use whycode_protocol::sdk::{
+use whycodes_protocol::sdk::{
     Handshake, PROTOCOL_MAJOR, SdkEvent, SessionHistory, SessionInfo, SessionList,
 };
 
-use crate::{ErrorCode, LaunchOptions, RunOptions, WhycodeClient};
+use crate::{ErrorCode, LaunchOptions, RunOptions, WhyCodesClient};
 
 #[derive(Clone)]
 struct Mode(Arc<AtomicU8>);
@@ -256,7 +256,7 @@ async fn healthy() -> Json<Handshake> {
 #[tokio::test]
 async fn connect_and_session_surface() {
     let (base, _h) = spawn_ok().await;
-    let c = WhycodeClient::connect(&base).await.expect("connect");
+    let c = WhyCodesClient::connect(&base).await.expect("connect");
     assert!(c.base_url().contains("127.0.0.1"));
     let hs = c.health().await.unwrap();
     assert_eq!(hs.protocol, PROTOCOL_MAJOR);
@@ -309,7 +309,7 @@ async fn connect_and_session_surface() {
     c.respond_to_permission(
         "abc",
         "r1",
-        whycode_protocol::sdk::PermissionDecision::Allow,
+        whycodes_protocol::sdk::PermissionDecision::Allow,
     )
     .await
     .unwrap();
@@ -317,7 +317,7 @@ async fn connect_and_session_surface() {
         c.respond_to_permission(
             "missing",
             "r1",
-            whycode_protocol::sdk::PermissionDecision::Deny
+            whycodes_protocol::sdk::PermissionDecision::Deny
         )
         .await
         .is_err()
@@ -352,7 +352,7 @@ async fn connect_and_session_surface() {
 async fn handshake_rejects_wrong_protocol_and_missing_route() {
     let mode = Mode(Arc::new(AtomicU8::new(MODE_BAD_PROTOCOL)));
     let (base, _h) = bind_with(mode.clone()).await;
-    let err = match WhycodeClient::connect(&base).await {
+    let err = match WhyCodesClient::connect(&base).await {
         Err(e) => e,
         Ok(_) => panic!("expected unsupported protocol"),
     };
@@ -360,7 +360,7 @@ async fn handshake_rejects_wrong_protocol_and_missing_route() {
 
     mode.0.store(MODE_NO_HEALTH, Ordering::SeqCst);
     let (base2, _h2) = bind_with(mode).await;
-    let err = match WhycodeClient::connect(&base2).await {
+    let err = match WhyCodesClient::connect(&base2).await {
         Err(e) => e,
         Ok(_) => panic!("expected missing /v1/health"),
     };
@@ -369,7 +369,7 @@ async fn handshake_rejects_wrong_protocol_and_missing_route() {
 
 #[tokio::test]
 async fn connect_refused_is_disconnected() {
-    let err = match WhycodeClient::connect("127.0.0.1:1").await {
+    let err = match WhyCodesClient::connect("127.0.0.1:1").await {
         Err(e) => e,
         Ok(_) => panic!("expected disconnect"),
     };
@@ -424,7 +424,7 @@ async fn request_options_are_sent_as_protocol_json() {
         .route("/v1/sessions/:id/compact", post(compact_body))
         .route("/v1/sessions/:id/run", post(run_body));
     let (base, _server) = bind_app(app).await;
-    let client = WhycodeClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(base).await.unwrap();
 
     assert_eq!(
         client.create_session(Some("/project")).await.unwrap().id,
@@ -469,7 +469,7 @@ async fn http_and_decode_failures_return_stable_error_codes() {
         .route("/v1/models", get(invalid_json))
         .route("/v1/sessions/:id/cancel", post(server_error));
     let (base, _server) = bind_app(app).await;
-    let client = WhycodeClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(base).await.unwrap();
 
     let auth = client.list_sessions().await.unwrap_err();
     assert_eq!(auth.code, ErrorCode::Auth);
@@ -528,7 +528,7 @@ async fn run_collects_cancel_and_error_event_branches() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions/:id/run", post(events));
     let (base, _server) = bind_app(app).await;
-    let client = WhycodeClient::connect(base).await.unwrap();
+    let client = WhyCodesClient::connect(base).await.unwrap();
 
     let cancelled = client
         .run("cancelled", "go", RunOptions::default())

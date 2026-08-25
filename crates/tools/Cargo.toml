@@ -1,5 +1,5 @@
 [package]
-name = "whycode-tools"
+name = "whycodes-tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,17 +7,17 @@ repository.workspace = true
 
 [features]
 default = []
-onnx = ["whycode-memory/onnx"]
+onnx = ["whycodes-memory/onnx"]
 
 [dependencies]
-whycode-core = { path = "../core" }
-whycode-index = { path = "../index" }
-whycode-format = { path = "../format" }
-whycode-skill = { path = "../skill" }
-whycode-plugin = { path = "../plugin" }
-whycode-lsp = { path = "../lsp" }
-whycode-sandbox = { path = "../sandbox" }
-whycode-memory = { path = "../memory" }
+whycodes-core = { path = "../core" }
+whycodes-index = { path = "../index" }
+whycodes-format = { path = "../format" }
+whycodes-skill = { path = "../skill" }
+whycodes-plugin = { path = "../plugin" }
+whycodes-lsp = { path = "../lsp" }
+whycodes-sandbox = { path = "../sandbox" }
+whycodes-memory = { path = "../memory" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

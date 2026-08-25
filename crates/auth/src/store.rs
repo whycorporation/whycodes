@@ -5,7 +5,7 @@
 //!   refused rather than silently used.
 //! - Writes are atomic (write temp file in the same dir, then rename) so a
 //!   crash mid-write cannot leave a truncated store.
-//! - The store is never written anywhere but the whycode data directory.
+//! - The store is never written anywhere but the whycodes data directory.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,7 +21,7 @@ struct StoreFile {
     providers: BTreeMap<String, ProviderAuth>,
 }
 
-/// OAuth token store rooted at the whycode data directory.
+/// OAuth token store rooted at the whycodes data directory.
 pub struct TokenStore {
     path: PathBuf,
 }

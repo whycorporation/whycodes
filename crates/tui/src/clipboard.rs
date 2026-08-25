@@ -564,13 +564,13 @@ mod tests {
 
     #[test]
     fn status_bar_space_between_collapses() {
-        // Footer: "● whycode" + many pad spaces + "Get started /connect"
-        let mut row = String::from("● whycode");
+        // Footer: "● whycodes" + many pad spaces + "Get started /connect"
+        let mut row = String::from("● whycodes");
         row.push_str(&" ".repeat(40));
         row.push_str("Get started /connect");
         let cells = grid_padded(&[row.as_str()], 80);
         let t = text_from_cells(&cells, 0, 0, 79, 0);
-        assert_eq!(t, "● whycode Get started /connect");
+        assert_eq!(t, "● whycodes Get started /connect");
         assert!(
             !t.contains("  "),
             "must not keep double spaces from layout: {t:?}"
@@ -599,7 +599,7 @@ mod tests {
         let lines = vec![
             "   ┃ hello".into(),
             "   │ note".into(),
-            format!(" ● whycode{}Get started", " ".repeat(30)),
+            format!(" ● whycodes{}Get started", " ".repeat(30)),
         ];
         let out = clean_copied_lines(lines);
         assert_eq!(
@@ -607,7 +607,7 @@ mod tests {
             vec![
                 "  ┃ hello".to_string(),
                 "  │ note".to_string(),
-                "● whycode Get started".to_string(),
+                "● whycodes Get started".to_string(),
             ]
         );
         assert!(

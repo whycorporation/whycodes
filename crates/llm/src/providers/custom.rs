@@ -6,7 +6,7 @@ use futures::stream::Stream;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat};
 
 use crate::provider::LlmProvider;
 
@@ -48,7 +48,7 @@ impl CustomProvider {
     }
 
     /// Create from config
-    pub fn from_config(config: &whycode_core::types::ProviderConfig) -> Self {
+    pub fn from_config(config: &whycodes_core::types::ProviderConfig) -> Self {
         // Accept either a bare `/v1` base or a full chat-completions URL.
         let url = normalize_chat_completions_url(
             config
@@ -109,7 +109,7 @@ impl CustomProvider {
         crate::openai_compat::convert_messages_with_format(request, self.tool_arguments)
     }
 
-    fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
+    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
         crate::openai_compat::convert_tools(tools)
     }
 
@@ -162,7 +162,7 @@ impl LlmProvider for CustomProvider {
         request: &LlmRequest,
         _api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         let mut body = self.build_body(request, model);
         body["stream"] = Value::Bool(false);
 
@@ -170,17 +170,17 @@ impl LlmProvider for CustomProvider {
             .build_request(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         let status = resp.status();
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON: {e}")))?;
 
         if !status.is_success() {
             let msg = json["error"]["message"].as_str().unwrap_or("unknown");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "{} API error ({}): {}",
                 self.name, status, msg
             )));
@@ -204,7 +204,7 @@ impl LlmProvider for CustomProvider {
         request: &LlmRequest,
         _api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = self.build_body(request, model);
         crate::openai_compat::attach_stream_usage_option(&mut body);
@@ -212,13 +212,13 @@ impl LlmProvider for CustomProvider {
             .build_request(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP: {e}")))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             // Include (NNN) so retry_with_backoff / is_retryable can see 5xx.
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "{} API error ({}): {}",
                 self.name,
                 status.as_u16(),
@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn from_config_uses_normalized_base_url() {
-        let pc = whycode_core::types::ProviderConfig {
+        let pc = whycodes_core::types::ProviderConfig {
             name: "custom".into(),
             api_key: Some("sk-test".into()),
             api_base: None,
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn from_config_honors_tool_arguments_object() {
-        let pc = whycode_core::types::ProviderConfig {
+        let pc = whycodes_core::types::ProviderConfig {
             name: "omniroute".into(),
             api_key: Some("sk-test".into()),
             api_base: None,
@@ -338,7 +338,7 @@ mod tests {
         let req = make_req();
         let mut req = req;
         // Build a body that includes a tool call in history.
-        use whycode_core::types::{ContentBlock, Message, MessageContent, Role};
+        use whycodes_core::types::{ContentBlock, Message, MessageContent, Role};
         req.messages = std::sync::Arc::from(vec![Message {
             role: Role::Assistant,
             content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
@@ -388,7 +388,7 @@ mod tests {
     fn test_custom_provider_with_tools() {
         let p = CustomProvider::new("test", "http://localhost/v1", None, HashMap::new());
         let mut req = make_req();
-        req.tools = vec![whycode_core::types::ToolDefinition {
+        req.tools = vec![whycodes_core::types::ToolDefinition {
             name: "read".to_string(),
             description: "read file".to_string(),
             parameters: serde_json::json!({"type": "object"}),

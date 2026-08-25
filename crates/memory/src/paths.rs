@@ -8,7 +8,7 @@ use crate::settings::MemoryScope;
 /// Directory holding MEMORY.md for this bank.
 ///
 /// - **User scope:** `{data_dir}/memory/<project_key>[/agents/<bank>]/`
-/// - **Project scope:** `{project}/.whycode/memory[/agents/<bank>]` (git-shareable)
+/// - **Project scope:** `{project}/.whycodes/memory[/agents/<bank>]` (git-shareable)
 pub fn memory_dir(
     data_dir: &Path,
     project_path: &Path,
@@ -17,7 +17,7 @@ pub fn memory_dir(
 ) -> PathBuf {
     let base = match scope {
         MemoryScope::User => data_dir.join("memory").join(project_key(project_path)),
-        MemoryScope::Project => project_path.join(".whycode").join("memory"),
+        MemoryScope::Project => project_path.join(".whycodes").join("memory"),
     };
     match agent_bank {
         Some(a) if !a.is_empty() => base.join("agents").join(sanitize_component(a)),

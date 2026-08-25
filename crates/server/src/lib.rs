@@ -1,4 +1,4 @@
-//! Local warm API server (`whycode serve`).
+//! Local warm API server (`whycodes serve`).
 //!
 //! Keeps a fully configured [`Agent`] (MCP, plugins, workspace index, config)
 //! alive across HTTP clients so reconnects skip cold startup. Sessions are
@@ -17,10 +17,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex as AsyncMutex;
 use tower_http::cors::CorsLayer;
-use whycode_agent::agent::Agent;
-use whycode_agent::events::CancelFlag;
-use whycode_config::Config;
-use whycode_session::session::Session;
+use whycodes_agent::agent::Agent;
+use whycodes_agent::events::CancelFlag;
+use whycodes_config::Config;
+use whycodes_session::session::Session;
 
 /// One live session handle (async mutex so concurrent chats serialize per id).
 pub type SessionHandle = Arc<AsyncMutex<Session>>;
@@ -71,14 +71,14 @@ impl AppState {
             .unwrap_or_default()
     }
 
-    /// Path to the shared whycode SQLite file (same as CLI/TUI).
+    /// Path to the shared whycodes SQLite file (same as CLI/TUI).
     pub fn db_path() -> Option<PathBuf> {
-        Config::data_dir().ok().map(|d| d.join("whycode.db"))
+        Config::data_dir().ok().map(|d| d.join("whycodes.db"))
     }
 
-    pub fn open_db() -> Option<whycode_storage::db::Database> {
+    pub fn open_db() -> Option<whycodes_storage::db::Database> {
         let path = Self::db_path()?;
-        whycode_storage::db::Database::open(&path.to_string_lossy()).ok()
+        whycodes_storage::db::Database::open(&path.to_string_lossy()).ok()
     }
 
     pub fn register_cancel(&self, session_id: &str, flag: CancelFlag) {
@@ -95,7 +95,7 @@ impl AppState {
         match self.cancel_flags.lock() {
             Ok(map) => {
                 if let Some(flag) = map.get(session_id) {
-                    whycode_agent::events::request_cancel(flag);
+                    whycodes_agent::events::request_cancel(flag);
                     true
                 } else {
                     false
@@ -147,7 +147,7 @@ pub fn create_router(state: AppState) -> Router {
 /// touches the user's config, database, or workspace.
 #[cfg(test)]
 pub(crate) fn test_state() -> AppState {
-    use whycode_core::types::{AgentInfo, AgentMode, PermissionSet};
+    use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet};
 
     AppState {
         agent: Arc::new(Agent::new(AgentInfo {
@@ -179,8 +179,8 @@ mod http_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_agent::events::new_cancel_flag;
-    use whycode_session::session::Session;
+    use whycodes_agent::events::new_cancel_flag;
+    use whycodes_session::session::Session;
 
     #[test]
     fn session_round_trip_through_the_warm_map() {

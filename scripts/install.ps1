@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Install whycode from a GitHub release.
+    Install whycodes from a GitHub release.
 
 .DESCRIPTION
     irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.ps1 | iex
@@ -13,7 +13,7 @@
 
 [CmdletBinding()]
 param(
-    [string] $InstallDir = "$env:LOCALAPPDATA\Programs\whycode",
+    [string] $InstallDir = "$env:LOCALAPPDATA\Programs\whycodes",
     [string] $Version = "latest"
 )
 
@@ -32,14 +32,14 @@ if ($arch -ne "AMD64") {
 }
 
 $target  = "x86_64-pc-windows-msvc"
-$archive = "whycode-$target.zip"
+$archive = "whycodes-$target.zip"
 $base = if ($Version -eq "latest") {
     "https://github.com/$Repo/releases/latest/download"
 } else {
     "https://github.com/$Repo/releases/download/$Version"
 }
 
-$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("whycode-install-" + [guid]::NewGuid())
+$tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("whycodes-install-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force -Path $tmp | Out-Null
 
 try {
@@ -69,11 +69,11 @@ try {
     Write-Host "Checksum verified"
 
     Expand-Archive -Path $archivePath -DestinationPath (Join-Path $tmp "unpacked") -Force
-    $exe = Join-Path $tmp "unpacked\whycode.exe"
-    if (-not (Test-Path $exe)) { Fail "the archive did not contain whycode.exe" }
+    $exe = Join-Path $tmp "unpacked\whycodes.exe"
+    if (-not (Test-Path $exe)) { Fail "the archive did not contain whycodes.exe" }
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-    $dest = Join-Path $InstallDir "whycode.exe"
+    $dest = Join-Path $InstallDir "whycodes.exe"
 
     # Windows locks a running executable, so a copy over it fails. Move the old
     # one aside first — the rename succeeds even while it is running, and the
@@ -82,7 +82,7 @@ try {
         $old = "$dest.old"
         Remove-Item $old -Force -ErrorAction SilentlyContinue
         try { Move-Item $dest $old -Force } catch {
-            Fail "could not replace $dest — close any running whycode and try again"
+            Fail "could not replace $dest — close any running whycodes and try again"
         }
     }
     Copy-Item $exe $dest -Force

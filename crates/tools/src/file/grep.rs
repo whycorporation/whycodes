@@ -9,7 +9,7 @@ use super::paths::{
     walk_files,
 };
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 const DEFAULT_MAX_RESULTS: usize = 50;
 const HARD_MAX_RESULTS: usize = 500;
@@ -152,7 +152,7 @@ impl GrepTool {
         context: usize,
         max_results: usize,
         working_dir: &str,
-        file_index: Option<&whycode_index::WorkspaceIndex>,
+        file_index: Option<&whycodes_index::WorkspaceIndex>,
     ) -> Result<String, String> {
         let mut builder = regex::RegexBuilder::new(pattern);
         builder.case_insensitive(case_insensitive);

@@ -19,7 +19,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use unicode_width::UnicodeWidthStr;
-use whycode_core::todo::{TodoItem, TodoStatus, all_terminal, terminal_count};
+use whycodes_core::todo::{TodoItem, TodoStatus, all_terminal, terminal_count};
 
 /// Max item rows (not counting the header or overflow line).
 pub const MAX_ITEMS: usize = 8;
@@ -225,7 +225,7 @@ mod tests {
     use crate::config::TuiAppConfig;
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use whycode_core::todo::{TodoItem, TodoStatus};
+    use whycodes_core::todo::{TodoItem, TodoStatus};
 
     fn paint(app: &mut TuiApp, w: u16, h: u16) -> String {
         let palette = app.config.palette();

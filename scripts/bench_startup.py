@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure how long whycode takes to start.
+"""Measure how long whycodes takes to start.
 
 Runs the binary N times and reports the median and p95 wall time. The first run
 is discarded: it pays for reading the binary off disk, and every run after it
@@ -37,13 +37,13 @@ CASES = [
 
 
 def default_binary() -> Path:
-    name = "whycode.exe" if platform.system() == "Windows" else "whycode"
+    name = "whycodes.exe" if platform.system() == "Windows" else "whycodes"
     for profile in ("release", "debug"):
         candidate = ROOT / "target" / profile / name
         if candidate.exists():
             return candidate
     raise SystemExit(
-        "no whycode binary found — build one first:\n  cargo build --release -p whycode-cli"
+        "no whycodes binary found — build one first:\n  cargo build --release -p whycodes-cli"
     )
 
 

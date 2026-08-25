@@ -1,4 +1,4 @@
-# Whycode
+# WhyCodes
 
 A fast, provider-independent coding agent for the terminal, written in Rust.
 It reads, writes and edits files, runs commands, searches the workspace and
@@ -13,13 +13,13 @@ machine-readable one-shot CLI.
   CI matrix.
 - Choose Anthropic, OpenAI, Google, GitHub Copilot, Groq, xAI, DeepSeek,
   Ollama, OpenRouter, Mistral, Together, or any OpenAI-compatible endpoint,
-  using an API key or subscription login (`whycode auth login`).
+  using an API key or subscription login (`whycodes auth login`).
 - Bring project instructions from `AGENTS.md` and connect existing MCP tools
   and language servers over LSP.
 - Resume previous work with persisted sessions and cross-session memory
   (`MEMORY.md`, semantic recall, and an optional code index).
 
-Whycode focuses on a small native footprint, an idle-efficient TUI, and a
+WhyCodes focuses on a small native footprint, an idle-efficient TUI, and a
 provider-independent agent workflow.
 
 ## Install
@@ -35,13 +35,13 @@ irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/instal
 ```bash
 # Homebrew
 brew tap whycorporation/whycode https://github.com/whycorporation/whycode
-brew install whycode
+brew install whycodes
 
 # From source
-cargo build --release -p whycode-cli
+cargo build --release -p whycodes-cli
 ```
 
-Update with `whycode upgrade`. The install scripts verify release artifacts
+Update with `whycodes upgrade`. The install scripts verify release artifacts
 against the published `SHA256SUMS`. For downloadable binaries, installation
 details and uninstall instructions, see
 [docs/packaging.md](docs/packaging.md).
@@ -49,9 +49,9 @@ details and uninstall instructions, see
 Shell completions are generated from the live CLI:
 
 ```bash
-eval "$(whycode completions zsh)"    # ~/.zshrc
-eval "$(whycode completions bash)"   # ~/.bashrc
-whycode completions fish > ~/.config/fish/completions/whycode.fish
+eval "$(whycodes completions zsh)"    # ~/.zshrc
+eval "$(whycodes completions bash)"   # ~/.bashrc
+whycodes completions fish > ~/.config/fish/completions/whycodes.fish
 ```
 
 ## Quick start
@@ -59,22 +59,22 @@ whycode completions fish > ~/.config/fish/completions/whycode.fish
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 
-whycode -d ./my-project                          # interactive TUI
-whycode generate "Explain main.rs" -d ./my-project
-whycode generate "Summarize the last commit" --format json
-whycode --continue                               # resume last session
-whycode -P openai -m gpt-4o generate "Refactor this module"
+whycodes -d ./my-project                          # interactive TUI
+whycodes generate "Explain main.rs" -d ./my-project
+whycodes generate "Summarize the last commit" --format json
+whycodes --continue                               # resume last session
+whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
 
 Or sign in with a subscription instead of an API key:
 
 ```bash
-whycode auth login anthropic              # Claude Pro/Max
-whycode auth login openai                 # ChatGPT Plus/Pro
-whycode auth login github-copilot
-whycode auth login google                 # Gemini
-whycode auth login google-antigravity     # Antigravity (Gemini 3, Claude, GPT-OSS)
-whycode auth login xai                    # SuperGrok / X Premium
+whycodes auth login anthropic              # Claude Pro/Max
+whycodes auth login openai                 # ChatGPT Plus/Pro
+whycodes auth login github-copilot
+whycodes auth login google                 # Gemini
+whycodes auth login google-antigravity     # Antigravity (Gemini 3, Claude, GPT-OSS)
+whycodes auth login xai                    # SuperGrok / X Premium
 ```
 
 Full CLI, TUI keys, slash commands, agents, tools and configuration:
@@ -85,7 +85,7 @@ Full CLI, TUI keys, slash commands, agents, tools and configuration:
 Idle TUI, Linux x86_64, 2026-08-17, HEAD `cd4961f` (see
 [docs/benchmarks.md](docs/benchmarks.md) for method and machine):
 
-| | whycode |
+| | whycodes |
 |---|---|
 | 1 session PSS | **11.8 MB** |
 | 10 sessions PSS | **33.0 MB** (~2.4 MB each extra) |
@@ -123,4 +123,4 @@ breakdown, measurement command and enforced floors.
 
 ## License
 
-MIT — [whycorporation/whycode](https://github.com/whycorporation/whycode)
+MIT — [why.codes](https://why.codes) · [whycorporation/whycode](https://github.com/whycorporation/whycode)

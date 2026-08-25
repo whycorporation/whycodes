@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::panel::PanelUpdate;
-use whycode_core::types::ToolResult;
+use whycodes_core::panel::PanelUpdate;
+use whycodes_core::types::ToolResult;
 
 const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 

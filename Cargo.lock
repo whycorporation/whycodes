@@ -3979,7 +3979,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whycode-agent"
+name = "whycodes-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -3994,22 +3994,22 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "whycode-command-risk",
- "whycode-config",
- "whycode-core",
- "whycode-index",
- "whycode-llm",
- "whycode-mcp",
- "whycode-memory",
- "whycode-plugin",
- "whycode-sandbox",
- "whycode-session",
- "whycode-skill",
- "whycode-tools",
+ "whycodes-command-risk",
+ "whycodes-config",
+ "whycodes-core",
+ "whycodes-index",
+ "whycodes-llm",
+ "whycodes-mcp",
+ "whycodes-memory",
+ "whycodes-plugin",
+ "whycodes-sandbox",
+ "whycodes-session",
+ "whycodes-skill",
+ "whycodes-tools",
 ]
 
 [[package]]
-name = "whycode-auth"
+name = "whycodes-auth"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -4028,7 +4028,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whycode-cli"
+name = "whycodes-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4051,35 +4051,35 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "whycode-agent",
- "whycode-auth",
- "whycode-config",
- "whycode-core",
- "whycode-format",
- "whycode-index",
- "whycode-llm",
- "whycode-mcp",
- "whycode-memory",
- "whycode-protocol",
- "whycode-sdk",
- "whycode-server",
- "whycode-session",
- "whycode-skill",
- "whycode-storage",
- "whycode-tools",
- "whycode-tui",
+ "whycodes-agent",
+ "whycodes-auth",
+ "whycodes-config",
+ "whycodes-core",
+ "whycodes-format",
+ "whycodes-index",
+ "whycodes-llm",
+ "whycodes-mcp",
+ "whycodes-memory",
+ "whycodes-protocol",
+ "whycodes-sdk",
+ "whycodes-server",
+ "whycodes-session",
+ "whycodes-skill",
+ "whycodes-storage",
+ "whycodes-tools",
+ "whycodes-tui",
  "zip",
 ]
 
 [[package]]
-name = "whycode-command-risk"
+name = "whycodes-command-risk"
 version = "0.1.0"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
-name = "whycode-config"
+name = "whycodes-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4089,11 +4089,11 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "tracing",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-core"
+name = "whycodes-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4108,11 +4108,11 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "whycode-index",
+ "whycodes-index",
 ]
 
 [[package]]
-name = "whycode-format"
+name = "whycodes-format"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4123,21 +4123,21 @@ dependencies = [
  "serde",
  "syntect",
  "two-face",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-function"
+name = "whycodes-function"
 version = "0.1.0"
 dependencies = [
  "async-trait",
  "serde_json",
  "tokio",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-index"
+name = "whycodes-index"
 version = "0.1.0"
 dependencies = [
  "criterion",
@@ -4150,7 +4150,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whycode-llm"
+name = "whycodes-llm"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4167,13 +4167,13 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
- "whycode-auth",
- "whycode-config",
- "whycode-core",
+ "whycodes-auth",
+ "whycodes-config",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-lsp"
+name = "whycodes-lsp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4182,11 +4182,11 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-mcp"
+name = "whycodes-mcp"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4200,12 +4200,12 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "whycode-core",
- "whycode-tools",
+ "whycodes-core",
+ "whycodes-tools",
 ]
 
 [[package]]
-name = "whycode-memory"
+name = "whycodes-memory"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4218,13 +4218,13 @@ dependencies = [
  "tracing",
  "tract-onnx",
  "uuid",
- "whycode-core",
- "whycode-index",
- "whycode-storage",
+ "whycodes-core",
+ "whycodes-index",
+ "whycodes-storage",
 ]
 
 [[package]]
-name = "whycode-plugin"
+name = "whycodes-plugin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4233,40 +4233,40 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
- "whycode-config",
- "whycode-core",
+ "whycodes-config",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-protocol"
+name = "whycodes-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-sandbox"
+name = "whycodes-sandbox"
 version = "0.1.0"
 dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-schema"
+name = "whycodes-schema"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-sdk"
+name = "whycodes-sdk"
 version = "0.1.0"
 dependencies = [
  "axum",
@@ -4277,11 +4277,11 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "whycode-protocol",
+ "whycodes-protocol",
 ]
 
 [[package]]
-name = "whycode-server"
+name = "whycodes-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4297,20 +4297,20 @@ dependencies = [
  "tower",
  "tower-http 0.5.2",
  "tracing",
- "whycode-agent",
- "whycode-auth",
- "whycode-config",
- "whycode-core",
- "whycode-index",
- "whycode-llm",
- "whycode-protocol",
- "whycode-session",
- "whycode-storage",
- "whycode-tools",
+ "whycodes-agent",
+ "whycodes-auth",
+ "whycodes-config",
+ "whycodes-core",
+ "whycodes-index",
+ "whycodes-llm",
+ "whycodes-protocol",
+ "whycodes-session",
+ "whycodes-storage",
+ "whycodes-tools",
 ]
 
 [[package]]
-name = "whycode-session"
+name = "whycodes-session"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4324,12 +4324,12 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "whycode-core",
- "whycode-storage",
+ "whycodes-core",
+ "whycodes-storage",
 ]
 
 [[package]]
-name = "whycode-skill"
+name = "whycodes-skill"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4339,11 +4339,11 @@ dependencies = [
  "tokio",
  "toml",
  "tracing",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-storage"
+name = "whycodes-storage"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4355,11 +4355,11 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "whycode-core",
+ "whycodes-core",
 ]
 
 [[package]]
-name = "whycode-tools"
+name = "whycodes-tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4376,18 +4376,18 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "whycode-core",
- "whycode-format",
- "whycode-index",
- "whycode-lsp",
- "whycode-memory",
- "whycode-plugin",
- "whycode-sandbox",
- "whycode-skill",
+ "whycodes-core",
+ "whycodes-format",
+ "whycodes-index",
+ "whycodes-lsp",
+ "whycodes-memory",
+ "whycodes-plugin",
+ "whycodes-sandbox",
+ "whycodes-skill",
 ]
 
 [[package]]
-name = "whycode-tui"
+name = "whycodes-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4405,17 +4405,17 @@ dependencies = [
  "tokio",
  "tracing",
  "unicode-width 0.2.0",
- "whycode-agent",
- "whycode-auth",
- "whycode-config",
- "whycode-core",
- "whycode-format",
- "whycode-index",
- "whycode-llm",
- "whycode-memory",
- "whycode-session",
- "whycode-storage",
- "whycode-tools",
+ "whycodes-agent",
+ "whycodes-auth",
+ "whycodes-config",
+ "whycodes-core",
+ "whycodes-format",
+ "whycodes-index",
+ "whycodes-llm",
+ "whycodes-memory",
+ "whycodes-session",
+ "whycodes-storage",
+ "whycodes-tools",
 ]
 
 [[package]]

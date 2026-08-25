@@ -1,4 +1,4 @@
-//! whycode-index — fast, gitignore-aware workspace file index.
+//! whycodes-index — fast, gitignore-aware workspace file index.
 //!
 //! One background scan of the project roots feeds every consumer:
 //!
@@ -13,7 +13,7 @@
 //! stays warm as files are created, edited and deleted during a session.
 //!
 //! ```no_run
-//! let index = whycode_index::WorkspaceIndex::start(vec![".".into()]);
+//! let index = whycodes_index::WorkspaceIndex::start(vec![".".into()]);
 //! let hits = index.query("main.rs", 20);
 //! ```
 
@@ -35,6 +35,21 @@ use fuzzy::FuzzyEngine;
 pub use store::{Entry, IndexStore};
 pub use walk::{WalkEntry, WalkStats, walk_root};
 use watch::{Change, ChangeKind, Command};
+
+/// Project-local WhyCodes dir: `.whycodes`, or legacy `.whycode` if that is
+/// the only one present. Duplicated from `whycodes-core::paths` because
+/// `index` is a leaf crate and must not depend on `core`.
+fn project_meta_dir(working_dir: &Path) -> PathBuf {
+    let preferred = working_dir.join(".whycodes");
+    if preferred.exists() {
+        return preferred;
+    }
+    let legacy = working_dir.join(".whycode");
+    if legacy.exists() {
+        return legacy;
+    }
+    preferred
+}
 
 /// Default cap on indexed entries per root.
 pub const DEFAULT_MAX_ENTRIES: usize = 200_000;
@@ -168,17 +183,17 @@ impl WorkspaceIndex {
         });
         let thread_shared = shared.clone();
         let scanner = std::thread::Builder::new()
-            .name("whycode-index".into())
+            .name("whycodes-index".into())
             .spawn(move || scanner_main(thread_shared, cmd_rx))
             .ok();
         Arc::new(Self { shared, scanner })
     }
 
     /// Roots of the index: `[working_dir]` plus every directory listed in
-    /// `.whycode/external_dirs_allowed` (blank lines / `#` comments skipped).
+    /// `.whycodes/external_dirs_allowed` (legacy `.whycode/` is still read).
     pub fn project_roots(working_dir: &Path) -> Vec<PathBuf> {
         let mut roots = vec![working_dir.to_path_buf()];
-        let allow = working_dir.join(".whycode").join("external_dirs_allowed");
+        let allow = project_meta_dir(working_dir).join("external_dirs_allowed");
         if let Ok(content) = std::fs::read_to_string(&allow) {
             for line in content.lines() {
                 let line = line.trim();

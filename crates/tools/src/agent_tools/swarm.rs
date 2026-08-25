@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Parallel multi-agent work with file-ownership conflict notify.
 ///
@@ -29,7 +29,7 @@ impl Tool for SwarmTool {
 
     fn description(&self) -> &str {
         "Run several subagents in parallel on independent units of work. \
-         In a git repo each worker gets an isolated worktree under `.whycode/swarm/`; \
+         In a git repo each worker gets an isolated worktree under `.whycodes/swarm/`; \
          changes three-way-merge back into the main checkout (conflicts toast). \
          Without git (or with worktrees off), workers share the checkout and file \
          claims block double-writes. Prefer for wide audits or mechanical migrations \

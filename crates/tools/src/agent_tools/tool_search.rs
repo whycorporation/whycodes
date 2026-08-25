@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Discover deferred tools (outside the core profile) and activate them for
 /// the rest of the session. Intercepted by the agent loop.

@@ -2,7 +2,7 @@
 //! subscription token the store considered fresh.
 //!
 //! Call sites that resolve a credential from the OAuth store
-//! (`whycode auth login <provider>`) register the provider here; call sites
+//! (`whycodes auth login <provider>`) register the provider here; call sites
 //! that resolve an explicit API key (env var / config) unregister it.
 //! Providers that send OAuth bearer tokens route their POST through
 //! [`send_with_refresh_retry`]: on a 401 they force-refresh the stored
@@ -59,7 +59,7 @@ fn source_dir(provider: &str) -> Option<PathBuf> {
 /// extra key.
 pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
     let dir = source_dir(provider)?;
-    let store = whycode_auth::TokenStore::new(&dir);
+    let store = whycodes_auth::TokenStore::new(&dir);
     let auth = store.get(provider).ok()??;
     auth.token.extra.get(key)?.as_str().map(str::to_string)
 }
@@ -72,18 +72,18 @@ pub async fn send_with_refresh_retry(
     provider: &str,
     current_key: &str,
     build: impl Fn(&str) -> reqwest::RequestBuilder,
-) -> whycode_core::Result<reqwest::Response> {
+) -> whycodes_core::Result<reqwest::Response> {
     let resp = build(current_key)
         .send()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
     if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(resp);
     }
     let Some(dir) = source_dir(provider) else {
         return Ok(resp);
     };
-    let Some(fresh) = whycode_auth::providers::force_refresh(provider, &dir).await else {
+    let Some(fresh) = whycodes_auth::providers::force_refresh(provider, &dir).await else {
         return Ok(resp);
     };
     if fresh == current_key {
@@ -98,7 +98,7 @@ pub async fn send_with_refresh_retry(
     build(&fresh)
         .send()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))
+        .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))
 }
 
 #[cfg(test)]
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn register_unregister_roundtrip() {
-        let dir = PathBuf::from("/tmp/whycode-test-oauth-src");
+        let dir = PathBuf::from("/tmp/whycodes-test-oauth-src");
         assert!(!has_source("test-provider"));
         register("test-provider", dir.clone());
         assert!(has_source("test-provider"));
@@ -119,7 +119,7 @@ mod tests {
 
     #[test]
     fn sources_are_per_provider() {
-        let dir = PathBuf::from("/tmp/whycode-test-oauth-src-2");
+        let dir = PathBuf::from("/tmp/whycodes-test-oauth-src-2");
         register("prov-a", dir.clone());
         assert!(has_source("prov-a"));
         assert!(!has_source("prov-b"));

@@ -1,10 +1,10 @@
 [package]
-name = "whycode-function"
+name = "whycodes-function"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
-whycode-core = { path = "../core" }
+whycodes-core = { path = "../core" }
 async-trait = "0.1"
 serde_json.workspace = true
 tokio.workspace = true

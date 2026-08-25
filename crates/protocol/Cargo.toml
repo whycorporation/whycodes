@@ -1,9 +1,9 @@
 [package]
-name = "whycode-protocol"
+name = "whycodes-protocol"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-whycode-core = { path = "../core" }
+whycodes-core = { path = "../core" }

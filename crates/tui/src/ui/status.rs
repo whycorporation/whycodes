@@ -27,7 +27,7 @@ const STATUS_SQUARE_OPEN: &str = "▯";
 fn branch_icon() -> &'static str {
     static ICON: OnceLock<&'static str> = OnceLock::new();
     ICON.get_or_init(|| {
-        let nerd = match std::env::var("WHYCODE_NERD_FONTS").ok().as_deref() {
+        let nerd = match std::env::var("WHYCODES_NERD_FONTS").ok().as_deref() {
             Some("0") | Some("false") => false,
             Some(_) => true,
             None => !cfg!(windows),
@@ -42,7 +42,7 @@ fn branch_icon() -> &'static str {
     })
 }
 
-/// Dual-tone wordmark: bold fg `why` + bold accent `code`.
+/// Dual-tone wordmark: bold fg `why` + bold accent `codes`.
 fn brand_spans(palette: &ThemePalette) -> Vec<Span<'static>> {
     vec![
         Span::styled(
@@ -50,7 +50,7 @@ fn brand_spans(palette: &ThemePalette) -> Vec<Span<'static>> {
             Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "code",
+            "codes",
             Style::default()
                 .fg(palette.accent)
                 .add_modifier(Modifier::BOLD),
@@ -91,7 +91,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     let dir_raw = app.project_label.trim();
     let label_src = if !title_raw.is_empty() && title_raw != dir_raw {
         title_raw
-    } else if !dir_raw.is_empty() && !dir_raw.eq_ignore_ascii_case("whycode") && dir_raw != "." {
+    } else if !dir_raw.is_empty() && !dir_raw.eq_ignore_ascii_case("whycodes") && dir_raw != "." {
         dir_raw
     } else {
         ""
@@ -412,12 +412,12 @@ mod tests {
     }
 
     #[test]
-    fn paints_whycode_wordmark_as_one_word() {
+    fn paints_whycodes_wordmark_as_one_word() {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
         let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
-        assert!(text.contains("whycode"), "{text}");
-        assert!(!text.contains("why code"), "{text}");
+        assert!(text.contains("whycodes"), "{text}");
+        assert!(!text.contains("why codes"), "{text}");
     }
 
     #[test]

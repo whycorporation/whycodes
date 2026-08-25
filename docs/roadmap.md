@@ -9,7 +9,7 @@ Last updated: **2026-08-15**.
 
 Nothing open. Later stays later.
 
-SDK protocol v1 (`whycode serve` `/v1/*`, Rust `whycode-sdk`,
+SDK protocol v1 (`whycodes serve` `/v1/*`, Rust `whycodes-sdk`,
 `sdk/typescript`) shipped. Not on the public npm registry yet.
 
 ## Later
@@ -17,8 +17,8 @@ SDK protocol v1 (`whycode serve` `/v1/*`, Rust `whycode-sdk`,
 | Item | Notes |
 |---|---|
 | Public release | **Last.** Repo public, Windows install smoke. Homebrew binary formula auto-bumps from `release.yml`. Assets already cut as `v0.1.0`. |
-| ACP | Editor ↔ agent JSON-RPC. `whycode acp` is a stub. |
-| `web` surface | Same band as ACP. Use `whycode serve` + a browser for local share. |
+| ACP | Editor ↔ agent JSON-RPC. `whycodes acp` is a stub. |
+| `web` surface | Same band as ACP. Use `whycodes serve` + a browser for local share. |
 
 ## Out
 

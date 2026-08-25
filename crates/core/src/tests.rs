@@ -137,7 +137,7 @@ mod file_claims_tests {
     #[test]
     fn first_claim_acquires_second_same_agent_holds() {
         let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_claim_test_a.rs");
+        let p = Path::new("/tmp/whycodes_claim_test_a.rs");
         assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Acquired);
         assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Held);
     }
@@ -150,7 +150,7 @@ mod file_claims_tests {
         reg.set_listener(Some(Arc::new(move |_ev| {
             hits2.fetch_add(1, Ordering::SeqCst);
         })));
-        let p = Path::new("/tmp/whycode_claim_test_b.rs");
+        let p = Path::new("/tmp/whycodes_claim_test_b.rs");
         assert_eq!(reg.try_claim("w0", "worker-0", p), ClaimResult::Acquired);
         match reg.try_claim("w1", "worker-1", p) {
             ClaimResult::Conflict {
@@ -168,7 +168,7 @@ mod file_claims_tests {
     #[test]
     fn release_agent_frees_paths() {
         let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_claim_test_c.rs");
+        let p = Path::new("/tmp/whycodes_claim_test_c.rs");
         reg.try_claim("w0", "worker-0", p);
         reg.release_agent("w0");
         assert_eq!(reg.try_claim("w1", "worker-1", p), ClaimResult::Acquired);
@@ -177,7 +177,7 @@ mod file_claims_tests {
     #[test]
     fn read_after_other_write_is_stale() {
         let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_claim_test_stale.rs");
+        let p = Path::new("/tmp/whycodes_claim_test_stale.rs");
         reg.try_claim("w0", "worker-0", p);
         let ev = reg.note_read("w1", p).expect("stale");
         assert_eq!(ev.writer_id, "w0");
@@ -191,7 +191,7 @@ mod file_claims_tests {
         assert_eq!(reg.len(), 0);
         let _ = format!("{reg:?}");
 
-        let rel = Path::new("/definitely-missing-whycode-xyz/foo/../bar.rs");
+        let rel = Path::new("/definitely-missing-whycodes-xyz/foo/../bar.rs");
         let key = FileClaimRegistry::claim_key(rel);
         assert!(key.contains("bar.rs"), "{key}");
         assert!(!key.contains("foo"), "{key}");
@@ -203,9 +203,9 @@ mod file_claims_tests {
         reg.set_stale_listener(Some(Arc::new(move |_| {
             hits2.fetch_add(1, Ordering::SeqCst);
         })));
-        let p = Path::new("/tmp/whycode_claim_snap.rs");
+        let p = Path::new("/tmp/whycodes_claim_snap.rs");
         assert_eq!(reg.try_claim("w0", "lab", p), ClaimResult::Acquired);
-        let p2 = Path::new("/tmp/whycode_claim_snap_b.rs");
+        let p2 = Path::new("/tmp/whycodes_claim_snap_b.rs");
         assert_eq!(reg.try_claim("w1", "lab-b", p2), ClaimResult::Acquired);
         assert_eq!(reg.len(), 2);
         let snap = reg.snapshot();
@@ -243,7 +243,7 @@ mod file_claims_tests {
         );
 
         let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_poison_claim.rs");
+        let p = Path::new("/tmp/whycodes_poison_claim.rs");
         reg.poison_claims();
         assert_eq!(reg.len(), 0);
         let _ = format!("{reg:?}");
@@ -346,12 +346,12 @@ mod logging_tests {
         // Instead exercise format path indirectly by writing a synthetic file.
         let body = {
             let mut out = String::new();
-            out.push_str("whycode crash report\n");
+            out.push_str("whycodes crash report\n");
             out.push_str(&format!("version: {VERSION}\n"));
             out.push_str("message: boom\n");
             out
         };
-        assert!(body.contains("whycode crash report"));
+        assert!(body.contains("whycodes crash report"));
         assert!(body.contains(VERSION));
         assert!(body.contains("boom"));
     }
@@ -388,7 +388,7 @@ mod logging_tests {
         let path = report_path.lock().unwrap().clone().expect("crash path");
         assert!(path.exists());
         let text = fs::read_to_string(&path).unwrap();
-        assert!(text.contains("whycode crash report"), "{text}");
+        assert!(text.contains("whycodes crash report"), "{text}");
         assert!(text.contains("test-crash-payload"), "{text}");
         assert!(text.contains("version:"), "{text}");
         assert!(path.starts_with(tmp.path().join("crash")));
@@ -462,7 +462,7 @@ mod logging_tests {
     }
 
     #[test]
-    fn whycode_log_file_env_path_is_used_when_passed() {
+    fn whycodes_log_file_env_path_is_used_when_passed() {
         let _g = TEST_LOCK.lock().unwrap();
         let tmp = temp_data_dir();
         let dirs = LogDirs::from_data_dir(tmp.path());
@@ -499,7 +499,7 @@ mod logging_tests {
         assert!(
             path.file_name()
                 .and_then(|s| s.to_str())
-                .is_some_and(|s| s.starts_with("whycode-")),
+                .is_some_and(|s| s.starts_with("whycodes-")),
             "stamped debug filename: {}",
             path.display()
         );
@@ -642,14 +642,14 @@ mod logging_tests {
         let _ = std::panic::catch_unwind(|| panic!("hook-cleanup"));
         clear_panic_cleanup();
 
-        let prev = std::env::var_os("WHYCODE_LOG_LEVEL");
+        let prev = std::env::var_os("WHYCODES_LOG_LEVEL");
         unsafe { std::env::remove_var("RUST_LOG") };
-        unsafe { std::env::set_var("WHYCODE_LOG_LEVEL", "error") };
+        unsafe { std::env::set_var("WHYCODES_LOG_LEVEL", "error") };
         let f = build_env_filter(None);
         assert!(f.to_string().contains("error"), "{}", f.to_string());
         match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_LOG_LEVEL", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_LOG_LEVEL") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_LOG_LEVEL", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_LOG_LEVEL") },
         }
 
         let tmp2 = temp_data_dir();
@@ -678,7 +678,7 @@ mod logging_tests {
         );
         std::panic::set_hook(previous);
         let body = captured.lock().unwrap().clone().unwrap_or_default();
-        assert!(body.contains("owned-panic") || body.contains("whycode crash"));
+        assert!(body.contains("owned-panic") || body.contains("whycodes crash"));
     }
 
     #[test]
@@ -1006,15 +1006,15 @@ mod todo_tests {
         let root = Path::new("/proj");
         assert_eq!(
             todos_path(root, Some("sess-1")),
-            PathBuf::from("/proj/.whycode/todos/sess-1.json")
+            PathBuf::from("/proj/.whycodes/todos/sess-1.json")
         );
         assert_eq!(
             todos_path(root, Some("  ")),
-            PathBuf::from("/proj/.whycode/todos.json")
+            PathBuf::from("/proj/.whycodes/todos.json")
         );
         assert_eq!(
             todos_path(root, None),
-            PathBuf::from("/proj/.whycode/todos.json")
+            PathBuf::from("/proj/.whycodes/todos.json")
         );
     }
 
@@ -1022,7 +1022,7 @@ mod todo_tests {
     fn load_missing_invalid_and_save_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         assert!(load_todos(dir.path(), None).is_empty());
-        let why = dir.path().join(".whycode");
+        let why = dir.path().join(".whycodes");
         std::fs::create_dir_all(&why).unwrap();
         std::fs::write(why.join("todos.json"), "not json {{{").unwrap();
         assert!(load_todos(dir.path(), None).is_empty());
@@ -1051,7 +1051,7 @@ mod todo_tests {
     #[test]
     fn save_fails_when_target_is_a_directory() {
         let dir = tempfile::tempdir().unwrap();
-        let why = dir.path().join(".whycode");
+        let why = dir.path().join(".whycodes");
         std::fs::create_dir_all(why.join("todos.json")).unwrap();
         let err = save_todos(dir.path(), None, &[]).unwrap_err();
         assert!(err.contains("writing todos"), "{err}");
@@ -1124,13 +1124,13 @@ mod paths_tests {
     fn home_override_wins() {
         let _g = recover_paths_lock();
         let dir = tempfile::tempdir().expect("tempdir");
-        let prev = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
         let data = data_dir();
         let cfg = config_file();
         match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
         }
         assert_eq!(data, dir.path());
         assert_eq!(cfg, dir.path().join("config.toml"));
@@ -1139,13 +1139,21 @@ mod paths_tests {
     #[test]
     fn empty_home_env_is_ignored() {
         let _g = recover_paths_lock();
-        let prev = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", "") };
-        assert!(whycode_home().is_none());
+        let prev = std::env::var_os("WHYCODES_HOME");
+        let prev_legacy = std::env::var_os("WHYCODE_HOME");
+        unsafe {
+            std::env::set_var("WHYCODES_HOME", "");
+            std::env::remove_var("WHYCODE_HOME");
+        }
+        assert!(whycodes_home().is_none());
         let data = data_dir();
         let cfg = config_dir();
         let file = config_file();
         match prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+        match prev_legacy {
             Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
             None => unsafe { std::env::remove_var("WHYCODE_HOME") },
         }
@@ -1154,6 +1162,43 @@ mod paths_tests {
         assert_eq!(file, cfg.join("config.toml"));
         assert_eq!(or_dot(None), PathBuf::from("."));
         assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
+    }
+
+    #[test]
+    fn legacy_whycode_home_env_is_honoured() {
+        let _g = recover_paths_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev_new = std::env::var_os("WHYCODES_HOME");
+        let prev_old = std::env::var_os("WHYCODE_HOME");
+        unsafe {
+            std::env::remove_var("WHYCODES_HOME");
+            std::env::set_var("WHYCODE_HOME", dir.path());
+        }
+        let home = whycodes_home();
+        let data = data_dir();
+        match prev_new {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+        match prev_old {
+            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+        }
+        assert_eq!(home.as_deref(), Some(dir.path()));
+        assert_eq!(data, dir.path());
+    }
+
+    #[test]
+    fn project_dir_prefers_whycodes_then_legacy() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        assert_eq!(project_dir(root), root.join(".whycodes"));
+
+        std::fs::create_dir(root.join(".whycode")).unwrap();
+        assert_eq!(project_dir(root), root.join(".whycode"));
+
+        std::fs::create_dir(root.join(".whycodes")).unwrap();
+        assert_eq!(project_dir(root), root.join(".whycodes"));
     }
 
     #[test]
@@ -1386,7 +1431,7 @@ mod tool_tests {
     #[test]
     fn file_claim_gates() {
         let reg = FileClaimRegistry::new();
-        let p = Path::new("/tmp/whycode_tool_claim.rs");
+        let p = Path::new("/tmp/whycodes_tool_claim.rs");
         assert_eq!(
             reg.try_claim("w0", "alpha", p),
             crate::file_claims::ClaimResult::Acquired

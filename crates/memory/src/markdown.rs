@@ -41,7 +41,7 @@ pub fn append_entry(path: &Path, id: &str, text: &str) -> std::io::Result<()> {
         let mut f = std::fs::OpenOptions::new().append(true).open(path)?;
         f.write_all(line.as_bytes())?;
     } else {
-        let body = format!("# Whycode auto memory\n\n{line}");
+        let body = format!("# WhyCodes auto memory\n\n{line}");
         std::fs::write(path, body)?;
     }
     Ok(())
@@ -76,7 +76,7 @@ pub fn remove_entry(path: &Path, id: &str) -> std::io::Result<bool> {
 /// Truncate MEMORY.md to header only (or delete if no header needed).
 pub fn clear_file(path: &Path) -> std::io::Result<()> {
     if path.exists() {
-        std::fs::write(path, "# Whycode auto memory\n\n")?;
+        std::fs::write(path, "# WhyCodes auto memory\n\n")?;
     }
     Ok(())
 }

@@ -13,20 +13,20 @@ use std::convert::Infallible;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use whycode_agent::Agent;
-use whycode_agent::events::TurnEvent;
-use whycode_session::session::Session;
+use whycodes_agent::Agent;
+use whycodes_agent::events::TurnEvent;
+use whycodes_session::session::Session;
 
 use crate::AppState;
 use crate::perm::{RUN, RunScope};
 
-/// Resolve share file directories: project .whycode/shares + global data dir shares.
+/// Resolve share file directories: project .whycodes/shares + global data dir shares.
 fn share_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join(".whycode").join("shares"));
+        dirs.push(cwd.join(".whycodes").join("shares"));
     }
-    if let Ok(data) = whycode_config::Config::data_dir() {
+    if let Ok(data) = whycodes_config::Config::data_dir() {
         dirs.push(data.join("shares"));
     }
     dirs
@@ -57,40 +57,40 @@ pub(crate) fn system_prompt_for(agent: &Agent, project: &std::path::Path) -> Str
 /// Env → config api_key → OAuth store (mirrors CLI `get_api_key`).
 pub(crate) async fn resolve_api_key(
     provider: &str,
-    config: &whycode_config::Config,
+    config: &whycodes_config::Config,
 ) -> Option<String> {
     let env_var = format!("{}_API_KEY", provider.to_uppercase());
     if let Ok(key) = std::env::var(&env_var)
         && !key.is_empty()
     {
-        whycode_llm::oauth_refresh::unregister(provider);
+        whycodes_llm::oauth_refresh::unregister(provider);
         return Some(key);
     }
     if let Some(pc) = config.get_provider(provider)
         && let Some(key) = &pc.api_key
         && !key.is_empty()
     {
-        whycode_llm::oauth_refresh::unregister(provider);
+        whycodes_llm::oauth_refresh::unregister(provider);
         return Some(key.clone());
     }
     if provider == "openai"
         && let Ok(key) = std::env::var("OPENAI_API_KEY")
         && !key.is_empty()
     {
-        whycode_llm::oauth_refresh::unregister(provider);
+        whycodes_llm::oauth_refresh::unregister(provider);
         return Some(key);
     }
-    if whycode_auth::providers::supports_oauth(provider)
-        && let Ok(data_dir) = whycode_config::Config::data_dir()
-        && let Some(token) = whycode_auth::providers::access_token(provider, &data_dir).await
+    if whycodes_auth::providers::supports_oauth(provider)
+        && let Ok(data_dir) = whycodes_config::Config::data_dir()
+        && let Some(token) = whycodes_auth::providers::access_token(provider, &data_dir).await
     {
-        whycode_llm::oauth_refresh::register(provider, data_dir);
+        whycodes_llm::oauth_refresh::register(provider, data_dir);
         return Some(token);
     }
     None
 }
 
-pub(crate) fn default_provider_model(config: &whycode_config::Config) -> (String, String) {
+pub(crate) fn default_provider_model(config: &whycodes_config::Config) -> (String, String) {
     if let Some(dm) = &config.default_model {
         return (dm.provider_id.clone(), dm.model_id.clone());
     }
@@ -119,10 +119,10 @@ pub async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 
 pub async fn list_tools(State(state): State<AppState>) -> Json<serde_json::Value> {
     // Prefer the warm agent's profile-aware catalog (core tools + activated).
-    let tools: Vec<_> = whycode_tools::executor::ToolExecutor::new()
+    let tools: Vec<_> = whycodes_tools::executor::ToolExecutor::new()
         .get_definitions_profile(
             &state.agent.info.permission,
-            whycode_tools::ToolProfile::Core,
+            whycodes_tools::ToolProfile::Core,
         )
         .iter()
         .map(|t| {
@@ -329,7 +329,7 @@ pub async fn chat(
 
     if api_key.is_empty() {
         let msg = format!(
-            "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycode auth login`.",
+            "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycodes auth login`.",
             provider.to_uppercase()
         );
         let stream = async_stream::stream! {
@@ -382,11 +382,11 @@ pub async fn chat(
         match result {
             Ok(text) => {
                 emit_status(&tx, format!("done:{}chars", text.len()));
-                emit_status(&tx, "__whycode_done__");
+                emit_status(&tx, "__whycodes_done__");
             }
             Err(e) => {
                 emit_status(&tx, format!("error:{e}"));
-                emit_status(&tx, "__whycode_done__");
+                emit_status(&tx, "__whycodes_done__");
             }
         }
     });
@@ -394,7 +394,7 @@ pub async fn chat(
     let stream = async_stream::stream! {
         while let Some(ev) = rx.recv().await {
             if let TurnEvent::Status(ref s) = ev
-                && s == "__whycode_done__"
+                && s == "__whycodes_done__"
             {
                 break;
             }
@@ -588,20 +588,20 @@ fn turn_event_json(ev: &TurnEvent) -> Option<serde_json::Value> {
             serde_json::json!({
                 "type": "todos",
                 "count": todos.len(),
-                "done": whycode_core::todo::terminal_count(todos),
+                "done": whycodes_core::todo::terminal_count(todos),
             })
         }
         TurnEvent::Panel(update) => match update {
-            whycode_core::PanelUpdate::Clear => {
+            whycodes_core::PanelUpdate::Clear => {
                 serde_json::json!({"type": "panel", "action": "clear"})
             }
-            whycode_core::PanelUpdate::File { path, .. } => {
+            whycodes_core::PanelUpdate::File { path, .. } => {
                 serde_json::json!({"type": "panel", "action": "file", "path": path})
             }
-            whycode_core::PanelUpdate::Diff { path, .. } => {
+            whycodes_core::PanelUpdate::Diff { path, .. } => {
                 serde_json::json!({"type": "panel", "action": "diff", "path": path})
             }
-            whycode_core::PanelUpdate::Mermaid { .. } => {
+            whycodes_core::PanelUpdate::Mermaid { .. } => {
                 serde_json::json!({"type": "panel", "action": "mermaid"})
             }
         },
@@ -719,8 +719,8 @@ fn html_escape(s: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::HashMap;
-    use whycode_config::Config;
-    use whycode_core::types::{ModelConfig, ProviderConfig};
+    use whycodes_config::Config;
+    use whycodes_core::types::{ModelConfig, ProviderConfig};
 
     #[test]
     fn html_escape_escapes_special_chars() {
@@ -834,7 +834,7 @@ mod tests {
                 }),
             ),
             (
-                TurnEvent::Panel(whycode_core::PanelUpdate::File {
+                TurnEvent::Panel(whycodes_core::PanelUpdate::File {
                     path: "src/lib.rs".into(),
                     text: "fn main() {}".into(),
                 }),

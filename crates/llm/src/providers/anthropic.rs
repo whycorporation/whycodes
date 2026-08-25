@@ -4,7 +4,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{
+use whycodes_core::types::{
     ContentBlock, LlmRequest, LlmResponse, Message, StreamEvent, ToolDefinition, Usage,
 };
 
@@ -42,11 +42,11 @@ fn usage_from_message_delta(event: &Value) -> Option<(u64, u64)> {
 ///
 /// Extracted from `stream()` so wire-format handling stays unit-testable
 /// without a live HTTP response (same seam as codex `events_for_payload`).
-fn events_for_data(data: &str) -> Vec<whycode_core::Result<StreamEvent>> {
+fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
     let Ok(event) = serde_json::from_str::<Value>(data) else {
         return Vec::new();
     };
-    let mut out: Vec<whycode_core::Result<StreamEvent>> = Vec::new();
+    let mut out: Vec<whycodes_core::Result<StreamEvent>> = Vec::new();
     match event["type"].as_str() {
         Some("message_start") => {
             if let Some(msg) = event["message"].as_object() {
@@ -164,7 +164,7 @@ fn events_for_data(data: &str) -> Vec<whycode_core::Result<StreamEvent>> {
             out.push(Ok(StreamEvent::MessageStop));
         }
         Some("error") => {
-            out.push(Err(whycode_core::Error::Llm(
+            out.push(Err(whycodes_core::Error::Llm(
                 event["error"]["message"]
                     .as_str()
                     .unwrap_or("Unknown error")
@@ -180,7 +180,7 @@ fn content_block_to_anthropic(b: &ContentBlock) -> Value {
     match b {
         ContentBlock::Text { text } => serde_json::json!({"type": "text", "text": text}),
         ContentBlock::Image { source } => match source {
-            whycode_core::types::ImageSource::Base64 { media_type, data } => serde_json::json!({
+            whycodes_core::types::ImageSource::Base64 { media_type, data } => serde_json::json!({
                 "type": "image",
                 "source": {"type": "base64", "media_type": media_type, "data": data}
             }),
@@ -218,7 +218,7 @@ pub struct AnthropicProvider {
 
 /// POST with the right auth header for the credential type.
 ///
-/// OAuth subscription tokens (`sk-ant-oat…`, from `whycode auth login
+/// OAuth subscription tokens (`sk-ant-oat…`, from `whycodes auth login
 /// anthropic`) must go in `Authorization: Bearer` with the oauth beta flag;
 /// plain API keys go in `x-api-key`. Sending an OAuth token as `x-api-key`
 /// is rejected by the API.
@@ -282,19 +282,19 @@ impl AnthropicProvider {
             .iter()
             .filter_map(|m| {
                 let role = match m.role {
-                    whycode_core::types::Role::Assistant => "assistant",
-                    whycode_core::types::Role::User => "user",
-                    whycode_core::types::Role::System => "user", // system goes in top-level
-                    whycode_core::types::Role::Tool => "user",
+                    whycodes_core::types::Role::Assistant => "assistant",
+                    whycodes_core::types::Role::User => "user",
+                    whycodes_core::types::Role::System => "user", // system goes in top-level
+                    whycodes_core::types::Role::Tool => "user",
                 };
 
                 let content: Vec<Value> = match &m.content {
-                    whycode_core::types::MessageContent::Text(text) => {
+                    whycodes_core::types::MessageContent::Text(text) => {
                         vec![serde_json::json!({"type": "text", "text": text})]
                     }
-                    whycode_core::types::MessageContent::Blocks(blocks) => {
-                        let wire = if m.role == whycode_core::types::Role::Assistant {
-                            whycode_core::types::strip_trailing_thinking(blocks)
+                    whycodes_core::types::MessageContent::Blocks(blocks) => {
+                        let wire = if m.role == whycodes_core::types::Role::Assistant {
+                            whycodes_core::types::strip_trailing_thinking(blocks)
                         } else {
                             blocks.clone()
                         };
@@ -339,7 +339,7 @@ impl LlmProvider for AnthropicProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
@@ -352,11 +352,11 @@ impl LlmProvider for AnthropicProvider {
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Anthropic API error ({}): {}",
                 status, err_msg
             )));
@@ -414,7 +414,7 @@ impl LlmProvider for AnthropicProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let body = self.build_body(request, model);
         let api_key = api_key.to_string();
@@ -426,7 +426,7 @@ impl LlmProvider for AnthropicProvider {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Anthropic API error: {}",
                 text
             )));
@@ -480,7 +480,7 @@ impl Default for AnthropicProvider {
 mod tests {
     use super::{AnthropicProvider, events_for_data, usage_from_message_delta};
     use serde_json::json;
-    use whycode_core::types::StreamEvent;
+    use whycodes_core::types::StreamEvent;
 
     #[test]
     fn usage_sibling_of_delta_is_official_shape() {
@@ -666,7 +666,7 @@ mod tests {
     }
 
     use std::sync::Arc;
-    use whycode_core::types::{
+    use whycodes_core::types::{
         ContentBlock, ImageSource, LlmRequest, Message, MessageContent, Role, ToolDefinition,
     };
 

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// A tool defined by a closure/function.
 pub struct FnTool {
@@ -41,7 +41,7 @@ macro_rules! define_tool {
 mod tests {
     use super::*;
     use serde_json::json;
-    use whycode_core::types::ToolResult;
+    use whycodes_core::types::ToolResult;
 
     fn ok(text: &str) -> ToolResult {
         ToolResult {

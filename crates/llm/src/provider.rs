@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use futures::stream::Stream;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 /// Trait for LLM providers (Anthropic, OpenAI, Google, etc.)
 #[async_trait]
@@ -15,7 +15,7 @@ pub trait LlmProvider: Send + Sync {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse>;
+    ) -> whycodes_core::Result<LlmResponse>;
 
     /// Send a request and stream the response
     async fn stream(
@@ -23,7 +23,7 @@ pub trait LlmProvider: Send + Sync {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>;
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>;
 }
 
 /// Registry of available LLM providers
@@ -56,7 +56,7 @@ impl ProviderRegistry {
 
     /// Register a custom provider from config.
     /// This enables dynamically-added providers from config.toml.
-    pub fn register_from_config(&mut self, config: &whycode_config::Config) {
+    pub fn register_from_config(&mut self, config: &whycodes_config::Config) {
         for (name, pc) in &config.providers {
             // Skip built-in providers that already exist
             if self.providers.contains_key(name) {
@@ -112,8 +112,8 @@ impl Default for ProviderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_config::Config;
-    use whycode_core::types::ProviderConfig;
+    use whycodes_config::Config;
+    use whycodes_core::types::ProviderConfig;
 
     fn config_entry(name: &str) -> ProviderConfig {
         ProviderConfig {

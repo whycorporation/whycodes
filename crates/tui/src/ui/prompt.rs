@@ -501,7 +501,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     if app.model_hit.hovered {
         model_style = model_style.add_modifier(Modifier::UNDERLINED);
     }
-    let effort = whycode_llm::ThinkingConfig::resolve_effort(
+    let effort = whycodes_llm::ThinkingConfig::resolve_effort(
         &app.provider_name,
         &app.model_name,
         app.reasoning_effort.as_deref(),

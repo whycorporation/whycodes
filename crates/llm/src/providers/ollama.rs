@@ -5,7 +5,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
+use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
@@ -66,10 +66,10 @@ impl OllamaProvider {
 
         for msg in request.messages.iter() {
             let role = match msg.role {
-                whycode_core::types::Role::Assistant => "assistant",
-                whycode_core::types::Role::User => "user",
-                whycode_core::types::Role::System => "system",
-                whycode_core::types::Role::Tool => "tool",
+                whycodes_core::types::Role::Assistant => "assistant",
+                whycodes_core::types::Role::User => "user",
+                whycodes_core::types::Role::System => "system",
+                whycodes_core::types::Role::Tool => "tool",
             };
 
             let text = msg.content.as_text().unwrap_or("[content]").to_string();
@@ -80,11 +80,11 @@ impl OllamaProvider {
             });
 
             // If message has images (from ContentBlock::Image), attach them as Ollama images
-            if let whycode_core::types::MessageContent::Blocks(blocks) = &msg.content {
+            if let whycodes_core::types::MessageContent::Blocks(blocks) = &msg.content {
                 let mut images: Vec<String> = Vec::new();
                 for block in blocks {
                     if let ContentBlock::Image {
-                        source: whycode_core::types::ImageSource::Base64 { data, .. },
+                        source: whycodes_core::types::ImageSource::Base64 { data, .. },
                     } = block
                     {
                         images.push(data.clone());
@@ -102,7 +102,7 @@ impl OllamaProvider {
         messages
     }
 
-    fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
+    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
         tools
             .iter()
             .map(|t| {
@@ -134,7 +134,7 @@ impl LlmProvider for OllamaProvider {
         request: &LlmRequest,
         _api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
@@ -142,17 +142,17 @@ impl LlmProvider for OllamaProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         let status = resp.status();
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
             let err_msg = json["error"].as_str().unwrap_or("Unknown error");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Ollama API error ({}): {}",
                 status, err_msg
             )));
@@ -205,7 +205,7 @@ impl LlmProvider for OllamaProvider {
         request: &LlmRequest,
         _api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let body = self.build_body(request, model);
 
@@ -213,11 +213,11 @@ impl LlmProvider for OllamaProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Ollama API error: {}",
                 text
             )));
@@ -243,7 +243,7 @@ impl LlmProvider for OllamaProvider {
                             if let Ok(event) = serde_json::from_str::<Value>(&line) {
                                 // Check for errors
                                 if let Some(err) = event.get("error") {
-                                    yield Err(whycode_core::Error::Llm(
+                                    yield Err(whycodes_core::Error::Llm(
                                         err.as_str().unwrap_or("Unknown error").to_string(),
                                     ));
                                     return;

@@ -1,5 +1,5 @@
 use rustc_hash::FxHashMap;
-use whycode_core::types::{PermissionSet, ToolCall, ToolResult};
+use whycodes_core::types::{PermissionSet, ToolCall, ToolResult};
 
 use super::tool::{Tool, ToolContext};
 use crate::{
@@ -94,7 +94,7 @@ impl ToolExecutor {
     pub fn get_definitions(
         &self,
         permissions: &PermissionSet,
-    ) -> Vec<whycode_core::types::ToolDefinition> {
+    ) -> Vec<whycodes_core::types::ToolDefinition> {
         self.get_definitions_profile(permissions, crate::profile::ToolProfile::Full)
     }
 
@@ -107,7 +107,7 @@ impl ToolExecutor {
         &self,
         permissions: &PermissionSet,
         profile: crate::profile::ToolProfile,
-    ) -> Vec<whycode_core::types::ToolDefinition> {
+    ) -> Vec<whycodes_core::types::ToolDefinition> {
         self.get_definitions_profile_extra(permissions, profile, &[])
     }
 
@@ -117,7 +117,7 @@ impl ToolExecutor {
         permissions: &PermissionSet,
         profile: crate::profile::ToolProfile,
         extra: &[String],
-    ) -> Vec<whycode_core::types::ToolDefinition> {
+    ) -> Vec<whycodes_core::types::ToolDefinition> {
         let mut defs: Vec<_> = self
             .tools
             .values()
@@ -156,18 +156,18 @@ impl ToolExecutor {
     /// Load shell plugins from `plugins.toml` then `plugin.json` trees.
     ///
     /// Order (later same `name` wins): global toml → project toml →
-    /// `$CONFIG/plugins/*/plugin.json` → `<project>/.whycode/plugins/*/plugin.json`.
+    /// `$CONFIG/plugins/*/plugin.json` → `<project>/.whycodes/plugins/*/plugin.json`.
     pub fn register_config_plugins(&mut self, project_dir: Option<&std::path::Path>) -> usize {
         let mut by_name = std::collections::BTreeMap::new();
 
         let toml = match project_dir {
-            Some(dir) => whycode_skill::PluginRegistry::load_layered(dir).unwrap_or_else(|e| {
+            Some(dir) => whycodes_skill::PluginRegistry::load_layered(dir).unwrap_or_else(|e| {
                 tracing::debug!(error = %e, "plugins.toml load skipped");
-                whycode_skill::PluginRegistry::new()
+                whycodes_skill::PluginRegistry::new()
             }),
-            None => whycode_skill::PluginRegistry::load_from_config().unwrap_or_else(|e| {
+            None => whycodes_skill::PluginRegistry::load_from_config().unwrap_or_else(|e| {
                 tracing::debug!(error = %e, "global plugins.toml load skipped");
-                whycode_skill::PluginRegistry::new()
+                whycodes_skill::PluginRegistry::new()
             }),
         };
         for cfg in toml.plugins {
@@ -177,7 +177,7 @@ impl ToolExecutor {
             by_name.insert(cfg.name.clone(), cfg);
         }
 
-        let mut mgr = whycode_plugin::PluginManager::new();
+        let mut mgr = whycodes_plugin::PluginManager::new();
         mgr.discover_standard(project_dir);
         for spec in mgr.shell_specs() {
             if spec.name.trim().is_empty() || spec.command.trim().is_empty() {
@@ -185,7 +185,7 @@ impl ToolExecutor {
             }
             by_name.insert(
                 spec.name.clone(),
-                whycode_skill::PluginConfig {
+                whycodes_skill::PluginConfig {
                     name: spec.name,
                     command: spec.command,
                     description: spec.description,
@@ -252,7 +252,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use serde_json::json;
-    use whycode_core::types::{PermissionAction, ToolResult};
+    use whycodes_core::types::{PermissionAction, ToolResult};
 
     /// Minimal fake tool for registration/definition tests.
     struct FakeTool {
@@ -593,9 +593,9 @@ mod tests {
     fn register_config_plugins_project_toml() {
         // Isolate global config so the developer machine's plugins.toml cannot leak in.
         let home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
         let dir = tempfile::tempdir().unwrap();
-        let why = dir.path().join(".whycode");
+        let why = dir.path().join(".whycodes");
         std::fs::create_dir_all(&why).unwrap();
         std::fs::write(
             why.join("plugins.toml"),
@@ -620,17 +620,17 @@ description = "Has no command"
         assert_eq!(shout.unwrap().description(), "Shouts back");
         // Empty-command plugins are skipped.
         assert!(ex.get("plugin_empty-cmd").is_none());
-        unsafe { std::env::remove_var("WHYCODE_HOME") };
+        unsafe { std::env::remove_var("WHYCODES_HOME") };
     }
 
     #[test]
     fn register_config_plugins_skips_without_project_dir() {
         // No project dir: falls back to isolated (empty) global config only.
         let home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("WHYCODE_HOME", home.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
         let mut ex = ToolExecutor::new();
         let n = ex.register_config_plugins(None);
         assert_eq!(n, 0);
-        unsafe { std::env::remove_var("WHYCODE_HOME") };
+        unsafe { std::env::remove_var("WHYCODES_HOME") };
     }
 }

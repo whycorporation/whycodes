@@ -17,19 +17,19 @@ pub fn count_tokens(text: &str, _model: &str) -> Result<usize> {
 /// Count tokens across multiple messages.
 pub fn count_message_tokens(
     system: &str,
-    messages: &[whycode_core::types::Message],
+    messages: &[whycodes_core::types::Message],
     model: &str,
 ) -> Result<usize> {
     let mut total = count_tokens(system, model)?;
     for msg in messages {
         match &msg.content {
-            whycode_core::types::MessageContent::Text(t) => {
+            whycodes_core::types::MessageContent::Text(t) => {
                 total += count_tokens(t, model)?;
             }
-            whycode_core::types::MessageContent::Blocks(blocks) => {
+            whycodes_core::types::MessageContent::Blocks(blocks) => {
                 // Avoid joining into a temporary when most blocks are text.
                 for b in blocks {
-                    if let whycode_core::types::ContentBlock::Text { text } = b {
+                    if let whycodes_core::types::ContentBlock::Text { text } = b {
                         total += count_tokens(text, model)?;
                     }
                 }

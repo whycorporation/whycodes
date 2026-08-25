@@ -1,7 +1,7 @@
 //! Session todo list (Grok-style sticky TUI panel).
 //!
 //! Tools write through [`TodoSink`]; the host maps that onto [`crate::todo`]
-//! events. Storage is session-scoped under `.whycode/todos/<session_id>.json`.
+//! events. Storage is session-scoped under `.whycodes/todos/<session_id>.json`.
 
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::{Path, PathBuf};
@@ -97,10 +97,11 @@ pub type TodoSink = Arc<dyn Fn(Vec<TodoItem>) + Send + Sync>;
 
 /// Path of the session todo file.
 ///
-/// With a non-empty `session_id`: `.whycode/todos/<id>.json`.
-/// Otherwise (tests, missing id): `.whycode/todos.json`.
+/// With a non-empty `session_id`: `.whycodes/todos/<id>.json`.
+/// Otherwise (tests, missing id): `.whycodes/todos.json`.
+/// Falls back to a legacy `.whycode/` directory when that is the only one present.
 pub fn todos_path(working_dir: &Path, session_id: Option<&str>) -> PathBuf {
-    let dir = working_dir.join(".whycode");
+    let dir = crate::paths::project_dir(working_dir);
     match session_id.map(str::trim).filter(|s| !s.is_empty()) {
         Some(id) => dir.join("todos").join(format!("{id}.json")),
         None => dir.join("todos.json"),
@@ -118,14 +119,14 @@ pub fn load_todos(working_dir: &Path, session_id: Option<&str>) -> Vec<TodoItem>
         .unwrap_or_default()
 }
 
-/// Persist the full list. Creates `.whycode` / `.whycode/todos` as needed.
+/// Persist the full list. Creates `.whycodes` / `.whycodes/todos` as needed.
 pub fn save_todos(
     working_dir: &Path,
     session_id: Option<&str>,
     todos: &[TodoItem],
 ) -> Result<(), String> {
     let path = todos_path(working_dir, session_id);
-    // `todos_path` is always nested under `.whycode/`, so parent exists.
+    // `todos_path` is always nested under `.whycodes/`, so parent exists.
     // `unwrap_or` keeps the llvm-cov 100% floor (no uncovered `if let` else).
     std::fs::create_dir_all(path.parent().unwrap_or(working_dir))
         .map_err(|e| format!("creating todo dir: {e}"))?;

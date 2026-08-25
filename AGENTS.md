@@ -1,4 +1,4 @@
-# Whycode — agent rules
+# WhyCodes — agent rules
 
 ## Build after every change (required)
 
@@ -9,21 +9,21 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
 
    ```bash
    # Touched a single crate
-   cargo check -p whycode-<crate>
+   cargo check -p whycodes-<crate>
 
    # Multiple crates or workspace-wide impact
    cargo check --workspace
 
    # CLI / binary path changed
-   cargo build -p whycode-cli
+   cargo build -p whycodes-cli
    ```
 
 3. If the change is non-trivial (logic, API, providers, agent loop, TUI), also run the relevant tests:
 
    ```bash
-   cargo test -p whycode-<crate>
+   cargo test -p whycodes-<crate>
    # or
-   cargo test -p whycode-<crate> --lib
+   cargo test -p whycodes-<crate> --lib
    ```
 
 4. **Fix compile errors in the same turn** before reporting done. A “done” response with a red `cargo check` is incomplete.
@@ -35,10 +35,10 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    python scripts/check_swallowed_error_budget.py
    python scripts/check_dependency_boundaries.py
    cargo fmt --all --check
-   cargo clippy -p whycode-<crate> --all-targets -- -D warnings
+   cargo clippy -p whycodes-<crate> --all-targets -- -D warnings
    ```
 
-   A `let _ = send(...)`, `Err(_) =>`, `return x.ok();`, or a new `whycode-*` Cargo.toml line will fail CI even when the crate compiles. Handle the error (name it / log it) or register the edge in `scripts/dependency_boundaries.json` in the **same** commit. Details: [`docs/knowhow.md`](docs/knowhow.md) rule 8.
+   A `let _ = send(...)`, `Err(_) =>`, `return x.ok();`, or a new `whycodes-*` Cargo.toml line will fail CI even when the crate compiles. Handle the error (name it / log it) or register the edge in `scripts/dependency_boundaries.json` in the **same** commit. Details: [`docs/knowhow.md`](docs/knowhow.md) rule 8.
 
 ### Why
 
@@ -63,8 +63,8 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 24 crates, one-way layering. Full map and allowed edges:
 [`docs/architecture.md`](docs/architecture.md).
 
-Package names use the `whycode-` prefix even when the directory is shorter
-(e.g. `crates/llm` → `-p whycode-llm`). The TypeScript SDK lives at
+Package names use the `whycodes-` prefix even when the directory is shorter
+(e.g. `crates/llm` → `-p whycodes-llm`). The TypeScript SDK lives at
 `sdk/typescript` (twin of `crates/sdk`), not under `crates/`.
 
 Dependency rule of thumb: **leaf types and traits stay in `core`**; I/O and policy trees that load user config live in `config`. Do not re-export `config` from `core` (cycle).

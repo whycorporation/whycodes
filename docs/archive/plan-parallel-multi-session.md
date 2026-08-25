@@ -1,7 +1,7 @@
 # Plan: Parallel multi-session
 
 Feature-matrix row: `Parallel multi-session` (docs/archive/features.md §4) — currently ❌.
-Goal: multiple sessions run concurrently in one whycode process; the user
+Goal: multiple sessions run concurrently in one whycodes process; the user
 switches between live sessions without waiting for the active turn to finish,
 and headless/CLI usage can fan out prompts in parallel.
 
@@ -78,7 +78,7 @@ Splits are universally delegated to tmux/Zellij. Design revised accordingly:
 
 ### CLI: parallel fan-out (headless)
 
-7. `whycode generate` accepts repeated prompts or `--prompt-file` lines plus
+7. `whycodes generate` accepts repeated prompts or `--prompt-file` lines plus
    `-j/--jobs <N>`: runs N prompts concurrently via
    `Agent::spawn_parallel`-style Semaphore, each with its own `Session`
    (persisted), printing one result envelope per line in `--format json` /
@@ -114,9 +114,9 @@ Splits are universally delegated to tmux/Zellij. Design revised accordingly:
   intact when switching back (transcript, scroll, draft all preserved).
 - Permission prompt raised by a background session does not steal the
   active session's dialog; dashboard shows `!` on that session instead.
-- Restarting whycode: both sessions are persisted and resumable via
+- Restarting whycodes: both sessions are persisted and resumable via
   `--resume` / `/sessions`.
-- `whycode generate "a" "b" -j 2 --format json` prints two envelopes, two
+- `whycodes generate "a" "b" -j 2 --format json` prints two envelopes, two
   distinct `session_id`s.
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
   warnings`, `cargo test --workspace` all green.

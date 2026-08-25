@@ -8,9 +8,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Directories pruned during recursive walks (grep/glob/list recursive).
-/// Single source of truth lives in `whycode_index::policy`; re-exported here
+/// Single source of truth lives in `whycodes_index::policy`; re-exported here
 /// so existing call sites keep working.
-pub const SKIP_DIRS: &[&str] = whycode_index::policy::SKIP_DIRS;
+pub const SKIP_DIRS: &[&str] = whycodes_index::policy::SKIP_DIRS;
 
 /// Bytes sniffed for a NUL (binary) marker.
 pub const BINARY_SNIFF_LEN: usize = 8192;
@@ -56,7 +56,7 @@ pub fn display_path(path: &Path, working_dir: &str) -> String {
 /// Whether a directory name should be pruned from recursive walks.
 /// Delegates to the shared index policy (skip-list + hidden-dir rules).
 pub fn is_skip_dir(name: &str) -> bool {
-    whycode_index::policy::is_pruned_dir(name)
+    whycodes_index::policy::is_pruned_dir(name)
 }
 
 /// Entries under `root` from the warm workspace index, shaped like
@@ -67,7 +67,7 @@ pub fn is_skip_dir(name: &str) -> bool {
 /// Note the index never lists hidden files (secret hygiene: `.env` & co. stay
 /// out of agent context); patterns explicitly targeting dotfiles should walk.
 pub fn index_entries(
-    index: &whycode_index::WorkspaceIndex,
+    index: &whycodes_index::WorkspaceIndex,
     root: &Path,
 ) -> Option<Vec<(PathBuf, String, bool, u64)>> {
     if !index.is_ready() {

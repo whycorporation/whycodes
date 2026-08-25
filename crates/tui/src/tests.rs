@@ -153,7 +153,7 @@ fn test_all_themes_produce_palette() {
 
 #[test]
 fn syntax_theme_follows_grok_mapping() {
-    use whycode_format::highlight::SyntaxTheme;
+    use whycodes_format::highlight::SyntaxTheme;
     assert_eq!(
         ThemeName::DefaultDark.syntax_theme(),
         SyntaxTheme::GrokNight
@@ -328,7 +328,7 @@ fn test_complete_turn_timing_ms_uses_reported_work_not_wall() {
 #[test]
 fn test_format_usage_short() {
     use crate::app::format_usage_short;
-    use whycode_core::types::Usage;
+    use whycodes_core::types::Usage;
 
     let u = Usage {
         input_tokens: 1200,
@@ -349,7 +349,7 @@ fn test_format_context_usage_and_percent() {
         format_context_usage,
     };
     use unicode_width::UnicodeWidthStr;
-    use whycode_core::types::Usage;
+    use whycodes_core::types::Usage;
 
     assert_eq!(format_context_usage(1_200, 200_000), "1.2k / 200k");
     assert_eq!(format_context_usage(12_400, 128_000), "12.4k / 128k");
@@ -463,10 +463,10 @@ fn todo_panel_click_toggles_collapse() {
     use ratatui::layout::Rect;
 
     let mut app = TuiApp::new(test_config());
-    app.replace_todos(vec![whycode_core::TodoItem::new(
+    app.replace_todos(vec![whycodes_core::TodoItem::new(
         "a",
         "open work",
-        whycode_core::TodoStatus::Pending,
+        whycodes_core::TodoStatus::Pending,
     )]);
     assert!(!app.todos_collapsed);
     app.todos_hit.set_rect(Some(Rect {
@@ -914,7 +914,7 @@ fn test_confirm() {
 #[test]
 fn test_ask_question_opens_dialog() {
     use crate::app::{AgentState, DialogKind};
-    use whycode_tools::question::{QuestionOption, QuestionSpec};
+    use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
     let mut app = TuiApp::new(test_config());
     app.ask_question(vec![QuestionSpec {
@@ -943,7 +943,7 @@ fn test_ask_question_opens_dialog() {
 #[test]
 fn test_question_dialog_confirm_single() {
     use crate::app::QuestionDialogState;
-    use whycode_tools::question::{QuestionOption, QuestionSpec};
+    use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
     let mut st = QuestionDialogState::new(vec![QuestionSpec {
         prompt: "Go?".into(),
@@ -969,7 +969,7 @@ fn test_question_dialog_confirm_single() {
 #[test]
 fn test_question_navigate_prev_next_and_copy() {
     use crate::app::QuestionDialogState;
-    use whycode_tools::question::{QuestionOption, QuestionSpec};
+    use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
     let opt = |label: &str| QuestionOption {
         label: label.into(),
@@ -1071,7 +1071,7 @@ fn panel_event_opens_preview() {
     assert!(!app.sidebar.visible);
     crate::run::apply_panel_update(
         &mut app,
-        whycode_core::PanelUpdate::File {
+        whycodes_core::PanelUpdate::File {
             path: "src/main.rs".into(),
             text: "fn main() {}".into(),
         },
@@ -1229,8 +1229,8 @@ fn session_list_selection_identifies_entry_for_resume() {
 #[test]
 fn load_messages_from_session_restores_user_and_assistant() {
     use crate::app::{ChatRole, chat_messages_from_session};
-    use whycode_core::types::ContentBlock;
-    use whycode_session::session::Session;
+    use whycodes_core::types::ContentBlock;
+    use whycodes_session::session::Session;
 
     let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
     session.add_user_message("hello");
@@ -1248,7 +1248,7 @@ fn load_messages_from_session_restores_user_and_assistant() {
             input: serde_json::json!({"path": "a.rs"}),
         },
     ]);
-    session.add_tool_results(vec![whycode_core::types::ToolResult {
+    session.add_tool_results(vec![whycodes_core::types::ToolResult {
         tool_call_id: "t1".into(),
         content: "fn main() {}".into(),
         is_error: false,
@@ -1287,7 +1287,7 @@ fn load_messages_from_session_restores_user_and_assistant() {
 #[test]
 fn load_messages_renders_compact_carrier_as_system_summary() {
     use crate::app::{ChatRole, chat_messages_from_session};
-    use whycode_session::session::Session;
+    use whycodes_session::session::Session;
 
     let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
     session.add_user_message("fix login");
@@ -1321,8 +1321,8 @@ fn load_messages_renders_compact_carrier_as_system_summary() {
 
 #[test]
 fn load_messages_uses_transcript_estimate_not_session_usage() {
-    use whycode_core::types::Usage;
-    use whycode_session::session::Session;
+    use whycodes_core::types::Usage;
+    use whycodes_session::session::Session;
 
     let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
     session.add_user_message("hello world, this is a short prompt");
@@ -1356,7 +1356,7 @@ fn load_messages_uses_transcript_estimate_not_session_usage() {
 #[test]
 fn context_tokens_from_usage_is_prompt_side_only() {
     use crate::app::context_tokens_from_usage;
-    use whycode_core::types::Usage;
+    use whycodes_core::types::Usage;
 
     // Anthropic-style: cache fields additive with input.
     let anthropic = Usage {
@@ -1985,7 +1985,7 @@ fn adopt_yield_view_moves_transcript_without_clone() {
 #[test]
 fn question_dialog_covers_other_multi_and_rehydration() {
     use crate::app::QuestionDialogState;
-    use whycode_tools::question::{QuestionOption, QuestionSpec};
+    use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
     let option = |label: &str| QuestionOption {
         label: label.into(),
@@ -2034,7 +2034,7 @@ fn question_dialog_covers_other_multi_and_rehydration() {
 #[test]
 fn question_dialog_requires_an_answer_and_wraps_cursor() {
     use crate::app::QuestionDialogState;
-    use whycode_tools::question::{QuestionOption, QuestionSpec};
+    use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
     let mut state = QuestionDialogState::new(vec![QuestionSpec {
         prompt: "Pick".into(),

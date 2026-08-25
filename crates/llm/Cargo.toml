@@ -1,14 +1,14 @@
 [package]
-name = "whycode-llm"
+name = "whycodes-llm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [dependencies]
-whycode-core = { path = "../core" }
-whycode-config = { path = "../config" }
-whycode-auth = { path = "../auth" }
+whycodes-core = { path = "../core" }
+whycodes-config = { path = "../config" }
+whycodes-auth = { path = "../auth" }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

@@ -1,5 +1,5 @@
 // ── lib.rs: TUI crate root ────────────────────────────────────────────
-// Re-exports all public modules in the whycode-tui crate.
+// Re-exports all public modules in the whycodes-tui crate.
 
 pub mod app;
 pub mod bench;

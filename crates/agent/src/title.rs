@@ -6,10 +6,10 @@
 //! 3. This module upgrades the title after the first successful turn using the
 //!    user prompt + a short assistant excerpt (better than first-message-only).
 
-use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
-use whycode_llm::provider::LlmProvider;
-use whycode_session::Session;
-use whycode_session::title::sanitize_title;
+use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
+use whycodes_llm::provider::LlmProvider;
+use whycodes_session::Session;
+use whycodes_session::title::sanitize_title;
 
 const TITLE_SYSTEM: &str = "\
 You name coding-agent chat sessions.
@@ -85,7 +85,7 @@ pub async fn generate_title(
     model: &str,
     user_text: &str,
     assistant_snippet: Option<&str>,
-) -> whycode_core::Result<String> {
+) -> whycodes_core::Result<String> {
     let user_text = truncate(user_text, 800);
     let mut body = format!("User request:\n{user_text}");
     if let Some(a) = assistant_snippet.map(str::trim).filter(|s| !s.is_empty()) {
@@ -114,9 +114,9 @@ pub async fn generate_title(
     };
 
     // Title is a fire-and-forget nicety — short timeout + light retry.
-    let transport = whycode_llm::LlmTransport {
+    let transport = whycodes_llm::LlmTransport {
         complete_timeout: Some(std::time::Duration::from_secs(8)),
-        retry: whycode_llm::RetryPolicy {
+        retry: whycodes_llm::RetryPolicy {
             max_retries: 1,
             initial_backoff: std::time::Duration::from_millis(200),
             max_backoff: std::time::Duration::from_secs(2),
@@ -131,7 +131,7 @@ pub async fn generate_title(
         .content
         .iter()
         .filter_map(|b| match b {
-            whycode_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+            whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -177,7 +177,7 @@ pub fn should_refine_title(session: &Session) -> bool {
         return false;
     }
     session.user_message_count() == 1
-        || session.title_source == whycode_session::TitleSource::Default
+        || session.title_source == whycodes_session::TitleSource::Default
 }
 
 /// Short chit-chat / smoke pings where a model title adds little value.
@@ -366,12 +366,12 @@ mod tests {
         let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
         // Placeholder still Default after two user turns (pre-auto-title rows).
         session.title = "New session - 2026-01-01".into();
-        session.title_source = whycode_session::TitleSource::Default;
+        session.title_source = whycodes_session::TitleSource::Default;
         session.add_user_message("fix auth");
         session.add_user_message("also retries");
         assert!(should_refine_title(&session));
 
-        session.title_source = whycode_session::TitleSource::Heuristic;
+        session.title_source = whycodes_session::TitleSource::Heuristic;
         assert!(!should_refine_title(&session)); // multi-turn + already heuristicked
     }
 
@@ -387,7 +387,7 @@ mod tests {
         assert!(!is_trivial_title_seed("read crates/tui/src/run.rs"));
 
         let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
-        session.title_source = whycode_session::TitleSource::Heuristic;
+        session.title_source = whycodes_session::TitleSource::Heuristic;
         session.add_user_message("selam");
         assert!(!should_refine_title(&session));
     }

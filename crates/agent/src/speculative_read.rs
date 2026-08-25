@@ -9,11 +9,11 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 use tokio::task::JoinHandle;
-use whycode_core::ToolContext;
-use whycode_core::types::ToolResult;
-use whycode_tools::Tool;
-use whycode_tools::file::paths::resolve_path;
-use whycode_tools::file::read::ReadTool;
+use whycodes_core::ToolContext;
+use whycodes_core::types::ToolResult;
+use whycodes_tools::Tool;
+use whycodes_tools::file::paths::resolve_path;
+use whycodes_tools::file::read::ReadTool;
 
 /// Default / hard limits must match `crates/tools/src/file/read.rs`.
 const DEFAULT_LIMIT: usize = 400;
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn spawn_skips_internal_schemes() {
-        let ctx = whycode_core::ToolContext::new("/tmp");
+        let ctx = whycodes_core::ToolContext::new("/tmp");
         assert!(spawn_speculative_read("c1".into(), "skill://demo".into(), 1, 10, &ctx).is_none());
         assert!(
             spawn_speculative_read("c1".into(), "agent://task-1".into(), 1, 10, &ctx).is_none()
@@ -334,11 +334,11 @@ mod tests {
     #[test]
     fn maybe_start_ignores_non_read_tools() {
         let mut jobs = Vec::new();
-        let ctx = whycode_core::ToolContext {
+        let ctx = whycodes_core::ToolContext {
             working_dir: "/work/proj".into(),
             session_id: None,
-            sandbox: whycode_core::SandboxSettings::off(),
-            network: whycode_core::NetworkPolicy::unrestricted(),
+            sandbox: whycodes_core::SandboxSettings::off(),
+            network: whycodes_core::NetworkPolicy::unrestricted(),
             file_claims: None,
             agent_id: None,
             agent_label: None,

@@ -19,16 +19,16 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Rect;
 use tokio::sync::mpsc;
-use whycode_agent::agent::Agent;
-use whycode_agent::permission::ChannelPermissionPrompter;
-use whycode_agent::{
+use whycodes_agent::agent::Agent;
+use whycodes_agent::permission::ChannelPermissionPrompter;
+use whycodes_agent::{
     CancelFlag, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
     TurnEvent, new_cancel_flag, request_cancel,
 };
-use whycode_config::Config;
-use whycode_core::types::AgentMode;
-use whycode_session::SessionHistory;
-use whycode_session::session::Session;
+use whycodes_config::Config;
+use whycodes_core::types::AgentMode;
+use whycodes_session::SessionHistory;
+use whycodes_session::session::Session;
 
 use crate::app::{
     AgentState, AppMode, ChatRole, DialogKind, FocusPane, TuiApp, format_elapsed_ms,
@@ -81,7 +81,7 @@ pub enum AuthFlowEvent {
     },
 }
 
-/// Drives `whycode_auth::providers::LoginUi` from the TUI: notes land in
+/// Drives `whycodes_auth::providers::LoginUi` from the TUI: notes land in
 /// the chat transcript, the pasted code is collected via the prompt box.
 struct TuiLoginUi {
     tx: mpsc::UnboundedSender<AuthFlowEvent>,
@@ -97,7 +97,7 @@ impl TuiLoginUi {
     }
 }
 
-impl whycode_auth::providers::LoginUi for TuiLoginUi {
+impl whycodes_auth::providers::LoginUi for TuiLoginUi {
     fn show_sign_in(&mut self, label: &str, url: &str, browser_opened: bool) {
         let browser = if browser_opened {
             "Browser opened — complete the sign-in there."
@@ -126,12 +126,12 @@ impl whycode_auth::providers::LoginUi for TuiLoginUi {
 
     fn prompt_pasted_code(
         &mut self,
-    ) -> impl std::future::Future<Output = whycode_auth::error::Result<String>> + Send {
+    ) -> impl std::future::Future<Output = whycodes_auth::error::Result<String>> + Send {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.send(AuthFlowEvent::NeedCode(tx));
         async move {
             rx.await.map_err(|_| {
-                whycode_auth::AuthError::FlowCancelled("sign-in dismissed".to_string())
+                whycodes_auth::AuthError::FlowCancelled("sign-in dismissed".to_string())
             })
         }
     }
@@ -153,9 +153,9 @@ fn spawn_oauth_login(
         format!("Starting `{p}` subscription sign-in… (Esc cancels)"),
     );
     tokio::spawn(async move {
-        let store = whycode_auth::TokenStore::new(&dir);
+        let store = whycodes_auth::TokenStore::new(&dir);
         let mut ui = TuiLoginUi { tx: tx.clone() };
-        let result = whycode_auth::providers::login_with_ui(&p, &store, true, &mut ui)
+        let result = whycodes_auth::providers::login_with_ui(&p, &store, true, &mut ui)
             .await
             .map(|_| p.clone())
             .map_err(|e| e.to_string());
@@ -177,7 +177,7 @@ fn bind_agent_prompters(
     question: &Arc<ChannelQuestionPrompter>,
 ) -> Agent {
     agent
-        .with_permission_prompter(Arc::clone(perm) as Arc<dyn whycode_agent::PermissionPrompter>)
+        .with_permission_prompter(Arc::clone(perm) as Arc<dyn whycodes_agent::PermissionPrompter>)
         .with_question_prompter(Arc::clone(question) as Arc<dyn QuestionPrompter>)
 }
 
@@ -197,7 +197,7 @@ pub struct TuiRunOptions {
     /// Used by CLI `--continue` / `--resume <id>`. In-session resume uses
     /// `pending_session_id` on the app instead.
     pub resume_session_id: Option<String>,
-    /// When set, turns go to `whycode serve` over HTTP instead of an in-process agent.
+    /// When set, turns go to `whycodes serve` over HTTP instead of an in-process agent.
     pub remote: Option<crate::remote::RemoteAttach>,
 }
 
@@ -208,15 +208,15 @@ pub const RESUME_LATEST: &str = "__latest__";
 struct TuiBoot {
     app: TuiApp,
     config: Config,
-    file_index: Arc<whycode_index::WorkspaceIndex>,
+    file_index: Arc<whycodes_index::WorkspaceIndex>,
     agent: Agent,
     session: Session,
     history: SessionHistory,
     perm_prompter: Arc<ChannelPermissionPrompter>,
     question_prompter: Arc<ChannelQuestionPrompter>,
-    perm_rx: mpsc::UnboundedReceiver<whycode_agent::PermissionRequest>,
+    perm_rx: mpsc::UnboundedReceiver<whycodes_agent::PermissionRequest>,
     question_rx: mpsc::UnboundedReceiver<QuestionRequest>,
-    session_claims: whycode_core::FileClaimRegistry,
+    session_claims: whycodes_core::FileClaimRegistry,
     missing_key: bool,
 }
 
@@ -296,8 +296,8 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
     let mut app = TuiApp::new(tui_cfg);
 
-    let file_index = whycode_index::WorkspaceIndex::start(
-        whycode_index::WorkspaceIndex::project_roots(&opts.project_dir),
+    let file_index = whycodes_index::WorkspaceIndex::start(
+        whycodes_index::WorkspaceIndex::project_roots(&opts.project_dir),
     );
     app.set_file_index(file_index.clone());
 
@@ -366,15 +366,15 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let agent_info = config
         .get_agent(&opts.agent_name)
         .cloned()
-        .unwrap_or_else(|| whycode_core::types::AgentInfo {
+        .unwrap_or_else(|| whycodes_core::types::AgentInfo {
             name: opts.agent_name.clone(),
             description: "Default".into(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet {
+            permission: whycodes_core::types::PermissionSet {
                 allow_file_writes: true,
                 allow_network: true,
                 allow_shell: true,
-                ..whycode_core::types::PermissionSet::default()
+                ..whycodes_core::types::PermissionSet::default()
             },
             model: None,
             system_prompt: None,
@@ -407,13 +407,13 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
     config.general.project_path = Some(opts.project_dir.clone());
-    let session_claims = whycode_core::FileClaimRegistry::new();
+    let session_claims = whycodes_core::FileClaimRegistry::new();
     let agent = Agent::new(agent_info)
         .with_config(&config)
         .with_file_index(file_index.clone())
         .with_session_claims(session_claims.clone())
         .with_permission_prompter(
-            Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+            Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
         .with_plugins(Some(opts.project_dir.as_path()));
@@ -538,7 +538,7 @@ pub enum TurnOutcome {
         /// Wall time for `run_turn` only (excludes post-turn title refine).
         work_ms: u128,
     },
-    /// Remote `whycode serve` turn finished; local agent/session stay in place.
+    /// Remote `whycodes serve` turn finished; local agent/session stay in place.
     Remote {
         text: String,
         error: Option<String>,
@@ -555,7 +555,7 @@ pub enum TurnOutcome {
     Compact {
         agent: Agent,
         session: Session,
-        outcome: whycode_session::CompactOutcome,
+        outcome: whycodes_session::CompactOutcome,
         work_ms: u128,
     },
 }
@@ -587,8 +587,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let project_dir = opts.project_dir.clone();
 
     // On panic, leave alt-screen / raw mode so the shell is usable and the
-    // crash report (written by whycode_core::logging) is readable.
-    whycode_core::logging::set_panic_cleanup(|| {
+    // crash report (written by whycodes_core::logging) is readable.
+    whycodes_core::logging::set_panic_cleanup(|| {
         if let Ok(mut out) = open_tui_writer() {
             restore_terminal_on(&mut out);
         } else {
@@ -596,8 +596,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         }
     });
 
-    whycode_core::logging::emit(
-        "whycode_tui",
+    whycodes_core::logging::emit(
+        "whycodes_tui",
         "info",
         "tui.starting",
         Some(serde_json::json!({
@@ -609,28 +609,28 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     );
 
     let mut tui_out = open_tui_writer().map_err(|e| {
-        whycode_core::logging::emit(
-            "whycode_tui",
+        whycodes_core::logging::emit(
+            "whycodes_tui",
             "error",
             "tui.open_writer_failed",
             Some(serde_json::json!({ "error": e.to_string() })),
         );
         anyhow::anyhow!(
             "failed to open terminal for TUI ({e}). \
-             Run inside a real terminal, or use `whycode --plain`."
+             Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
 
     enable_raw_mode().map_err(|e| {
-        whycode_core::logging::emit(
-            "whycode_tui",
+        whycodes_core::logging::emit(
+            "whycodes_tui",
             "error",
             "tui.raw_mode_failed",
             Some(serde_json::json!({ "error": e.to_string() })),
         );
         anyhow::anyhow!(
             "failed to enter raw mode ({e}). \
-             Run inside a real terminal, or use `whycode --plain`."
+             Run inside a real terminal, or use `whycodes --plain`."
         )
     })?;
     // Mouse capture: we own drag-select so clipboard text can be trimmed of
@@ -645,8 +645,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     )
     .map_err(|e| {
         let _ = disable_raw_mode();
-        whycode_core::logging::emit(
-            "whycode_tui",
+        whycodes_core::logging::emit(
+            "whycodes_tui",
             "error",
             "tui.alt_screen_failed",
             Some(serde_json::json!({ "error": e.to_string() })),
@@ -665,8 +665,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let backend = CrosstermBackend::new(tui_out);
     let mut terminal = Terminal::new(backend).inspect_err(|e| {
         let _ = disable_raw_mode();
-        whycode_core::logging::emit(
-            "whycode_tui",
+        whycodes_core::logging::emit(
+            "whycodes_tui",
             "error",
             "tui.terminal_new_failed",
             Some(serde_json::json!({ "error": e.to_string() })),
@@ -680,16 +680,16 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     if tw == 0 || th == 0 {
         let fallback = Rect::new(0, 0, 80, 24);
         let _ = terminal.resize(fallback);
-        whycode_core::logging::emit(
-            "whycode_tui",
+        whycodes_core::logging::emit(
+            "whycodes_tui",
             "warn",
             "tui.size_fallback",
             Some(serde_json::json!({ "reported_w": tw, "reported_h": th, "using": "80x24" })),
         );
     }
 
-    whycode_core::logging::emit(
-        "whycode_tui",
+    whycodes_core::logging::emit(
+        "whycodes_tui",
         "info",
         "tui.ready",
         Some(serde_json::json!({ "term_w": tw, "term_h": th })),
@@ -747,7 +747,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
 
     apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
 
-    // Inert unless WHYCODE_BENCH is set; see crate::bench.
+    // Inert unless WHYCODES_BENCH is set; see crate::bench.
     let bench = crate::bench::config_from_env();
 
     let mut first_frame = true;
@@ -791,8 +791,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             if app.needs_redraw || animate || first_frame {
                 if app.pending_full_clears > 0 {
                     if let Err(e) = terminal.clear() {
-                        whycode_core::logging::emit(
-                            "whycode_tui",
+                        whycodes_core::logging::emit(
+                            "whycodes_tui",
                             "warn",
                             "tui.full_clear_failed",
                             Some(serde_json::json!({ "error": e.to_string() })),
@@ -803,8 +803,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 let completed = match terminal.draw(|f| render::render(f, &mut app)) {
                     Ok(c) => c,
                     Err(e) => {
-                        whycode_core::logging::emit(
-                            "whycode_tui",
+                        whycodes_core::logging::emit(
+                            "whycodes_tui",
                             "error",
                             "tui.draw_failed",
                             Some(serde_json::json!({ "error": e.to_string() })),
@@ -814,8 +814,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 };
                 if first_frame {
                     first_frame = false;
-                    whycode_core::logging::emit(
-                        "whycode_tui",
+                    whycodes_core::logging::emit(
+                        "whycodes_tui",
                         "info",
                         "tui.first_frame",
                         Some(serde_json::json!({
@@ -1306,8 +1306,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             let has_ev = match event::poll(poll_for) {
                 Ok(v) => v,
                 Err(e) => {
-                    whycode_core::logging::emit(
-                        "whycode_tui",
+                    whycodes_core::logging::emit(
+                        "whycodes_tui",
                         "error",
                         "tui.poll_failed",
                         Some(serde_json::json!({ "error": e.to_string() })),
@@ -1324,8 +1324,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                 let batch = match read_event_batch() {
                     Ok(b) => b,
                     Err(e) => {
-                        whycode_core::logging::emit(
-                            "whycode_tui",
+                        whycodes_core::logging::emit(
+                            "whycodes_tui",
                             "error",
                             "tui.read_failed",
                             Some(serde_json::json!({ "error": e.to_string() })),
@@ -1694,8 +1694,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                     }
 
                     if !input::handle_event(&mut app, ev) {
-                        whycode_core::logging::emit(
-                            "whycode_tui",
+                        whycodes_core::logging::emit(
+                            "whycodes_tui",
                             "info",
                             "tui.exit",
                             Some(serde_json::json!({ "reason": "handle_event=false" })),
@@ -1706,8 +1706,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             }
 
             if !app.running {
-                whycode_core::logging::emit(
-                    "whycode_tui",
+                whycodes_core::logging::emit(
+                    "whycodes_tui",
                     "info",
                     "tui.exit",
                     Some(serde_json::json!({ "reason": "running=false" })),
@@ -1732,8 +1732,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     }
 
     if let Err(ref e) = result {
-        whycode_core::logging::emit(
-            "whycode_tui",
+        whycodes_core::logging::emit(
+            "whycodes_tui",
             "error",
             "tui.loop_error",
             Some(serde_json::json!({ "error": e.to_string() })),
@@ -1753,7 +1753,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     );
     let _ = terminal.show_cursor();
     // Normal exit — panic hook no longer needs to touch the terminal.
-    whycode_core::logging::clear_panic_cleanup();
+    whycodes_core::logging::clear_panic_cleanup();
 
     // After the terminal is restored, so a failed write cannot corrupt the
     // screen the user is left looking at.
@@ -1766,11 +1766,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let model_label = format!("{provider}/{model}");
     let summary =
         rt.session
-            .format_exit_summary(session_started.elapsed(), &model_label, "whycode");
+            .format_exit_summary(session_started.elapsed(), &model_label, "whycodes");
     print_session_summary(&summary);
 
-    whycode_core::logging::emit(
-        "whycode_tui",
+    whycodes_core::logging::emit(
+        "whycodes_tui",
         "info",
         "tui.stopped",
         Some(serde_json::json!({
@@ -1842,7 +1842,7 @@ fn begin_cancel(
     cancel_flag: &Option<CancelFlag>,
     cancel_requested_at: &mut Option<Instant>,
     pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
-    pending_perm_queue: &mut std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    pending_perm_queue: &mut std::collections::VecDeque<whycodes_agent::PermissionRequest>,
 ) {
     if let Some(flag) = cancel_flag.as_ref() {
         request_cancel(flag);
@@ -1879,7 +1879,7 @@ fn force_stop_turn(
     turn_join: &mut Option<tokio::task::JoinHandle<()>>,
     session_backup: &mut Option<Session>,
     pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
-    pending_perm_queue: &mut std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    pending_perm_queue: &mut std::collections::VecDeque<whycodes_agent::PermissionRequest>,
     done_rx: &mut mpsc::UnboundedReceiver<TurnOutcome>,
     config: &Config,
     project_dir: &std::path::Path,
@@ -1888,7 +1888,7 @@ fn force_stop_turn(
     event_tx: mpsc::UnboundedSender<TurnEvent>,
     perm_prompter: Arc<ChannelPermissionPrompter>,
     question_prompter: Arc<ChannelQuestionPrompter>,
-    file_index: &Arc<whycode_index::WorkspaceIndex>,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
 ) {
     // Always re-signal cancel in case the task is still cooperative.
     if let Some(flag) = cancel_flag.as_ref() {
@@ -1994,7 +1994,7 @@ fn rebuild_agent_after_force_stop(
     event_tx: mpsc::UnboundedSender<TurnEvent>,
     perm_prompter: Arc<ChannelPermissionPrompter>,
     question_prompter: Arc<ChannelQuestionPrompter>,
-    file_index: &Arc<whycode_index::WorkspaceIndex>,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
 ) {
     let name = if preferred_name.is_empty() || preferred_name == "_pending" {
         if config.default_agent.is_empty() {
@@ -2005,19 +2005,20 @@ fn rebuild_agent_after_force_stop(
     } else {
         preferred_name.to_string()
     };
-    let info = config
-        .get_agent(&name)
-        .cloned()
-        .unwrap_or_else(|| whycode_core::types::AgentInfo {
-            name: name.clone(),
-            description: String::new(),
-            mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        });
+    let info =
+        config
+            .get_agent(&name)
+            .cloned()
+            .unwrap_or_else(|| whycodes_core::types::AgentInfo {
+                name: name.clone(),
+                description: String::new(),
+                mode: AgentMode::Primary,
+                permission: whycodes_core::types::PermissionSet::default(),
+                model: None,
+                system_prompt: None,
+                temperature: None,
+                top_p: None,
+            });
     let base = info
         .system_prompt
         .clone()
@@ -2034,7 +2035,7 @@ fn rebuild_agent_after_force_stop(
         .with_config(config)
         .with_background_registry(bg)
         .with_file_index(file_index.clone())
-        .with_permission_prompter(perm_prompter as Arc<dyn whycode_agent::PermissionPrompter>)
+        .with_permission_prompter(perm_prompter as Arc<dyn whycodes_agent::PermissionPrompter>)
         .with_question_prompter(question_prompter as Arc<dyn QuestionPrompter>);
     if let Some(c) = claims {
         next = next.with_session_claims(c);
@@ -2052,7 +2053,7 @@ fn persist_session_best_effort(session: &Session, reason: &str) {
     let outcome = with_session_db(|db| session.save_to_db(db));
     match outcome {
         Some(Ok(())) => {
-            whycode_core::logging::emit_sid(
+            whycodes_core::logging::emit_sid(
                 "session",
                 "info",
                 "session.persist",
@@ -2064,7 +2065,7 @@ fn persist_session_best_effort(session: &Session, reason: &str) {
             );
         }
         Some(Err(e)) => {
-            whycode_core::logging::emit_sid(
+            whycodes_core::logging::emit_sid(
                 "session",
                 "warn",
                 "session.persist_failed",
@@ -2084,9 +2085,9 @@ fn persist_session_best_effort(session: &Session, reason: &str) {
 
 /// Process-lifetime SQLite handle for the TUI (avoids re-running migrations
 /// and reopening the file on every turn persist).
-fn with_session_db<T>(f: impl FnOnce(&whycode_storage::db::Database) -> T) -> Option<T> {
+fn with_session_db<T>(f: impl FnOnce(&whycodes_storage::db::Database) -> T) -> Option<T> {
     use std::sync::{Mutex, OnceLock};
-    static DB: OnceLock<Mutex<Option<whycode_storage::db::Database>>> = OnceLock::new();
+    static DB: OnceLock<Mutex<Option<whycodes_storage::db::Database>>> = OnceLock::new();
     let lock = DB.get_or_init(|| Mutex::new(None));
     let mut guard = lock.lock().ok()?;
     if guard.is_none() {
@@ -2132,22 +2133,22 @@ async fn spawn_new_session_runtime(
     agent_name: &str,
     config: &Config,
     project_dir: &std::path::Path,
-    file_index: &Arc<whycode_index::WorkspaceIndex>,
-    session_claims: whycode_core::FileClaimRegistry,
+    file_index: &Arc<whycodes_index::WorkspaceIndex>,
+    session_claims: whycodes_core::FileClaimRegistry,
 ) -> SessionRuntime {
     let agent_info =
         config
             .get_agent(agent_name)
             .cloned()
-            .unwrap_or_else(|| whycode_core::types::AgentInfo {
+            .unwrap_or_else(|| whycodes_core::types::AgentInfo {
                 name: agent_name.to_string(),
                 description: "Default".into(),
                 mode: AgentMode::Primary,
-                permission: whycode_core::types::PermissionSet {
+                permission: whycodes_core::types::PermissionSet {
                     allow_file_writes: true,
                     allow_network: true,
                     allow_shell: true,
-                    ..whycode_core::types::PermissionSet::default()
+                    ..whycodes_core::types::PermissionSet::default()
                 },
                 model: None,
                 system_prompt: None,
@@ -2182,7 +2183,7 @@ async fn spawn_new_session_runtime(
         .with_file_index(file_index.clone())
         .with_session_claims(session_claims)
         .with_permission_prompter(
-            Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+            Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
         .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
         .with_mcp(config)
@@ -2436,7 +2437,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                     if cancelled {
                         scratch.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
                     } else {
-                        let display = whycode_llm::format_turn_error(&whycode_core::Error::Llm(
+                        let display = whycodes_llm::format_turn_error(&whycodes_core::Error::Llm(
                             error.clone(),
                         ));
                         scratch.add_message(ChatRole::System, format!("Error: {display}"));
@@ -2657,7 +2658,7 @@ fn apply_turn_outcome(
                 rt.persist("cancelled");
             } else {
                 let display =
-                    whycode_llm::format_turn_error(&whycode_core::Error::Llm(error.clone()));
+                    whycodes_llm::format_turn_error(&whycodes_core::Error::Llm(error.clone()));
                 app.current_agent_state = AgentState::Error(display.clone());
                 let dur = elapsed_ms
                     .map(|ms| format!("{} · ", format_elapsed_ms(ms)))
@@ -2666,7 +2667,7 @@ fn apply_turn_outcome(
                 app.add_message(ChatRole::System, format!("Error: {display}"));
                 app.toasts
                     .push(crate::toast::ToastKind::Error, truncate_toast(&display, 48));
-                whycode_core::logging::emit_sid(
+                whycodes_core::logging::emit_sid(
                     "tui",
                     "error",
                     "turn.error",
@@ -2698,7 +2699,7 @@ fn apply_turn_outcome(
 fn apply_compact_view(
     app: &mut TuiApp,
     session: &Session,
-    outcome: &whycode_session::CompactOutcome,
+    outcome: &whycodes_session::CompactOutcome,
 ) {
     app.load_messages_from_session(session);
     app.current_agent_state = AgentState::Idle;
@@ -2854,7 +2855,7 @@ fn resume_or_switch_session(
 
 fn reply_permission(
     app: &mut TuiApp,
-    queue: &mut std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    queue: &mut std::collections::VecDeque<whycodes_agent::PermissionRequest>,
     allow: bool,
 ) {
     if let Some(req) = queue.pop_front() {
@@ -2882,8 +2883,8 @@ fn reply_permission(
 fn complete_questionnaire_ui(
     app: &mut TuiApp,
     queue: &mut std::collections::VecDeque<QuestionRequest>,
-    perm_queue: &std::collections::VecDeque<whycode_agent::PermissionRequest>,
-    answers: Option<Vec<whycode_tools::question::QuestionAnswer>>,
+    perm_queue: &std::collections::VecDeque<whycodes_agent::PermissionRequest>,
+    answers: Option<Vec<whycodes_tools::question::QuestionAnswer>>,
 ) {
     let answered = answers.is_some();
     if let Some(req) = queue.pop_front() {
@@ -2908,7 +2909,7 @@ fn warn_missing_api_key(app: &mut TuiApp, provider: &str) {
         format!(
             "No API key for `{provider}`\n\
                  → export {env_name}=…\n\
-                 → whycode provider add {provider} --api-key <key> · then /connect"
+                 → whycodes provider add {provider} --api-key <key> · then /connect"
         ),
     );
     app.status_message = "no API key · /connect".into();
@@ -2950,8 +2951,8 @@ fn apply_catalog_window(
         config.configured_context_window(provider, model),
         config.session.max_context_tokens as u64,
     );
-    whycode_core::logging::emit(
-        "whycode_tui",
+    whycodes_core::logging::emit(
+        "whycodes_tui",
         "info",
         "tui.context_window_applied",
         Some(serde_json::json!({
@@ -2989,7 +2990,7 @@ async fn apply_auth_flow_event(
             Ok(_) => {
                 let already_on = *provider == p;
                 if !already_on {
-                    let m = whycode_auth::providers::suggested_models(&p)
+                    let m = whycodes_auth::providers::suggested_models(&p)
                         .first()
                         .copied()
                         .unwrap_or("");
@@ -3006,9 +3007,9 @@ async fn apply_auth_flow_event(
                     }
                 }
                 if let Ok(dir) = Config::data_dir()
-                    && let Some(tok) = whycode_auth::providers::access_token(&p, &dir).await
+                    && let Some(tok) = whycodes_auth::providers::access_token(&p, &dir).await
                 {
-                    whycode_llm::oauth_refresh::register(&p, dir);
+                    whycodes_llm::oauth_refresh::register(&p, dir);
                     *api_key = tok;
                 }
                 let model_note = if already_on {
@@ -3094,19 +3095,19 @@ fn try_fill_api_key(api_key: &mut String, provider: &str) {
     let cfg = Config::load().unwrap_or_default();
     if let Some(k) = explicit_provider_key(&cfg, provider) {
         *api_key = k;
-        whycode_llm::oauth_refresh::unregister(provider);
+        whycodes_llm::oauth_refresh::unregister(provider);
     }
 }
 
 async fn fill_oauth_credential(api_key: &mut String, provider: &str) {
-    if !api_key.is_empty() || !whycode_auth::providers::supports_oauth(provider) {
+    if !api_key.is_empty() || !whycodes_auth::providers::supports_oauth(provider) {
         return;
     }
     let Ok(dir) = Config::data_dir() else {
         return;
     };
-    if let Some(tok) = whycode_auth::providers::access_token(provider, &dir).await {
-        whycode_llm::oauth_refresh::register(provider, dir);
+    if let Some(tok) = whycodes_auth::providers::access_token(provider, &dir).await {
+        whycodes_llm::oauth_refresh::register(provider, dir);
         *api_key = tok;
     }
 }
@@ -3168,14 +3169,14 @@ fn route_turn_model(
     fast: Option<&str>,
 ) -> (String, String) {
     let (route_provider, route_model) =
-        whycode_agent::resolve_turn_model(provider, model, expanded, fast);
+        whycodes_agent::resolve_turn_model(provider, model, expanded, fast);
     if route_model != model || route_provider != provider {
         tracing::info!(
             from = %format!("{provider}/{model}"),
             to = %format!("{route_provider}/{route_model}"),
             "routed trivial turn to fast model"
         );
-        whycode_core::logging::emit_sid(
+        whycodes_core::logging::emit_sid(
             "tui",
             "info",
             "turn.route_fast",
@@ -3201,10 +3202,10 @@ fn apply_model_choice(
     if provider.as_str() != p {
         // Never send the previous backend's credential to the new one
         // (e.g. tektik API key as a Code Assist bearer → 401).
-        whycode_llm::oauth_refresh::unregister(provider);
+        whycodes_llm::oauth_refresh::unregister(provider);
         if let Some(k) = explicit_provider_key(config, &p) {
             *api_key = k;
-            whycode_llm::oauth_refresh::unregister(&p);
+            whycodes_llm::oauth_refresh::unregister(&p);
         } else {
             api_key.clear();
         }
@@ -3222,14 +3223,14 @@ fn apply_model_choice(
 }
 
 fn apply_reasoning_effort(app: &mut TuiApp, agent: &mut Agent, config: &mut Config, raw: &str) {
-    let Some(parsed) = whycode_llm::ReasoningEffort::parse(raw) else {
+    let Some(parsed) = whycodes_llm::ReasoningEffort::parse(raw) else {
         app.toasts.push(
             crate::toast::ToastKind::Warning,
             format!("Unknown effort '{raw}' (low, medium, high, xhigh)"),
         );
         return;
     };
-    let resolved = whycode_llm::ThinkingConfig::resolve_effort(
+    let resolved = whycodes_llm::ThinkingConfig::resolve_effort(
         &app.provider_name,
         &app.model_name,
         Some(parsed.as_str()),
@@ -3544,11 +3545,11 @@ fn start_compact_task(
 fn take_turn_owner(rt: &mut SessionRuntime, project_dir: &std::path::Path) -> (Agent, Session) {
     let ag = std::mem::replace(
         &mut rt.agent,
-        Agent::new(whycode_core::types::AgentInfo {
+        Agent::new(whycodes_core::types::AgentInfo {
             name: "_pending".into(),
             description: String::new(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
+            permission: whycodes_core::types::PermissionSet::default(),
             model: None,
             system_prompt: Some(String::new()),
             temperature: None,
@@ -3619,7 +3620,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             };
             app.status_message = format!("tool: {shown}");
             if matches!(name.as_str(), "todowrite" | "todo")
-                && let Some(next) = whycode_core::todo::apply_todowrite_args(&app.todos, &input)
+                && let Some(next) = whycodes_core::todo::apply_todowrite_args(&app.todos, &input)
             {
                 app.replace_todos(next);
             }
@@ -3817,8 +3818,8 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
     }
 }
 
-pub(crate) fn apply_panel_update(app: &mut TuiApp, update: whycode_core::PanelUpdate) {
-    use whycode_core::PanelUpdate;
+pub(crate) fn apply_panel_update(app: &mut TuiApp, update: whycodes_core::PanelUpdate) {
+    use whycodes_core::PanelUpdate;
     app.sidebar.preview = match update {
         PanelUpdate::Clear => crate::app::SidebarPreview::None,
         PanelUpdate::File { path, text } => crate::app::SidebarPreview::File { path, text },
@@ -3843,8 +3844,8 @@ pub(crate) fn apply_panel_update(app: &mut TuiApp, update: whycode_core::PanelUp
 /// Refresh sidebar lists from the workspace index, config, and session todos.
 fn refresh_sidebar(
     app: &mut TuiApp,
-    config: &whycode_config::Config,
-    file_index: &std::sync::Arc<whycode_index::WorkspaceIndex>,
+    config: &whycodes_config::Config,
+    file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
 ) {
     const FILE_CAP: usize = 80;
     let mut files: Vec<String> = file_index
@@ -3872,7 +3873,7 @@ fn refresh_sidebar(
 }
 
 fn load_app_todos(app: &mut TuiApp) {
-    app.replace_todos(whycode_core::todo::load_todos(
+    app.replace_todos(whycodes_core::todo::load_todos(
         &app.project_dir,
         if app.session_id.is_empty() {
             None
@@ -3957,7 +3958,7 @@ async fn switch_to_agent(
             .with_config(config)
             .with_background_registry(bg)
             .with_permission_prompter(
-                Arc::clone(&perm_prompter) as Arc<dyn whycode_agent::PermissionPrompter>
+                Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
             )
             .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
         if let Some(c) = claims {
@@ -3974,7 +3975,7 @@ fn handle_question_key(
     app: &mut TuiApp,
     code: KeyCode,
     pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
-    pending_perm_queue: &std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    pending_perm_queue: &std::collections::VecDeque<whycodes_agent::PermissionRequest>,
 ) -> bool {
     let Some(DialogKind::Question(mut state)) = app.dialogs.pop() else {
         return false;
@@ -3985,7 +3986,7 @@ fn handle_question_key(
         QuestionRequest,
     >,
                          pending_perm_queue: &std::collections::VecDeque<
-        whycode_agent::PermissionRequest,
+        whycodes_agent::PermissionRequest,
     >| {
         if let Some(req) = pending_question_queue.pop_front() {
             let _ = req.reply.send(Err(QuestionError::Cancelled));
@@ -3996,10 +3997,10 @@ fn handle_question_key(
     };
 
     let finish_ok = |app: &mut TuiApp,
-                     answers: Vec<whycode_tools::question::QuestionAnswer>,
+                     answers: Vec<whycodes_tools::question::QuestionAnswer>,
                      pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
                      pending_perm_queue: &std::collections::VecDeque<
-        whycode_agent::PermissionRequest,
+        whycodes_agent::PermissionRequest,
     >| {
         if let Some(req) = pending_question_queue.pop_front() {
             let _ = req.reply.send(Ok(answers));
@@ -4133,7 +4134,7 @@ fn handle_question_key(
 fn resume_after_question(
     app: &mut TuiApp,
     pending_question_queue: &std::collections::VecDeque<QuestionRequest>,
-    pending_perm_queue: &std::collections::VecDeque<whycode_agent::PermissionRequest>,
+    pending_perm_queue: &std::collections::VecDeque<whycodes_agent::PermissionRequest>,
 ) {
     if let Some(next) = pending_question_queue.front() {
         app.ask_question(next.questions.clone());
@@ -4201,11 +4202,11 @@ fn expand_at_files(input: &str, project_dir: &std::path::Path) -> String {
     result
 }
 
-fn open_db_quiet() -> Option<whycode_storage::db::Database> {
-    let data_dir = whycode_config::Config::data_dir().ok()?;
+fn open_db_quiet() -> Option<whycodes_storage::db::Database> {
+    let data_dir = whycodes_config::Config::data_dir().ok()?;
     std::fs::create_dir_all(&data_dir).ok()?;
-    let db_path = data_dir.join("whycode.db");
-    whycode_storage::db::Database::open(&db_path.to_string_lossy()).ok()
+    let db_path = data_dir.join("whycodes.db");
+    whycodes_storage::db::Database::open(&db_path.to_string_lossy()).ok()
 }
 
 fn share_server_up(port: u16) -> bool {
@@ -4226,8 +4227,8 @@ fn share_server_up(port: u16) -> bool {
 fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize {
     let mut n = 0usize;
     let candidates = [
-        project_dir.join(".whycode").join("shares"),
-        whycode_config::Config::data_dir()
+        project_dir.join(".whycodes").join("shares"),
+        whycodes_config::Config::data_dir()
             .map(|d| d.join("shares"))
             .unwrap_or_default(),
     ];
@@ -4472,7 +4473,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             Ok(p) => {
                 let md = p.replace(".json", ".md");
                 let id = ctx.session.id.clone();
-                let port = std::env::var("WHYCODE_SHARE_PORT")
+                let port = std::env::var("WHYCODES_SHARE_PORT")
                     .ok()
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(3030u16);
@@ -4481,7 +4482,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 ctx.app.status_message = if live {
                     format!("Share: {url}")
                 } else {
-                    format!("Exported — run `whycode serve` then open {url}")
+                    format!("Exported — run `whycodes serve` then open {url}")
                 };
                 ctx.app.add_message(
                     ChatRole::System,
@@ -4495,7 +4496,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                         if live {
                             "(server is up)"
                         } else {
-                            "Start server: whycode serve 3030"
+                            "Start server: whycodes serve 3030"
                         }
                     ),
                 );
@@ -4523,7 +4524,7 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 .and_then(|cfg| explicit_provider_key(&cfg, ctx.provider));
             if let Some(k) = from_live.or(from_disk) {
                 *ctx.api_key = k;
-                whycode_llm::oauth_refresh::unregister(ctx.provider);
+                whycodes_llm::oauth_refresh::unregister(ctx.provider);
             } else {
                 ctx.api_key.clear();
                 fill_oauth_credential(ctx.api_key, ctx.provider).await;
@@ -4531,13 +4532,13 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             let env_name = format!("{}_API_KEY", ctx.provider.to_uppercase());
             if ctx.api_key.is_empty() {
                 ctx.app.status_message = format!("no API key · set {env_name}");
-                let oauth_supported = whycode_auth::providers::supports_oauth(ctx.provider);
+                let oauth_supported = whycodes_auth::providers::supports_oauth(ctx.provider);
                 ctx.app.add_message(
                     ChatRole::System,
                     format!(
                         "No API key for `{}`\n\
                          → export {env_name}=…\n\
-                         → whycode provider add {} --api-key <key> · then /connect",
+                         → whycodes provider add {} --api-key <key> · then /connect",
                         ctx.provider, ctx.provider
                     ),
                 );
@@ -4570,9 +4571,9 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 // provider, annotated with the stored-credential status.
                 let mut rows = Vec::new();
                 if let Ok(dir) = Config::data_dir() {
-                    let store = whycode_auth::TokenStore::new(&dir);
-                    for name in whycode_auth::OAUTH_PROVIDERS {
-                        let label = whycode_auth::providers::spec_for(name)
+                    let store = whycodes_auth::TokenStore::new(&dir);
+                    for name in whycodes_auth::OAUTH_PROVIDERS {
+                        let label = whycodes_auth::providers::spec_for(name)
                             .map(|s| s.label)
                             .unwrap_or(name);
                         let connected = store.get(name).ok().flatten().is_some();
@@ -4585,14 +4586,14 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 }
                 ctx.app.login_dialog = crate::app::LoginDialogState { selected: 0, rows };
                 crate::input::open_dialog(ctx.app, DialogKind::Login);
-            } else if whycode_auth::providers::supports_oauth(arg) {
+            } else if whycodes_auth::providers::supports_oauth(arg) {
                 if let Ok(dir) = Config::data_dir() {
                     spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, arg);
                 }
             } else {
                 ctx.app.status_message = format!(
                     "OAuth login not available for `{arg}` ({})",
-                    whycode_auth::OAUTH_PROVIDERS.join(", ")
+                    whycodes_auth::OAUTH_PROVIDERS.join(", ")
                 );
             }
         }
@@ -4699,10 +4700,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
         }
         "/tools" => {
             // List what the model actually sees (core profile by default).
-            let profile = whycode_tools::ToolProfile::parse(&ctx.config.session.tool_profile);
-            let tools = whycode_tools::ToolExecutor::new()
+            let profile = whycodes_tools::ToolProfile::parse(&ctx.config.session.tool_profile);
+            let tools = whycodes_tools::ToolExecutor::new()
                 .get_definitions_profile(&ctx.agent.info.permission, profile);
-            let full_n = whycode_tools::ToolExecutor::new()
+            let full_n = whycodes_tools::ToolExecutor::new()
                 .get_definitions(&ctx.agent.info.permission)
                 .len();
             ctx.app.status_message =
@@ -4821,7 +4822,7 @@ fn maybe_spawn_prompt_suggestion(
         .messages
         .iter()
         .rev()
-        .find(|m| m.role == whycode_core::types::Role::User)
+        .find(|m| m.role == whycodes_core::types::Role::User)
         .and_then(|m| m.content.as_text().map(|s| s.to_string()))
         .unwrap_or_default();
     if last_user.trim().is_empty() {
@@ -4831,21 +4832,21 @@ fn maybe_spawn_prompt_suggestion(
         .messages
         .iter()
         .rev()
-        .find(|m| m.role == whycode_core::types::Role::Assistant)
+        .find(|m| m.role == whycodes_core::types::Role::Assistant)
         .and_then(|m| m.content.as_text().map(|s| s.to_string()))
         .unwrap_or_default();
     let provider = provider.to_string();
     let model = model.to_string();
     let api_key = api_key.to_string();
     let model_fast = config.session.model_fast.clone();
-    let mut reg = whycode_llm::provider::ProviderRegistry::default();
+    let mut reg = whycodes_llm::provider::ProviderRegistry::default();
     reg.register_from_config(config);
     tokio::spawn(async move {
-        let (p, m) = whycode_agent::resolve_title_model(&provider, &model, model_fast.as_deref());
+        let (p, m) = whycodes_agent::resolve_title_model(&provider, &model, model_fast.as_deref());
         let Some(prov) = reg.get(&p) else {
             return;
         };
-        use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+        use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
         let body = format!(
             "User last said:\n{}\n\nAssistant replied (excerpt):\n{}\n\n\
              Suggest ONE short next user message (≤12 words) to continue the coding task. \
@@ -4871,9 +4872,9 @@ fn maybe_spawn_prompt_suggestion(
             thinking: None,
             use_prompt_cache: false,
         };
-        let transport = whycode_llm::LlmTransport {
+        let transport = whycodes_llm::LlmTransport {
             complete_timeout: Some(std::time::Duration::from_secs(8)),
-            retry: whycode_llm::RetryPolicy {
+            retry: whycodes_llm::RetryPolicy {
                 max_retries: 0,
                 initial_backoff: std::time::Duration::from_millis(100),
                 max_backoff: std::time::Duration::from_secs(1),
@@ -4886,7 +4887,7 @@ fn maybe_spawn_prompt_suggestion(
                 .content
                 .iter()
                 .filter_map(|b| match b {
-                    whycode_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+                    whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -4941,13 +4942,13 @@ fn spawn_model_context_fetch(
     runtime_api_key: &str,
     tx: mpsc::UnboundedSender<(String, String, u32)>,
 ) {
-    // Opt-out for debugging hang/crash suspicions: WHYCODE_NO_MODEL_CATALOG=1
-    if std::env::var_os("WHYCODE_NO_MODEL_CATALOG").is_some() {
-        tracing::debug!("WHYCODE_NO_MODEL_CATALOG set — skip /v1/models");
+    // Opt-out for debugging hang/crash suspicions: WHYCODES_NO_MODEL_CATALOG=1
+    if std::env::var_os("WHYCODES_NO_MODEL_CATALOG").is_some() {
+        tracing::debug!("WHYCODES_NO_MODEL_CATALOG set — skip /v1/models");
         return;
     }
 
-    let Some(req) = whycode_llm::catalog_request_from_config(
+    let Some(req) = whycodes_llm::catalog_request_from_config(
         config,
         provider,
         if runtime_api_key.is_empty() {
@@ -4965,9 +4966,9 @@ fn spawn_model_context_fetch(
 
     let provider_name = req.provider_name.clone();
     let model = model.to_string();
-    let url = whycode_llm::normalize_models_url(&req.base_url);
+    let url = whycodes_llm::normalize_models_url(&req.base_url);
     tokio::spawn(async move {
-        match whycode_llm::fetch_model_context_window(&req, &model).await {
+        match whycodes_llm::fetch_model_context_window(&req, &model).await {
             Ok(Some(window)) => {
                 tracing::info!(
                     provider = %provider_name,
@@ -5013,7 +5014,7 @@ fn parse_session_rfc3339(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 /// Stored sessions, newest first, for the session picker.
 ///
 /// A database that will not open is not worth interrupting the user for here —
-/// the picker shows its empty state, and `whycode session list` reports the
+/// the picker shows its empty state, and `whycodes session list` reports the
 /// actual error.
 ///
 /// While building the list, backfill placeholder titles (`New session - …`,
@@ -5035,7 +5036,7 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
         let messages = counts.get(&s.id).copied().unwrap_or(0);
         let mut title = s.title;
         if messages > 0
-            && whycode_session::title::looks_like_default_title(
+            && whycodes_session::title::looks_like_default_title(
                 &title,
                 std::path::Path::new(&s.project_path),
             )
@@ -5069,15 +5070,15 @@ fn load_session_entries() -> Vec<crate::app::SessionEntry> {
     out
 }
 
-fn memory_settings(config: &Config) -> whycode_memory::MemorySettings {
+fn memory_settings(config: &Config) -> whycodes_memory::MemorySettings {
     memory_settings_for(config, None)
 }
 
 fn memory_settings_for(
     config: &Config,
     agent_bank: Option<String>,
-) -> whycode_memory::MemorySettings {
-    let mut s = whycode_agent::memory_settings_from_config(config);
+) -> whycodes_memory::MemorySettings {
+    let mut s = whycodes_agent::memory_settings_from_config(config);
     s.agent_bank = agent_bank;
     s
 }
@@ -5086,7 +5087,7 @@ fn memory_settings_for(
 fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config, app: &mut TuiApp) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     if let Some(n) =
-        whycode_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+        whycodes_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
     {
         app.toasts.push(
             crate::toast::ToastKind::Info,
@@ -5102,7 +5103,7 @@ fn with_project_memory(
     query: Option<&str>,
 ) -> String {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    whycode_memory::apply_memory_prompt(
+    whycodes_memory::apply_memory_prompt(
         system_prompt,
         project_dir,
         &data_dir,
@@ -5125,9 +5126,9 @@ fn refresh_session_memory(
 fn memory_service(
     project_dir: &std::path::Path,
     config: &Config,
-) -> anyhow::Result<whycode_memory::MemoryService> {
+) -> anyhow::Result<whycodes_memory::MemoryService> {
     let data_dir = Config::data_dir()?;
-    whycode_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
+    whycodes_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
 }
 
 /// Shorten a UUID-style session id for status lines (`a1b2c3d4…`).
@@ -5154,7 +5155,7 @@ fn try_load_session(want: &str) -> anyhow::Result<Option<Session>> {
 /// - exact id match
 /// - otherwise unique prefix (case-insensitive); ambiguous prefix → error
 pub fn resolve_and_load_session(
-    db: &whycode_storage::db::Database,
+    db: &whycodes_storage::db::Database,
     want: &str,
 ) -> anyhow::Result<Option<Session>> {
     if want == RESUME_LATEST || want.eq_ignore_ascii_case("latest") {
@@ -5194,9 +5195,9 @@ fn context_report(
     session: &Session,
     app: &TuiApp,
     config: &Config,
-    agent: &whycode_agent::Agent,
+    agent: &whycodes_agent::Agent,
 ) -> String {
-    use whycode_core::types::{MessageContent, Role};
+    use whycodes_core::types::{MessageContent, Role};
 
     let mut lines = vec!["Context".to_string()];
     lines.push(format!(
@@ -5230,10 +5231,10 @@ fn context_report(
                 MessageContent::Blocks(b) => b
                     .iter()
                     .map(|bl| match bl {
-                        whycode_core::types::ContentBlock::Text { text }
-                        | whycode_core::types::ContentBlock::ToolResult { content: text, .. } => {
-                            text.chars().count()
-                        }
+                        whycodes_core::types::ContentBlock::Text { text }
+                        | whycodes_core::types::ContentBlock::ToolResult {
+                            content: text, ..
+                        } => text.chars().count(),
                         _ => 0,
                     })
                     .sum(),
@@ -5254,7 +5255,7 @@ fn context_report(
         }
     }
 
-    let profile = whycode_tools::ToolProfile::parse(&config.session.tool_profile);
+    let profile = whycodes_tools::ToolProfile::parse(&config.session.tool_profile);
     let activated = agent.activated_tools_snapshot();
     lines.push(format!(
         "  tools:     profile={} activated={}",
@@ -5391,7 +5392,7 @@ fn doctor_report(
     session: &Session,
     app: &TuiApp,
     config: &Config,
-    agent: &whycode_agent::Agent,
+    agent: &whycodes_agent::Agent,
     project_dir: &std::path::Path,
 ) -> String {
     use std::path::Path;
@@ -5522,7 +5523,7 @@ fn which_bwrap() -> bool {
 
 fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config) -> String {
     let usage = &session.usage;
-    let profile = whycode_tools::ToolProfile::parse(&config.session.tool_profile);
+    let profile = whycodes_tools::ToolProfile::parse(&config.session.tool_profile);
     let mut out = format!(
         "Session\n  title:     {}\n  source:    {:?}\n  id:        {}\n  agent:     {agent}\n  messages:  {}\n  model:     {}/{}\n  context:   {} / {} ({}%)\n  tools:     profile={}\n  prompt_cache: {}\n",
         session.title,
@@ -5650,7 +5651,7 @@ mod tests {
         let s = format_turn_done_status(&app, "build", "anthropic", "m", None, false);
         assert_eq!(s, "Done");
 
-        app.turn_usage = Some(whycode_core::types::Usage {
+        app.turn_usage = Some(whycodes_core::types::Usage {
             input_tokens: 1200,
             output_tokens: 340,
             cache_creation_input_tokens: None,
@@ -5724,7 +5725,7 @@ mod tests {
 
     #[test]
     fn resolve_session_latest_and_prefix() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
         // Empty db → latest is None.
         assert!(
             resolve_and_load_session(&db, RESUME_LATEST)
@@ -5765,7 +5766,7 @@ mod tests {
         let mut app = TuiApp::new(TuiAppConfig::default());
         apply_panel_update(
             &mut app,
-            whycode_core::PanelUpdate::File {
+            whycodes_core::PanelUpdate::File {
                 path: "a.rs".into(),
                 text: "fn main() {}".into(),
             },
@@ -5780,7 +5781,7 @@ mod tests {
 
         apply_panel_update(
             &mut app,
-            whycode_core::PanelUpdate::Diff {
+            whycodes_core::PanelUpdate::Diff {
                 path: "b.rs".into(),
                 unified: "-a\n+b".into(),
             },
@@ -5793,7 +5794,7 @@ mod tests {
 
         apply_panel_update(
             &mut app,
-            whycode_core::PanelUpdate::Mermaid {
+            whycodes_core::PanelUpdate::Mermaid {
                 source: "graph TD".into(),
             },
         );
@@ -5802,7 +5803,7 @@ mod tests {
             crate::app::SidebarPreview::Mermaid { source } if source == "graph TD"
         ));
 
-        apply_panel_update(&mut app, whycode_core::PanelUpdate::Clear);
+        apply_panel_update(&mut app, whycodes_core::PanelUpdate::Clear);
         assert!(matches!(
             app.sidebar.preview,
             crate::app::SidebarPreview::None
@@ -5820,7 +5821,7 @@ mod tests {
         assert!(out.contains("estimated"), "{out}");
         assert!(out.contains("last turn: (none yet)"), "{out}");
 
-        session.usage = whycode_core::types::Usage {
+        session.usage = whycodes_core::types::Usage {
             input_tokens: 1200,
             output_tokens: 300,
             cache_creation_input_tokens: Some(500),
@@ -5837,7 +5838,7 @@ mod tests {
     fn cost_report_includes_last_turn_usage() {
         let session = Session::new(PathBuf::from("/work/proj"), "sys".into());
         let mut app = TuiApp::new(TuiAppConfig::default());
-        app.turn_usage = Some(whycode_core::types::Usage {
+        app.turn_usage = Some(whycodes_core::types::Usage {
             input_tokens: 100,
             output_tokens: 50,
             cache_creation_input_tokens: None,
@@ -5851,18 +5852,18 @@ mod tests {
     fn context_report_lists_roles_and_tool_sizes() {
         let mut session = Session::new(PathBuf::from("/work/proj"), "sys".into());
         session.add_user_message("do it");
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "tc1".into(),
             content: "short result".into(),
             is_error: false,
         }]);
         let app = TuiApp::new(TuiAppConfig::default());
         let config = Config::default();
-        let agent = Agent::new(whycode_core::types::AgentInfo {
+        let agent = Agent::new(whycodes_core::types::AgentInfo {
             name: "build".into(),
             description: String::new(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
+            permission: whycodes_core::types::PermissionSet::default(),
             model: None,
             system_prompt: None,
             temperature: None,
@@ -5882,12 +5883,12 @@ mod tests {
     #[test]
     fn load_session_todos_missing_and_valid() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(whycode_core::todo::load_todos(dir.path(), None).is_empty());
+        assert!(whycodes_core::todo::load_todos(dir.path(), None).is_empty());
 
-        let whycode = dir.path().join(".whycode");
-        std::fs::create_dir_all(&whycode).unwrap();
+        let whycodes = dir.path().join(".whycodes");
+        std::fs::create_dir_all(&whycodes).unwrap();
         std::fs::write(
-            whycode.join("todos.json"),
+            whycodes.join("todos.json"),
             r#"{"todos": [
                 {"content": "finish task", "status": "pending"},
                 {"content": "done item", "status": "completed"},
@@ -5897,7 +5898,7 @@ mod tests {
             ]}"#,
         )
         .unwrap();
-        let todos = whycode_core::todo::load_todos(dir.path(), None);
+        let todos = whycodes_core::todo::load_todos(dir.path(), None);
         assert_eq!(todos.len(), 5);
         assert_eq!(todos[0].line(), "☐ finish task");
         assert_eq!(todos[1].line(), "☑ done item");
@@ -5909,12 +5910,12 @@ mod tests {
     #[test]
     fn load_session_todos_invalid_json_and_wrong_shape() {
         let dir = tempfile::tempdir().unwrap();
-        let whycode = dir.path().join(".whycode");
-        std::fs::create_dir_all(&whycode).unwrap();
-        std::fs::write(whycode.join("todos.json"), "not json {{{").unwrap();
-        assert!(whycode_core::todo::load_todos(dir.path(), None).is_empty());
-        std::fs::write(whycode.join("todos.json"), r#"{"other": 1}"#).unwrap();
-        assert!(whycode_core::todo::load_todos(dir.path(), None).is_empty());
+        let whycodes = dir.path().join(".whycodes");
+        std::fs::create_dir_all(&whycodes).unwrap();
+        std::fs::write(whycodes.join("todos.json"), "not json {{{").unwrap();
+        assert!(whycodes_core::todo::load_todos(dir.path(), None).is_empty());
+        std::fs::write(whycodes.join("todos.json"), r#"{"other": 1}"#).unwrap();
+        assert!(whycodes_core::todo::load_todos(dir.path(), None).is_empty());
     }
 
     #[test]
@@ -5922,14 +5923,14 @@ mod tests {
         use std::sync::OnceLock;
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
         let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
-        // Isolate WHYCODE_HOME so TokenStore reads a temp dir, not user keys.
-        let prev = std::env::var_os("WHYCODE_HOME");
-        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        // Isolate WHYCODES_HOME so TokenStore reads a temp dir, not user keys.
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
 
         let mut config = Config::default();
         config.providers.insert(
             "acme".into(),
-            whycode_core::types::ProviderConfig {
+            whycodes_core::types::ProviderConfig {
                 name: "acme".into(),
                 api_key: None,
                 api_base: None,
@@ -5945,8 +5946,8 @@ mod tests {
         assert!(out.contains(&("acme".to_string(), "acme-2".to_string())));
 
         match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
         }
     }
 
@@ -5983,7 +5984,7 @@ mod tests {
         assert!(out.contains("swarm:"), "{out}");
 
         // With usage → input/output/cache lines.
-        session.usage = whycode_core::types::Usage {
+        session.usage = whycodes_core::types::Usage {
             input_tokens: 10,
             output_tokens: 20,
             cache_creation_input_tokens: Some(5),
@@ -6003,11 +6004,11 @@ mod tests {
         let session = Session::new(PathBuf::from("/work/proj"), "sys".into());
         let app = TuiApp::new(TuiAppConfig::default());
         let config = Config::default();
-        let agent = Agent::new(whycode_core::types::AgentInfo {
+        let agent = Agent::new(whycodes_core::types::AgentInfo {
             name: "build".into(),
             description: String::new(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
+            permission: whycodes_core::types::PermissionSet::default(),
             model: None,
             system_prompt: None,
             temperature: None,
@@ -6144,13 +6145,13 @@ mod tests {
         use std::sync::OnceLock;
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
         let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
-        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
 
-        let info = whycode_core::types::AgentInfo {
+        let info = whycodes_core::types::AgentInfo {
             name: "build".into(),
             description: String::new(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
+            permission: whycodes_core::types::PermissionSet::default(),
             model: None,
             system_prompt: None,
             temperature: None,
@@ -6179,17 +6180,17 @@ mod tests {
         use std::sync::OnceLock;
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
         let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
-        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     }
 
-    /// Exclusive empty `WHYCODE_HOME` for tests that assert on an empty session
+    /// Exclusive empty `WHYCODES_HOME` for tests that assert on an empty session
     /// store. The shared [`isolate_home`] OnceLock is process-wide, so a
     /// sibling persist can make `RESUME_LATEST` look populated.
     fn isolate_home_fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
-        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
         (lock, dir)
     }
 
@@ -6287,7 +6288,7 @@ mod tests {
 
         apply_turn_event(
             &mut app,
-            TurnEvent::Usage(whycode_core::types::Usage {
+            TurnEvent::Usage(whycodes_core::types::Usage {
                 input_tokens: 10,
                 output_tokens: 4,
                 cache_creation_input_tokens: None,
@@ -6385,7 +6386,7 @@ mod tests {
 
         apply_turn_event(
             &mut app,
-            TurnEvent::Panel(whycode_core::PanelUpdate::File {
+            TurnEvent::Panel(whycodes_core::PanelUpdate::File {
                 path: "x.rs".into(),
                 text: "fn x() {}".into(),
             }),
@@ -6447,10 +6448,10 @@ mod tests {
         apply_turn_event(
             &mut app,
             TurnEvent::Todos {
-                todos: vec![whycode_core::TodoItem::new(
+                todos: vec![whycodes_core::TodoItem::new(
                     "a",
                     "panel item",
-                    whycode_core::TodoStatus::InProgress,
+                    whycodes_core::TodoStatus::InProgress,
                 )],
             },
         );
@@ -6467,7 +6468,7 @@ mod tests {
                 }),
             },
         );
-        assert_eq!(app.todos[0].status, whycode_core::TodoStatus::Completed);
+        assert_eq!(app.todos[0].status, whycodes_core::TodoStatus::Completed);
         apply_turn_event(
             &mut app,
             TurnEvent::ToolStart {
@@ -6517,7 +6518,7 @@ mod tests {
             "{out}"
         );
 
-        let shares = dir.path().join(".whycode").join("shares");
+        let shares = dir.path().join(".whycodes").join("shares");
         std::fs::create_dir_all(&shares).unwrap();
         std::fs::write(shares.join("abc.json"), "{}").unwrap();
         std::fs::write(shares.join("abc.md"), "#").unwrap();
@@ -6542,15 +6543,15 @@ mod tests {
         isolate_home();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
-        std::fs::create_dir_all(dir.path().join(".whycode")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".whycodes")).unwrap();
         std::fs::write(
-            dir.path().join(".whycode").join("todos.json"),
+            dir.path().join(".whycodes").join("todos.json"),
             r#"{"todos":[{"content":"do it","status":"pending"}]}"#,
         )
         .unwrap();
-        let idx = whycode_index::WorkspaceIndex::start_with(
+        let idx = whycodes_index::WorkspaceIndex::start_with(
             vec![dir.path().to_path_buf()],
-            whycode_index::IndexOptions {
+            whycodes_index::IndexOptions {
                 watch: false,
                 threads: 1,
                 ..Default::default()
@@ -6562,7 +6563,7 @@ mod tests {
         let mut config = Config::default();
         config.mcp_servers.insert(
             "demo".into(),
-            whycode_config::McpServerConfig {
+            whycodes_config::McpServerConfig {
                 transport: None,
                 command: Some("true".into()),
                 args: Vec::new(),
@@ -6603,7 +6604,7 @@ mod tests {
         let mut q = std::collections::VecDeque::new();
         let mut p = std::collections::VecDeque::new();
         begin_cancel(&mut app, &Some(Arc::clone(&flag)), &mut at, &mut q, &mut p);
-        assert!(whycode_agent::is_cancelled(&Some(flag)));
+        assert!(whycodes_agent::is_cancelled(&Some(flag)));
         assert!(at.is_some());
         assert!(app.status_message.contains("Cancelling"));
         begin_cancel(&mut app, &None, &mut at, &mut q, &mut p);
@@ -6612,7 +6613,7 @@ mod tests {
 
     #[test]
     fn tui_login_ui_emits_notes() {
-        use whycode_auth::providers::LoginUi;
+        use whycodes_auth::providers::LoginUi;
         let (tx, mut rx) = mpsc::unbounded_channel();
         let mut ui = TuiLoginUi { tx };
         ui.show_sign_in("Anthropic", "https://example.test", true);
@@ -6690,11 +6691,11 @@ mod tests {
         fn new() -> Self {
             isolate_home();
             let tmp = tempfile::tempdir().expect("tmpdir");
-            let info = whycode_core::types::AgentInfo {
+            let info = whycodes_core::types::AgentInfo {
                 name: "build".into(),
                 description: String::new(),
                 mode: AgentMode::Primary,
-                permission: whycode_core::types::PermissionSet::default(),
+                permission: whycodes_core::types::PermissionSet::default(),
                 model: None,
                 system_prompt: Some("sys".into()),
                 temperature: None,
@@ -6769,7 +6770,7 @@ mod tests {
         assert!(h.app.status_message.contains("Nothing to compact"));
         h.session.add_user_message("old task");
         h.session
-            .add_assistant_message(vec![whycode_core::types::ContentBlock::Text {
+            .add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
                 text: "working".into(),
             }]);
         h.session.add_user_message("fix login");
@@ -6921,7 +6922,7 @@ mod tests {
 
         h.config.commands.insert(
             "hello".into(),
-            whycode_config::CustomCommandConfig {
+            whycodes_config::CustomCommandConfig {
                 template: "hello $ARGUMENTS".into(),
                 description: Some("say hi".into()),
                 agent: None,
@@ -6943,11 +6944,11 @@ mod tests {
         let prompt = with_project_memory("base prompt", dir.path(), &config, Some("query"));
         assert!(prompt.contains("base prompt"));
         let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
-        let agent = Agent::new(whycode_core::types::AgentInfo {
+        let agent = Agent::new(whycodes_core::types::AgentInfo {
             name: "build".into(),
             description: String::new(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
+            permission: whycodes_core::types::PermissionSet::default(),
             model: None,
             system_prompt: Some("sys".into()),
             temperature: None,
@@ -6957,12 +6958,12 @@ mod tests {
         let _ = memory_service(dir.path(), &config);
     }
 
-    fn dummy_info(name: &str) -> whycode_core::types::AgentInfo {
-        whycode_core::types::AgentInfo {
+    fn dummy_info(name: &str) -> whycodes_core::types::AgentInfo {
+        whycodes_core::types::AgentInfo {
             name: name.into(),
             description: String::new(),
             mode: AgentMode::Primary,
-            permission: whycode_core::types::PermissionSet::default(),
+            permission: whycodes_core::types::PermissionSet::default(),
             model: None,
             system_prompt: Some("sys".into()),
             temperature: None,
@@ -6970,11 +6971,11 @@ mod tests {
         }
     }
 
-    fn temp_index() -> (tempfile::TempDir, Arc<whycode_index::WorkspaceIndex>) {
+    fn temp_index() -> (tempfile::TempDir, Arc<whycodes_index::WorkspaceIndex>) {
         let dir = tempfile::tempdir().unwrap();
-        let idx = whycode_index::WorkspaceIndex::start_with(
+        let idx = whycodes_index::WorkspaceIndex::start_with(
             vec![dir.path().to_path_buf()],
-            whycode_index::IndexOptions {
+            whycodes_index::IndexOptions {
                 watch: false,
                 threads: 1,
                 ..Default::default()
@@ -6983,16 +6984,16 @@ mod tests {
         (dir, idx)
     }
 
-    fn sample_question() -> whycode_tools::question::QuestionSpec {
-        whycode_tools::question::QuestionSpec {
+    fn sample_question() -> whycodes_tools::question::QuestionSpec {
+        whycodes_tools::question::QuestionSpec {
             prompt: "Pick?".into(),
             options: vec![
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "Yes".into(),
                     description: String::new(),
                     preview: None,
                 },
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "No".into(),
                     description: String::new(),
                     preview: None,
@@ -7369,7 +7370,7 @@ mod tests {
         q.clear();
         app.dialogs.clear();
         let (tx, _rx) = tokio::sync::oneshot::channel();
-        p.push_back(whycode_agent::PermissionRequest {
+        p.push_back(whycodes_agent::PermissionRequest {
             tool_name: "bash".into(),
             detail: "ls".into(),
             reply: tx,
@@ -7390,7 +7391,7 @@ mod tests {
             &Config::default(),
             dir.path(),
             &idx,
-            whycode_core::FileClaimRegistry::new(),
+            whycodes_core::FileClaimRegistry::new(),
         )
         .await;
         assert_eq!(rt.agent.info.name, "no-such-agent");
@@ -7464,7 +7465,7 @@ mod tests {
 
     #[tokio::test]
     async fn drain_background_queues_prompter_asks() {
-        use whycode_agent::{PermissionPrompter, QuestionPrompter};
+        use whycodes_agent::{PermissionPrompter, QuestionPrompter};
         let mut rt = test_runtime();
         let perm = Arc::clone(&rt.perm_prompter);
         let question = Arc::clone(&rt.question_prompter);
@@ -7609,7 +7610,7 @@ mod tests {
 
         h.config.providers.insert(
             "acme".into(),
-            whycode_core::types::ProviderConfig {
+            whycodes_core::types::ProviderConfig {
                 name: "acme".into(),
                 api_key: Some("sk-test".into()),
                 api_base: None,
@@ -7784,7 +7785,7 @@ mod tests {
             TurnOutcome::Compact {
                 agent: Agent::new(dummy_info("cmp")),
                 session: compacted,
-                outcome: whycode_session::CompactOutcome {
+                outcome: whycodes_session::CompactOutcome {
                     messages_before: 4,
                     messages_after: 2,
                     tokens_before: 800,
@@ -7953,12 +7954,12 @@ mod tests {
 
         let (tx1, rx1) = tokio::sync::oneshot::channel();
         let (tx2, _rx2) = tokio::sync::oneshot::channel();
-        q.push_back(whycode_agent::PermissionRequest {
+        q.push_back(whycodes_agent::PermissionRequest {
             tool_name: "bash".into(),
             detail: "one".into(),
             reply: tx1,
         });
-        q.push_back(whycode_agent::PermissionRequest {
+        q.push_back(whycodes_agent::PermissionRequest {
             tool_name: "read".into(),
             detail: "two".into(),
             reply: tx2,
@@ -7987,7 +7988,7 @@ mod tests {
             &mut app,
             &mut q,
             &p,
-            Some(vec![whycode_tools::question::QuestionAnswer {
+            Some(vec![whycodes_tools::question::QuestionAnswer {
                 selected: vec!["Yes".into()],
                 free_text: None,
             }]),
@@ -8037,7 +8038,7 @@ mod tests {
         let mut rt = test_runtime();
         let (tx, rx) = tokio::sync::oneshot::channel();
         rt.pending_perm_queue
-            .push_back(whycode_agent::PermissionRequest {
+            .push_back(whycodes_agent::PermissionRequest {
                 tool_name: "bash".into(),
                 detail: "x".into(),
                 reply: tx,
@@ -8118,15 +8119,15 @@ mod tests {
 
     #[test]
     fn handle_question_enter_confirms_and_multi_space() {
-        let spec = whycode_tools::question::QuestionSpec {
+        let spec = whycodes_tools::question::QuestionSpec {
             prompt: "Pick many?".into(),
             options: vec![
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "A".into(),
                     description: String::new(),
                     preview: None,
                 },
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "B".into(),
                     description: String::new(),
                     preview: None,
@@ -8193,7 +8194,7 @@ mod tests {
         isolate_home();
         let mut session = Session::new(PathBuf::from("/work"), "sys".into());
         session.add_user_message("go");
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "t1".into(),
             content: "x".repeat(80),
             is_error: false,
@@ -8207,7 +8208,7 @@ mod tests {
 
     #[test]
     fn tui_login_prompt_pasted_code_cancels_when_dropped() {
-        use whycode_auth::providers::LoginUi;
+        use whycodes_auth::providers::LoginUi;
         let (tx, _rx) = mpsc::unbounded_channel();
         let mut ui = TuiLoginUi { tx };
         let fut = ui.prompt_pasted_code();
@@ -8230,7 +8231,7 @@ mod tests {
                 .last()
                 .is_some_and(|m| m.role == ChatRole::Assistant)
         );
-        assert!(!whycode_agent::is_cancelled(&Some(flag)));
+        assert!(!whycodes_agent::is_cancelled(&Some(flag)));
 
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("note.txt"), "hello file").unwrap();
@@ -8273,7 +8274,7 @@ mod tests {
         let mut key = String::new();
         config.providers.insert(
             "acme".into(),
-            whycode_core::types::ProviderConfig {
+            whycodes_core::types::ProviderConfig {
                 name: "acme".into(),
                 api_key: Some("sk-from-cfg".into()),
                 api_base: None,
@@ -8578,7 +8579,7 @@ mod tests {
         maybe_open_queued_dialog(&mut app, &rt);
         let (tx, _rx) = tokio::sync::oneshot::channel();
         rt.pending_perm_queue
-            .push_back(whycode_agent::PermissionRequest {
+            .push_back(whycodes_agent::PermissionRequest {
                 tool_name: "bash".into(),
                 detail: "ls".into(),
                 reply: tx,
@@ -8774,7 +8775,7 @@ mod tests {
         let mut rt = test_runtime();
         let (permission_tx, _permission_rx) = tokio::sync::oneshot::channel();
         rt.pending_perm_queue
-            .push_back(whycode_agent::PermissionRequest {
+            .push_back(whycodes_agent::PermissionRequest {
                 tool_name: "bash".into(),
                 detail: "cargo test".into(),
                 reply: permission_tx,

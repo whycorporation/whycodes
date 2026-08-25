@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
 use thiserror::Error;
-use whycode_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
 use crate::{bwrap, host};
 

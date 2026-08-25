@@ -25,7 +25,7 @@ use crate::token::{OAuthToken, ProviderAuth};
 /// A credential file another CLI is known to write, plus its parser.
 #[derive(Debug)]
 pub struct KnownSource {
-    /// whycode provider the credential maps to.
+    /// whycodes provider the credential maps to.
     pub provider: &'static str,
     /// Owning tool, for display ("Claude Code").
     pub label: &'static str,

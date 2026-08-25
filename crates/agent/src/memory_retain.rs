@@ -8,10 +8,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
-use whycode_llm::provider::{LlmProvider, ProviderRegistry};
-use whycode_memory::{MemoryService, MemorySettings, llm_retain_prompt};
-use whycode_session::session::Session;
+use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
+use whycodes_llm::provider::{LlmProvider, ProviderRegistry};
+use whycodes_memory::{MemoryService, MemorySettings, llm_retain_prompt};
+use whycodes_session::session::Session;
 
 use crate::events::{EventSink, TurnEvent, emit};
 use crate::title::resolve_title_model;
@@ -114,7 +114,7 @@ pub fn spawn_post_turn_retain(
     let provider_name = provider_name.to_string();
     let model = model.to_string();
     let api_key = api_key.to_string();
-    let data_dir = whycode_core::paths::data_dir();
+    let data_dir = whycodes_core::paths::data_dir();
 
     tokio::spawn(async move {
         let mut saved = Vec::new();
@@ -201,7 +201,7 @@ async fn run_llm_retain_facts(
     model: &str,
     api_key: &str,
     data_dir: &Path,
-) -> whycode_core::Result<Vec<String>> {
+) -> whycodes_core::Result<Vec<String>> {
     let raw = llm_extract_facts(
         provider,
         provider_name,
@@ -234,7 +234,7 @@ async fn llm_extract_facts(
     api_key: &str,
     user: &str,
     assistant: &str,
-) -> whycode_core::Result<String> {
+) -> whycodes_core::Result<String> {
     // Prefer a cheap sibling model (same strategy as title refine).
     let (p_name, m_id) = resolve_title_model(provider_name, model, None);
     let use_provider = if p_name == provider_name {
@@ -273,9 +273,9 @@ async fn llm_extract_facts(
         use_prompt_cache: false,
     };
 
-    let transport = whycode_llm::LlmTransport {
+    let transport = whycodes_llm::LlmTransport {
         complete_timeout: Some(std::time::Duration::from_secs(12)),
-        retry: whycode_llm::RetryPolicy {
+        retry: whycodes_llm::RetryPolicy {
             max_retries: 1,
             initial_backoff: std::time::Duration::from_millis(300),
             max_backoff: std::time::Duration::from_secs(3),
@@ -291,7 +291,7 @@ async fn llm_extract_facts(
         .content
         .iter()
         .filter_map(|b| match b {
-            whycode_core::types::ContentBlock::Text { text } => Some(text.as_str()),
+            whycodes_core::types::ContentBlock::Text { text } => Some(text.as_str()),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -302,8 +302,8 @@ async fn llm_extract_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::types::ContentBlock;
-    use whycode_memory::MemorySettings;
+    use whycodes_core::types::ContentBlock;
+    use whycodes_memory::MemorySettings;
 
     fn make_session() -> Session {
         let mut s = Session::new(PathBuf::from("/work/proj"), "sys".into());
@@ -379,7 +379,7 @@ mod tests {
     async fn post_turn_retain_skips_when_disabled() {
         let session = make_session();
         let settings = MemorySettings::disabled();
-        let registry = whycode_llm::ProviderRegistry::default();
+        let registry = whycodes_llm::ProviderRegistry::default();
         let provider = registry.get("anthropic").expect("built-in provider");
         let saved = run_post_turn_retain(
             &session,
@@ -399,7 +399,7 @@ mod tests {
     fn spawn_retain_is_noop_when_disabled() {
         let session = make_session();
         let settings = MemorySettings::disabled();
-        let registry = Arc::new(whycode_llm::ProviderRegistry::default());
+        let registry = Arc::new(whycodes_llm::ProviderRegistry::default());
         // Must not panic or spawn anything — just returns early.
         spawn_post_turn_retain(
             &session,
@@ -422,7 +422,7 @@ mod tests {
             session_inject: false,
             ..MemorySettings::default()
         };
-        let registry = Arc::new(whycode_llm::ProviderRegistry::default());
+        let registry = Arc::new(whycodes_llm::ProviderRegistry::default());
         spawn_post_turn_retain(
             &session,
             "answer",

@@ -7,7 +7,7 @@
 
 ## Goal
 
-Convert the research report’s high-ROI opportunities (**A1–A7**) into shippable whycode work, ordered by value vs cost, without turning into “Claude Code parity.”
+Convert the research report’s high-ROI opportunities (**A1–A7**) into shippable whycodes work, ordered by value vs cost, without turning into “Claude Code parity.”
 
 Success = each row’s acceptance criteria green, FEATURES.md cells updated, no copyright risk.
 
@@ -37,7 +37,7 @@ Ship **A1 → A4 first** (no deep API redesign). Then A2/A3. A5 when agent-to-ag
 ## A1 — PromptCommand workflows
 
 **Why:** Claude Code’s “magic” is often slash → fixed prompt + tool allowlist, not more tools.  
-**whycode today:** `/init` injects a prompt; `.whycode/commands/*.md` + OpenCode-style commands exist but few built-ins.
+**whycodes today:** `/init` injects a prompt; `.whycodes/commands/*.md` + OpenCode-style commands exist but few built-ins.
 
 ### Design
 
@@ -78,7 +78,7 @@ Ship **A1 → A4 first** (no deep API redesign). Then A2/A3. A5 when agent-to-ag
 ## A2 — LLM-backed compact
 
 **Why:** Char drop + prune loses nuance on long sessions; OpenCode/CC use summary agents.  
-**whycode today:** `Session::compact` drop + prune + circuit breaker; no LLM summary.
+**whycodes today:** `Session::compact` drop + prune + circuit breaker; no LLM summary.
 
 ### Design
 
@@ -145,7 +145,7 @@ behaves as documented in TUI permission prompts.
 ## A4 — `/context` visualization
 
 **Why:** Power users need to see *what* fills the window (CC `/context`).  
-**whycode today:** `/info` session fields + context %; no breakdown.
+**whycodes today:** `/info` session fields + context %; no breakdown.
 
 ### Design
 
@@ -178,18 +178,18 @@ No new LLM call. Pure local introspection.
 ## A5 — MCP server export
 
 **Why:** Codex/others expose agent tools as MCP server; FEATURES gap.  
-**whycode today:** MCP **client** only.
+**whycodes today:** MCP **client** only.
 
 ### Design
 
-1. CLI: `whycode mcp-serve` (stdio MCP).
+1. CLI: `whycodes mcp-serve` (stdio MCP).
 2. Expose a **curated** tool set (core profile or config allowlist) — not full github spam by default.
-3. Map whycode `Tool` → MCP tool list/call; working_dir = cwd; permissions = env auto-approve or restrictive default.
+3. Map whycodes `Tool` → MCP tool list/call; working_dir = cwd; permissions = env auto-approve or restrictive default.
 4. Auth: none for local stdio; document danger of full-auto.
 
 ### Tasks
 
-- [ ] Evaluate `rmcp` / existing `whycode-mcp` for server role.
+- [ ] Evaluate `rmcp` / existing `whycodes-mcp` for server role.
 - [ ] stdio server loop + tool dispatch via `ToolExecutor`.
 - [ ] Config: `mcp_server.tools = "core" | "full" | [names…]`.
 - [ ] Integration test with mock client or unit dispatch.
@@ -197,14 +197,14 @@ No new LLM call. Pure local introspection.
 
 ### Acceptance
 
-- Claude Desktop / Cursor can add `whycode mcp-serve` and call `read`/`grep` successfully.
+- Claude Desktop / Cursor can add `whycodes mcp-serve` and call `read`/`grep` successfully.
 - Default is not “silent shell full access”.
 
 ---
 
 ## A6 — Multimodal file read
 
-**Why:** CC FileRead handles images/PDFs; whycode is path-attach partial.  
+**Why:** CC FileRead handles images/PDFs; whycodes is path-attach partial.  
 **Depends:** provider vision (Anthropic/OpenAI/Google).
 
 ### Design
@@ -263,8 +263,8 @@ No new LLM call. Pure local introspection.
 | A2 | **done** | `session.compaction_llm` + small-model summary after local compact |
 | A3 | **done** | `edit(src/**)` path rules + agent gate |
 | A4 | **done** | `/context` TUI + plain |
-| A5 | **done** | `whycode mcp serve [--tools core\|full]` stdio MCP server |
-| A6 | **done** | `read` images → WHYCODE_IMAGE_B64 → session Image block |
+| A5 | **done** | `whycodes mcp serve [--tools core\|full]` stdio MCP server |
+| A6 | **done** | `read` images → WHYCODES_IMAGE_B64 → session Image block |
 | A7 | **done** | `tui.prompt_suggestions = "idle"`; Tab accepts; default off |
 
 Update this table + [status.md](status.md) when a row ships. Prefer **one PR per ID** (or A1+A4 together as “slash UX”).
@@ -274,9 +274,9 @@ Update this table + [status.md](status.md) when a row ships. Prefer **one PR per
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test -p whycode-agent -p whycode-tools -p whycode-tui -p whycode-core
+cargo test -p whycodes-agent -p whycodes-tools -p whycodes-tui -p whycodes-core
 # A5 additionally:
-# cargo test -p whycode-mcp
+# cargo test -p whycodes-mcp
 ```
 
 ## Decision log

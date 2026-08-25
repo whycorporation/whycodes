@@ -6,7 +6,7 @@
 //! triggers: `Assistant messages must contain text, reasoning content, or tool_calls.`
 
 use serde_json::Value;
-use whycode_core::types::{
+use whycodes_core::types::{
     ContentBlock, ImageSource, LlmRequest, Message, MessageContent, Role, ToolArgumentsFormat,
     ToolDefinition,
 };
@@ -36,9 +36,9 @@ pub fn error_source_chain(err: &dyn std::error::Error) -> String {
 ///
 /// TUI already records `turn.error` with the display string; this captures the
 /// provider + reqwest source chain at the decode site (always-on JSONL).
-pub fn stream_chunk_error(provider: &str, err: impl std::error::Error) -> whycode_core::Error {
+pub fn stream_chunk_error(provider: &str, err: impl std::error::Error) -> whycodes_core::Error {
     let chain = error_source_chain(&err);
-    whycode_core::logging::emit(
+    whycodes_core::logging::emit(
         "llm",
         "error",
         "llm.stream_chunk",
@@ -48,7 +48,7 @@ pub fn stream_chunk_error(provider: &str, err: impl std::error::Error) -> whycod
         })),
     );
     tracing::warn!(provider, error = %chain, "llm.stream_chunk");
-    whycode_core::Error::Llm(format!("Stream: {chain}"))
+    whycodes_core::Error::Llm(format!("Stream: {chain}"))
 }
 
 /// Convert request messages into OpenAI chat-completions format.
@@ -331,8 +331,8 @@ pub fn arguments_stream_fragment(raw: &Value) -> Option<String> {
 /// - `ToolUse` when `id` is present
 /// - `ToolUseDelta` for any non-empty arguments fragment, keyed by real id when
 ///   known, otherwise by `index` (agent maps index → tool)
-pub fn stream_events_for_tool_call_delta(tc: &Value) -> Vec<whycode_core::types::StreamEvent> {
-    use whycode_core::types::StreamEvent;
+pub fn stream_events_for_tool_call_delta(tc: &Value) -> Vec<whycodes_core::types::StreamEvent> {
+    use whycodes_core::types::StreamEvent;
 
     let mut out = Vec::new();
     let index_key = tc
@@ -375,7 +375,9 @@ pub fn stream_events_for_tool_call_delta(tc: &Value) -> Vec<whycode_core::types:
 }
 
 /// Emit stream events for every entry in `delta.tool_calls`.
-pub fn stream_events_for_tool_calls(tool_calls: &[Value]) -> Vec<whycode_core::types::StreamEvent> {
+pub fn stream_events_for_tool_calls(
+    tool_calls: &[Value],
+) -> Vec<whycodes_core::types::StreamEvent> {
     tool_calls
         .iter()
         .flat_map(stream_events_for_tool_call_delta)
@@ -400,9 +402,9 @@ pub fn attach_stream_usage_option(body: &mut Value) {
 /// into `cache_read_input_tokens` would double-count in `Usage::total()` and
 /// the context meter. We leave cache fields unset here; Anthropic fills them
 /// via its own provider path.
-pub fn usage_from_chat_completion(usage: &Value) -> whycode_core::types::Usage {
+pub fn usage_from_chat_completion(usage: &Value) -> whycodes_core::types::Usage {
     super::usage_dump::dump_raw_usage("openai_compat", usage);
-    whycode_core::types::Usage {
+    whycodes_core::types::Usage {
         input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
         output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
         cache_creation_input_tokens: None,
@@ -415,7 +417,7 @@ pub fn usage_from_chat_completion(usage: &Value) -> whycode_core::types::Usage {
 /// OpenAI's `include_usage` final chunk often has empty `choices` and no
 /// `finish_reason` — only a `usage` object. Older parsers that required
 /// `finish_reason` dropped that chunk and the meter never updated.
-pub fn stream_usage_from_chunk(event: &Value) -> Option<whycode_core::types::StreamEvent> {
+pub fn stream_usage_from_chunk(event: &Value) -> Option<whycodes_core::types::StreamEvent> {
     let usage = event.get("usage")?;
     if !usage.is_object() {
         return None;
@@ -432,7 +434,7 @@ pub fn stream_usage_from_chunk(event: &Value) -> Option<whycode_core::types::Str
     if input_tokens == 0 && output_tokens == 0 {
         return None;
     }
-    Some(whycode_core::types::StreamEvent::Usage {
+    Some(whycodes_core::types::StreamEvent::Usage {
         input_tokens,
         output_tokens,
     })
@@ -447,8 +449,8 @@ pub fn stream_usage_from_chunk(event: &Value) -> Option<whycode_core::types::Str
 ///
 /// Without this, reasoning streams are dropped and the TUI never paints
 /// "Thinking…" even though the model is thinking (Grok parity).
-pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycode_core::types::StreamEvent> {
-    use whycode_core::types::StreamEvent;
+pub fn stream_events_for_chat_delta(delta: &Value) -> Vec<whycodes_core::types::StreamEvent> {
+    use whycodes_core::types::StreamEvent;
 
     // Hot path: one SSE line per token. Cap small to avoid realloc.
     let mut out = Vec::with_capacity(3);
@@ -624,7 +626,7 @@ pub fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::types::Message;
+    use whycodes_core::types::Message;
 
     fn req_with(messages: Vec<Message>) -> LlmRequest {
         LlmRequest {
@@ -884,7 +886,7 @@ mod tests {
 
     #[test]
     fn stream_tool_call_start_then_delta() {
-        use whycode_core::types::StreamEvent;
+        use whycodes_core::types::StreamEvent;
 
         let start = serde_json::json!({
             "index": 0,
@@ -922,7 +924,7 @@ mod tests {
 
     #[test]
     fn chat_delta_emits_thinking_from_reasoning_content() {
-        use whycode_core::types::StreamEvent;
+        use whycodes_core::types::StreamEvent;
 
         // DeepSeek / Grok-compat reasoning stream — must not be dropped.
         let delta = serde_json::json!({
@@ -942,7 +944,7 @@ mod tests {
 
     #[test]
     fn chat_delta_thinking_then_text_then_tools() {
-        use whycode_core::types::StreamEvent;
+        use whycodes_core::types::StreamEvent;
 
         let delta = serde_json::json!({
             "reasoning": "plan",
@@ -977,7 +979,7 @@ mod tests {
 
     #[test]
     fn nested_reasoning_object_is_parsed() {
-        use whycode_core::types::StreamEvent;
+        use whycodes_core::types::StreamEvent;
 
         let delta = serde_json::json!({
             "reasoning": { "content": "nested thought" }
@@ -999,7 +1001,7 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert!(matches!(
             &events[0],
-            whycode_core::types::StreamEvent::TextDelta { text } if text == "hi"
+            whycodes_core::types::StreamEvent::TextDelta { text } if text == "hi"
         ));
     }
 
@@ -1189,7 +1191,7 @@ mod tests {
             "usage": { "prompt_tokens": 1500, "completion_tokens": 12 }
         });
         match stream_usage_from_chunk(&event) {
-            Some(whycode_core::types::StreamEvent::Usage {
+            Some(whycodes_core::types::StreamEvent::Usage {
                 input_tokens,
                 output_tokens,
             }) => {

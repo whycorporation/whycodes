@@ -95,17 +95,17 @@ impl PermissionPrompter for StdinPrompter {
 }
 
 /// Build a prompter from environment / defaults.
-/// - `WHYCODE_AUTO_APPROVE=1` → auto-allow
-/// - `WHYCODE_AUTO_DENY=1` → auto-deny
+/// - `WHYCODES_AUTO_APPROVE=1` → auto-allow
+/// - `WHYCODES_AUTO_DENY=1` → auto-deny
 /// - else stdin
 pub fn default_prompter() -> Arc<dyn PermissionPrompter> {
-    if std::env::var("WHYCODE_AUTO_APPROVE")
+    if std::env::var("WHYCODES_AUTO_APPROVE")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
     {
         return Arc::new(AutoApprovePrompter);
     }
-    if std::env::var("WHYCODE_AUTO_DENY")
+    if std::env::var("WHYCODES_AUTO_DENY")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
     {
@@ -158,37 +158,37 @@ mod tests {
     #[tokio::test]
     async fn default_prompter_respects_env() {
         // Serialize env mutation: these vars are process-global.
-        let prev_approve = std::env::var_os("WHYCODE_AUTO_APPROVE");
-        let prev_deny = std::env::var_os("WHYCODE_AUTO_DENY");
+        let prev_approve = std::env::var_os("WHYCODES_AUTO_APPROVE");
+        let prev_deny = std::env::var_os("WHYCODES_AUTO_DENY");
         let prev_ci = std::env::var_os("CI");
 
-        unsafe { std::env::set_var("WHYCODE_AUTO_APPROVE", "1") };
-        unsafe { std::env::remove_var("WHYCODE_AUTO_DENY") };
+        unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", "1") };
+        unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
         unsafe { std::env::remove_var("CI") };
         let p = default_prompter();
         assert!(p.ask("bash", "x").await, "AUTO_APPROVE=1 must allow");
 
-        unsafe { std::env::remove_var("WHYCODE_AUTO_APPROVE") };
-        unsafe { std::env::set_var("WHYCODE_AUTO_DENY", "true") };
+        unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
+        unsafe { std::env::set_var("WHYCODES_AUTO_DENY", "true") };
         unsafe { std::env::remove_var("CI") };
         let p = default_prompter();
         assert!(!p.ask("bash", "x").await, "AUTO_DENY=true must deny");
 
         // CI (non-interactive) without explicit flags → deny for safety.
-        unsafe { std::env::remove_var("WHYCODE_AUTO_APPROVE") };
-        unsafe { std::env::remove_var("WHYCODE_AUTO_DENY") };
+        unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
+        unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
         unsafe { std::env::set_var("CI", "1") };
         let p = default_prompter();
         assert!(!p.ask("bash", "x").await, "piped stdin must deny");
 
         // Restore.
         match prev_approve {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_AUTO_APPROVE", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_AUTO_APPROVE") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") },
         }
         match prev_deny {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_AUTO_DENY", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_AUTO_DENY") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_DENY", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") },
         }
         match prev_ci {
             Some(v) => unsafe { std::env::set_var("CI", v) },

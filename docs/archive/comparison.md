@@ -1,4 +1,4 @@
-# Where whycode stands (archived)
+# Where whycodes stands (archived)
 
 > Archived 2026-08-13. Early jcode snapshot; numbers may be stale.
 > Living tracker: [`../roadmap.md`](../roadmap.md).
@@ -9,7 +9,7 @@ clone of `master`. Numbers may be stale; re-measure via [benchmarks.md](benchmar
 
 ## Numbers
 
-| | whycode | jcode |
+| | whycodes | jcode |
 |---|---|---|
 | First commit | 2026-07-09 | 2026-01-05 |
 | Commits | 40 | 6,408 |
@@ -37,14 +37,14 @@ reproduced these. Note that the memory figure is stated with local embeddings
 disabled, and that jcode's embedding crate loads an ONNX `all-MiniLM-L6-v2`
 model in-process, so the enabled figure will be materially higher.
 
-whycode measurements (release, see [benchmarks.md](benchmarks.md)): **~1.0 ms**
+whycodes measurements (release, see [benchmarks.md](benchmarks.md)): **~1.0 ms**
 `--version` on Linux after the 2026-08-05 boot cuts (Windows baseline was
 ~21 ms on a 16–18 MB binary; ship is now ~12 MB), ~9.6 MB peak RSS for CLI
 floor, ~4.7 ms in-process first TUI frame, and multi-session idle PSS of
 **~4.1 MB** (1 session) / **~16.8 MB** (10 sessions) on Linux. jcode's published
 27.8 MB / 117 MB figures remain its own claims.
 
-## What whycode has that is worth keeping
+## What whycodes has that is worth keeping
 
 - A dedicated `lsp` crate. jcode has no LSP crate in its workspace.
 - Verified cross-platform behaviour. Linux, macOS and Windows all run the full
@@ -73,13 +73,13 @@ Living feature matrix vs other products: [features.md](features.md).
 ## Positioning
 
 "OpenCode parity in Rust" is a weak goal (recorded in early history): a user
-comparing whycode to OpenCode has no reason to pick the copy, and jcode already
+comparing whycodes to OpenCode has no reason to pick the copy, and jcode already
 occupies the "measurably more efficient alternative" slot with numbers.
 
 The roadmap does not pick a new slogan; it closes ship-blockers first. Candidate
 axes still on the table once measurements are trusted:
 
 - **First-class Windows support** — full suite in CI; contested by jcode smoke.
-- **LSP depth** — whycode has an LSP crate; jcode's workspace did not at measure time.
+- **LSP depth** — whycodes has an LSP crate; jcode's workspace did not at measure time.
 
 Neither is a product decision yet. See [status.md](status.md).

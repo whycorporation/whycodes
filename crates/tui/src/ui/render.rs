@@ -82,8 +82,8 @@ fn render_inner(frame: &mut Frame, app: &mut TuiApp) {
 
 fn paint_recovered_frame(frame: &mut Frame, payload: &(dyn std::any::Any + Send)) {
     let msg = panic_message(payload);
-    whycode_core::logging::emit(
-        "whycode_tui",
+    whycodes_core::logging::emit(
+        "whycodes_tui",
         "error",
         "tui.draw_panic_recovered",
         Some(serde_json::json!({ "error": msg })),
@@ -832,7 +832,7 @@ mod paint_tests {
         a.current_agent_state = AgentState::Generating;
         a.spinner_frame = 2;
         a.status_message = "Running tool `read`…".into();
-        a.turn_usage = Some(whycode_core::types::Usage {
+        a.turn_usage = Some(whycodes_core::types::Usage {
             input_tokens: 1_200,
             output_tokens: 80,
             cache_creation_input_tokens: None,
@@ -1098,7 +1098,7 @@ mod paint_tests {
         let mut a = app();
         a.provider_name = "anthropic".into();
         a.model_name = "claude".into();
-        a.project_label = "whycode".into();
+        a.project_label = "whycodes".into();
         // Unique markers so we can see which row they land on.
         a.add_message(
             crate::app::ChatRole::User,
@@ -1144,11 +1144,11 @@ mod paint_tests {
 
         // Status header sits on the first inset row and is not overwritten.
         assert!(
-            header.contains("whycode"),
+            header.contains("whycodes"),
             "header brand missing: {header:?}"
         );
         assert!(
-            !header.contains("why code"),
+            !header.contains("why codes"),
             "wordmark must be one word: {header:?}"
         );
         assert!(
@@ -1195,7 +1195,7 @@ mod paint_tests {
 
         let header = row_text(&buf, layout::SAFE_TOP);
         assert!(
-            header.contains("whycode"),
+            header.contains("whycodes"),
             "header lost after scroll: {header:?}"
         );
         assert!(

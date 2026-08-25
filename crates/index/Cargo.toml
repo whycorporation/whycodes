@@ -1,5 +1,5 @@
 [package]
-name = "whycode-index"
+name = "whycodes-index"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

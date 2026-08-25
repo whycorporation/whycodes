@@ -13,8 +13,8 @@ use axum::{
 };
 use futures::stream::Stream;
 use serde::Deserialize;
-use whycode_agent::events::{TurnEvent, new_cancel_flag};
-use whycode_protocol::sdk::{
+use whycodes_agent::events::{TurnEvent, new_cancel_flag};
+use whycodes_protocol::sdk::{
     CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelInfo,
     ModelList, PROTOCOL_MAJOR, PermissionResponse, QuestionResponse, RenameRequest, RewindRequest,
     RunRequest, SdkEvent, SessionHistory, SessionInfo, SessionList, SetModelRequest,
@@ -82,7 +82,7 @@ pub async fn create_session(
         .map(PathBuf::from)
         .unwrap_or_else(|| state.project_dir.clone());
     let prompt = system_prompt_for(&state.agent, &project);
-    let session = whycode_session::session::Session::new(project, prompt);
+    let session = whycodes_session::session::Session::new(project, prompt);
     let persist = req.persist.unwrap_or(true);
     if persist
         && let Some(db) = AppState::open_db()
@@ -167,7 +167,7 @@ pub async fn run(
 
     if api_key.is_empty() {
         let msg = format!(
-            "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycode auth login`.",
+            "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycodes auth login`.",
             provider.to_uppercase()
         );
         let stream = async_stream::stream! {
@@ -285,7 +285,7 @@ fn session_or_default_model(state: &AppState, session_id: &str) -> (String, Stri
 }
 
 fn history_from_session(
-    s: &whycode_session::session::Session,
+    s: &whycodes_session::session::Session,
     limit: Option<usize>,
 ) -> SessionHistory {
     let mut msgs: Vec<HistoryMessage> = s
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn maps_every_wire_event() {
-        use whycode_core::PanelUpdate;
+        use whycodes_core::PanelUpdate;
 
         assert!(matches!(
             from_turn_event(&TurnEvent::ToolStart {
@@ -603,10 +603,10 @@ mod tests {
         assert!(from_turn_event(&TurnEvent::Panel(PanelUpdate::Clear)).is_none());
         assert!(
             from_turn_event(&TurnEvent::Todos {
-                todos: vec![whycode_core::TodoItem::new(
+                todos: vec![whycodes_core::TodoItem::new(
                     "a",
                     "x",
-                    whycode_core::TodoStatus::Pending
+                    whycodes_core::TodoStatus::Pending
                 )]
             })
             .is_none()
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn history_from_session_maps_roles_and_limits() {
-        let mut s = whycode_session::session::Session::new("/tmp".into(), "sys".into());
+        let mut s = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         s.add_user_message("first");
         s.add_user_message("second");
 
