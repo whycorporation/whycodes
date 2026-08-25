@@ -5,7 +5,7 @@
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::theme::ThemePalette;
 use crate::tokens::{HOME_LOGO_CODE, HOME_LOGO_WHY, layout};
-use crate::ui::scrollbar::{SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
+use crate::ui::scrollbar::{SCROLLBAR_GAP, SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
 #[cfg(test)]
 use ratatui::widgets::Widget;
@@ -274,14 +274,15 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
 
 fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     // Shell already applies SIDE_PAD — don't pad again (extra spaces end up in mouse selection).
-    // When the transcript overflows, reserve a dedicated right-hand gutter so
+    // When the transcript overflows, reserve a blank gap + the 1-col bar so
     // the solid scrollbar never paints over wrapped text.
     let height = area.height as usize;
     let full_width = area.width;
+    let reserved = SCROLLBAR_GUTTER.saturating_add(SCROLLBAR_GAP);
     let (starts_full, total_full) = message_row_layout_mut(app, full_width);
-    let mut needs_bar = total_full > height && area.width > SCROLLBAR_GUTTER;
+    let mut needs_bar = total_full > height && area.width > reserved;
     let mut content_width = if needs_bar {
-        full_width.saturating_sub(SCROLLBAR_GUTTER)
+        full_width.saturating_sub(reserved)
     } else {
         full_width
     };
@@ -422,6 +423,14 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         // so "at bottom" never looked like the bottom. Ours maps
         // top-origin `view_start` with `thumb_pos = view_start * travel / max_off`,
         // matching drag math in `ui/scrollbar` (0 → top, max_off → flush bottom).
+        let gap_x = area.x.saturating_add(content_width);
+        let clear = Style::default().fg(palette.bg).bg(palette.bg);
+        for dy in 0..area.height {
+            if let Some(cell) = buf.cell_mut((gap_x, area.y.saturating_add(dy))) {
+                cell.set_symbol(" ");
+                cell.set_style(clear);
+            }
+        }
         let sb = Rect {
             x: area.x + area.width.saturating_sub(SCROLLBAR_GUTTER),
             y: area.y,
@@ -430,7 +439,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         };
         let colors = ScrollbarColors::from_palette(palette);
         paint_scrollbar(
-            frame.buffer_mut(),
+            buf,
             sb,
             total,
             height,
