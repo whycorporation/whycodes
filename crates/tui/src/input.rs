@@ -100,6 +100,10 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
     let mut text = String::new();
     for ev in events.iter() {
         match ev {
+            // Windows / enhanced keyboard emits Press+Release per key. Release
+            // must not abort coalescing (or a real unbracketed paste never
+            // folds) and must not be treated as a second insert.
+            Event::Key(k) if k.kind == KeyEventKind::Release => {}
             Event::Key(k)
                 if (k.kind == KeyEventKind::Press || k.kind == KeyEventKind::Repeat)
                     && !k.modifiers.intersects(
@@ -109,8 +113,8 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
                     ) =>
             {
                 match k.code {
+                    KeyCode::Char('\n' | '\r') | KeyCode::Enter => text.push('\n'),
                     KeyCode::Char(c) => text.push(c),
-                    KeyCode::Enter => text.push('\n'),
                     _ => return,
                 }
             }
@@ -119,7 +123,14 @@ pub fn coalesce_unbracketed_paste(app: &TuiApp, events: &mut Vec<Event>) {
             _ => return,
         }
     }
-    if !crate::paste::should_collapse(&text) {
+    // A typed line plus trailing Enter is submit, not a paste. `line_count`
+    // treats "hello\n" as two rows, which would swallow Enter on the home
+    // prompt (and `/command` + Enter) into a paste chip when keys arrive in
+    // one poll batch (common on the first screen while startup is catching up).
+    // Strip every trailing newline so "hello" + Enter + Enter in one batch
+    // also stays keys. Hosts may deliver Enter as `\r`.
+    let collapse_src = text.trim_end_matches('\n');
+    if !crate::paste::should_collapse(collapse_src) {
         return;
     }
     events.retain(|e| {
@@ -2052,6 +2063,12 @@ mod event_tests {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))
     }
 
+    fn key_release(code: KeyCode) -> Event {
+        let mut k = KeyEvent::new(code, KeyModifiers::NONE);
+        k.kind = KeyEventKind::Release;
+        Event::Key(k)
+    }
+
     fn ctrl(c: char) -> Event {
         Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL))
     }
@@ -3291,6 +3308,84 @@ mod event_tests {
         let before = events.clone();
         coalesce_unbracketed_paste(&a, &mut events);
         assert_eq!(events, before);
+    }
+
+    #[test]
+    fn coalesce_unbracketed_paste_leaves_typed_line_plus_enter() {
+        let a = app();
+        let mut events: Vec<Event> = "hello"
+            .chars()
+            .map(|c| key(KeyCode::Char(c)))
+            .chain(std::iter::once(key(KeyCode::Enter)))
+            .collect();
+        let before = events.clone();
+        coalesce_unbracketed_paste(&a, &mut events);
+        assert_eq!(
+            events, before,
+            "typed line + Enter must stay keys so submit/slash run"
+        );
+
+        let mut slash: Vec<Event> = "/help"
+            .chars()
+            .map(|c| key(KeyCode::Char(c)))
+            .chain(std::iter::once(key(KeyCode::Enter)))
+            .collect();
+        let before_slash = slash.clone();
+        coalesce_unbracketed_paste(&a, &mut slash);
+        assert_eq!(slash, before_slash);
+
+        // Double Enter in the same batch must not become a 2-line paste.
+        let mut doubled: Vec<Event> = "hello"
+            .chars()
+            .map(|c| key(KeyCode::Char(c)))
+            .chain([key(KeyCode::Enter), key(KeyCode::Enter)])
+            .collect();
+        let before_doubled = doubled.clone();
+        coalesce_unbracketed_paste(&a, &mut doubled);
+        assert_eq!(doubled, before_doubled);
+
+        // Windows / some hosts deliver Enter as CR, not KeyCode::Enter.
+        let mut cr: Vec<Event> = "hello"
+            .chars()
+            .map(|c| key(KeyCode::Char(c)))
+            .chain(std::iter::once(key(KeyCode::Char('\r'))))
+            .collect();
+        let before_cr = cr.clone();
+        coalesce_unbracketed_paste(&a, &mut cr);
+        assert_eq!(
+            cr, before_cr,
+            "typed line + CR must stay keys so submit runs"
+        );
+    }
+
+    #[test]
+    fn coalesce_unbracketed_paste_ignores_key_release_and_cr_newlines() {
+        let a = app();
+        let mut events = Vec::new();
+        for c in "hello\nworld\nmore".chars() {
+            let code = if c == '\n' {
+                KeyCode::Enter
+            } else {
+                KeyCode::Char(c)
+            };
+            events.push(key(code));
+            events.push(key_release(code));
+        }
+        coalesce_unbracketed_paste(&a, &mut events);
+        assert_eq!(events, vec![Event::Paste("hello\nworld\nmore".into())]);
+
+        let mut cr_paste: Vec<Event> = "hello\rworld\rmore"
+            .chars()
+            .map(|c| {
+                if c == '\r' {
+                    key(KeyCode::Char('\r'))
+                } else {
+                    key(KeyCode::Char(c))
+                }
+            })
+            .collect();
+        coalesce_unbracketed_paste(&a, &mut cr_paste);
+        assert_eq!(cr_paste, vec![Event::Paste("hello\nworld\nmore".into())]);
     }
 
     #[test]
