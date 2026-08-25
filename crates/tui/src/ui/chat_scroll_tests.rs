@@ -696,8 +696,8 @@ fn paint_publishes_scrollbar_when_overflowing() {
     assert_eq!(hit.x + hit.width, 40, "bar sits on the right edge");
     assert_eq!(
         app.chat_content_width,
-        40 - crate::ui::scrollbar::SCROLLBAR_GUTTER,
-        "text wrap must reserve the scrollbar gutter"
+        40 - crate::ui::scrollbar::SCROLLBAR_GUTTER - crate::ui::scrollbar::SCROLLBAR_GAP,
+        "text wrap must reserve the scrollbar gap + gutter"
     );
 }
 
@@ -767,8 +767,16 @@ fn overflowing_chat_does_not_paint_text_under_scrollbar() {
     assert_eq!(hit.width, crate::ui::scrollbar::SCROLLBAR_GUTTER);
     assert_eq!(
         app.chat_content_width,
-        w - crate::ui::scrollbar::SCROLLBAR_GUTTER
+        w - crate::ui::scrollbar::SCROLLBAR_GUTTER - crate::ui::scrollbar::SCROLLBAR_GAP
     );
+    for y in 0..h {
+        let gap = buf.cell((bar_x.saturating_sub(1), y)).expect("gap cell");
+        assert_eq!(
+            gap.symbol(),
+            " ",
+            "column left of the bar must be the blank gap at y={y}"
+        );
+    }
 }
 
 #[test]
