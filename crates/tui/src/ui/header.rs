@@ -109,9 +109,9 @@ mod tests {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
         let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
-        // Dual-tone wordmark + agent chip.
-        assert!(text.contains("why"), "{text}");
-        assert!(text.contains("code"), "{text}");
+        // Dual-tone wordmark is one word (`whycode`), then the agent chip.
+        assert!(text.contains("whycode"), "{text}");
+        assert!(!text.contains("why code"), "{text}");
         assert!(text.contains("build"), "{text}");
         // No provider/model configured → dash pair.
         assert!(text.contains("—/—"), "{text}");

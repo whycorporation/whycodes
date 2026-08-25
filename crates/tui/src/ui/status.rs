@@ -412,6 +412,15 @@ mod tests {
     }
 
     #[test]
+    fn paints_whycode_wordmark_as_one_word() {
+        let app = TuiApp::new(cfg());
+        let palette = app.config.palette();
+        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        assert!(text.contains("whycode"), "{text}");
+        assert!(!text.contains("why code"), "{text}");
+    }
+
+    #[test]
     fn shows_get_started_when_no_key_and_idle() {
         // Default app: empty provider, empty messages, Idle → /connect hint.
         let app = TuiApp::new(cfg());

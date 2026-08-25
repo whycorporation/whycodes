@@ -25,12 +25,12 @@ pub mod dark {
     pub const TEXT_MUTED: Color = Color::Rgb(0x80, 0x80, 0x80);
 }
 
-/// Home screen block logo: "WHY" + "CODE".
+/// Home screen block logo: Whycode as one word (`WHY` + `CODE`, no gap).
 pub const HOME_LOGO_WHY: &[&str] = &[
-    "                   ",
-    "█   █ █   █ █   █  ",
-    "█ █ █ █▀▀▀█ █▄▄▄█  ",
-    "▀█▀█▀ █   █   █    ",
+    "                 ",
+    "█   █ █   █ █   █",
+    "█ █ █ █▀▀▀█ █▄▄▄█",
+    "▀█▀█▀ █   █   █  ",
 ];
 
 pub const HOME_LOGO_CODE: &[&str] = &[
@@ -205,6 +205,31 @@ mod tests {
         assert!(why_w.windows(2).all(|w| w[0] == w[1]), "{why_w:?}");
         assert!(code_w.windows(2).all(|w| w[0] == w[1]), "{code_w:?}");
         assert!(why_w[0] > 0 && code_w[0] > 0);
+    }
+
+    #[test]
+    fn home_logo_is_one_word() {
+        // Letter rows: last WHY glyph sits flush against first CODE glyph.
+        let why = HOME_LOGO_WHY[1];
+        let code = HOME_LOGO_CODE[1];
+        assert!(
+            !why.ends_with(' '),
+            "WHY must not trail a gap column: {why:?}"
+        );
+        assert!(
+            code.starts_with('█'),
+            "CODE must start on the next cell: {code:?}"
+        );
+        let joined: Vec<String> = HOME_LOGO_WHY
+            .iter()
+            .zip(HOME_LOGO_CODE)
+            .map(|(w, c)| format!("{w}{c}"))
+            .collect();
+        let widths: Vec<usize> = joined.iter().map(|l| l.chars().count()).collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "joined Whycode rows must stay aligned: {widths:?}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 // ── ui/chat.rs: session message list ───────────────────────────────────
 // User: elevated band + ❯ prefix. Assistant: free-flow body + turn footer.
-// Home: centered dual-block logo.
+// Home: centered Whycode wordmark (WHY + CODE, one word).
 
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::theme::ThemePalette;
@@ -185,8 +185,8 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         lines.push(Line::from(""));
     }
 
-    // Center logo horizontally
-    let logo_w = HOME_LOGO_WHY[1].chars().count() + 1 + HOME_LOGO_CODE[1].chars().count();
+    // Center logo horizontally. WHY sits flush against CODE (Whycode, not Why Code).
+    let logo_w = HOME_LOGO_WHY[1].chars().count() + HOME_LOGO_CODE[1].chars().count();
     let left_pad = area
         .width
         .saturating_sub(logo_w as u16 + 2)
@@ -200,7 +200,6 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
                 HOME_LOGO_WHY[i].to_string(),
                 Style::default().fg(palette.dim),
             ),
-            Span::raw(" "),
             Span::styled(
                 HOME_LOGO_CODE[i].to_string(),
                 Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
