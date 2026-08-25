@@ -30,6 +30,15 @@ fn short_component_path_is_cut_in_the_middle() {
 }
 
 #[test]
+fn short_component_path_does_not_slice_mid_utf8() {
+    // 3-component (or fewer) path: byte-cut at `third`. `ö` is 2 bytes.
+    let p = format!("{}ö{}", "a".repeat(8), "b".repeat(8));
+    let out = truncate_path(&p, 10);
+    assert!(out.contains("..."), "{out}");
+    assert!(out.is_char_boundary(out.len()));
+}
+
+#[test]
 fn expand_sides_until_budget() {
     let p = "/aa/bb/cc/dd/ee/ff/gg/hh/ii/jj/kk";
     let out = truncate_path(p, 22);

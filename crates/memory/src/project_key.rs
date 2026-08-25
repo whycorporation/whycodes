@@ -66,9 +66,11 @@ fn sanitize_key(raw: &str) -> String {
     if trimmed.is_empty() {
         "default".into()
     } else if trimmed.len() > 180 {
-        // Keep start + short hash of full so long paths stay unique
+        // Keep start + short hash of full so long paths stay unique.
+        // `trimmed` is ASCII after sanitize, but floor anyway (same class as
+        // mid-UTF-8 `&s[..n]` panics).
         let h = simple_hash(raw);
-        format!("{}-{:x}", &trimmed[..120], h)
+        format!("{}-{:x}", &trimmed[..trimmed.floor_char_boundary(120)], h)
     } else {
         trimmed.to_string()
     }
@@ -98,5 +100,19 @@ mod tests {
     #[test]
     fn empty_becomes_default() {
         assert_eq!(sanitize_key("///"), "default");
+    }
+
+    #[test]
+    fn long_key_is_hashed_and_stays_on_char_boundary() {
+        let raw = format!("/{}", "a".repeat(250));
+        let k = sanitize_key(&raw);
+        assert!(k.len() < raw.len(), "{k}");
+        assert!(k.contains('-'), "{k}");
+        assert!(k.is_char_boundary(k.len()));
+        // Unicode path chars become `_` (1 byte) so the 120-byte prefix is ASCII.
+        let uni = format!("/{}", "ö".repeat(200));
+        let ku = sanitize_key(&uni);
+        assert!(ku.is_char_boundary(ku.len()));
+        assert!(ku.len() < uni.len());
     }
 }

@@ -165,6 +165,10 @@ chat; inline in the message widget). Tests place `ö` on the old cut.
 without `floor_char_boundary`. Byte length ≠ char length. Same lesson as
 the 2026-08-23 memory-index clip.
 
+Same class still lurked in MCP log `truncate` (`&s[..max]`),
+`truncate_path` mid-cut (`&path[..third]`), and `/doctor` secret mask
+(`&val[..4]`). All now floor/ceil to a char boundary.
+
 ### 2026-08-25 — Paste overflow returns on new-session home (grey boxes)
 
 **Symptom:** A long paste paints outside the boxed prompt. Enter/submit cleans it up, but opening a new session (home) brings the leftover text back. Grey boxes sit on the right of the home screen.

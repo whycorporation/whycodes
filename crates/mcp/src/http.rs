@@ -41,7 +41,8 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max])
+        // Byte cap: never slice mid-codepoint (`ö`, CJK, emoji).
+        format!("{}…", &s[..s.floor_char_boundary(max)])
     }
 }
 
@@ -508,6 +509,16 @@ mod tests {
     fn truncate_preserves_short_text_and_limits_long_text() {
         assert_eq!(truncate("short", 5), "short");
         assert_eq!(truncate("abcdef", 3), "abc…");
+    }
+
+    #[test]
+    fn truncate_backs_up_from_mid_codepoint() {
+        // 2 ASCII + `ö` (bytes 2..4) — `&s[..3]` panics.
+        let s = format!("abö{}", "c".repeat(10));
+        assert!(!s.is_char_boundary(3));
+        let out = truncate(&s, 3);
+        assert_eq!(out, "ab…");
+        assert!(out.is_char_boundary(out.len()));
     }
 
     #[test]

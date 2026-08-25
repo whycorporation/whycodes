@@ -4366,12 +4366,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
     ] {
         match std::env::var(var) {
             Ok(val) => {
-                let masked = if val.len() > 8 {
-                    format!("{}...{}", &val[..4], &val[val.len() - 4..])
-                } else {
-                    "***".to_string()
-                };
-                println!("    {} = {} (set)", var, masked.dimmed());
+                println!("    {} = {} (set)", var, mask_secret(&val).dimmed());
             }
             Err(_) => {
                 println!("    {} = (not set)", var.dimmed());
@@ -4466,6 +4461,17 @@ fn truncate_str(s: &str, max_len: usize) -> String {
         truncated.push_str("...");
         truncated
     }
+}
+
+/// First/last 4 bytes of a secret, floored/ceiled to char boundaries.
+/// Byte slices (`&val[..4]`) panic when a multi-byte char straddles the cut.
+fn mask_secret(val: &str) -> String {
+    if val.len() <= 8 {
+        return "***".to_string();
+    }
+    let start = val.floor_char_boundary(4);
+    let end = val.ceil_char_boundary(val.len().saturating_sub(4));
+    format!("{}...{}", &val[..start], &val[end..])
 }
 
 #[cfg(test)]
