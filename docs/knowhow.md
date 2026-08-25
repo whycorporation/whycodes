@@ -140,6 +140,31 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-25 — tool summary `&raw[..56]` panics mid-UTF-8 (`ö`)
+
+**Symptom:** TUI abort on a live turn:
+`end byte index 56 is not a char boundary; it is inside 'ö' (bytes 55..57 of string)`
+at `crates/tui/src/ui/chat.rs` (`tool_summary`). Crash file
+`crash-20260825T163136.045.txt`.
+
+**JSONL / crash:** panic in `main`; location is the JSON-dump fallback that
+sliced the serialized tool input at a fixed **byte** index.
+
+**Root cause:** unknown tools with no `command`/`path`/`query`/… string field
+fall back to `input.to_string()`. If that dump is longer than 56 bytes, the
+code did `&raw[..56]`. A 2-byte char (`ö`, CJK, emoji) straddling offset 56
+is not a char boundary.
+
+Same class in `crates/tui/src/widgets/message.rs`: `&content[..500]` on
+tool-result preview.
+
+**Fix:** `s.floor_char_boundary(n)` before the slice (`ellipsize_bytes` in
+chat; inline in the message widget). Tests place `ö` on the old cut.
+
+**Prevention:** Never `&s[..n]` / `String::truncate(n)` on user or JSON text
+without `floor_char_boundary`. Byte length ≠ char length. Same lesson as
+the 2026-08-23 memory-index clip.
+
 ### 2026-08-25 — Paste overflow returns on new-session home (grey boxes)
 
 **Symptom:** A long paste paints outside the boxed prompt. Enter/submit cleans it up, but opening a new session (home) brings the leftover text back. Grey boxes sit on the right of the home screen.

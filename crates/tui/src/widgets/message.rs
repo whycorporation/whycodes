@@ -105,7 +105,10 @@ impl MessageWidget {
                         palette.tool_msg
                     };
                     let truncated = if content.len() > 500 {
-                        format!("{}... (truncated)", &content[..500])
+                        format!(
+                            "{}... (truncated)",
+                            &content[..content.floor_char_boundary(500)]
+                        )
                     } else {
                         content.clone()
                     };
@@ -277,6 +280,21 @@ mod tests {
         assert!(text.starts_with("    ↳ "), "{text}");
         assert!(text.ends_with("... (truncated)"), "len={}", text.len());
         assert!(text.len() < 600, "capped, not full content");
+        // 499 ASCII + `ö` (bytes 499..501) — `&content[..500]` panics.
+        let utf8 = format!("{}ö{}", "x".repeat(499), "y".repeat(20));
+        assert!(!utf8.is_char_boundary(500));
+        let w = widget(
+            ChatRole::Tool,
+            "",
+            vec![ChatBlock::ToolResult {
+                id: "r-utf8".into(),
+                content: utf8,
+                is_error: false,
+            }],
+        );
+        let text = line_text(&w.to_lines(&p)[1]);
+        assert!(text.ends_with("... (truncated)"), "{text}");
+        assert!(text.is_char_boundary(text.len()));
         // Error results use the error color.
         let w = widget(
             ChatRole::Tool,
