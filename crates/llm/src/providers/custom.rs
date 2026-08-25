@@ -226,6 +226,7 @@ impl LlmProvider for CustomProvider {
             )));
         }
 
+        let provider = self.name.clone();
         let s = stream! {
             let mut stream = resp.bytes_stream();
             let mut buf = String::new();
@@ -252,7 +253,9 @@ impl LlmProvider for CustomProvider {
                             }
                         }
                     }
-                    Err(e) => { yield Err(whycode_core::Error::Llm(format!("Stream: {e}"))); }
+                    Err(e) => {
+                        yield Err(crate::openai_compat::stream_chunk_error(&provider, e));
+                    }
                 }
             }
         };

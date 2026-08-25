@@ -1490,6 +1490,17 @@ impl Agent {
                     }
                     Err(e) => {
                         crate::speculative_read::abort_all(&mut speculative_reads);
+                        whycode_core::logging::emit_sid(
+                            "agent",
+                            "error",
+                            "turn.stream_error",
+                            Some(session.id.as_str()),
+                            Some(serde_json::json!({
+                                "provider": provider_name,
+                                "model": model,
+                                "error": e.to_string(),
+                            })),
+                        );
                         return Err(e);
                     }
                 };

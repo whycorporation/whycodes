@@ -11,6 +11,46 @@ use whycode_core::types::{
     ToolDefinition,
 };
 
+/// Flatten `err` + `source()` chain so reqwest decode failures keep TLS/EOF/JSON
+/// causes that `{e}` alone drops (`error decoding response body`).
+pub fn error_source_chain(err: &dyn std::error::Error) -> String {
+    let mut out = err.to_string();
+    let mut cur = err.source();
+    let mut n = 0;
+    while let Some(src) = cur {
+        n += 1;
+        if n > 8 {
+            break;
+        }
+        let s = src.to_string();
+        if !s.is_empty() && !out.contains(&s) {
+            out.push_str(": ");
+            out.push_str(&s);
+        }
+        cur = src.source();
+    }
+    out
+}
+
+/// Log a mid-stream chunk failure to `unified.jsonl` and return the LLM error.
+///
+/// TUI already records `turn.error` with the display string; this captures the
+/// provider + reqwest source chain at the decode site (always-on JSONL).
+pub fn stream_chunk_error(provider: &str, err: impl std::error::Error) -> whycode_core::Error {
+    let chain = error_source_chain(&err);
+    whycode_core::logging::emit(
+        "llm",
+        "error",
+        "llm.stream_chunk",
+        Some(serde_json::json!({
+            "provider": provider,
+            "error": chain,
+        })),
+    );
+    tracing::warn!(provider, error = %chain, "llm.stream_chunk");
+    whycode_core::Error::Llm(format!("Stream: {chain}"))
+}
+
 /// Convert request messages into OpenAI chat-completions format.
 ///
 /// Uses OpenAI-style JSON-string tool arguments. For a different wire shape,
@@ -1082,6 +1122,39 @@ mod tests {
                 .pointer("/function/parameters/properties/ids/uniqueItems")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn error_source_chain_walks_nested_sources() {
+        #[derive(Debug)]
+        struct Inner;
+        impl std::fmt::Display for Inner {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("unexpected EOF during chunk")
+            }
+        }
+        impl std::error::Error for Inner {}
+
+        #[derive(Debug)]
+        struct Outer(Inner);
+        impl std::fmt::Display for Outer {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("error decoding response body")
+            }
+        }
+        impl std::error::Error for Outer {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let chain = error_source_chain(&Outer(Inner));
+        assert!(chain.contains("error decoding response body"), "{chain}");
+        assert!(chain.contains("unexpected EOF"), "{chain}");
+        let err = stream_chunk_error("grokv", Outer(Inner));
+        let s = err.to_string();
+        assert!(s.contains("Stream:"), "{s}");
+        assert!(s.contains("unexpected EOF"), "{s}");
     }
 
     #[test]

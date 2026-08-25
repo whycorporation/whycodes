@@ -142,7 +142,13 @@ impl LlmProvider for GoogleProvider {
 
         let s = stream! {
             // Gemini SSE format is different: starts with '[{' per chunk, not 'data: '
-            let text = resp.text().await.unwrap_or_default();
+            let text = match resp.text().await {
+                Ok(t) => t,
+                Err(e) => {
+                    yield Err(crate::openai_compat::stream_chunk_error("google", e));
+                    return;
+                }
+            };
             // Remove leading '[' and split by '},{' pattern
             let clean = text.replace("}\n,{", "}\n~{").replace("]\n", "");
             for item_str in clean.split("}\n~").filter(|s| !s.is_empty()) {
