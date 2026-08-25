@@ -50,7 +50,7 @@ fn wait_for_callback_skips_options_and_returns_code() {
                  \r\n"
         ),
     );
-    assert!(page.contains("whycode login complete"), "{page}");
+    assert!(page.contains("whycodes login complete"), "{page}");
 
     let result = handle.join().unwrap().unwrap();
     assert_eq!(result.code, "tok");
@@ -81,7 +81,7 @@ fn wait_for_callback_reports_provider_error() {
         addr,
         "GET /callback?error=access_denied&error_description=Nope HTTP/1.1\r\nHost: localhost\r\nOrigin: https://evil.example\r\n\r\n",
     );
-    assert!(page.contains("whycode login failed"));
+    assert!(page.contains("whycodes login failed"));
     assert!(page.contains("https://accounts.x.ai"));
     assert_eq!(
         handle.join().unwrap().unwrap_err().to_string(),
@@ -115,7 +115,7 @@ fn wait_for_callback_error_wins_when_code_is_also_present() {
         addr,
         "GET /callback?code=tok&error=access_denied&error_description=Nope HTTP/1.1\r\nHost: localhost\r\n\r\n",
     );
-    assert!(page.contains("whycode login complete"), "{page}");
+    assert!(page.contains("whycodes login complete"), "{page}");
     assert_eq!(
         handle.join().unwrap().unwrap_err().to_string(),
         "OAuth provider returned an error: Nope"
@@ -189,9 +189,9 @@ fn accept_connection_surfaces_io_errors() {
 }
 
 #[test]
-fn callback_html_uses_the_dark_whycode_theme() {
+fn callback_html_uses_the_dark_whycodes_theme() {
     let ok = callback_html(true);
-    assert!(ok.contains("whycode login complete"), "{ok}");
+    assert!(ok.contains("whycodes login complete"), "{ok}");
     assert!(
         ok.contains("You can close this tab and return to the terminal."),
         "{ok}"
@@ -204,7 +204,7 @@ fn callback_html_uses_the_dark_whycode_theme() {
     assert!(ok.contains("body class=\"ok\""), "{ok}");
 
     let fail = callback_html(false);
-    assert!(fail.contains("whycode login failed"), "{fail}");
+    assert!(fail.contains("whycodes login failed"), "{fail}");
     assert!(
         fail.contains("The provider did not return a code. You can close this tab."),
         "{fail}"

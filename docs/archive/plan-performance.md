@@ -4,7 +4,7 @@
 
 ## Problem
 
-whycode has no measurements. Not slow ones — none. There is no startup number,
+whycodes has no measurements. Not slow ones — none. There is no startup number,
 no memory number, no token-usage number. So:
 
 - We cannot tell whether a change made things worse.
@@ -55,7 +55,7 @@ Out:
 - [x] `scripts/count_idle_draws.py`: redraws in 10s with no input; the target
       is zero
 - [x] Structured token accounting on every turn, surfaced by `/info`
-- [x] Per-session usage persisted in SQLite; `whycode stats` aggregates it
+- [x] Per-session usage persisted in SQLite; `whycodes stats` aggregates it
 - [x] `docs/benchmarks.md` recording the method precisely enough to reproduce:
       machine, build profile, terminal, run count
 - [x] `bench-results.json` committed per run (`docs/bench-results.json`)
@@ -131,7 +131,7 @@ the provider's own numbers in both the TUI and the plain REPL.
 
 - Sessions table stores `input_tokens`, `output_tokens`, and optional cache
   columns; `Session::save_to_db` / `load_from_db` round-trip them.
-- `whycode stats` prints provider-reported totals and top sessions (no more
+- `whycodes stats` prints provider-reported totals and top sessions (no more
   500×message heuristic).
 - Message rows are replaced on each save (fixes duplicate-message inflate).
 
@@ -143,7 +143,7 @@ the provider's own numbers in both the TUI and the plain REPL.
 - **CI ceilings / `bench-results.json`.** `docs/bench-results.json` schema +
   `scripts/check_bench_ceilings.py` (generous Ubuntu ceilings); CI budgets job
   runs the checker (skips cleanly if file absent).
-- **Reconciliation against a live provider.** `WHYCODE_USAGE_DUMP` writes each
+- **Reconciliation against a live provider.** `WHYCODES_USAGE_DUMP` writes each
   raw usage object; `scripts/reconcile_token_usage.py` compares the last
   snapshot to `generate --format json` session usage (≤1%). In-stream fold is
   `Usage::absorb_stream` (`max`), not `+=`, so a gateway that repeats the

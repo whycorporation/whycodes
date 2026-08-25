@@ -1,6 +1,6 @@
 //! Git worktree isolation for swarm workers.
 //!
-//! Each worker gets a detached worktree under `.whycode/swarm/<run>/worker-N`.
+//! Each worker gets a detached worktree under `.whycodes/swarm/<run>/worker-N`.
 //! After the worker finishes, changed files are three-way merged into the main
 //! checkout (base vs worktree vs main). Conflicts are reported; worktrees are
 //! always removed (success or failure).
@@ -238,9 +238,9 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
     Ok(())
 }
 
-/// Directory for one swarm run: `{project}/.whycode/swarm/{run_id}`.
+/// Directory for one swarm run: `{project}/.whycodes/swarm/{run_id}`.
 pub fn run_dir(project: &Path, run_id: &str) -> PathBuf {
-    project.join(".whycode").join("swarm").join(run_id)
+    project.join(".whycodes").join("swarm").join(run_id)
 }
 
 /// Format merge report lines for the swarm worker section.
@@ -317,11 +317,11 @@ mod tests {
         );
         // Identity for commit in bare CI environments.
         let _ = Command::new("git")
-            .args(["config", "user.email", "test@whycode.local"])
+            .args(["config", "user.email", "test@whycodes.local"])
             .current_dir(&root)
             .status();
         let _ = Command::new("git")
-            .args(["config", "user.name", "whycode-test"])
+            .args(["config", "user.name", "whycodes-test"])
             .current_dir(&root)
             .status();
         std::fs::write(root.join("a.txt"), b"base-a\n").unwrap();
@@ -349,7 +349,7 @@ mod tests {
     fn worktree_create_edit_merge_cleanup() {
         let (_keep, root) = init_repo();
         let dest = root
-            .join(".whycode")
+            .join(".whycodes")
             .join("swarm")
             .join("run1")
             .join("worker-0");
@@ -378,7 +378,7 @@ mod tests {
     fn merge_detects_main_divergence() {
         let (_keep, root) = init_repo();
         let dest = root
-            .join(".whycode")
+            .join(".whycodes")
             .join("swarm")
             .join("run2")
             .join("worker-0");

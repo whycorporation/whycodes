@@ -1,4 +1,4 @@
-export { WhycodeClient, normalizeBase } from "./client.js";
+export { WhyCodesClient, normalizeBase } from "./client.js";
 export { SdkError } from "./error.js";
 export {
   ERROR_CODES,

@@ -1,10 +1,10 @@
 [package]
-name = "whycode-mcp"
+name = "whycodes-mcp"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Model Context Protocol client for whycode"
+description = "Model Context Protocol client for whycodes"
 
 [dependencies]
 serde.workspace = true
@@ -14,8 +14,8 @@ anyhow.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
 futures.workspace = true
-whycode-core = { path = "../core" }
-whycode-tools = { path = "../tools" }
+whycodes-core = { path = "../core" }
+whycodes-tools = { path = "../tools" }
 
 [dev-dependencies]
 axum = { version = "0.7", features = ["macros"] }

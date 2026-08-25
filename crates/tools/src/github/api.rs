@@ -2,7 +2,7 @@
 use std::env;
 
 use reqwest::header::{HeaderMap, HeaderValue};
-use whycode_core::network::NetworkPolicy;
+use whycodes_core::network::NetworkPolicy;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
 
@@ -32,7 +32,7 @@ pub fn github_headers(token: &str) -> Result<HeaderMap, String> {
         "X-GitHub-Api-Version",
         HeaderValue::from_static("2022-11-28"),
     );
-    headers.insert("User-Agent", HeaderValue::from_static("whycode"));
+    headers.insert("User-Agent", HeaderValue::from_static("whycodes"));
     Ok(headers)
 }
 
@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(headers["Authorization"], "Bearer secret");
         assert_eq!(headers["Accept"], "application/vnd.github+json");
         assert_eq!(headers["X-GitHub-Api-Version"], "2022-11-28");
-        assert_eq!(headers["User-Agent"], "whycode");
+        assert_eq!(headers["User-Agent"], "whycodes");
     }
 
     #[test]
@@ -122,8 +122,8 @@ mod tests {
     #[test]
     fn api_url_preserves_the_requested_path() {
         assert_eq!(
-            api_url("repos/whycode/whycode/issues?state=open"),
-            "https://api.github.com/repos/whycode/whycode/issues?state=open"
+            api_url("repos/whycodes/whycodes/issues?state=open"),
+            "https://api.github.com/repos/whycodes/whycodes/issues?state=open"
         );
     }
 

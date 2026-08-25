@@ -28,7 +28,7 @@ pub enum TurnEvent {
     /// Token usage for the turn that just finished, as the provider reported
     /// it. Emitted once per turn rather than per streamed chunk: the interesting
     /// figure is what the turn cost, and a running partial is noise.
-    Usage(whycode_core::types::Usage),
+    Usage(whycodes_core::types::Usage),
     /// Human-readable status line
     Status(String),
     /// Heuristic user-intent for this turn (badge + optional toast in TUI).
@@ -68,7 +68,7 @@ pub enum TurnEvent {
     /// Queue a user prompt for the next free TUI turn (`schedule` / `/loop`).
     EnqueuePrompt { text: String },
     /// Pin a file / diff / mermaid on the TUI side panel.
-    Panel(whycode_core::PanelUpdate),
+    Panel(whycodes_core::PanelUpdate),
     /// A swarm worker sent a message (toast).
     SwarmMessage {
         from: String,
@@ -76,7 +76,7 @@ pub enum TurnEvent {
         text: String,
     },
     /// Session todo list for the sticky TUI panel (Grok-style).
-    Todos { todos: Vec<whycode_core::TodoItem> },
+    Todos { todos: Vec<whycodes_core::TodoItem> },
     /// Subagent lifecycle for the parent TUI (Grok-style strip / tasks pane).
     Subagent {
         id: String,

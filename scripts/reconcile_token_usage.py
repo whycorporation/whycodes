@@ -4,7 +4,7 @@
 The 1% acceptance criterion in docs/archive/plan-performance.md: stored
 session usage must match the provider's own usage object on a real turn.
 
-  WHYCODE_USAGE_DUMP=/tmp/usage.jsonl whycode generate --format json ...
+  WHYCODES_USAGE_DUMP=/tmp/usage.jsonl whycodes generate --format json ...
   python scripts/reconcile_token_usage.py --dump /tmp/usage.jsonl --result out.json
 
 Or one shot (needs a configured provider):
@@ -123,12 +123,12 @@ def run_self_test() -> int:
     return 0
 
 
-def run_live(whycode: Path, prompt: str, project: Path | None) -> int:
-    dump_path = Path(tempfile.mkstemp(prefix="whycode-usage-", suffix=".jsonl")[1])
+def run_live(whycodes: Path, prompt: str, project: Path | None) -> int:
+    dump_path = Path(tempfile.mkstemp(prefix="whycodes-usage-", suffix=".jsonl")[1])
     env = os.environ.copy()
-    env["WHYCODE_USAGE_DUMP"] = str(dump_path)
-    env.setdefault("WHYCODE_AUTO_APPROVE", "1")
-    cmd = [str(whycode), "--no-memory", "-a", "ask"]
+    env["WHYCODES_USAGE_DUMP"] = str(dump_path)
+    env.setdefault("WHYCODES_AUTO_APPROVE", "1")
+    cmd = [str(whycodes), "--no-memory", "-a", "ask"]
     if project is not None:
         cmd.extend(["-d", str(project)])
     cmd.extend(
@@ -161,7 +161,7 @@ def run_live(whycode: Path, prompt: str, project: Path | None) -> int:
 def compare(dump_lines: list[str], result_text: str) -> int:
     snap = last_snapshot(dump_lines)
     if snap is None:
-        print("no raw provider usage dumped — is WHYCODE_USAGE_DUMP set?", file=sys.stderr)
+        print("no raw provider usage dumped — is WHYCODES_USAGE_DUMP set?", file=sys.stderr)
         return 2
     result = load_result(None, result_text)
     session = session_tokens(result)
@@ -174,14 +174,14 @@ def compare(dump_lines: list[str], result_text: str) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dump", type=Path, help="WHYCODE_USAGE_DUMP JSONL")
+    ap.add_argument("--dump", type=Path, help="WHYCODES_USAGE_DUMP JSONL")
     ap.add_argument("--result", type=Path, help="generate --format json output")
     ap.add_argument("--live", action="store_true", help="run one generate turn")
     ap.add_argument(
-        "--whycode",
+        "--whycodes",
         type=Path,
-        default=Path("target/debug/whycode"),
-        help="whycode binary for --live",
+        default=Path("target/debug/whycodes"),
+        help="whycodes binary for --live",
     )
     ap.add_argument(
         "--prompt",
@@ -191,7 +191,7 @@ def main() -> int:
     ap.add_argument(
         "--project",
         type=Path,
-        help="project dir for --live (`-d`; use to load .whycode/config.toml)",
+        help="project dir for --live (`-d`; use to load .whycodes/config.toml)",
     )
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
@@ -199,10 +199,10 @@ def main() -> int:
     if args.self_test:
         return run_self_test()
     if args.live:
-        if not args.whycode.exists():
-            print(f"missing binary {args.whycode} — cargo build -p whycode-cli", file=sys.stderr)
+        if not args.whycodes.exists():
+            print(f"missing binary {args.whycodes} — cargo build -p whycodes-cli", file=sys.stderr)
             return 2
-        return run_live(args.whycode, args.prompt, args.project)
+        return run_live(args.whycodes, args.prompt, args.project)
     if args.dump is None or args.result is None:
         ap.error("need --live, --self-test, or both --dump and --result")
     return compare(

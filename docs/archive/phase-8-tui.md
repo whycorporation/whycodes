@@ -8,17 +8,17 @@ TUI is the target look and feel.
 ## What can and cannot be taken
 
 opencode's TUI is SolidJS on OpenTUI, running under Bun — 119 `.tsx` files.
-whycode's is Rust on ratatui. **No code transfers.** What transfers is the
+whycodes's is Rust on ratatui. **No code transfers.** What transfers is the
 design: which surfaces exist, how a message is rendered, and how themes are
 defined.
 
 One artefact does transfer directly: opencode ships 33 themes as JSON with a
 published schema (`https://opencode.ai/theme.json`), MIT licensed. Adopting that
-schema means those files work in whycode unmodified.
+schema means those files work in whycodes unmodified.
 
 ## The gap
 
-| | whycode | opencode |
+| | whycodes | opencode |
 |---|---|---|
 | Assistant output | plain text | markdown + tree-sitter syntax highlighting |
 | Themes | 29, hardcoded in 1,161 lines of Rust | 33 JSON files against a schema |
@@ -28,8 +28,8 @@ schema means those files work in whycode unmodified.
 
 The first row is the one that matters most, and it is nearly free:
 `crates/format` already contains `markdown.rs` (163 lines) and `highlight.rs`
-(64 lines), and `crates/tui/Cargo.toml` already declares `whycode-format` as a
-dependency — but `whycode_format` does not appear anywhere under
+(64 lines), and `crates/tui/Cargo.toml` already declares `whycodes-format` as a
+dependency — but `whycodes_format` does not appear anywhere under
 `crates/tui/src`. The rendering code exists, is paid for in the dependency
 graph, and is not called. Model output goes to the screen as raw
 `Span::raw(line)`.
@@ -44,7 +44,7 @@ than code.
 
 In:
 
-- Wire `whycode-format`'s markdown renderer into the chat view.
+- Wire `whycodes-format`'s markdown renderer into the chat view.
 - Syntax highlighting for fenced code blocks.
 - Load themes from JSON using opencode's schema, keeping the built-in set as a
   fallback so no configuration is required.
@@ -74,7 +74,7 @@ Out:
 
 ## Tasks
 
-- [x] Render assistant messages through `whycode_format::markdown`
+- [x] Render assistant messages through `whycodes_format::markdown`
 - [x] Fenced code blocks: language tag, syntax colours, and a copyable body
 - [x] Confirm the dependency is now genuinely used, or drop it
 - [x] Theme JSON schema matching opencode's `defs` + `theme` indirection,

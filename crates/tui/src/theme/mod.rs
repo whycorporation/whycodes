@@ -134,8 +134,8 @@ impl ThemeName {
     ///
     /// Matches Grok Build: Night for dark UIs, Day for light, Tokyo Night
     /// only when the TUI theme is Tokyo Night.
-    pub fn syntax_theme(self) -> whycode_format::highlight::SyntaxTheme {
-        use whycode_format::highlight::SyntaxTheme;
+    pub fn syntax_theme(self) -> whycodes_format::highlight::SyntaxTheme {
+        use whycodes_format::highlight::SyntaxTheme;
         match self {
             Self::TokyoNight | Self::TokyoNightStorm => SyntaxTheme::TokyoNight,
             Self::DefaultLight
@@ -152,7 +152,7 @@ impl ThemeName {
 
     /// Point the highlighter at this theme and drop cached token colours.
     pub fn apply_syntax_theme(self) {
-        whycode_format::highlight::set_syntax_theme(self.syntax_theme());
+        whycodes_format::highlight::set_syntax_theme(self.syntax_theme());
     }
 }
 

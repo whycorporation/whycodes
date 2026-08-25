@@ -5,7 +5,7 @@ These are the two numbers a process-level benchmark cannot reach. Timing a
 process that has exited says nothing about when it drew, and a loop that
 repaints when nothing changed is invisible without a counter.
 
-The binary reports on itself when `WHYCODE_BENCH` is set (see
+The binary reports on itself when `WHYCODES_BENCH` is set (see
 `crates/tui/src/bench.rs`); this script drives it and reads the file. Two
 timings come out of that:
 
@@ -41,14 +41,14 @@ IS_WINDOWS = platform.system() == "Windows"
 
 
 def default_binary() -> Path:
-    name = "whycode.exe" if IS_WINDOWS else "whycode"
+    name = "whycodes.exe" if IS_WINDOWS else "whycodes"
     for profile in ("release", "debug"):
         candidate = ROOT / "target" / profile / name
         if candidate.exists():
             return candidate
     raise SystemExit(
-        "no whycode binary found — build one first:\n"
-        "  cargo build --release -p whycode-cli"
+        "no whycodes binary found — build one first:\n"
+        "  cargo build --release -p whycodes-cli"
     )
 
 
@@ -58,12 +58,12 @@ def run_once(binary: Path, idle_ms: int, project: Path) -> dict | None:
         out = Path(tmp) / "bench.json"
         env = {
             **os.environ,
-            "WHYCODE_BENCH": str(out),
-            "WHYCODE_BENCH_DURATION_MS": str(idle_ms),
+            "WHYCODES_BENCH": str(out),
+            "WHYCODES_BENCH_DURATION_MS": str(idle_ms),
             # Keep the run offline and deterministic: no key means no provider
             # call, and the TUI still draws its first frame.
             "ANTHROPIC_API_KEY": "",
-            "WHYCODE_AUTO_DENY": "1",
+            "WHYCODES_AUTO_DENY": "1",
         }
         argv = [str(binary), "run", "-d", str(project)]
 

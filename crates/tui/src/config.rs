@@ -6,7 +6,7 @@ use ratatui::style::Color;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
-use whycode_config::TuiConfig;
+use whycodes_config::TuiConfig;
 
 /// Directory, relative to the config directory, holding user theme files.
 pub const THEMES_DIR: &str = "themes";
@@ -88,7 +88,7 @@ impl TuiAppConfig {
 
     /// Build from the core `TuiConfig` loaded from config.toml.
     pub fn from_core_config(cfg: &TuiConfig) -> Self {
-        Self::from_core_config_with_themes(cfg, whycode_config::Config::default_path().ok())
+        Self::from_core_config_with_themes(cfg, whycodes_config::Config::default_path().ok())
     }
 
     /// [`Self::from_core_config`] with the config file location supplied, so
@@ -149,7 +149,7 @@ mod tests {
     /// A theme file directory containing one file named `custom.json`.
     fn temp_themes() -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "whycode-cfg-{}",
+            "whycodes-cfg-{}",
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_nanos())

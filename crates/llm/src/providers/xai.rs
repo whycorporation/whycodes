@@ -1,7 +1,7 @@
 /// xAI Grok LLM provider.
 ///
 /// Console API keys (`xai-…`) use `https://api.x.ai/v1/chat/completions`.
-/// SuperGrok / X Premium tokens from `whycode auth login xai` are rejected
+/// SuperGrok / X Premium tokens from `whycodes auth login xai` are rejected
 /// there — they authorize the Grok Build chat proxy at
 /// `cli-chat-proxy.grok.com` (same path the public Grok client uses), with
 /// `X-XAI-Token-Auth: xai-grok-cli`.
@@ -9,7 +9,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
@@ -25,7 +25,7 @@ pub const SUBSCRIPTION_CHAT_URL: &str = "https://cli-chat-proxy.grok.com/v1/chat
 
 /// Product / version the public Grok CLI sends. The proxy gates auth
 /// context on these (`x-grok-client-identifier` / `User-Agent`); a
-/// whycode UA + GitHub Referer yields `upstream=Unauthenticated,
+/// whycodes UA + GitHub Referer yields `upstream=Unauthenticated,
 /// reason=no auth context` with an otherwise-valid token.
 const GROK_CLIENT_IDENTIFIER: &str = "grok-shell";
 const GROK_CLIENT_VERSION: &str = "1.0.5";
@@ -59,7 +59,7 @@ fn grok_user_agent() -> String {
 fn authed_post(api_key: &str) -> reqwest::RequestBuilder {
     if is_xai_oauth_token(api_key) {
         // Do not use `client_identity::post`: HTTP-Referer / X-Title /
-        // whycode User-Agent prevent the proxy from attaching a user.
+        // whycodes User-Agent prevent the proxy from attaching a user.
         crate::client_identity::http_client()
             .post(SUBSCRIPTION_CHAT_URL)
             .header("Authorization", format!("Bearer {api_key}"))
@@ -116,7 +116,7 @@ impl XaiProvider {
         crate::openai_compat::convert_messages(request)
     }
 
-    fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
+    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
         crate::openai_compat::convert_tools(tools)
     }
 }
@@ -136,7 +136,7 @@ impl LlmProvider for XaiProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
@@ -149,11 +149,11 @@ impl LlmProvider for XaiProvider {
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "xAI API error ({}): {}",
                 status, err_msg
             )));
@@ -177,7 +177,7 @@ impl LlmProvider for XaiProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = self.build_body(request, model);
         crate::openai_compat::attach_stream_usage_option(&mut body);
@@ -189,7 +189,10 @@ impl LlmProvider for XaiProvider {
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!("xAI API error: {}", text)));
+            return Err(whycodes_core::Error::Llm(format!(
+                "xAI API error: {}",
+                text
+            )));
         }
 
         let s = stream! {

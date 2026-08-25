@@ -3,8 +3,8 @@ use serde_json::json;
 use std::path::Path;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::todo::load_todos;
-use whycode_core::types::ToolResult;
+use whycodes_core::todo::load_todos;
+use whycodes_core::types::ToolResult;
 
 /// Read the current session todo list — OpenCode `todoread` tool.
 pub struct TodoReadTool;
@@ -69,7 +69,7 @@ impl Tool for TodoReadTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::todo::{TodoItem, TodoStatus, save_todos};
+    use whycodes_core::todo::{TodoItem, TodoStatus, save_todos};
 
     fn ctx(dir: &std::path::Path, session: Option<&str>) -> ToolContext {
         let mut c = ToolContext::unsandboxed(dir.to_string_lossy().into_owned());

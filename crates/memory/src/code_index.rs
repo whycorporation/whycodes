@@ -103,12 +103,12 @@ impl MemoryService {
 }
 
 /// Collect indexable source files under `root` via the shared workspace
-/// walker (gitignore-aware, policy-pruned — see `whycode_index::walk`).
+/// walker (gitignore-aware, policy-pruned — see `whycodes_index::walk`).
 fn walk_files(root: &Path, out: &mut Vec<String>, max_files: usize) {
     let scanned = AtomicUsize::new(0);
     let cancel = AtomicBool::new(false);
     let collected = Mutex::new(std::mem::take(out));
-    whycode_index::walk::walk_root(root, 4, usize::MAX, &scanned, &cancel, &|e| {
+    whycodes_index::walk::walk_root(root, 4, usize::MAX, &scanned, &cancel, &|e| {
         if e.is_dir {
             return;
         }

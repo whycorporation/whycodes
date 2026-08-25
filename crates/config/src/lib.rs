@@ -1,21 +1,21 @@
-//! Whycode configuration: load, merge, validate.
+//! WhyCodes configuration: load, merge, validate.
 //!
-//! Leaf types (`Message`, `Tool`, sandbox policy) live in `whycode-core`.
+//! Leaf types (`Message`, `Tool`, sandbox policy) live in `whycodes-core`.
 //! This crate owns the user-facing `Config` tree and I/O.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use whycode_core::network::{self, NetworkPolicy};
-use whycode_core::types::{
+use whycodes_core::network::{self, NetworkPolicy};
+use whycodes_core::types::{
     AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig,
 };
-use whycode_core::{Error, Result};
+use whycodes_core::{Error, Result};
 
-// Re-export leaf sandbox types so callers that already import `whycode_config`
+// Re-export leaf sandbox types so callers that already import `whycodes_config`
 // can resolve sandbox policy without a second crate path.
-pub use whycode_core::sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
+pub use whycodes_core::sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 
 /// Per-command configuration overrides
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -133,7 +133,7 @@ impl Default for AutomationConfig {
 /// Concurrent multi-agent work (`swarm` tool).
 ///
 /// When `worktrees` is on (default) and the project is a git repo, each worker
-/// runs in a detached git worktree under `.whycode/swarm/`. Changes merge back
+/// runs in a detached git worktree under `.whycodes/swarm/`. Changes merge back
 /// into the main checkout with three-way conflict detection. File claims still
 /// gate same-checkout mode and pre-declared path ownership.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,10 +201,10 @@ pub enum HookEvent {
 /// timeout_secs = 30
 /// ```
 ///
-/// Environment for the command: `WHYCODE_HOOK_EVENT`, `WHYCODE_TOOL_NAME`,
-/// `WHYCODE_TOOL_INPUT` (JSON), `WHYCODE_TOOL_ID`, `WHYCODE_SESSION_ID`,
-/// `WHYCODE_WORKING_DIR`. Post-tool also sets `WHYCODE_TOOL_IS_ERROR` and
-/// `WHYCODE_TOOL_OUTPUT` (truncated).
+/// Environment for the command: `WHYCODES_HOOK_EVENT`, `WHYCODES_TOOL_NAME`,
+/// `WHYCODES_TOOL_INPUT` (JSON), `WHYCODES_TOOL_ID`, `WHYCODES_SESSION_ID`,
+/// `WHYCODES_WORKING_DIR`. Post-tool also sets `WHYCODES_TOOL_IS_ERROR` and
+/// `WHYCODES_TOOL_OUTPUT` (truncated).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
     /// `pre_tool` or `post_tool`.
@@ -427,7 +427,7 @@ impl McpServerConfig {
 
 impl Default for Config {
     fn default() -> Self {
-        use whycode_core::types::{AgentInfo, AgentMode, PermissionSet};
+        use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet};
 
         let build_agent = AgentInfo {
             name: "build".to_string(),
@@ -698,7 +698,7 @@ pub struct MemoryConfig {
     /// Hashing embedder dimension (stored BLOB width).
     #[serde(default = "default_memory_embed_dim")]
     pub embed_dim: usize,
-    /// `user` (data_dir, default) or `project` (`.whycode/memory`, git-shareable).
+    /// `user` (data_dir, default) or `project` (`.whycodes/memory`, git-shareable).
     #[serde(default = "default_memory_scope")]
     pub scope: String,
     /// `hash` (default) or `onnx` (MiniLM; needs `--features onnx`).
@@ -933,7 +933,7 @@ pub struct SessionConfig {
     /// Heuristic intent posture for build turns: `auto` (default), `off`, or `always`.
     ///
     /// When enabled, high-confidence question/plan signals inject an ephemeral
-    /// `<whycode_intent>` block into the LLM request (not session history) so
+    /// `<whycodes_intent>` block into the LLM request (not session history) so
     /// the model answers or plans instead of over-eager edits. Hard modes
     /// (`ask` / `plan`) still enforce tool denylists regardless of this flag.
     #[serde(default = "default_intent_guidance")]
@@ -1174,21 +1174,21 @@ impl Config {
 
     /// Get default config path
     pub fn default_path() -> Result<PathBuf> {
-        Ok(whycode_core::paths::config_file())
+        Ok(whycodes_core::paths::config_file())
     }
 
     /// Get data directory for sessions, caches, etc.
     pub fn data_dir() -> Result<PathBuf> {
-        Ok(whycode_core::paths::data_dir())
+        Ok(whycodes_core::paths::data_dir())
     }
 
     // ── Layered config loading ──────────────────────────────────────────
 
     /// Load config using priority-based layering:
     /// 1. Built-in defaults
-    /// 2. Global config (~/.config/com.whycorporation.whycode/config.toml)
-    /// 3. Project config (<project_dir>/.whycode/config.toml)
-    /// 4. Environment variables (WHYCODE_*)
+    /// 2. Global config (~/.config/whycodes/config.toml)
+    /// 3. Project config (`<project>/.whycodes/config.toml`, or `.whycode/` if that is the only one)
+    /// 4. Environment variables (WHYCODES_*)
     ///
     /// Returns the merged configuration.
     pub fn load_layered(project_dir: &Path) -> Result<Self> {
@@ -1208,7 +1208,7 @@ impl Config {
         }
 
         // Layer 3: project config
-        let project_config_path = project_dir.join(".whycode").join("config.toml");
+        let project_config_path = whycodes_core::project_dir(project_dir).join("config.toml");
         if project_config_path.exists() {
             match std::fs::read_to_string(&project_config_path) {
                 Ok(content) => match toml::from_str::<Config>(&content) {
@@ -1229,9 +1229,9 @@ impl Config {
 
     /// Apply environment variable overrides to this config in-place.
     pub fn apply_env_overrides(&mut self) {
-        // WHYCODE_PROVIDER — set as the default provider (first entry) and
+        // WHYCODES_PROVIDER — set as the default provider (first entry) and
         // also populate a basic ProviderConfig if one doesn't exist.
-        if let Ok(provider_name) = std::env::var("WHYCODE_PROVIDER") {
+        if let Ok(provider_name) = std::env::var("WHYCODES_PROVIDER") {
             if !self.providers.contains_key(&provider_name) {
                 // Auto-create a basic provider entry
                 let api_key = std::env::var(format!("{}_API_KEY", provider_name.to_uppercase()))
@@ -1254,9 +1254,9 @@ impl Config {
                 );
             }
 
-            // If no default model is set, try to pick it up from WHYCODE_MODEL
+            // If no default model is set, try to pick it up from WHYCODES_MODEL
             if self.default_model.is_none()
-                && let Ok(model_name) = std::env::var("WHYCODE_MODEL")
+                && let Ok(model_name) = std::env::var("WHYCODES_MODEL")
             {
                 self.default_model = Some(ModelConfig {
                     model_id: model_name,
@@ -1270,7 +1270,7 @@ impl Config {
                     supports_images: None,
                 });
             }
-        } else if let Ok(model_name) = std::env::var("WHYCODE_MODEL") {
+        } else if let Ok(model_name) = std::env::var("WHYCODES_MODEL") {
             // Model set without provider — update default model's model_id if
             // one exists, otherwise create a minimal entry.
             if let Some(ref mut default_model) = self.default_model {
@@ -1290,44 +1290,44 @@ impl Config {
             }
         }
 
-        // WHYCODE_MAX_TURNS
-        if let Ok(val) = std::env::var("WHYCODE_MAX_TURNS")
+        // WHYCODES_MAX_TURNS
+        if let Ok(val) = std::env::var("WHYCODES_MAX_TURNS")
             && let Ok(n) = val.parse::<usize>()
         {
             self.session.max_context_tokens = n;
         }
 
-        // WHYCODE_LOG_LEVEL
-        if let Ok(val) = std::env::var("WHYCODE_LOG_LEVEL") {
+        // WHYCODES_LOG_LEVEL
+        if let Ok(val) = std::env::var("WHYCODES_LOG_LEVEL") {
             self.general.log_level = Some(val);
         }
 
-        // WHYCODE_PROJECT_DIR
-        if let Ok(val) = std::env::var("WHYCODE_PROJECT_DIR") {
+        // WHYCODES_PROJECT_DIR
+        if let Ok(val) = std::env::var("WHYCODES_PROJECT_DIR") {
             self.general.project_path = Some(PathBuf::from(val));
         }
 
-        if let Ok(val) = std::env::var("WHYCODE_SANDBOX") {
+        if let Ok(val) = std::env::var("WHYCODES_SANDBOX") {
             self.security.sandbox = val;
         }
-        if let Ok(val) = std::env::var("WHYCODE_SANDBOX_NETWORK") {
+        if let Ok(val) = std::env::var("WHYCODES_SANDBOX_NETWORK") {
             self.security.sandbox_network = matches!(
                 val.to_ascii_lowercase().as_str(),
                 "1" | "true" | "yes" | "on"
             );
         }
-        if let Ok(val) = std::env::var("WHYCODE_SANDBOX_FALLBACK") {
+        if let Ok(val) = std::env::var("WHYCODES_SANDBOX_FALLBACK") {
             self.security.sandbox_fallback = val;
         }
-        if let Ok(val) = std::env::var("WHYCODE_NETWORK_ALLOWLIST") {
+        if let Ok(val) = std::env::var("WHYCODES_NETWORK_ALLOWLIST") {
             self.security.network_allowlist = network::parse_domain_list(&val);
         }
-        if let Ok(val) = std::env::var("WHYCODE_NETWORK_DENYLIST") {
+        if let Ok(val) = std::env::var("WHYCODES_NETWORK_DENYLIST") {
             self.security.network_denylist = network::parse_domain_list(&val);
         }
 
-        // WHYCODE_NO_MEMORY=1 disables cross-session memory inject/write.
-        if let Ok(val) = std::env::var("WHYCODE_NO_MEMORY")
+        // WHYCODES_NO_MEMORY=1 disables cross-session memory inject/write.
+        if let Ok(val) = std::env::var("WHYCODES_NO_MEMORY")
             && matches!(
                 val.to_ascii_lowercase().as_str(),
                 "1" | "true" | "yes" | "on"
@@ -1335,7 +1335,7 @@ impl Config {
         {
             self.memory.enabled = false;
         }
-        if let Ok(val) = std::env::var("WHYCODE_MEMORY") {
+        if let Ok(val) = std::env::var("WHYCODES_MEMORY") {
             match val.to_ascii_lowercase().as_str() {
                 "0" | "false" | "no" | "off" => self.memory.enabled = false,
                 "1" | "true" | "yes" | "on" => self.memory.enabled = true,
@@ -1343,20 +1343,20 @@ impl Config {
             }
         }
 
-        // WHYCODE_SWARM=0/1 toggles parallel multi-agent.
-        if let Ok(val) = std::env::var("WHYCODE_SWARM") {
+        // WHYCODES_SWARM=0/1 toggles parallel multi-agent.
+        if let Ok(val) = std::env::var("WHYCODES_SWARM") {
             match val.to_ascii_lowercase().as_str() {
                 "0" | "false" | "no" | "off" => self.swarm.enabled = false,
                 "1" | "true" | "yes" | "on" => self.swarm.enabled = true,
                 _ => {}
             }
         }
-        if let Ok(val) = std::env::var("WHYCODE_SWARM_MAX_AGENTS")
+        if let Ok(val) = std::env::var("WHYCODES_SWARM_MAX_AGENTS")
             && let Ok(n) = val.parse::<usize>()
         {
             self.swarm.max_agents = n.clamp(1, 8);
         }
-        if let Ok(val) = std::env::var("WHYCODE_SWARM_WORKTREES") {
+        if let Ok(val) = std::env::var("WHYCODES_SWARM_WORKTREES") {
             match val.to_ascii_lowercase().as_str() {
                 "0" | "false" | "no" | "off" => self.swarm.worktrees = false,
                 "1" | "true" | "yes" | "on" => self.swarm.worktrees = true,
@@ -1722,7 +1722,7 @@ impl Config {
 
     /// Load custom commands from markdown files (OpenCode paths adapted):
     /// - global: `~/.config/.../commands/*.md`
-    /// - project: `<project>/.whycode/commands/*.md`
+    /// - project: `<project>/.whycodes/commands/*.md` (legacy `.whycode/` is still read)
     pub fn load_command_files(&mut self, project_dir: &Path) {
         if let Ok(global_dir) = Self::default_path()
             && let Some(parent) = global_dir.parent()
@@ -1731,7 +1731,7 @@ impl Config {
         }
         load_commands_from_dir(
             &mut self.commands,
-            &project_dir.join(".whycode").join("commands"),
+            &whycodes_core::project_dir(project_dir).join("commands"),
         );
         // also accept OpenCode-style .opencode/commands
         load_commands_from_dir(
@@ -2014,7 +2014,7 @@ impl Config {
         if self.providers.is_empty() && self.default_model.is_none() {
             issues.push(
                 "No providers configured and no default model set. \
-                 Configure at least one provider or set WHYCODE_PROVIDER / WHYCODE_MODEL."
+                 Configure at least one provider or set WHYCODES_PROVIDER / WHYCODES_MODEL."
                     .to_string(),
             );
         }
@@ -2037,9 +2037,9 @@ impl Config {
         // Check providers for common issues
         for (name, provider) in &self.providers {
             if provider.api_key.is_none() {
-                // Check env var: <NAME>_API_KEY or WHYCODE_<NAME>_API_KEY
+                // Check env var: <NAME>_API_KEY or WHYCODES_<NAME>_API_KEY
                 let key_from_env = std::env::var(format!("{}_API_KEY", name.to_uppercase()))
-                    .or_else(|_| std::env::var(format!("WHYCODE_{}_API_KEY", name.to_uppercase())))
+                    .or_else(|_| std::env::var(format!("WHYCODES_{}_API_KEY", name.to_uppercase())))
                     .or_else(|_| std::env::var("OPENAI_API_KEY"))
                     .or_else(|_| std::env::var("ANTHROPIC_API_KEY"));
 
@@ -2166,7 +2166,7 @@ impl Config {
     /// Explicit `context_window` from config for this provider/model, if any.
     ///
     /// Does not consult the built-in catalog — call
-    /// `whycode_llm::resolve_context_window` for the full chain.
+    /// `whycodes_llm::resolve_context_window` for the full chain.
     pub fn configured_context_window(&self, provider: &str, model: &str) -> Option<u32> {
         self.get_model(provider, model)
             .and_then(|m| m.context_window)

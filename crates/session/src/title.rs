@@ -2,7 +2,7 @@
 //!
 //! Industry pattern (Claude Code / OpenCode): cheap placeholder at create time,
 //! then a short human-readable title once the conversation has content.
-//! Whycode goes further with an instant offline heuristic before any LLM call.
+//! WhyCodes goes further with an instant offline heuristic before any LLM call.
 
 use std::path::Path;
 
@@ -35,7 +35,7 @@ impl TitleSource {
 
 /// Default display name: project basename + two hex chars from the session id.
 ///
-/// Example: `whycode-a3`. Matches Claude Code's `my-app-3f` style — scannable
+/// Example: `whycodes-a3`. Matches Claude Code's `my-app-3f` style — scannable
 /// in a list of live sessions without waiting for an LLM.
 pub fn default_title(project_path: &Path, session_id: &str) -> String {
     let base = project_basename(project_path);
@@ -233,8 +233,8 @@ mod tests {
 
     #[test]
     fn default_title_uses_basename_and_id() {
-        let t = default_title(&PathBuf::from("/home/u/whycode"), "a3f1c2d4-…");
-        assert_eq!(t, "whycode-a3");
+        let t = default_title(&PathBuf::from("/home/u/whycodes"), "a3f1c2d4-…");
+        assert_eq!(t, "whycodes-a3");
     }
 
     #[test]

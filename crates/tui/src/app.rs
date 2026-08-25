@@ -9,7 +9,7 @@ use ratatui::layout::Rect;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
-use whycode_tools::question::{QuestionAnswer, QuestionSpec};
+use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
 
 // ── Application Modes ──────────────────────────────────────────────────
 /// Top-level application mode.  Mutually exclusive — only one active.
@@ -975,7 +975,7 @@ pub fn format_thinking_elapsed(ms: u128) -> String {
 }
 
 /// Compact token usage for status / epilogue (`1.2k in / 340 out`).
-pub fn format_usage_short(usage: &whycode_core::types::Usage) -> String {
+pub fn format_usage_short(usage: &whycodes_core::types::Usage) -> String {
     let mut s = format!(
         "{} in / {} out",
         format_token_count(usage.input_tokens),
@@ -1019,7 +1019,7 @@ fn format_scaled(v: f64, suffix: char) -> String {
 ///
 /// Output/completion tokens are excluded: they are not part of the next
 /// prefill until the assistant turn is stored in the session.
-pub fn context_tokens_from_usage(usage: &whycode_core::types::Usage) -> u64 {
+pub fn context_tokens_from_usage(usage: &whycodes_core::types::Usage) -> u64 {
     usage.input_tokens
         + usage.cache_creation_input_tokens.unwrap_or(0)
         + usage.cache_read_input_tokens.unwrap_or(0)
@@ -1340,13 +1340,13 @@ pub struct TuiApp {
     /// When the current agent turn started (live latency while busy).
     pub turn_started_at: Option<std::time::Instant>,
     /// Latest token usage reported for the current/last turn.
-    pub turn_usage: Option<whycode_core::types::Usage>,
+    pub turn_usage: Option<whycodes_core::types::Usage>,
     /// Mouse `[stop]` (or future UI) requested cancel — run loop consumes this.
     pub pending_cancel: bool,
     /// Active session id (todo file key; empty before the first session).
     pub session_id: String,
     /// Session todo list (sticky panel under the header).
-    pub todos: Vec<whycode_core::TodoItem>,
+    pub todos: Vec<whycodes_core::TodoItem>,
     /// Fold the sticky todo list to a single header row (Grok chevron).
     /// Auto-collapses when every item is done; click / `t` reopens it.
     pub todos_collapsed: bool,
@@ -1392,18 +1392,18 @@ pub struct ModelSelectionState {
 /// OAuth subscription logins (`/login`) bypass config, so their providers
 /// would never appear here: merge in the suggested models for any provider
 /// with a credential in the token store.
-pub fn catalog_models(config: &whycode_config::Config) -> Vec<(String, String)> {
+pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = config
         .providers
         .values()
         .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
         .collect();
-    if let Ok(dir) = whycode_config::Config::data_dir() {
-        let store = whycode_auth::TokenStore::new(&dir);
-        for name in whycode_auth::OAUTH_PROVIDERS {
+    if let Ok(dir) = whycodes_config::Config::data_dir() {
+        let store = whycodes_auth::TokenStore::new(&dir);
+        for name in whycodes_auth::OAUTH_PROVIDERS {
             if store.get(name).ok().flatten().is_some() {
                 out.extend(
-                    whycode_auth::providers::suggested_models(name)
+                    whycodes_auth::providers::suggested_models(name)
                         .iter()
                         .map(|m| ((*name).to_string(), (*m).to_string())),
                 );
@@ -2045,7 +2045,7 @@ impl TuiApp {
     }
 
     /// Install the workspace file index (called once at startup).
-    pub fn set_file_index(&mut self, index: std::sync::Arc<whycode_index::WorkspaceIndex>) {
+    pub fn set_file_index(&mut self, index: std::sync::Arc<whycodes_index::WorkspaceIndex>) {
         self.file_suggest.set_index(index);
     }
 
@@ -2053,7 +2053,7 @@ impl TuiApp {
     ///
     /// Prefer this over [`Self::sync_context_estimate`] when the provider
     /// reported prompt-side tokens for the request that was just sent.
-    pub fn set_context_from_usage(&mut self, usage: &whycode_core::types::Usage) {
+    pub fn set_context_from_usage(&mut self, usage: &whycodes_core::types::Usage) {
         self.context_used = context_tokens_from_usage(usage);
     }
 
@@ -2062,7 +2062,7 @@ impl TuiApp {
     /// Use when provider usage is missing or stale (resume, compact, undo,
     /// silent stream). Never use cumulative `session.usage` here — that is
     /// billed tokens across all turns, not current window fill.
-    pub fn sync_context_estimate(&mut self, session: &whycode_session::session::Session) {
+    pub fn sync_context_estimate(&mut self, session: &whycodes_session::session::Session) {
         self.context_used = session.token_count() as u64;
     }
 
@@ -2087,8 +2087,13 @@ impl TuiApp {
                 .as_ref()
                 .is_some_and(|(p, m)| p == provider && m == model)
         });
-        self.max_context_tokens =
-            whycode_llm::resolve_context_window(provider, model, configured, api, session_fallback);
+        self.max_context_tokens = whycodes_llm::resolve_context_window(
+            provider,
+            model,
+            configured,
+            api,
+            session_fallback,
+        );
     }
 
     /// Apply a single-model context window from `GET /v1/models` and re-resolve.
@@ -2768,11 +2773,11 @@ impl TuiApp {
     /// Used when resuming via the session picker, `/resume`, or `--continue`.
     /// Tool-role messages are folded into the matching assistant tool-call when
     /// possible so the UI matches live turns.
-    pub fn load_messages_from_session(&mut self, session: &whycode_session::session::Session) {
+    pub fn load_messages_from_session(&mut self, session: &whycodes_session::session::Session) {
         self.messages = chat_messages_from_session(session);
         self.session_title = session.title.clone();
         self.session_id = session.id.clone();
-        self.replace_todos(whycode_core::todo::load_todos(
+        self.replace_todos(whycodes_core::todo::load_todos(
             &self.project_dir,
             if session.id.is_empty() {
                 None
@@ -2886,9 +2891,9 @@ impl TuiApp {
 
     /// Replace the session todo list. Auto-collapses when every item is
     /// terminal; unfolds again when new open work arrives.
-    pub fn replace_todos(&mut self, todos: Vec<whycode_core::TodoItem>) {
-        let was_all_done = whycode_core::todo::all_terminal(&self.todos);
-        let all_done = whycode_core::todo::all_terminal(&todos);
+    pub fn replace_todos(&mut self, todos: Vec<whycodes_core::TodoItem>) {
+        let was_all_done = whycodes_core::todo::all_terminal(&self.todos);
+        let all_done = whycodes_core::todo::all_terminal(&todos);
         self.todos = todos;
         if self.todos.is_empty() {
             self.todos_collapsed = false;
@@ -3122,8 +3127,10 @@ impl TuiApp {
 }
 
 /// Build display messages from a persisted session transcript.
-pub fn chat_messages_from_session(session: &whycode_session::session::Session) -> Vec<ChatMessage> {
-    use whycode_core::types::{ContentBlock, MessageContent, Role};
+pub fn chat_messages_from_session(
+    session: &whycodes_session::session::Session,
+) -> Vec<ChatMessage> {
+    use whycodes_core::types::{ContentBlock, MessageContent, Role};
 
     let mut out: Vec<ChatMessage> = Vec::new();
 
@@ -3185,10 +3192,10 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                 // session event, not a collapsed ❯ prompt — show the summary
                 // body as a system card so the 9 sections stay readable.
                 let (role, content) =
-                    if role == ChatRole::User && whycode_session::is_compact_summary_text(t) {
+                    if role == ChatRole::User && whycodes_session::is_compact_summary_text(t) {
                         (
                             ChatRole::System,
-                            whycode_session::compact_summary_display_text(t),
+                            whycodes_session::compact_summary_display_text(t),
                         )
                     } else {
                         (role, t.clone())
@@ -3247,10 +3254,12 @@ pub fn chat_messages_from_session(session: &whycode_session::session::Session) -
                         }
                         ContentBlock::Image { source } => {
                             let label = match source {
-                                whycode_core::types::ImageSource::Url { url } => {
+                                whycodes_core::types::ImageSource::Url { url } => {
                                     url.rsplit('/').next().unwrap_or("image").to_string()
                                 }
-                                whycode_core::types::ImageSource::Base64 { media_type, .. } => {
+                                whycodes_core::types::ImageSource::Base64 {
+                                    media_type, ..
+                                } => {
                                     format!("image ({media_type})")
                                 }
                             };
@@ -3371,7 +3380,7 @@ pub(crate) fn git_output_timeout(
 mod state_tests {
     use super::*;
     use crate::config::TuiAppConfig;
-    use whycode_tools::question::QuestionOption;
+    use whycodes_tools::question::QuestionOption;
 
     fn app() -> TuiApp {
         TuiApp::from_config(TuiAppConfig::default())

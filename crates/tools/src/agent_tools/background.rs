@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// List / read / kill background shell jobs. Intercepted by the agent loop.
 pub struct BgTool;

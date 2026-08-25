@@ -14,12 +14,12 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use whycode_agent::agent::Agent;
-use whycode_agent::permission::{ChannelPermissionPrompter, PermissionRequest};
-use whycode_agent::{CancelFlag, ChannelQuestionPrompter, QuestionRequest, TurnEvent};
-use whycode_session::SessionHistory;
-use whycode_session::session::Session;
-use whycode_storage::db::Database;
+use whycodes_agent::agent::Agent;
+use whycodes_agent::permission::{ChannelPermissionPrompter, PermissionRequest};
+use whycodes_agent::{CancelFlag, ChannelQuestionPrompter, QuestionRequest, TurnEvent};
+use whycodes_session::SessionHistory;
+use whycodes_session::session::Session;
+use whycodes_storage::db::Database;
 
 use crate::app::{AgentState, ChatMessage, ChatRole};
 use crate::run::TurnOutcome;
@@ -28,9 +28,9 @@ use crate::run::TurnOutcome;
 /// of the app; SQLite serializes writers). `None` when the data dir is
 /// unavailable.
 fn open_runtime_db() -> Option<Database> {
-    let data_dir = whycode_config::Config::data_dir().ok()?;
+    let data_dir = whycodes_config::Config::data_dir().ok()?;
     std::fs::create_dir_all(&data_dir).ok()?;
-    let db_path = data_dir.join("whycode.db");
+    let db_path = data_dir.join("whycodes.db");
     Database::open(&db_path.to_string_lossy()).ok()
 }
 
@@ -95,11 +95,11 @@ pub struct ViewSnapshot {
     pub input_cursor: usize,
     pub intent_badge: Option<String>,
     pub intent_kind: Option<String>,
-    pub turn_usage: Option<whycode_core::types::Usage>,
+    pub turn_usage: Option<whycodes_core::types::Usage>,
     pub context_used: u64,
     pub pending_suggestion: Option<String>,
     pub session_id: String,
-    pub todos: Vec<whycode_core::TodoItem>,
+    pub todos: Vec<whycodes_core::TodoItem>,
     pub todos_collapsed: bool,
 }
 
@@ -234,7 +234,7 @@ impl SessionRuntime {
             return;
         };
         if let Err(e) = self.session.save_to_db(db) {
-            whycode_core::logging::emit_sid(
+            whycodes_core::logging::emit_sid(
                 "session",
                 "warn",
                 "session.persist_failed",
@@ -419,13 +419,13 @@ mod tests {
     // ── helpers ────────────────────────────────────────────────────────
 
     /// Point the data dir at a throwaway temp dir once per test binary so
-    /// `SessionRuntime::new` (which opens `whycode.db`) never touches real
+    /// `SessionRuntime::new` (which opens `whycodes.db`) never touches real
     /// user data. Parallel tests share the same isolated root.
     fn isolate_data_dir() {
         use std::sync::OnceLock;
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
         let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
-        unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     }
 
     fn perm_request() -> PermissionRequest {
@@ -440,9 +440,9 @@ mod tests {
     fn question_request() -> QuestionRequest {
         let (tx, _rx) = tokio::sync::oneshot::channel();
         QuestionRequest {
-            questions: vec![whycode_tools::question::QuestionSpec {
+            questions: vec![whycodes_tools::question::QuestionSpec {
                 prompt: "Pick?".into(),
-                options: vec![whycode_tools::question::QuestionOption {
+                options: vec![whycodes_tools::question::QuestionOption {
                     label: "A".into(),
                     description: String::new(),
                     preview: None,
@@ -454,9 +454,9 @@ mod tests {
     }
 
     fn make_runtime() -> SessionRuntime {
-        use whycode_core::types::{AgentInfo, AgentMode, PermissionSet};
-        use whycode_session::SessionHistory;
-        use whycode_session::session::Session;
+        use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet};
+        use whycodes_session::SessionHistory;
+        use whycodes_session::session::Session;
 
         isolate_data_dir();
         let info = AgentInfo {
@@ -469,7 +469,7 @@ mod tests {
             temperature: None,
             top_p: None,
         };
-        let agent = whycode_agent::agent::Agent::new(info);
+        let agent = whycodes_agent::agent::Agent::new(info);
         let session = Session::new(std::path::PathBuf::from("/work/proj"), "sys".into());
         let history = SessionHistory::new();
         let (event_tx, event_rx) = mpsc::unbounded_channel();

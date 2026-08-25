@@ -1,10 +1,10 @@
 [package]
-name = "whycode-auth"
+name = "whycodes-auth"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "OAuth login flows and token storage for Whycode subscription auth"
+description = "OAuth login flows and token storage for WhyCodes subscription auth"
 
 [dependencies]
 serde.workspace = true

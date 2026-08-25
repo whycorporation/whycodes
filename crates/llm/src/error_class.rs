@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use serde::Deserialize;
-use whycode_core::Error;
+use whycodes_core::Error;
 
 use crate::rate_limit::parse_retry_after;
 
@@ -87,7 +87,7 @@ impl ClassifiedError {
             ErrorKind::Auth => {
                 let lower = self.message.to_ascii_lowercase();
                 if lower.contains("xai") {
-                    return "xAI authentication failed — run `whycode auth login xai` (or set XAI_API_KEY)".into();
+                    return "xAI authentication failed — run `whycodes auth login xai` (or set XAI_API_KEY)".into();
                 }
                 if lower.contains("not eligible") && lower.contains("code assist") {
                     // Gemini Code Assist free-tier eligibility is account-based;
@@ -111,7 +111,7 @@ impl ClassifiedError {
                     return format!("Forbidden by the provider (HTTP 403): {reason}");
                 }
                 if lower.contains("code assist") {
-                    return "Google authentication failed — run `whycode auth login google-antigravity` (or `google`)".into();
+                    return "Google authentication failed — run `whycodes auth login google-antigravity` (or `google`)".into();
                 }
                 "Authentication failed — check API key".into()
             }
@@ -808,7 +808,7 @@ mod tests {
 
     #[test]
     fn classify_wraps_core_error_display() {
-        let err = whycode_core::Error::Llm("Provider API error (500): internal".into());
+        let err = whycodes_core::Error::Llm("Provider API error (500): internal".into());
         let c = classify(&err);
         assert_eq!(c.kind, ErrorKind::Server);
         assert_eq!(c.message, "LLM error: Provider API error (500): internal");

@@ -1,14 +1,14 @@
 /// Integration tests for LLM provider body building, retry, and fallback.
-use whycode_core::types::{
+use whycodes_core::types::{
     ContentBlock, LlmRequest, Message, MessageContent, Role, ToolDefinition,
 };
-use whycode_llm::anthropic::AnthropicProvider;
-use whycode_llm::deepseek::DeepSeekProvider;
-use whycode_llm::fallback::FallbackChain;
-use whycode_llm::openai::OpenAiProvider;
-use whycode_llm::openrouter::OpenRouterProvider;
-use whycode_llm::provider::LlmProvider;
-use whycode_llm::retry;
+use whycodes_llm::anthropic::AnthropicProvider;
+use whycodes_llm::deepseek::DeepSeekProvider;
+use whycodes_llm::fallback::FallbackChain;
+use whycodes_llm::openai::OpenAiProvider;
+use whycodes_llm::openrouter::OpenRouterProvider;
+use whycodes_llm::provider::LlmProvider;
+use whycodes_llm::retry;
 
 fn make_basic_request() -> LlmRequest {
     LlmRequest {
@@ -249,7 +249,7 @@ fn test_openai_build_body_sends_reasoning_effort() {
 
 #[test]
 fn test_xai_build_body_sends_reasoning_effort() {
-    let provider = whycode_llm::xai::XaiProvider::new();
+    let provider = whycodes_llm::xai::XaiProvider::new();
     let mut request = make_basic_request();
     request.thinking = Some(serde_json::json!({
         "enabled": true,
@@ -283,12 +283,12 @@ fn test_anthropic_tools_get_cache_breakpoint_on_last() {
     let provider = AnthropicProvider::new();
     let mut request = make_basic_request();
     request.tools = vec![
-        whycode_core::types::ToolDefinition {
+        whycodes_core::types::ToolDefinition {
             name: "read".into(),
             description: "read a file".into(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         },
-        whycode_core::types::ToolDefinition {
+        whycodes_core::types::ToolDefinition {
             name: "grep".into(),
             description: "search".into(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -333,7 +333,7 @@ fn test_openai_build_body() {
 fn test_openai_build_body_with_tools() {
     let provider = OpenAiProvider::new();
     let mut request = make_basic_request();
-    request.tools = vec![whycode_core::types::ToolDefinition {
+    request.tools = vec![whycodes_core::types::ToolDefinition {
         name: "search".to_string(),
         description: "Search the web".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
@@ -404,19 +404,20 @@ fn test_openrouter_has_headers() {
 }
 
 #[test]
-fn test_openrouter_defaults_to_whycode_identity() {
+fn test_openrouter_defaults_to_whycodes_identity() {
     let provider = OpenRouterProvider::new();
     assert_eq!(
         provider.site_url.as_deref(),
-        Some(whycode_llm::HTTP_REFERER)
+        Some(whycodes_llm::HTTP_REFERER)
     );
-    assert_eq!(provider.site_name.as_deref(), Some(whycode_llm::X_TITLE));
+    assert_eq!(provider.site_name.as_deref(), Some(whycodes_llm::X_TITLE));
 }
 
 #[test]
 fn test_client_identity_user_agent() {
-    assert!(whycode_llm::USER_AGENT.starts_with("whycode/"));
-    assert_eq!(whycode_llm::X_TITLE, "whycode");
+    assert!(whycodes_llm::USER_AGENT.starts_with("whycodes/"));
+    assert_eq!(whycodes_llm::X_TITLE, "whycodes");
+    assert_eq!(whycodes_llm::HTTP_REFERER, "https://why.codes");
 }
 
 #[test]
@@ -436,7 +437,7 @@ fn test_openrouter_body_is_openai_compatible() {
 #[tokio::test]
 async fn test_retry_backoff_successful_first_try() {
     let result = retry::retry_with_backoff(
-        || async { Ok::<&str, whycode_core::Error>("success") },
+        || async { Ok::<&str, whycodes_core::Error>("success") },
         3,
         10,
     )
@@ -449,7 +450,7 @@ async fn test_retry_backoff_non_retryable_error() {
     // A 400 error is not retryable — should fail immediately
     let result = retry::retry_with_backoff(
         || async move {
-            Err::<String, _>(whycode_core::Error::Llm(
+            Err::<String, _>(whycodes_core::Error::Llm(
                 "Bad request (400): Invalid input".to_string(),
             ))
         },
@@ -475,7 +476,7 @@ async fn test_retry_backoff_retryable_error_retries() {
             async move {
                 let n = count.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
-                    Err(whycode_core::Error::Llm(
+                    Err(whycodes_core::Error::Llm(
                         "Rate limit (429): Too many requests".to_string(),
                     ))
                 } else {

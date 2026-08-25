@@ -5,8 +5,8 @@ use serde_json::json;
 use std::path::PathBuf;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
-use whycode_memory::{MemoryService, MemorySettings};
+use whycodes_core::types::ToolResult;
+use whycodes_memory::{MemoryService, MemorySettings};
 
 pub struct MemoryTool;
 
@@ -23,15 +23,15 @@ impl MemoryTool {
 }
 
 fn data_dir() -> PathBuf {
-    whycode_core::paths::data_dir()
+    whycodes_core::paths::data_dir()
 }
 
 fn service_for(ctx: &ToolContext) -> Result<MemoryService, String> {
-    if std::env::var("WHYCODE_NO_MEMORY")
+    if std::env::var("WHYCODES_NO_MEMORY")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
     {
-        return Err("memory is disabled (WHYCODE_NO_MEMORY)".into());
+        return Err("memory is disabled (WHYCODES_NO_MEMORY)".into());
     }
     let project = PathBuf::from(&ctx.working_dir);
     MemoryService::open(project, data_dir(), MemorySettings::default())
@@ -192,7 +192,7 @@ impl Tool for MemoryTool {
                 }
                 match svc.search_code(q, limit, 0.12) {
                     Ok(hits) if hits.is_empty() => Ok(
-                        "No code hits. Run memory action=index first (or `whycode memory index`)."
+                        "No code hits. Run memory action=index first (or `whycodes memory index`)."
                             .into(),
                     ),
                     Ok(hits) => {

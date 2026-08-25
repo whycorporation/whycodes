@@ -5,7 +5,7 @@
 
 ## Problem
 
-The only way to get whycode is:
+The only way to get whycodes is:
 
 ```bash
 git clone … && cargo build --release
@@ -14,7 +14,7 @@ git clone … && cargo build --release
 That requires a Rust toolchain and several minutes of compilation. It excludes
 everyone who wants to try the tool rather than work on it.
 
-`whycode upgrade` compounds it. `--help` advertises it as "Self-update", but
+`whycodes upgrade` compounds it. `--help` advertises it as "Self-update", but
 the implementation prints instructions to re-clone and `cargo install`. The
 command lies about what it does.
 
@@ -23,8 +23,8 @@ installer, and a Homebrew tap, plus `release.yml` and `uninstall` scripts.
 
 ## Goal
 
-A user on Linux, macOS or Windows can install a working whycode without a Rust
-toolchain, and `whycode upgrade` actually upgrades.
+A user on Linux, macOS or Windows can install a working whycodes without a Rust
+toolchain, and `whycodes upgrade` actually upgrades.
 
 ## Scope
 
@@ -35,14 +35,14 @@ In:
 - `install.sh` and `install.ps1` that download the right artifact, verify its
   checksum and place it on `PATH`.
 - `uninstall.sh` / `uninstall.ps1`.
-- A real `whycode upgrade`: check the latest release, compare versions,
+- A real `whycodes upgrade`: check the latest release, compare versions,
   download, verify, replace the running binary.
 - Version output that includes the commit and build date.
 
 Out (full automation — partial scaffolding exists):
 
 - Dedicated Homebrew tap repo, AUR, winget, Nix. Each is ongoing maintenance.
-  **Done (2026-08-14):** in-repo binary `Formula/whycode.rb` for `v0.1.0`;
+  **Done (2026-08-14):** in-repo binary `Formula/whycodes.rb` for `v0.1.0`;
   `release.yml` re-runs `scripts/update_homebrew_formula.sh` after each tag.
   See [packaging.md](../packaging.md). Dedicated tap repo still later.
 - Code signing and notarization. macOS Gatekeeper will warn. Document it
@@ -59,14 +59,14 @@ Out (full automation — partial scaffolding exists):
 - [x] `scripts/install.sh`: detect OS and architecture, download, verify
       checksum, install to `~/.local/bin`, warn if it is not on `PATH`
 - [x] `scripts/install.ps1`: the same for Windows, installing under
-      `%LOCALAPPDATA%\Programs\whycode`
+      `%LOCALAPPDATA%\Programs\whycodes`
 - [x] `scripts/uninstall.sh` and `scripts/uninstall.ps1`
 - [x] Implement `cmd_upgrade` against the GitHub releases API, with atomic
       replacement (download to a temp path, verify, rename over the target)
 - [x] `--version` reports version, short commit hash and build date
-      (`crates/cli/build.rs` → `whycode 0.1.0 (<hash> <YYYY-MM-DD>)`)
+      (`crates/cli/build.rs` → `whycodes 0.1.0 (<hash> <YYYY-MM-DD>)`)
 - [x] README: install section leads with the scripts, source build second
-- [x] Partial Homebrew: `Formula/whycode.rb` (HEAD/source) +
+- [x] Partial Homebrew: `Formula/whycodes.rb` (HEAD/source) +
       `scripts/update_homebrew_formula.sh` for post-release binary formula
 - [x] Homebrew: binary formula for `v0.1.0` + `release.yml` auto-bump on
       later tags
@@ -78,12 +78,12 @@ Out (full automation — partial scaffolding exists):
       platforms plus `SHA256SUMS`, with no manual step
       (2026-08-04: [release v0.1.0](https://github.com/whycorporation/whycode/releases/tag/v0.1.0))
 - [x] `install.sh` on a machine with no Rust toolchain yields a runnable
-      `whycode --version` — verified with `GITHUB_TOKEN` while the repo is
+      `whycodes --version` — verified with `GITHUB_TOKEN` while the repo is
       **private** (anonymous `/releases/download/` URLs 404 until the repo is public)
 - [ ] `install.ps1` does the same on Windows (not exercised here; same asset set)
 - [x] A tampered artifact fails checksum verification (local digest mismatch check)
-- [x] `whycode upgrade` on the newest version says so and exits 0 (with token on private)
-- [x] `whycode upgrade` failing mid-download leaves the existing binary intact
+- [x] `whycodes upgrade` on the newest version says so and exits 0 (with token on private)
+- [x] `whycodes upgrade` failing mid-download leaves the existing binary intact
       (unit: `replace_binary` restore path)
 - [x] Uninstall removes the binary and reports what it removed; it does not
       touch the config or data directories without `--purge`
@@ -125,9 +125,9 @@ git tag v0.1.0 && git push origin v0.1.0
 
 That runs `.github/workflows/release.yml`, which builds all four targets,
 generates `SHA256SUMS` and publishes the release. The installers and
-`whycode upgrade` can then be run against it, and the remaining boxes ticked.
+`whycodes upgrade` can then be run against it, and the remaining boxes ticked.
 After a green release, `release.yml` runs `scripts/update_homebrew_formula.sh`
-and commits `Formula/whycode.rb` to `main`. Manual backfill is the same script.
+and commits `Formula/whycodes.rb` to `main`. Manual backfill is the same script.
 
 Unit-tested without a release: version comparison, `SHA256SUMS` parsing
 (including the `*` binary marker `sha256sum` writes), and that `replace_binary`

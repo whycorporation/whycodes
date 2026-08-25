@@ -6,13 +6,13 @@
 //! idle redraws — a loop that repaints when nothing changed burns CPU
 //! invisibly, and the only way to see it is to count.
 //!
-//! So the loop reports on itself. Setting `WHYCODE_BENCH` to a file path turns
+//! So the loop reports on itself. Setting `WHYCODES_BENCH` to a file path turns
 //! this on; everything here is inert otherwise, and the checks are two atomic
 //! loads per frame.
 //!
 //! ```text
-//! WHYCODE_BENCH=/tmp/out.json                  exit as soon as the first frame is up
-//! WHYCODE_BENCH_DURATION_MS=2000               … or keep drawing for 2s and count
+//! WHYCODES_BENCH=/tmp/out.json                  exit as soon as the first frame is up
+//! WHYCODES_BENCH_DURATION_MS=2000               … or keep drawing for 2s and count
 //! ```
 //!
 //! The file it writes holds the in-process split. The harness measures spawn to
@@ -54,10 +54,10 @@ pub struct BenchConfig {
 /// Read the environment. `None` when benchmarking is off, which is the normal
 /// case.
 pub fn config_from_env() -> Option<BenchConfig> {
-    let output = std::env::var("WHYCODE_BENCH")
+    let output = std::env::var("WHYCODES_BENCH")
         .ok()
         .filter(|s| !s.is_empty())?;
-    let duration = std::env::var("WHYCODE_BENCH_DURATION_MS")
+    let duration = std::env::var("WHYCODES_BENCH_DURATION_MS")
         .ok()
         .and_then(|s| s.parse::<u64>().ok())
         .map(Duration::from_millis)
@@ -144,7 +144,7 @@ pub fn write_results(config: &BenchConfig) {
     let measurement = measure();
     if let Err(e) = std::fs::write(&config.output, measurement.to_json()) {
         eprintln!(
-            "whycode: could not write benchmark results to {}: {e}",
+            "whycodes: could not write benchmark results to {}: {e}",
             config.output.display()
         );
     }
@@ -225,7 +225,7 @@ mod tests {
     fn benchmarking_is_off_without_the_environment_variable() {
         // The variable is not set in the test environment, so this is the
         // normal path: no config, and the loop pays nothing.
-        if std::env::var("WHYCODE_BENCH").is_err() {
+        if std::env::var("WHYCODES_BENCH").is_err() {
             assert!(config_from_env().is_none());
         }
     }

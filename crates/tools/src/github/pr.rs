@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use super::api;
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 pub struct GitHubPrTool;
 

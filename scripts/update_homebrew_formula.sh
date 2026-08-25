@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Update Formula/whycode.rb for a published GitHub release.
+# Update Formula/whycodes.rb for a published GitHub release.
 #
 # After `release.yml` attaches binaries and SHA256SUMS, this rewrites the
 # formula as a prebuilt-binary install (macOS + Linux x86_64). Artifact names
@@ -11,17 +11,17 @@
 #
 #   scripts/update_homebrew_formula.sh v0.1.0
 #   scripts/update_homebrew_formula.sh 0.1.0          # leading v optional
-#   WHYCODE_REPO=owner/repo scripts/update_homebrew_formula.sh v0.1.0
-#   WHYCODE_SHA256SUMS=/path/to/SHA256SUMS scripts/update_homebrew_formula.sh v0.1.0
+#   WHYCODES_REPO=owner/repo scripts/update_homebrew_formula.sh v0.1.0
+#   WHYCODES_SHA256SUMS=/path/to/SHA256SUMS scripts/update_homebrew_formula.sh v0.1.0
 #
 # Requires: curl. Uses `gh` when available (private releases). Does not
 # commit — the workflow (or a reviewer) does that.
 
 set -eu
 
-REPO="${WHYCODE_REPO:-whycorporation/whycode}"
+REPO="${WHYCODES_REPO:-whycorporation/whycode}"
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-FORMULA="${WHYCODE_FORMULA:-$ROOT/Formula/whycode.rb}"
+FORMULA="${WHYCODES_FORMULA:-$ROOT/Formula/whycodes.rb}"
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -42,9 +42,9 @@ trap 'rm -rf "$tmp"' EXIT
 sums="$tmp/SHA256SUMS"
 
 fetch_sums() {
-    if [ -n "${WHYCODE_SHA256SUMS:-}" ]; then
-        [ -f "$WHYCODE_SHA256SUMS" ] || die "WHYCODE_SHA256SUMS is not a file: $WHYCODE_SHA256SUMS"
-        cp "$WHYCODE_SHA256SUMS" "$sums"
+    if [ -n "${WHYCODES_SHA256SUMS:-}" ]; then
+        [ -f "$WHYCODES_SHA256SUMS" ] || die "WHYCODES_SHA256SUMS is not a file: $WHYCODES_SHA256SUMS"
+        cp "$WHYCODES_SHA256SUMS" "$sums"
         return 0
     fi
 
@@ -78,9 +78,9 @@ digest_for() {
 }
 
 # Artifact names must match release.yml + install.sh / upgrade.rs.
-linux_x64="whycode-x86_64-unknown-linux-gnu.tar.gz"
-mac_arm="whycode-aarch64-apple-darwin.tar.gz"
-mac_x64="whycode-x86_64-apple-darwin.tar.gz"
+linux_x64="whycodes-x86_64-unknown-linux-gnu.tar.gz"
+mac_arm="whycodes-aarch64-apple-darwin.tar.gz"
+mac_x64="whycodes-x86_64-apple-darwin.tar.gz"
 
 sha_linux_x64="$(digest_for "$linux_x64")"
 sha_mac_arm="$(digest_for "$mac_arm")"
@@ -99,14 +99,14 @@ cat > "$FORMULA" <<EOF
 #
 # Install:
 #   brew tap whycorporation/whycode https://github.com/${REPO}
-#   brew install whycode
+#   brew install whycodes
 #
 # Source tip (needs a Rust toolchain):
-#   brew install --HEAD whycode
+#   brew install --HEAD whycodes
 
-class Whycode < Formula
+class Whycodes < Formula
   desc "Terminal coding agent written in Rust"
-  homepage "https://github.com/${REPO}"
+  homepage "https://why.codes"
   version "${version}"
   license "MIT"
 
@@ -138,16 +138,16 @@ class Whycode < Formula
     if build.head?
       system "cargo", "install", *std_cargo_args(path: "crates/cli")
     else
-      bin.install "whycode"
+      bin.install "whycodes"
     end
   end
 
   test do
-    assert_match "whycode", shell_output("#{bin}/whycode --version")
+    assert_match "whycodes", shell_output("#{bin}/whycodes --version")
   end
 end
 EOF
 
 printf 'Updated %s\n' "$FORMULA"
 printf 'Next: review the diff (CI commits this on release).\n'
-printf 'Users: brew update && brew upgrade whycode  (or reinstall)\n'
+printf 'Users: brew update && brew upgrade whycodes  (or reinstall)\n'

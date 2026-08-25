@@ -1,6 +1,6 @@
 # TUI terminal matrix
 
-`cargo test -p whycode-tui` paints into a ratatui buffer. It does **not**
+`cargo test -p whycodes-tui` paints into a ratatui buffer. It does **not**
 exercise a real PTY or emulator CSI/OSC. Colour, mouse, clipboard, paste, and
 keyboard-enhancement flags only show up in a host like Alacritty.
 
@@ -10,7 +10,7 @@ This page is the manual pass. Launch helpers live in
 ## Launch
 
 ```bash
-cargo build -p whycode-cli
+cargo build -p whycodes-cli
 scripts/tui_term_matrix.sh --list          # which hosts are on PATH
 scripts/tui_term_matrix.sh                 # open every installed default host
 scripts/tui_term_matrix.sh alacritty kitty # subset
@@ -19,7 +19,7 @@ scripts/tui_term_matrix.sh alacritty kitty # subset
 Same binary in every window (`BIN=…` / `DIR=…` override). After a bad run:
 
 ```bash
-tail -40 ~/.local/share/whycode/logs/unified.jsonl
+tail -40 ~/.local/share/whycodes/logs/unified.jsonl
 ```
 
 Look for `tui.starting` (`stdin_tty` / `stdout_tty`), `tui.ready`
@@ -41,7 +41,7 @@ Look for `tui.starting` (`stdin_tty` / `stdout_tty`), `tui.ready`
 Minimum useful set: **Alacritty + Kitty + WezTerm + one VTE**. Add **foot** on
 Wayland.
 
-Whycode does not special-case `TERM` strings. Behaviour is whatever the
+WhyCodes does not special-case `TERM` strings. Behaviour is whatever the
 emulator implements. Setup is in `crates/tui/src/run.rs`: `/dev/tty`,
 alt-screen, mouse capture, bracketed paste, and (when
 `supports_keyboard_enhancement`) `DISAMBIGUATE_ESCAPE_CODES`.
@@ -70,7 +70,7 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 Reproduce “dumb host” without installing another terminal:
 
 ```bash
-BIN="${BIN:-target/debug/whycode}"
+BIN="${BIN:-target/debug/whycodes}"
 
 # 256 colour, no COLORTERM
 env -u COLORTERM TERM=xterm-256color "$BIN" -d .
@@ -79,17 +79,17 @@ env -u COLORTERM TERM=xterm-256color "$BIN" -d .
 TERM=xterm "$BIN" -d .
 
 # Force the readline REPL
-WHYCODE_PLAIN=1 "$BIN" -d .
+WHYCODES_PLAIN=1 "$BIN" -d .
 # or: "$BIN" --plain -d .
 ```
 
-`WHYCODE_PLAIN` / `--plain` must **not** open alt-screen.
+`WHYCODES_PLAIN` / `--plain` must **not** open alt-screen.
 
 ## What CI already covers
 
 | Layer | Command | Sees a real emulator? |
 |-------|---------|------------------------|
-| Widget / layout / clipboard string trim | `cargo test -p whycode-tui` | No |
+| Widget / layout / clipboard string trim | `cargo test -p whycodes-tui` | No |
 | First-frame / RSS benches | `scripts/bench_*.py` | No (or tmux-ish PTY only) |
 | CSI/OSC, mouse, Shift+Enter | this matrix | Yes |
 

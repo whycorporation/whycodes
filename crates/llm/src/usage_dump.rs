@@ -1,6 +1,6 @@
 //! Optional dump of raw provider `usage` objects for live reconcile.
 //!
-//! Set `WHYCODE_USAGE_DUMP` to a file path (append JSONL) or `1`/`-` for
+//! Set `WHYCODES_USAGE_DUMP` to a file path (append JSONL) or `1`/`-` for
 //! stderr. Unset or `0` disables the dump. One line per parsed usage object:
 //!
 //! ```json
@@ -8,7 +8,7 @@
 //! ```
 //!
 //! The script `scripts/reconcile_token_usage.py` compares the last snapshot
-//! against `whycode generate --format json` session usage.
+//! against `whycodes generate --format json` session usage.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -16,12 +16,12 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-/// Write one raw usage object if `WHYCODE_USAGE_DUMP` is set.
+/// Write one raw usage object if `WHYCODES_USAGE_DUMP` is set.
 pub fn dump_raw_usage(source: &str, usage: &Value) {
     if !usage.is_object() {
         return;
     }
-    let Ok(dest) = std::env::var("WHYCODE_USAGE_DUMP") else {
+    let Ok(dest) = std::env::var("WHYCODES_USAGE_DUMP") else {
         return;
     };
     if dest.is_empty() || dest == "0" {
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn write_line_appends_jsonl() {
         let dir = std::env::temp_dir().join(format!(
-            "whycode-usage-dump-{}-{}",
+            "whycodes-usage-dump-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

@@ -1,12 +1,12 @@
 #!/usr/bin/env sh
-# Remove the whycode binary.
+# Remove the whycodes binary.
 #
 # Config and session data are left alone unless --purge is given: a user
 # uninstalling to reinstall should not lose their providers and history.
 
 set -eu
 
-INSTALL_DIR="${WHYCODE_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${WHYCODES_INSTALL_DIR:-$HOME/.local/bin}"
 PURGE=0
 
 for arg in "$@"; do
@@ -17,19 +17,23 @@ for arg in "$@"; do
 done
 
 removed=0
-if [ -f "$INSTALL_DIR/whycode" ]; then
-    rm -f "$INSTALL_DIR/whycode"
-    printf 'Removed %s\n' "$INSTALL_DIR/whycode"
+if [ -f "$INSTALL_DIR/whycodes" ]; then
+    rm -f "$INSTALL_DIR/whycodes"
+    printf 'Removed %s\n' "$INSTALL_DIR/whycodes"
     removed=1
 else
-    printf 'No binary at %s\n' "$INSTALL_DIR/whycode"
+    printf 'No binary at %s\n' "$INSTALL_DIR/whycodes"
 fi
 
 if [ "$PURGE" -eq 1 ]; then
     for dir in \
+        "${XDG_CONFIG_HOME:-$HOME/.config}/whycodes" \
         "${XDG_CONFIG_HOME:-$HOME/.config}/whycode" \
+        "${XDG_DATA_HOME:-$HOME/.local/share}/whycodes" \
         "${XDG_DATA_HOME:-$HOME/.local/share}/whycode" \
+        "$HOME/Library/Application Support/com.whycorporation.whycodes" \
         "$HOME/Library/Application Support/com.whycorporation.whycode" \
+        "$HOME/Library/Caches/com.whycorporation.whycodes" \
         "$HOME/Library/Caches/com.whycorporation.whycode"
     do
         if [ -d "$dir" ]; then

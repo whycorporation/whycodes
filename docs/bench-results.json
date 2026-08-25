@@ -6,7 +6,7 @@
     "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
     "kernel": "7.1.6-1-cachyos"
   },
-  "binary": "target/release/whycode",
+  "binary": "target/release/whycodes",
   "profile": "release",
   "binary_size_mb": 14.9,
   "version_ms_p95": 7.0,

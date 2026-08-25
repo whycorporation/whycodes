@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use tracing::warn;
 
-use whycode_core::types::{LlmRequest, LlmResponse};
+use whycodes_core::types::{LlmRequest, LlmResponse};
 
 use super::provider::ProviderRegistry;
 
@@ -35,8 +35,8 @@ impl FallbackChain {
         &self,
         request: &LlmRequest,
         registry: &ProviderRegistry,
-    ) -> whycode_core::Result<LlmResponse> {
-        let mut last_error: Option<whycode_core::Error> = None;
+    ) -> whycodes_core::Result<LlmResponse> {
+        let mut last_error: Option<whycodes_core::Error> = None;
 
         for (idx, (provider_name, model)) in self.entries.iter().enumerate() {
             let provider = match registry.get(provider_name) {
@@ -81,7 +81,7 @@ impl FallbackChain {
         }
 
         Err(last_error.unwrap_or_else(|| {
-            whycode_core::Error::Provider("All fallback providers exhausted".to_string())
+            whycodes_core::Error::Provider("All fallback providers exhausted".to_string())
         }))
     }
 }
@@ -91,7 +91,7 @@ mod tests {
     use super::*;
     use crate::provider::{LlmProvider, ProviderRegistry};
     use crate::scripted::{ScriptedProvider, ScriptedStep};
-    use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
 
     fn req() -> LlmRequest {
         LlmRequest {
@@ -162,7 +162,7 @@ mod tests {
         let resp = chain.complete(&req(), &registry).await.unwrap();
         assert_eq!(resp.model, "m1");
         let text = match &resp.content[0] {
-            whycode_core::types::ContentBlock::Text { text } => text.as_str(),
+            whycodes_core::types::ContentBlock::Text { text } => text.as_str(),
             other => panic!("expected text, got {other:?}"),
         };
         assert_eq!(text, "ok");
@@ -187,7 +187,7 @@ mod tests {
         let resp = chain.complete(&req(), &registry).await.unwrap();
         assert_eq!(resp.model, "m2");
         let text = match &resp.content[0] {
-            whycode_core::types::ContentBlock::Text { text } => text.as_str(),
+            whycodes_core::types::ContentBlock::Text { text } => text.as_str(),
             other => panic!("expected text, got {other:?}"),
         };
         assert_eq!(text, "recovered");

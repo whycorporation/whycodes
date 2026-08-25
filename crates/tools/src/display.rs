@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use super::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 pub struct DisplayTool;
 
@@ -59,8 +59,10 @@ impl Tool for DisplayTool {
             "code" => {
                 // If language is empty and content looks like a path, try to detect
                 let lang = if language.is_empty() {
-                    whycode_format::highlight::detect_language(content.lines().next().unwrap_or(""))
-                        .unwrap_or("")
+                    whycodes_format::highlight::detect_language(
+                        content.lines().next().unwrap_or(""),
+                    )
+                    .unwrap_or("")
                 } else {
                     language
                 };
@@ -68,10 +70,10 @@ impl Tool for DisplayTool {
                     // No language — return as plain text
                     content.to_string()
                 } else {
-                    whycode_format::highlight::highlight_code(content, lang)
+                    whycodes_format::highlight::highlight_code(content, lang)
                 }
             }
-            "diff" => whycode_format::diff::render_diff_unified(content),
+            "diff" => whycodes_format::diff::render_diff_unified(content),
             "table" => {
                 // Parse content as simple newline-and-comma table
                 content.to_string()

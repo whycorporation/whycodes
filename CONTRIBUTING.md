@@ -10,7 +10,7 @@ Stable Rust is the only requirement:
 ```bash
 git clone https://github.com/whycorporation/whycode.git
 cd whycode
-cargo build -p whycode-cli
+cargo build -p whycodes-cli
 ```
 
 ## Before opening a pull request
@@ -61,7 +61,7 @@ Notes:
 - Agent-facing repo rules are in [AGENTS.md](AGENTS.md); they apply to human
   contributors just the same.
 - Naming: Rust files and modules are `snake_case`; crate directories are
-  short `kebab-case` (package name `whycode-<dir>`); docs outside the repo
+  short `kebab-case` (package name `whycodes-<dir>`); docs outside the repo
   root are `kebab-case.md`; scripts are `snake_case` (`check_*`, `bench_*`,
   `update_*`). Do not repeat a parent directory in the file name
   (`git/blame.rs`, not `git/git_blame.rs`). Root meta files (`README.md`,
@@ -73,7 +73,7 @@ Notes:
 
 Open an issue with the command you ran, what you expected, and what happened.
 For TUI problems, the last lines of
-`~/.local/share/whycode/logs/unified.jsonl` are the fastest diagnostic — see
+`~/.local/share/whycodes/logs/unified.jsonl` are the fastest diagnostic — see
 [docs/knowhow.md](docs/knowhow.md) for what the lifecycle events mean.
 
 Security issues: please use the process in [SECURITY.md](SECURITY.md) instead

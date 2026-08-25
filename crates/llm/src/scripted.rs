@@ -10,11 +10,11 @@ use std::time::Duration;
 use async_trait::async_trait;
 use futures::Stream;
 use serde_json::Value;
-use whycode_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
+use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
 use crate::provider::LlmProvider;
 
-type EventStream = Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>;
+type EventStream = Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>;
 
 /// One scripted action. Consumed in order by [`ScriptedProvider::stream`].
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ impl LlmProvider for ScriptedProvider {
         _request: &LlmRequest,
         _api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         let mut text = String::new();
         let mut usage = Usage::default();
         for step in self.take_steps() {
@@ -99,7 +99,7 @@ impl LlmProvider for ScriptedProvider {
                     usage.output_tokens = output_tokens;
                 }
                 ScriptedStep::Error(msg) | ScriptedStep::FailOpen(msg) => {
-                    return Err(whycode_core::Error::Provider(msg));
+                    return Err(whycodes_core::Error::Provider(msg));
                 }
                 ScriptedStep::Hang(d) => tokio::time::sleep(d).await,
             }
@@ -121,10 +121,10 @@ impl LlmProvider for ScriptedProvider {
         _request: &LlmRequest,
         _api_key: &str,
         _model: &str,
-    ) -> whycode_core::Result<EventStream> {
+    ) -> whycodes_core::Result<EventStream> {
         let steps = self.take_steps();
         if let Some(ScriptedStep::FailOpen(msg)) = steps.first() {
-            return Err(whycode_core::Error::Provider(msg.clone()));
+            return Err(whycodes_core::Error::Provider(msg.clone()));
         }
         Ok(Box::pin(async_stream::stream! {
             for step in steps {
@@ -168,7 +168,7 @@ mod tests {
     use super::*;
     use futures::StreamExt;
     use serde_json::json;
-    use whycode_core::types::{LlmRequest, Message, MessageContent, Role};
+    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role};
 
     fn req() -> LlmRequest {
         LlmRequest {

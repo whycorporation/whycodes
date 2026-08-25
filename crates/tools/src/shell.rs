@@ -3,8 +3,8 @@ use serde_json::json;
 use std::path::PathBuf;
 
 use super::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
-use whycode_sandbox::{SandboxRequest, run as sandbox_run};
+use whycodes_core::types::ToolResult;
+use whycodes_sandbox::{SandboxRequest, run as sandbox_run};
 
 pub struct ShellTool {
     name: &'static str,

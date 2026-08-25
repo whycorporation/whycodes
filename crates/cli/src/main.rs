@@ -6,12 +6,12 @@ use colored::*;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use whycode_agent::agent::Agent;
-use whycode_agent::events::{TurnEvent, new_cancel_flag};
-use whycode_agent::permission::AutoApprovePrompter;
-use whycode_config::Config;
-use whycode_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet, ProviderConfig};
-use whycode_protocol::{CiEvent, OutputFormat, ResultMeta};
+use whycodes_agent::agent::Agent;
+use whycodes_agent::events::{TurnEvent, new_cancel_flag};
+use whycodes_agent::permission::AutoApprovePrompter;
+use whycodes_config::Config;
+use whycodes_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet, ProviderConfig};
+use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 
 /// Crate version only (semver from Cargo.toml).
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -19,20 +19,20 @@ const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Full version string: `0.1.0 (abc1234 2026-08-04)`.
 ///
 /// Git hash and build date come from `build.rs` so release binaries and
-/// `whycode --version` / install smoke checks identify an exact build.
+/// `whycodes --version` / install smoke checks identify an exact build.
 const VERSION_LONG: &str = concat!(
     env!("CARGO_PKG_VERSION"),
     " (",
-    env!("WHYCODE_GIT_HASH"),
+    env!("WHYCODES_GIT_HASH"),
     " ",
-    env!("WHYCODE_BUILD_DATE"),
+    env!("WHYCODES_BUILD_DATE"),
     ")"
 );
 
-/// Whycode — An AI coding agent built in Rust
+/// WhyCodes — An AI coding agent built in Rust
 #[derive(Parser, Debug)]
 #[command(
-    name = "whycode",
+    name = "whycodes",
     version = VERSION_LONG,
     about = "AI-powered coding agent",
     long_about = None
@@ -69,7 +69,7 @@ pub struct Cli {
     #[arg(short = 'r', long = "resume", global = true, value_name = "SESSION_ID")]
     pub resume: Option<String>,
 
-    /// Write debug logs under the data dir (`debug/whycode-*.log` + `debug/latest.log`)
+    /// Write debug logs under the data dir (`debug/whycodes-*.log` + `debug/latest.log`)
     #[arg(long, global = true)]
     pub debug: bool,
 
@@ -152,7 +152,7 @@ pub enum Commands {
         port: u16,
     },
 
-    /// Attach a TUI to a running `whycode serve` (not `/connect` login)
+    /// Attach a TUI to a running `whycodes serve` (not `/connect` login)
     Connect {
         /// Host:port or URL (default 127.0.0.1:3030)
         #[arg(default_value = "127.0.0.1:3030")]
@@ -288,7 +288,7 @@ pub enum McpCmd {
     },
     /// Remove an MCP server
     Remove { name: String },
-    /// Run whycode as an MCP **server** on stdio (export core tools)
+    /// Run whycodes as an MCP **server** on stdio (export core tools)
     Serve {
         /// Tool profile: `core` (default) or `full`
         #[arg(long, default_value = "core")]
@@ -472,7 +472,7 @@ pub enum SessionCmd {
         /// Session ID
         id: String,
     },
-    /// Import a transcript (whycode / Claude / Codex / OpenCode / Pi)
+    /// Import a transcript (whycodes / Claude / Codex / OpenCode / Pi)
     Import {
         /// File to import
         path: PathBuf,
@@ -483,7 +483,7 @@ pub enum SessionCmd {
 }
 
 fn main() -> anyhow::Result<()> {
-    // Floor path for Boot/TTFF (`whycode --version` / `-V`):
+    // Floor path for Boot/TTFF (`whycodes --version` / `-V`):
     // never build a Tokio runtime, never run clap, never touch config/logging.
     // The old `#[tokio::main]` wrapper paid for a multi-thread executor on
     // every invocation — including the ones that only print a version string.
@@ -493,7 +493,7 @@ fn main() -> anyhow::Result<()> {
 
     // First statement on the real path: everything after it is time a user
     // waits for, and the first-frame benchmark measures from here.
-    whycode_tui::bench::mark_process_start();
+    whycodes_tui::bench::mark_process_start();
 
     // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
     // SIGPIPE-kill the process on any accidental write to stdout. Ignore it so
@@ -508,7 +508,7 @@ fn main() -> anyhow::Result<()> {
     rt.block_on(async_main(cli))
 }
 
-/// `whycode --version` / `whycode -V` only — same format clap would print.
+/// `whycodes --version` / `whycodes -V` only — same format clap would print.
 ///
 /// Returns true when the process should exit immediately (caller returns Ok).
 fn early_print_version_from<I, S>(args: I) -> bool
@@ -517,7 +517,7 @@ where
     S: AsRef<std::ffi::OsStr>,
 {
     if is_version_only_argv(args) {
-        println!("whycode {VERSION_LONG}");
+        println!("whycodes {VERSION_LONG}");
         return true;
     }
     false
@@ -591,7 +591,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // Grok-style logging: always-on JSONL under data_dir/logs/, optional file,
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
-    // is not corrupted (use --debug or WHYCODE_LOG_FILE to capture human logs).
+    // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
     init_logging(&cli);
 
     // Determine which command to run; default to Run
@@ -610,8 +610,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     if let Err(ref e) = result {
         // Always land in unified.jsonl — TUI mode often silences stderr.
-        whycode_core::logging::emit(
-            "whycode",
+        whycodes_core::logging::emit(
+            "whycodes",
             "error",
             "main.exit_error",
             Some(serde_json::json!({ "error": e.to_string() })),
@@ -644,9 +644,9 @@ fn ignore_sigpipe() {}
 /// Resolve data dir + env/config filters and install the process logger.
 fn init_logging(cli: &Cli) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let log_file = std::env::var_os("WHYCODE_LOG_FILE").map(PathBuf::from);
+    let log_file = std::env::var_os("WHYCODES_LOG_FILE").map(PathBuf::from);
     // Prefer env so we skip a full TOML/config walk on the common path.
-    let log_level = std::env::var("WHYCODE_LOG_LEVEL").ok().or_else(|| {
+    let log_level = std::env::var("WHYCODES_LOG_LEVEL").ok().or_else(|| {
         // Only open config when no env override — light commands stay cheap.
         Config::load()
             .ok()
@@ -655,7 +655,7 @@ fn init_logging(cli: &Cli) {
 
     let is_tui = is_tui_invoke(cli);
 
-    let opts = whycode_core::logging::InitOptions {
+    let opts = whycodes_core::logging::InitOptions {
         data_dir,
         log_level,
         log_file,
@@ -665,7 +665,7 @@ fn init_logging(cli: &Cli) {
         with_stderr: !is_tui || cli.debug,
     };
 
-    if let Err(e) = whycode_core::logging::init(opts) {
+    if let Err(e) = whycodes_core::logging::init(opts) {
         eprintln!("warning: failed to initialize logging: {e}");
         // Last-resort so tracing macros still work somewhere.
         let _ = tracing_subscriber::fmt::try_init();
@@ -686,7 +686,7 @@ pub(crate) fn is_tui_invoke(cli: &Cli) -> bool {
 pub(crate) fn ignore_max_turns_interactive(max_turns: Option<usize>) -> Option<usize> {
     if max_turns.is_some() {
         eprintln!(
-            "whycode: --max-turns is headless-only (generate / --format json|stream-json); ignoring it in interactive mode"
+            "whycodes: --max-turns is headless-only (generate / --format json|stream-json); ignoring it in interactive mode"
         );
     }
     None
@@ -732,7 +732,7 @@ async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
 fn cmd_completions(shell: clap_complete::Shell) -> anyhow::Result<()> {
     use clap::CommandFactory;
     let mut cmd = Cli::command();
-    clap_complete::generate(shell, &mut cmd, "whycode", &mut std::io::stdout());
+    clap_complete::generate(shell, &mut cmd, "whycodes", &mut std::io::stdout());
     Ok(())
 }
 
@@ -778,21 +778,21 @@ fn resolve_dir(cli: &Cli) -> PathBuf {
 }
 
 /// Resolve the credential for `provider`: env var → config `api_key` →
-/// OAuth token store (`whycode auth login`), refreshing the token when it
+/// OAuth token store (`whycodes auth login`), refreshing the token when it
 /// is near expiry. Env and config win so a stored subscription login never
 /// overrides an explicit key.
 async fn get_api_key(provider: &str, config: &Config) -> Option<String> {
     if let Some(key) = key_from_env_and_config(provider, config, |k| std::env::var(k).ok()) {
-        whycode_llm::oauth_refresh::unregister(provider);
+        whycodes_llm::oauth_refresh::unregister(provider);
         return Some(key);
     }
-    // OAuth subscription login (`whycode auth login <provider>`).
-    if whycode_auth::providers::supports_oauth(provider)
+    // OAuth subscription login (`whycodes auth login <provider>`).
+    if whycodes_auth::providers::supports_oauth(provider)
         && let Ok(data_dir) = Config::data_dir()
-        && let Some(token) = whycode_auth::providers::access_token(provider, &data_dir).await
+        && let Some(token) = whycodes_auth::providers::access_token(provider, &data_dir).await
     {
         // A 401 on this credential may trigger one forced refresh + retry.
-        whycode_llm::oauth_refresh::register(provider, data_dir);
+        whycodes_llm::oauth_refresh::register(provider, data_dir);
         return Some(token);
     }
     None
@@ -823,8 +823,8 @@ pub(crate) fn key_from_env_and_config(
 }
 
 pub(crate) fn missing_api_key_message(provider: &str) -> String {
-    let oauth_hint = if whycode_auth::providers::supports_oauth(provider) {
-        format!(" Or log in with your subscription: `whycode auth login {provider}`.")
+    let oauth_hint = if whycodes_auth::providers::supports_oauth(provider) {
+        format!(" Or log in with your subscription: `whycodes auth login {provider}`.")
     } else {
         String::new()
     };
@@ -862,7 +862,7 @@ fn resolve_resume_want(cli: &Cli) -> Option<String> {
         return Some(id.to_string());
     }
     if cli.continue_session {
-        return Some(whycode_tui::RESUME_LATEST.to_string());
+        return Some(whycodes_tui::RESUME_LATEST.to_string());
     }
     None
 }
@@ -871,12 +871,12 @@ fn resolve_resume_want(cli: &Cli) -> Option<String> {
 ///
 /// Returns `Ok(true)` when a session was loaded, `Ok(false)` when none matched.
 fn resume_session_into(
-    session: &mut whycode_session::session::Session,
+    session: &mut whycodes_session::session::Session,
     want: &str,
 ) -> anyhow::Result<bool> {
     let db = open_db()?;
     let Some(loaded) =
-        whycode_tui::resolve_and_load_session(&db, want).map_err(|e| anyhow::anyhow!("{e}"))?
+        whycodes_tui::resolve_and_load_session(&db, want).map_err(|e| anyhow::anyhow!("{e}"))?
     else {
         return Ok(false);
     };
@@ -892,11 +892,11 @@ fn resume_session_into(
     Ok(true)
 }
 
-fn open_db() -> anyhow::Result<whycode_storage::db::Database> {
+fn open_db() -> anyhow::Result<whycodes_storage::db::Database> {
     let data_dir = Config::data_dir()?;
     std::fs::create_dir_all(&data_dir)?;
-    let db_path = data_dir.join("whycode.db");
-    whycode_storage::db::Database::open(&db_path.to_string_lossy())
+    let db_path = data_dir.join("whycodes.db");
+    whycodes_storage::db::Database::open(&db_path.to_string_lossy())
         .map_err(|e| anyhow::anyhow!("Failed to open database: {}", e))
 }
 
@@ -955,7 +955,7 @@ async fn cmd_run(
         let Some(prompt) = prompt.filter(|p| !p.is_empty()) else {
             anyhow::bail!(
                 "--format {format} requires a non-empty prompt \
-                 (e.g. `whycode run \"…\" --format {format}` or `whycode generate \"…\" --format {format}`)"
+                 (e.g. `whycodes run \"…\" --format {format}` or `whycodes generate \"…\" --format {format}`)"
             );
         };
         let prompt_owned = prompt.to_string();
@@ -986,16 +986,16 @@ async fn cmd_run(
     // the user actually sends a prompt that needs the LLM.
     let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
-    // Full-screen TUI unless --plain / WHYCODE_PLAIN.
+    // Full-screen TUI unless --plain / WHYCODES_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
     // while still having a controlling terminal — tui_available() opens
     // /dev/tty in that case so the TUI still works.
-    let force_plain = cli.plain || std::env::var_os("WHYCODE_PLAIN").is_some();
-    let use_tui = !force_plain && whycode_tui::tui_available();
+    let force_plain = cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some();
+    let use_tui = !force_plain && whycodes_tui::tui_available();
     if !use_tui && !force_plain {
         use std::io::IsTerminal;
         eprintln!(
-            "whycode: no interactive terminal \
+            "whycodes: no interactive terminal \
              (stdin_tty={} stdout_tty={} /dev/tty unavailable).\n\
              Falling back to plain mode. Use a real terminal, or pass --plain.",
             std::io::stdin().is_terminal(),
@@ -1008,7 +1008,7 @@ async fn cmd_run(
     let max_turns = ignore_max_turns_interactive(max_turns);
 
     if use_tui {
-        return whycode_tui::run(whycode_tui::TuiRunOptions {
+        return whycodes_tui::run(whycodes_tui::TuiRunOptions {
             project_dir,
             provider,
             model,
@@ -1031,7 +1031,7 @@ async fn cmd_run(
                 anyhow::anyhow!(
                     "{msg}\n\n\
                      TUI needs a real terminal. Run in a terminal emulator, or:\n\
-                       whycode --plain"
+                       whycodes --plain"
                 )
             } else {
                 e
@@ -1060,17 +1060,17 @@ async fn cmd_run(
 
     let mut agent_name = agent_name;
     config.general.project_path = Some(project_dir.clone());
-    let file_index = whycode_index::WorkspaceIndex::start(
-        whycode_index::WorkspaceIndex::project_roots(&project_dir),
+    let file_index = whycodes_index::WorkspaceIndex::start(
+        whycodes_index::WorkspaceIndex::project_roots(&project_dir),
     );
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
         .with_file_index(file_index)
         .with_mcp(&config)
         .await;
-    let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
+    let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
     maybe_session_auto_index(&project_dir, &config);
-    let mut history = whycode_session::SessionHistory::new();
+    let mut history = whycodes_session::SessionHistory::new();
     let mut provider = provider;
     let mut model = model;
     let mut show_thinking = false;
@@ -1091,7 +1091,7 @@ async fn cmd_run(
                 eprintln!(
                     "{} No session to resume ({}).",
                     "ℹ".yellow(),
-                    if want == whycode_tui::RESUME_LATEST {
+                    if want == whycodes_tui::RESUME_LATEST {
                         "none saved yet"
                     } else {
                         want.as_str()
@@ -1104,7 +1104,7 @@ async fn cmd_run(
 
     println!(
         "{} {}",
-        "Whycode".cyan().bold(),
+        "WhyCodes".cyan().bold(),
         format!(
             "[agent={}, provider={}, model={}]",
             agent_name, provider, model
@@ -1151,7 +1151,7 @@ async fn cmd_run(
             // bool: whether the title changed (not a Result).
             session.apply_heuristic_title(&seed);
         }
-        let (run_provider, run_model) = whycode_agent::resolve_turn_model(
+        let (run_provider, run_model) = whycodes_agent::resolve_turn_model(
             &provider,
             &model,
             &expanded,
@@ -1192,7 +1192,7 @@ async fn cmd_run(
         let model_label = format!("{provider}/{model}");
         print!(
             "{}",
-            session.format_exit_summary(session_started.elapsed(), &model_label, "whycode")
+            session.format_exit_summary(session_started.elapsed(), &model_label, "whycodes")
         );
         return Ok(());
     }
@@ -1273,8 +1273,8 @@ async fn cmd_run(
                     continue;
                 }
                 "/new" | "/clear" => {
-                    history = whycode_session::SessionHistory::new();
-                    session = whycode_session::session::Session::new(
+                    history = whycodes_session::SessionHistory::new();
+                    session = whycodes_session::session::Session::new(
                         project_dir.clone(),
                         with_project_memory(
                             &Agent::with_agents_md(&agent.system_prompt(), &project_dir),
@@ -1439,9 +1439,9 @@ async fn cmd_run(
                     );
                     if let Some(last) = session.messages.last()
                         && let Some(text) = last.content.as_text()
-                        && whycode_session::is_compact_summary_text(text)
+                        && whycodes_session::is_compact_summary_text(text)
                     {
-                        println!("{}", whycode_session::compact_summary_display_text(text));
+                        println!("{}", whycodes_session::compact_summary_display_text(text));
                     }
                     continue;
                 }
@@ -1524,7 +1524,7 @@ async fn cmd_run(
                     let want = if !rest.is_empty() {
                         rest.to_string()
                     } else if cmd == "/continue" {
-                        whycode_tui::RESUME_LATEST.to_string()
+                        whycodes_tui::RESUME_LATEST.to_string()
                     } else {
                         // /resume with no id → list, same as /sessions
                         if let Err(err) = cmd_session(&SessionCmd::List).await {
@@ -1535,7 +1535,7 @@ async fn cmd_run(
                     };
                     match resume_session_into(&mut session, &want) {
                         Ok(true) => {
-                            history = whycode_session::SessionHistory::new();
+                            history = whycodes_session::SessionHistory::new();
                             println!(
                                 "{} Resumed {} ({}) — {} messages",
                                 "✓".green(),
@@ -1557,7 +1557,7 @@ async fn cmd_run(
                     if !rest.is_empty() {
                         // /models provider/model
                         if let Some((p, m)) = rest.split_once('/') {
-                            whycode_llm::oauth_refresh::unregister(&provider);
+                            whycodes_llm::oauth_refresh::unregister(&provider);
                             provider = p.to_string();
                             model = m.to_string();
                             api_key = get_api_key(&provider, &config).await.unwrap_or_default();
@@ -1583,8 +1583,8 @@ async fn cmd_run(
                             .unwrap_or("medium (default)");
                         println!("Reasoning effort: {}", current.cyan());
                         println!("Set with /effort low|medium|high|xhigh");
-                    } else if let Some(parsed) = whycode_llm::ReasoningEffort::parse(rest) {
-                        let resolved = whycode_llm::ThinkingConfig::resolve_effort(
+                    } else if let Some(parsed) = whycodes_llm::ReasoningEffort::parse(rest) {
+                        let resolved = whycodes_llm::ThinkingConfig::resolve_effort(
                             &provider,
                             &model,
                             Some(parsed.as_str()),
@@ -1655,11 +1655,11 @@ async fn cmd_run(
                         );
                     } else {
                         println!("Add a provider:");
-                        println!("  whycode provider add {} --api-key <key>", provider);
+                        println!("  whycodes provider add {} --api-key <key>", provider);
                         println!("  or set env {}", provider_env_var(&provider));
-                        if whycode_auth::providers::supports_oauth(&provider) {
+                        if whycodes_auth::providers::supports_oauth(&provider) {
                             println!(
-                                "  or log in with your subscription: whycode auth login {}",
+                                "  or log in with your subscription: whycodes auth login {}",
                                 provider
                             );
                         }
@@ -1676,9 +1676,9 @@ async fn cmd_run(
                     if arg.is_empty() {
                         println!("{}", "Subscription sign-in (OAuth):".bold());
                         if let Ok(dir) = Config::data_dir() {
-                            let store = whycode_auth::TokenStore::new(&dir);
-                            for name in whycode_auth::OAUTH_PROVIDERS {
-                                let label = whycode_auth::providers::spec_for(name)
+                            let store = whycodes_auth::TokenStore::new(&dir);
+                            for name in whycodes_auth::OAUTH_PROVIDERS {
+                                let label = whycodes_auth::providers::spec_for(name)
                                     .map(|s| s.label)
                                     .unwrap_or(name);
                                 let status = if store.get(name).ok().flatten().is_some() {
@@ -1697,9 +1697,9 @@ async fn cmd_run(
                         println!(
                             "\nSign in: {}  ·  CLI: {}",
                             "/login <provider>".cyan(),
-                            "whycode auth login <provider>".cyan()
+                            "whycodes auth login <provider>".cyan()
                         );
-                    } else if whycode_auth::providers::supports_oauth(arg) {
+                    } else if whycodes_auth::providers::supports_oauth(arg) {
                         if let Err(e) = cmd_auth(&AuthCmd::Login {
                             provider: arg.to_string(),
                             no_browser: false,
@@ -1717,7 +1717,7 @@ async fn cmd_run(
                         println!(
                             "OAuth login is not available for `{}` — choose from: {}",
                             arg.red(),
-                            whycode_auth::OAUTH_PROVIDERS.join(", ")
+                            whycodes_auth::OAUTH_PROVIDERS.join(", ")
                         );
                     }
                     continue;
@@ -1736,7 +1736,7 @@ async fn cmd_run(
                     continue;
                 }
                 "/themes" => {
-                    let names: Vec<&str> = whycode_tui::theme::ThemeName::ALL
+                    let names: Vec<&str> = whycodes_tui::theme::ThemeName::ALL
                         .iter()
                         .map(|t| t.name())
                         .collect();
@@ -1747,7 +1747,7 @@ async fn cmd_run(
                 }
                 "/tools" => {
                     let tools =
-                        whycode_tools::ToolExecutor::new().get_definitions(&agent.info.permission);
+                        whycodes_tools::ToolExecutor::new().get_definitions(&agent.info.permission);
                     println!("{} Available tools ({}):", "🔧".bold(), tools.len());
                     for t in tools {
                         println!("  {} — {}", t.name.cyan(), t.description);
@@ -1758,7 +1758,7 @@ async fn cmd_run(
                     if rest.is_empty() {
                         println!("Usage: /remember <text to store>");
                     } else {
-                        match whycode_memory::MemoryService::open(
+                        match whycodes_memory::MemoryService::open(
                             &project_dir,
                             Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
                             memory_settings(&config),
@@ -1778,7 +1778,7 @@ async fn cmd_run(
                     continue;
                 }
                 "/memory" => {
-                    match whycode_memory::MemoryService::open(
+                    match whycodes_memory::MemoryService::open(
                         &project_dir,
                         Config::data_dir().unwrap_or_else(|_| PathBuf::from(".")),
                         memory_settings(&config),
@@ -1792,7 +1792,7 @@ async fn cmd_run(
                                 svc.memory_md_path().display()
                             );
                             println!("  project_key={}", svc.project_key.dimmed());
-                            println!("  CLI: whycode memory list|search|add|delete|clear");
+                            println!("  CLI: whycodes memory list|search|add|delete|clear");
                             if let Ok(rows) = svc.list(10) {
                                 for r in rows {
                                     println!(
@@ -1857,7 +1857,7 @@ async fn cmd_run(
                     if let Err(err) = session.save_to_db(&db) {
                         tracing::warn!(error = %err, "failed to persist session");
                     } else {
-                        whycode_core::logging::emit_sid(
+                        whycodes_core::logging::emit_sid(
                             "session",
                             "info",
                             "session.persist",
@@ -1873,7 +1873,7 @@ async fn cmd_run(
             }
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
-                whycode_core::logging::emit_sid(
+                whycodes_core::logging::emit_sid(
                     "cli",
                     "error",
                     "turn.error",
@@ -1894,7 +1894,7 @@ async fn cmd_run(
     let model_label = format!("{provider}/{model}");
     print!(
         "{}",
-        session.format_exit_summary(session_started.elapsed(), &model_label, "whycode")
+        session.format_exit_summary(session_started.elapsed(), &model_label, "whycodes")
     );
     Ok(())
 }
@@ -1911,8 +1911,8 @@ async fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -
         return true;
     }
     let env = provider_env_var(provider);
-    let oauth_hint = if whycode_auth::providers::supports_oauth(provider) {
-        format!("\n  → whycode auth login {provider}  (subscription)")
+    let oauth_hint = if whycodes_auth::providers::supports_oauth(provider) {
+        format!("\n  → whycodes auth login {provider}  (subscription)")
     } else {
         String::new()
     };
@@ -1922,7 +1922,7 @@ async fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -
             .yellow()
             .bold(),
         format!("→ export {env}=…").dimmed(),
-        format!("→ whycode provider add {provider} --api-key <key>").dimmed(),
+        format!("→ whycodes provider add {provider} --api-key <key>").dimmed(),
         oauth_hint.dimmed(),
         "Then /connect and try again.".dimmed(),
     );
@@ -1967,10 +1967,10 @@ fn print_slash_help() {
     println!("{}", "Also:".bold());
     println!("  !cmd                   — Run shell command, add output to chat");
     println!("  @path/to/file          — Include file contents in your message");
-    println!("  Custom commands        — .whycode/commands/*.md or config [commands]");
-    println!("  whycode memory …       — list|search|add|delete|clear|path");
-    println!("  whycode --no-memory    — disable memory for this process");
-    println!("  whycode --plain        — readline REPL instead of TUI");
+    println!("  Custom commands        — .whycodes/commands/*.md or config [commands]");
+    println!("  whycodes memory …       — list|search|add|delete|clear|path");
+    println!("  whycodes --no-memory    — disable memory for this process");
+    println!("  whycodes --plain        — readline REPL instead of TUI");
 }
 
 fn split_slash_command(input: &str) -> (&str, &str) {
@@ -1981,16 +1981,16 @@ fn split_slash_command(input: &str) -> (&str, &str) {
     }
 }
 
-/// Settings bag for `whycode-memory` from config (config does not depend on memory).
-fn memory_settings(config: &Config) -> whycode_memory::MemorySettings {
+/// Settings bag for `whycodes-memory` from config (config does not depend on memory).
+fn memory_settings(config: &Config) -> whycodes_memory::MemorySettings {
     memory_settings_for(config, None)
 }
 
 fn memory_settings_for(
     config: &Config,
     agent_bank: Option<String>,
-) -> whycode_memory::MemorySettings {
-    let mut s = whycode_agent::memory_settings_from_config(config);
+) -> whycodes_memory::MemorySettings {
+    let mut s = whycodes_agent::memory_settings_from_config(config);
     s.agent_bank = agent_bank;
     s
 }
@@ -1999,7 +1999,7 @@ fn memory_settings_for(
 fn maybe_session_auto_index(project_dir: &std::path::Path, config: &Config) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     if let Some(n) =
-        whycode_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+        whycodes_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
     {
         println!("{} Auto-indexed {n} code chunks", "📇".dimmed());
     }
@@ -2012,7 +2012,7 @@ fn with_project_memory(
     query: Option<&str>,
 ) -> String {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-    whycode_memory::apply_memory_prompt(
+    whycodes_memory::apply_memory_prompt(
         system_prompt,
         project_dir,
         &data_dir,
@@ -2023,7 +2023,7 @@ fn with_project_memory(
 
 /// Rebuild system prompt with AGENTS.md + memory recall for the current query.
 fn refresh_session_memory(
-    session: &mut whycode_session::session::Session,
+    session: &mut whycodes_session::session::Session,
     agent: &Agent,
     project_dir: &std::path::Path,
     config: &Config,
@@ -2036,10 +2036,10 @@ fn refresh_session_memory(
 fn open_memory_service(
     cli: &Cli,
     config: &Config,
-) -> anyhow::Result<whycode_memory::MemoryService> {
+) -> anyhow::Result<whycodes_memory::MemoryService> {
     let project_dir = resolve_dir(cli);
     let data_dir = Config::data_dir()?;
-    whycode_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
+    whycodes_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
 }
 
 async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
@@ -2091,7 +2091,7 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
         MemoryCmd::Add { text } => {
             let text = text.join(" ");
             if text.trim().is_empty() {
-                anyhow::bail!("usage: whycode memory add <text>");
+                anyhow::bail!("usage: whycodes memory add <text>");
             }
             let id = svc.remember(&text, None)?;
             println!(
@@ -2122,7 +2122,7 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
                 config.memory.scope,
                 config.memory.embed_backend,
                 config.memory.enabled,
-                whycode_memory::onnx::onnx_available()
+                whycodes_memory::onnx::onnx_available()
             );
         }
         MemoryCmd::Export { output } => {
@@ -2178,7 +2178,7 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
             let hits = svc.search_code(query, *limit, config.memory.code_min_score.min(0.1))?;
             if hits.is_empty() {
                 println!(
-                    "{} No code hits. Run `whycode memory index` first.",
+                    "{} No code hits. Run `whycodes memory index` first.",
                     "ℹ".cyan()
                 );
             } else {
@@ -2194,9 +2194,9 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
             }
         }
         MemoryCmd::OnnxSmoke => {
-            if !whycode_memory::onnx::onnx_available() {
+            if !whycodes_memory::onnx::onnx_available() {
                 anyhow::bail!(
-                    "ONNX not in this binary. Rebuild with: cargo build -p whycode-cli --features onnx"
+                    "ONNX not in this binary. Rebuild with: cargo build -p whycodes-cli --features onnx"
                 );
             }
             let data_dir = Config::data_dir()?;
@@ -2204,14 +2204,14 @@ async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {
                 "{} Running ONNX smoke (download + checksum + embed)…",
                 "⚡".bold()
             );
-            let (dim, norm) = whycode_memory::onnx::smoke_embed(&data_dir)?;
+            let (dim, norm) = whycodes_memory::onnx::smoke_embed(&data_dir)?;
             println!(
                 "{} OK — embedding dim={dim}, L2-norm={norm:.4} (≈1.0 expected)",
                 "✓".green()
             );
             println!(
                 "  model dir: {}",
-                whycode_memory::onnx::model_dir(&data_dir).display()
+                whycodes_memory::onnx::model_dir(&data_dir).display()
             );
         }
     }
@@ -2380,7 +2380,7 @@ async fn run_init_agents_md(
         existing
     );
 
-    let mut tmp = whycode_session::session::Session::new(
+    let mut tmp = whycodes_session::session::Session::new(
         project_dir.to_path_buf(),
         "You write clear AGENTS.md project instruction files.".to_string(),
     );
@@ -2470,8 +2470,8 @@ pub(crate) async fn cmd_generate(
 
     // Structured CI formats cannot prompt on stdin; auto-approve tool asks.
     // Catastrophic shell risk still hard-blocks regardless of this.
-    let file_index = whycode_index::WorkspaceIndex::start(
-        whycode_index::WorkspaceIndex::project_roots(&project_dir),
+    let file_index = whycodes_index::WorkspaceIndex::start(
+        whycodes_index::WorkspaceIndex::project_roots(&project_dir),
     );
     let mut agent = Agent::new(agent_info)
         .with_config(&config)
@@ -2481,10 +2481,10 @@ pub(crate) async fn cmd_generate(
     if format.is_structured() {
         agent = agent
             .with_permission_prompter(Arc::new(AutoApprovePrompter))
-            .with_question_prompter(Arc::new(whycode_agent::AutoAnswerPrompter));
+            .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
     }
 
-    let mut session = whycode_session::session::Session::new(project_dir.clone(), system_prompt);
+    let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
 
     if format == OutputFormat::Text {
         println!(
@@ -2643,8 +2643,8 @@ pub(crate) async fn run_one_parallel_turn(
         Some(&expanded),
     );
 
-    let file_index = whycode_index::WorkspaceIndex::start(
-        whycode_index::WorkspaceIndex::project_roots(project_dir),
+    let file_index = whycodes_index::WorkspaceIndex::start(
+        whycodes_index::WorkspaceIndex::project_roots(project_dir),
     );
     let mut agent = Agent::new(agent_info)
         .with_config(config)
@@ -2654,11 +2654,11 @@ pub(crate) async fn run_one_parallel_turn(
     if structured {
         agent = agent
             .with_permission_prompter(Arc::new(AutoApprovePrompter))
-            .with_question_prompter(Arc::new(whycode_agent::AutoAnswerPrompter));
+            .with_question_prompter(Arc::new(whycodes_agent::AutoAnswerPrompter));
     }
 
     let mut session =
-        whycode_session::session::Session::new(project_dir.to_path_buf(), system_prompt);
+        whycodes_session::session::Session::new(project_dir.to_path_buf(), system_prompt);
     let session_id = session.id.clone();
     session.add_user_message(&expanded);
 
@@ -2797,7 +2797,7 @@ fn emit_headless_setup_error(format: OutputFormat, message: &str) -> anyhow::Res
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_headless_turn(
     agent: &Agent,
-    session: &mut whycode_session::session::Session,
+    session: &mut whycodes_session::session::Session,
     provider: &str,
     model: &str,
     api_key: &str,
@@ -2915,7 +2915,7 @@ pub(crate) fn is_cancel_message(msg: &str) -> bool {
 }
 
 fn log_cli_turn_error(meta: &ResultMeta, msg: &str) {
-    whycode_core::logging::emit_sid(
+    whycodes_core::logging::emit_sid(
         "cli",
         "error",
         "turn.error",
@@ -3029,10 +3029,10 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
         }),
         TurnEvent::Panel(update) => Some(CiEvent::Status {
             message: match update {
-                whycode_core::PanelUpdate::Clear => "panel clear".into(),
-                whycode_core::PanelUpdate::File { path, .. } => format!("panel file={path}"),
-                whycode_core::PanelUpdate::Diff { path, .. } => format!("panel diff={path}"),
-                whycode_core::PanelUpdate::Mermaid { .. } => "panel mermaid".into(),
+                whycodes_core::PanelUpdate::Clear => "panel clear".into(),
+                whycodes_core::PanelUpdate::File { path, .. } => format!("panel file={path}"),
+                whycodes_core::PanelUpdate::Diff { path, .. } => format!("panel diff={path}"),
+                whycodes_core::PanelUpdate::Mermaid { .. } => "panel mermaid".into(),
             },
         }),
         TurnEvent::Subagent {
@@ -3045,7 +3045,7 @@ fn turn_event_to_ci(ev: TurnEvent) -> Option<CiEvent> {
             message: format!("subagent {id} {status} ({kind}): {description}"),
         }),
         TurnEvent::Todos { todos } => {
-            let done = whycode_core::todo::terminal_count(&todos);
+            let done = whycodes_core::todo::terminal_count(&todos);
             Some(CiEvent::Status {
                 message: format!("todos {done}/{}", todos.len()),
             })
@@ -3155,9 +3155,9 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `connect` — Attach a TUI to `whycode serve`. `/connect` remains OAuth login.
+/// `connect` — Attach a TUI to `whycodes serve`. `/connect` remains OAuth login.
 async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Result<()> {
-    use whycode_tui::remote;
+    use whycodes_tui::remote;
 
     let base = remote::normalize_base(addr);
     match remote::health(&base).await {
@@ -3171,7 +3171,7 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
         }
         Err(e) => {
             anyhow::bail!(
-                "cannot reach {base}: {e}\n\nStart the daemon first:\n  whycode serve\nthen:\n  whycode connect {addr}"
+                "cannot reach {base}: {e}\n\nStart the daemon first:\n  whycodes serve\nthen:\n  whycodes connect {addr}"
             );
         }
     }
@@ -3198,11 +3198,11 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
     let agent_name = resolve_agent(cli, &config);
     let api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
-    if !whycode_tui::tui_available() {
+    if !whycodes_tui::tui_available() {
         anyhow::bail!("connect needs a real TUI terminal (not --plain)");
     }
 
-    whycode_tui::run(whycode_tui::TuiRunOptions {
+    whycodes_tui::run(whycodes_tui::TuiRunOptions {
         project_dir,
         provider,
         model,
@@ -3212,7 +3212,7 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
         initial_prompt: None,
         config,
         resume_session_id: None,
-        remote: Some(whycode_tui::RemoteAttach::new(base, session_id)),
+        remote: Some(whycodes_tui::RemoteAttach::new(base, session_id)),
     })
     .await
 }
@@ -3225,11 +3225,11 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
 async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use std::sync::Arc;
-    use whycode_agent::{PermissionPrompter, QuestionPrompter};
+    use whycodes_agent::{PermissionPrompter, QuestionPrompter};
 
     let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     println!(
-        "{} Starting Whycode warm server on http://localhost:{}",
+        "{} Starting WhyCodes warm server on http://localhost:{}",
         "•".bold(),
         port.to_string().cyan()
     );
@@ -3260,14 +3260,14 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
 
     // Permissions: `/v1` can prompt the SDK client; `/api` chat wraps
     // auto-approve so TUI `connect` stays unattended.
-    let perm = whycode_server::perm::PermHub::new();
-    let file_index = whycode_index::WorkspaceIndex::start(vec![project_dir.clone()]);
+    let perm = whycodes_server::perm::PermHub::new();
+    let file_index = whycodes_index::WorkspaceIndex::start(vec![project_dir.clone()]);
     let agent = Agent::new(agent_info)
         .with_config(&config)
-        .with_permission_prompter(Arc::new(whycode_server::perm::ServePrompter {
+        .with_permission_prompter(Arc::new(whycodes_server::perm::ServePrompter {
             hub: Arc::clone(&perm),
         }) as Arc<dyn PermissionPrompter>)
-        .with_question_prompter(Arc::new(whycode_server::perm::ServeQuestionPrompter {
+        .with_question_prompter(Arc::new(whycodes_server::perm::ServeQuestionPrompter {
             hub: Arc::clone(&perm),
         }) as Arc<dyn QuestionPrompter>)
         .with_file_index(file_index)
@@ -3275,7 +3275,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         .with_mcp(&config)
         .await;
 
-    let state = whycode_server::AppState {
+    let state = whycodes_server::AppState {
         agent: Arc::new(agent),
         config: Arc::new(config),
         project_dir,
@@ -3289,7 +3289,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
         session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
     };
 
-    let router = whycode_server::create_router(state);
+    let router = whycodes_server::create_router(state);
     // Loopback only — this is a local warm daemon, not a public API.
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     println!("  Endpoints:");
@@ -3333,7 +3333,7 @@ async fn cmd_serve(port: u16) -> anyhow::Result<()> {
 /// `web` — Open web UI
 async fn cmd_web() -> anyhow::Result<()> {
     println!("{} Web UI — not yet implemented.", "🌐".cyan());
-    println!("Start the server with: whycode serve");
+    println!("Start the server with: whycodes serve");
     println!("Then open http://localhost:3030 in your browser.");
     Ok(())
 }
@@ -3345,9 +3345,9 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     match cmd {
         McpCmd::Serve { tools, cwd } => {
             use std::sync::Arc;
-            use whycode_core::types::PermissionSet;
-            use whycode_tools::executor::ToolExecutor;
-            use whycode_tools::profile::ToolProfile;
+            use whycodes_core::types::PermissionSet;
+            use whycodes_tools::executor::ToolExecutor;
+            use whycodes_tools::profile::ToolProfile;
 
             let profile = ToolProfile::parse(tools);
             let working_dir = cwd.clone().unwrap_or_else(|| {
@@ -3365,11 +3365,11 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             // MCP serve runs tools directly — document risk; prefer core profile.
             let executor = Arc::new(ToolExecutor::new());
             eprintln!(
-                "whycode mcp serve — profile={} cwd={} (stdio JSON-RPC)",
+                "whycodes mcp serve — profile={} cwd={} (stdio JSON-RPC)",
                 profile.as_str(),
                 working_dir
             );
-            whycode_mcp::run_stdio_server(executor, permissions, profile, working_dir).await?;
+            whycodes_mcp::run_stdio_server(executor, permissions, profile, working_dir).await?;
             return Ok(());
         }
         McpCmd::List => {
@@ -3377,9 +3377,9 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 println!("{} No MCP servers configured.", "🔌".bold());
                 println!();
                 println!("Add one:");
-                println!("  whycode mcp add <name> <command> [--args \"arg1 arg2\"]");
-                println!("  whycode mcp add <name> --url https://mcp.example.com/mcp");
-                println!("  whycode mcp add <name> --url https://host/sse --type sse");
+                println!("  whycodes mcp add <name> <command> [--args \"arg1 arg2\"]");
+                println!("  whycodes mcp add <name> --url https://mcp.example.com/mcp");
+                println!("  whycodes mcp add <name> --url https://host/sse --type sse");
             } else {
                 println!("{} Configured MCP servers:", "🔌".bold());
                 for (name, server) in &config.mcp_servers {
@@ -3417,12 +3417,12 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
         } => {
             let transport_kind = match transport.as_deref() {
                 None => None,
-                Some("stdio") | Some("local") => Some(whycode_config::McpTransportKind::Stdio),
+                Some("stdio") | Some("local") => Some(whycodes_config::McpTransportKind::Stdio),
                 Some("http") | Some("streamable-http") | Some("remote") => {
-                    Some(whycode_config::McpTransportKind::Http)
+                    Some(whycodes_config::McpTransportKind::Http)
                 }
-                Some("sse") => Some(whycode_config::McpTransportKind::Sse),
-                Some("auto") => Some(whycode_config::McpTransportKind::Auto),
+                Some("sse") => Some(whycodes_config::McpTransportKind::Sse),
+                Some("auto") => Some(whycodes_config::McpTransportKind::Auto),
                 Some(other) => {
                     anyhow::bail!("unknown MCP transport '{other}' (expected stdio|http|sse|auto)");
                 }
@@ -3453,7 +3453,7 @@ async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                 .map(|s| s.split_whitespace().map(|a| a.to_string()).collect())
                 .unwrap_or_default();
 
-            let server = whycode_config::McpServerConfig {
+            let server = whycodes_config::McpServerConfig {
                 transport: transport_kind,
                 command: command.clone(),
                 args: arg_vec.clone(),
@@ -3508,11 +3508,11 @@ async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 println!("{} No providers configured.", "ℹ".cyan());
                 println!();
                 println!("Add a provider:");
-                println!("  whycode provider add <name> --api-key <key> --base-url <url>");
+                println!("  whycodes provider add <name> --api-key <key> --base-url <url>");
                 println!();
                 println!(
                     "Built-in providers supported: {}",
-                    whycode_llm::ProviderRegistry::default().names().join(", ")
+                    whycodes_llm::ProviderRegistry::default().names().join(", ")
                 );
             } else {
                 println!("{} Configured providers:", "🔑".bold());
@@ -3607,10 +3607,10 @@ async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
                 // Save provider name as metadata
                 config.save()?;
                 println!("{} Default provider set to '{}'.", "✓".green(), name.cyan());
-                println!("  Use: whycode -P {} ...", name);
+                println!("  Use: whycodes -P {} ...", name);
             } else {
                 eprintln!(
-                    "{} Provider '{}' not found. Add it first: whycode provider add {}",
+                    "{} Provider '{}' not found. Add it first: whycodes provider add {}",
                     "✗".red(),
                     name.cyan(),
                     name
@@ -3680,12 +3680,11 @@ async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
 async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::Result<()> {
     let _ = cmd; // only List for now
     let project = resolve_dir(cli);
-    let listed = whycode_tools::list_shell_plugins(Some(&project));
+    let listed = whycodes_tools::list_shell_plugins(Some(&project));
     if listed.is_empty() {
         println!("{} No shell plugins configured.", "🔌".bold());
-        println!();
-        println!("TOML: ~/.config/com.whycorporation.whycode/plugins.toml or");
-        println!("      .whycode/plugins.toml");
+        println!("TOML: ~/.config/whycodes/plugins.toml or");
+        println!("      .whycodes/plugins.toml");
         println!();
         println!("  [[plugins]]");
         println!("  name = \"hello\"");
@@ -3693,7 +3692,7 @@ async fn cmd_plugins(cli: &Cli, cmd: Option<&PluginsCmd>) -> anyhow::Result<()> 
         println!("  description = \"Demo plugin\"");
         println!();
         println!("Or a directory plugin:");
-        println!("  .whycode/plugins/hello/plugin.json");
+        println!("  .whycodes/plugins/hello/plugin.json");
         println!("  {{\"name\":\"hello\",\"command\":\"./run.sh\",\"description\":\"Demo\"}}");
         println!();
         println!("Tools appear as plugin_<name> (tool_profile=full or tool_search).");
@@ -3847,7 +3846,7 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
 
             if sessions.is_empty() {
                 println!("{} No sessions found.", "ℹ".cyan());
-                println!("Start a session with: whycode run");
+                println!("Start a session with: whycodes run");
             } else {
                 println!("{} Sessions:", "📋".bold());
                 for s in &sessions {
@@ -3855,12 +3854,12 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                     let mut title = s.title.clone();
                     // Backfill legacy placeholders so the list is scannable.
                     if msg_count > 0
-                        && whycode_session::title::looks_like_default_title(
+                        && whycodes_session::title::looks_like_default_title(
                             &title,
                             std::path::Path::new(&s.project_path),
                         )
                         && let Ok(Some(mut loaded)) =
-                            whycode_session::session::Session::load_from_db(&db, &s.id)
+                            whycodes_session::session::Session::load_from_db(&db, &s.id)
                         && loaded.maybe_upgrade_title_from_history()
                     {
                         if let Err(err) = loaded.save_to_db(&db) {
@@ -3928,7 +3927,7 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
         SessionCmd::Rename { id, name } => {
             match db.get_session(id).map_err(|e| anyhow::anyhow!("{}", e))? {
                 Some(s) => {
-                    let cleaned = whycode_session::sanitize_title(name);
+                    let cleaned = whycodes_session::sanitize_title(name);
                     if cleaned.is_empty() {
                         eprintln!("{} Empty title after sanitize.", "✗".red());
                         return Ok(());
@@ -3950,11 +3949,11 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
         SessionCmd::Import { path, from } => {
             let raw = std::fs::read_to_string(path)
                 .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
-            let kind = whycode_session::ImportKind::parse(from);
-            let messages = whycode_session::import_messages(&raw, kind)?;
+            let kind = whycodes_session::ImportKind::parse(from);
+            let messages = whycodes_session::import_messages(&raw, kind)?;
             let project = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let title = path.file_stem().and_then(|s| s.to_str());
-            let session = whycode_session::Session::from_imported(project, messages, title);
+            let session = whycodes_session::Session::from_imported(project, messages, title);
             session.save_to_db(&db)?;
             println!(
                 "{} Imported {} messages as session {}",
@@ -3962,7 +3961,7 @@ async fn cmd_session(cmd: &SessionCmd) -> anyhow::Result<()> {
                 session.messages.len(),
                 session.id.cyan()
             );
-            println!("Resume with: whycode --resume {}", &session.id[..8]);
+            println!("Resume with: whycodes --resume {}", &session.id[..8]);
         }
         SessionCmd::Share { id } => {
             match db.get_session(id).map_err(|e| anyhow::anyhow!("{}", e))? {
@@ -4020,7 +4019,7 @@ async fn cmd_stats() -> anyhow::Result<()> {
         Ok(d) => d,
         Err(e) if is_missing_database(&e) => {
             println!("{} No statistics database found.", "ℹ".cyan());
-            println!("Stats are collected as you use whycode.");
+            println!("Stats are collected as you use whycodes.");
             return Ok(());
         }
         Err(e) => {
@@ -4093,7 +4092,7 @@ async fn cmd_stats() -> anyhow::Result<()> {
 
     if totals.session_count > 0 {
         let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let db_path = data_dir.join("whycode.db");
+        let db_path = data_dir.join("whycodes.db");
         if let Ok(meta) = std::fs::metadata(&db_path) {
             println!();
             println!("  DB size:   {} bytes", meta.len());
@@ -4109,19 +4108,19 @@ async fn cmd_stats() -> anyhow::Result<()> {
 
 async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
     let data_dir = Config::data_dir()?;
-    let store = whycode_auth::TokenStore::new(&data_dir);
+    let store = whycodes_auth::TokenStore::new(&data_dir);
     match cmd {
         AuthCmd::Login {
             provider,
             no_browser,
         } => {
-            if !whycode_auth::providers::supports_oauth(provider) {
+            if !whycodes_auth::providers::supports_oauth(provider) {
                 anyhow::bail!(
                     "provider `{provider}` does not support OAuth login (supported: {})",
-                    whycode_auth::OAUTH_PROVIDERS.join(", ")
+                    whycodes_auth::OAUTH_PROVIDERS.join(", ")
                 );
             }
-            whycode_auth::providers::login(provider, &store, !no_browser).await?;
+            whycodes_auth::providers::login(provider, &store, !no_browser).await?;
             println!(
                 "{} Logged in to {} — credential stored in {}",
                 "✓".green(),
@@ -4144,8 +4143,8 @@ async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
             let entries = store.list()?;
             if entries.is_empty() {
                 println!(
-                    "No OAuth logins yet. Run: whycode auth login <{}>",
-                    whycode_auth::OAUTH_PROVIDERS.join("|")
+                    "No OAuth logins yet. Run: whycodes auth login <{}>",
+                    whycodes_auth::OAUTH_PROVIDERS.join("|")
                 );
             } else {
                 println!("{} OAuth logins ({}):", "🔑".bold(), store.path().display());
@@ -4168,14 +4167,14 @@ async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
 /// source (the decision is persisted), import approved ones. Sources are
 /// only ever read, never modified; symlinks are refused.
 async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
-    use whycode_auth::discover::{ConsentStore, SourceState, import, scan};
+    use whycodes_auth::discover::{ConsentStore, SourceState, import, scan};
 
     let consent = ConsentStore::new(data_dir);
     let found = scan(&consent);
     if found.is_empty() {
         println!(
             "No credentials from other CLIs found (looked for {}).",
-            whycode_auth::discover::KNOWN_SOURCES
+            whycodes_auth::discover::KNOWN_SOURCES
                 .iter()
                 .map(|s| s.label)
                 .collect::<Vec<_>>()
@@ -4204,7 +4203,7 @@ async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
     }
     println!();
 
-    let store = whycode_auth::TokenStore::new(data_dir);
+    let store = whycodes_auth::TokenStore::new(data_dir);
     let mut imported = 0usize;
     for f in &found {
         match f.state {
@@ -4258,7 +4257,7 @@ async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
     }
     if imported > 0 {
         println!(
-            "\n{} {imported} credential(s) ready — `whycode auth status` lists them.",
+            "\n{} {imported} credential(s) ready — `whycodes auth status` lists them.",
             "✓".green()
         );
     }
@@ -4266,7 +4265,7 @@ async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Result<()> {
 }
 
 /// Human expiry label for `auth status` / `debug` — never token material.
-fn auth_expiry_label(auth: &whycode_auth::ProviderAuth) -> String {
+fn auth_expiry_label(auth: &whycodes_auth::ProviderAuth) -> String {
     // A derived API token (e.g. Copilot's) is the one that actually expires;
     // it lives in extra. "copilot_expires_at" is the pre-rename key name.
     let derived_expiry = auth
@@ -4319,7 +4318,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
                 "✗".red()
             };
             println!("  Data dir:    {} {}", p.display(), exists);
-            let dirs = whycode_core::logging::LogDirs::from_data_dir(&p);
+            let dirs = whycodes_core::logging::LogDirs::from_data_dir(&p);
             println!(
                 "  JSONL log:   {} {}",
                 dirs.unified_jsonl().display(),
@@ -4331,7 +4330,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
             );
             println!("  Crash dir:   {}", dirs.crash.display());
             println!(
-                "  Debug log:   {} (or WHYCODE_LOG_FILE / --debug)",
+                "  Debug log:   {} (or WHYCODES_LOG_FILE / --debug)",
                 dirs.debug.join("latest.log").display()
             );
         }
@@ -4369,10 +4368,10 @@ async fn cmd_debug() -> anyhow::Result<()> {
     // Relevant environment variables
     println!("  Environment:");
     for var in &[
-        "WHYCODE_PROVIDER",
-        "WHYCODE_MODEL",
-        "WHYCODE_LOG_LEVEL",
-        "WHYCODE_LOG_FILE",
+        "WHYCODES_PROVIDER",
+        "WHYCODES_MODEL",
+        "WHYCODES_LOG_LEVEL",
+        "WHYCODES_LOG_FILE",
         "RUST_LOG",
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
@@ -4394,10 +4393,10 @@ async fn cmd_debug() -> anyhow::Result<()> {
     println!("  OAuth (auth.json):");
     match Config::data_dir() {
         Ok(dir) => {
-            let store = whycode_auth::TokenStore::new(&dir);
+            let store = whycodes_auth::TokenStore::new(&dir);
             match store.list() {
                 Ok(entries) if entries.is_empty() => {
-                    println!("    (none — `whycode auth login <provider>`)");
+                    println!("    (none — `whycodes auth login <provider>`)");
                 }
                 Ok(entries) => {
                     for (name, auth) in entries {
@@ -4422,7 +4421,7 @@ async fn cmd_debug() -> anyhow::Result<()> {
 #[cfg(feature = "self-update")]
 async fn cmd_upgrade() -> anyhow::Result<()> {
     let current = PKG_VERSION;
-    println!("{} Whycode Upgrade", "⬆".bold());
+    println!("{} WhyCodes Upgrade", "⬆".bold());
     println!("  Current version: {}", current.cyan());
     println!("  Checking for a newer release…");
 
@@ -4457,7 +4456,7 @@ async fn cmd_upgrade() -> anyhow::Result<()> {
             );
             println!(
                 "    {}",
-                "cd whycode && cargo install --path crates/cli".dimmed()
+                "cd whycodes && cargo install --path crates/cli".dimmed()
             );
         }
     }

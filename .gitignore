@@ -6,6 +6,7 @@ target/
 
 # Local agent / session / ops scratch (do not commit)
 .omo/
+.whycodes/
 .whycode/
 local/
 # Unexpanded editor env vars sometimes land as a literal directory name

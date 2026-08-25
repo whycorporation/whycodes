@@ -1,11 +1,11 @@
 //! Headless / CI output: structured JSON and streaming NDJSON.
 //!
-//! Used by `whycode generate --format …` and `whycode run <prompt> --format …`.
-//! Maps agent [`whycode_agent::TurnEvent`] values onto a stable wire format
+//! Used by `whycodes generate --format …` and `whycodes run <prompt> --format …`.
+//! Maps agent [`whycodes_agent::TurnEvent`] values onto a stable wire format
 //! that scripts and CI can parse without scraping the TUI.
 
 use serde::{Deserialize, Serialize};
-use whycode_core::types::Usage;
+use whycodes_core::types::Usage;
 
 /// How headless commands write results to stdout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

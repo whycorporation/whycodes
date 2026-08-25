@@ -1,10 +1,10 @@
 [package]
-name = "whycode-memory"
+name = "whycodes-memory"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Cross-session semantic / auto memory for whycode"
+description = "Cross-session semantic / auto memory for whycodes"
 
 [features]
 default = []
@@ -12,9 +12,9 @@ default = []
 onnx = ["dep:tract-onnx", "dep:tokenizers"]
 
 [dependencies]
-whycode-core = { path = "../core" }
-whycode-index = { path = "../index" }
-whycode-storage = { path = "../storage" }
+whycodes-core = { path = "../core" }
+whycodes-index = { path = "../index" }
+whycodes-storage = { path = "../storage" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }

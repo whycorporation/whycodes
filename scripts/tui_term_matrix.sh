@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Launch whycode's TUI in popular Linux terminal emulators.
+# Launch whycodes's TUI in popular Linux terminal emulators.
 #
 # cargo test does not cover emulator CSI/OSC (mouse, OSC 52, Shift+Enter,
 # truecolor). This script only opens a real PTY per host; walk the checklist
@@ -10,14 +10,14 @@
 #   scripts/tui_term_matrix.sh --list          # which hosts are installed
 #   scripts/tui_term_matrix.sh --dry-run       # print commands, do not exec
 #   scripts/tui_term_matrix.sh --no-build alacritty kitty
-#   BIN=/usr/local/bin/whycode scripts/tui_term_matrix.sh
+#   BIN=/usr/local/bin/whycodes scripts/tui_term_matrix.sh
 #   DIR=/tmp/demo scripts/tui_term_matrix.sh
 
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 DIR="${DIR:-$ROOT}"
-BIN="${BIN:-$ROOT/target/debug/whycode}"
+BIN="${BIN:-$ROOT/target/debug/whycodes}"
 DOCS="docs/tui-term-matrix.md"
 
 do_build=1
@@ -118,8 +118,8 @@ fi
 
 if [ "$do_build" -eq 1 ] && [ "$dry_run" -eq 0 ]; then
     if [ ! -x "$BIN" ]; then
-        say "building whycode-cli → $BIN"
-        (cd "$ROOT" && cargo build -p whycode-cli)
+        say "building whycodes-cli → $BIN"
+        (cd "$ROOT" && cargo build -p whycodes-cli)
     fi
 fi
 
@@ -167,7 +167,7 @@ done
 say ""
 say "launched=$launched skipped=$skipped unknown=$unknown"
 if [ "$dry_run" -eq 0 ] && [ "$launched" -gt 0 ]; then
-    say "Walk $DOCS in each window. Logs: ~/.local/share/whycode/logs/unified.jsonl"
+    say "Walk $DOCS in each window. Logs: ~/.local/share/whycodes/logs/unified.jsonl"
 fi
 
 if [ "$unknown" -gt 0 ]; then

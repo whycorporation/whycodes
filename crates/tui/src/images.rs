@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
-use whycode_core::types::{ContentBlock, ImageSource};
+use whycodes_core::types::{ContentBlock, ImageSource};
 
 /// Soft cap so a huge screenshot does not blow the request body.
 pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;

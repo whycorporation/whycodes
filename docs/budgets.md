@@ -14,7 +14,7 @@ drift visible, not to be at zero.
 |---|---|---|
 | `check_panic_budget.py` | `unwrap()`, `expect()`, `panic!()`, `todo!()`, `unimplemented!()` in non-test code | `scripts/panic_budget.json` |
 | `check_swallowed_error_budget.py` | `let _ = call(…)`, `Err(_) =>`, `.ok();` in non-test code | `scripts/swallowed_error_budget.json` |
-| `check_dependency_boundaries.py` | `whycode-*` edges between workspace crates | `scripts/dependency_boundaries.json` |
+| `check_dependency_boundaries.py` | `whycodes-*` edges between workspace crates | `scripts/dependency_boundaries.json` |
 | `check_sdk_protocol.py` | Protocol v1 tags (`SdkEvent` / `ErrorCode`) vs TypeScript `KNOWN_EVS` | (no JSON; fails on drift) |
 
 Run them the way CI does:

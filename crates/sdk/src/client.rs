@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use futures::StreamExt;
 use tokio::process::{Child, Command};
-use whycode_protocol::sdk::{
+use whycodes_protocol::sdk::{
     CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelList,
     PROTOCOL_MAJOR, PermissionDecision, PermissionResponse, QuestionResponse, RenameRequest,
     RewindRequest, RunRequest, SdkEvent, SessionHistory, SessionInfo, SessionList, SetModelRequest,
@@ -16,20 +16,20 @@ use whycode_protocol::sdk::{
 
 use crate::SdkError;
 
-/// Options for [`WhycodeClient::launch`].
+/// Options for [`WhyCodesClient::launch`].
 #[derive(Debug, Clone)]
 pub struct LaunchOptions {
     pub working_dir: PathBuf,
     /// Bind port. `None` picks an ephemeral loopback port.
     pub port: Option<u16>,
-    /// `whycode` binary. Falls back to `$WHYCODE`, then PATH.
+    /// `whycodes` binary. Falls back to `$WHYCODES`, then PATH.
     pub binary: Option<PathBuf>,
     pub startup_timeout: Duration,
     /// When true (default), the child uses the user's config/auth/home.
-    /// When false, a private `WHYCODE_HOME` is used and API-key env vars
+    /// When false, a private `WHYCODES_HOME` is used and API-key env vars
     /// are stripped so the instance cannot spend the user's quota.
     pub inherit_logins: bool,
-    /// Explicit `WHYCODE_HOME`. Implies isolation even if `inherit_logins`.
+    /// Explicit `WHYCODES_HOME`. Implies isolation even if `inherit_logins`.
     pub home: Option<PathBuf>,
 }
 
@@ -46,19 +46,19 @@ impl Default for LaunchOptions {
     }
 }
 
-/// Options for [`WhycodeClient::run`].
+/// Options for [`WhyCodesClient::run`].
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub provider: Option<String>,
     pub model: Option<String>,
     pub max_turns: Option<usize>,
-    /// When `None`, [`WhycodeClient::run`] defaults to `true` (scripts) and
-    /// [`WhycodeClient::run_events`] defaults to `false` (interactive UIs).
+    /// When `None`, [`WhyCodesClient::run`] defaults to `true` (scripts) and
+    /// [`WhyCodesClient::run_events`] defaults to `false` (interactive UIs).
     pub auto_approve: Option<bool>,
 }
 
-/// Connection to a `whycode serve` process.
-pub struct WhycodeClient {
+/// Connection to a `whycodes serve` process.
+pub struct WhyCodesClient {
     base: String,
     http: reqwest::Client,
     child: Option<Child>,
@@ -66,8 +66,8 @@ pub struct WhycodeClient {
     _home: Option<tempfile::TempDir>,
 }
 
-impl WhycodeClient {
-    /// Attach to an already-running daemon (`whycode serve`).
+impl WhyCodesClient {
+    /// Attach to an already-running daemon (`whycodes serve`).
     pub async fn connect(base: impl AsRef<str>) -> Result<Self, SdkError> {
         let base = normalize_base(base.as_ref());
         let http = http_client()?;
@@ -81,7 +81,7 @@ impl WhycodeClient {
         Ok(client)
     }
 
-    /// Spawn `whycode serve` as a private instance and connect to it.
+    /// Spawn `whycodes serve` as a private instance and connect to it.
     ///
     /// The child inherits this process's environment (API keys, `HOME`), so
     /// it spends the same provider quota as the user. `close` / drop kills it.
@@ -95,12 +95,12 @@ impl WhycodeClient {
         let (home_env, held_home) = if isolated {
             if let Some(p) = opts.home.clone() {
                 std::fs::create_dir_all(&p).map_err(|e| {
-                    SdkError::with_source(ErrorCode::StartupFailed, "create WHYCODE_HOME", e)
+                    SdkError::with_source(ErrorCode::StartupFailed, "create WHYCODES_HOME", e)
                 })?;
                 (Some(p), None)
             } else {
                 let tmp = tempfile::tempdir().map_err(|e| {
-                    SdkError::with_source(ErrorCode::StartupFailed, "temp WHYCODE_HOME", e)
+                    SdkError::with_source(ErrorCode::StartupFailed, "temp WHYCODES_HOME", e)
                 })?;
                 let path = tmp.path().to_path_buf();
                 (Some(path), Some(tmp))
@@ -117,7 +117,7 @@ impl WhycodeClient {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         if let Some(home) = &home_env {
-            cmd.env("WHYCODE_HOME", home);
+            cmd.env("WHYCODES_HOME", home);
         }
         if !opts.inherit_logins {
             for key in [
@@ -168,7 +168,7 @@ impl WhycodeClient {
                 let stderr = take_stderr(&mut client.child).await;
                 return Err(SdkError::new(
                     ErrorCode::StartupFailed,
-                    format!("whycode serve exited ({status}). {stderr}"),
+                    format!("whycodes serve exited ({status}). {stderr}"),
                 ));
             }
             match client.handshake().await {
@@ -355,7 +355,7 @@ impl WhycodeClient {
         &self,
         session_id: &str,
         request_id: impl Into<String>,
-        answers: Option<Vec<whycode_protocol::sdk::QuestionAnswerWire>>,
+        answers: Option<Vec<whycodes_protocol::sdk::QuestionAnswerWire>>,
         cancelled: bool,
     ) -> Result<(), SdkError> {
         let url = format!("{}/v1/sessions/{session_id}/question", self.base);
@@ -618,7 +618,7 @@ impl WhycodeClient {
             return Err(SdkError::new(
                 ErrorCode::UnsupportedVersion,
                 format!(
-                    "{} has no /v1/health — upgrade whycode serve (need protocol {PROTOCOL_MAJOR})",
+                    "{} has no /v1/health — upgrade whycodes serve (need protocol {PROTOCOL_MAJOR})",
                     self.base
                 ),
             ));
@@ -651,7 +651,7 @@ impl WhycodeClient {
     }
 }
 
-impl Drop for WhycodeClient {
+impl Drop for WhyCodesClient {
     fn drop(&mut self) {
         if let Some(mut child) = self.child.take()
             && let Err(_kill) = child.start_kill()
@@ -752,7 +752,7 @@ fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
     }
-    if let Ok(p) = std::env::var("WHYCODE")
+    if let Ok(p) = std::env::var("WHYCODES")
         && !p.is_empty()
     {
         return Ok(PathBuf::from(p));
@@ -761,20 +761,20 @@ fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
         if exe
             .file_stem()
             .and_then(|s| s.to_str())
-            .is_some_and(|n| n == "whycode")
+            .is_some_and(|n| n == "whycodes")
         {
             return Ok(exe);
         }
         let sibling = exe.with_file_name(if cfg!(windows) {
-            "whycode.exe"
+            "whycodes.exe"
         } else {
-            "whycode"
+            "whycodes"
         });
         if sibling.is_file() {
             return Ok(sibling);
         }
     }
-    Ok(PathBuf::from("whycode"))
+    Ok(PathBuf::from("whycodes"))
 }
 
 fn ephemeral_port() -> Result<u16, SdkError> {
@@ -858,15 +858,15 @@ mod tests {
 
     #[test]
     fn resolve_binary_prefers_explicit_then_env() {
-        let p = resolve_binary(Some(Path::new("/opt/whycode"))).unwrap();
-        assert_eq!(p, PathBuf::from("/opt/whycode"));
-        let prev = std::env::var_os("WHYCODE");
-        unsafe { std::env::set_var("WHYCODE", "/env/whycode") };
+        let p = resolve_binary(Some(Path::new("/opt/whycodes"))).unwrap();
+        assert_eq!(p, PathBuf::from("/opt/whycodes"));
+        let prev = std::env::var_os("WHYCODES");
+        unsafe { std::env::set_var("WHYCODES", "/env/whycodes") };
         let p = resolve_binary(None).unwrap();
-        assert_eq!(p, PathBuf::from("/env/whycode"));
+        assert_eq!(p, PathBuf::from("/env/whycodes"));
         match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE", v) },
-            None => unsafe { std::env::remove_var("WHYCODE") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES", v) },
+            None => unsafe { std::env::remove_var("WHYCODES") },
         }
     }
 
@@ -914,8 +914,8 @@ mod tests {
 
     #[tokio::test]
     async fn launch_missing_binary_is_serve_not_found() {
-        let err = match WhycodeClient::launch(LaunchOptions {
-            binary: Some(PathBuf::from("/no/such/whycode-binary")),
+        let err = match WhyCodesClient::launch(LaunchOptions {
+            binary: Some(PathBuf::from("/no/such/whycodes-binary")),
             inherit_logins: false,
             startup_timeout: Duration::from_millis(200),
             ..Default::default()

@@ -1,14 +1,14 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use whycode_core::SandboxSettings;
-use whycode_core::network::NetworkPolicy;
-use whycode_core::tool::ToolContext;
-use whycode_core::types::{AgentInfo, PermissionSet};
-use whycode_llm::provider::ProviderRegistry;
-use whycode_memory::MemorySettings;
-use whycode_session::session::Session;
-use whycode_tools::executor::ToolExecutor;
+use whycodes_core::SandboxSettings;
+use whycodes_core::network::NetworkPolicy;
+use whycodes_core::tool::ToolContext;
+use whycodes_core::types::{AgentInfo, PermissionSet};
+use whycodes_llm::provider::ProviderRegistry;
+use whycodes_memory::MemorySettings;
+use whycodes_session::session::Session;
+use whycodes_tools::executor::ToolExecutor;
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
 
@@ -37,7 +37,7 @@ pub struct SubagentResult {
     /// Wall-clock duration of the subagent run
     pub duration: std::time::Duration,
     /// Provider-reported token usage across all subagent LLM steps (fold into parent).
-    pub usage: whycode_core::types::Usage,
+    pub usage: whycodes_core::types::Usage,
 }
 
 /// Runner that executes a subagent task by creating a fresh session and
@@ -51,14 +51,14 @@ pub struct SubagentRunner {
     network: NetworkPolicy,
     memory: MemorySettings,
     /// Shared file-claim registry when running inside a swarm.
-    file_claims: Option<whycode_core::FileClaimRegistry>,
+    file_claims: Option<whycodes_core::FileClaimRegistry>,
     agent_id: Option<String>,
     agent_label: Option<String>,
     /// Workspace file index inherited from the parent agent (tools fast path).
-    file_index: Option<Arc<whycode_index::WorkspaceIndex>>,
+    file_index: Option<Arc<whycodes_index::WorkspaceIndex>>,
     /// Parent TUI panel sink (so workers can pin a preview).
-    panel: Option<whycode_core::PanelSink>,
-    swarm_hub: Option<whycode_core::SwarmHub>,
+    panel: Option<whycodes_core::PanelSink>,
+    swarm_hub: Option<whycodes_core::SwarmHub>,
 }
 
 impl SubagentRunner {
@@ -89,18 +89,18 @@ impl SubagentRunner {
     }
 
     /// Inherit the parent agent's workspace file index.
-    pub fn with_file_index(mut self, index: Option<Arc<whycode_index::WorkspaceIndex>>) -> Self {
+    pub fn with_file_index(mut self, index: Option<Arc<whycodes_index::WorkspaceIndex>>) -> Self {
         self.file_index = index;
         self
     }
 
     /// Inherit the parent agent's side-panel sink.
-    pub fn with_panel(mut self, panel: Option<whycode_core::PanelSink>) -> Self {
+    pub fn with_panel(mut self, panel: Option<whycodes_core::PanelSink>) -> Self {
         self.panel = panel;
         self
     }
 
-    pub fn with_swarm_hub(mut self, hub: Option<whycode_core::SwarmHub>) -> Self {
+    pub fn with_swarm_hub(mut self, hub: Option<whycodes_core::SwarmHub>) -> Self {
         self.swarm_hub = hub;
         self
     }
@@ -114,7 +114,7 @@ impl SubagentRunner {
     /// Bind this runner to a swarm file-claim registry and worker identity.
     pub fn with_file_claims(
         mut self,
-        claims: whycode_core::FileClaimRegistry,
+        claims: whycodes_core::FileClaimRegistry,
         agent_id: impl Into<String>,
         agent_label: impl Into<String>,
     ) -> Self {
@@ -131,7 +131,7 @@ impl SubagentRunner {
         provider_name: &str,
         model: &str,
         api_key: &str,
-    ) -> whycode_core::Result<SubagentResult> {
+    ) -> whycodes_core::Result<SubagentResult> {
         let start = Instant::now();
 
         // Build the full prompt from goal + optional context
@@ -195,7 +195,7 @@ impl SubagentRunner {
                 output: format!("Subagent error: {}", e),
                 success: false,
                 duration,
-                usage: whycode_core::types::Usage::default(),
+                usage: whycodes_core::types::Usage::default(),
             }),
         }
     }
@@ -211,9 +211,9 @@ impl SubagentRunner {
         api_key: &str,
         max_turns: usize,
         permission: &PermissionSet,
-    ) -> whycode_core::Result<(String, whycode_core::types::Usage)> {
+    ) -> whycodes_core::Result<(String, whycodes_core::types::Usage)> {
         use futures::StreamExt;
-        use whycode_core::types::{ContentBlock, StreamEvent};
+        use whycodes_core::types::{ContentBlock, StreamEvent};
 
         use super::tool_stream::ToolCallAssembler;
 
@@ -239,7 +239,7 @@ impl SubagentRunner {
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
-            whycode_core::Error::Llm(format!(
+            whycodes_core::Error::Llm(format!(
                 "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity",
                 provider_name
             ))
@@ -247,12 +247,12 @@ impl SubagentRunner {
 
         let mut turn_count = 0;
         let mut final_text = String::new();
-        let mut total_usage = whycode_core::types::Usage::default();
+        let mut total_usage = whycodes_core::types::Usage::default();
 
         loop {
             turn_count += 1;
             if turn_count > max_turns {
-                return Err(whycode_core::Error::Agent(format!(
+                return Err(whycodes_core::Error::Agent(format!(
                     "Subagent exceeded maximum turns ({})",
                     max_turns
                 )));
@@ -282,9 +282,9 @@ impl SubagentRunner {
             // Stream response
             let mut accumulated_text = String::new();
             let mut assembler = ToolCallAssembler::new();
-            let mut step_usage = whycode_core::types::Usage::default();
+            let mut step_usage = whycodes_core::types::Usage::default();
 
-            let mut event_stream = whycode_llm::default_transport()
+            let mut event_stream = whycodes_llm::default_transport()
                 .stream(provider, &request, api_key, model)
                 .await?;
 
@@ -328,7 +328,7 @@ impl SubagentRunner {
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
                     StreamEvent::Error { message } => {
-                        return Err(whycode_core::Error::Llm(message));
+                        return Err(whycodes_core::Error::Llm(message));
                     }
                 }
             }
@@ -424,18 +424,18 @@ fn inject_subagent_memory(
         return system_prompt.to_string();
     }
     // Env override still wins for emergency off-switch.
-    if std::env::var("WHYCODE_NO_MEMORY")
+    if std::env::var("WHYCODES_NO_MEMORY")
         .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
     {
         return system_prompt.to_string();
     }
 
-    let data_dir = whycode_core::paths::data_dir();
+    let data_dir = whycodes_core::paths::data_dir();
 
     let mut settings = parent_memory.clone();
     // Env can force main bank even if config has subagent_banks=true.
-    let banks_off = std::env::var("WHYCODE_SUBAGENT_BANKS")
+    let banks_off = std::env::var("WHYCODES_SUBAGENT_BANKS")
         .map(|v| {
             matches!(
                 v.to_ascii_lowercase().as_str(),
@@ -449,7 +449,7 @@ fn inject_subagent_memory(
         settings.agent_bank = None;
     }
 
-    whycode_memory::apply_memory_prompt(
+    whycodes_memory::apply_memory_prompt(
         system_prompt,
         project_path,
         &data_dir,
@@ -464,7 +464,7 @@ mod tests {
 
     #[test]
     fn inject_memory_passthrough_when_disabled() {
-        let memory = whycode_memory::MemorySettings::disabled();
+        let memory = whycodes_memory::MemorySettings::disabled();
         let out = inject_subagent_memory(
             "base prompt",
             std::path::Path::new("/work/proj"),
@@ -477,18 +477,18 @@ mod tests {
 
     #[test]
     fn inject_memory_passthrough_when_env_off_switch() {
-        let prev = std::env::var_os("WHYCODE_NO_MEMORY");
-        unsafe { std::env::set_var("WHYCODE_NO_MEMORY", "1") };
+        let prev = std::env::var_os("WHYCODES_NO_MEMORY");
+        unsafe { std::env::set_var("WHYCODES_NO_MEMORY", "1") };
         let out = inject_subagent_memory(
             "base prompt",
             std::path::Path::new("/work/proj"),
             "worker",
             "do the thing",
-            &whycode_memory::MemorySettings::default(),
+            &whycodes_memory::MemorySettings::default(),
         );
         match prev {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_NO_MEMORY", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_NO_MEMORY") },
+            Some(v) => unsafe { std::env::set_var("WHYCODES_NO_MEMORY", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_NO_MEMORY") },
         }
         assert_eq!(out, "base prompt");
     }
@@ -496,15 +496,15 @@ mod tests {
     #[test]
     fn runner_builders_set_state() {
         let runner = make_runner();
-        let idx = whycode_index::WorkspaceIndex::start(Vec::new());
-        let hub = whycode_core::SwarmHub::default();
+        let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+        let hub = whycodes_core::SwarmHub::default();
         let runner = runner
             .with_file_index(Some(idx))
             .with_panel(None)
             .with_swarm_hub(Some(hub))
-            .with_memory(whycode_memory::MemorySettings::disabled())
+            .with_memory(whycodes_memory::MemorySettings::disabled())
             .with_file_claims(
-                whycode_core::FileClaimRegistry::default(),
+                whycodes_core::FileClaimRegistry::default(),
                 "worker-1",
                 "Worker One",
             );
@@ -565,7 +565,7 @@ mod tests {
         AgentInfo {
             name: "worker".into(),
             description: "test worker".into(),
-            mode: whycode_core::types::AgentMode::Primary,
+            mode: whycodes_core::types::AgentMode::Primary,
             permission: PermissionSet::default(),
             model: None,
             system_prompt: None,

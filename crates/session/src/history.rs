@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use whycode_core::types::Message;
+use whycodes_core::types::Message;
 
 /// Snapshot of conversation + working tree for one undo step.
 #[derive(Debug, Clone)]
@@ -156,7 +156,7 @@ pub fn git_changed_files(project_path: &Path) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::types::{Message, MessageContent, Role};
+    use whycodes_core::types::{Message, MessageContent, Role};
 
     fn msg(content: &str) -> Message {
         Message {

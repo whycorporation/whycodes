@@ -1,6 +1,6 @@
 //! Leaf sandbox policy types used by [`crate::ToolContext`] and the sandbox runtime.
 //!
-//! Kept in `whycode-core` (not `whycode-config`) so tool execution can depend on
+//! Kept in `whycodes-core` (not `whycodes-config`) so tool execution can depend on
 //! policy without pulling config load/merge.
 
 use serde::{Deserialize, Serialize};

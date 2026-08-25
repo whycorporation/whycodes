@@ -1,6 +1,6 @@
 //! OS-level sandbox for shell commands.
 //!
-//! `whycode-command-risk` classifies command *strings*. This crate is the
+//! `whycodes-command-risk` classifies command *strings*. This crate is the
 //! second lock: when enabled, shell runs inside a restricted filesystem (and
 //! optionally network) namespace so blast radius is limited even if the string
 //! gate misses.
@@ -17,7 +17,7 @@ pub use policy::{
     run,
 };
 
-use whycode_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
 pub fn backend_available() -> bool {
     bwrap::bwrap_path().is_some()

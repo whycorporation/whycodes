@@ -1,5 +1,5 @@
 [package]
-name = "whycode-tui"
+name = "whycodes-tui"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,17 +17,17 @@ futures.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 chrono.workspace = true
-whycode-core = { path = "../core" }
-whycode-auth = { path = "../auth" }
-whycode-config = { path = "../config" }
-whycode-session = { path = "../session" }
-whycode-agent = { path = "../agent" }
-whycode-llm = { path = "../llm" }
-whycode-tools = { path = "../tools" }
-whycode-format = { path = "../format" }
-whycode-storage = { path = "../storage" }
-whycode-memory = { path = "../memory" }
-whycode-index = { path = "../index" }
+whycodes-core = { path = "../core" }
+whycodes-auth = { path = "../auth" }
+whycodes-config = { path = "../config" }
+whycodes-session = { path = "../session" }
+whycodes-agent = { path = "../agent" }
+whycodes-llm = { path = "../llm" }
+whycodes-tools = { path = "../tools" }
+whycodes-format = { path = "../format" }
+whycodes-storage = { path = "../storage" }
+whycodes-memory = { path = "../memory" }
+whycodes-index = { path = "../index" }
 unicode-width = "0.2"
 base64.workspace = true
 regex.workspace = true
@@ -38,6 +38,6 @@ tempfile.workspace = true
 [features]
 default = []
 screenshot = []
-# Forwarded from whycode-cli so a single feature set controls the whole binary.
-mermaid = ["whycode-format/mermaid"]
-extended-syntax = ["whycode-format/extended-syntax"]
+# Forwarded from whycodes-cli so a single feature set controls the whole binary.
+mermaid = ["whycodes-format/mermaid"]
+extended-syntax = ["whycodes-format/extended-syntax"]

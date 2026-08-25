@@ -1,4 +1,4 @@
-use whycode_core::types::ToolDefinition;
+use whycodes_core::types::ToolDefinition;
 
 /// Validate tool call parameters against a tool's JSON Schema definition
 pub fn validate_tool_params(

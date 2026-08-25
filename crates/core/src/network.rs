@@ -103,7 +103,7 @@ fn blocked_message(host: &str, url: &str, policy: &NetworkPolicy) -> String {
     }
     msg.push_str(
         "\nConfigure `security.network_allowlist` / `security.network_denylist` in config.toml \
-         (or WHYCODE_NETWORK_ALLOWLIST / WHYCODE_NETWORK_DENYLIST).",
+         (or WHYCODES_NETWORK_ALLOWLIST / WHYCODES_NETWORK_DENYLIST).",
     );
     msg
 }

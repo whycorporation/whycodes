@@ -2,9 +2,9 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
-/// Manage project-local git worktrees (`.whycode/worktrees/<name>`).
+/// Manage project-local git worktrees (`.whycodes/worktrees/<name>`).
 /// Intercepted by the agent loop for enter/exit cwd override.
 pub struct WorktreeTool;
 
@@ -27,7 +27,7 @@ impl Tool for WorktreeTool {
     }
 
     fn description(&self) -> &str {
-        "Git worktree helpers under `.whycode/worktrees/`. Actions: create, list, \
+        "Git worktree helpers under `.whycodes/worktrees/`. Actions: create, list, \
          remove, enter (switch tool cwd), exit (restore project root). Use to isolate \
          experimental edits without touching the main checkout."
     }

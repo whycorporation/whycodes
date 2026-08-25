@@ -1,4 +1,4 @@
-//! Minimal MCP **server** (stdio JSON-RPC) exporting whycode tools (A5).
+//! Minimal MCP **server** (stdio JSON-RPC) exporting whycodes tools (A5).
 //!
 //! Implements `initialize`, `notifications/initialized`, `tools/list`, `tools/call`.
 //! Designed for local hosts (Cursor / Claude Desktop / other agents).
@@ -7,10 +7,10 @@ use std::io::{BufRead, Write};
 use std::sync::Arc;
 
 use serde_json::{Value, json};
-use whycode_core::types::{PermissionSet, ToolCall};
-use whycode_tools::executor::ToolExecutor;
-use whycode_tools::profile::ToolProfile;
-use whycode_tools::tool::ToolContext;
+use whycodes_core::types::{PermissionSet, ToolCall};
+use whycodes_tools::executor::ToolExecutor;
+use whycodes_tools::profile::ToolProfile;
+use whycodes_tools::tool::ToolContext;
 
 use crate::types::{
     CallToolResult, InitializeResult, ListToolsResult, McpTool, ServerCapabilities,
@@ -91,7 +91,7 @@ pub(crate) async fn handle_rpc(
                     resources: None,
                 },
                 server_info: ServerInfo {
-                    name: "whycode".into(),
+                    name: "whycodes".into(),
                     version: env!("CARGO_PKG_VERSION").into(),
                 },
             };
@@ -134,8 +134,8 @@ pub(crate) async fn handle_rpc(
                 let ctx = ToolContext {
                     working_dir: working_dir.to_string(),
                     session_id: None,
-                    sandbox: whycode_core::SandboxSettings::default(),
-                    network: whycode_core::NetworkPolicy::unrestricted(),
+                    sandbox: whycodes_core::SandboxSettings::default(),
+                    network: whycodes_core::NetworkPolicy::unrestricted(),
                     file_claims: None,
                     agent_id: None,
                     agent_label: None,
@@ -179,7 +179,7 @@ fn rpc_err(id: Value, code: i64, message: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_tools::executor::ToolExecutor;
+    use whycodes_tools::executor::ToolExecutor;
 
     fn exec() -> ToolExecutor {
         ToolExecutor::new()
@@ -212,7 +212,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(init["result"]["protocolVersion"], PROTOCOL_VERSION);
-        assert_eq!(init["result"]["serverInfo"]["name"], "whycode");
+        assert_eq!(init["result"]["serverInfo"]["name"], "whycodes");
 
         let ping = rpc(json!({"jsonrpc": "2.0", "id": 2, "method": "ping"}))
             .await

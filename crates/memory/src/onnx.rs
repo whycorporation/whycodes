@@ -215,7 +215,7 @@ pub fn try_embed(text: &str, data_dir: &Path) -> Option<Vec<f32>> {
 pub fn smoke_embed(data_dir: &Path) -> anyhow::Result<(usize, f32)> {
     #[cfg(feature = "onnx")]
     {
-        let v = embed_onnx("whycode memory onnx smoke test", data_dir)?;
+        let v = embed_onnx("whycodes memory onnx smoke test", data_dir)?;
         let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         Ok((v.len(), norm))
     }

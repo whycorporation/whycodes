@@ -1,4 +1,4 @@
-# Whycode know-how
+# WhyCodes know-how
 
 Living notes for bugs that are easy to reintroduce — especially TUI, terminal I/O, and silent exits. **Read this before changing the event loop, mouse handling, or terminal setup.**
 
@@ -10,13 +10,13 @@ When you fix a non-obvious bug: **append an entry** (newest first under [Log](#l
 
 | Symptom | First check |
 |--------|-------------|
-| TUI opens and dies immediately | `tail -40 ~/.local/share/whycode/logs/unified.jsonl` |
-| Panic? | `ls ~/.local/share/whycode/crash/` (empty ⇒ usually not a panic) |
+| TUI opens and dies immediately | `tail -40 ~/.local/share/whycodes/logs/unified.jsonl` |
+| Panic? | `ls ~/.local/share/whycodes/crash/` (empty ⇒ usually not a panic) |
 | Silent clean exit | Look for `tui.exit` / `tui.loop_error` / `main.exit_error` in JSONL |
 | No TUI, plain mode | `stdin_tty` / `stdout_tty` / `/dev/tty` in `tui.starting` |
 | CI `Budgets` / `Check & Lint` red | Rule 8 — run the three `scripts/check_*.py` + `clippy -D warnings` locally |
 
-Lifecycle events written to **`~/.local/share/whycode/logs/unified.jsonl`** (always-on):
+Lifecycle events written to **`~/.local/share/whycodes/logs/unified.jsonl`** (always-on):
 
 | `msg` | Meaning |
 |-------|---------|
@@ -35,7 +35,7 @@ Lifecycle events written to **`~/.local/share/whycode/logs/unified.jsonl`** (alw
 
 ```bash
 # After a bad run:
-tail -40 ~/.local/share/whycode/logs/unified.jsonl
+tail -40 ~/.local/share/whycodes/logs/unified.jsonl
 ```
 
 ---
@@ -86,7 +86,7 @@ Some PTYs report `TIOCGWINSZ` as 0×0. Drawing a zero-area buffer is useless and
 - Config-driven only: `base_url` / `api_key` / headers from the active provider — **no hard-coded gateway hosts**.
 - TUI must **not** store the full gateway catalog (thousands of models). Keep a single `api_context_window` for the active model.
 - Failures are non-fatal; meter falls back to built-in / `session.max_context_tokens`.
-- Opt-out: `WHYCODE_NO_MODEL_CATALOG=1`.
+- Opt-out: `WHYCODES_NO_MODEL_CATALOG=1`.
 
 ### 6. `max_tokens` vs `context_window`
 
@@ -99,8 +99,8 @@ Do not use rate-limit headers (`x-ratelimit-limit-tokens`) as context window —
 
 ### 7. Build before “done”
 
-See root `AGENTS.md`. After Rust edits: `cargo check` / `cargo build -p whycode-cli` (and tests when logic changes).  
-Users often run **`./target/release/whycode`** — rebuild **release** when verifying TUI fixes they will run that way.
+See root `AGENTS.md`. After Rust edits: `cargo check` / `cargo build -p whycodes-cli` (and tests when logic changes).  
+Users often run **`./target/release/whycodes`** — rebuild **release** when verifying TUI fixes they will run that way.
 
 ### 8. CI Budgets + Clippy — run locally, every Rust push
 
@@ -135,13 +135,29 @@ Prefer **handling** over raising the crate’s number in `scripts/swallowed_erro
 
 Only bump a budget in the **same commit**, and say why. If the count is *below* budget, **lower** the JSON to lock the improvement in (the script prints this).
 
-**Dependency boundaries** (`scripts/dependency_boundaries.json`): any new `whycode-*` line in a crate’s `Cargo.toml` is a new **edge**. Add it to that crate’s list in the same commit, with a reason. New crate ⇒ entry in **all three** JSONs (see 2026-08-09 log).
+**Dependency boundaries** (`scripts/dependency_boundaries.json`): any new `whycodes-*` line in a crate’s `Cargo.toml` is a new **edge**. Add it to that crate’s list in the same commit, with a reason. New crate ⇒ entry in **all three** JSONs (see 2026-08-09 log).
 
 **Clippy:** `-D warnings` means style lints fail CI. Common one: `if let Some(x) = … { v } else { return None; }` → `let x = …?;`.
 
 ---
 
 ## Log
+
+### 2026-08-26 — WhyCodes rebrand vs GitHub slug
+
+**Symptom:** Mixing `Whycode` / `WhyCodes` / `whycode` / `whycodes` and pointing
+installers at `github.com/whycorporation/whycodes` 404s.
+
+**Cause:** Product name is **WhyCodes** (`why.codes`). The GitHub repo is still
+`whycorporation/whycode`. Homebrew's class is the formula name camel-cased
+(`whycodes` → `Whycodes`), not `WhyCodes`.
+
+**Fix:** User-facing copy and crates/binary/env are `WhyCodes` / `whycodes` /
+`WHYCODES_*`. Clone, release, and raw.githubusercontent URLs stay on
+`whycorporation/whycode`. Legacy `.whycode/` and `WHYCODE_HOME` still resolve.
+
+**Prevention:** Do not rewrite GitHub slugs when renaming the product. Homebrew
+class = formula filename, homepage = `https://why.codes`.
 
 ### 2026-08-26 — stream decode errors need JSONL at the chunk site
 
@@ -248,13 +264,13 @@ length.
 
 ### 2026-08-20 — core 100% floor misses `save_todos` parent `if let`
 
-**Symptom:** `Coverage (line floor)` fails `whycode-core` with
+**Symptom:** `Coverage (line floor)` fails `whycodes-core` with
 `Uncovered Lines: crates/core/src/todo.rs: 130` (closing `}` of
 `if let Some(parent) = path.parent()`). `Test (linux)` is green.
 
 **JSONL / crash:** none.
 
-**Root cause:** `todos_path` is always `working_dir/.whycode/...`, so
+**Root cause:** `todos_path` is always `working_dir/.whycodes/...`, so
 `Path::parent()` is `Some`. llvm-cov attributes the unused `None` arm to
 the closing brace (same shape as the sandbox `SSH_AUTH_SOCK` miss).
 
@@ -274,7 +290,7 @@ in progress.
 
 **JSONL / crash:** none (user-facing `Error::Agent`).
 
-**Root cause:** `whycode run` defaulted `-t/--max-turns` to 25 and the TUI
+**Root cause:** `whycodes run` defaulted `-t/--max-turns` to 25 and the TUI
 passed that into `Agent::run_turn`. Grok's `--max-turns` is **headless-only**;
 the interactive TUI is unlimited and ignores the flag.
 
@@ -312,15 +328,15 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-19 — xAI OAuth tokens are rejected by api.x.ai
 
-**Symptom:** `whycode auth login xai` succeeds, then the first turn shows `Authentication failed — check API key`.
+**Symptom:** `whycodes auth login xai` succeeds, then the first turn shows `Authentication failed — check API key`.
 
 **JSONL / crash:** none.
 
 **Root cause:** Console keys (`xai-…`) authorize `api.x.ai`. SuperGrok / X Premium OAuth tokens authorize the Grok Build proxy `https://cli-chat-proxy.grok.com/v1` with `X-XAI-Token-Auth: xai-grok-cli`. Sending the subscription token to `api.x.ai/v1/chat/completions` is a 401.
 
-**Fix:** `XaiProvider` routes non-`xai-` credentials to the proxy (chat completions + Grok CLI identity: `User-Agent: grok-shell/…`, `x-grok-client-identifier`, `X-XAI-Token-Auth`). A whycode UA / GitHub `HTTP-Referer` yields `upstream=Unauthenticated, reason=no auth context` even with a fresh token. API keys stay on `api.x.ai`.
+**Fix:** `XaiProvider` routes non-`xai-` credentials to the proxy (chat completions + Grok CLI identity: `User-Agent: grok-shell/…`, `x-grok-client-identifier`, `X-XAI-Token-Auth`). A whycodes UA / GitHub `HTTP-Referer` yields `upstream=Unauthenticated, reason=no auth context` even with a fresh token. API keys stay on `api.x.ai`.
 
-**Prevention:** Do not treat Grok account login as an `XAI_API_KEY`. Do not send `client_identity::post` (whycode Referer) to `cli-chat-proxy.grok.com`.
+**Prevention:** Do not treat Grok account login as an `XAI_API_KEY`. Do not send `client_identity::post` (whycodes Referer) to `cli-chat-proxy.grok.com`.
 
 ### 2026-08-19 — Coverage flake: `project_path_uses_configured_or_cwd` vs chdir
 
@@ -394,7 +410,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Prevention:** Never `.await` an LLM call from `handle_slash` or any other path that sits on the TUI poll loop.
 
-### 2026-08-19 — `apply_resume_found_missing_and_latest` flakes on shared `WHYCODE_HOME`
+### 2026-08-19 — `apply_resume_found_missing_and_latest` flakes on shared `WHYCODES_HOME`
 
 **Symptom:** `Test (linux)` fails `run::tests::apply_resume_found_missing_and_latest`: toast does not contain `No saved`. Isolated re-run is green.
 
@@ -404,7 +420,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Fix:** That test uses `isolate_home_fresh()` — a mutex plus a unique temp dir held for the test body.
 
-**Prevention:** Tests that assert on an empty session store must not share `WHYCODE_HOME` with other tests.
+**Prevention:** Tests that assert on an empty session store must not share `WHYCODES_HOME` with other tests.
 
 ### 2026-08-19 — Coverage flake: nucleo `rearm` tick(5) is too short under llvm-cov
 
@@ -420,7 +436,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-19 — Keyboard Shortcuts popup is 70%/max 80, not 90%
 
-**Symptom:** whycode dialogs were stretched to 90% of the terminal after copying the generic `ModalSizing::large()` numbers. They did not look like Grok's Ctrl+. cheatsheet.
+**Symptom:** whycodes dialogs were stretched to 90% of the terminal after copying the generic `ModalSizing::large()` numbers. They did not look like Grok's Ctrl+. cheatsheet.
 
 **JSONL / crash:** none.
 
@@ -470,7 +486,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-17 — Competitor audit: draw recovery, resize coalesce, git timeout
 
-**Symptom / gap:** jcode keeps the TUI alive after a widget panic; Grok never `malloc_trim`s inside a frame; a wedged `git` or a resize flood can stall whycode.
+**Symptom / gap:** jcode keeps the TUI alive after a widget panic; Grok never `malloc_trim`s inside a frame; a wedged `git` or a resize flood can stall whycodes.
 
 **Fix:** `catch_unwind` around `render_inner` + fallback banner. Coalesce `Resize` to the last size in a batch. `git rev-parse` capped at 250 ms (child killed). Turn-done heap trim is `request_release_after_draw` (Grok), drained after `terminal.draw`.
 
@@ -606,7 +622,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-17 — CI Budgets + index watcher flake
 
-**Symptom:** `Budgets` red on `sh scripts/test_tui_term_matrix.sh` (no `ok`). `Test (linux)` red on `whycode-index::watcher_picks_up_changes` (`create must be indexed`, 5 vs 6).
+**Symptom:** `Budgets` red on `sh scripts/test_tui_term_matrix.sh` (no `ok`). `Test (linux)` red on `whycodes-index::watcher_picks_up_changes` (`create must be indexed`, 5 vs 6).
 
 **Root cause:** `--dry-run` skipped hosts whose emulator was not on PATH, so CI (no Alacritty) never printed the argv the test locks. Index `wait_ready` flipped Ready at the end of `full_scan`, *then* `notify` was armed — a create in that window was lost.
 
@@ -618,7 +634,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-17 — Header–chat gap too tight; scroll still hitchy
 
-**Symptom:** Transcript sat almost flush under the `whycode` header (one blank row). Wheel/trackpad scroll was still not fluid after the previous drain-only fix.
+**Symptom:** Transcript sat almost flush under the `whycodes` header (one blank row). Wheel/trackpad scroll was still not fluid after the previous drain-only fix.
 
 **Root cause:** `TOP_PAD` was 1. Paint still cloned every visible `Line`/`Span`/`String`, wiped every cell then stamped (2× writes), and re-parsed the selected bubble. Wheel notches in a drained batch were applied one `handle_mouse` at a time instead of one offset change.
 
@@ -645,7 +661,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-16 — Chat painted into the status header
 
-**Symptom:** Session transcript (user band / first visible line) sat flush on the `whycode` header row. Scrolling to the top made the elevated user band look like it had overflowed into the chrome / safe area.
+**Symptom:** Session transcript (user band / first visible line) sat flush on the `whycodes` header row. Scrolling to the top made the elevated user band look like it had overflowed into the chrome / safe area.
 
 **Root cause:** Shell split was header · body · footer inside `inset_safe`. Body started on the next cell after the 1-row status bar. Session inset applied `SIDE_PAD` + `BOTTOM_PAD` but no top gap, so `SparseLines` wiped and stamped chat at `body.y` — the header’s neighbour.
 
@@ -671,7 +687,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Fix:** Handle, don’t swallow — `emit_status` logs a closed channel; name timeout/`Elapsed`; warn on lock poison; rewrite catalog `as_u32` to `if let Ok`. Clippy arm → `let msg = s.strip_prefix("error:")?;`. Lock budgets (`llm` 4→0, `memory` 9→8). Register `server → auth, index, storage` in `dependency_boundaries.json`.
 
-**Prevention:** Rule 8. After any `.rs` / `Cargo.toml` edit, run the three budget scripts **and** clippy `-D warnings` before push. Do not treat “I didn’t add a crate” as a skip — a single `let _ =` or a new `whycode-*` dep is enough. Do not raise a budget to paper over `let _ =` / `Err(_)` when the error can be named or logged.
+**Prevention:** Rule 8. After any `.rs` / `Cargo.toml` edit, run the three budget scripts **and** clippy `-D warnings` before push. Do not treat “I didn’t add a crate” as a skip — a single `let _ =` or a new `whycodes-*` dep is enough. Do not raise a budget to paper over `let _ =` / `Err(_)` when the error can be named or logged.
 
 ---
 
@@ -737,7 +753,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 **Root cause:** No product-level intent layer — only free-form model judgment. Competitors use hard modes (Cursor Ask/Plan/Agent, OpenCode Build/Plan) plus prompt rules, not a silent ML router.
 
-**Fix:** Three layers: (1) primary agents `build` / `plan` / `ask` with tool denylists; (2) prompt protocol in `prompts/{build,plan,ask}.txt`; (3) zero-LLM heuristic (`crates/agent/src/intent.rs`) injects ephemeral `<whycode_intent>` on the **request** only (not session history) so system prompt cache stays stable. Config: `session.intent_guidance = auto|off|always`.
+**Fix:** Three layers: (1) primary agents `build` / `plan` / `ask` with tool denylists; (2) prompt protocol in `prompts/{build,plan,ask}.txt`; (3) zero-LLM heuristic (`crates/agent/src/intent.rs`) injects ephemeral `<whycodes_intent>` on the **request** only (not session history) so system prompt cache stays stable. Config: `session.intent_guidance = auto|off|always`.
 
 **UX + auth (same day):** `TurnEvent::Intent` → TUI badge (`[Q]` / `chg` / `plan` in header + prompt chrome); mode-mismatch **Warning** toast (8s TTL); Claude-style `authorize_tool` escalates mutators (edit/write/shell) to Confirm when turn intent is high-confidence question/plan. Read-only shell (`ls`, `git status`, …) still allowed. `intent_guidance=off` disables posture + auth escalate.
 
@@ -771,7 +787,7 @@ agent loop. Loop protection is doom-loop + cancel, not a 25-step ceiling.
 
 ### 2026-08-05 — Boot/TTFF: do not put Tokio before `--version`
 
-**Symptom:** `whycode --version` (Boot floor in comparison tables) paid multi-ms for a multi-thread Tokio runtime that never ran work. Windows baseline ~21 ms was mostly binary page-in + that setup.
+**Symptom:** `whycodes --version` (Boot floor in comparison tables) paid multi-ms for a multi-thread Tokio runtime that never ran work. Windows baseline ~21 ms was mostly binary page-in + that setup.
 
 **Root cause:** `#[tokio::main]` builds the runtime *before* the async body runs, so clap’s version exit still started worker threads. Full RELRO (`BIND_NOW`) resolved every relocation at start. 16 MB binary + mermaid-text + two-face packs meant more pages faulted in.
 
@@ -938,7 +954,7 @@ With `position = view_start = total - height` that never reaches the track end.
 
 **Root cause:** TUI spawned `GET /v1/models` at open with a **15s** request timeout on the **same host** as chat. Gateways with low concurrency effectively serialize: catalog holds the slot; chat waits; wall clock ≫ model Duration. No `connect_timeout` on the shared client made dead hops worse (long SYN retries).
 
-**Repro (outside whycode):** hang/slow `/v1/models` + concurrent `/v1/chat/completions` → chat TTFT balloons; alone chat stays ~2–3s.
+**Repro (outside whycodes):** hang/slow `/v1/models` + concurrent `/v1/chat/completions` → chat TTFT balloons; alone chat stays ~2–3s.
 
 **Fix:**
 - Do **not** fetch catalog at TUI open; queue after turn complete / model switch when `!agent_busy`.
@@ -1032,7 +1048,7 @@ scripts locally before push. They run in seconds and are the whole
 ---
 
 
-### 2026-08-12 — workspace file index (`whycode-index`): picker + tool fast paths
+### 2026-08-12 — workspace file index (`whycodes-index`): picker + tool fast paths
 
 **Context:** The TUI had a dead `ui/autocomplete.rs` (never wired, sync
 `read_dir` per keystroke) and three drifted hand-rolled walkers
@@ -1064,7 +1080,7 @@ prompt (or Ctrl+Space) opens the picker; dirs drill down on Tab.
   dotfile-targeting patterns (`.*`) bypass the index and walk the disk.
 - `ignore` crate: `filter_entry` drives descent control in both serial and
   parallel mode; `hidden(false)` + own policy so whitelisted dot-dirs
-  (`.github`, `.whycode`) survive.
+  (`.github`, `.whycodes`) survive.
 
 **Round 2 (async query model) — measured at 34.8k entries (cargo registry):**
 
@@ -1093,7 +1109,7 @@ every chunk. Anthropic streaming can also show `output_tokens = 0` because
 official SSE puts `usage` next to `delta`, not inside it.
 
 **JSONL / crash:** `turn.step` `input_tokens` / `output_tokens` disagree
-with the last raw `usage` in `WHYCODE_USAGE_DUMP`.
+with the last raw `usage` in `WHYCODES_USAGE_DUMP`.
 
 **Root cause:** The agent used `+=` on every `StreamEvent::Usage`. That is
 correct for Anthropic's *split* input-then-output events only if each field
@@ -1205,7 +1221,7 @@ stream colours to `highlight_uncached` must take the same lock. Do not
 ### 2026-08-17 — sandbox tests panic when the runner has no `bwrap`
 
 **Symptom:** CI `Test (linux)` and `Coverage (line floor)` fail in
-`whycode-sandbox`: `bwrap is required for this test`, or
+`whycodes-sandbox`: `bwrap is required for this test`, or
 `prepare_delegates_to_prepare_with_real_availability` asserts
 `Bubblewrap` while the host backend is `Host`.
 
@@ -1232,10 +1248,10 @@ host-only assertion arms as missed lines.
 
 ### 2026-08-20 — sandbox 100% floor misses `SSH_AUTH_SOCK` unset
 
-**Symptom:** `Coverage (line floor)` fails `whycode-sandbox` with
+**Symptom:** `Coverage (line floor)` fails `whycodes-sandbox` with
 `Uncovered Lines: crates/sandbox/src/bwrap.rs: 105` (the closing `}` of
 `if let Ok(auth_sock) = std::env::var("SSH_AUTH_SOCK")`). Workspace 78%
-and the other 100% crates are green. Isolated `cargo test -p whycode-sandbox`
+and the other 100% crates are green. Isolated `cargo test -p whycodes-sandbox`
 is green.
 
 **JSONL / crash:** none.
@@ -1291,7 +1307,7 @@ happy path. Do not "fix" by dropping the crate off the 100% list.
 
 ## Axum: `/s/:id` vs `/s/:id.json` route conflict (2026-08-13)
 
-**Symptom:** `whycode serve` panics at router build:
+**Symptom:** `whycodes serve` panics at router build:
 `Invalid route "/s/:id.json": insertion failed due to conflict with previously registered route: /s/:id`.
 
 **Cause:** axum/matchit treats `:id` as capturing the rest of the segment; a second

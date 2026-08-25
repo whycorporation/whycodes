@@ -1,3 +1,3 @@
-// Re-export the Tool trait and ToolContext from whycode-core,
+// Re-export the Tool trait and ToolContext from whycodes-core,
 // where they live to avoid circular dependencies with other crates.
-pub use whycode_core::{Tool, ToolContext};
+pub use whycodes_core::{Tool, ToolContext};

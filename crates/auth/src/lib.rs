@@ -1,10 +1,10 @@
-//! OAuth subscription login for Whycode.
+//! OAuth subscription login for WhyCodes.
 //!
 //! Lets users authenticate with an existing provider subscription (Claude
 //! Pro/Max, ChatGPT Plus/Pro, GitHub Copilot, Google/Gemini) instead of an
 //! API key, using the public PKCE OAuth client ids that first-party and
 //! community terminal agents use. Tokens live in `auth.json` under the
-//! whycode data directory with `0600` permissions on Unix.
+//! whycodes data directory with `0600` permissions on Unix.
 //!
 //! Security rules enforced here:
 //! - The token store is never world-readable; we chmod 0600 and refuse to

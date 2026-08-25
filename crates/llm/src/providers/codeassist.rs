@@ -1,13 +1,13 @@
 //! Google/Gemini subscription call routing: the Code Assist endpoint.
 //!
-//! A Google OAuth token (`whycode auth login google`) is rejected by the
+//! A Google OAuth token (`whycodes auth login google`) is rejected by the
 //! API-key `generativelanguage` route; Gemini-subscription calls go to the
 //! Code Assist endpoint (`cloudcode-pa.googleapis.com`, the service Gemini
 //! CLI uses) with the request wrapped in a `{model, project, request}`
 //! envelope. `GoogleProvider` delegates here when the credential is an
 //! OAuth access token (`ya29.…`); `AIza…` API keys keep the old path.
 //!
-//! Antigravity subscription tokens (`whycode auth login google-antigravity`)
+//! Antigravity subscription tokens (`whycodes auth login google-antigravity`)
 //! use the same RPC shape against `daily-cloudcode-pa.googleapis.com` with
 //! the native hub User-Agent and `{ ideType: ANTIGRAVITY }` metadata.
 //!
@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{OnceLock, RwLock};
-use whycode_core::types::{
+use whycodes_core::types::{
     ContentBlock, LlmRequest, LlmResponse, MessageContent, Role, StreamEvent, Usage,
 };
 
@@ -137,7 +137,7 @@ async fn post_at(
     path: &str,
     api_key: &str,
     body: &Value,
-) -> whycode_core::Result<reqwest::Response> {
+) -> whycodes_core::Result<reqwest::Response> {
     let url = format!("{base}{path}");
     crate::oauth_refresh::send_with_refresh_retry(profile.oauth_provider, api_key, |key| {
         authorize(
@@ -156,7 +156,7 @@ async fn post(
     path: &str,
     api_key: &str,
     body: &Value,
-) -> whycode_core::Result<reqwest::Response> {
+) -> whycodes_core::Result<reqwest::Response> {
     post_at(profile, profile.bases[0], path, api_key, body).await
 }
 
@@ -168,7 +168,7 @@ async fn post_generate(
     path: &str,
     api_key: &str,
     body: &Value,
-) -> whycode_core::Result<reqwest::Response> {
+) -> whycodes_core::Result<reqwest::Response> {
     let last = profile.bases.len() - 1;
     for (i, base) in profile.bases.iter().enumerate() {
         let resp = post_at(profile, base, path, api_key, body).await?;
@@ -187,7 +187,7 @@ async fn get(
     profile: &Profile,
     path: &str,
     api_key: &str,
-) -> whycode_core::Result<reqwest::Response> {
+) -> whycodes_core::Result<reqwest::Response> {
     let url = format!("{}{path}", profile.bases[0]);
     crate::oauth_refresh::send_with_refresh_retry(profile.oauth_provider, api_key, |key| {
         authorize(
@@ -202,7 +202,7 @@ async fn get(
 /// Resolve the Code Assist project id for this credential, cached
 /// process-wide per OAuth provider. See the module docs for the resolution
 /// order.
-async fn project_id(profile: &Profile, api_key: &str) -> whycode_core::Result<String> {
+async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<String> {
     if let Some(cached) = cached_project(profile.oauth_provider) {
         return Ok(cached);
     }
@@ -220,7 +220,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycode_core::Result<St
             if profile.antigravity {
                 None
             } else {
-                Some("whycodes".to_string())
+                Some("whycodess".to_string())
             }
         });
 
@@ -234,10 +234,10 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycode_core::Result<St
     let json: Value = resp
         .json()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("Code Assist loadCodeAssist: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist loadCodeAssist: {e}")))?;
     if !status.is_success() {
         let msg = json["error"]["message"].as_str().unwrap_or("unknown error");
-        return Err(whycode_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::Llm(format!(
             "Code Assist loadCodeAssist ({status}): {msg}"
         )));
     }
@@ -265,10 +265,10 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycode_core::Result<St
     let op: Value = resp
         .json()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("Code Assist onboardUser: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist onboardUser: {e}")))?;
     if !status.is_success() {
         let msg = op["error"]["message"].as_str().unwrap_or("unknown error");
-        return Err(whycode_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::Llm(format!(
             "Code Assist onboardUser ({status}): {msg}"
         )));
     }
@@ -286,14 +286,14 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycode_core::Result<St
         operation = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("Code Assist operation poll: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist operation poll: {e}")))?;
     }
 
     let project = operation["response"]["cloudaicompanionProject"]["id"]
         .as_str()
         .or(env_project.as_deref())
         .ok_or_else(|| {
-            whycode_core::Error::Llm(
+            whycodes_core::Error::Llm(
                 "Code Assist onboarding did not yield a project id; set GOOGLE_CLOUD_PROJECT"
                     .to_string(),
             )
@@ -526,7 +526,7 @@ fn code_assist_http_error(
 }
 
 /// Map one Code Assist SSE chunk (a GenerateContentResponse, tolerating a
-/// `{"response": …}` wrapper) to whycode stream events. Pure for tests.
+/// `{"response": …}` wrapper) to whycodes stream events. Pure for tests.
 /// `call_seq` mints ids for function calls — Gemini does not send any, but
 /// our agent round-trips the id through ToolResult.
 fn events_for_chunk(data: &str, call_seq: &mut u64) -> Vec<StreamEvent> {
@@ -597,7 +597,7 @@ pub async fn complete(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<LlmResponse> {
+) -> whycodes_core::Result<LlmResponse> {
     complete_with(&GEMINI_CLI, request, api_key, model).await
 }
 
@@ -606,7 +606,7 @@ pub async fn complete_antigravity(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<LlmResponse> {
+) -> whycodes_core::Result<LlmResponse> {
     complete_with(&ANTIGRAVITY, request, api_key, model).await
 }
 
@@ -615,7 +615,7 @@ async fn complete_with(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<LlmResponse> {
+) -> whycodes_core::Result<LlmResponse> {
     let project = project_id(profile, api_key).await?;
     let model = if profile.antigravity {
         antigravity_wire_model(model)
@@ -634,9 +634,9 @@ async fn complete_with(
     let json: Value = resp
         .json()
         .await
-        .map_err(|e| whycode_core::Error::Llm(format!("Code Assist parse: {e}")))?;
+        .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist parse: {e}")))?;
     if !status.is_success() {
-        return Err(whycode_core::Error::Llm(code_assist_http_error(
+        return Err(whycodes_core::Error::Llm(code_assist_http_error(
             status,
             model,
             &json,
@@ -692,7 +692,7 @@ pub async fn stream(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
+) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
     stream_with(&GEMINI_CLI, request, api_key, model).await
 }
 
@@ -701,7 +701,7 @@ pub async fn stream_antigravity(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
+) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
     stream_with(&ANTIGRAVITY, request, api_key, model).await
 }
 
@@ -710,7 +710,7 @@ async fn stream_with(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
+) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
     let project = project_id(profile, api_key).await?;
     let model = if profile.antigravity {
         antigravity_wire_model(model)
@@ -730,7 +730,7 @@ async fn stream_with(
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        return Err(whycode_core::Error::Llm(code_assist_http_error(
+        return Err(whycodes_core::Error::Llm(code_assist_http_error(
             status, model, &json, &text,
         )));
     }
@@ -775,7 +775,7 @@ async fn stream_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::types::{ImageSource, Message, ToolDefinition};
+    use whycodes_core::types::{ImageSource, Message, ToolDefinition};
 
     fn message(role: Role, content: MessageContent) -> Message {
         Message {

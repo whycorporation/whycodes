@@ -1,5 +1,5 @@
 [package]
-name = "whycode-server"
+name = "whycodes-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,16 +9,16 @@ axum = { version = "0.7", features = ["macros"] }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-whycode-core = { path = "../core" }
-whycode-config = { path = "../config" }
-whycode-agent = { path = "../agent" }
-whycode-session = { path = "../session" }
-whycode-tools = { path = "../tools" }
-whycode-llm = { path = "../llm" }
-whycode-storage = { path = "../storage" }
-whycode-auth = { path = "../auth" }
-whycode-index = { path = "../index" }
-whycode-protocol = { path = "../protocol" }
+whycodes-core = { path = "../core" }
+whycodes-config = { path = "../config" }
+whycodes-agent = { path = "../agent" }
+whycodes-session = { path = "../session" }
+whycodes-tools = { path = "../tools" }
+whycodes-llm = { path = "../llm" }
+whycodes-storage = { path = "../storage" }
+whycodes-auth = { path = "../auth" }
+whycodes-index = { path = "../index" }
+whycodes-protocol = { path = "../protocol" }
 tower-http = { version = "0.5", features = ["cors"] }
 tracing.workspace = true
 anyhow.workspace = true

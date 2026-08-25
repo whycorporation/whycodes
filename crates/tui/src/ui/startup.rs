@@ -123,7 +123,7 @@ pub fn render(frame: &mut Frame, area: Rect, screen: &StartupScreen) {
         Line::from(vec![
             Span::styled("  ║", Style::default().fg(accent)),
             Span::styled(
-                format!("       whycode v{}        ", version),
+                format!("       whycodes v{}        ", version),
                 Style::default().fg(fg).add_modifier(Modifier::BOLD),
             ),
             Span::styled("║", Style::default().fg(accent)),

@@ -25,9 +25,9 @@ the gate:
 
 ```bash
 CRATE_IGNORE="$IGNORE|tests\\.rs$"
-for crate in whycode-function whycode-schema whycode-skill whycode-sandbox \
-             whycode-protocol whycode-plugin whycode-command-risk whycode-storage \
-             whycode-core whycode-config whycode-format whycode-index; do
+for crate in whycodes-function whycodes-schema whycodes-skill whycodes-sandbox \
+             whycodes-protocol whycodes-plugin whycodes-command-risk whycodes-storage \
+             whycodes-core whycodes-config whycodes-format whycodes-index; do
   cargo llvm-cov -p "$crate" --ignore-filename-regex "$CRATE_IGNORE" \
     --fail-under-lines 100 --show-missing-lines --summary-only
 done

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use whycode_core::types::{
+use whycodes_core::types::{
     ContentBlock, LlmRequest, Message, MessageContent, Role, SessionInfo, ToolDefinition,
 };
 
@@ -72,7 +72,7 @@ impl CompactOutcome {
     }
 }
 
-/// ~4 Unicode scalars per token (matches `whycode_llm` fallback family).
+/// ~4 Unicode scalars per token (matches `whycodes_llm` fallback family).
 ///
 /// ASCII uses byte length (same as scalar count); non-ASCII still walks chars.
 fn estimate_tokens(text: &str) -> usize {
@@ -171,11 +171,13 @@ impl SessionTokenCache {
     }
 }
 
-/// Parse `WHYCODE_IMAGE_B64:image/png\n<base64>` payloads from the read tool.
-fn split_whycode_image_payload(content: &str) -> Option<(String, String, String)> {
-    const MARK: &str = "WHYCODE_IMAGE_B64:";
-    let idx = content.find(MARK)?;
-    let after = &content[idx + MARK.len()..];
+/// Parse `WHYCODES_IMAGE_B64:image/png\n<base64>` payloads from the read tool.
+fn split_whycodes_image_payload(content: &str) -> Option<(String, String, String)> {
+    const MARKS: &[&str] = &["WHYCODES_IMAGE_B64:", "WHYCODE_IMAGE_B64:"];
+    let (idx, mark_len) = MARKS
+        .iter()
+        .find_map(|mark| content.find(mark).map(|idx| (idx, mark.len())))?;
+    let after = &content[idx + mark_len..];
     let (media, rest) = after.split_once('\n')?;
     let media = media.trim();
     let b64 = rest.trim();
@@ -510,7 +512,7 @@ pub struct Session {
     ///
     /// `#[serde(default)]` so sessions exported before this existed still load.
     #[serde(default)]
-    pub usage: whycode_core::types::Usage,
+    pub usage: whycodes_core::types::Usage,
     /// Incremental char/4 estimate (system + per-message). Not persisted.
     #[serde(skip)]
     token_cache: SessionTokenCache,
@@ -535,7 +537,7 @@ impl Session {
     /// Build a session from imported messages (new id, current project).
     pub fn from_imported(
         project_path: PathBuf,
-        messages: Vec<whycode_core::types::Message>,
+        messages: Vec<whycodes_core::types::Message>,
         title_hint: Option<&str>,
     ) -> Self {
         let mut s = Self::new(project_path, String::new());
@@ -547,7 +549,7 @@ impl Session {
                 .messages
                 .iter()
                 .find_map(|m| {
-                    (m.role == whycode_core::types::Role::User)
+                    (m.role == whycodes_core::types::Role::User)
                         .then(|| m.content.as_text().map(str::to_string))
                 })
                 .flatten();
@@ -689,7 +691,7 @@ impl Session {
     }
 
     /// Fold a turn''s reported usage into the session total.
-    pub fn add_usage(&mut self, usage: &whycode_core::types::Usage) {
+    pub fn add_usage(&mut self, usage: &whycodes_core::types::Usage) {
         self.usage.add(usage);
         self.touch();
     }
@@ -740,25 +742,26 @@ impl Session {
     }
 
     /// Add tool results (oversized bodies are capped for context economy).
-    pub fn add_tool_results(&mut self, results: Vec<whycode_core::types::ToolResult>) {
+    pub fn add_tool_results(&mut self, results: Vec<whycodes_core::types::ToolResult>) {
         for result in results {
-            let content =
-                if let Some((media, b64, preface)) = split_whycode_image_payload(&result.content) {
-                    // Vision path: short text + image block (A6).
-                    MessageContent::Blocks(vec![
-                        ContentBlock::Text {
-                            text: cap_tool_text(preface),
+            let content = if let Some((media, b64, preface)) =
+                split_whycodes_image_payload(&result.content)
+            {
+                // Vision path: short text + image block (A6).
+                MessageContent::Blocks(vec![
+                    ContentBlock::Text {
+                        text: cap_tool_text(preface),
+                    },
+                    ContentBlock::Image {
+                        source: whycodes_core::types::ImageSource::Base64 {
+                            media_type: media,
+                            data: b64,
                         },
-                        ContentBlock::Image {
-                            source: whycode_core::types::ImageSource::Base64 {
-                                media_type: media,
-                                data: b64,
-                            },
-                        },
-                    ])
-                } else {
-                    MessageContent::Text(cap_tool_text(result.content))
-                };
+                    },
+                ])
+            } else {
+                MessageContent::Text(cap_tool_text(result.content))
+            };
             let msg = Message {
                 role: Role::Tool,
                 content,
@@ -810,7 +813,7 @@ impl Session {
     /// Cline-style exit summary printed after the terminal is restored.
     ///
     /// `model_label` is typically `provider/model`. `binary` is the CLI name
-    /// used in the resume hint (e.g. `"whycode"`).
+    /// used in the resume hint (e.g. `"whycodes"`).
     pub fn format_exit_summary(
         &self,
         duration: std::time::Duration,
@@ -1293,7 +1296,7 @@ impl Session {
     ///
     /// Session metadata (including provider-reported token usage) is upserted.
     /// Messages are replaced as a set so repeated saves do not duplicate rows.
-    pub fn save_to_db(&self, db: &whycode_storage::db::Database) -> anyhow::Result<()> {
+    pub fn save_to_db(&self, db: &whycodes_storage::db::Database) -> anyhow::Result<()> {
         db.upsert_session(
             &self.id,
             &self.title,
@@ -1328,7 +1331,7 @@ impl Session {
 
     /// Load a session and its messages from the SQLite database by session id.
     pub fn load_from_db(
-        db: &whycode_storage::db::Database,
+        db: &whycodes_storage::db::Database,
         id: &str,
     ) -> anyhow::Result<Option<Self>> {
         let Some(row) = db.get_session(id)? else {
@@ -1341,10 +1344,10 @@ impl Session {
             chrono::DateTime::parse_from_rfc3339(&row.updated_at)?.with_timezone(&chrono::Utc);
 
         let message_rows = db.get_messages(id)?;
-        let messages: Vec<whycode_core::types::Message> = message_rows
+        let messages: Vec<whycodes_core::types::Message> = message_rows
             .iter()
             .map(|mr| {
-                let mut msg: whycode_core::types::Message = serde_json::from_str(&mr.content)?;
+                let mut msg: whycodes_core::types::Message = serde_json::from_str(&mr.content)?;
                 if msg.created_at.is_none() {
                     msg.created_at = chrono::DateTime::parse_from_rfc3339(&mr.created_at)
                         .ok()
@@ -1409,11 +1412,11 @@ impl Session {
 #[cfg(test)]
 mod persist_tests {
     use super::*;
-    use whycode_core::types::Usage;
+    use whycodes_core::types::Usage;
 
     #[test]
     fn save_and_load_restores_usage_and_messages() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
         let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
         session.add_user_message("hello");
         session.add_usage(&Usage {
@@ -1449,7 +1452,7 @@ mod persist_tests {
 
     #[test]
     fn usage_totals_reflect_saved_sessions() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
         let mut a = Session::new(std::path::PathBuf::from("/a"), "s".into());
         a.add_usage(&Usage {
             input_tokens: 10,
@@ -1475,7 +1478,7 @@ mod persist_tests {
     fn save_propagates_session_upsert_database_errors() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("broken.db");
-        let db = whycode_storage::db::Database::open(path.to_str().unwrap()).unwrap();
+        let db = whycodes_storage::db::Database::open(path.to_str().unwrap()).unwrap();
         let conn = rusqlite::Connection::open(&path).unwrap();
         conn.execute_batch("DROP TABLE messages; DROP TABLE sessions;")
             .unwrap();
@@ -1486,14 +1489,14 @@ mod persist_tests {
 
     #[test]
     fn load_missing_session_returns_none() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
 
         assert!(Session::load_from_db(&db, "missing").unwrap().is_none());
     }
 
     #[test]
     fn load_rejects_invalid_session_timestamp() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
         db.upsert_session(
             "broken-time",
             "Broken",
@@ -1510,7 +1513,7 @@ mod persist_tests {
 
     #[test]
     fn load_rejects_invalid_message_json() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
         db.upsert_session(
             "broken-message",
             "Broken",
@@ -1541,9 +1544,9 @@ mod persist_tests {
 // Keep export methods on Session.
 impl Session {
     /// Export the session as a shareable JSON file.
-    /// Writes to .whycode/shares/{session_id}.json and returns the file path.
+    /// Writes to .whycodes/shares/{session_id}.json and returns the file path.
     pub fn export_share(&self) -> anyhow::Result<String> {
-        let shares_dir = self.project_path.join(".whycode").join("shares");
+        let shares_dir = self.project_path.join(".whycodes").join("shares");
         std::fs::create_dir_all(&shares_dir)?;
 
         let filename = format!("{}.json", self.id);
@@ -1695,7 +1698,7 @@ mod tests {
         let text = session.format_exit_summary(
             std::time::Duration::from_secs(42),
             "openai/gpt-4o",
-            "whycode",
+            "whycodes",
         );
         assert!(text.contains("Session Summary"), "{text}");
         assert!(text.contains(&session.id), "{text}");
@@ -1704,7 +1707,7 @@ mod tests {
         assert!(text.contains("CWD       /tmp/test-project"), "{text}");
         assert!(text.contains("Messages  1"), "{text}");
         assert!(
-            text.contains(&format!("whycode --resume {}", session.id)),
+            text.contains(&format!("whycodes --resume {}", session.id)),
             "{text}"
         );
     }
@@ -1788,12 +1791,12 @@ mod tests {
         let mut session = Session::new(test_project_path(), test_system_prompt());
 
         let results = vec![
-            whycode_core::types::ToolResult {
+            whycodes_core::types::ToolResult {
                 tool_call_id: "call-1".to_string(),
                 content: "result 1".to_string(),
                 is_error: false,
             },
-            whycode_core::types::ToolResult {
+            whycodes_core::types::ToolResult {
                 tool_call_id: "call-2".to_string(),
                 content: "error result".to_string(),
                 is_error: true,
@@ -1970,7 +1973,7 @@ mod tests {
         session.add_assistant_message(vec![ContentBlock::Text {
             text: "looking at auth.rs".into(),
         }]);
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "t1".into(),
             content: "fn login() {}".into(),
             is_error: false,
@@ -2036,7 +2039,7 @@ mod tests {
     fn test_add_tool_results_caps_huge_body() {
         let mut session = Session::new(test_project_path(), test_system_prompt());
         let huge = "a".repeat(TOOL_RESULT_MAX_CHARS + 5000);
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "t1".into(),
             content: huge,
             is_error: false,
@@ -2201,7 +2204,7 @@ mod tests {
     fn truncate_large_tool_results_caps_bodies() {
         let mut session = Session::new(test_project_path(), test_system_prompt());
         session.add_user_message("go");
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "t1".into(),
             content: "x".repeat(TOOL_RESULT_MAX_CHARS + 10_000),
             is_error: false,
@@ -2234,7 +2237,7 @@ mod tests {
         let mut session = Session::new(test_project_path(), test_system_prompt());
         session.add_user_message("start");
         for i in 0..6 {
-            session.add_tool_results(vec![whycode_core::types::ToolResult {
+            session.add_tool_results(vec![whycodes_core::types::ToolResult {
                 tool_call_id: format!("t{i}"),
                 content: "z".repeat(10_000),
                 is_error: false,
@@ -2252,7 +2255,7 @@ mod tests {
         // no-op when few tools
         let mut small = Session::new(test_project_path(), test_system_prompt());
         small.add_user_message("start");
-        small.add_tool_results(vec![whycode_core::types::ToolResult {
+        small.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "a".into(),
             content: "small".into(),
             is_error: false,
@@ -2265,7 +2268,7 @@ mod tests {
         let mut session = Session::new(test_project_path(), test_system_prompt());
         session.add_user_message("start");
         for i in 0..6 {
-            session.add_tool_results(vec![whycode_core::types::ToolResult {
+            session.add_tool_results(vec![whycodes_core::types::ToolResult {
                 tool_call_id: format!("t{i}"),
                 content: "z".repeat(10_000),
                 is_error: false,
@@ -2287,7 +2290,7 @@ mod tests {
             "recent kept larger than shake cap"
         );
         let mut small = Session::new(test_project_path(), test_system_prompt());
-        small.add_tool_results(vec![whycode_core::types::ToolResult {
+        small.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "a".into(),
             content: "tiny".into(),
             is_error: false,
@@ -2339,7 +2342,7 @@ mod tests {
                 is_error: Some(false),
             },
             ContentBlock::Image {
-                source: whycode_core::types::ImageSource::Base64 {
+                source: whycodes_core::types::ImageSource::Base64 {
                     media_type: "image/png".into(),
                     data: "aGk=".into(),
                 },
@@ -2363,7 +2366,7 @@ mod tests {
         session.add_assistant_message(vec![ContentBlock::Text { text: "a1".into() }]);
         session.add_user_message("q2");
         session.add_assistant_message(vec![ContentBlock::Text { text: "a2".into() }]);
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "x".into(),
             content: "r".into(),
             is_error: false,
@@ -2489,7 +2492,7 @@ mod tests {
         let md_path = json_path.with_extension("md");
         assert_eq!(
             json_path,
-            project.path().join(".whycode/shares/export-fixed.json")
+            project.path().join(".whycodes/shares/export-fixed.json")
         );
         assert!(md_path.is_file());
 
@@ -2505,7 +2508,7 @@ mod tests {
     #[test]
     fn export_share_reports_directory_creation_error() {
         let project = tempfile::tempdir().unwrap();
-        std::fs::write(project.path().join(".whycode"), "not a directory").unwrap();
+        std::fs::write(project.path().join(".whycodes"), "not a directory").unwrap();
         let session = Session::new(project.path().to_path_buf(), "system".into());
 
         let error = session.export_share().unwrap_err();
@@ -2560,7 +2563,7 @@ mod tests {
                 input: serde_json::json!({"path":"a.rs"}),
             },
             ContentBlock::Image {
-                source: whycode_core::types::ImageSource::Base64 {
+                source: whycodes_core::types::ImageSource::Base64 {
                     media_type: "image/png".into(),
                     data: "x".into(),
                 },
@@ -2587,14 +2590,19 @@ mod tests {
 
     #[test]
     fn image_payload_parsing_and_unicode_caps_cover_boundaries() {
-        assert!(split_whycode_image_payload("plain").is_none());
-        assert!(split_whycode_image_payload("WHYCODE_IMAGE_B64:image/png").is_none());
-        assert!(split_whycode_image_payload("WHYCODE_IMAGE_B64:\nabc").is_none());
-        assert!(split_whycode_image_payload("WHYCODE_IMAGE_B64:image/png\n ").is_none());
-        let parsed = split_whycode_image_payload("WHYCODE_IMAGE_B64:image/png\nYWJj").unwrap();
+        assert!(split_whycodes_image_payload("plain").is_none());
+        assert!(split_whycodes_image_payload("WHYCODE_IMAGE_B64:image/png").is_none());
+        let legacy = split_whycodes_image_payload("WHYCODE_IMAGE_B64:image/png\nYWJj").unwrap();
+        assert_eq!(legacy.0, "image/png");
+        assert_eq!(legacy.1, "YWJj");
+        assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/png").is_none());
+        assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:\nabc").is_none());
+        assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/png\n ").is_none());
+        let parsed = split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/png\nYWJj").unwrap();
         assert_eq!(parsed.2, "[image image/png]");
         let parsed =
-            split_whycode_image_payload("preview\nWHYCODE_IMAGE_B64:image/jpeg\nZGF0YQ==").unwrap();
+            split_whycodes_image_payload("preview\nWHYCODES_IMAGE_B64:image/jpeg\nZGF0YQ==")
+                .unwrap();
         assert_eq!(
             parsed,
             ("image/jpeg".into(), "ZGF0YQ==".into(), "preview".into())
@@ -2605,9 +2613,9 @@ mod tests {
         assert!(cap_tool_text_to("é".repeat(11), 10).contains("1 characters truncated"));
 
         let mut session = Session::new(test_project_path(), String::new());
-        session.add_tool_results(vec![whycode_core::types::ToolResult {
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
             tool_call_id: "image".into(),
-            content: "caption\nWHYCODE_IMAGE_B64:image/png\naGk=".into(),
+            content: "caption\nWHYCODES_IMAGE_B64:image/png\naGk=".into(),
             is_error: false,
         }]);
         assert!(
@@ -2686,7 +2694,7 @@ mod tests {
                         input: serde_json::json!({"path":"src/lib.rs"}),
                     },
                     ContentBlock::Image {
-                        source: whycode_core::types::ImageSource::Base64 {
+                        source: whycodes_core::types::ImageSource::Base64 {
                             media_type: "image/png".into(),
                             data: "x".into(),
                         },
@@ -2800,7 +2808,7 @@ mod tests {
             Message {
                 role: Role::User,
                 content: MessageContent::Blocks(vec![ContentBlock::Image {
-                    source: whycode_core::types::ImageSource::Base64 {
+                    source: whycodes_core::types::ImageSource::Base64 {
                         media_type: "image/png".into(),
                         data: "x".into(),
                     },
@@ -2988,7 +2996,7 @@ mod tests {
 
         let mut block_user = Session::new(test_project_path(), String::new());
         block_user.add_user_message_blocks(vec![ContentBlock::Image {
-            source: whycode_core::types::ImageSource::Base64 {
+            source: whycodes_core::types::ImageSource::Base64 {
                 media_type: "image/png".into(),
                 data: "x".into(),
             },
@@ -3097,7 +3105,7 @@ mod tests {
             role: Role::User,
             content: MessageContent::Blocks(vec![
                 ContentBlock::Image {
-                    source: whycode_core::types::ImageSource::Base64 {
+                    source: whycodes_core::types::ImageSource::Base64 {
                         media_type: "image/png".into(),
                         data: "x".into(),
                     },
@@ -3120,7 +3128,7 @@ mod tests {
             Message {
                 role: Role::Assistant,
                 content: MessageContent::Blocks(vec![ContentBlock::Image {
-                    source: whycode_core::types::ImageSource::Base64 {
+                    source: whycodes_core::types::ImageSource::Base64 {
                         media_type: "image/png".into(),
                         data: "x".into(),
                     },
@@ -3149,7 +3157,7 @@ mod tests {
             Message {
                 role: Role::Tool,
                 content: MessageContent::Blocks(vec![ContentBlock::Image {
-                    source: whycode_core::types::ImageSource::Base64 {
+                    source: whycodes_core::types::ImageSource::Base64 {
                         media_type: "image/png".into(),
                         data: "x".into(),
                     },
@@ -3166,7 +3174,7 @@ mod tests {
             pruning.messages.push(Message {
                 role: Role::Tool,
                 content: MessageContent::Blocks(vec![ContentBlock::Image {
-                    source: whycode_core::types::ImageSource::Base64 {
+                    source: whycodes_core::types::ImageSource::Base64 {
                         media_type: "image/png".into(),
                         data: "x".into(),
                     },
@@ -3219,8 +3227,8 @@ mod tests {
 
     #[test]
     fn load_fills_missing_message_timestamp_from_valid_and_invalid_rows() {
-        let db = whycode_storage::db::Database::open_in_memory().unwrap();
-        let usage = whycode_core::types::Usage::default();
+        let db = whycodes_storage::db::Database::open_in_memory().unwrap();
+        let usage = whycodes_core::types::Usage::default();
         for (id, created) in [
             ("valid-created", "2026-08-21T12:00:02Z"),
             ("invalid-created", "bad-time"),

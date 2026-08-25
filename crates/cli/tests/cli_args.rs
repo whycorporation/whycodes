@@ -1,11 +1,11 @@
 use std::process::{Command, Output};
 
-/// Run the whycode binary with `args` and capture its output.
+/// Run the whycodes binary with `args` and capture its output.
 fn run(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_whycode"))
+    Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(args)
         .output()
-        .unwrap_or_else(|e| panic!("failed to spawn `whycode {}`: {}", args.join(" "), e))
+        .unwrap_or_else(|e| panic!("failed to spawn `whycodes {}`: {}", args.join(" "), e))
 }
 
 /// Assert the command succeeded, reporting stdout and stderr when it did not.
@@ -13,7 +13,7 @@ fn run(args: &[&str]) -> Output {
 fn assert_ok(args: &[&str], o: &Output) {
     assert!(
         o.status.success(),
-        "`whycode {}` exited with {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+        "`whycodes {}` exited with {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
         args.join(" "),
         o.status.code(),
         String::from_utf8_lossy(&o.stdout),
@@ -47,7 +47,7 @@ fn test_version_includes_semver_and_build_meta() {
     let o = run(&["--version"]);
     assert_ok(&["--version"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
-    // clap prints: "whycode 0.1.0 (abc1234 2026-08-04)"
+    // clap prints: "whycodes 0.1.0 (abc1234 2026-08-04)"
     assert!(
         s.contains(env!("CARGO_PKG_VERSION")),
         "version should include crate semver: {s}"
@@ -64,8 +64,8 @@ fn test_completions_bash_emits_script() {
     assert_ok(&["completions", "bash"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(
-        s.contains("whycode") && (s.contains("_whycode") || s.contains("complete")),
-        "bash completions should mention whycode: {s}"
+        s.contains("whycodes") && (s.contains("_whycodes") || s.contains("complete")),
+        "bash completions should mention whycodes: {s}"
     );
 }
 
@@ -132,7 +132,7 @@ fn test_cli_version() {
     let o = run(&["--version"]);
     assert_ok(&["--version"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
-    assert!(s.contains("whycode"), "version: {}", s);
+    assert!(s.contains("whycodes"), "version: {}", s);
 }
 
 #[test]
@@ -215,14 +215,14 @@ fn test_auth_help_lists_subcommands() {
 fn test_auth_import_runs_offline() {
     // Isolate HOME so the scan finds nothing and never touches the real
     // consent store — the command must exit cleanly without prompting.
-    let home = std::env::temp_dir().join(format!("whycode-test-home-{}", std::process::id()));
+    let home = std::env::temp_dir().join(format!("whycodes-test-home-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();
-    let o = Command::new(env!("CARGO_BIN_EXE_whycode"))
+    let o = Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(["auth", "import"])
         .env("HOME", &home)
         .env("XDG_DATA_HOME", home.join(".local/share"))
         .output()
-        .expect("spawn whycode auth import");
+        .expect("spawn whycodes auth import");
     assert_ok(&["auth", "import"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(
@@ -251,16 +251,16 @@ fn test_auth_login_rejects_unknown_provider_without_network() {
     );
 }
 
-/// Isolated `WHYCODE_HOME` so config/session/memory commands never touch
+/// Isolated `WHYCODES_HOME` so config/session/memory commands never touch
 /// the developer's real store.
 fn run_home(home: &std::path::Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_whycode"))
+    Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(args)
-        .env("WHYCODE_HOME", home)
+        .env("WHYCODES_HOME", home)
         .env("HOME", home)
         .current_dir(home)
         .output()
-        .unwrap_or_else(|e| panic!("failed to spawn `whycode {}`: {e}", args.join(" ")))
+        .unwrap_or_else(|e| panic!("failed to spawn `whycodes {}`: {e}", args.join(" ")))
 }
 
 #[test]
@@ -274,7 +274,7 @@ fn test_acp_and_web_are_offline_stubs() {
     let web = run_home(home.path(), &["web"]);
     assert_ok(&["web"], &web);
     let s = String::from_utf8_lossy(&web.stdout);
-    assert!(s.contains("whycode serve"), "{s}");
+    assert!(s.contains("whycodes serve"), "{s}");
 }
 
 #[test]
@@ -497,9 +497,9 @@ fn test_pr_and_github_degrade_without_gh() {
     // PATH without `gh` so we hit the fallback print, not a real GitHub call.
     // Empty PATH so we never invoke a real `gh`.
     let empty_path = home.path();
-    let o = Command::new(env!("CARGO_BIN_EXE_whycode"))
+    let o = Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(["pr", "--title", "t", "--base", "main"])
-        .env("WHYCODE_HOME", home.path())
+        .env("WHYCODES_HOME", home.path())
         .env("HOME", home.path())
         .env("PATH", empty_path)
         .current_dir(home.path())
@@ -512,9 +512,9 @@ fn test_pr_and_github_degrade_without_gh() {
         "{s}"
     );
 
-    let gh = Command::new(env!("CARGO_BIN_EXE_whycode"))
+    let gh = Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(["github", "pr", "list"])
-        .env("WHYCODE_HOME", home.path())
+        .env("WHYCODES_HOME", home.path())
         .env("HOME", home.path())
         .env("PATH", empty_path)
         .current_dir(home.path())
@@ -522,9 +522,9 @@ fn test_pr_and_github_degrade_without_gh() {
         .expect("github pr");
     assert_ok(&["github", "pr", "list"], &gh);
 
-    let view = Command::new(env!("CARGO_BIN_EXE_whycode"))
+    let view = Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(["github", "pr", "view", "1"])
-        .env("WHYCODE_HOME", home.path())
+        .env("WHYCODES_HOME", home.path())
         .env("HOME", home.path())
         .env("PATH", empty_path)
         .current_dir(home.path())
@@ -532,9 +532,9 @@ fn test_pr_and_github_degrade_without_gh() {
         .expect("github view");
     assert_ok(&["github", "pr", "view"], &view);
 
-    let issue = Command::new(env!("CARGO_BIN_EXE_whycode"))
+    let issue = Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(["github", "issue", "2"])
-        .env("WHYCODE_HOME", home.path())
+        .env("WHYCODES_HOME", home.path())
         .env("HOME", home.path())
         .env("PATH", empty_path)
         .current_dir(home.path())
@@ -721,17 +721,17 @@ fn test_mcp_dispatch_persists_remote_headers_and_lists_stdio_details() {
 fn run_plain(home: &std::path::Path, stdin: &str) -> Output {
     use std::io::Write;
     use std::process::Stdio;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_whycode"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_whycodes"))
         .args(["--plain", "--no-memory"])
-        .env("WHYCODE_HOME", home)
+        .env("WHYCODES_HOME", home)
         .env("HOME", home)
-        .env("WHYCODE_PLAIN", "1")
+        .env("WHYCODES_PLAIN", "1")
         .current_dir(home)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("spawn whycode --plain");
+        .expect("spawn whycodes --plain");
     child
         .stdin
         .take()
@@ -787,7 +787,7 @@ fn test_plain_repl_slash_commands_without_api_key() {
     );
     assert!(s.contains("Slash commands") || s.contains("/help"), "{s}");
     assert!(
-        s.contains("Interactive mode") || s.contains("Whycode"),
+        s.contains("Interactive mode") || s.contains("WhyCodes"),
         "{s}"
     );
 }

@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 struct BrowserSession {
     child: Child,
@@ -129,7 +129,7 @@ fn ok(msg: impl Into<String>) -> ToolResult {
 }
 
 fn find_browser() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("WHYCODE_BROWSER") {
+    if let Ok(p) = std::env::var("WHYCODES_BROWSER") {
         let pb = PathBuf::from(p);
         if pb.exists() {
             return Some(pb);
@@ -168,7 +168,7 @@ fn status() -> ToolResult {
     };
     match bin {
         None => err(
-            "No Chromium/Chrome on PATH. Install Chromium or set WHYCODE_BROWSER=/path/to/chrome.",
+            "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER=/path/to/chrome.",
         ),
         Some(p) => ok(format!(
             "browser: {}\nrunning: {}\nport: {}",
@@ -180,7 +180,7 @@ fn status() -> ToolResult {
 }
 
 fn user_data_dir() -> PathBuf {
-    whycode_core::paths::data_dir().join("browser-profile")
+    whycodes_core::paths::data_dir().join("browser-profile")
 }
 
 fn ensure_session() -> Result<u16, String> {
@@ -190,7 +190,7 @@ fn ensure_session() -> Result<u16, String> {
         return Ok(s.port);
     }
     let bin = find_browser().ok_or_else(|| {
-        "No Chromium/Chrome on PATH. Install Chromium or set WHYCODE_BROWSER.".to_string()
+        "No Chromium/Chrome on PATH. Install Chromium or set WHYCODES_BROWSER.".to_string()
     })?;
     let dir = user_data_dir();
     if let Err(e) = std::fs::create_dir_all(&dir) {
@@ -350,7 +350,9 @@ fn screenshot(ctx: &ToolContext) -> ToolResult {
         Ok(b) => b,
         Err(e) => return err(format!("screenshot decode: {e}")),
     };
-    let dir = Path::new(&ctx.working_dir).join(".whycode").join("browser");
+    let dir = Path::new(&ctx.working_dir)
+        .join(".whycodes")
+        .join("browser");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return err(format!("mkdir: {e}"));
     }
@@ -457,7 +459,7 @@ fn ws_cdp_call(ws_url: &str, method: &str, params: Value) -> Result<Value, Strin
     }
     let key = base64::Engine::encode(
         &base64::engine::general_purpose::STANDARD,
-        *b"whycode-cdp-key!!",
+        *b"whycodes-cdp-key!!",
     );
     let hs = format!(
         "GET {path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"

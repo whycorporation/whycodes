@@ -5,7 +5,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
@@ -55,7 +55,7 @@ impl GroqProvider {
         crate::openai_compat::convert_messages(request)
     }
 
-    fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
+    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
         crate::openai_compat::convert_tools(tools)
     }
 }
@@ -75,7 +75,7 @@ impl LlmProvider for GroqProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
@@ -84,17 +84,17 @@ impl LlmProvider for GroqProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         let status = resp.status();
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Groq API error ({}): {}",
                 status, err_msg
             )));
@@ -118,7 +118,7 @@ impl LlmProvider for GroqProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let mut body = self.build_body(request, model);
         crate::openai_compat::attach_stream_usage_option(&mut body);
@@ -128,11 +128,11 @@ impl LlmProvider for GroqProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "Groq API error: {}",
                 text
             )));

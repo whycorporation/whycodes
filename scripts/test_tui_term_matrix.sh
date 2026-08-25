@@ -22,9 +22,9 @@ need "konsole" "$list"
 # Dry-run must print argv even when the emulator is not on PATH (CI runners).
 dry="$(
     PATH=/usr/bin:/bin
-    BIN=/tmp/whycode-fake DIR=/tmp/demo "$SCRIPT" --dry-run --no-build alacritty 2>&1
+    BIN=/tmp/whycodes-fake DIR=/tmp/demo "$SCRIPT" --dry-run --no-build alacritty 2>&1
 )"
-need "alacritty -e /tmp/whycode-fake -d /tmp/demo" "$dry"
+need "alacritty -e /tmp/whycodes-fake -d /tmp/demo" "$dry"
 need "launched=1" "$dry"
 
 if "$SCRIPT" --dry-run --no-build not-a-term >/dev/null 2>&1; then

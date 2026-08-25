@@ -1,6 +1,6 @@
 use crate::agent::Agent;
 use crate::subagent::SubagentTask;
-use whycode_core::types::{AgentInfo, AgentMode, PermissionAction, PermissionSet};
+use whycodes_core::types::{AgentInfo, AgentMode, PermissionAction, PermissionSet};
 
 fn make_test_agent_info(name: &str) -> AgentInfo {
     AgentInfo {
@@ -25,7 +25,7 @@ fn make_test_agent_info(name: &str) -> AgentInfo {
 
 // ─── Shell risk gate ───────────────────────────────────────────────────
 //
-// Classification itself is covered by `whycode-command-risk`. These tests
+// Classification itself is covered by `whycodes-command-risk`. These tests
 // cover the part only this layer can prove: that the gate sits in front of the
 // permission map rather than behind it.
 
@@ -39,24 +39,24 @@ fn agent_with_bash_allowed() -> Agent {
     Agent::new(info)
 }
 
-fn bash_call(command: &str) -> whycode_core::types::ToolCall {
-    whycode_core::types::ToolCall {
+fn bash_call(command: &str) -> whycodes_core::types::ToolCall {
+    whycodes_core::types::ToolCall {
         id: "tc-1".to_string(),
         name: "bash".to_string(),
         arguments: serde_json::json!({ "command": command }),
     }
 }
 
-async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResult {
-    let session = whycode_session::session::Session::new(
+async fn run_bash(agent: &Agent, command: &str) -> whycodes_core::types::ToolResult {
+    let session = whycodes_session::session::Session::new(
         std::path::PathBuf::from("/work/proj"),
         "test".to_string(),
     );
-    let ctx = whycode_core::ToolContext {
+    let ctx = whycodes_core::ToolContext {
         working_dir: "/work/proj".to_string(),
         session_id: None,
-        sandbox: whycode_core::SandboxSettings::off(),
-        network: whycode_core::NetworkPolicy::unrestricted(),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
         file_claims: None,
         agent_id: None,
         agent_label: None,
@@ -86,9 +86,9 @@ async fn run_bash(agent: &Agent, command: &str) -> whycode_core::types::ToolResu
 /// `mkfs.*` is classified by family, and this member of the family does not
 /// exist as a binary, so a failure here is a failed assertion rather than a
 /// wiped disk. The dangerous strings — `rm -rf /`, `rm -rf ~` — are covered in
-/// `whycode-command-risk`, where classification is a pure function and nothing
+/// `whycodes-command-risk`, where classification is a pure function and nothing
 /// is executed.
-const HARMLESS_CATASTROPHIC: &str = "mkfs.whycode-test-not-a-real-binary /dev/null";
+const HARMLESS_CATASTROPHIC: &str = "mkfs.whycodes-test-not-a-real-binary /dev/null";
 
 #[tokio::test]
 async fn catastrophic_command_is_refused_despite_bash_being_allowed() {
@@ -153,15 +153,15 @@ async fn deny_still_wins_for_non_shell_tools() {
         .insert("read".to_string(), PermissionAction::Deny);
     let agent = Agent::new(info);
 
-    let session = whycode_session::session::Session::new(
+    let session = whycodes_session::session::Session::new(
         std::path::PathBuf::from("/work/proj"),
         "test".to_string(),
     );
-    let ctx = whycode_core::ToolContext {
+    let ctx = whycodes_core::ToolContext {
         working_dir: "/work/proj".to_string(),
         session_id: None,
-        sandbox: whycode_core::SandboxSettings::off(),
-        network: whycode_core::NetworkPolicy::unrestricted(),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
         file_claims: None,
         agent_id: None,
         agent_label: None,
@@ -170,7 +170,7 @@ async fn deny_still_wins_for_non_shell_tools() {
         todo_sink: None,
         swarm_hub: None,
     };
-    let call = whycode_core::types::ToolCall {
+    let call = whycodes_core::types::ToolCall {
         id: "tc-2".to_string(),
         name: "read".to_string(),
         arguments: serde_json::json!({ "path": "x" }),
@@ -298,7 +298,7 @@ fn test_with_runtime_context_is_idempotent() {
 
 #[test]
 fn test_with_agents_md_includes_runtime_context() {
-    let dir = std::env::temp_dir().join(format!("whycode-agent-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("whycodes-agent-test-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let prompt = Agent::with_agents_md("base prompt", &dir);
     let _ = std::fs::remove_dir_all(&dir);
@@ -308,8 +308,8 @@ fn test_with_agents_md_includes_runtime_context() {
 
 #[test]
 fn test_agent_with_builder_methods() {
-    use whycode_llm::provider::ProviderRegistry;
-    use whycode_tools::executor::ToolExecutor;
+    use whycodes_llm::provider::ProviderRegistry;
+    use whycodes_tools::executor::ToolExecutor;
 
     let info = make_test_agent_info("builder-test");
     let agent = Agent::new(info)
@@ -369,7 +369,7 @@ fn test_subagent_task_debug_format() {
 #[test]
 fn doom_loop_trips_on_third_identical_call() {
     use std::collections::VecDeque;
-    use whycode_core::types::ToolCall;
+    use whycodes_core::types::ToolCall;
 
     let tc = ToolCall {
         id: "1".into(),
@@ -403,7 +403,7 @@ fn doom_loop_trips_on_third_identical_call() {
 #[test]
 fn doom_loop_ignores_mixed_batch() {
     use std::collections::VecDeque;
-    use whycode_core::types::ToolCall;
+    use whycodes_core::types::ToolCall;
 
     let calls = vec![
         ToolCall {
@@ -426,9 +426,9 @@ fn doom_loop_ignores_mixed_batch() {
 
 #[test]
 fn core_tool_profile_shrinks_definitions() {
-    use whycode_core::types::PermissionSet;
-    use whycode_tools::ToolExecutor;
-    use whycode_tools::ToolProfile;
+    use whycodes_core::types::PermissionSet;
+    use whycodes_tools::ToolExecutor;
+    use whycodes_tools::ToolProfile;
 
     let ex = ToolExecutor::new();
     let perms = PermissionSet {
@@ -450,14 +450,14 @@ fn core_tool_profile_shrinks_definitions() {
     assert!(full.iter().any(|d| d.name == "webfetch"));
 }
 
-fn scripted_agent(steps: impl IntoIterator<Item = whycode_llm::ScriptedStep>) -> Agent {
-    let mut registry = whycode_llm::ProviderRegistry::new();
-    registry.register(Box::new(whycode_llm::ScriptedProvider::new(steps)));
+fn scripted_agent(steps: impl IntoIterator<Item = whycodes_llm::ScriptedStep>) -> Agent {
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::new(steps)));
     Agent::new(make_test_agent_info("build")).with_provider_registry(registry)
 }
 
-fn scripted_session(user: &str) -> whycode_session::session::Session {
-    let mut session = whycode_session::session::Session::new(
+fn scripted_session(user: &str) -> whycodes_session::session::Session {
+    let mut session = whycodes_session::session::Session::new(
         std::path::PathBuf::from("/work/proj"),
         "test".into(),
     );
@@ -467,7 +467,7 @@ fn scripted_session(user: &str) -> whycode_session::session::Session {
 
 #[tokio::test]
 async fn scripted_text_turn_returns_assistant_text() {
-    let agent = scripted_agent([whycode_llm::ScriptedStep::Text("hello from script".into())]);
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Text("hello from script".into())]);
     let mut session = scripted_session("please say hello");
     let out = agent
         .run_turn(&mut session, "script", "m", "k", Some(4))
@@ -478,7 +478,7 @@ async fn scripted_text_turn_returns_assistant_text() {
 
 #[tokio::test]
 async fn scripted_unknown_provider_errors() {
-    let agent = scripted_agent([whycode_llm::ScriptedStep::Text("x".into())]);
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Text("x".into())]);
     let mut session = scripted_session("hi there friend");
     let err = agent
         .run_turn(&mut session, "no-such-provider", "m", "k", Some(2))
@@ -492,7 +492,7 @@ async fn scripted_unknown_provider_errors() {
 
 #[tokio::test]
 async fn scripted_fail_open_surfaces_provider_error() {
-    let agent = scripted_agent([whycode_llm::ScriptedStep::FailOpen("boom".into())]);
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::FailOpen("boom".into())]);
     let mut session = scripted_session("please explain rust");
     let err = agent
         .run_turn(&mut session, "script", "m", "k", Some(2))
@@ -504,13 +504,13 @@ async fn scripted_fail_open_surfaces_provider_error() {
 async fn scripted_tool_then_exhausted_turns() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "secret note").unwrap();
-    let agent = scripted_agent([whycode_llm::ScriptedStep::ToolCall {
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::ToolCall {
         id: "c1".into(),
         name: "read".into(),
         input: serde_json::json!({"path": "note.txt"}),
     }]);
     let mut session =
-        whycode_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".into());
     session.add_user_message("please read note.txt and summarize it");
     let err = agent
         .run_turn(&mut session, "script", "m", "k", Some(1))
@@ -528,15 +528,15 @@ async fn scripted_unlimited_turns_continue_after_tool() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "secret note").unwrap();
     let agent = scripted_agent([
-        whycode_llm::ScriptedStep::ToolCall {
+        whycodes_llm::ScriptedStep::ToolCall {
             id: "c1".into(),
             name: "read".into(),
             input: serde_json::json!({"path": "note.txt"}),
         },
-        whycode_llm::ScriptedStep::Text("the note is secret".into()),
+        whycodes_llm::ScriptedStep::Text("the note is secret".into()),
     ]);
     let mut session =
-        whycode_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".into());
     session.add_user_message("please read note.txt and summarize it");
     let out = agent
         .run_turn(&mut session, "script", "m", "k", None)
@@ -547,7 +547,7 @@ async fn scripted_unlimited_turns_continue_after_tool() {
 
 #[tokio::test]
 async fn scripted_cancel_before_llm() {
-    let agent = scripted_agent([whycode_llm::ScriptedStep::Text("never".into())]);
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Text("never".into())]);
     let mut session = scripted_session("please explain the retry loop");
     let cancel = crate::events::new_cancel_flag();
     crate::events::request_cancel(&cancel);
@@ -569,9 +569,9 @@ async fn scripted_cancel_before_llm() {
 #[tokio::test]
 async fn scripted_thinking_and_text_emits_events() {
     let agent = scripted_agent([
-        whycode_llm::ScriptedStep::Thinking("plan".into()),
-        whycode_llm::ScriptedStep::Text("answer".into()),
-        whycode_llm::ScriptedStep::Usage {
+        whycodes_llm::ScriptedStep::Thinking("plan".into()),
+        whycodes_llm::ScriptedStep::Text("answer".into()),
+        whycodes_llm::ScriptedStep::Usage {
             input_tokens: 3,
             output_tokens: 4,
         },
@@ -599,12 +599,12 @@ async fn scripted_thinking_and_text_emits_events() {
 #[tokio::test]
 async fn compact_session_local_without_key_keeps_last_user() {
     let agent = Agent::new(make_test_agent_info("build"));
-    let mut session = whycode_session::session::Session::new(
+    let mut session = whycodes_session::session::Session::new(
         std::path::PathBuf::from("/work/proj"),
         "test".into(),
     );
     session.add_user_message("old request");
-    session.add_assistant_message(vec![whycode_core::types::ContentBlock::Text {
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
         text: "old answer".into(),
     }]);
     session.add_user_message("fix login");
@@ -627,13 +627,13 @@ async fn compact_session_uses_llm_summary_when_scripted() {
          5. Problem Solving: None\n6. All User Messages: fix login\n\
          7. Pending Tasks: None\n8. Current Work: editing auth.rs\n\
          9. Optional Next Step: run tests\n</summary>";
-    let agent = scripted_agent([whycode_llm::ScriptedStep::Text(summary.into())]);
-    let mut session = whycode_session::session::Session::new(
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Text(summary.into())]);
+    let mut session = whycodes_session::session::Session::new(
         std::path::PathBuf::from("/work/proj"),
         "test".into(),
     );
     session.add_user_message("old");
-    session.add_assistant_message(vec![whycode_core::types::ContentBlock::Text {
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
         text: "ack".into(),
     }]);
     session.add_user_message("fix login");
@@ -653,7 +653,7 @@ async fn compact_session_uses_llm_summary_when_scripted() {
 #[tokio::test]
 async fn compact_session_empty_is_noop() {
     let agent = Agent::new(make_test_agent_info("build"));
-    let mut session = whycode_session::session::Session::new(
+    let mut session = whycodes_session::session::Session::new(
         std::path::PathBuf::from("/work/proj"),
         "test".into(),
     );

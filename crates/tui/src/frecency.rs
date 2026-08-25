@@ -6,7 +6,7 @@
 //! first — the Claude Code picker feel — without drowning strong matches.
 //!
 //! Persisted per project at `<data_dir>/frecency/<key>.json` (machine-local
-//! state; deliberately NOT under the project's `.whycode/`, which users
+//! state; deliberately NOT under the project's `.whycodes/`, which users
 //! commit). The key is a deterministic hash of the canonical project path.
 //! Best-effort: load/save failures degrade to an empty in-memory map.
 
@@ -57,7 +57,7 @@ impl Frecency {
     /// Load the table for `project_root` (canonical). Missing/corrupt files
     /// start empty.
     pub fn load(project_root: &Path) -> Self {
-        let path = whycode_config::Config::data_dir().ok().map(|d| {
+        let path = whycodes_config::Config::data_dir().ok().map(|d| {
             d.join("frecency")
                 .join(format!("{}.json", project_key(project_root)))
         });

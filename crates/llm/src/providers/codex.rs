@@ -1,6 +1,6 @@
 //! ChatGPT-subscription call routing: the Codex backend.
 //!
-//! A ChatGPT Plus/Pro OAuth token (`whycode auth login openai`) is rejected
+//! A ChatGPT Plus/Pro OAuth token (`whycodes auth login openai`) is rejected
 //! by `api.openai.com`; it only authorizes the Codex backend at
 //! `chatgpt.com/backend-api`. This module speaks the Responses API against
 //! that endpoint. `OpenAiProvider` delegates here when the credential is
@@ -16,7 +16,7 @@ use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{Value, json};
 use std::pin::Pin;
-use whycode_core::types::{
+use whycodes_core::types::{
     ContentBlock, ImageSource, LlmRequest, LlmResponse, Message, MessageContent, Role, StreamEvent,
     ToolDefinition, Usage,
 };
@@ -168,7 +168,7 @@ fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
 
 /// POST to the Codex backend with one OAuth-aware retry: a 401 force-renews
 /// the stored credential via `oauth_refresh` and resends once.
-async fn post(api_key: &str, body: &Value) -> whycode_core::Result<reqwest::Response> {
+async fn post(api_key: &str, body: &Value) -> whycodes_core::Result<reqwest::Response> {
     let account_id = crate::oauth_refresh::stored_extra("openai", "openai_account_id").await;
     crate::oauth_refresh::send_with_refresh_retry("openai", api_key, |key| {
         let req = crate::client_identity::post(CODEX_RESPONSES_URL)
@@ -185,7 +185,7 @@ async fn post(api_key: &str, body: &Value) -> whycode_core::Result<reqwest::Resp
     .await
 }
 
-/// Map one Responses-API SSE `data:` payload to whycode stream events.
+/// Map one Responses-API SSE `data:` payload to whycodes stream events.
 /// Pure so the event dialect is unit-testable without a network.
 fn events_for_payload(data: &str) -> Vec<StreamEvent> {
     let Ok(event) = serde_json::from_str::<Value>(data) else {
@@ -248,7 +248,7 @@ pub async fn complete(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<LlmResponse> {
+) -> whycodes_core::Result<LlmResponse> {
     let mut events = stream(request, api_key, model).await?;
     let mut content: Vec<ContentBlock> = Vec::new();
     let mut text = String::new();
@@ -301,7 +301,7 @@ pub async fn stream(
     request: &LlmRequest,
     api_key: &str,
     model: &str,
-) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>> {
+) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
     let body = build_body(request, model);
     let resp = post(api_key, &body).await?;
 
@@ -309,7 +309,7 @@ pub async fn stream(
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let trimmed: String = text.chars().take(500).collect();
-        return Err(whycode_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::Llm(format!(
             "Codex backend error ({status}): {trimmed}"
         )));
     }
@@ -375,7 +375,7 @@ mod tests {
 
     fn request_with_tools() -> LlmRequest {
         LlmRequest {
-            system: "You are whycode.".to_string(),
+            system: "You are whycodes.".to_string(),
             messages: std::sync::Arc::from(vec![
                 Message {
                     role: Role::User,
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(body["model"], "gpt-5.1-codex");
         assert_eq!(body["store"], false);
         assert_eq!(body["stream"], true);
-        assert_eq!(body["instructions"], "You are whycode.");
+        assert_eq!(body["instructions"], "You are whycodes.");
         assert_eq!(body["tool_choice"], "auto");
         assert_eq!(body["parallel_tool_calls"], true);
         assert_eq!(body["tools"][0]["type"], "function");

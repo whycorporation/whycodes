@@ -1,6 +1,6 @@
 //! Discover project instruction files already written for other coding agents.
 //!
-//! Whycode's native file is `AGENTS.md`. Sibling conventions (Claude, Gemini,
+//! WhyCodes' native file is `AGENTS.md`. Sibling conventions (Claude, Gemini,
 //! Copilot, Cursor, Cline, Windsurf) are loaded from the same project so a
 //! checkout does not need a migration step.
 
@@ -132,8 +132,8 @@ fn candidates_in(dir: &Path) -> Vec<PathBuf> {
         dir.join(".cursorrules"),
         dir.join(".windsurfrules"),
         dir.join(".clinerules"),
-        dir.join(".whycode").join("AGENTS.md"),
-        dir.join(".whycode").join("RULES.md"),
+        dir.join(".whycodes").join("AGENTS.md"),
+        dir.join(".whycodes").join("RULES.md"),
         dir.join(".claude").join("CLAUDE.md"),
         dir.join(".gemini").join("GEMINI.md"),
         dir.join(".github").join("copilot-instructions.md"),
@@ -204,13 +204,13 @@ mod tests {
     }
 
     #[test]
-    fn whycode_nested_agents_md() {
+    fn whycodes_nested_agents_md() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join(".whycode")).unwrap();
-        std::fs::write(dir.path().join(".whycode/AGENTS.md"), "nested rules").unwrap();
+        std::fs::create_dir(dir.path().join(".whycodes")).unwrap();
+        std::fs::write(dir.path().join(".whycodes/AGENTS.md"), "nested rules").unwrap();
         let with = append_project_instructions("base", dir.path());
         assert!(with.contains("nested rules"), "{with}");
-        assert!(with.contains(".whycode/AGENTS.md"), "{with}");
+        assert!(with.contains(".whycodes/AGENTS.md"), "{with}");
     }
 
     #[test]

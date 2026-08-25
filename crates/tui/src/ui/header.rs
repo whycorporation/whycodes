@@ -17,7 +17,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
     );
     let brand_code = Span::styled(
-        "code ",
+        "codes ",
         Style::default()
             .fg(palette.accent)
             .add_modifier(Modifier::BOLD),
@@ -109,9 +109,9 @@ mod tests {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
         let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
-        // Dual-tone wordmark is one word (`whycode`), then the agent chip.
-        assert!(text.contains("whycode"), "{text}");
-        assert!(!text.contains("why code"), "{text}");
+        // Dual-tone wordmark is one word (`whycodes`), then the agent chip.
+        assert!(text.contains("whycodes"), "{text}");
+        assert!(!text.contains("why codes"), "{text}");
         assert!(text.contains("build"), "{text}");
         // No provider/model configured → dash pair.
         assert!(text.contains("—/—"), "{text}");

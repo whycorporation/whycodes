@@ -1,20 +1,20 @@
 //! Render parsed markdown into ratatui lines.
 //!
-//! `whycode_format::render_markdown` emits ANSI escapes, which ratatui does not
+//! `whycodes_format::render_markdown` emits ANSI escapes, which ratatui does not
 //! interpret — they would reach the screen as literal bytes. This module
 //! consumes the structured parse instead and produces styled spans, so markdown
 //! picks up the active theme for prose; fenced code uses Tokyo Night via
-//! `whycode_format::highlight`. Fenced `mermaid` / `mmd` blocks render as
-//! Unicode box-drawing diagrams via `whycode_format::mermaid`.
+//! `whycodes_format::highlight`. Fenced `mermaid` / `mmd` blocks render as
+//! Unicode box-drawing diagrams via `whycodes_format::mermaid`.
 //!
 //! Prose soft-wraps to `max_width` (Grok-style transcript; no hard overflow).
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use whycode_format::highlight::{CodeSpan, highlight_code_spans, with_open_code_spans};
-use whycode_format::markdown::{Block, Inline, TableAlign, parse_markdown};
-use whycode_format::mermaid::{is_mermaid_language, render_mermaid};
-use whycode_format::table::{column_widths, pad_cell};
+use whycodes_format::highlight::{CodeSpan, highlight_code_spans, with_open_code_spans};
+use whycodes_format::markdown::{Block, Inline, TableAlign, parse_markdown};
+use whycodes_format::mermaid::{is_mermaid_language, render_mermaid};
+use whycodes_format::table::{column_widths, pad_cell};
 
 use crate::theme::ThemePalette;
 use crate::widgets::wrap::wrap_spans;
@@ -472,7 +472,7 @@ fn render_diff_code(
     let body_w = max_width.map(|w| w.saturating_sub(gutter_w).max(8));
 
     for (i, raw) in lines.iter().enumerate() {
-        let parts = whycode_format::diff::parse_diff_line(raw);
+        let parts = whycodes_format::diff::parse_diff_line(raw);
         let (fg, row_bg, bold) = if raw.starts_with("+++") || raw.starts_with("---") {
             (palette.fg, band, false)
         } else if raw.starts_with("@@") || raw.starts_with("diff --git") {

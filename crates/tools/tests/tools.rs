@@ -4,9 +4,9 @@
 //! using temporary files and directories.
 
 use tempfile::TempDir;
-use whycode_core::ToolContext;
-use whycode_core::types::PermissionSet;
-use whycode_tools::executor::ToolExecutor;
+use whycodes_core::ToolContext;
+use whycodes_core::types::PermissionSet;
+use whycodes_tools::executor::ToolExecutor;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -16,8 +16,8 @@ fn temp_ctx(dir: &TempDir) -> ToolContext {
     ToolContext {
         working_dir: dir.path().to_string_lossy().to_string(),
         session_id: None,
-        sandbox: whycode_core::SandboxSettings::off(),
-        network: whycode_core::NetworkPolicy::unrestricted(),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
         file_claims: None,
         agent_id: None,
         agent_label: None,
@@ -153,7 +153,7 @@ async fn test_write_tool() {
 
 #[tokio::test]
 async fn test_write_tool_file_claim_conflict() {
-    use whycode_core::FileClaimRegistry;
+    use whycodes_core::FileClaimRegistry;
 
     let dir = TempDir::new().unwrap();
     let claims = FileClaimRegistry::new();
@@ -195,10 +195,10 @@ async fn test_write_tool_file_claim_conflict() {
 trait ExpectClaim {
     fn expect_acquired_or_held(self);
 }
-impl ExpectClaim for whycode_core::ClaimResult {
+impl ExpectClaim for whycodes_core::ClaimResult {
     fn expect_acquired_or_held(self) {
         match self {
-            whycode_core::ClaimResult::Acquired | whycode_core::ClaimResult::Held => {}
+            whycodes_core::ClaimResult::Acquired | whycodes_core::ClaimResult::Held => {}
             other => panic!("expected acquire/hold, got {other:?}"),
         }
     }
@@ -752,7 +752,7 @@ async fn test_executor_execute_unknown_tool() {
     let _perms = default_perms();
     let executor = ToolExecutor::new();
 
-    let call = whycode_core::types::ToolCall {
+    let call = whycodes_core::types::ToolCall {
         id: "test-1".to_string(),
         name: "nonexistent".to_string(),
         arguments: serde_json::json!({}),
@@ -782,7 +782,7 @@ async fn test_executor_execute_denied_tool() {
     };
     let executor = ToolExecutor::new();
 
-    let call = whycode_core::types::ToolCall {
+    let call = whycodes_core::types::ToolCall {
         id: "test-2".to_string(),
         name: "shell".to_string(),
         arguments: serde_json::json!({"command": "echo hi"}),

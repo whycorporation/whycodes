@@ -1,7 +1,7 @@
 {
-  "name": "@whycorporation/whycode-sdk",
+  "name": "@whycorporation/whycodes-sdk",
   "version": "0.1.0",
-  "description": "Thin TypeScript client for whycode serve (protocol v1)",
+  "description": "Thin TypeScript client for whycodes serve (protocol v1)",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/whycorporation/whycode/tree/main/sdk/typescript",
@@ -9,7 +9,7 @@
     "url": "https://github.com/whycorporation/whycode/issues"
   },
   "keywords": [
-    "whycode",
+    "whycodes",
     "sdk",
     "agent",
     "sse"

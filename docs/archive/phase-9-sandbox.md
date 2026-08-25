@@ -16,7 +16,7 @@ gate misses — without breaking ordinary agent work (`cargo build`, `npm i`,
 
 ## Design
 
-- New crate `whycode-sandbox`.
+- New crate `whycodes-sandbox`.
 - Config under `[security]`:
   - `sandbox = "workspace" | "off"` (default `workspace`)
   - `sandbox_network = true | false` (default `true`)

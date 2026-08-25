@@ -25,7 +25,7 @@ pub struct ToolContext {
     pub agent_label: Option<String>,
     /// Resident workspace file index (when the host started one). File tools
     /// use it as a warm fast path for enumeration and fall back to walking.
-    pub file_index: Option<std::sync::Arc<whycode_index::WorkspaceIndex>>,
+    pub file_index: Option<std::sync::Arc<whycodes_index::WorkspaceIndex>>,
     /// Optional sink so the `panel` tool can pin a file / diff / mermaid.
     pub panel: Option<PanelSink>,
     /// Optional sink so `todowrite` can update the host todo panel live.

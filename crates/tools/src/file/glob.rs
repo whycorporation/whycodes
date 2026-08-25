@@ -4,7 +4,7 @@ use std::path::Path;
 
 use super::paths::{display_path, resolve_path, walk_files};
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 const DEFAULT_MAX: usize = 200;
 const HARD_MAX: usize = 2000;
@@ -242,7 +242,7 @@ mod tests {
     use super::*;
     use crate::tool::ToolContext;
     use std::time::Duration;
-    use whycode_index::IndexOptions;
+    use whycodes_index::IndexOptions;
 
     fn ctx(dir: &std::path::Path) -> ToolContext {
         ToolContext::new(dir.to_string_lossy().into_owned())
@@ -365,7 +365,7 @@ mod tests {
         std::fs::write(dir.path().join("src/a.rs"), "x").expect("write");
         std::fs::write(dir.path().join("README.md"), "hi").expect("write");
 
-        let idx = whycode_index::WorkspaceIndex::start_with(
+        let idx = whycodes_index::WorkspaceIndex::start_with(
             vec![dir.path().to_path_buf()],
             IndexOptions {
                 watch: false,
@@ -391,7 +391,7 @@ mod tests {
         std::fs::write(dir.path().join(".env"), "SECRET=1").expect("write");
         std::fs::write(dir.path().join("visible.txt"), "x").expect("write");
 
-        let idx = whycode_index::WorkspaceIndex::start_with(
+        let idx = whycodes_index::WorkspaceIndex::start_with(
             vec![dir.path().to_path_buf()],
             IndexOptions {
                 watch: false,

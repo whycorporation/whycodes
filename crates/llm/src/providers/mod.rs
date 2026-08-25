@@ -20,7 +20,7 @@ pub mod xai;
 mod tests {
     use super::*;
     use crate::provider::LlmProvider;
-    use whycode_core::types::{LlmRequest, Message, MessageContent, Role, ToolDefinition};
+    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role, ToolDefinition};
 
     fn req_with_tools() -> LlmRequest {
         LlmRequest {

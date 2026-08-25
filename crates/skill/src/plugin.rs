@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Configuration for a plugin — a user-defined external tool.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -256,7 +256,7 @@ mod tests {
             command: "true".into(),
             description: "d".into(),
             parameters: None,
-            working_dir: Some("/no/such/plugin-cwd-whycode".into()),
+            working_dir: Some("/no/such/plugin-cwd-whycodes".into()),
         };
         let result = Plugin::new(config)
             .execute(&HashMap::new(), &PluginContext::default())

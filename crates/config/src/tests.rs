@@ -4,29 +4,29 @@
 use super::*;
 use std::io::Write;
 
-/// Serializes tests that mutate process-global env vars (WHYCODE_HOME,
-/// WHYCODE_PROVIDER, …) so parallel test threads cannot interfere.
+/// Serializes tests that mutate process-global env vars (WHYCODES_HOME,
+/// WHYCODES_PROVIDER, …) so parallel test threads cannot interfere.
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// Run `f` with `WHYCODE_HOME` pointed at a fresh temp dir, then restore.
+/// Run `f` with `WHYCODES_HOME` pointed at a fresh temp dir, then restore.
 fn with_isolated_home(f: impl FnOnce(&std::path::Path)) {
     let _guard = lock_env();
     let dir = tempfile::tempdir().expect("tempdir");
-    let prev = std::env::var_os("WHYCODE_HOME");
-    unsafe { std::env::set_var("WHYCODE_HOME", dir.path()) };
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     f(dir.path());
     match prev {
-        Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-        None => unsafe { std::env::remove_var("WHYCODE_HOME") },
+        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
     }
 }
 
 #[test]
-fn whycode_home_overrides_config_and_data_paths() {
+fn whycodes_home_overrides_config_and_data_paths() {
     with_isolated_home(|home| {
         let cfg = Config::default_path().expect("config path");
         let data = Config::data_dir().expect("data dir");
@@ -130,7 +130,7 @@ fn test_config_load_save_tempfile() {
     let toml_str = toml::to_string_pretty(&cfg).expect("serialize");
 
     let dir = std::env::temp_dir();
-    let path = dir.join(format!("whycode-test-config-{}.toml", std::process::id()));
+    let path = dir.join(format!("whycodes-test-config-{}.toml", std::process::id()));
     {
         let mut f = std::fs::File::create(&path).expect("create temp file");
         f.write_all(toml_str.as_bytes()).expect("write");
@@ -215,24 +215,24 @@ fn test_default_agent() {
 #[test]
 fn test_substitute_vars_braced() {
     unsafe {
-        std::env::set_var("WHYCODE_TEST_FOO", "hello-world");
+        std::env::set_var("WHYCODES_TEST_FOO", "hello-world");
     }
-    let result = Config::substitute_vars("prefix ${WHYCODE_TEST_FOO} suffix");
+    let result = Config::substitute_vars("prefix ${WHYCODES_TEST_FOO} suffix");
     assert_eq!(result, "prefix hello-world suffix");
     unsafe {
-        std::env::remove_var("WHYCODE_TEST_FOO");
+        std::env::remove_var("WHYCODES_TEST_FOO");
     }
 }
 
 #[test]
 fn test_substitute_vars_unbraced() {
     unsafe {
-        std::env::set_var("WHYCODE_TEST_BAR", "bar-value");
+        std::env::set_var("WHYCODES_TEST_BAR", "bar-value");
     }
-    let result = Config::substitute_vars("start $WHYCODE_TEST_BAR end");
+    let result = Config::substitute_vars("start $WHYCODES_TEST_BAR end");
     assert_eq!(result, "start bar-value end");
     unsafe {
-        std::env::remove_var("WHYCODE_TEST_BAR");
+        std::env::remove_var("WHYCODES_TEST_BAR");
     }
 }
 
@@ -867,19 +867,19 @@ fn restore_env(names: &[&str], prev: Vec<Option<std::ffi::OsString>>) {
 fn apply_env_overrides_provider_and_model() {
     let _guard = lock_env();
     let names = [
-        "WHYCODE_PROVIDER",
-        "WHYCODE_MODEL",
-        "WHYCODE_MAX_TURNS",
-        "WHYCODE_LOG_LEVEL",
-        "WHYCODE_PROJECT_DIR",
+        "WHYCODES_PROVIDER",
+        "WHYCODES_MODEL",
+        "WHYCODES_MAX_TURNS",
+        "WHYCODES_LOG_LEVEL",
+        "WHYCODES_PROJECT_DIR",
     ];
     let prev = clear_env(&names);
     unsafe {
-        std::env::set_var("WHYCODE_PROVIDER", "acme");
-        std::env::set_var("WHYCODE_MODEL", "acme-sonnet");
-        std::env::set_var("WHYCODE_MAX_TURNS", "42");
-        std::env::set_var("WHYCODE_LOG_LEVEL", "debug");
-        std::env::set_var("WHYCODE_PROJECT_DIR", "/work");
+        std::env::set_var("WHYCODES_PROVIDER", "acme");
+        std::env::set_var("WHYCODES_MODEL", "acme-sonnet");
+        std::env::set_var("WHYCODES_MAX_TURNS", "42");
+        std::env::set_var("WHYCODES_LOG_LEVEL", "debug");
+        std::env::set_var("WHYCODES_PROJECT_DIR", "/work");
     }
     let mut cfg = Config::default();
     cfg.apply_env_overrides();
@@ -902,9 +902,9 @@ fn apply_env_overrides_provider_and_model() {
 #[allow(clippy::field_reassign_with_default)]
 fn apply_env_overrides_model_without_provider() {
     let _guard = lock_env();
-    let names = ["WHYCODE_PROVIDER", "WHYCODE_MODEL"];
+    let names = ["WHYCODES_PROVIDER", "WHYCODES_MODEL"];
     let prev = clear_env(&names);
-    unsafe { std::env::set_var("WHYCODE_MODEL", "bare-model") };
+    unsafe { std::env::set_var("WHYCODES_MODEL", "bare-model") };
     let mut cfg = Config::default();
     cfg.default_model = Some(make_model("openai", "old"));
     cfg.apply_env_overrides();
@@ -918,28 +918,28 @@ fn apply_env_overrides_model_without_provider() {
 fn apply_env_overrides_sandbox_and_memory() {
     let _guard = lock_env();
     let names = [
-        "WHYCODE_SANDBOX",
-        "WHYCODE_SANDBOX_NETWORK",
-        "WHYCODE_SANDBOX_FALLBACK",
-        "WHYCODE_NETWORK_ALLOWLIST",
-        "WHYCODE_NETWORK_DENYLIST",
-        "WHYCODE_NO_MEMORY",
-        "WHYCODE_MEMORY",
-        "WHYCODE_SWARM",
-        "WHYCODE_SWARM_MAX_AGENTS",
-        "WHYCODE_SWARM_WORKTREES",
+        "WHYCODES_SANDBOX",
+        "WHYCODES_SANDBOX_NETWORK",
+        "WHYCODES_SANDBOX_FALLBACK",
+        "WHYCODES_NETWORK_ALLOWLIST",
+        "WHYCODES_NETWORK_DENYLIST",
+        "WHYCODES_NO_MEMORY",
+        "WHYCODES_MEMORY",
+        "WHYCODES_SWARM",
+        "WHYCODES_SWARM_MAX_AGENTS",
+        "WHYCODES_SWARM_WORKTREES",
     ];
     let prev = clear_env(&names);
     unsafe {
-        std::env::set_var("WHYCODE_SANDBOX", "off");
-        std::env::set_var("WHYCODE_SANDBOX_NETWORK", "0");
-        std::env::set_var("WHYCODE_SANDBOX_FALLBACK", "deny");
-        std::env::set_var("WHYCODE_NETWORK_ALLOWLIST", "a.com, b.com");
-        std::env::set_var("WHYCODE_NETWORK_DENYLIST", "evil.com");
-        std::env::set_var("WHYCODE_NO_MEMORY", "1");
-        std::env::set_var("WHYCODE_SWARM", "0");
-        std::env::set_var("WHYCODE_SWARM_MAX_AGENTS", "12");
-        std::env::set_var("WHYCODE_SWARM_WORKTREES", "0");
+        std::env::set_var("WHYCODES_SANDBOX", "off");
+        std::env::set_var("WHYCODES_SANDBOX_NETWORK", "0");
+        std::env::set_var("WHYCODES_SANDBOX_FALLBACK", "deny");
+        std::env::set_var("WHYCODES_NETWORK_ALLOWLIST", "a.com, b.com");
+        std::env::set_var("WHYCODES_NETWORK_DENYLIST", "evil.com");
+        std::env::set_var("WHYCODES_NO_MEMORY", "1");
+        std::env::set_var("WHYCODES_SWARM", "0");
+        std::env::set_var("WHYCODES_SWARM_MAX_AGENTS", "12");
+        std::env::set_var("WHYCODES_SWARM_WORKTREES", "0");
     }
     let mut cfg = Config::default();
     cfg.apply_env_overrides();
@@ -1180,27 +1180,27 @@ fn load_layered_merges_project_and_warns_on_bad_toml() {
     with_isolated_home(|home| {
         std::fs::write(home.join("config.toml"), "default_agent = \"plan\"\n").unwrap();
         let proj = home.join("proj");
-        std::fs::create_dir_all(proj.join(".whycode")).unwrap();
+        std::fs::create_dir_all(proj.join(".whycodes")).unwrap();
         std::fs::write(
-            proj.join(".whycode/config.toml"),
+            proj.join(".whycodes/config.toml"),
             "default_agent = \"explore\"\n",
         )
         .unwrap();
         let cfg = Config::load_layered(&proj).unwrap();
         assert_eq!(cfg.default_agent, "explore");
 
-        std::fs::write(proj.join(".whycode/config.toml"), "[[[not toml").unwrap();
+        std::fs::write(proj.join(".whycodes/config.toml"), "[[[not toml").unwrap();
         let cfg = Config::load_layered(&proj).unwrap();
         assert_eq!(cfg.default_agent, "plan");
 
         // unreadable project file (directory instead of file)
-        std::fs::remove_file(proj.join(".whycode/config.toml")).unwrap();
-        std::fs::create_dir(proj.join(".whycode/config.toml")).unwrap();
+        std::fs::remove_file(proj.join(".whycodes/config.toml")).unwrap();
+        std::fs::create_dir(proj.join(".whycodes/config.toml")).unwrap();
         let cfg = Config::load_layered(&proj).unwrap();
         assert_eq!(cfg.default_agent, "plan");
 
         // no project file at all
-        std::fs::remove_dir(proj.join(".whycode/config.toml")).unwrap();
+        std::fs::remove_dir(proj.join(".whycodes/config.toml")).unwrap();
         let cfg = Config::load_layered(&proj).unwrap();
         assert_eq!(cfg.default_agent, "plan");
     });
@@ -1210,30 +1210,30 @@ fn load_layered_merges_project_and_warns_on_bad_toml() {
 fn apply_env_overrides_cover_every_knob() {
     let _guard = lock_env();
     let names = [
-        "WHYCODE_PROVIDER",
-        "WHYCODE_MODEL",
+        "WHYCODES_PROVIDER",
+        "WHYCODES_MODEL",
         "GROK_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
-        "WHYCODE_MAX_TURNS",
-        "WHYCODE_LOG_LEVEL",
-        "WHYCODE_PROJECT_DIR",
-        "WHYCODE_SANDBOX",
-        "WHYCODE_SANDBOX_NETWORK",
-        "WHYCODE_SANDBOX_FALLBACK",
-        "WHYCODE_NETWORK_ALLOWLIST",
-        "WHYCODE_NETWORK_DENYLIST",
-        "WHYCODE_NO_MEMORY",
-        "WHYCODE_MEMORY",
-        "WHYCODE_SWARM",
-        "WHYCODE_SWARM_MAX_AGENTS",
-        "WHYCODE_SWARM_WORKTREES",
+        "WHYCODES_MAX_TURNS",
+        "WHYCODES_LOG_LEVEL",
+        "WHYCODES_PROJECT_DIR",
+        "WHYCODES_SANDBOX",
+        "WHYCODES_SANDBOX_NETWORK",
+        "WHYCODES_SANDBOX_FALLBACK",
+        "WHYCODES_NETWORK_ALLOWLIST",
+        "WHYCODES_NETWORK_DENYLIST",
+        "WHYCODES_NO_MEMORY",
+        "WHYCODES_MEMORY",
+        "WHYCODES_SWARM",
+        "WHYCODES_SWARM_MAX_AGENTS",
+        "WHYCODES_SWARM_WORKTREES",
     ];
     let prev = clear_env(&names);
 
     unsafe {
-        std::env::set_var("WHYCODE_PROVIDER", "grok");
-        std::env::set_var("WHYCODE_MODEL", "grok-4");
+        std::env::set_var("WHYCODES_PROVIDER", "grok");
+        std::env::set_var("WHYCODES_MODEL", "grok-4");
         std::env::set_var("GROK_API_KEY", "gk");
     }
     let mut cfg = Config::default();
@@ -1244,25 +1244,25 @@ fn apply_env_overrides_cover_every_knob() {
         Some("grok-4")
     );
 
-    // existing provider is not recreated; WHYCODE_MODEL without provider
+    // existing provider is not recreated; WHYCODES_MODEL without provider
     // rewrites the default model's id.
-    unsafe { std::env::remove_var("WHYCODE_PROVIDER") };
-    unsafe { std::env::set_var("WHYCODE_MODEL", "other") };
+    unsafe { std::env::remove_var("WHYCODES_PROVIDER") };
+    unsafe { std::env::set_var("WHYCODES_MODEL", "other") };
     cfg.apply_env_overrides();
     assert_eq!(cfg.default_model.as_ref().unwrap().model_id, "other");
 
     // model without existing default
     let mut cfg2 = Config::default();
-    unsafe { std::env::set_var("WHYCODE_MODEL", "solo") };
+    unsafe { std::env::set_var("WHYCODES_MODEL", "solo") };
     cfg2.apply_env_overrides();
     assert_eq!(cfg2.default_model.as_ref().unwrap().model_id, "solo");
     assert!(cfg2.default_model.as_ref().unwrap().provider_id.is_empty());
 
-    // WHYCODE_PROVIDER when the provider already exists — skip insert, still
-    // pick up WHYCODE_MODEL when default_model is None.
+    // WHYCODES_PROVIDER when the provider already exists — skip insert, still
+    // pick up WHYCODES_MODEL when default_model is None.
     unsafe {
-        std::env::set_var("WHYCODE_PROVIDER", "grok");
-        std::env::set_var("WHYCODE_MODEL", "grok-again");
+        std::env::set_var("WHYCODES_PROVIDER", "grok");
+        std::env::set_var("WHYCODES_MODEL", "grok-again");
     }
     cfg.default_model = None;
     cfg.apply_env_overrides();
@@ -1272,37 +1272,37 @@ fn apply_env_overrides_cover_every_knob() {
     );
 
     // invalid parses are ignored
-    unsafe { std::env::set_var("WHYCODE_MAX_TURNS", "nope") };
-    unsafe { std::env::set_var("WHYCODE_SWARM_MAX_AGENTS", "x") };
+    unsafe { std::env::set_var("WHYCODES_MAX_TURNS", "nope") };
+    unsafe { std::env::set_var("WHYCODES_SWARM_MAX_AGENTS", "x") };
     cfg.apply_env_overrides();
 
-    unsafe { std::env::set_var("WHYCODE_SANDBOX_NETWORK", "yes") };
+    unsafe { std::env::set_var("WHYCODES_SANDBOX_NETWORK", "yes") };
     cfg.apply_env_overrides();
     assert!(cfg.security.sandbox_network);
 
-    unsafe { std::env::set_var("WHYCODE_NO_MEMORY", "maybe") };
+    unsafe { std::env::set_var("WHYCODES_NO_MEMORY", "maybe") };
     cfg.memory.enabled = true;
     cfg.apply_env_overrides();
     assert!(cfg.memory.enabled, "unrecognized NO_MEMORY leaves enabled");
 
-    unsafe { std::env::set_var("WHYCODE_MEMORY", "on") };
+    unsafe { std::env::set_var("WHYCODES_MEMORY", "on") };
     cfg.apply_env_overrides();
     assert!(cfg.memory.enabled);
-    unsafe { std::env::set_var("WHYCODE_MEMORY", "off") };
+    unsafe { std::env::set_var("WHYCODES_MEMORY", "off") };
     cfg.apply_env_overrides();
     assert!(!cfg.memory.enabled);
-    unsafe { std::env::set_var("WHYCODE_MEMORY", "maybe") };
+    unsafe { std::env::set_var("WHYCODES_MEMORY", "maybe") };
     cfg.apply_env_overrides();
 
-    unsafe { std::env::set_var("WHYCODE_SWARM", "1") };
+    unsafe { std::env::set_var("WHYCODES_SWARM", "1") };
     cfg.apply_env_overrides();
     assert!(cfg.swarm.enabled);
-    unsafe { std::env::set_var("WHYCODE_SWARM", "huh") };
+    unsafe { std::env::set_var("WHYCODES_SWARM", "huh") };
     cfg.apply_env_overrides();
-    unsafe { std::env::set_var("WHYCODE_SWARM_WORKTREES", "1") };
+    unsafe { std::env::set_var("WHYCODES_SWARM_WORKTREES", "1") };
     cfg.apply_env_overrides();
     assert!(cfg.swarm.worktrees);
-    unsafe { std::env::set_var("WHYCODE_SWARM_WORKTREES", "maybe") };
+    unsafe { std::env::set_var("WHYCODES_SWARM_WORKTREES", "maybe") };
     cfg.apply_env_overrides();
     assert!(cfg.swarm.worktrees);
 
@@ -1323,7 +1323,7 @@ fn merge_with_covers_provider_model_memory_tools() {
             base_url: Some("http://b".into()),
             headers: Some(HashMap::from([("h".into(), "v".into())])),
             models: vec!["m1".into()],
-            tool_arguments: Some(whycode_core::types::ToolArgumentsFormat::Object),
+            tool_arguments: Some(whycodes_core::types::ToolArgumentsFormat::Object),
             extra: HashMap::from([("k".into(), serde_json::json!(1))]),
         },
     );
@@ -1345,7 +1345,7 @@ fn merge_with_covers_provider_model_memory_tools() {
     other.agents.push(AgentInfo {
         name: "extra".into(),
         description: "x".into(),
-        mode: whycode_core::types::AgentMode::Primary,
+        mode: whycodes_core::types::AgentMode::Primary,
         permission: PermissionSet::default(),
         model: None,
         system_prompt: None,
@@ -1520,7 +1520,7 @@ fn command_markdown_render_and_load_dir() {
         let rendered = with.render("arg1 extra");
         assert!(rendered.contains("arg1"), "{rendered}");
         assert!(rendered.contains("hi"), "{rendered}");
-        let dir = home.join("proj/.whycode/commands");
+        let dir = home.join("proj/.whycodes/commands");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("skip.txt"), "nope").unwrap();
         std::fs::write(dir.join("ok.md"), "do $ARGUMENTS").unwrap();
@@ -1538,7 +1538,7 @@ fn validate_empty_agents_and_provider_env_key() {
     let _guard = lock_env();
     let names = [
         "LOCAL_API_KEY",
-        "WHYCODE_LOCAL_API_KEY",
+        "WHYCODES_LOCAL_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
     ];
@@ -1567,8 +1567,8 @@ fn validate_empty_agents_and_provider_env_key() {
 
 #[test]
 fn substitute_unbraced_unknown_kept() {
-    let s = Config::substitute_vars("x $NOT_A_WHYCODE_VAR_ZZZ y");
-    assert!(s.contains("$NOT_A_WHYCODE_VAR_ZZZ"), "{s}");
+    let s = Config::substitute_vars("x $NOT_A_WHYCODES_VAR_ZZZ y");
+    assert!(s.contains("$NOT_A_WHYCODES_VAR_ZZZ"), "{s}");
 }
 
 #[test]
@@ -1626,7 +1626,7 @@ fn render_inline_shell_stdout_and_stderr() {
 #[test]
 fn render_inline_shell_spawn_failure() {
     let _guard = lock_env();
-    let names = ["PATH", "WHYCODE_HOME"];
+    let names = ["PATH", "WHYCODES_HOME"];
     let prev = names.iter().map(std::env::var_os).collect::<Vec<_>>();
     unsafe { std::env::set_var("PATH", "") };
     let cmd = CustomCommandConfig {
@@ -1667,8 +1667,8 @@ fn load_command_files_opencode_dir_and_unreadable_md() {
 fn apply_env_provider_key_fallbacks() {
     let _guard = lock_env();
     let names = [
-        "WHYCODE_PROVIDER",
-        "WHYCODE_MODEL",
+        "WHYCODES_PROVIDER",
+        "WHYCODES_MODEL",
         "FOO_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -1676,7 +1676,7 @@ fn apply_env_provider_key_fallbacks() {
     let prev = clear_env(&names);
 
     unsafe {
-        std::env::set_var("WHYCODE_PROVIDER", "foo");
+        std::env::set_var("WHYCODES_PROVIDER", "foo");
         std::env::set_var("OPENAI_API_KEY", "ok");
     }
     let mut cfg = Config::default();
@@ -1685,7 +1685,7 @@ fn apply_env_provider_key_fallbacks() {
 
     unsafe {
         std::env::remove_var("OPENAI_API_KEY");
-        std::env::set_var("WHYCODE_PROVIDER", "bar");
+        std::env::set_var("WHYCODES_PROVIDER", "bar");
         std::env::set_var("ANTHROPIC_API_KEY", "ak");
     }
     let mut cfg2 = Config::default();
@@ -1694,7 +1694,7 @@ fn apply_env_provider_key_fallbacks() {
 
     unsafe {
         std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::set_var("WHYCODE_PROVIDER", "bare");
+        std::env::set_var("WHYCODES_PROVIDER", "bare");
     }
     let mut cfg3 = Config::default();
     cfg3.apply_env_overrides();
@@ -1708,7 +1708,7 @@ fn validate_env_key_aliases_and_empty_default_agent() {
     let _guard = lock_env();
     let names = [
         "LOCAL_API_KEY",
-        "WHYCODE_LOCAL_API_KEY",
+        "WHYCODES_LOCAL_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
     ];
@@ -1729,11 +1729,11 @@ fn validate_env_key_aliases_and_empty_default_agent() {
             extra: HashMap::new(),
         },
     );
-    unsafe { std::env::set_var("WHYCODE_LOCAL_API_KEY", "k") };
+    unsafe { std::env::set_var("WHYCODES_LOCAL_API_KEY", "k") };
     assert!(cfg.validate().is_ok());
 
     unsafe {
-        std::env::remove_var("WHYCODE_LOCAL_API_KEY");
+        std::env::remove_var("WHYCODES_LOCAL_API_KEY");
         std::env::set_var("OPENAI_API_KEY", "ok");
     }
     assert!(cfg.validate().is_ok());

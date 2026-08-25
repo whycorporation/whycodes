@@ -1,6 +1,6 @@
 //! Unified tree-pruning policy for project scans.
 //!
-//! Single source of truth for which parts of a tree whycode descends into —
+//! Single source of truth for which parts of a tree whycodes descends into —
 //! used by the workspace index, the file tools (`glob` / `list` / `grep`),
 //! and memory code indexing. Replaces the drifted per-crate copies that lived
 //! in `tools/file/paths.rs` and `memory/code_index.rs`. On top of this name
@@ -41,7 +41,7 @@ pub const SKIP_DIRS: &[&str] = &[
 ];
 
 /// Dot-directories still indexed despite the hidden-skip rule (project metadata).
-pub const HIDDEN_DIR_WHITELIST: &[&str] = &[".github", ".whycode", ".config"];
+pub const HIDDEN_DIR_WHITELIST: &[&str] = &[".github", ".whycodes", ".whycode", ".config"];
 
 /// Well-known dotfiles kept in the index; every other `.`-prefixed file is
 /// skipped (secret hygiene — `.env` and friends must not flow into prompts).

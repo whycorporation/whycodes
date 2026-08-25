@@ -37,8 +37,8 @@ on the async path — not more LTO.
 ## Measurement after Session B
 
 ```bash
-cargo test -p whycode-storage -p whycode-session -p whycode-tools -p whycode-agent --lib
+cargo test -p whycodes-storage -p whycodes-session -p whycodes-tools -p whycodes-agent --lib
 cargo check --workspace
-cargo build -p whycode-cli
+cargo build -p whycodes-cli
 # optional: python scripts/bench_startup.py --runs 10
 ```

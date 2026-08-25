@@ -136,7 +136,7 @@ jobs:
           # so host-only test branches cannot sink the floor.
           CRATE_IGNORE="$IGNORE|tests\\.rs$"
           cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --fail-under-lines 82 --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index
-          for crate in whycode-function whycode-schema whycode-skill whycode-sandbox whycode-protocol whycode-plugin whycode-command-risk whycode-storage whycode-core whycode-config whycode-format whycode-index; do
+          for crate in whycodes-function whycodes-schema whycodes-skill whycodes-sandbox whycodes-protocol whycodes-plugin whycodes-command-risk whycodes-storage whycodes-core whycodes-config whycodes-format whycodes-index; do
             cargo llvm-cov -p "$crate" --ignore-filename-regex "$CRATE_IGNORE" --fail-under-lines 100 --show-missing-lines --summary-only
           done
 
@@ -153,8 +153,8 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: whycode-linux
-          path: target/release/whycode*
+          name: whycodes-linux
+          path: target/release/whycodes*
           retention-days: 3
 
   # Optional GitHub-hosted multi-OS (uses billed minutes).
@@ -190,6 +190,6 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
-          name: whycode-${{ matrix.os }}
-          path: target/release/whycode*
+          name: whycodes-${{ matrix.os }}
+          path: target/release/whycodes*
           retention-days: 3

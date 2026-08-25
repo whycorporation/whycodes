@@ -1,14 +1,14 @@
 //! Index hot paths: cold walk (serial vs parallel), warm fuzzy query, browse.
 //!
 //! ```sh
-//! cargo bench -p whycode-index
+//! cargo bench -p whycodes-index
 //! ```
 
 use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
-use whycode_index::{IndexOptions, WorkspaceIndex, walk_root};
+use whycodes_index::{IndexOptions, WorkspaceIndex, walk_root};
 
 /// Build a synthetic repo: `dirs` top dirs × `files` files each, nested 2 deep.
 fn synthetic_repo(dirs: usize, files: usize) -> tempfile::TempDir {

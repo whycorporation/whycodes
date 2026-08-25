@@ -44,7 +44,7 @@ mod tokenize;
 pub use assess::{Assessment, RiskLevel, assess, assess_with_home};
 pub use paths::PathScope;
 
-/// The level at which whycode starts asking for confirmation.
+/// The level at which whycodes starts asking for confirmation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RiskThreshold {
     /// Confirm anything that writes, including inside the project.

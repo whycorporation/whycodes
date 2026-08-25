@@ -4,7 +4,7 @@
 anthropic, openai, github-copilot, google; API-call routing live for all
 four (openai → Codex backend Responses API, google → Code Assist endpoint);
 401 refresh+retry; `/connect` in-TUI login; credential discovery with the
-consent model below (`whycode auth import`). See [../auth.md](../auth.md).
+consent model below (`whycodes auth import`). See [../auth.md](../auth.md).
 Residual non-blockers: Windows restrictive ACL on the token store (Unix
 `0600` is solid). · **Blocks:** nothing
 
@@ -20,7 +20,7 @@ writing code, and getting it wrong has consequences beyond a bug.
 
 **The OAuth flows need a registered client.** A device flow is not something a
 third-party client can simply perform against Anthropic or OpenAI; it needs a
-client identifier issued to whycode. Registering one is an act by the project
+client identifier issued to whycodes. Registering one is an act by the project
 maintainer, under whatever terms the provider attaches.
 
 **Credential discovery may not be permitted at all.** Reading Claude Code's or
@@ -43,7 +43,7 @@ Once those were answered, the tasks below became ordinary work.
 
 ## Problem
 
-whycode authenticates with API keys only — an environment variable or an
+whycodes authenticates with API keys only — an environment variable or an
 `api_key` in `config.toml`. A new user must find the provider console, create a
 key, and paste it into a file. Meanwhile the machine very likely already holds
 working credentials for Claude Code, Codex, Gemini CLI or Copilot.
@@ -63,7 +63,7 @@ planted link pointing at an arbitrary file.
 
 ## Goal
 
-`whycode` on a fresh machine reaches a working session without the user
+`whycodes` on a fresh machine reaches a working session without the user
 visiting a provider console, and never reads another tool's credentials
 without being told to.
 
@@ -71,13 +71,13 @@ without being told to.
 
 In:
 
-- `whycode login --provider <name>`: OAuth device flow for Anthropic and
-  OpenAI, storing tokens under the whycode data directory.
+- `whycodes login --provider <name>`: OAuth device flow for Anthropic and
+  OpenAI, storing tokens under the whycodes data directory.
 - Token refresh, transparently, before expiry.
 - Credential discovery: detect credential files belonging to other CLIs,
   list what was found, and import only after explicit per-path approval.
-- `whycode logout --provider <name>`.
-- `whycode debug` reports which providers are authenticated and by what
+- `whycodes logout --provider <name>`.
+- `whycodes debug` reports which providers are authenticated and by what
   method, without printing secrets.
 
 Out:
@@ -116,8 +116,8 @@ Out:
 
 ## Acceptance criteria
 
-- [x] `whycode auth login anthropic` completes the browser flow and a
-      subsequent `whycode generate "hi"` works with no API key set
+- [x] `whycodes auth login anthropic` completes the browser flow and a
+      subsequent `whycodes generate "hi"` works with no API key set
 - [x] An expired access token refreshes without user interaction
 - [x] Discovery finds a Claude Code credential file when present and does
       **not** read it until approved
@@ -125,7 +125,7 @@ Out:
 - [x] A symlinked credential source is refused with a clear message
 - [x] No discovered file is modified — verified by comparing mtime and content
       hash before and after a session (discover.rs import test)
-- [x] `whycode debug` shows auth state and never prints a token, not even
+- [x] `whycodes debug` shows auth state and never prints a token, not even
       truncated
 - [x] Secrets do not appear in logs at any tracing level
 

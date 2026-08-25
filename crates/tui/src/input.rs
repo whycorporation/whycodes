@@ -182,7 +182,7 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             if app.mode != AppMode::Command && app.mode != AppMode::Dialog {
                 app.confirm(
                     "Quit",
-                    "Are you sure you want to quit whycode?",
+                    "Are you sure you want to quit whycodes?",
                     ConfirmAction::Quit,
                 );
             }
@@ -1441,7 +1441,7 @@ fn handle_help_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
             true
         }
         KeyCode::Char('q') if !app.help_searching && app.help_query.is_empty() => {
-            // Grok Esc · Whycode `q` — close even when key_context is stale.
+            // Grok Esc · WhyCodes `q` — close even when key_context is stale.
             app.mode = AppMode::Normal;
             app.key_context = KeymapContext::Normal;
             true
@@ -1826,7 +1826,7 @@ fn open_provider_dialog(app: &mut TuiApp) {
         app.provider_dialog.providers.push(name.to_string());
     }
     // Then custom from config.
-    if let Ok(config) = whycode_config::Config::load() {
+    if let Ok(config) = whycodes_config::Config::load() {
         for name in config.providers.keys() {
             if !app.provider_dialog.providers.contains(name) {
                 app.provider_dialog.providers.push(name.clone());
@@ -1881,7 +1881,7 @@ pub fn open_effort_dialog(app: &mut TuiApp) {
         app.mark_dirty();
         return;
     }
-    let current = whycode_llm::ThinkingConfig::resolve_effort(
+    let current = whycodes_llm::ThinkingConfig::resolve_effort(
         &app.provider_name,
         &app.model_name,
         app.reasoning_effort.as_deref(),
@@ -1892,12 +1892,12 @@ pub fn open_effort_dialog(app: &mut TuiApp) {
     open_dialog(app, DialogKind::Effort);
 }
 
-fn effort_levels(app: &TuiApp) -> &'static [whycode_llm::ReasoningEffort] {
-    whycode_llm::ThinkingConfig::supported_efforts(&app.provider_name, &app.model_name)
+fn effort_levels(app: &TuiApp) -> &'static [whycodes_llm::ReasoningEffort] {
+    whycodes_llm::ThinkingConfig::supported_efforts(&app.provider_name, &app.model_name)
 }
 
 fn fill_model_catalog_from_disk(app: &mut TuiApp) {
-    let Ok(config) = whycode_config::Config::load() else {
+    let Ok(config) = whycodes_config::Config::load() else {
         return;
     };
     app.model_selection.models = crate::app::catalog_models(&config);
@@ -2241,11 +2241,11 @@ mod event_tests {
         a.file_suggest.active = true;
         a.file_suggest.token_start = 0;
         a.file_suggest.matches = vec![
-            whycode_index::FileMatch {
+            whycodes_index::FileMatch {
                 rel: "a.rs".into(),
                 ..Default::default()
             },
-            whycode_index::FileMatch {
+            whycodes_index::FileMatch {
                 rel: "b.rs".into(),
                 ..Default::default()
             },
@@ -2555,7 +2555,7 @@ mod event_tests {
         let mut a = app();
         a.file_suggest.active = true;
         a.file_suggest.token_start = 0;
-        a.file_suggest.matches = vec![whycode_index::FileMatch {
+        a.file_suggest.matches = vec![whycodes_index::FileMatch {
             rel: "lib.rs".into(),
             ..Default::default()
         }];
@@ -2858,9 +2858,9 @@ mod event_tests {
         assert!(!a.dialogs.is_open());
 
         let mut a = app();
-        a.ask_question(vec![whycode_tools::question::QuestionSpec {
+        a.ask_question(vec![whycodes_tools::question::QuestionSpec {
             prompt: "Go?".into(),
-            options: vec![whycode_tools::question::QuestionOption {
+            options: vec![whycodes_tools::question::QuestionOption {
                 label: "Yes".into(),
                 description: String::new(),
                 preview: None,
@@ -2900,15 +2900,15 @@ mod event_tests {
         assert_eq!(a.mode, AppMode::Normal);
 
         let mut a = app();
-        a.ask_question(vec![whycode_tools::question::QuestionSpec {
+        a.ask_question(vec![whycodes_tools::question::QuestionSpec {
             prompt: "Go?".into(),
             options: vec![
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "Yes".into(),
                     description: String::new(),
                     preview: None,
                 },
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "No".into(),
                     description: String::new(),
                     preview: None,
@@ -3220,15 +3220,15 @@ mod event_tests {
     #[test]
     fn dialog_question_keys_move_without_free_text() {
         let mut a = app();
-        a.ask_question(vec![whycode_tools::question::QuestionSpec {
+        a.ask_question(vec![whycodes_tools::question::QuestionSpec {
             prompt: "Go?".into(),
             options: vec![
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "A".into(),
                     description: String::new(),
                     preview: None,
                 },
-                whycode_tools::question::QuestionOption {
+                whycodes_tools::question::QuestionOption {
                     label: "B".into(),
                     description: String::new(),
                     preview: None,

@@ -2,7 +2,7 @@
 //!
 //! The flows reuse the public, pre-registered OAuth client ids that
 //! first-party and community terminal agents already ship (Claude Code,
-//! Codex CLI, Gemini CLI, VS Code's GitHub client, Grok Build). whycode
+//! Codex CLI, Gemini CLI, VS Code's GitHub client, Grok Build). whycodes
 //! cannot register its own client for these providers, so subscription
 //! login rides on the same identifiers a user's first-party CLI would use.
 //!
@@ -226,7 +226,7 @@ pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
             loopback_port: None,
             loopback_host: Some("127.0.0.1"),
             callback_path: "/callback",
-            extra_authorize: &[("referrer", "whycode")],
+            extra_authorize: &[("referrer", "whycodes")],
             derived: None,
         }),
         "google-antigravity" => Ok(ProviderSpec {
@@ -269,7 +269,7 @@ pub trait LoginUi {
     fn prompt_pasted_code(&mut self) -> impl Future<Output = Result<String>> + Send;
 }
 
-/// stdout/stdin [`LoginUi`] used by `whycode auth login`.
+/// stdout/stdin [`LoginUi`] used by `whycodes auth login`.
 pub struct CliLoginUi;
 
 impl LoginUi for CliLoginUi {
@@ -397,7 +397,7 @@ pub async fn access_token(provider: &str, data_dir: &Path) -> Option<String> {
 /// Used after a provider answers 401 on a token the store considered fresh
 /// (revoked server-side, clock skew, a derived token invalidated early).
 /// How many times a rejection may trigger this is the *caller's* policy
-/// (whycode-llm does it once per request); this function only guarantees
+/// (whycodes-llm does it once per request); this function only guarantees
 /// the store ends up holding the newest credential the provider will issue.
 /// `None` when not logged in, when the credential has no renewal path, or
 /// when the provider refuses the renewal — the stored credential is never
@@ -956,7 +956,7 @@ pub(crate) fn openai_account_id_from_jwt(id_token: &str) -> Option<String> {
 
 fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
-        .user_agent(concat!("whycode/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("whycodes/", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(AuthError::Http)

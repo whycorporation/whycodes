@@ -1,13 +1,13 @@
 //! Integration tests for git tools: git_diff, git_log, git_status.
 //!
-//! These tests run against the whycode repository itself.
+//! These tests run against the whycodes repository itself.
 //! They verify that the tools produce well-formed output when executed
 //! inside a real git repository.
 
-use whycode_core::ToolContext;
-use whycode_tools::executor::ToolExecutor;
+use whycodes_core::ToolContext;
+use whycodes_tools::executor::ToolExecutor;
 
-/// Build a ToolContext pointing at the whycode workspace root.
+/// Build a ToolContext pointing at the whycodes workspace root.
 /// This is a real git repo, so all git tools should work.
 fn repo_ctx() -> ToolContext {
     // Find the workspace root (where .git lives) from the manifest dir
@@ -20,8 +20,8 @@ fn repo_ctx() -> ToolContext {
     ToolContext {
         working_dir: workspace_root.to_string_lossy().to_string(),
         session_id: None,
-        sandbox: whycode_core::SandboxSettings::off(),
-        network: whycode_core::NetworkPolicy::unrestricted(),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
         file_claims: None,
         agent_id: None,
         agent_label: None,

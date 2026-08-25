@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use whycode_core::SandboxSettings;
-use whycode_sandbox::{SandboxRequest, prepare};
+use whycodes_core::SandboxSettings;
+use whycodes_sandbox::{SandboxRequest, prepare};
 
 /// Soft cap on concurrent running jobs.
 pub const DEFAULT_MAX_BACKGROUND_JOBS: usize = 8;
@@ -492,7 +492,7 @@ fn finalize_job(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::SandboxSettings;
+    use whycodes_core::SandboxSettings;
 
     #[tokio::test]
     async fn start_sleep_kill() {

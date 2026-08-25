@@ -12,7 +12,7 @@ use std::time::Duration;
 use futures::Stream;
 use futures::StreamExt;
 use tracing::{debug, warn};
-use whycode_core::types::{LlmRequest, StreamEvent};
+use whycodes_core::types::{LlmRequest, StreamEvent};
 
 use crate::provider::LlmProvider;
 use crate::transport::LlmTransport;
@@ -49,7 +49,7 @@ impl RaceOutcome {
     }
 }
 
-pub type EventStream = Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>;
+pub type EventStream = Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>;
 
 /// First event that counts as TTFT (text, thinking, or a tool call).
 pub fn is_first_token(ev: &StreamEvent) -> bool {
@@ -68,7 +68,7 @@ pub async fn stream_raced(
     race: Option<StreamTarget<'_>>,
     request: &LlmRequest,
     race_after: Duration,
-) -> whycode_core::Result<(EventStream, RaceOutcome)> {
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
     let Some(race) =
         race.filter(|r| r.model != primary.model || r.provider.name() != primary.provider.name())
     else {
@@ -136,7 +136,7 @@ async fn race_immediate(
     primary: StreamTarget<'_>,
     race: StreamTarget<'_>,
     request: &LlmRequest,
-) -> whycode_core::Result<(EventStream, RaceOutcome)> {
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
     let (p, r) = tokio::join!(
         transport.stream(primary.provider, request, primary.api_key, primary.model),
         transport.stream(race.provider, request, race.api_key, race.model),
@@ -165,7 +165,7 @@ async fn race_after_timeout(
     mut primary_stream: EventStream,
     race: StreamTarget<'_>,
     request: &LlmRequest,
-) -> whycode_core::Result<(EventStream, RaceOutcome)> {
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
     let mut race_open = Some(Box::pin(transport.stream(
         race.provider,
         request,
@@ -173,7 +173,7 @@ async fn race_after_timeout(
         race.model,
     )));
     let mut race_stream: Option<EventStream> = None;
-    let mut primary_dead: Option<whycode_core::Error> = None;
+    let mut primary_dead: Option<whycodes_core::Error> = None;
 
     loop {
         tokio::select! {
@@ -191,7 +191,7 @@ async fn race_after_timeout(
                         primary_dead = Some(e);
                     }
                     None => {
-                        let e = whycode_core::Error::Provider(
+                        let e = whycodes_core::Error::Provider(
                             "primary stream ended before first token".into(),
                         );
                         if race_open.is_none() && race_stream.is_none() {
@@ -217,7 +217,7 @@ async fn race_after_timeout(
                 match r {
                     Some(Ok(ev)) => {
                         let Some(rs) = race_stream.take() else {
-                            return Err(whycode_core::Error::Provider(
+                            return Err(whycodes_core::Error::Provider(
                                 "race stream missing after first token".into(),
                             ));
                         };
@@ -253,9 +253,9 @@ async fn race_after_timeout(
 /// Pending when `open` is `None`, so `select!` never needs `unwrap`.
 async fn await_opt_open<F>(
     open: &mut Option<Pin<Box<F>>>,
-) -> Option<whycode_core::Result<EventStream>>
+) -> Option<whycodes_core::Result<EventStream>>
 where
-    F: Future<Output = whycode_core::Result<EventStream>> + ?Sized,
+    F: Future<Output = whycodes_core::Result<EventStream>> + ?Sized,
 {
     match open.as_mut() {
         Some(fut) => {
@@ -269,7 +269,7 @@ where
 
 async fn await_opt_first_token(
     stream: &mut Option<EventStream>,
-) -> Option<whycode_core::Result<StreamEvent>> {
+) -> Option<whycodes_core::Result<StreamEvent>> {
     match stream.as_mut() {
         Some(s) => next_first_token(s).await,
         None => std::future::pending().await,
@@ -279,7 +279,7 @@ async fn await_opt_first_token(
 async fn first_of_two(
     mut primary: EventStream,
     mut race: EventStream,
-) -> whycode_core::Result<(EventStream, RaceOutcome)> {
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
     tokio::select! {
         p = next_first_token(&mut primary) => {
             match p {
@@ -307,7 +307,7 @@ async fn first_of_two(
                         },
                     )),
                     Some(Err(e)) => Err(e),
-                    None => Err(whycode_core::Error::Provider(
+                    None => Err(whycodes_core::Error::Provider(
                         "both race streams empty".into(),
                     )),
                 },
@@ -327,7 +327,7 @@ async fn first_of_two(
                 Some(Err(_)) | None => match next_first_token(&mut primary).await {
                     Some(Ok(ev)) => Ok((prefix_stream(ev, primary), RaceOutcome::Primary)),
                     Some(Err(e)) => Err(e),
-                    None => Err(whycode_core::Error::Provider(
+                    None => Err(whycodes_core::Error::Provider(
                         "both race streams empty".into(),
                     )),
                 },
@@ -336,7 +336,7 @@ async fn first_of_two(
     }
 }
 
-async fn next_first_token(s: &mut EventStream) -> Option<whycode_core::Result<StreamEvent>> {
+async fn next_first_token(s: &mut EventStream) -> Option<whycodes_core::Result<StreamEvent>> {
     while let Some(item) = s.next().await {
         match item {
             Ok(ev) if is_first_token(&ev) => return Some(Ok(ev)),
@@ -364,7 +364,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use async_trait::async_trait;
-    use whycode_core::types::{LlmResponse, Message, MessageContent, Role, Usage};
+    use whycodes_core::types::{LlmResponse, Message, MessageContent, Role, Usage};
 
     use crate::retry::RetryPolicy;
 
@@ -389,7 +389,7 @@ mod tests {
             _request: &LlmRequest,
             _api_key: &str,
             model: &str,
-        ) -> whycode_core::Result<LlmResponse> {
+        ) -> whycodes_core::Result<LlmResponse> {
             Ok(LlmResponse {
                 content: vec![],
                 stop_reason: None,
@@ -402,10 +402,10 @@ mod tests {
             _request: &LlmRequest,
             _api_key: &str,
             _model: &str,
-        ) -> whycode_core::Result<EventStream> {
+        ) -> whycodes_core::Result<EventStream> {
             self.opens.fetch_add(1, Ordering::SeqCst);
             if self.fail_open {
-                return Err(whycode_core::Error::Provider("boom".into()));
+                return Err(whycodes_core::Error::Provider("boom".into()));
             }
             let delay = self.delay;
             let text = self.text.clone();

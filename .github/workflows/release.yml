@@ -45,7 +45,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --locked -p whycode-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p whycodes-cli --target ${{ matrix.target }}
 
       # One archive per target, named so the installers can construct the URL
       # from `uname`/`$PROCESSOR_ARCHITECTURE` without consulting an index.
@@ -55,25 +55,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/whycode" dist/
+          cp "target/${{ matrix.target }}/release/whycodes" dist/
           cp LICENSE README.md dist/
-          tar -C dist -czf "whycode-${{ matrix.target }}.tar.gz" whycode LICENSE README.md
+          tar -C dist -czf "whycodes-${{ matrix.target }}.tar.gz" whycodes LICENSE README.md
 
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/whycode.exe" dist/
+          Copy-Item "target/${{ matrix.target }}/release/whycodes.exe" dist/
           Copy-Item LICENSE, README.md dist/
-          Compress-Archive -Path dist/* -DestinationPath "whycode-${{ matrix.target }}.zip"
+          Compress-Archive -Path dist/* -DestinationPath "whycodes-${{ matrix.target }}.zip"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: whycode-${{ matrix.target }}
+          name: whycodes-${{ matrix.target }}
           path: |
-            whycode-${{ matrix.target }}.tar.gz
-            whycode-${{ matrix.target }}.zip
+            whycodes-${{ matrix.target }}.tar.gz
+            whycodes-${{ matrix.target }}.zip
           if-no-files-found: error
 
   publish:
@@ -94,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           cd artifacts
-          sha256sum whycode-* > SHA256SUMS
+          sha256sum whycodes-* > SHA256SUMS
           cat SHA256SUMS
 
       - name: Release
@@ -111,10 +111,10 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --generate-notes \
-            artifacts/whycode-* artifacts/SHA256SUMS
+            artifacts/whycodes-* artifacts/SHA256SUMS
 
   # Derived from the just-published SHA256SUMS. Lives on main (the tap default
-  # branch), not on the tag — users `brew install whycode` against main.
+  # branch), not on the tag — users `brew install whycodes` against main.
   homebrew:
     name: Homebrew formula
     needs: publish
@@ -127,12 +127,12 @@ jobs:
       - name: Bump formula
         env:
           GH_TOKEN: ${{ github.token }}
-          WHYCODE_REPO: ${{ github.repository }}
+          WHYCODES_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           scripts/update_homebrew_formula.sh "$TAG"
-          git add Formula/whycode.rb
+          git add Formula/whycodes.rb
           if git diff --cached --quiet; then
             echo "Formula already matches $TAG"
             exit 0

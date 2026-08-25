@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use whycode_tools::question::{
+use whycodes_tools::question::{
     QuestionAnswer, QuestionSpec, format_question_result, parse_questions,
 };
 
@@ -198,11 +198,11 @@ fn read_line() -> Result<String, String> {
 }
 
 /// Build default prompter for non-TUI:
-/// - `WHYCODE_AUTO_APPROVE=1` → auto first option
+/// - `WHYCODES_AUTO_APPROVE=1` → auto first option
 /// - CI / non-interactive → auto
 /// - else stdin
 pub fn default_question_prompter() -> Arc<dyn QuestionPrompter> {
-    if std::env::var("WHYCODE_AUTO_APPROVE")
+    if std::env::var("WHYCODES_AUTO_APPROVE")
         .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
         .unwrap_or(false)
         || std::env::var_os("CI").is_some()
@@ -217,11 +217,11 @@ pub async fn run_question_tool(
     prompter: &dyn QuestionPrompter,
     arguments: &serde_json::Value,
     tool_call_id: &str,
-) -> whycode_core::types::ToolResult {
+) -> whycodes_core::types::ToolResult {
     let questions = match parse_questions(arguments) {
         Ok(q) => q,
         Err(e) => {
-            return whycode_core::types::ToolResult {
+            return whycodes_core::types::ToolResult {
                 tool_call_id: tool_call_id.to_string(),
                 content: QuestionError::Invalid(e).message(),
                 is_error: true,
@@ -230,12 +230,12 @@ pub async fn run_question_tool(
     };
 
     match prompter.ask(questions.clone()).await {
-        Ok(answers) => whycode_core::types::ToolResult {
+        Ok(answers) => whycodes_core::types::ToolResult {
             tool_call_id: tool_call_id.to_string(),
             content: format_question_result(&questions, &answers),
             is_error: false,
         },
-        Err(e) => whycode_core::types::ToolResult {
+        Err(e) => whycodes_core::types::ToolResult {
             tool_call_id: tool_call_id.to_string(),
             content: e.message(),
             is_error: true,
@@ -246,7 +246,7 @@ pub async fn run_question_tool(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_tools::question::QuestionOption;
+    use whycodes_tools::question::QuestionOption;
 
     #[tokio::test]
     async fn auto_prompter_picks_first() {

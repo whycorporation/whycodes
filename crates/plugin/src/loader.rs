@@ -51,7 +51,7 @@ pub struct ShellPluginSpec {
     pub parameters: Option<serde_json::Value>,
     /// Absolute plugin directory; the child process starts here.
     pub working_dir: PathBuf,
-    /// Path shown by `whycode plugins` (the manifest file).
+    /// Path shown by `whycodes plugins` (the manifest file).
     pub origin: String,
 }
 
@@ -105,7 +105,7 @@ impl PluginManager {
         n
     }
 
-    /// Global `$CONFIG/plugins/` then `<project>/.whycode/plugins/`.
+    /// Global `$CONFIG/plugins/` then `<project>/.whycodes/plugins/`.
     /// Project entries override global ones with the same `name`.
     pub fn discover_standard(&mut self, project_dir: Option<&Path>) -> usize {
         let mut n = 0;
@@ -215,14 +215,14 @@ impl LoadedPlugin {
 
 /// `$CONFIG_DIR/plugins` (same tree as `plugins.toml`).
 pub fn global_plugins_dir() -> Option<PathBuf> {
-    whycode_config::Config::default_path()
+    whycodes_config::Config::default_path()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join("plugins")))
 }
 
-/// `<project>/.whycode/plugins`.
+/// `<project>/.whycodes/plugins`.
 pub fn project_plugins_dir(project: &Path) -> PathBuf {
-    project.join(".whycode").join("plugins")
+    project.join(".whycodes").join("plugins")
 }
 
 fn load_plugin_dir(dir: &Path) -> Option<LoadedPlugin> {
@@ -435,10 +435,10 @@ mod tests {
     }
 
     #[test]
-    fn project_plugins_dir_is_under_whycode() {
+    fn project_plugins_dir_is_under_whycodes() {
         assert_eq!(
             project_plugins_dir(Path::new("/repo")),
-            PathBuf::from("/repo/.whycode/plugins")
+            PathBuf::from("/repo/.whycodes/plugins")
         );
     }
 

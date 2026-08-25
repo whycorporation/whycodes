@@ -1,7 +1,7 @@
-//! Protocol v1 — the public daemon wire format (`whycode serve` + `whycode-sdk`).
+//! Protocol v1 — the public daemon wire format (`whycodes serve` + `whycodes-sdk`).
 //!
 //! The agent loop stays in-process inside the daemon. Clients speak this
-//! document, not `whycode-agent` types. New `ev` values may appear in a
+//! document, not `whycodes-agent` types. New `ev` values may appear in a
 //! minor release; unknown tags deserialize as [`SdkEvent::Unknown`].
 
 use serde::{Deserialize, Serialize};
@@ -193,7 +193,7 @@ pub struct RunRequest {
     pub auto_approve: Option<bool>,
 }
 
-/// Collected turn (what `WhycodeClient::run` returns).
+/// Collected turn (what `WhyCodesClient::run` returns).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TurnResult {
     pub text: String,

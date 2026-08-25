@@ -13,7 +13,7 @@ Living tracker: [`../roadmap.md`](../roadmap.md).
 | [phase-4-ci-budgets.md](phase-4-ci-budgets.md) | **done** — panic / swallow / dep budgets |
 | [phase-7-multi-agent.md](phase-7-multi-agent.md) | **shipped lightweight** — `swarm` + worktrees |
 | [phase-8-tui.md](phase-8-tui.md) | **done** — markdown, themes, pickers, toasts |
-| [phase-9-sandbox.md](phase-9-sandbox.md) | **done** — `whycode-sandbox` + bwrap |
+| [phase-9-sandbox.md](phase-9-sandbox.md) | **done** — `whycodes-sandbox` + bwrap |
 
 ## Feature plans
 

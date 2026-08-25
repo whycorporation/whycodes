@@ -1,14 +1,14 @@
-//! Import transcripts from whycode shares and other harnesses.
+//! Import transcripts from whycodes shares and other harnesses.
 //!
 //! Best-effort: unknown parts become text. Tools do not replay.
 
-use whycode_core::types::{Message, MessageContent, Role};
+use whycodes_core::types::{Message, MessageContent, Role};
 
 /// Source format. `Auto` peeks at the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportKind {
     Auto,
-    Whycode,
+    WhyCodes,
     Claude,
     Codex,
     OpenCode,
@@ -18,7 +18,7 @@ pub enum ImportKind {
 impl ImportKind {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
-            "whycode" | "native" => Self::Whycode,
+            "whycodes" | "whycode" | "native" => Self::WhyCodes,
             "claude" | "claude-code" => Self::Claude,
             "codex" => Self::Codex,
             "opencode" => Self::OpenCode,
@@ -36,7 +36,7 @@ pub fn import_messages(raw: &str, kind: ImportKind) -> anyhow::Result<Vec<Messag
         kind
     };
     let msgs = match kind {
-        ImportKind::Auto | ImportKind::Whycode => parse_whycode(raw)?,
+        ImportKind::Auto | ImportKind::WhyCodes => parse_whycodes(raw)?,
         ImportKind::Claude => parse_claude(raw)?,
         ImportKind::Codex => parse_codex(raw)?,
         ImportKind::OpenCode => parse_opencode(raw)?,
@@ -57,14 +57,14 @@ fn detect(raw: &str) -> ImportKind {
             return ImportKind::OpenCode;
         }
         if v.get("id").is_some() && v.get("messages").is_some() {
-            return ImportKind::Whycode;
+            return ImportKind::WhyCodes;
         }
         if v.get("session").is_some() && v.get("messages").is_some() {
-            return ImportKind::Whycode;
+            return ImportKind::WhyCodes;
         }
     }
     let Some(first) = first_jsonl_object(raw) else {
-        return ImportKind::Whycode;
+        return ImportKind::WhyCodes;
     };
     let ty = first.get("type").and_then(|t| t.as_str()).unwrap_or("");
     if ty == "session_meta" || ty.starts_with("event") || first.get("payload").is_some() {
@@ -76,7 +76,7 @@ fn detect(raw: &str) -> ImportKind {
     if first.get("role").is_some() && first.get("content").is_some() {
         return ImportKind::Pi;
     }
-    ImportKind::Whycode
+    ImportKind::WhyCodes
 }
 
 fn first_jsonl_object(raw: &str) -> Option<serde_json::Value> {
@@ -92,7 +92,7 @@ fn first_jsonl_object(raw: &str) -> Option<serde_json::Value> {
     None
 }
 
-fn parse_whycode(raw: &str) -> anyhow::Result<Vec<Message>> {
+fn parse_whycodes(raw: &str) -> anyhow::Result<Vec<Message>> {
     let v: serde_json::Value = serde_json::from_str(raw)?;
     if let Some(arr) = v.get("messages").and_then(|m| m.as_array()) {
         return Ok(arr.iter().filter_map(value_to_message).collect());
@@ -100,11 +100,11 @@ fn parse_whycode(raw: &str) -> anyhow::Result<Vec<Message>> {
     if let Some(arr) = v.as_array() {
         return Ok(arr.iter().filter_map(value_to_message).collect());
     }
-    anyhow::bail!("not a whycode session JSON (expected messages array)")
+    anyhow::bail!("not a whycodes session JSON (expected messages array)")
 }
 
 fn parse_opencode(raw: &str) -> anyhow::Result<Vec<Message>> {
-    parse_whycode(raw)
+    parse_whycodes(raw)
 }
 
 fn parse_claude(raw: &str) -> anyhow::Result<Vec<Message>> {
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn whycode_share() {
+    fn whycodes_share() {
         let raw = r#"{"id":"abc","title":"t","messages":[{"role":"user","content":"ping"}]}"#;
         let msgs = import_messages(raw, ImportKind::Auto).unwrap();
         assert_eq!(msgs.len(), 1);
@@ -272,7 +272,9 @@ mod tests {
 
     #[test]
     fn import_kind_parse_covers_aliases_and_fallback() {
-        assert_eq!(ImportKind::parse(" native "), ImportKind::Whycode);
+        assert_eq!(ImportKind::parse(" native "), ImportKind::WhyCodes);
+        assert_eq!(ImportKind::parse("whycodes"), ImportKind::WhyCodes);
+        assert_eq!(ImportKind::parse("whycode"), ImportKind::WhyCodes);
         assert_eq!(ImportKind::parse("CLAUDE-CODE"), ImportKind::Claude);
         assert_eq!(ImportKind::parse("codex"), ImportKind::Codex);
         assert_eq!(ImportKind::parse("opencode"), ImportKind::OpenCode);
@@ -284,7 +286,7 @@ mod tests {
     fn explicit_import_kinds_and_empty_errors() {
         let native = r#"[{"role":"user","content":"hello"}]"#;
         assert_eq!(
-            import_messages(native, ImportKind::Whycode).unwrap().len(),
+            import_messages(native, ImportKind::WhyCodes).unwrap().len(),
             1
         );
         assert_eq!(
@@ -300,10 +302,10 @@ mod tests {
         let pi = "\ninvalid\n{\"role\":\"user\",\"content\":\"question\"}";
         assert_eq!(import_messages(pi, ImportKind::Pi).unwrap().len(), 1);
 
-        let err = import_messages(r#"{"messages":[]}"#, ImportKind::Whycode).unwrap_err();
+        let err = import_messages(r#"{"messages":[]}"#, ImportKind::WhyCodes).unwrap_err();
         assert!(err.to_string().contains("no user/assistant"));
-        assert!(import_messages("{}", ImportKind::Whycode).is_err());
-        assert!(import_messages("not json", ImportKind::Whycode).is_err());
+        assert!(import_messages("{}", ImportKind::WhyCodes).is_err());
+        assert!(import_messages("not json", ImportKind::WhyCodes).is_err());
     }
 
     #[test]
@@ -360,7 +362,7 @@ not-json
           {"content":"skip"},
           {"role":"user"}
         ]"#;
-        let msgs = import_messages(raw, ImportKind::Whycode).unwrap();
+        let msgs = import_messages(raw, ImportKind::WhyCodes).unwrap();
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].role, Role::Tool);
         assert_eq!(msgs[0].content.as_text(), Some("one\ntwo"));
@@ -372,14 +374,14 @@ not-json
 
     #[test]
     fn direct_parsers_cover_remaining_detection_and_loop_fallbacks() {
-        assert_eq!(detect("\ninvalid\n{}"), ImportKind::Whycode);
+        assert_eq!(detect("\ninvalid\n{}"), ImportKind::WhyCodes);
         assert_eq!(
             detect("{\"unrecognized\":true}\nnot-json"),
-            ImportKind::Whycode
+            ImportKind::WhyCodes
         );
-        assert_eq!(detect("{}\n"), ImportKind::Whycode);
-        assert_eq!(detect("not-json\n{}"), ImportKind::Whycode);
-        assert_eq!(detect("not-json-only"), ImportKind::Whycode);
+        assert_eq!(detect("{}\n"), ImportKind::WhyCodes);
+        assert_eq!(detect("not-json\n{}"), ImportKind::WhyCodes);
+        assert_eq!(detect("not-json-only"), ImportKind::WhyCodes);
         assert!(first_jsonl_object("\ninvalid\nalso-invalid").is_none());
         assert_eq!(
             import_messages(

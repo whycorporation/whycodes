@@ -1,6 +1,6 @@
 // ── ui/chat.rs: session message list ───────────────────────────────────
 // User: elevated band + ❯ prefix. Assistant: free-flow body + turn footer.
-// Home: centered Whycode wordmark (WHY + CODE, one word).
+// Home: centered WhyCodes wordmark (WHY + CODES, one word).
 
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::theme::ThemePalette;
@@ -19,8 +19,8 @@ use ratatui::{
 };
 use std::sync::Arc;
 use unicode_width::UnicodeWidthStr;
-use whycode_format::diff::{looks_like_diff, parse_diff_line};
-use whycode_format::highlight::{detect_language, highlight_code_spans};
+use whycodes_format::diff::{looks_like_diff, parse_diff_line};
+use whycodes_format::highlight::{detect_language, highlight_code_spans};
 
 pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
     if app.messages.is_empty() {
@@ -185,7 +185,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         lines.push(Line::from(""));
     }
 
-    // Center logo horizontally. WHY sits flush against CODE (Whycode, not Why Code).
+    // Center logo horizontally. WHY sits flush against CODES (WhyCodes, not Why Codes).
     let logo_w = HOME_LOGO_WHY[1].chars().count() + HOME_LOGO_CODE[1].chars().count();
     let left_pad = area
         .width
@@ -3386,7 +3386,7 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         let palette = ThemeName::DefaultDark.palette();
         let lines = tool_block(
             "bash",
-            &json!({"command": "cargo test -p whycode-tui"}),
+            &json!({"command": "cargo test -p whycodes-tui"}),
             Some("ok\n"),
             ToolPaint {
                 is_error: false,

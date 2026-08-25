@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Install whycode from a GitHub release.
+# Install whycodes from a GitHub release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.sh | sh
 #
@@ -8,15 +8,15 @@
 # Contents read). Browser download URLs 404 on private releases; this script
 # falls back to the GitHub API asset endpoint when a token is present.
 #
-# POSIX sh on purpose: this runs on whatever shell a machine has before whycode
+# POSIX sh on purpose: this runs on whatever shell a machine has before whycodes
 # is on it. Every downloaded artifact is checked against the release's
 # SHA256SUMS before anything is written to the install directory.
 
 set -eu
 
 REPO="whycorporation/whycode"
-INSTALL_DIR="${WHYCODE_INSTALL_DIR:-$HOME/.local/bin}"
-VERSION="${WHYCODE_VERSION:-latest}"
+INSTALL_DIR="${WHYCODES_INSTALL_DIR:-$HOME/.local/bin}"
+VERSION="${WHYCODES_VERSION:-latest}"
 # Prefer GITHUB_TOKEN; accept GH_TOKEN (gh CLI).
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
@@ -116,7 +116,7 @@ main() {
     need tar
 
     target="$(detect_target)"
-    archive="whycode-${target}.tar.gz"
+    archive="whycodes-${target}.tar.gz"
 
     # Normalize optional leading v for tag URLs.
     case "$VERSION" in
@@ -145,17 +145,17 @@ Nothing was installed."
     say "Checksum verified"
 
     tar -xzf "$tmp/$archive" -C "$tmp"
-    [ -f "$tmp/whycode" ] || die "the archive did not contain a whycode binary"
+    [ -f "$tmp/whycodes" ] || die "the archive did not contain a whycodes binary"
 
     mkdir -p "$INSTALL_DIR"
     # Install via a temporary name and rename, so an interrupted copy cannot
     # leave a half-written binary in place of a working one.
-    cp "$tmp/whycode" "$INSTALL_DIR/.whycode.new"
-    chmod +x "$INSTALL_DIR/.whycode.new"
-    mv "$INSTALL_DIR/.whycode.new" "$INSTALL_DIR/whycode"
+    cp "$tmp/whycodes" "$INSTALL_DIR/.whycodes.new"
+    chmod +x "$INSTALL_DIR/.whycodes.new"
+    mv "$INSTALL_DIR/.whycodes.new" "$INSTALL_DIR/whycodes"
 
-    say "Installed to $INSTALL_DIR/whycode"
-    "$INSTALL_DIR/whycode" --version || true
+    say "Installed to $INSTALL_DIR/whycodes"
+    "$INSTALL_DIR/whycodes" --version || true
 
     case ":$PATH:" in
         *":$INSTALL_DIR:"*) ;;

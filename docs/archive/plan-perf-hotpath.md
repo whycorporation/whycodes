@@ -6,7 +6,7 @@
 
 | Area | Finding | Action |
 |------|---------|--------|
-| **Binary** | Release `whycode` ≈ **23 MB** unstripped, **18 MB** stripped; no `[profile.release]` LTO/strip | Workspace release profile: `strip`, `lto = "thin"`, `codegen-units = 1` |
+| **Binary** | Release `whycodes` ≈ **23 MB** unstripped, **18 MB** stripped; no `[profile.release]` LTO/strip | Workspace release profile: `strip`, `lto = "thin"`, `codegen-units = 1` |
 | **Hash (crypto)** | `sha2` used only in `upgrade` for **SHA256SUMS** verification — correct, keep | No change; do not replace with Fx for integrity |
 | **Hash (internal)** | Highlight + mermaid memo keys use **SipHash** (`DefaultHasher`) over full source **every frame** on the TUI path | Switch cache keys to **FxHash** (`rustc-hash`); use `FxHashMap` for hot registries (tools, providers) |
 | **Math / heuristics** | Token fallback uses `chars().count() / 4`; no BPE cache; tests swap args | `div_ceil(4)` heuristic; cache BPE in `OnceLock`; fix tests |

@@ -1,11 +1,11 @@
-//! Live protocol v1 against a spawned `whycode serve` (no LLM required).
+//! Live protocol v1 against a spawned `whycodes serve` (no LLM required).
 
 use std::net::TcpListener;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use tokio::process::Command;
-use whycode_sdk::{ErrorCode, LaunchOptions, PermissionDecision, RunOptions, WhycodeClient};
+use whycodes_sdk::{ErrorCode, LaunchOptions, PermissionDecision, RunOptions, WhyCodesClient};
 
 fn ephemeral_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
@@ -15,10 +15,10 @@ fn ephemeral_port() -> u16 {
         .port()
 }
 
-async fn wait_connect(base: &str) -> WhycodeClient {
+async fn wait_connect(base: &str) -> WhyCodesClient {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        match WhycodeClient::connect(base).await {
+        match WhyCodesClient::connect(base).await {
             Ok(c) => return c,
             Err(e) if Instant::now() >= deadline => {
                 panic!("daemon at {base} never became healthy: {e}");
@@ -32,11 +32,11 @@ async fn wait_connect(base: &str) -> WhycodeClient {
 async fn v1_session_models_and_errors_without_llm() {
     let home = tempfile::tempdir().expect("home");
     let port = ephemeral_port();
-    let bin = env!("CARGO_BIN_EXE_whycode");
+    let bin = env!("CARGO_BIN_EXE_whycodes");
     let mut child = Command::new(bin)
         .arg("serve")
         .arg(port.to_string())
-        .env("WHYCODE_HOME", home.path())
+        .env("WHYCODES_HOME", home.path())
         .current_dir(home.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -113,10 +113,10 @@ async fn v1_session_models_and_errors_without_llm() {
 
 #[tokio::test]
 async fn launch_isolated_home_does_not_need_user_keys() {
-    let bin = env!("CARGO_BIN_EXE_whycode");
+    let bin = env!("CARGO_BIN_EXE_whycodes");
     let work = tempfile::tempdir().expect("work");
     let home = tempfile::tempdir().expect("home");
-    let client = WhycodeClient::launch(LaunchOptions {
+    let client = WhyCodesClient::launch(LaunchOptions {
         working_dir: work.path().to_path_buf(),
         binary: Some(bin.into()),
         inherit_logins: false,
@@ -134,8 +134,8 @@ async fn launch_isolated_home_does_not_need_user_keys() {
         .await
         .expect("create");
     assert!(
-        home.path().join("whycode.db").exists(),
-        "isolated WHYCODE_HOME should hold the session db"
+        home.path().join("whycodes.db").exists(),
+        "isolated WHYCODES_HOME should hold the session db"
     );
     let _ = session;
     client.close().await.expect("close");

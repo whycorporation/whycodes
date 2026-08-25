@@ -10,14 +10,14 @@ and verified in CI.
 Two rules keep the graph acyclic:
 
 - `core` holds leaf types, the `Tool` trait, errors, logging and
-  `paths` (`WHYCODE_HOME`). It depends on **`index` only** among workspace
+  `paths` (`WHYCODES_HOME`). It depends on **`index` only** among workspace
   crates (file-index types). It never depends on `config`.
 - `config` (user-config loading and policy) depends only on `core`. `core`
   never re-exports `config`.
 
 | Layer | Crate | Responsibility |
 |---|---|---|
-| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`WHYCODE_HOME`) |
+| Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`WHYCODES_HOME`) |
 | | `command-risk` | Shell command risk classification (pure, no I/O) |
 | | `auth` | OAuth: PKCE / device code, token store |
 | | `config` | Config load / merge / validate |
@@ -37,13 +37,13 @@ Two rules keep the graph acyclic:
 | | `tools` | Tool system and built-ins |
 | | `mcp` | MCP client; tools bind as `{server}_{tool}` |
 | Orchestration | `agent` | Agent loop, subagents, swarm, `AGENTS.md` |
-| Applications | `cli` | The only binary (`whycode`) |
+| Applications | `cli` | The only binary (`whycodes`) |
 | | `tui` | Full-screen terminal UI (ratatui) |
-| | `server` | Local daemon (`whycode serve`): `/api/*` for TUI attach, `/v1/*` for the SDK |
+| | `server` | Local daemon (`whycodes serve`): `/api/*` for TUI attach, `/v1/*` for the SDK |
 | | `sdk` | Thin HTTP client for protocol v1 (`connect` / `launch`). TypeScript twin: `sdk/typescript`. |
 
-Package names use the `whycode-` prefix even when the directory is shorter
-(`crates/llm` → `-p whycode-llm`).
+Package names use the `whycodes-` prefix even when the directory is shorter
+(`crates/llm` → `-p whycodes-llm`).
 
 ## Repository layout
 

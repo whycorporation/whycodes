@@ -6,7 +6,7 @@
 /// # Examples
 ///
 /// ```
-/// use whycode_format::paths::truncate_path;
+/// use whycodes_format::paths::truncate_path;
 /// assert_eq!(
 ///     truncate_path("/very/long/path/with/many/components", 25),
 ///     "/very/.../many/components"

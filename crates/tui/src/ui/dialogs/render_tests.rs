@@ -15,7 +15,7 @@ use crate::theme::ThemeName;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use whycode_tools::question::{QuestionOption, QuestionSpec};
+use whycodes_tools::question::{QuestionOption, QuestionSpec};
 
 fn cfg() -> TuiAppConfig {
     TuiAppConfig::default()

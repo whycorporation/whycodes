@@ -2,11 +2,11 @@
 
 use std::path::{Path, PathBuf};
 
-use whycode_storage::db::Database;
-use whycode_storage::models::{MemoryRow, SessionChunkRow};
+use whycodes_storage::db::Database;
+use whycodes_storage::models::{MemoryRow, SessionChunkRow};
 
 // CodeHit re-exports the storage row type for callers.
-pub use whycode_storage::models::CodeChunkRow;
+pub use whycodes_storage::models::CodeChunkRow;
 
 use crate::embed::{cosine, decode_blob, embed, encode_blob};
 use crate::markdown;
@@ -56,7 +56,7 @@ impl MemoryService {
         let data_dir = data_dir.into();
         let key = project_key(&project_path);
         let bank_key = settings.bank_key(&key);
-        let db_path = data_dir.join("whycode.db");
+        let db_path = data_dir.join("whycodes.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -77,7 +77,7 @@ impl MemoryService {
     }
 
     pub fn open_db(&self) -> anyhow::Result<Database> {
-        Database::open(self.db_path.to_str().unwrap_or("whycode.db"))
+        Database::open(self.db_path.to_str().unwrap_or("whycodes.db"))
     }
 
     pub fn memory_md_path(&self) -> PathBuf {
@@ -670,7 +670,7 @@ mod tests {
 
         let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
         let id = svc
-            .remember("always run cargo test -p whycode-memory after edits", None)
+            .remember("always run cargo test -p whycodes-memory after edits", None)
             .unwrap();
         assert!(!id.is_empty());
 
@@ -773,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn project_scope_writes_under_whycode() {
+    fn project_scope_writes_under_whycodes() {
         let dir = tempdir().unwrap();
         let data = dir.path().join("data");
         let project = dir.path().join("proj");
@@ -782,7 +782,7 @@ mod tests {
         settings.scope = crate::settings::MemoryScope::Project;
         let svc = MemoryService::open(&project, &data, settings).unwrap();
         svc.remember("project scoped memory item", None).unwrap();
-        assert!(svc.memory_md_path().starts_with(project.join(".whycode")));
+        assert!(svc.memory_md_path().starts_with(project.join(".whycodes")));
         assert!(svc.memory_md_path().exists());
     }
 
@@ -862,7 +862,7 @@ mod tests {
         assert_eq!(other.list(10).unwrap().len(), 1);
         assert_eq!(
             std::fs::read_to_string(svc.memory_md_path()).unwrap(),
-            "# Whycode auto memory\n\n"
+            "# WhyCodes auto memory\n\n"
         );
     }
 

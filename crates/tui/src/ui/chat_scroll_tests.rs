@@ -794,11 +794,11 @@ fn paint_home_wordmark_is_one_word() {
     // Y's last █ sits flush against C's █ — a gap would insert a space.
     assert!(
         text.contains("█   ██▀▀▀"),
-        "Whycode home logo must join WHY+CODE with no column gap: {text}"
+        "WhyCodes home logo must join WHY+CODES with no column gap: {text}"
     );
     assert!(
         !text.contains("█   █ █▀▀▀"),
-        "home logo must not read as Why Code: {text}"
+        "home logo must not read as Why Codes: {text}"
     );
 }
 

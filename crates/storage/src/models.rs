@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use whycode_core::types::Usage;
+use whycodes_core::types::Usage;
 
 /// A row from the sessions table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,7 +14,7 @@ pub struct SessionRow {
     pub usage: Usage,
 }
 
-/// Aggregated usage across all sessions (for `whycode stats`).
+/// Aggregated usage across all sessions (for `whycodes stats`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UsageTotals {
     pub session_count: usize,

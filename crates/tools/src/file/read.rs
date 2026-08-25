@@ -9,7 +9,7 @@ use super::paths::{
     suggest_similar,
 };
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Default max lines returned when the model omits `limit`.
 const DEFAULT_LIMIT: usize = 400;
@@ -124,7 +124,7 @@ impl Tool for ReadTool {
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
                     return ok(format!(
                         "Image file `{shown}` ({media}, {}).\n\
-                         WHYCODE_IMAGE_B64:{media}\n{b64}",
+                         WHYCODES_IMAGE_B64:{media}\n{b64}",
                         super::paths::human_size(size)
                     ));
                 }
@@ -508,7 +508,7 @@ mod tests {
             .await;
         assert!(!result.is_error);
         assert!(result.content.contains("image/png"));
-        assert!(result.content.contains("WHYCODE_IMAGE_B64"));
+        assert!(result.content.contains("WHYCODES_IMAGE_B64"));
     }
 
     #[tokio::test]

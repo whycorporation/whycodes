@@ -6,8 +6,8 @@
 
 use std::path::PathBuf;
 
-use whycode_core::{SandboxFallback, SandboxMode, SandboxSettings};
-use whycode_sandbox::{Backend, SandboxRequest, backend_available, prepare, run};
+use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_sandbox::{Backend, SandboxRequest, backend_available, prepare, run};
 
 fn skip_without_bwrap() -> bool {
     if backend_available() {
@@ -67,7 +67,7 @@ fn workspace_rw_project_and_blocks_home_write() {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/tmp"));
-    let probe = home.join(format!("whycode-sandbox-probe-{}", std::process::id()));
+    let probe = home.join(format!("whycodes-sandbox-probe-{}", std::process::id()));
     let _ = std::fs::remove_file(&probe);
     let out = run(&SandboxRequest {
         command: format!("echo x > {}", probe.display()),

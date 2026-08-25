@@ -3,8 +3,8 @@
 //! These tests probe the live GitHub API when GITHUB_TOKEN is set.
 //! When the token is absent, tests are skipped with [`std::process::exit(0)`].
 
-use whycode_core::ToolContext;
-use whycode_tools::executor::ToolExecutor;
+use whycodes_core::ToolContext;
+use whycodes_tools::executor::ToolExecutor;
 
 /// Returns the GitHub token from the environment, or None if not set.
 fn github_token() -> Option<String> {
@@ -15,8 +15,8 @@ fn neutral_ctx() -> ToolContext {
     ToolContext {
         working_dir: "/tmp".to_string(),
         session_id: None,
-        sandbox: whycode_core::SandboxSettings::off(),
-        network: whycode_core::NetworkPolicy::unrestricted(),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
         file_claims: None,
         agent_id: None,
         agent_label: None,

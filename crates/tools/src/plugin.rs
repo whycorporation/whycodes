@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
-use whycode_skill::plugin::{Plugin, PluginConfig, PluginContext};
+use whycodes_core::types::ToolResult;
+use whycodes_skill::plugin::{Plugin, PluginConfig, PluginContext};
 
 /// One external shell plugin registered as an LLM tool (`plugin_<name>`).
 pub struct PluginShellTool {
@@ -69,7 +69,7 @@ impl Tool for PluginShellTool {
     }
 }
 
-/// One row for `whycode plugins` (toml + json, last-wins by tool name).
+/// One row for `whycodes plugins` (toml + json, last-wins by tool name).
 #[derive(Debug, Clone)]
 pub struct ListedPlugin {
     pub tool_name: String,
@@ -83,8 +83,8 @@ pub fn list_shell_plugins(project_dir: Option<&std::path::Path>) -> Vec<ListedPl
     let mut by_name = std::collections::BTreeMap::new();
 
     let toml = match project_dir {
-        Some(dir) => whycode_skill::PluginRegistry::load_layered(dir).unwrap_or_default(),
-        None => whycode_skill::PluginRegistry::load_from_config().unwrap_or_default(),
+        Some(dir) => whycodes_skill::PluginRegistry::load_layered(dir).unwrap_or_default(),
+        None => whycodes_skill::PluginRegistry::load_from_config().unwrap_or_default(),
     };
     for cfg in toml.plugins {
         if cfg.name.trim().is_empty() || cfg.command.trim().is_empty() {
@@ -101,7 +101,7 @@ pub fn list_shell_plugins(project_dir: Option<&std::path::Path>) -> Vec<ListedPl
         );
     }
 
-    let mut mgr = whycode_plugin::PluginManager::new();
+    let mut mgr = whycodes_plugin::PluginManager::new();
     mgr.discover_standard(project_dir);
     for spec in mgr.shell_specs() {
         if spec.name.trim().is_empty() || spec.command.trim().is_empty() {
@@ -129,11 +129,11 @@ mod tests {
     #[test]
     fn register_discovers_project_plugin_json() {
         let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join(".whycode").join("plugins").join("echo");
+        let dir = tmp.path().join(".whycodes").join("plugins").join("echo");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("plugin.json"),
-            r#"{"name":"whycode_test_echojson","command":"echo from-json","description":"json plugin"}"#,
+            r#"{"name":"whycodes_test_echojson","command":"echo from-json","description":"json plugin"}"#,
         )
         .unwrap();
 
@@ -141,7 +141,7 @@ mod tests {
         let n = exec.register_config_plugins(Some(tmp.path()));
         assert!(n >= 1, "registered {n}");
         assert!(
-            exec.get("plugin_whycode_test_echojson").is_some(),
+            exec.get("plugin_whycodes_test_echojson").is_some(),
             "tools: {:?}",
             exec.tool_names()
         );
@@ -150,13 +150,13 @@ mod tests {
     #[test]
     fn json_overrides_toml_same_name() {
         let tmp = tempfile::tempdir().unwrap();
-        let why = tmp.path().join(".whycode");
+        let why = tmp.path().join(".whycodes");
         std::fs::create_dir_all(why.join("plugins").join("hello")).unwrap();
         std::fs::write(
             why.join("plugins.toml"),
             r#"
 [[plugins]]
-name = "whycode_test_hello"
+name = "whycodes_test_hello"
 command = "echo toml"
 description = "from toml"
 "#,
@@ -164,14 +164,14 @@ description = "from toml"
         .unwrap();
         std::fs::write(
             why.join("plugins").join("hello").join("plugin.json"),
-            r#"{"name":"whycode_test_hello","command":"echo json"}"#,
+            r#"{"name":"whycodes_test_hello","command":"echo json"}"#,
         )
         .unwrap();
 
         let listed = list_shell_plugins(Some(tmp.path()));
         let hello = listed
             .iter()
-            .find(|p| p.tool_name == "plugin_whycode_test_hello");
+            .find(|p| p.tool_name == "plugin_whycodes_test_hello");
         assert!(hello.is_some(), "{listed:?}");
         assert_eq!(hello.unwrap().command, "echo json");
     }

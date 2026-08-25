@@ -1,12 +1,12 @@
 [package]
-name = "whycode-cli"
+name = "whycodes-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "whycode"
+name = "whycodes"
 path = "src/main.rs"
 
 [features]
@@ -16,33 +16,33 @@ default = ["self-update", "server"]
 # Everything including diagram render + extended syntax pack.
 full = ["self-update", "server", "mermaid", "extended-syntax"]
 # Unicode mermaid diagrams (mermaid-text + ascii_dag). Off by default — ~0.8 MB.
-mermaid = ["whycode-format/mermaid", "whycode-tui/mermaid"]
+mermaid = ["whycodes-format/mermaid", "whycodes-tui/mermaid"]
 # bat/two-face extended language pack (~0.9 MB). Off by default.
-extended-syntax = ["whycode-format/extended-syntax", "whycode-tui/extended-syntax"]
-# `whycode upgrade` — zip/tar extract + sha2 verify.
+extended-syntax = ["whycodes-format/extended-syntax", "whycodes-tui/extended-syntax"]
+# `whycodes upgrade` — zip/tar extract + sha2 verify.
 self-update = ["dep:sha2", "dep:flate2", "dep:tar", "dep:zip"]
-# `whycode serve` — axum HTTP API.
-server = ["dep:whycode-server", "dep:axum"]
+# `whycodes serve` — axum HTTP API.
+server = ["dep:whycodes-server", "dep:axum"]
 # MiniLM ONNX embedder (downloads model on first use; larger binary / RSS).
-onnx = ["whycode-memory/onnx", "whycode-tools/onnx", "whycode-agent/onnx"]
+onnx = ["whycodes-memory/onnx", "whycodes-tools/onnx", "whycodes-agent/onnx"]
 
 [dependencies]
-whycode-core = { path = "../core" }
-whycode-index = { path = "../index" }
-whycode-auth = { path = "../auth" }
-whycode-config = { path = "../config" }
-whycode-llm = { path = "../llm" }
-whycode-tools = { path = "../tools" }
-whycode-skill = { path = "../skill" }
-whycode-mcp = { path = "../mcp" }
-whycode-session = { path = "../session" }
-whycode-agent = { path = "../agent" }
-whycode-storage = { path = "../storage" }
-whycode-memory = { path = "../memory" }
-whycode-server = { path = "../server", optional = true }
-whycode-protocol = { path = "../protocol" }
-whycode-tui = { path = "../tui" }
-whycode-format = { path = "../format" }
+whycodes-core = { path = "../core" }
+whycodes-index = { path = "../index" }
+whycodes-auth = { path = "../auth" }
+whycodes-config = { path = "../config" }
+whycodes-llm = { path = "../llm" }
+whycodes-tools = { path = "../tools" }
+whycodes-skill = { path = "../skill" }
+whycodes-mcp = { path = "../mcp" }
+whycodes-session = { path = "../session" }
+whycodes-agent = { path = "../agent" }
+whycodes-storage = { path = "../storage" }
+whycodes-memory = { path = "../memory" }
+whycodes-server = { path = "../server", optional = true }
+whycodes-protocol = { path = "../protocol" }
+whycodes-tui = { path = "../tui" }
+whycodes-format = { path = "../format" }
 clap = { workspace = true, features = ["derive"] }
 clap_complete.workspace = true
 toml.workspace = true
@@ -65,5 +65,5 @@ tar = { version = "0.4", optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
-whycode-sdk = { path = "../sdk" }
+whycodes-sdk = { path = "../sdk" }
 tempfile.workspace = true

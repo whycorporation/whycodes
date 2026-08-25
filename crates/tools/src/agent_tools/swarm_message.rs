@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
-use whycode_core::types::ToolResult;
+use whycodes_core::types::ToolResult;
 
 /// Message another swarm worker, or the parent, or everyone.
 pub struct SwarmMsgTool;
@@ -88,7 +88,7 @@ impl Tool for SwarmMsgTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use whycode_core::SwarmHub;
+    use whycodes_core::SwarmHub;
 
     #[tokio::test]
     async fn send_reaches_inbox() {

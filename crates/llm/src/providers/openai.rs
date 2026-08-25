@@ -5,7 +5,7 @@ use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
 use std::pin::Pin;
-use whycode_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
@@ -57,7 +57,7 @@ impl OpenAiProvider {
         crate::openai_compat::convert_messages(request)
     }
 
-    fn convert_tools(&self, tools: &[whycode_core::types::ToolDefinition]) -> Vec<Value> {
+    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
         crate::openai_compat::convert_tools(tools)
     }
 }
@@ -77,7 +77,7 @@ impl LlmProvider for OpenAiProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<LlmResponse> {
+    ) -> whycodes_core::Result<LlmResponse> {
         // ChatGPT-subscription OAuth tokens are rejected by api.openai.com;
         // route them to the Codex backend (Responses API) instead.
         if super::codex::is_chatgpt_oauth_token(api_key) {
@@ -91,17 +91,17 @@ impl LlmProvider for OpenAiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         let status = resp.status();
         let json: Value = resp
             .json()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
         if !status.is_success() {
             let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "OpenAI API error ({}): {}",
                 status, err_msg
             )));
@@ -125,7 +125,7 @@ impl LlmProvider for OpenAiProvider {
         request: &LlmRequest,
         api_key: &str,
         model: &str,
-    ) -> whycode_core::Result<Pin<Box<dyn Stream<Item = whycode_core::Result<StreamEvent>> + Send>>>
+    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         // See `complete`: JWT-shaped subscription tokens go to the Codex
         // backend, API keys keep the chat-completions path.
@@ -140,11 +140,11 @@ impl LlmProvider for OpenAiProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| whycode_core::Error::Llm(format!("HTTP error: {e}")))?;
+            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
-            return Err(whycode_core::Error::Llm(format!(
+            return Err(whycodes_core::Error::Llm(format!(
                 "OpenAI API error: {}",
                 text
             )));

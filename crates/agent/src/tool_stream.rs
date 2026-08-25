@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 
 use serde_json::Value;
-use whycode_core::types::ToolCall;
-use whycode_llm::openai_compat::parse_tool_arguments;
+use whycodes_core::types::ToolCall;
+use whycodes_llm::openai_compat::parse_tool_arguments;
 
 /// Builds [`ToolCall`]s from interleaved `ToolUse` / `ToolUseDelta` events.
 #[derive(Debug, Default)]

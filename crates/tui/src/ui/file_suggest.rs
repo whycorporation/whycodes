@@ -1,6 +1,6 @@
 // ── ui/file_suggest.rs: `@file` picker over the workspace index ─────────
 // Opens on `@` (any word boundary) or Ctrl+Space. Queries the resident
-// whycode-index — keystroke filtering never touches the filesystem.
+// whycodes-index — keystroke filtering never touches the filesystem.
 // Layout mirrors the slash dropdown: panel wash, hairlines, selected row
 // wash, solid scrollbar; matched characters render in the accent colour.
 
@@ -11,7 +11,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Clear;
 use ratatui::{Frame, buffer::Buffer};
-use whycode_index::{FileMatch, ScanStatus, WorkspaceIndex};
+use whycodes_index::{FileMatch, ScanStatus, WorkspaceIndex};
 
 use crate::app::TuiApp;
 use crate::frecency::Frecency;
@@ -580,7 +580,7 @@ mod tests {
 
         let idx = WorkspaceIndex::start_with(
             vec![tmp.path().to_path_buf()],
-            whycode_index::IndexOptions {
+            whycodes_index::IndexOptions {
                 watch: false,
                 threads: 1,
                 ..Default::default()

@@ -4,23 +4,23 @@
 //! change agent behaviour. Notices are request-only (not stored in the
 //! session transcript).
 
-use whycode_config::MagicKeywordsConfig;
+use whycodes_config::MagicKeywordsConfig;
 
 const ULTRATHINK: &str = "ultrathink";
 const ORCHESTRATE: &str = "orchestrate";
 
-pub const ULTRATHINK_NOTICE: &str = "\n\n<whycode_keyword name=\"ultrathink\">\n\
+pub const ULTRATHINK_NOTICE: &str = "\n\n<whycodes_keyword name=\"ultrathink\">\n\
 Think carefully before acting. Work through the problem in multiple steps: \
 clarify the goal, consider failure modes and edge cases, then choose an \
 approach. Prefer a correct, durable change over a fast one.\n\
-</whycode_keyword>";
+</whycodes_keyword>";
 
-pub const ORCHESTRATE_NOTICE: &str = "\n\n<whycode_keyword name=\"orchestrate\">\n\
+pub const ORCHESTRATE_NOTICE: &str = "\n\n<whycodes_keyword name=\"orchestrate\">\n\
 This is substantial independent work. Scope the full task first, then delegate \
 parallel pieces with the `task` / `swarm` tools when they do not share files. \
 Verify each phase (build, test, review) before continuing. Do not stop until \
 the original request is complete.\n\
-</whycode_keyword>";
+</whycodes_keyword>";
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MagicHit {

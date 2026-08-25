@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fail when a crate gains a workspace dependency it did not have.
 
-Reads the `whycode-*` path dependencies out of every crate's Cargo.toml and
+Reads the `whycodes-*` path dependencies out of every crate's Cargo.toml and
 compares the graph against `dependency_boundaries.json`.
 
 Adding an edge is what this catches. It is not a claim that the current graph is
@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BOUNDARIES = Path(__file__).resolve().parent / "dependency_boundaries.json"
 
-DEP = re.compile(r"^\s*whycode-([a-z0-9-]+)\s*=", re.MULTILINE)
+DEP = re.compile(r"^\s*whycodes-([a-z0-9-]+)\s*=", re.MULTILINE)
 
 
 def edges() -> dict[str, list[str]]:
@@ -29,7 +29,7 @@ def edges() -> dict[str, list[str]]:
     graph: dict[str, list[str]] = {}
     for crate in sorted(p for p in (ROOT / "crates").iterdir() if (p / "Cargo.toml").is_file()):
         text = (crate / "Cargo.toml").read_text(encoding="utf-8")
-        # The package's own `name = "whycode-x"` line is not a dependency.
+        # The package's own `name = "whycodes-x"` line is not a dependency.
         deps = {m.group(1) for m in DEP.finditer(text)} - {crate.name}
         graph[crate.name] = sorted(deps)
     return graph

@@ -6,7 +6,7 @@
 //! primarily rely on **explicit modes** (hard tool gates) + **system-prompt
 //! rules**. They do **not** ship a silent ML router that rewrites every turn.
 //!
-//! Whycode mirrors that, then adds a **zero-cost heuristic** layer:
+//! WhyCodes mirrors that, then adds a **zero-cost heuristic** layer:
 //!
 //! 1. **Hard modes** — `build` / `plan` / `ask` primary agents (tool denylists).
 //! 2. **Static prompt protocol** — when to answer, edit, plan, or `question`.
@@ -17,7 +17,7 @@
 //! Authorization-style classifiers (Claude Code auto mode) are a separate
 //! concern: "is this tool call authorized?", not "what does the user want?".
 
-use whycode_core::types::{LlmRequest, MessageContent, Role};
+use whycodes_core::types::{LlmRequest, MessageContent, Role};
 
 /// How to treat heuristic intent for build-mode turns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -224,7 +224,7 @@ pub fn posture_suffix(assessment: &IntentAssessment, agent_name: &str) -> Option
     };
 
     Some(format!(
-        "\n\n<whycode_intent confidence=\"{:.2}\" kind=\"{label}\">\n{body}\n</whycode_intent>",
+        "\n\n<whycodes_intent confidence=\"{:.2}\" kind=\"{label}\">\n{body}\n</whycodes_intent>",
         assessment.confidence
     ))
 }
@@ -277,7 +277,7 @@ pub fn apply_intent_to_request(
             }
             MessageContent::Blocks(blocks) => {
                 // Append a trailing text block so multimodal turns keep images.
-                blocks.push(whycode_core::types::ContentBlock::Text { text: suffix });
+                blocks.push(whycodes_core::types::ContentBlock::Text { text: suffix });
                 return Some(assessment);
             }
         }
@@ -898,7 +898,7 @@ mod tests {
     fn apply_mutates_request_not_empty() {
         let mut req = LlmRequest {
             system: "sys".into(),
-            messages: std::sync::Arc::from(vec![whycode_core::types::Message {
+            messages: std::sync::Arc::from(vec![whycodes_core::types::Message {
                 role: Role::User,
                 content: MessageContent::Text("How does auth work?".into()),
                 tool_call_id: None,
@@ -922,7 +922,7 @@ mod tests {
         );
         assert!(applied.is_some());
         let text = req.messages[0].content.as_text().unwrap();
-        assert!(text.contains("whycode_intent"));
+        assert!(text.contains("whycodes_intent"));
         assert!(text.contains("How does auth work?"));
     }
 
@@ -930,7 +930,7 @@ mod tests {
     fn off_mode_skips() {
         let mut req = LlmRequest {
             system: "sys".into(),
-            messages: std::sync::Arc::from(vec![whycode_core::types::Message {
+            messages: std::sync::Arc::from(vec![whycodes_core::types::Message {
                 role: Role::User,
                 content: MessageContent::Text("How does auth work?".into()),
                 tool_call_id: None,
