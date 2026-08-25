@@ -22,7 +22,9 @@ pub fn truncate_path(path: &str, max_len: usize) -> String {
     if components.len() <= 3 {
         // Path is already longer than max_len (checked above).
         let third = max_len.saturating_sub(3) / 2;
-        return format!("{}...{}", &path[..third], &path[path.len() - third..]);
+        let start = path.floor_char_boundary(third);
+        let end = path.ceil_char_boundary(path.len().saturating_sub(third));
+        return format!("{}...{}", &path[..start], &path[end..]);
     }
 
     let start_count = 2; // keep first 2 components

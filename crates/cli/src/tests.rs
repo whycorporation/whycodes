@@ -37,6 +37,19 @@ fn provider_env_var_name() {
 }
 
 #[test]
+fn mask_secret_does_not_slice_mid_utf8() {
+    assert_eq!(mask_secret("short"), "***");
+    assert_eq!(mask_secret("abcdefghij"), "abcd...ghij");
+    // `ö` is 2 bytes; `&val[..4]` would panic when it straddles offset 4.
+    let s = format!("abcö{}xy", "d".repeat(8));
+    assert!(!s.is_char_boundary(4));
+    let masked = mask_secret(&s);
+    assert!(masked.contains("..."), "{masked}");
+    assert!(masked.is_char_boundary(masked.len()));
+    assert!(masked.starts_with("abc"), "{masked}");
+}
+
+#[test]
 fn missing_database_detection() {
     let not_found = anyhow::anyhow!(std::io::Error::new(std::io::ErrorKind::NotFound, "gone"));
     assert!(is_missing_database(&not_found));
