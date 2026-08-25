@@ -365,8 +365,8 @@ mod tests {
         ];
         let palette = app.config.palette();
         let text = paint(60, 12, |f| render(f, f.area(), &app, &palette));
-        assert!(text.contains("☐ first"), "{text}");
-        assert!(text.contains("☑ done"), "{text}");
+        assert!(text.contains("□ first"), "{text}");
+        assert!(text.contains("✓ done"), "{text}");
     }
 
     #[test]
