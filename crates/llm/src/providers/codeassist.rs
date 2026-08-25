@@ -220,7 +220,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
             if profile.antigravity {
                 None
             } else {
-                Some("whycodess".to_string())
+                Some("whycodes".to_string())
             }
         });
 

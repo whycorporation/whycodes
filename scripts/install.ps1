@@ -3,7 +3,7 @@
     Install whycodes from a GitHub release.
 
 .DESCRIPTION
-    irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.ps1 | iex
+    irm https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.ps1 | iex
 
     The downloaded archive is verified against the release's SHA256SUMS before
     anything is written to the install directory. PATH is not modified: an
@@ -18,7 +18,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = "whycorporation/whycode"
+$Repo = "whycorporation/whycodes"
 
 function Fail($message) {
     Write-Error $message

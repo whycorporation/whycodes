@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-const REPO: &str = "whycorporation/whycode";
+const REPO: &str = "whycorporation/whycodes";
 const USER_AGENT: &str = concat!("whycodes/", env!("CARGO_PKG_VERSION"));
 
 /// The release-artifact name for the platform this binary was built for.

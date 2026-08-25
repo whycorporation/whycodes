@@ -25,16 +25,16 @@ provider-independent agent workflow.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.sh | sh
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.ps1 | iex
 ```
 
 ```bash
 # Homebrew
-brew tap whycorporation/whycode https://github.com/whycorporation/whycode
+brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
 brew install whycodes
 
 # From source
@@ -123,4 +123,4 @@ breakdown, measurement command and enforced floors.
 
 ## License
 
-MIT — [why.codes](https://why.codes) · [whycorporation/whycode](https://github.com/whycorporation/whycode)
+MIT — [why.codes](https://why.codes) · [whycorporation/whycodes](https://github.com/whycorporation/whycodes)

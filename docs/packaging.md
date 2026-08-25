@@ -10,7 +10,7 @@ separate `homebrew-whycodes` tap is not required yet. Tagged releases install
 prebuilt binaries (no Rust). `--HEAD` still compiles from `main`.
 
 ```bash
-brew tap whycorporation/whycode https://github.com/whycorporation/whycode
+brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
 brew install whycodes
 
 # Tip of main (needs Rust via brew)
@@ -18,7 +18,7 @@ brew install --HEAD whycodes
 
 # One-shot without a persistent tap
 brew install --formula \
-  https://raw.githubusercontent.com/whycorporation/whycode/main/Formula/whycodes.rb
+  https://raw.githubusercontent.com/whycorporation/whycodes/main/Formula/whycodes.rb
 ```
 
 `release.yml` rewrites the formula from the published `SHA256SUMS` and commits

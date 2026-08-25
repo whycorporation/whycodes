@@ -4,9 +4,9 @@
   "description": "Thin TypeScript client for whycodes serve (protocol v1)",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/whycorporation/whycode/tree/main/sdk/typescript",
+  "homepage": "https://github.com/whycorporation/whycodes/tree/main/sdk/typescript",
   "bugs": {
-    "url": "https://github.com/whycorporation/whycode/issues"
+    "url": "https://github.com/whycorporation/whycodes/issues"
   },
   "keywords": [
     "whycodes",
@@ -19,7 +19,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/whycorporation/whycode.git",
+    "url": "git+https://github.com/whycorporation/whycodes.git",
     "directory": "sdk/typescript"
   },
   "engines": {

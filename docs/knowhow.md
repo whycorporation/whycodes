@@ -145,18 +145,20 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ### 2026-08-26 — WhyCodes rebrand vs GitHub slug
 
-**Symptom:** Mixing `Whycode` / `WhyCodes` / `whycode` / `whycodes` and pointing
-installers at `github.com/whycorporation/whycodes` 404s.
+**Symptom:** Mixing `Whycode` / `WhyCodes` / `whycode` / `whycodes`. Naive
+`whycode` → `whycodes` replaces also turn `whycodes` into `whycodess`.
 
-**Cause:** Product name is **WhyCodes** (`why.codes`). The GitHub repo is still
-`whycorporation/whycode`. Homebrew's class is the formula name camel-cased
-(`whycodes` → `Whycodes`), not `WhyCodes`.
+**Cause:** Product name is **WhyCodes** (`why.codes`). GitHub is
+`whycorporation/whycodes`. Homebrew's class is the formula name camel-cased
+(`whycodes` → `Whycodes`), not `WhyCodes`. A dummy Code Assist project id was
+already the string `whycodes`.
 
 **Fix:** User-facing copy and crates/binary/env are `WhyCodes` / `whycodes` /
-`WHYCODES_*`. Clone, release, and raw.githubusercontent URLs stay on
-`whycorporation/whycode`. Legacy `.whycode/` and `WHYCODE_HOME` still resolve.
+`WHYCODES_*`. Clone, release, and raw.githubusercontent URLs are
+`whycorporation/whycodes`. Homepage is `https://why.codes`. Legacy `.whycode/`
+and `WHYCODE_HOME` still resolve.
 
-**Prevention:** Do not rewrite GitHub slugs when renaming the product. Homebrew
+**Prevention:** Replace `whycode` only at identifier boundaries. Homebrew
 class = formula filename, homepage = `https://why.codes`.
 
 ### 2026-08-26 — stream decode errors need JSONL at the chunk site

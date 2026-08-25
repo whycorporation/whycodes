@@ -76,7 +76,7 @@ Out (full automation — partial scaffolding exists):
 
 - [x] Tagging `v0.1.0` produces a release with binaries for all three
       platforms plus `SHA256SUMS`, with no manual step
-      (2026-08-04: [release v0.1.0](https://github.com/whycorporation/whycode/releases/tag/v0.1.0))
+      (2026-08-04: [release v0.1.0](https://github.com/whycorporation/whycodes/releases/tag/v0.1.0))
 - [x] `install.sh` on a machine with no Rust toolchain yields a runnable
       `whycodes --version` — verified with `GITHUB_TOKEN` while the repo is
       **private** (anonymous `/releases/download/` URLs 404 until the repo is public)
@@ -89,7 +89,7 @@ Out (full automation — partial scaffolding exists):
       touch the config or data directories without `--purge`
       (`scripts/uninstall.sh` / `scripts/uninstall.ps1`)
 
-**Ship gate remaining:** make `whycorporation/whycode` **public** so
+**Ship gate remaining:** make `whycorporation/whycodes` **public** so
 `curl … | sh` works without a token. Private installs work today via
 `GITHUB_TOKEN` / `GH_TOKEN` (API asset download).
 
