@@ -3012,10 +3012,9 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
         let raw = input.to_string();
         if raw == "{}" || raw == "null" {
             String::new()
-        } else if raw.len() > 56 {
-            format!("{}…", &raw[..56])
         } else {
-            raw
+            // Byte cap: never slice mid-codepoint (`ö`, CJK, emoji).
+            ellipsize_bytes(&raw, 56)
         }
     } else {
         s
@@ -3025,6 +3024,14 @@ fn tool_summary(name: &str, input: &serde_json::Value) -> String {
     } else {
         s
     }
+}
+
+/// Truncate `s` to at most `max_bytes`, backing up to a char boundary.
+fn ellipsize_bytes(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    format!("{}…", &s[..s.floor_char_boundary(max_bytes)])
 }
 
 fn center_line(text: &str, width: u16, color: ratatui::style::Color, bold: bool) -> Line<'static> {
@@ -3071,9 +3078,9 @@ fn empty_dash(s: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::{
-        SparseLines, ToolOutHint, ToolPaint, hard_truncate_line, message_row_layout_mut,
-        parse_grep_hit, prettify_tool_result, split_read_line, tool_block, tool_display_name,
-        tool_result, tool_summary, visible_message_range,
+        SparseLines, ToolOutHint, ToolPaint, ellipsize_bytes, hard_truncate_line,
+        message_row_layout_mut, parse_grep_hit, prettify_tool_result, split_read_line, tool_block,
+        tool_display_name, tool_result, tool_summary, visible_message_range,
     };
     use crate::app::{ChatRole, TuiApp};
     use crate::config::TuiAppConfig;
@@ -3234,6 +3241,28 @@ mod tests {
     fn tool_summary_read_is_path() {
         let s = tool_summary("read", &json!({"path": "src/main.rs", "offset": 1}));
         assert_eq!(s, "src/main.rs");
+    }
+
+    #[test]
+    fn ellipsize_bytes_backs_up_from_mid_codepoint() {
+        // 55 ASCII + `ö` (bytes 55..57) — `&s[..56]` panics.
+        let s = format!("{}ö{}", "a".repeat(55), "b".repeat(10));
+        assert!(!s.is_char_boundary(56));
+        let out = ellipsize_bytes(&s, 56);
+        assert!(out.ends_with('…'));
+        assert_eq!(out.trim_end_matches('…'), "a".repeat(55));
+    }
+
+    #[test]
+    fn tool_summary_json_fallback_does_not_panic_on_utf8() {
+        // Unknown tool, no known string fields → JSON dump, then 56-byte cap.
+        // `{"n":"` is 6 bytes + 49 ASCII = 55, then `ö` straddles offset 56.
+        let s = tool_summary(
+            "custom",
+            &json!({"n": format!("{}ö{}", "a".repeat(49), "b".repeat(20))}),
+        );
+        assert!(s.ends_with('…'));
+        assert!(s.is_char_boundary(s.len()));
     }
 
     #[test]
