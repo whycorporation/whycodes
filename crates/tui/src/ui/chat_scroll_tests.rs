@@ -787,6 +787,22 @@ fn paint_home_clears_chat_hits() {
 }
 
 #[test]
+fn paint_home_wordmark_is_one_word() {
+    let mut app = TuiApp::new(cfg());
+    let buf = paint_and_snapshot(&mut app, 80, 24);
+    let text = buffer_text(&buf);
+    // Y's last █ sits flush against C's █ — a gap would insert a space.
+    assert!(
+        text.contains("█   ██▀▀▀"),
+        "Whycode home logo must join WHY+CODE with no column gap: {text}"
+    );
+    assert!(
+        !text.contains("█   █ █▀▀▀"),
+        "home logo must not read as Why Code: {text}"
+    );
+}
+
+#[test]
 fn scroll_paints_reuse_closed_line_cache() {
     use crate::app::AgentState;
     let mut app = TuiApp::new(cfg());

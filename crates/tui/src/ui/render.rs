@@ -1143,8 +1143,14 @@ mod paint_tests {
         );
 
         // Status header sits on the first inset row and is not overwritten.
-        assert!(header.contains("why"), "header brand missing: {header:?}");
-        assert!(header.contains("code"), "header brand missing: {header:?}");
+        assert!(
+            header.contains("whycode"),
+            "header brand missing: {header:?}"
+        );
+        assert!(
+            !header.contains("why code"),
+            "wordmark must be one word: {header:?}"
+        );
         assert!(
             !header.contains("SAFEAREA_TOP_MARKER"),
             "chat spilled into the header: {header:?}"
@@ -1189,7 +1195,7 @@ mod paint_tests {
 
         let header = row_text(&buf, layout::SAFE_TOP);
         assert!(
-            header.contains("why"),
+            header.contains("whycode"),
             "header lost after scroll: {header:?}"
         );
         assert!(
