@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Install whycodes from a GitHub release.
 #
-#   curl -fsSL https://raw.githubusercontent.com/whycorporation/whycode/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.sh | sh
 #
 # Public repos: no auth required.
 # Private repos: set GITHUB_TOKEN or GH_TOKEN (classic or fine-grained with
@@ -14,7 +14,7 @@
 
 set -eu
 
-REPO="whycorporation/whycode"
+REPO="whycorporation/whycodes"
 INSTALL_DIR="${WHYCODES_INSTALL_DIR:-$HOME/.local/bin}"
 VERSION="${WHYCODES_VERSION:-latest}"
 # Prefer GITHUB_TOKEN; accept GH_TOKEN (gh CLI).

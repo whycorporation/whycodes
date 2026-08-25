@@ -4452,7 +4452,7 @@ async fn cmd_upgrade() -> anyhow::Result<()> {
             println!("  Build from source instead:");
             println!(
                 "    {}",
-                "git clone https://github.com/whycorporation/whycode.git".dimmed()
+                "git clone https://github.com/whycorporation/whycodes.git".dimmed()
             );
             println!(
                 "    {}",

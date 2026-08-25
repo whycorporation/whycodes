@@ -19,7 +19,7 @@
 
 set -eu
 
-REPO="${WHYCODES_REPO:-whycorporation/whycode}"
+REPO="${WHYCODES_REPO:-whycorporation/whycodes}"
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 FORMULA="${WHYCODES_FORMULA:-$ROOT/Formula/whycodes.rb}"
 TOKEN="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
@@ -98,7 +98,7 @@ cat > "$FORMULA" <<EOF
 # Do not hand-edit sha256 values.
 #
 # Install:
-#   brew tap whycorporation/whycode https://github.com/${REPO}
+#   brew tap whycorporation/whycodes https://github.com/${REPO}
 #   brew install whycodes
 #
 # Source tip (needs a Rust toolchain):

@@ -5,7 +5,7 @@
 Please do **not** open a public issue for security problems.
 
 Use GitHub's private reporting channel:
-[github.com/whycorporation/whycode/security/advisories/new](https://github.com/whycorporation/whycode/security/advisories/new)
+[github.com/whycorporation/whycodes/security/advisories/new](https://github.com/whycorporation/whycodes/security/advisories/new)
 
 Include enough detail to reproduce: whycodes version (`whycodes --version`), OS,
 configuration (redact credentials), and the input or sequence that triggers

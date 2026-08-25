@@ -8,8 +8,8 @@ change.
 Stable Rust is the only requirement:
 
 ```bash
-git clone https://github.com/whycorporation/whycode.git
-cd whycode
+git clone https://github.com/whycorporation/whycodes.git
+cd whycodes
 cargo build -p whycodes-cli
 ```
 

@@ -1,5 +1,5 @@
 # GitHub-hosted minutes are billed out. The 1Panel runner lives on this repo
-# (whycorporation/whycode), so landing production deploys run here.
+# (whycorporation/whycodes), so landing production deploys run here.
 name: Deploy landing
 
 on:
