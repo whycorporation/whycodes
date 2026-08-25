@@ -34,6 +34,7 @@ pub use model_catalog::{
     fetch_model_catalog_from_request, fetch_model_context_window, normalize_models_url,
     parse_models_json,
 };
+pub use openai_compat::{error_source_chain, stream_chunk_error};
 pub use provider::{LlmProvider, ProviderRegistry};
 pub use race::{RaceOutcome, StreamTarget, stream_raced};
 pub use response_cache::{CachedText, ResponseCache, text_only_response};

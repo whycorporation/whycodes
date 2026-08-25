@@ -2746,6 +2746,7 @@ pub(crate) fn emit_parallel_outcome(
             false
         }
         Err(msg) => {
+            log_cli_turn_error(&meta, &msg);
             match format {
                 OutputFormat::Text => {
                     eprintln!("{} {}", "Error:".red().bold(), msg);
@@ -2884,6 +2885,7 @@ pub(crate) fn emit_turn_outcome(
             Ok(())
         }
         Err(msg) => {
+            log_cli_turn_error(&meta, &msg);
             match format {
                 OutputFormat::Text => {
                     eprintln!("{} {}", "Error:".red().bold(), msg);
@@ -2910,6 +2912,20 @@ pub(crate) fn emit_turn_outcome(
 
 pub(crate) fn is_cancel_message(msg: &str) -> bool {
     msg.to_ascii_lowercase().contains("cancel")
+}
+
+fn log_cli_turn_error(meta: &ResultMeta, msg: &str) {
+    whycode_core::logging::emit_sid(
+        "cli",
+        "error",
+        "turn.error",
+        Some(meta.session_id.as_str()),
+        Some(serde_json::json!({
+            "error": msg,
+            "provider": meta.provider,
+            "model": meta.model,
+        })),
+    );
 }
 
 pub(crate) fn strip_agents_fence(raw: &str) -> String {

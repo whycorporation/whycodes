@@ -29,6 +29,9 @@ Lifecycle events written to **`~/.local/share/whycode/logs/unified.jsonl`** (alw
 | `tui.loop_error` | Draw / poll / read failed |
 | `tui.stopped` | Cleanup finished (`ok`) |
 | `main.exit_error` | Top-level error (also printed once to stderr) |
+| `llm.stream_chunk` | Mid-stream body decode failed (`error decoding response body` + source chain) |
+| `turn.stream_error` | Agent loop received a stream `Err` (provider/model + message) |
+| `turn.error` | TUI/CLI turn failed (display string) |
 
 ```bash
 # After a bad run:
@@ -139,6 +142,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 ---
 
 ## Log
+
+### 2026-08-26 — stream decode errors need JSONL at the chunk site
+
+**Symptom:** TUI shows `LLM error: Stream: error decoding response body` with
+no TLS/EOF/JSON cause. `unified.jsonl` only had TUI `turn.error` (display
+string). One-shot CLI had no JSONL line at all.
+
+**Cause:** provider `bytes_stream` `Err` branches did `format!("Stream: {e}")`.
+`reqwest` Display is the outer message; `source()` holds the decode cause.
+That `Err` was returned to the agent and never `logging::emit`'d.
+
+**Fix:** `openai_compat::stream_chunk_error` walks the source chain, emits
+`llm.stream_chunk`, and is used from every provider stream `Err` branch.
+Agent also emits `turn.stream_error`; CLI `emit_turn_outcome` emits
+`turn.error`.
+
+**Prevention:** Never stringify a `reqwest`/`hyper` error with `{e}` alone
+on the stream hot path. Log at the decode site, not only in the TUI.
 
 ### 2026-08-25 — tool summary `&raw[..56]` panics mid-UTF-8 (`ö`)
 

@@ -301,7 +301,7 @@ impl LlmProvider for OllamaProvider {
                         }
                     }
                     Err(e) => {
-                        yield Err(whycode_core::Error::Llm(format!("Stream error: {e}")));
+                        yield Err(crate::openai_compat::stream_chunk_error("ollama", e));
                     }
                 }
             }
