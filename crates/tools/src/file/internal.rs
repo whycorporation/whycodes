@@ -52,9 +52,7 @@ fn read_skill(name: &str, ctx: &ToolContext) -> ToolResult {
 }
 
 fn read_agent(id: &str, ctx: &ToolContext) -> ToolResult {
-    let dir = std::path::Path::new(&ctx.working_dir)
-        .join(".whycodes")
-        .join("agents");
+    let dir = whycodes_core::project_dir(std::path::Path::new(&ctx.working_dir)).join("agents");
     let id = id.trim().trim_start_matches('/');
     if id.is_empty() {
         return list_agent_artifacts(&dir);

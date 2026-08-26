@@ -17,7 +17,7 @@ pub fn memory_dir(
 ) -> PathBuf {
     let base = match scope {
         MemoryScope::User => data_dir.join("memory").join(project_key(project_path)),
-        MemoryScope::Project => project_path.join(".whycodes").join("memory"),
+        MemoryScope::Project => whycodes_core::project_dir(project_path).join("memory"),
     };
     match agent_bank {
         Some(a) if !a.is_empty() => base.join("agents").join(sanitize_component(a)),

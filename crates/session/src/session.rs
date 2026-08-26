@@ -1546,7 +1546,7 @@ impl Session {
     /// Export the session as a shareable JSON file.
     /// Writes to .whycodes/shares/{session_id}.json and returns the file path.
     pub fn export_share(&self) -> anyhow::Result<String> {
-        let shares_dir = self.project_path.join(".whycodes").join("shares");
+        let shares_dir = whycodes_core::project_dir(&self.project_path).join("shares");
         std::fs::create_dir_all(&shares_dir)?;
 
         let filename = format!("{}.json", self.id);

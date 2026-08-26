@@ -6,7 +6,7 @@
 
 set -eu
 
-INSTALL_DIR="${WHYCODES_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_DIR="${WHYCODES_INSTALL_DIR:-${WHYCODE_INSTALL_DIR:-$HOME/.local/bin}}"
 PURGE=0
 
 for arg in "$@"; do
@@ -17,11 +17,14 @@ for arg in "$@"; do
 done
 
 removed=0
-if [ -f "$INSTALL_DIR/whycodes" ]; then
-    rm -f "$INSTALL_DIR/whycodes"
-    printf 'Removed %s\n' "$INSTALL_DIR/whycodes"
-    removed=1
-else
+for name in whycodes whycode; do
+    if [ -e "$INSTALL_DIR/$name" ] || [ -L "$INSTALL_DIR/$name" ]; then
+        rm -f "$INSTALL_DIR/$name"
+        printf 'Removed %s\n' "$INSTALL_DIR/$name"
+        removed=1
+    fi
+done
+if [ "$removed" -eq 0 ]; then
     printf 'No binary at %s\n' "$INSTALL_DIR/whycodes"
 fi
 

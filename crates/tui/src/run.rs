@@ -4227,7 +4227,7 @@ fn share_server_up(port: u16) -> bool {
 fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize {
     let mut n = 0usize;
     let candidates = [
-        project_dir.join(".whycodes").join("shares"),
+        whycodes_core::project_dir(project_dir).join("shares"),
         whycodes_config::Config::data_dir()
             .map(|d| d.join("shares"))
             .unwrap_or_default(),

@@ -21,8 +21,7 @@ impl ExternalDirectoryTool {
     /// Reads the .whycodes/external_dirs_allowed file (relative to `working_dir`)
     /// and checks if the given path (or any of its parent directories) is listed.
     fn is_path_allowed(path: &str, working_dir: &str) -> bool {
-        let allowed_file = std::path::Path::new(working_dir)
-            .join(".whycodes")
+        let allowed_file = whycodes_core::project_dir(std::path::Path::new(working_dir))
             .join("external_dirs_allowed");
 
         let allowed_content = match std::fs::read_to_string(&allowed_file) {

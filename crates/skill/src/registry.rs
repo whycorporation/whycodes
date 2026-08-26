@@ -73,7 +73,7 @@ impl SkillRegistry {
         for dir in [
             project.join(".skills"),
             project.join("skills"),
-            project.join(".whycodes").join("skills"),
+            whycodes_core::project_dir(project).join("skills"),
         ] {
             if dir.is_dir() {
                 registry.load_from_dir(&dir)?;
@@ -191,7 +191,7 @@ impl PluginRegistry {
     /// Merge project-level `.whycodes/plugins.toml` (later entries override by name).
     pub fn load_layered(project_dir: &std::path::Path) -> anyhow::Result<Self> {
         let mut reg = Self::load_from_config().unwrap_or_default();
-        let path = project_dir.join(".whycodes").join("plugins.toml");
+        let path = whycodes_core::project_dir(project_dir).join("plugins.toml");
         if path.exists() {
             let content = std::fs::read_to_string(&path)?;
             let project = Self::parse_toml(&content)?;

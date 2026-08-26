@@ -293,7 +293,7 @@ fn persist_agent_artifact(project: &std::path::Path, id: &str, body: &str) {
     if id.is_empty() {
         return;
     }
-    let dir = project.join(".whycodes").join("agents");
+    let dir = whycodes_core::project_dir(project).join("agents");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         tracing::debug!(error = %e, "agent artifact dir");
         return;
@@ -2743,7 +2743,7 @@ impl Agent {
 
         let root = crate::swarm_worktree::git_toplevel(&session.project_path)
             .unwrap_or_else(|| session.project_path.clone());
-        let base = root.join(".whycodes").join("worktrees");
+        let base = whycodes_core::project_dir(&root).join("worktrees");
 
         match action {
             "list" => {

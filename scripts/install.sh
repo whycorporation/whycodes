@@ -153,6 +153,7 @@ Nothing was installed."
     cp "$tmp/whycodes" "$INSTALL_DIR/.whycodes.new"
     chmod +x "$INSTALL_DIR/.whycodes.new"
     mv "$INSTALL_DIR/.whycodes.new" "$INSTALL_DIR/whycodes"
+    ln -sfn whycodes "$INSTALL_DIR/whycode"
 
     say "Installed to $INSTALL_DIR/whycodes"
     "$INSTALL_DIR/whycodes" --version || true
