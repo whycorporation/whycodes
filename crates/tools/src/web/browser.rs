@@ -718,7 +718,7 @@ mod tests {
             assert!(handshake.starts_with("GET /devtools/page/1 HTTP/1.1\r\n"));
             assert!(handshake.contains(&format!("Host: {addr}\r\n")));
             assert!(handshake.contains("Upgrade: websocket\r\n"));
-            assert!(handshake.contains("Sec-WebSocket-Key: d2h5Y29kZS1jZHAta2V5ISE=\r\n"));
+            assert!(handshake.contains("Sec-WebSocket-Key: d2h5Y29kZXMtY2RwLWtleSEh\r\n"));
             stream
                 .write_all(b"HTTP/1.1 101 Switching Protocols\r\n\r\n")
                 .expect("write WebSocket handshake");
