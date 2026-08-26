@@ -6,7 +6,9 @@ target/
 
 # Local agent / session / ops scratch (do not commit)
 .omo/
+.whycode/
 .whycodes/
+.cline/
 local/
 # Unexpanded editor env vars sometimes land as a literal directory name
 $JCODE_SCRATCH_DIR/
@@ -32,3 +34,16 @@ Thumbs.db
 
 # Claude/local agent worktrees
 .claude/
+
+# Credentials and coverage dumps (never commit)
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+auth.json
+lcov.info
+*.profraw
+*.profdata

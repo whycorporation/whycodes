@@ -1,0 +1,47 @@
+#!/bin/sh
+# Reject pushes of local-only refs (Cline checkpoints, stash, notes, remotes).
+# `git push --mirror` and a default push-all would otherwise publish
+# /home/<user> coverage dumps sitting in refs/cline/checkpoints/*.
+#
+# Installed by scripts/install_git_hooks.sh into .git/hooks/pre-push.
+# stdin: <local ref> SP <local sha> SP <remote ref> SP <remote sha> LF
+# A delete has a zero local sha (and sometimes an empty local ref, which
+# `read` then shifts). Those are allowed so a leaked stray remote ref
+# can still be removed.
+
+set -eu
+
+ZERO="0000000000000000000000000000000000000000"
+
+allowed_ref() {
+    case "$1" in
+        HEAD|refs/heads/*|refs/tags/*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+blocked=""
+# Default IFS (space/tab) so the four git pre-push fields split. `IFS=` would
+# put the whole line in $a and reject every push. `while read` is the
+# condition, so EOF does not trip `set -e`.
+while read -r a b c d; do
+    [ -n "${a:-}" ] || continue
+    # Delete: local sha is zeros. An empty local ref makes `read` shift,
+    # so the zero sha lands in $a instead of $b.
+    if [ "$a" = "$ZERO" ] || [ "$b" = "$ZERO" ]; then
+        continue
+    fi
+    if ! allowed_ref "$a" || ! allowed_ref "$c"; then
+        blocked="${blocked}  ${a} -> ${c}\n"
+    fi
+done
+
+if [ -n "$blocked" ]; then
+    printf '%s\n' "pre-push: refusing to publish local-only refs:"
+    printf '%b' "$blocked"
+    printf '%s\n' "Only refs/heads/* and refs/tags/* may be pushed."
+    printf '%s\n' "Cline checkpoints, stash, and notes stay on this machine."
+    exit 1
+fi
+
+exit 0

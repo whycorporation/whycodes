@@ -45,6 +45,7 @@ After edits to Rust or Cargo manifests, run a targeted `cargo check` (or build t
 python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
+python scripts/check_tracked_secrets.py
 ```
 
 Before a PR, run the workspace-wide formatting, Clippy, and test commands plus:

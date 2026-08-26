@@ -49,6 +49,8 @@ jobs:
         run: python scripts/check_bench_ceilings.py
       - name: SDK protocol v1 (Rust ↔ TypeScript)
         run: python scripts/check_sdk_protocol.py
+      - name: Tracked secrets / scratch
+        run: python scripts/check_tracked_secrets.py
 
       # The installers are the first thing a new user runs and are not covered
       # by cargo. A syntax error in them is invisible until someone pipes one
@@ -59,8 +61,12 @@ jobs:
           sh -n scripts/uninstall.sh
           sh -n scripts/update_homebrew_formula.sh
           sh -n scripts/tui_term_matrix.sh
+          sh -n scripts/pre-push
+          sh -n scripts/install_git_hooks.sh
           sh scripts/test_update_homebrew_formula.sh
           sh scripts/test_tui_term_matrix.sh
+          sh scripts/test_pre_push.sh
+          python scripts/test_tracked_secrets.py
       - name: Installer syntax (PowerShell)
         # Self-hosted Linux often has no pwsh; skip rather than fail CI.
         run: |

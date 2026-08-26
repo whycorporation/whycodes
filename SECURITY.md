@@ -42,3 +42,14 @@ allowlist. Treat it as an `ask`-gated capability, not a confinement boundary.
 Out of scope: a model producing unwanted but correctly-gated actions (that is
 a model behaviour, not a whycodes vulnerability — tune `bash_risk_threshold`
 and permissions), and issues in third-party LLM providers themselves.
+
+## What this repository does not contain
+
+Credentials live in the user data directory (`0600`, symlink refused), not
+in git. The index is checked by `scripts/check_tracked_secrets.py` (scratch
+dirs, private keys, live-looking PATs). Public installed-app OAuth client
+ids in `crates/auth` are not secrets.
+
+Commit author emails are part of history and are **not** rewritten. Do not
+force-push a history filter unless a live credential actually landed in a
+blob.
