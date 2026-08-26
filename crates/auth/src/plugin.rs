@@ -223,4 +223,36 @@ mod tests {
         assert_eq!(name, "plugin-demo-device");
         assert!(supports_oauth("plugin-demo-device"));
     }
+
+    #[test]
+    fn load_dir_registers_auth_and_skips_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let auth = tmp.path().join("auth-plug");
+        let shell = tmp.path().join("shell-plug");
+        std::fs::create_dir_all(&auth).unwrap();
+        std::fs::create_dir_all(&shell).unwrap();
+        std::fs::write(
+            auth.join("plugin.json"),
+            r#"{
+                "kind": "auth",
+                "auth": {
+                    "provider": "fixture-from-dir",
+                    "label": "FromDir",
+                    "flow": "device-code",
+                    "client_id": "abc",
+                    "authorize_url": "https://example.com/device/code",
+                    "token_url": "https://example.com/token",
+                    "scopes": "read"
+                }
+            }"#,
+        )
+        .unwrap();
+        std::fs::write(
+            shell.join("plugin.json"),
+            r#"{"name":"hello","command":"echo hi"}"#,
+        )
+        .unwrap();
+        assert_eq!(load_dir(tmp.path()), 1);
+        assert!(supports_oauth("fixture-from-dir"));
+    }
 }
