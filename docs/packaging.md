@@ -50,7 +50,9 @@ the primary path until package managers are first-class.
 
 The scripts verify the download against the release `SHA256SUMS`. They do
 not modify `PATH`; they print the install directory if it is not already on
-it. `WHYCODES_INSTALL_DIR` overrides the location.
+it. `WHYCODES_INSTALL_DIR` overrides the location. Installers and Homebrew
+ship only the `whycodes` binary (no `whycode` alias). Uninstall still
+removes a leftover `whycode` binary and legacy config/data dirs if present.
 
 `scripts/uninstall.sh` / `uninstall.ps1` remove the binary. Add `--purge` /
 `-Purge` to delete config and session data as well.

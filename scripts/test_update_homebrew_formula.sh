@@ -42,7 +42,10 @@ need 'sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"'
 need 'depends_on "rust" => :build'
 need 'if build.head?'
 need 'bin.install "whycodes"'
-need 'bin.install_symlink "whycodes" => "whycode"'
+if grep -E -q '(^|[^[:alnum:]_])whycode([^[:alnum:]_]|$)' "$formula"; then
+    printf 'error: formula should not install a whycode alias\n' >&2
+    exit 1
+fi
 
 # Windows zip is not a Homebrew target; must not leak into the formula.
 if grep -F -q 'windows-msvc' "$formula"; then

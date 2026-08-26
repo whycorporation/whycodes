@@ -139,7 +139,6 @@ class Whycodes < Formula
       system "cargo", "install", *std_cargo_args(path: "crates/cli")
     else
       bin.install "whycodes"
-      bin.install_symlink "whycodes" => "whycode"
     end
   end
 
