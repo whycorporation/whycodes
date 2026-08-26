@@ -53,3 +53,8 @@ ids in `crates/auth` are not secrets.
 Commit author emails are part of history and are **not** rewritten. Do not
 force-push a history filter unless a live credential actually landed in a
 blob.
+
+This repository is public. Fork pull requests do not execute on the project's
+self-hosted runner. Production deploy and release jobs are pinned to
+`whycorporation/whycodes` so a fork cannot reuse those workflows with this
+repo's secrets.
