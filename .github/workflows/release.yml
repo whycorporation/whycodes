@@ -18,6 +18,7 @@ env:
 jobs:
   build:
     name: ${{ matrix.target }}
+    if: github.repository == 'whycorporation/whycodes'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -79,6 +80,7 @@ jobs:
   publish:
     name: Publish
     needs: build
+    if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
@@ -118,6 +120,7 @@ jobs:
   homebrew:
     name: Homebrew formula
     needs: publish
+    if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7

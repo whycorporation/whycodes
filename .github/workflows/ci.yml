@@ -12,14 +12,19 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
-# Linux on self-hosted (no GitHub-hosted minutes).
-# Job-level `if` cannot use `matrix` — multi-OS is a separate optional job set.
-# When minutes are available, set repo variable CI_MULTI_OS=true to also run
-# test-multi / build-multi on windows-latest and macos-latest.
+# Linux jobs run on the repo's self-hosted runner (no GitHub-hosted minutes).
+# Fork pull requests never do: untrusted workflow + checkout on that machine
+# is a takeover. Same-repo PRs and pushes to main still run here.
+# Job-level `if` cannot use `matrix` — multi-OS is a separate optional job set
+# on GitHub-hosted runners (set repo variable CI_MULTI_OS=true).
+#
+# `github.event.pull_request.head.repo.full_name` is empty on push, so the
+# first clause keeps those jobs.
 jobs:
   check:
     name: Check & Lint
     runs-on: self-hosted
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -34,6 +39,7 @@ jobs:
   budgets:
     name: Budgets
     runs-on: self-hosted
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -93,6 +99,7 @@ jobs:
   sdk-ts:
     name: TypeScript SDK
     runs-on: self-hosted
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v5
@@ -109,6 +116,7 @@ jobs:
   test:
     name: Test (linux)
     runs-on: self-hosted
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -119,6 +127,7 @@ jobs:
   coverage:
     name: Coverage (line floor)
     runs-on: self-hosted
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -149,6 +158,7 @@ jobs:
   build:
     name: Build (linux)
     runs-on: self-hosted
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -162,6 +172,18 @@ jobs:
           name: whycodes-linux
           path: target/release/whycodes*
           retention-days: 3
+
+  # Public forks never reach the self-hosted jobs above. This GitHub-hosted
+  # no-op keeps a green check and tells the author why Linux CI did not run.
+  fork-notice:
+    name: Fork PRs skip self-hosted CI
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Explain
+        run: |
+          echo "Fork pull requests do not run on the project's self-hosted runner."
+          echo "A maintainer reviews the diff and runs CI from a same-repo branch."
 
   # Optional GitHub-hosted multi-OS (uses billed minutes).
   test-multi:

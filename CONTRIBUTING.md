@@ -77,6 +77,10 @@ cannot publish local Cline checkpoints or stash:
 sh scripts/install_git_hooks.sh
 ```
 
+Linux CI runs on a **self-hosted** runner. Pull requests from **forks** are
+skipped there on purpose (untrusted workflow + checkout on that machine).
+Open the PR; a maintainer will run the suite from a same-repo branch.
+
 ## Secrets and local scratch
 
 Do not commit `.env`, `auth.json`, private keys, `.omo/`, `.whycode/`,

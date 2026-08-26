@@ -1,5 +1,5 @@
-# GitHub-hosted minutes are billed out. The 1Panel runner lives on this repo
-# (whycorporation/whycodes), so landing production deploys run here.
+# Landing production deploys run on this repo's Linux runner.
+# Triggered only by workflow_dispatch / repository_dispatch — never pull_request.
 name: Deploy landing
 
 on:
@@ -13,6 +13,7 @@ permissions:
 jobs:
   deploy:
     name: Cloudflare Workers
+    if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
     defaults:
       run:
