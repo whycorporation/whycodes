@@ -84,6 +84,17 @@ def run_once(binary: Path, idle_ms: int, project: Path) -> dict | None:
         return data
 
 
+def _set_pty_winsize(fd: int, rows: int = 24, cols: int = 80) -> None:
+    """Give the harness PTY a real TIOCGWINSZ so the TUI is not 0×0."""
+    import fcntl  # noqa: PLC0415 — Unix only
+    import struct  # noqa: PLC0415
+    import termios  # noqa: PLC0415
+
+    # struct winsize: rows, cols, xpixel, ypixel
+    packed = struct.pack("HHHH", rows, cols, 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, packed)
+
+
 def run_in_pty(argv: list[str], env: dict) -> int:
     """Run under a pty so the TUI sees a terminal, discarding its output."""
     import pty  # noqa: PLC0415 — Unix only
@@ -91,9 +102,20 @@ def run_in_pty(argv: list[str], env: dict) -> int:
     pid, fd = pty.fork()
     if pid == 0:  # child
         try:
+            # Size the slave before exec so the child never sees 0×0.
+            # (Parent ioctl after fork races TUI startup.)
+            try:
+                _set_pty_winsize(1)
+            except OSError:
+                pass
             os.execvpe(argv[0], argv, env)
         finally:
             os._exit(127)
+
+    try:
+        _set_pty_winsize(fd)
+    except OSError:
+        pass
 
     # Drain, or the child blocks once the pty buffer fills.
     try:

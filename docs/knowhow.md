@@ -80,6 +80,7 @@ Any write to a broken stdout pipe can **kill the process without a Rust panic** 
 Some PTYs report `TIOCGWINSZ` as 0×0. Drawing a zero-area buffer is useless and confuses diagnosis.
 
 - After `Terminal::new`, if `term_size()` is 0 in either dimension, **`terminal.resize(80×24)`** and log `tui.size_fallback`.
+- Do **not** call `supports_keyboard_enhancement()` when size is 0×0 or `WHYCODES_BENCH` is set — the CSI query times out at ~2 s and becomes the entire first-frame number.
 
 ### 5. `/v1/models` context window
 
@@ -142,6 +143,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 ---
 
 ## Log
+
+### 2026-08-26 — keyboard-enhancement CSI query stalled first frame ~2 s
+
+**Symptom:** `bench_first_frame.py` reported ~2024 ms in-proc TTFF. Real
+terminals were ~15–20 ms `tui.starting` → `tui.first_frame`. README could not
+quote a harness first-frame number.
+
+**Root cause:** `supports_keyboard_enhancement()` writes a CSI query and waits
+crossterm’s ~2 s timeout. Dumb / 0×0 PTYs never answer. Separately,
+`record_draw()` ran *after* blocking MCP connect + auto-index, so `--idle-ms 0`
+could not exit at the first paint.
+
+**Fix:** Skip the query when `WHYCODES_BENCH` is set or `TIOCGWINSZ` is 0×0
+(`should_query_keyboard_enhancement`). Record the draw immediately after
+`terminal.draw`, then stop the bench loop before MCP/index. Harness PTY is
+sized 80×24 in the child before exec. Identical `replace_todos` no longer
+`mark_dirty`s (empty boot reload was a one-shot extra paint, not an idle
+lock).
+
+**Prevention:** Never call `supports_keyboard_enhancement` on a 0×0 PTY.
+`record_draw` / `should_stop` must run before any post-paint I/O. Assert the
+skip in `keyboard_enhancement_query_skips_bench_and_zero_size`.
 
 ### 2026-08-26 — WhyCodes rebrand vs GitHub slug
 
