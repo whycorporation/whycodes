@@ -171,6 +171,48 @@ Idle redraws hitting **zero** on the harness is the dirty-draw + jcode cadence
 work landing: toasts no longer keep the short poll alive, and a settled
 session does not paint. Do not quote the ~2 s first-frame number as TTFF.
 
+### Re-measure, 2026-08-26 (Linux x86_64, release)
+
+Same machine (Intel Core i5-4200H @ 2.80 GHz, CachyOS). Release binary
+**16.1 MB**. Recorded JSON: [`bench-results.json`](bench-results.json).
+
+Two TTFF bugs were still on the path:
+
+1. `supports_keyboard_enhancement()` writes a CSI query and waits ~2 s. Dumb
+   / 0×0 PTYs never reply, so the first-frame harness paid that timeout every
+   run. Skip the query when `WHYCODES_BENCH` is set or `TIOCGWINSZ` is 0×0.
+2. `record_draw()` ran *after* MCP connect + code RAG auto-index, so
+   `--idle-ms 0` could not exit at the first paint and the in-proc clock
+   included blocking work that is not “time to first frame”.
+
+The harness PTY is also sized to **80×24** before exec (was 0×0).
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.5 ms** | 1.7 ms | **0.6 MB** |
+| `--help` | **1.9 ms** | 3.2 ms | — |
+| `config show` | **2.6 ms** | 3.0 ms | **5.1 MB** |
+| `session list` | — | — | **10.3 MB** |
+| binary size | **16.1 MB** | — | — |
+
+**Multi-session PSS** (idle TUI, 1.5 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **11.6 MB** | was 11.8 MB on 2026-08-17 |
+| 10 | **30.7 MB** | was 33.0 MB |
+| per added session | **~2.1 MB** | was ~2.4 MB |
+
+**First frame / idle** (`bench_first_frame.py`, empty project):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **18.4 ms** median | 0.0/s | was ~2024 ms |
+| Harness `--idle-ms 3000` (10 runs) | **18.1 ms** median | **0.0/s** | still zero idle paints |
+
+The ~18 ms in-proc figure is now a real TTFF (config + first paint), not a
+capability-query timeout. Spawn-to-exit at `--idle-ms 0` is **26.2 ms**.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -363,6 +405,10 @@ Idle ~16.6/s under the harness is also not the dirty-draw regression story:
 with a zero-size / capability-probing PTY the loop stays on the short poll
 path more often. On a real idle session the 2026-08-04 dirty-draw design still
 targets **~0 draws/s** after the first frame.
+
+**2026-08-26:** the harness now sets `TIOCSWINSZ` to 80×24 and the TUI skips
+the keyboard-enhancement CSI query on bench / 0×0 PTYs. Harness TTFF is
+**~18 ms** (was ~2 s). Quote that number; the 08-13 ~2 s row is historical.
 
 Also landed in the same pass:
 

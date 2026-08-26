@@ -2892,6 +2892,9 @@ impl TuiApp {
     /// Replace the session todo list. Auto-collapses when every item is
     /// terminal; unfolds again when new open work arrives.
     pub fn replace_todos(&mut self, todos: Vec<whycodes_core::TodoItem>) {
+        if self.todos == todos {
+            return;
+        }
         let was_all_done = whycodes_core::todo::all_terminal(&self.todos);
         let all_done = whycodes_core::todo::all_terminal(&todos);
         self.todos = todos;

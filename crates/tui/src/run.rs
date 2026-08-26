@@ -523,11 +523,44 @@ fn restore_terminal_on(out: &mut impl Write) {
     let _ = disable_raw_mode();
     let _ = execute!(
         out,
+        PopKeyboardEnhancementFlags,
         DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen,
         crossterm::cursor::Show
     );
+}
+
+/// Probe + enable the kitty keyboard protocol.
+///
+/// Returns whether flags were pushed (so shutdown can pop them). A 0×0 PTY
+/// or `WHYCODES_BENCH` run never answers the CSI query; skip it rather than
+/// stalling the first paint for crossterm's ~2 s timeout.
+fn enable_keyboard_enhancement(out: &mut impl Write) -> bool {
+    if !should_query_keyboard_enhancement(
+        std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()),
+        term_size().ok(),
+    ) {
+        return false;
+    }
+    if !matches!(supports_keyboard_enhancement(), Ok(true)) {
+        return false;
+    }
+    execute!(
+        out,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )
+    .is_ok()
+}
+
+/// Whether it is worth waiting on the keyboard-enhancement CSI query.
+///
+/// Pure so the 0×0 / bench skip can be unit-tested without a real PTY.
+fn should_query_keyboard_enhancement(bench: bool, size: Option<(u16, u16)>) -> bool {
+    if bench {
+        return false;
+    }
+    matches!(size, Some((w, h)) if w > 0 && h > 0)
 }
 
 pub enum TurnOutcome {
@@ -655,13 +688,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     })?;
     // Lets terminals that support it (Kitty, WezTerm, Alacritty…) report
     // Shift+Enter distinctly, so multi-line input gets a portable binding.
-    let keyboard_enhanced = matches!(supports_keyboard_enhancement(), Ok(true));
-    if keyboard_enhanced {
-        let _ = execute!(
-            tui_out,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        );
-    }
+    //
+    // `supports_keyboard_enhancement` writes a CSI query and waits ~2 s for a
+    // reply. Dumb / 0×0 PTYs (the first-frame harness) never answer, so a
+    // query there is a 2 s tax on time-to-first-frame. Skip it.
+    let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out);
     let backend = CrosstermBackend::new(tui_out);
     let mut terminal = Terminal::new(backend).inspect_err(|e| {
         let _ = disable_raw_mode();
@@ -812,6 +843,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         return Err(e.into());
                     }
                 };
+                // Record *before* MCP / auto-index: those can block for
+                // seconds and must not inflate time-to-first-frame or keep
+                // `--idle-ms 0` from exiting as soon as a frame is up.
+                crate::bench::record_draw();
+                let just_first = first_frame;
                 if first_frame {
                     first_frame = false;
                     whycodes_core::logging::emit(
@@ -823,6 +859,27 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                             "h": completed.area.height,
                         })),
                     );
+                }
+                // Cell snapshot is only for mouse text selection → clipboard.
+                // Skip the ~4k String allocs/frame when nothing is selected.
+                if app.mouse_sel.is_some() {
+                    app.screen_cells = crate::cell_grid::CellGrid::from_buffer(completed.buffer);
+                } else if !app.screen_cells.is_empty() {
+                    app.screen_cells.clear();
+                }
+                // Grok: never malloc_trim inside the paint; drain after flush.
+                crate::heap::run_deferred_release();
+                // Stay dirty while animation is live or a follow-up full
+                // clear is still owed (paste echo can land after this frame).
+                app.needs_redraw = animate || app.pending_full_clears > 0;
+
+                if let Some(ref bench) = bench
+                    && crate::bench::should_stop(bench)
+                {
+                    break;
+                }
+
+                if just_first {
                     // After first paint: MCP connect + code RAG auto-index.
                     // Both can block; doing them here keeps startup feel snappy.
                     rt.agent.load_mcp(&config).await;
@@ -833,19 +890,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
                         app.mark_dirty();
                     }
                 }
-                // Cell snapshot is only for mouse text selection → clipboard.
-                // Skip the ~4k String allocs/frame when nothing is selected.
-                if app.mouse_sel.is_some() {
-                    app.screen_cells = crate::cell_grid::CellGrid::from_buffer(completed.buffer);
-                } else if !app.screen_cells.is_empty() {
-                    app.screen_cells.clear();
-                }
-                crate::bench::record_draw();
-                // Grok: never malloc_trim inside the paint; drain after flush.
-                crate::heap::run_deferred_release();
-                // Stay dirty while animation is live or a follow-up full
-                // clear is still owed (paste echo can land after this frame).
-                app.needs_redraw = animate || app.pending_full_clears > 0;
             }
 
             if let Some(ref bench) = bench
@@ -5591,6 +5635,15 @@ fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keyboard_enhancement_query_skips_bench_and_zero_size() {
+        assert!(!should_query_keyboard_enhancement(true, Some((80, 24))));
+        assert!(!should_query_keyboard_enhancement(false, Some((0, 24))));
+        assert!(!should_query_keyboard_enhancement(false, Some((80, 0))));
+        assert!(!should_query_keyboard_enhancement(false, None));
+        assert!(should_query_keyboard_enhancement(false, Some((80, 24))));
+    }
 
     #[test]
     fn truncate_toast_takes_first_line_and_trims() {

@@ -82,14 +82,15 @@ Full CLI, TUI keys, slash commands, agents, tools and configuration:
 
 ## Performance
 
-Idle TUI, Linux x86_64, 2026-08-17, HEAD `cd4961f` (see
+Idle TUI, Linux x86_64, 2026-08-26 (see
 [docs/benchmarks.md](docs/benchmarks.md) for method and machine):
 
 | | whycodes |
 |---|---|
-| 1 session PSS | **11.8 MB** |
-| 10 sessions PSS | **33.0 MB** (~2.4 MB each extra) |
-| `--version` | **1.8 ms** |
+| 1 session PSS | **11.6 MB** |
+| 10 sessions PSS | **30.7 MB** (~2.1 MB each extra) |
+| `--version` | **1.5 ms** |
+| First frame (harness, in-proc) | **18 ms** |
 | Idle redraws (harness, 3 s) | **0.0 /s** |
 
 The TUI paints only when something changed. Idle target is **0 redraws/s**,

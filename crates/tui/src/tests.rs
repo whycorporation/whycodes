@@ -486,6 +486,30 @@ fn todo_panel_click_toggles_collapse() {
 }
 
 #[test]
+fn replace_todos_no_op_does_not_mark_dirty() {
+    let mut app = TuiApp::new(test_config());
+    app.needs_redraw = false;
+    app.replace_todos(Vec::new());
+    assert!(
+        !app.needs_redraw,
+        "empty→empty must not dirty the idle loop"
+    );
+    app.replace_todos(vec![whycodes_core::TodoItem::new(
+        "a",
+        "open work",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    assert!(app.needs_redraw);
+    app.needs_redraw = false;
+    app.replace_todos(vec![whycodes_core::TodoItem::new(
+        "a",
+        "open work",
+        whycodes_core::TodoStatus::Pending,
+    )]);
+    assert!(!app.needs_redraw, "identical list must not dirty");
+}
+
+#[test]
 fn prompt_meta_hover_marks_dirty_on_enter_leave() {
     use crossterm::event::{Event, KeyModifiers, MouseEvent, MouseEventKind};
     use ratatui::layout::Rect;
