@@ -1,0 +1,23 @@
+{
+  "kind": "auth",
+  "name": "xai-grok-cli",
+  "description": "Unofficial SuperGrok login. Uses the public Grok Build OAuth client and Grok CLI request identity. Not a WhyCodes product.",
+  "auth": {
+    "provider": "xai",
+    "label": "xAI (Grok / SuperGrok)",
+    "flow": "loopback-pkce",
+    "client_id": "b1a00492-073a-47ea-816f-4c329264a828",
+    "authorize_url": "https://auth.x.ai/oauth2/authorize",
+    "token_url": "https://auth.x.ai/oauth2/token",
+    "scopes": "openid profile email offline_access grok-cli:access api:access",
+    "token_encoding": "form",
+    "loopback_host": "127.0.0.1",
+    "callback_path": "/callback",
+    "extra_authorize": { "referrer": "whycodes" },
+    "suggested_models": ["grok-4.6", "grok-4.5", "grok-build-0.1"],
+    "inference": {
+      "user_agent": "grok-shell/1.0.5",
+      "headers": { "X-XAI-Token-Auth": "xai-grok-cli" }
+    }
+  }
+}

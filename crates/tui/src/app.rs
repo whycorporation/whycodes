@@ -1400,12 +1400,12 @@ pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)>
         .collect();
     if let Ok(dir) = whycodes_config::Config::data_dir() {
         let store = whycodes_auth::TokenStore::new(&dir);
-        for name in whycodes_auth::OAUTH_PROVIDERS {
-            if store.get(name).ok().flatten().is_some() {
+        for name in whycodes_auth::oauth_providers() {
+            if store.get(&name).ok().flatten().is_some() {
                 out.extend(
-                    whycodes_auth::providers::suggested_models(name)
-                        .iter()
-                        .map(|m| ((*name).to_string(), (*m).to_string())),
+                    whycodes_auth::providers::suggested_models(&name)
+                        .into_iter()
+                        .map(|m| (name.clone(), m)),
                 );
             }
         }

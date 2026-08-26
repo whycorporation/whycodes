@@ -593,6 +593,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
     init_logging(&cli);
+    load_auth_plugins(&cli);
 
     // Determine which command to run; default to Run
     let result = match &cli.command {
@@ -1677,11 +1678,11 @@ async fn cmd_run(
                         println!("{}", "Subscription sign-in (OAuth):".bold());
                         if let Ok(dir) = Config::data_dir() {
                             let store = whycodes_auth::TokenStore::new(&dir);
-                            for name in whycodes_auth::OAUTH_PROVIDERS {
-                                let label = whycodes_auth::providers::spec_for(name)
+                            for name in whycodes_auth::oauth_providers() {
+                                let label = whycodes_auth::providers::spec_for(&name)
                                     .map(|s| s.label)
-                                    .unwrap_or(name);
-                                let status = if store.get(name).ok().flatten().is_some() {
+                                    .unwrap_or_else(|_| name.clone());
+                                let status = if store.get(&name).ok().flatten().is_some() {
                                     "connected".green()
                                 } else {
                                     "not connected".dimmed()
@@ -1717,7 +1718,7 @@ async fn cmd_run(
                         println!(
                             "OAuth login is not available for `{}` — choose from: {}",
                             arg.red(),
-                            whycodes_auth::OAUTH_PROVIDERS.join(", ")
+                            oauth_provider_list()
                         );
                     }
                     continue;
@@ -4106,6 +4107,27 @@ async fn cmd_stats() -> anyhow::Result<()> {
 // Auth (OAuth subscription login)
 // ────────────────────────────────────────────────────────────────────────
 
+fn load_auth_plugins(cli: &Cli) {
+    let mut dirs = Vec::new();
+    if let Some(global) = whycodes_plugin::global_plugins_dir() {
+        dirs.push(global);
+    }
+    dirs.push(whycodes_plugin::project_plugins_dir(&resolve_dir(cli)));
+    let n = whycodes_auth::plugin::load_from_dirs(&dirs);
+    if n > 0 {
+        tracing::info!(count = n, "loaded auth plugins");
+    }
+}
+
+fn oauth_provider_list() -> String {
+    let names = whycodes_auth::oauth_providers();
+    if names.is_empty() {
+        "none — install an auth plugin (plugin.json with kind \"auth\")".into()
+    } else {
+        names.join(", ")
+    }
+}
+
 async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
     let data_dir = Config::data_dir()?;
     let store = whycodes_auth::TokenStore::new(&data_dir);
@@ -4117,7 +4139,7 @@ async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
             if !whycodes_auth::providers::supports_oauth(provider) {
                 anyhow::bail!(
                     "provider `{provider}` does not support OAuth login (supported: {})",
-                    whycodes_auth::OAUTH_PROVIDERS.join(", ")
+                    oauth_provider_list()
                 );
             }
             whycodes_auth::providers::login(provider, &store, !no_browser).await?;
@@ -4144,7 +4166,7 @@ async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
             if entries.is_empty() {
                 println!(
                     "No OAuth logins yet. Run: whycodes auth login <{}>",
-                    whycodes_auth::OAUTH_PROVIDERS.join("|")
+                    oauth_provider_list()
                 );
             } else {
                 println!("{} OAuth logins ({}):", "🔑".bold(), store.path().display());

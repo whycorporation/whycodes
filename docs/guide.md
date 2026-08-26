@@ -650,6 +650,10 @@ Args become `PLUGIN_ARG_<KEY>` environment variables. `PLUGIN_WORKSPACE` is
 the session cwd. Config `[hooks]` stay the hook path — `hooks` in
 `plugin.json` is reserved, not loaded.
 
+A plugin with `"kind": "auth"` registers an OAuth spec instead of a shell
+tool (`whycodes auth login`). Subscription-login plugins are **not** in
+the default install; see [auth.md](auth.md).
+
 ### Interoperability
 
 | Convention | Where |
@@ -658,4 +662,5 @@ the session cwd. Config `[hooks]` stay the hook path — `hooks` in
 | Markdown slash commands | `.whycodes/commands/`, also `.opencode/commands/` |
 | MCP servers | `[mcp_servers]` in `config.toml`, tools as `{server}_{tool}` |
 | Shell plugins | `plugins.toml` or `plugins/*/plugin.json` → `plugin_<name>` |
+| Auth plugins | `plugins/*/plugin.json` with `"kind": "auth"` → OAuth login |
 | `allow` / `ask` / `deny` | `[permission]` in `config.toml` |

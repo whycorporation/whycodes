@@ -3,8 +3,8 @@
 /// Console API keys (`xai-…`) use `https://api.x.ai/v1/chat/completions`.
 /// SuperGrok / X Premium tokens from `whycodes auth login xai` are rejected
 /// there — they authorize the Grok Build chat proxy at
-/// `cli-chat-proxy.grok.com` (same path the public Grok client uses), with
-/// `X-XAI-Token-Auth: xai-grok-cli`.
+/// `cli-chat-proxy.grok.com`. Extra proxy headers (`X-XAI-Token-Auth`, …)
+/// come from a loaded xAI auth plugin; core traffic is WhyCodes.
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
@@ -23,13 +23,6 @@ pub const CONSOLE_CHAT_URL: &str = "https://api.x.ai/v1/chat/completions";
 /// Grok Build subscription proxy. OAuth tokens from `auth.x.ai` only work here.
 pub const SUBSCRIPTION_CHAT_URL: &str = "https://cli-chat-proxy.grok.com/v1/chat/completions";
 
-/// Product / version the public Grok CLI sends. The proxy gates auth
-/// context on these (`x-grok-client-identifier` / `User-Agent`); a
-/// whycodes UA + GitHub Referer yields `upstream=Unauthenticated,
-/// reason=no auth context` with an otherwise-valid token.
-const GROK_CLIENT_IDENTIFIER: &str = "grok-shell";
-const GROK_CLIENT_VERSION: &str = "1.0.5";
-
 /// True when `key` is a SuperGrok / X Premium OAuth token rather than a
 /// console API key (`xai-…`). Access tokens may be JWTs or opaque.
 pub fn is_xai_oauth_token(key: &str) -> bool {
@@ -45,30 +38,10 @@ pub fn inference_url(api_key: &str) -> &'static str {
     }
 }
 
-fn grok_user_agent() -> String {
-    let arch = match std::env::consts::ARCH {
-        "arm64" => "aarch64",
-        other => other,
-    };
-    format!(
-        "{GROK_CLIENT_IDENTIFIER}/{GROK_CLIENT_VERSION} ({}; {arch})",
-        std::env::consts::OS
-    )
-}
-
 fn authed_post(api_key: &str) -> reqwest::RequestBuilder {
     if is_xai_oauth_token(api_key) {
-        // Do not use `client_identity::post`: HTTP-Referer / X-Title /
-        // whycodes User-Agent prevent the proxy from attaching a user.
-        crate::client_identity::http_client()
-            .post(SUBSCRIPTION_CHAT_URL)
+        crate::client_identity::post_for_provider(SUBSCRIPTION_CHAT_URL, "xai")
             .header("Authorization", format!("Bearer {api_key}"))
-            .header("User-Agent", grok_user_agent())
-            .header("X-XAI-Token-Auth", "xai-grok-cli")
-            .header("x-authenticateresponse", "authenticate-response")
-            .header("x-grok-client-mode", "interactive")
-            .header("x-grok-client-identifier", GROK_CLIENT_IDENTIFIER)
-            .header("x-grok-client-version", GROK_CLIENT_VERSION)
     } else {
         crate::client_identity::post(CONSOLE_CHAT_URL)
             .header("Authorization", format!("Bearer {api_key}"))
@@ -265,8 +238,5 @@ mod tests {
             SUBSCRIPTION_CHAT_URL
         );
         assert_eq!(inference_url("xai-abc123"), CONSOLE_CHAT_URL);
-        let ua = grok_user_agent();
-        assert!(ua.starts_with("grok-shell/"), "{ua}");
-        assert!(ua.contains('(') && ua.contains(')'), "{ua}");
     }
 }

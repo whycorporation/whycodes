@@ -1,0 +1,28 @@
+{
+  "kind": "auth",
+  "name": "google-antigravity",
+  "description": "Unofficial Antigravity hub login. Uses the native Antigravity OAuth client and hub User-Agent. Not a WhyCodes product.",
+  "auth": {
+    "provider": "google-antigravity",
+    "label": "Antigravity (Gemini 3, Claude, GPT-OSS)",
+    "flow": "loopback-pkce",
+    "client_id": "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+    "client_secret": "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",
+    "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+    "token_url": "https://oauth2.googleapis.com/token",
+    "scopes": "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs",
+    "token_encoding": "form",
+    "loopback_port": 51121,
+    "loopback_host": "127.0.0.1",
+    "callback_path": "/oauth-callback",
+    "extra_authorize": { "access_type": "offline", "prompt": "consent" },
+    "suggested_models": [
+      "gemini-3.1-pro-low",
+      "gemini-3.5-flash-low",
+      "claude-sonnet-4-6"
+    ],
+    "inference": {
+      "user_agent": "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)"
+    }
+  }
+}

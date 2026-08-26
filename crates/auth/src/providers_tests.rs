@@ -1,6 +1,7 @@
 use super::*;
 use std::io::{BufReader, Write};
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::thread;
 
 fn mock_server(responses: Vec<(u16, &'static str)>) -> String {
@@ -30,23 +31,64 @@ fn mock_server(responses: Vec<(u16, &'static str)>) -> String {
 }
 
 fn local_spec(base: String, encoding: TokenEncoding) -> ProviderSpec {
-    let url = Box::leak(base.into_boxed_str());
     ProviderSpec {
-        name: "openai",
-        label: "Local",
+        name: "openai".into(),
+        label: "Local".into(),
         flow: FlowKind::PasteCodePkce,
-        client_id: "client",
+        client_id: "client".into(),
         client_secret: None,
-        authorize_url: url,
-        token_url: url,
-        scopes: "scope",
+        authorize_url: base.clone(),
+        token_url: base,
+        scopes: "scope".into(),
         token_encoding: encoding,
-        redirect_uri: Some("https://example.com/callback"),
+        redirect_uri: Some("https://example.com/callback".into()),
         loopback_port: None,
         loopback_host: None,
-        callback_path: "",
-        extra_authorize: &[],
+        callback_path: String::new(),
+        extra_authorize: vec![],
         derived: None,
+        suggested_models: vec![],
+        inference: None,
+    }
+}
+
+/// Load unofficial extras plugins so conformance tests still cover the
+/// OAuth engine against those specs. Not used by the default binary.
+///
+/// Loaded once per process — never `clear_registry()`, which would race
+/// parallel tests that also register specs.
+fn load_extras_plugins() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extras/auth-plugins");
+        crate::plugin::load_dir(&root);
+    });
+}
+
+fn oauth_providers() -> Vec<String> {
+    load_extras_plugins();
+    crate::spec::registered_providers()
+        .into_iter()
+        .filter(|n| {
+            // Parallel unit tests may register throwaway specs (`demo`, …).
+            matches!(
+                n.as_str(),
+                "anthropic" | "openai" | "google" | "github-copilot" | "xai" | "google-antigravity"
+            )
+        })
+        .collect()
+}
+
+fn extras_spec(name: &str) -> ProviderSpec {
+    load_extras_plugins();
+    spec_for(name).unwrap_or_else(|e| panic!("{name}: {e}"))
+}
+
+fn derived_cred(url: impl Into<String>, scheme: &str) -> DerivedCredential {
+    DerivedCredential {
+        url: url.into(),
+        auth_scheme: scheme.to_string(),
+        headers: Vec::new(),
     }
 }
 
@@ -113,9 +155,9 @@ impl LoginUi for TestUi {
 
 #[test]
 fn specs_exist_for_all_advertised_providers() {
-    for name in OAUTH_PROVIDERS {
-        let spec = spec_for(name).expect(name);
-        assert_eq!(spec.name, *name);
+    for name in oauth_providers() {
+        let spec = spec_for(&name).expect(&name);
+        assert_eq!(spec.name, name);
         assert!(!spec.client_id.is_empty());
         assert!(spec.authorize_url.starts_with("https://"));
         assert!(spec.token_url.starts_with("https://"));
@@ -124,9 +166,9 @@ fn specs_exist_for_all_advertised_providers() {
 
 #[test]
 fn every_oauth_provider_suggests_at_least_one_model() {
-    for name in OAUTH_PROVIDERS {
+    for name in oauth_providers() {
         assert!(
-            !suggested_models(name).is_empty(),
+            !suggested_models(&name).is_empty(),
             "{name}: a logged-in user must see a model in the picker"
         );
     }
@@ -140,6 +182,7 @@ fn unknown_provider_is_rejected() {
         Err(AuthError::UnsupportedProvider(_))
     ));
     assert!(!supports_oauth("mistral"));
+    load_extras_plugins();
     assert!(supports_oauth("anthropic"));
 }
 
@@ -147,25 +190,25 @@ fn unknown_provider_is_rejected() {
 fn flow_kinds_match_registered_redirects() {
     // These encode deployment facts about the public clients; if a
     // provider changes its registration this test is the tripwire.
-    assert_eq!(spec_for("openai").unwrap().flow, FlowKind::LoopbackPkce);
-    assert_eq!(spec_for("openai").unwrap().loopback_port, Some(1455));
-    assert_eq!(spec_for("google").unwrap().flow, FlowKind::LoopbackPkce);
-    assert_eq!(spec_for("anthropic").unwrap().flow, FlowKind::PasteCodePkce);
+    assert_eq!(extras_spec("openai").flow, FlowKind::LoopbackPkce);
+    assert_eq!(extras_spec("openai").loopback_port, Some(1455));
+    assert_eq!(extras_spec("google").flow, FlowKind::LoopbackPkce);
+    assert_eq!(extras_spec("anthropic").flow, FlowKind::PasteCodePkce);
+    assert_eq!(extras_spec("github-copilot").flow, FlowKind::DeviceCode);
+    assert_eq!(extras_spec("xai").flow, FlowKind::LoopbackPkce);
     assert_eq!(
-        spec_for("github-copilot").unwrap().flow,
-        FlowKind::DeviceCode
+        extras_spec("xai").loopback_host.as_deref(),
+        Some("127.0.0.1")
     );
-    assert_eq!(spec_for("xai").unwrap().flow, FlowKind::LoopbackPkce);
-    assert_eq!(spec_for("xai").unwrap().loopback_host, Some("127.0.0.1"));
-    assert_eq!(spec_for("xai").unwrap().callback_path, "/callback");
+    assert_eq!(extras_spec("xai").callback_path, "/callback");
 }
 
 #[test]
 fn antigravity_requests_native_client_scopes() {
-    let spec = spec_for("google-antigravity").unwrap();
+    let spec = extras_spec("google-antigravity");
     assert_eq!(spec.flow, FlowKind::LoopbackPkce);
     assert_eq!(spec.loopback_port, Some(51121));
-    assert_eq!(spec.loopback_host, Some("127.0.0.1"));
+    assert_eq!(spec.loopback_host.as_deref(), Some("127.0.0.1"));
     assert_eq!(spec.callback_path, "/oauth-callback");
     for scope in [
         "https://www.googleapis.com/auth/cloud-platform",
@@ -278,7 +321,7 @@ fn openai_account_id_rejects_malformed_or_wrongly_typed_claims() {
 
 #[test]
 fn derived_usable_token_comes_from_extra() {
-    let spec = spec_for("github-copilot").unwrap();
+    let spec = extras_spec("github-copilot");
     let mut token = OAuthToken {
         access_token: "gh".to_string(),
         refresh_token: None,
@@ -305,8 +348,8 @@ fn derived_usable_token_comes_from_extra() {
 
 #[test]
 fn usable_token_prefers_current_derived_key_and_checks_its_type() {
-    let derived = spec_for("github-copilot").unwrap();
-    let direct = spec_for("openai").unwrap();
+    let derived = extras_spec("github-copilot");
+    let direct = extras_spec("openai");
     let mut token = OAuthToken {
         access_token: "oauth-access".to_string(),
         refresh_token: None,
@@ -365,35 +408,29 @@ fn set_derived_extra_replaces_values_in_canonical_keys() {
 
 // ── Conformance suite ────────────────────────────────────────────────
 // Adding a provider must be *only* a new spec literal in `spec_for` +
-// a name in `OAUTH_PROVIDERS`. These tests reject malformed literals,
+// a name in `oauth_providers()`. These tests reject malformed literals,
 // drift between the moving parts, and wrong grant encodings — with no
 // network involved.
 
 #[test]
 fn conformance_every_advertised_provider_validates() {
-    for name in OAUTH_PROVIDERS {
-        let spec = spec_for(name).expect(name);
+    for name in oauth_providers() {
+        let spec = spec_for(&name).expect(&name);
         let issues = validate(&spec);
         assert!(issues.is_empty(), "{name}: {}", issues.join("; "));
     }
 }
 
 #[test]
-fn conformance_error_message_lists_every_provider() {
-    // Tripwire against drift between error.rs and the registry.
+fn unsupported_provider_error_mentions_plugin() {
     let msg = AuthError::UnsupportedProvider("x".to_string()).to_string();
-    for name in OAUTH_PROVIDERS {
-        assert!(
-            msg.contains(name),
-            "UnsupportedProvider message misses {name}"
-        );
-    }
+    assert!(msg.contains("auth plugin"), "{msg}");
 }
 
 #[test]
 fn conformance_authorize_url_has_required_pkce_params() {
-    for name in OAUTH_PROVIDERS {
-        let spec = spec_for(name).expect(name);
+    for name in oauth_providers() {
+        let spec = spec_for(&name).expect(&name);
         if spec.flow == FlowKind::DeviceCode {
             continue; // device flow starts at the token endpoint family
         }
@@ -404,15 +441,15 @@ fn conformance_authorize_url_has_required_pkce_params() {
         };
         let redirect = spec
             .redirect_uri
-            .map(str::to_string)
+            .clone()
             .unwrap_or_else(|| format!("http://localhost:9999{}", spec.callback_path));
         let url = flow::authorize_url(
-            spec.authorize_url,
-            spec.client_id,
+            &spec.authorize_url,
+            &spec.client_id,
             &redirect,
-            spec.scopes,
+            &spec.scopes,
             &pkce,
-            spec.extra_authorize,
+            &spec.extra_authorize,
         );
         for param in [
             "response_type=code",
@@ -443,8 +480,8 @@ fn conformance_grant_bodies_match_declared_encoding() {
         challenge: "ch".to_string(),
         state: "st".to_string(),
     };
-    for name in OAUTH_PROVIDERS {
-        let spec = spec_for(name).expect(name);
+    for name in oauth_providers() {
+        let spec = spec_for(&name).expect(&name);
         if spec.flow == FlowKind::DeviceCode {
             continue;
         }
@@ -481,54 +518,59 @@ fn conformance_grant_bodies_match_declared_encoding() {
 #[test]
 fn conformance_validate_catches_broken_specs() {
     // Guard the guard: a deliberately broken spec must produce issues.
-    let mut broken = spec_for("google").unwrap();
-    broken.client_id = "";
+    let mut broken = extras_spec("google");
+    broken.client_id = String::new();
     broken.flow = FlowKind::PasteCodePkce; // …but redirect_uri stays None
-    broken.authorize_url = "http://insecure.example.com";
+    broken.authorize_url = "http://insecure.example.com".into();
     let issues = validate(&broken);
     assert!(issues.len() >= 3, "expected >=3 issues, got: {issues:?}");
 }
 
 #[test]
 fn validate_reports_each_flow_specific_error_branch() {
-    let mut loopback = spec_for("openai").unwrap();
-    loopback.callback_path = "callback";
-    loopback.redirect_uri = Some("https://example.com/callback");
-    loopback.loopback_host = Some("example.com");
+    let mut loopback = extras_spec("openai");
+    loopback.callback_path = "callback".into();
+    loopback.redirect_uri = Some("https://example.com/callback".into());
+    loopback.loopback_host = Some("example.com".into());
     let issues = validate(&loopback).join("\n");
     assert!(issues.contains("callback_path starting with '/'"));
     assert!(issues.contains("set redirect_uri = None"));
     assert!(issues.contains("loopback_host must be"));
 
-    let mut paste = spec_for("anthropic").unwrap();
-    paste.redirect_uri = Some("http://insecure.example/callback");
-    paste.loopback_host = Some("localhost");
+    let mut paste = extras_spec("anthropic");
+    paste.redirect_uri = Some("http://insecure.example/callback".into());
+    paste.loopback_host = Some("localhost".into());
     let issues = validate(&paste).join("\n");
     assert!(issues.contains("registered https redirect_uri"));
     assert!(issues.contains("loopback_host is only for LoopbackPkce"));
 
-    let mut device = spec_for("github-copilot").unwrap();
-    device.callback_path = "/callback";
-    device.redirect_uri = Some("https://example.com/callback");
+    let mut device = extras_spec("github-copilot");
+    device.callback_path = "/callback".into();
+    device.redirect_uri = Some("https://example.com/callback".into());
     let issues = validate(&device).join("\n");
     assert!(issues.contains("device flow has no redirect"));
 }
 
 #[test]
 fn validate_reports_metadata_extra_and_derived_errors() {
-    static BAD_EXTRAS: &[(&str, &str)] = &[("", "value"), ("same", "one"), ("same", "two")];
-    static BAD_HEADERS: &[(&str, &str)] = &[("", "value"), ("key", "")];
-    let mut spec = spec_for("github-copilot").unwrap();
-    spec.label = "";
-    spec.client_id = "client id";
-    spec.token_url = "relative";
-    spec.scopes = "  ";
-    spec.client_secret = Some("");
-    spec.extra_authorize = BAD_EXTRAS;
+    let mut spec = extras_spec("github-copilot");
+    spec.label = String::new();
+    spec.client_id = "client id".into();
+    spec.token_url = "relative".into();
+    spec.scopes = "  ".into();
+    spec.client_secret = Some(String::new());
+    spec.extra_authorize = vec![
+        (String::new(), "value".into()),
+        ("same".into(), "one".into()),
+        ("same".into(), "two".into()),
+    ];
     spec.derived = Some(DerivedCredential {
-        url: "http://insecure.example/token",
-        auth_scheme: "Basic",
-        headers: BAD_HEADERS,
+        url: "http://insecure.example/token".into(),
+        auth_scheme: "Basic".into(),
+        headers: vec![
+            (String::new(), "value".into()),
+            ("key".into(), String::new()),
+        ],
     });
 
     let issues = validate(&spec).join("\n");
@@ -539,10 +581,10 @@ fn validate_reports_metadata_extra_and_derived_errors() {
         "scopes are empty",
         "client_secret is Some(\"\")",
         "extra_authorize[0] has an empty key or value",
-        "duplicate extra_authorize key `same`",
+        "extra_authorize has duplicate key `same`",
         "derived.url must be an absolute https URL",
         "derived.auth_scheme must be",
-        "derived header has an empty key or value",
+        "derived.headers has an empty key or value",
     ] {
         assert!(
             issues.contains(expected),
@@ -553,6 +595,7 @@ fn validate_reports_metadata_extra_and_derived_errors() {
 
 #[tokio::test]
 async fn access_token_resolves_fresh_direct_credentials() {
+    load_extras_plugins();
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
     store
@@ -580,6 +623,7 @@ async fn access_token_resolves_fresh_direct_credentials() {
 
 #[tokio::test]
 async fn force_refresh_without_login_is_none() {
+    load_extras_plugins();
     let dir = tempfile::tempdir().unwrap();
     assert!(force_refresh("anthropic", dir.path()).await.is_none());
 }
@@ -589,6 +633,7 @@ async fn force_refresh_without_renewal_path_keeps_credential() {
     // A stored credential with no refresh token (and no derived
     // exchange) cannot be renewed: force_refresh must return None and
     // must NOT delete the stored credential.
+    load_extras_plugins();
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
     store
@@ -620,7 +665,7 @@ fn loopback_spec(base: String) -> ProviderSpec {
     let mut spec = local_spec(base, TokenEncoding::Form);
     spec.flow = FlowKind::LoopbackPkce;
     spec.redirect_uri = None;
-    spec.callback_path = "/callback";
+    spec.callback_path = "/callback".into();
     spec
 }
 
@@ -662,15 +707,12 @@ async fn refresh_grant_surfaces_provider_error_bodies() {
 #[tokio::test]
 async fn exchange_derived_token_returns_token() {
     let derived = DerivedCredential {
-        url: Box::leak(
-            mock_server(vec![(
-                200,
-                r#"{"token":"derived","expires_at":1893456000}"#,
-            )])
-            .into_boxed_str(),
-        ),
-        auth_scheme: "Bearer",
-        headers: &[("X-Test", "yes")],
+        url: mock_server(vec![(
+            200,
+            r#"{"token":"derived","expires_at":1893456000}"#,
+        )]),
+        auth_scheme: "Bearer".into(),
+        headers: vec![("X-Test".into(), "yes".into())],
     };
     assert_eq!(
         exchange_derived_token(&derived, "oauth").await.unwrap().0,
@@ -685,11 +727,7 @@ async fn exchange_derived_token_reports_http_and_shape_errors() {
         (200, r#"{"expires_at":1893456000}"#, "missing token"),
         (200, r#"{"token":"x"}"#, "missing expires_at"),
     ] {
-        let derived = DerivedCredential {
-            url: Box::leak(mock_server(vec![(status, body)]).into_boxed_str()),
-            auth_scheme: "Bearer",
-            headers: &[],
-        };
+        let derived = derived_cred(mock_server(vec![(status, body)]), "Bearer");
         let err = exchange_derived_token(&derived, "oauth").await.unwrap_err();
         assert!(err.to_string().contains(expected), "{err}");
     }
@@ -872,11 +910,7 @@ async fn device_flow_exchanges_oauth_and_derived_tokens() {
         (200, r#"{"token":"copilot","expires_at":1893456000}"#),
     ]);
     let mut spec = device_spec(base.clone());
-    spec.derived = Some(DerivedCredential {
-        url: Box::leak(base.into_boxed_str()),
-        auth_scheme: "token",
-        headers: &[],
-    });
+    spec.derived = Some(derived_cred(base, "token"));
     let mut ui = TestUi {
         pasted: String::new(),
     };
@@ -1012,11 +1046,7 @@ async fn ensure_fresh_derived_exchanges_when_stale() {
         r#"{"token":"new-derived","expires_at":1893456000}"#,
     )]);
     let mut spec = local_spec(base.clone(), TokenEncoding::Form);
-    spec.derived = Some(DerivedCredential {
-        url: Box::leak(base.into_boxed_str()),
-        auth_scheme: "token",
-        headers: &[],
-    });
+    spec.derived = Some(derived_cred(base, "token"));
     let oauth = OAuthToken {
         access_token: "oauth".into(),
         refresh_token: None,
@@ -1041,11 +1071,7 @@ async fn force_fresh_reexchanges_derived_token() {
         r#"{"token":"forced-derived","expires_at":1893456000}"#,
     )]);
     let mut spec = local_spec(base.clone(), TokenEncoding::Form);
-    spec.derived = Some(DerivedCredential {
-        url: Box::leak(base.into_boxed_str()),
-        auth_scheme: "token",
-        headers: &[],
-    });
+    spec.derived = Some(derived_cred(base, "token"));
     let oauth = OAuthToken {
         access_token: "oauth".into(),
         refresh_token: None,
@@ -1084,11 +1110,7 @@ async fn ensure_fresh_derived_keeps_unexpired_token() {
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
     let mut spec = local_spec("http://127.0.0.1:1".into(), TokenEncoding::Form);
-    spec.derived = Some(DerivedCredential {
-        url: "http://127.0.0.1:1",
-        auth_scheme: "token",
-        headers: &[],
-    });
+    spec.derived = Some(derived_cred("http://127.0.0.1:1", "token"));
     let mut fresh = OAuthToken {
         access_token: "oauth".into(),
         refresh_token: None,
@@ -1158,7 +1180,7 @@ async fn force_refresh_with_spec_renews_stored_credential() {
     );
     store
         .set(
-            spec.name,
+            &spec.name,
             ProviderAuth {
                 method: "imported".into(),
                 token: OAuthToken {

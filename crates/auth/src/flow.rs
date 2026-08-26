@@ -224,7 +224,7 @@ pub fn authorize_url(
     redirect_uri: &str,
     scope: &str,
     pkce: &Pkce,
-    extra: &[(&str, &str)],
+    extra: &[(String, String)],
 ) -> String {
     let mut pairs: Vec<(&str, &str)> = vec![
         ("response_type", "code"),
@@ -235,7 +235,7 @@ pub fn authorize_url(
         ("code_challenge", pkce.challenge.as_str()),
         ("code_challenge_method", "S256"),
     ];
-    pairs.extend_from_slice(extra);
+    pairs.extend(extra.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     let query = url::form_urlencoded::Serializer::new(String::new())
         .extend_pairs(pairs)
         .finish();

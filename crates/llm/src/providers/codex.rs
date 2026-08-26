@@ -9,8 +9,8 @@
 //!
 //! The backend only serves streaming responses (`store: false`,
 //! `stream: true`), so [`complete`] assembles its answer from the same SSE
-//! stream. The OAuth login rides on the public Codex CLI client id
-//! (docs/auth.md); requests use the matching `originator` identity.
+//! stream. Core traffic identifies as WhyCodes; an unofficial auth plugin
+//! may attach an `originator` header via `inference.headers`.
 
 use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
@@ -24,10 +24,6 @@ use whycodes_core::types::{
 /// Responses-API endpoint of the ChatGPT backend that Codex-client
 /// subscription tokens authorize.
 pub const CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
-
-/// The backend gates client features on this header; the login flow already
-/// uses the public Codex CLI client id, so calls present the same family.
-const ORIGINATOR: &str = "codex_cli_rs";
 
 /// True when `key` is a ChatGPT-subscription OAuth access token (a JWT)
 /// rather than an OpenAI API key (`sk-…`). JWTs are rejected by
@@ -171,11 +167,10 @@ fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
 async fn post(api_key: &str, body: &Value) -> whycodes_core::Result<reqwest::Response> {
     let account_id = crate::oauth_refresh::stored_extra("openai", "openai_account_id").await;
     crate::oauth_refresh::send_with_refresh_retry("openai", api_key, |key| {
-        let req = crate::client_identity::post(CODEX_RESPONSES_URL)
+        let req = crate::client_identity::post_for_provider(CODEX_RESPONSES_URL, "openai")
             .header("Authorization", format!("Bearer {key}"))
             .header("OpenAI-Beta", "responses=experimental")
-            .header("Accept", "text/event-stream")
-            .header("originator", ORIGINATOR);
+            .header("Accept", "text/event-stream");
         let req = match &account_id {
             Some(id) => req.header("chatgpt-account-id", id),
             None => req,

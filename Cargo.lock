@@ -4060,6 +4060,7 @@ dependencies = [
  "whycodes-llm",
  "whycodes-mcp",
  "whycodes-memory",
+ "whycodes-plugin",
  "whycodes-protocol",
  "whycodes-sdk",
  "whycodes-server",

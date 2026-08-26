@@ -3,23 +3,36 @@
 whycodes accepts two credential kinds per provider:
 
 1. **API keys** — env var (`ANTHROPIC_API_KEY`, …) or `api_key` in `config.toml`.
-2. **OAuth subscription login** — `whycodes auth login <provider>` stores a
-   token from an existing subscription (Claude Pro/Max, ChatGPT Plus/Pro,
-   GitHub Copilot, Google/Gemini, Google Antigravity, xAI SuperGrok / X
-   Premium).
+2. **OAuth subscription login** — only after an **auth plugin** is installed.
+   Built-in WhyCodes has **no** subscription-login clients and does not
+   impersonate another product's User-Agent. `whycodes auth login <provider>`
+   stores a token from an existing subscription when a matching plugin is
+   loaded (Claude Pro/Max, ChatGPT Plus/Pro, GitHub Copilot, Google/Gemini,
+   Google Antigravity, xAI SuperGrok / X Premium).
 
 Resolution order is always: **env var → config `api_key` → OAuth store**.
 An explicit key therefore never loses to a stored subscription login.
 
+## Auth plugins
+
+OAuth specs come from `plugin.json` with `"kind": "auth"`. Drop a plugin
+directory into `~/.config/com.whycorporation.whycodes/plugins/` or
+`<project>/.whycodes/plugins/`. The CLI loads those dirs at startup;
+`kind: "auth"` plugins never become shell tools.
+
+WhyCodes does **not** ship subscription-login plugins in the default
+install. Unofficial examples live in `extras/auth-plugins/` (not
+published, not installed). Copying one in may violate that provider's
+terms — they reuse first-party / community CLI OAuth clients and may
+attach that client's inference identity.
+
+Until a plugin is installed, `whycodes auth login`, `/login`, and
+`auth status` report that no OAuth providers are registered.
+
 ## Commands
 
 ```bash
-whycodes auth login anthropic              # browser sign-in (Claude Pro/Max)
-whycodes auth login openai                 # browser sign-in (ChatGPT Plus/Pro)
-whycodes auth login github-copilot         # device code on github.com
-whycodes auth login google                 # browser sign-in (Gemini)
-whycodes auth login google-antigravity     # browser sign-in (Antigravity)
-whycodes auth login xai                    # browser sign-in (SuperGrok / X Premium)
+whycodes auth login <provider>         # after installing an auth plugin
 whycodes auth login <p> --no-browser   # print the URL instead of opening it
 whycodes auth status                   # who is logged in (never prints tokens)
 whycodes auth logout <provider>        # remove stored credential
@@ -28,15 +41,15 @@ whycodes auth logout <provider>        # remove stored credential
 `whycodes debug` also lists stored logins (method + expiry only).
 
 In the TUI, `/connect` reloads the credential for the active provider; when
-none exists and the provider supports OAuth, it starts the login flow
-in-place — the browser opens from the TUI, loopback/device flows report
-progress in the transcript, and Anthropic's paste flow collects
+none exists and the provider supports OAuth (a plugin is loaded), it starts
+the login flow in-place — the browser opens from the TUI, loopback/device
+flows report progress in the transcript, and Anthropic's paste flow collects
 `code#state` through the prompt box (Esc cancels). `/login` opens a provider
-picker annotated with which subscriptions are already connected, and starts
-the same flow for the chosen one. Subscription backends do not expose a
-listable `/models` endpoint, so after a login the `/models` picker offers
-each connected provider's suggested models
-(`whycodes_auth::providers::suggested_models`).
+picker of **currently loaded** auth plugins, annotated with which
+subscriptions are already connected, and starts the same flow for the chosen
+one. Subscription backends do not expose a listable `/models` endpoint, so
+after a login the `/models` picker offers each connected provider's
+suggested models (`whycodes_auth::suggested_models`).
 
 ## What is stored, and where
 
@@ -52,8 +65,13 @@ Writes are atomic (temp file + rename). Tokens never appear in logs or
 
 ## Flow per provider
 
-The flows use the public OAuth client ids that ship in the first-party /
-community CLIs — whycodes has no registered client of its own.
+The OAuth engine in `whycodes-auth` is generic (PKCE paste-code, loopback,
+device-code). Client ids, redirect ports, and optional inference identity
+come from the installed plugin — core never ships them.
+
+The unofficial examples under `extras/auth-plugins/` reuse public OAuth
+clients from first-party / community CLIs. They are **not** WhyCodes
+products. After you copy one in:
 
 | Provider | Flow | Works for API calls |
 |----------|------|---------------------|
@@ -61,8 +79,8 @@ community CLIs — whycodes has no registered client of its own.
 | `openai` | PKCE → loopback callback on the registered port `localhost:1455` | ✅ yes — JWT-shaped subscription tokens are routed to the Codex backend (`chatgpt.com/backend-api/codex/responses`, Responses API) with the stored `chatgpt-account-id`; API keys keep the `api.openai.com` chat-completions path (`crates/llm/src/codex.rs`) |
 | `github-copilot` | GitHub device-code grant → GitHub token is exchanged for the short-lived Copilot API token | ✅ yes — `github-copilot` provider calls `api.githubcopilot.com/chat/completions`; the Copilot token re-exchanges automatically near expiry |
 | `google` | PKCE → loopback callback on an ephemeral port | ✅ yes — `ya29.…` OAuth tokens are routed to the Code Assist endpoint (`cloudcode-pa.googleapis.com/v1internal`) with `loadCodeAssist`/`onboardUser` project discovery (`GOOGLE_CLOUD_PROJECT` overrides); `AIza…` API keys keep the `generativelanguage` route (`crates/llm/src/codeassist.rs`) |
-| `google-antigravity` | PKCE → loopback callback on the native hub port `127.0.0.1:51121` (`/oauth-callback`); Antigravity client id + scopes (`cclog`, `experimentsandconfigs`) | ✅ yes — tokens go to `daily-cloudcode-pa.googleapis.com` with `ideType: ANTIGRAVITY` and the hub User-Agent. Picker ids such as `gemini-3.1-pro` remap to hub wire ids (`gemini-3.1-pro-low`). Distinct from `google` (Gemini CLI / Code Assist sunset for consumer accounts). |
-| `xai` | PKCE → loopback callback on an ephemeral `127.0.0.1` port (`/callback`); public Grok Build client | ✅ yes — SuperGrok / X Premium tokens go to `cli-chat-proxy.grok.com` with `X-XAI-Token-Auth: xai-grok-cli` (the public Grok client path). Console keys (`xai-…`) stay on `api.x.ai` (`crates/llm/src/providers/xai.rs`) |
+| `google-antigravity` | PKCE → loopback callback on the native hub port `127.0.0.1:51121` (`/oauth-callback`); Antigravity client id + scopes (`cclog`, `experimentsandconfigs`) | ✅ yes — tokens go to `daily-cloudcode-pa.googleapis.com` with `ideType: ANTIGRAVITY`. A loaded plugin may supply the hub User-Agent via `inference.user_agent`. Picker ids such as `gemini-3.1-pro` remap to hub wire ids (`gemini-3.1-pro-low`). Distinct from `google` (Gemini CLI / Code Assist sunset for consumer accounts). |
+| `xai` | PKCE → loopback callback on an ephemeral `127.0.0.1` port (`/callback`); public Grok Build client | ✅ yes — SuperGrok / X Premium tokens go to `cli-chat-proxy.grok.com`. Extra proxy headers (`X-XAI-Token-Auth`, …) come from the plugin's `inference` object. Console keys (`xai-…`) stay on `api.x.ai` (`crates/llm/src/providers/xai.rs`) |
 
 Expired access tokens refresh transparently on next use (GitHub's token
 does not expire; the derived Copilot token does and is re-exchanged). If a
@@ -100,32 +118,37 @@ The consent model (mirroring jcode's `OAUTH.md`):
 
 To reset a decision, delete `auth-consent.json` (or edit out the path).
 
-## Adding a new OAuth provider (standard)
+## Adding a new OAuth provider
 
-The design goal: adding a provider is **only** adding one `ProviderSpec`
-literal plus one registry entry — no branches in flow code. The conformance
-suite (`cargo test -p whycodes-auth`) rejects a malformed spec before it can
-misbehave at runtime.
+The design goal: adding a provider is **installing a `kind: "auth"`
+plugin** — no branches in flow code, no new match arm in core. The
+conformance suite (`cargo test -p whycodes-auth`) rejects a malformed spec
+before it can misbehave at runtime.
 
 Checklist:
 
-1. **`crates/auth/src/lib.rs`** — add the name to `OAUTH_PROVIDERS`.
-2. **`crates/auth/src/providers.rs` → `spec_for()`** — add one match arm:
-   - Pick the `flow`: `LoopbackPkce` (browser → localhost callback),
-     `PasteCodePkce` (registered redirect is a fixed web page → user pastes
-     `code#state`), or `DeviceCode` (RFC 8628 grant).
-   - Set `token_encoding` (`Form` = RFC 6749 default, `Json` for
+1. **Write `plugin.json`** with `"kind": "auth"` and an `auth` object:
+   - `provider` — store / CLI name (`anthropic`, `openai`, …).
+   - `flow`: `loopback-pkce` (browser → localhost callback),
+     `paste-code-pkce` (registered redirect is a fixed web page → user pastes
+     `code#state`), or `device-code` (RFC 8628 grant).
+   - `token_encoding` (`form` = RFC 6749 default, `json` for
      Anthropic-style endpoints) — grant bodies are built from this, never
      from the provider name.
-   - `redirect_uri`: `Some(..)` for paste flows, `None` for loopback
+   - `redirect_uri`: set for paste flows; omit for loopback
      (constructed from the bound port).
-   - `derived`: `Some(DerivedCredential { .. })` when the API credential
-     comes from a second exchange (Copilot model), else `None`.
-3. **`crates/auth/src/error.rs`** — add the name to the
-   `UnsupportedProvider` message (tripwire test enforces this).
-4. **`docs/auth.md`** — add a row to the flow table above.
+   - `derived`: when the API credential comes from a second exchange
+     (Copilot model).
+   - Optional `inference`: User-Agent / extra headers for LLM calls that
+     use this plugin's token. Core traffic stays `whycodes/<version>`
+     without this object.
+2. **Install** the directory under the user or project plugins folder.
+   Restart (or start a new `whycodes` process) so `load_from_dirs` registers
+   it. `whycodes auth login <provider>` then lists it.
+3. **`docs/auth.md`** — add a row to the flow table above if this is a
+   documented extra.
 
-The suite then verifies, for every advertised provider: `validate()`
+The suite then verifies, for every loaded extras plugin: `validate()`
 invariants (https URLs, flow/redirect consistency, unique authorize extras,
 derived-exchange description), the authorize URL carries all required PKCE
 params and never the verifier, and the grant bodies match the declared
@@ -135,7 +158,8 @@ params and never the verifier, and the grant bodies match the declared
 If the provider's *API calls* need a nonstandard endpoint or headers, that
 is a separate, explicit step: a provider module in `crates/llm` (see
 `copilot.rs`) registered in `provider.rs`. Login/refresh/storage never
-depend on it.
+depend on it. Impersonating another product's identity belongs in the
+plugin's `inference` object, not in core.
 
 ## Provider terms caveat
 

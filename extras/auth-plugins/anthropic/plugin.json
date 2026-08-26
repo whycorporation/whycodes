@@ -1,0 +1,18 @@
+{
+  "kind": "auth",
+  "name": "anthropic-subscription",
+  "description": "Unofficial Claude Pro/Max login. Uses the public Claude Code OAuth client. Not a WhyCodes product.",
+  "auth": {
+    "provider": "anthropic",
+    "label": "Anthropic (Claude Pro/Max)",
+    "flow": "paste-code-pkce",
+    "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+    "authorize_url": "https://claude.ai/oauth/authorize",
+    "token_url": "https://console.anthropic.com/v1/oauth/token",
+    "scopes": "org:create_api_key user:profile user:inference",
+    "token_encoding": "json",
+    "redirect_uri": "https://console.anthropic.com/oauth/code/callback",
+    "extra_authorize": { "code": "true" },
+    "suggested_models": ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"]
+  }
+}

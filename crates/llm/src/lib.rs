@@ -26,7 +26,9 @@ pub use providers::{
 
 pub use cache::{CacheConfig, CachePolicy, apply_anthropic_cache_policy};
 pub use capabilities::{ModelCapabilities, detect_capabilities, resolve_context_window};
-pub use client_identity::{HTTP_REFERER, USER_AGENT, X_TITLE};
+pub use client_identity::{
+    HTTP_REFERER, USER_AGENT, X_TITLE, post_for_provider, with_plugin_identity,
+};
 pub use error_class::{ClassifiedError, ErrorKind, classify, classify_message};
 pub use model_catalog::{
     CATALOG_TTL, CatalogFetchRequest, ModelCatalog, base_url_from_provider_config,
