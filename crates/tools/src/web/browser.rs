@@ -350,9 +350,7 @@ fn screenshot(ctx: &ToolContext) -> ToolResult {
         Ok(b) => b,
         Err(e) => return err(format!("screenshot decode: {e}")),
     };
-    let dir = Path::new(&ctx.working_dir)
-        .join(".whycodes")
-        .join("browser");
+    let dir = whycodes_core::project_dir(Path::new(&ctx.working_dir)).join("browser");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return err(format!("mkdir: {e}"));
     }

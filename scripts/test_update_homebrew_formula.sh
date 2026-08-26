@@ -42,6 +42,7 @@ need 'sha256 "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"'
 need 'depends_on "rust" => :build'
 need 'if build.head?'
 need 'bin.install "whycodes"'
+need 'bin.install_symlink "whycodes" => "whycode"'
 
 # Windows zip is not a Homebrew target; must not leak into the formula.
 if grep -F -q 'windows-msvc' "$formula"; then

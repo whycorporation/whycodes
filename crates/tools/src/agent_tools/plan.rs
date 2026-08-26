@@ -45,7 +45,7 @@ impl Tool for PlanTool {
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let action = args["action"].as_str().unwrap_or("");
 
-        let whycodes_dir = std::path::Path::new(&ctx.working_dir).join(".whycodes");
+        let whycodes_dir = whycodes_core::project_dir(std::path::Path::new(&ctx.working_dir));
         let plan_mode_file = whycodes_dir.join("plan_mode");
 
         match action {

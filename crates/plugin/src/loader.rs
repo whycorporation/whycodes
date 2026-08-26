@@ -220,9 +220,9 @@ pub fn global_plugins_dir() -> Option<PathBuf> {
         .and_then(|p| p.parent().map(|d| d.join("plugins")))
 }
 
-/// `<project>/.whycodes/plugins`.
+/// `<project>/.whycodes/plugins` (legacy `.whycode/` is still read).
 pub fn project_plugins_dir(project: &Path) -> PathBuf {
-    project.join(".whycodes").join("plugins")
+    whycodes_core::project_dir(project).join("plugins")
 }
 
 fn load_plugin_dir(dir: &Path) -> Option<LoadedPlugin> {

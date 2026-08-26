@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = "Stop"
 $removed = $false
 
-foreach ($name in @("whycodes.exe", "whycodes.exe.old")) {
+foreach ($name in @("whycodes.exe", "whycodes.exe.old", "whycode.exe", "whycode.exe.old")) {
     $path = Join-Path $InstallDir $name
     if (Test-Path $path) {
         Remove-Item $path -Force

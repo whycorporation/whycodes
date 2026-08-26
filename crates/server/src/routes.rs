@@ -24,7 +24,7 @@ use crate::perm::{RUN, RunScope};
 fn share_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
-        dirs.push(cwd.join(".whycodes").join("shares"));
+        dirs.push(whycodes_core::project_dir(&cwd).join("shares"));
     }
     if let Ok(data) = whycodes_config::Config::data_dir() {
         dirs.push(data.join("shares"));

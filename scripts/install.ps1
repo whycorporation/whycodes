@@ -86,6 +86,7 @@ try {
         }
     }
     Copy-Item $exe $dest -Force
+    Copy-Item $exe (Join-Path $InstallDir "whycode.exe") -Force
 
     Write-Host "Installed to $dest"
     & $dest --version

@@ -752,29 +752,37 @@ fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
     }
-    if let Ok(p) = std::env::var("WHYCODES")
-        && !p.is_empty()
-    {
-        return Ok(PathBuf::from(p));
+    for key in ["WHYCODES", "WHYCODE"] {
+        if let Ok(p) = std::env::var(key)
+            && !p.is_empty()
+        {
+            return Ok(PathBuf::from(p));
+        }
     }
     if let Ok(exe) = std::env::current_exe() {
         if exe
             .file_stem()
             .and_then(|s| s.to_str())
-            .is_some_and(|n| n == "whycodes")
+            .is_some_and(|n| n == "whycodes" || n == "whycode")
         {
             return Ok(exe);
         }
-        let sibling = exe.with_file_name(if cfg!(windows) {
-            "whycodes.exe"
-        } else {
-            "whycodes"
-        });
-        if sibling.is_file() {
-            return Ok(sibling);
+        for name in binary_names() {
+            let sibling = exe.with_file_name(name);
+            if sibling.is_file() {
+                return Ok(sibling);
+            }
         }
     }
     Ok(PathBuf::from("whycodes"))
+}
+
+fn binary_names() -> &'static [&'static str] {
+    if cfg!(windows) {
+        &["whycodes.exe", "whycode.exe"]
+    } else {
+        &["whycodes", "whycode"]
+    }
 }
 
 fn ephemeral_port() -> Result<u16, SdkError> {

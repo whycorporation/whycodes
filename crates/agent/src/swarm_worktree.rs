@@ -240,7 +240,9 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
 
 /// Directory for one swarm run: `{project}/.whycodes/swarm/{run_id}`.
 pub fn run_dir(project: &Path, run_id: &str) -> PathBuf {
-    project.join(".whycodes").join("swarm").join(run_id)
+    whycodes_core::project_dir(project)
+        .join("swarm")
+        .join(run_id)
 }
 
 /// Format merge report lines for the swarm worker section.
