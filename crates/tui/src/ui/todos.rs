@@ -93,12 +93,23 @@ pub fn item_line(item: &TodoItem, palette: &ThemePalette) -> Line<'static> {
 }
 
 fn item_line_width(item: &TodoItem, palette: &ThemePalette, width: u16) -> Line<'static> {
+    item_line_indented(item, palette, width, 0)
+}
+
+fn item_line_indented(
+    item: &TodoItem,
+    palette: &ThemePalette,
+    width: u16,
+    side: u16,
+) -> Line<'static> {
     let glyph = status_glyph(item.status);
     // Chevron + space is 2 columns; items use the same indent so the glyph
-    // column lines up with the header label (Grok tasks-pane rule).
-    let indent = "  ";
-    let prefix_cols = indent.width() + glyph.width() + 1;
-    let max = (width as usize).saturating_sub(prefix_cols).max(8);
+    // column lines up with the header label (Grok tasks-pane rule). Panel
+    // path adds `side` so the glyph sits on the shared body column.
+    let indent = format!("{}  ", " ".repeat(side as usize));
+    let prefix_cols = 2 + glyph.width() + 1;
+    let inner = (width as usize).saturating_sub((side as usize).saturating_mul(2));
+    let max = inner.saturating_sub(prefix_cols).max(8);
     let content = truncate_chars(first_line(&item.content), max);
     Line::from(vec![
         Span::raw(indent),
@@ -119,7 +130,7 @@ fn truncate_chars(s: &str, max: usize) -> String {
     format!("{kept}…")
 }
 
-fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16) -> Line<'static> {
+fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16, side: u16) -> Line<'static> {
     let total = app.todos.len();
     let done = terminal_count(&app.todos);
     let collapsed = is_collapsed(app);
@@ -148,19 +159,23 @@ fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16) -> Line<'static
         count_style = count_style.add_modifier(Modifier::UNDERLINED);
     }
 
-    let mut spans = vec![
-        Span::styled(chevron, chevron_style),
-        Span::styled("Todos", label_style),
-        Span::styled(format!("  {counts}"), count_style),
-    ];
+    let mut spans = Vec::new();
+    if side > 0 {
+        spans.push(Span::raw(" ".repeat(side as usize)));
+    }
+    spans.push(Span::styled(chevron, chevron_style));
+    spans.push(Span::styled("Todos", label_style));
+    spans.push(Span::styled(format!("  {counts}"), count_style));
 
     let used: usize = spans.iter().map(|s| s.content.width()).sum();
     let bar_w = HEADER_BAR_CELLS;
+    // Text (and the right-aligned track) stay inside [side, width - side).
+    let inner_end = (width as usize).saturating_sub(side as usize);
     // "  " + bar
-    if total > 0 && width as usize >= used + 2 + bar_w as usize {
+    if total > 0 && inner_end >= used + 2 + bar_w as usize {
         let frac = done as f64 / total as f64;
         let bar = progress_bar_string(bar_w, frac);
-        let pad = (width as usize).saturating_sub(used + 1 + bar_w as usize);
+        let pad = inner_end.saturating_sub(used + 1 + bar_w as usize);
         spans.push(Span::raw(" ".repeat(pad.max(1))));
         let bar_color = if all_done {
             palette.success
@@ -175,7 +190,13 @@ fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16) -> Line<'static
     Line::from(spans)
 }
 
-pub fn render_panel(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+pub fn render_panel(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut TuiApp,
+    palette: &ThemePalette,
+    side: u16,
+) {
     if area.height == 0 || app.todos.is_empty() {
         app.todos_hit.clear();
         return;
@@ -183,7 +204,7 @@ pub fn render_panel(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &T
     let collapsed = is_collapsed(app) || area.height == 1;
 
     let mut lines: Vec<Line> = Vec::new();
-    lines.push(header_line(app, palette, area.width));
+    lines.push(header_line(app, palette, area.width, side));
 
     if !collapsed {
         let mut budget = area.height.saturating_sub(1) as usize;
@@ -193,12 +214,13 @@ pub fn render_panel(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &T
         }
         let take = budget.min(MAX_ITEMS).min(app.todos.len());
         for item in app.todos.iter().take(take) {
-            lines.push(item_line_width(item, palette, area.width));
+            lines.push(item_line_indented(item, palette, area.width, side));
         }
         let hidden = app.todos.len().saturating_sub(take);
         if hidden > 0 {
+            let indent = format!("{}  ", " ".repeat(side as usize));
             lines.push(Line::from(Span::styled(
-                format!("  … +{hidden} more"),
+                format!("{indent}… +{hidden} more"),
                 Style::default().fg(palette.dim),
             )));
         }
@@ -228,11 +250,15 @@ mod tests {
     use whycodes_core::todo::{TodoItem, TodoStatus};
 
     fn paint(app: &mut TuiApp, w: u16, h: u16) -> String {
+        paint_with_side(app, w, h, 0)
+    }
+
+    fn paint_with_side(app: &mut TuiApp, w: u16, h: u16, side: u16) -> String {
         let palette = app.config.palette();
         let backend = TestBackend::new(w, h);
         let mut terminal = Terminal::new(backend).expect("term");
         terminal
-            .draw(|f| render_panel(f, f.area(), app, &palette))
+            .draw(|f| render_panel(f, f.area(), app, &palette, side))
             .expect("draw");
         let buf = terminal.backend().buffer().clone();
         let mut out = String::new();
@@ -372,5 +398,41 @@ mod tests {
         assert_eq!(status_glyph(TodoStatus::InProgress), "▶");
         assert_eq!(status_glyph(TodoStatus::Completed), "✓");
         assert_eq!(status_glyph(TodoStatus::Cancelled), "✗");
+    }
+
+    #[test]
+    fn panel_indents_text_by_side_and_keeps_item_line_unpadded() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.replace_todos(
+            (0..10)
+                .map(|i| item(&i.to_string(), &format!("item {i}"), TodoStatus::Pending))
+                .collect(),
+        );
+        let text = paint_with_side(&mut app, 60, 12, 2);
+        let header = text.lines().next().expect("header");
+        assert!(header.starts_with("  ▾"), "side indent: {header:?}");
+        let item_row = text.lines().find(|l| l.contains("item 0")).expect("item 0");
+        assert!(
+            item_row.starts_with("    □"),
+            "side + 2 item indent: {item_row:?}"
+        );
+        let overflow = text
+            .lines()
+            .find(|l| l.contains("+2 more"))
+            .expect("overflow");
+        assert!(
+            overflow.starts_with("    …"),
+            "side + 2 overflow indent: {overflow:?}"
+        );
+        // Sidebar helper stays at the original two-space indent.
+        let sidebar = item_line(
+            &item("z", "sidebar row", TodoStatus::Pending),
+            &app.config.palette(),
+        );
+        let sidebar_s: String = sidebar.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(
+            sidebar_s.starts_with("  □"),
+            "item_line must not take side: {sidebar_s:?}"
+        );
     }
 }

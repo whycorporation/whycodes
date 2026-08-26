@@ -68,6 +68,8 @@ pub mod layout {
     pub const TOP_PAD: u16 = 2;
     /// Blank rows between the transcript and the turn-status / prompt.
     pub const CHAT_GAP: u16 = 1;
+    /// Blank rows between sticky panels (subagent strip / todos) and the transcript.
+    pub const PANEL_GAP: u16 = 1;
     /// Gap under the prompt (bottom breathing room inside body).
     pub const BOTTOM_PAD: u16 = 1;
     /// Terminal edge insets (all four sides).
@@ -75,8 +77,6 @@ pub mod layout {
     pub const SAFE_BOTTOM: u16 = 1;
     pub const SAFE_LEFT: u16 = 1;
     pub const SAFE_RIGHT: u16 = 1;
-    /// Extra gap after a user message block.
-    pub const USER_PAD: u16 = 1;
     /// Shared left gutter for tools / epilogue / meta under an assistant turn.
     pub const ASSISTANT_PAD: u16 = 2;
     /// Sidebar preferred width (clamped by terminal size at render time).
@@ -182,6 +182,7 @@ mod tests {
             assert!(layout::PROMPT_MIN_WIDTH >= 8);
             assert!(layout::SIDEBAR_MIN_BODY > layout::SIDEBAR_MIN_CHAT);
             assert!(layout::CHAT_GAP >= 1);
+            assert!(layout::PANEL_GAP >= 1);
         }
     }
 

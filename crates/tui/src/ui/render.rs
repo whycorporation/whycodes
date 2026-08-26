@@ -223,8 +223,28 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let body = layout::below_header(outer[1]);
     status::render_footer(frame, outer[2], app, palette);
 
+    // Home never renders the sidebar, so its shared column is plain side_pad;
+    // the session path must subtract the sidebar rail before picking the pad.
+    let side = if app.messages.is_empty() {
+        layout::side_pad(body.width)
+    } else {
+        session_side_pad(app, body)
+    };
     let strip_h = subagents::strip_height(app);
-    let todo_h = todos::panel_height(app, body.height.saturating_sub(strip_h));
+    // Reserve PANEL_GAP in the todo budget so the transcript still gets ≥ 3 rows.
+    let todo_h = todos::panel_height(
+        app,
+        body.height
+            .saturating_sub(strip_h)
+            .saturating_sub(layout::PANEL_GAP),
+    );
+    // Drop the gap row on tiny bodies (e.g. strip-only at height 3-4) instead
+    // of letting it squeeze the transcript below its 3-row minimum.
+    let gap_h = if body.height >= strip_h + todo_h + layout::PANEL_GAP + 3 {
+        layout::PANEL_GAP
+    } else {
+        0
+    };
     let (strip, todo_area, body) = if strip_h == 0 && todo_h == 0 {
         (None, None, body)
     } else {
@@ -235,6 +255,7 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         if todo_h > 0 {
             constraints.push(Constraint::Length(todo_h));
         }
+        constraints.push(Constraint::Length(gap_h));
         constraints.push(Constraint::Min(3));
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -255,13 +276,16 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         } else {
             None
         };
+        let gap_area = chunks[i];
+        i += 1;
+        super::layout::fill_blank(frame, gap_area, palette.bg);
         (strip, todo_area, chunks[i])
     };
     if let Some(area) = strip {
-        subagents::render_strip(frame, area, app, palette);
+        subagents::render_strip(frame, area, app, palette, side);
     }
     if let Some(area) = todo_area {
-        todos::render_panel(frame, area, app, palette);
+        todos::render_panel(frame, area, app, palette, side);
     } else {
         app.todos_hit.clear();
     }
@@ -337,15 +361,30 @@ fn render_home(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemeP
     file_suggest::render(frame, chunks[3], app, palette);
 }
 
+/// Sidebar rail width when it fits beside the chat; `None` hides it.
+fn session_sidebar_width(app: &TuiApp, area: Rect) -> Option<u16> {
+    let rail = layout::SIDEBAR_WIDTH.min(area.width / 3).max(24);
+    let fits = area.width >= layout::SIDEBAR_MIN_BODY
+        && area.width.saturating_sub(rail) >= layout::SIDEBAR_MIN_CHAT;
+    if app.sidebar.visible && fits {
+        Some(rail)
+    } else {
+        None
+    }
+}
+
+/// Horizontal pad shared by sticky panels, transcript, and prompt.
+fn session_side_pad(app: &TuiApp, area: Rect) -> u16 {
+    let main_width = match session_sidebar_width(app, area) {
+        Some(w) => area.width.saturating_sub(w),
+        None => area.width,
+    };
+    layout::side_pad(main_width)
+}
+
 /// session: optional sidebar + padded main column
 fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
-    let sidebar_fits = area.width >= layout::SIDEBAR_MIN_BODY
-        && area
-            .width
-            .saturating_sub(layout::SIDEBAR_WIDTH.min(area.width / 3).max(24))
-            >= layout::SIDEBAR_MIN_CHAT;
-    let main = if app.sidebar.visible && sidebar_fits {
-        let w = layout::SIDEBAR_WIDTH.min(area.width / 3).max(24);
+    let main = if let Some(w) = session_sidebar_width(app, area) {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Min(20), Constraint::Length(w)])
@@ -357,7 +396,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         area
     };
 
-    let side = layout::side_pad(main.width);
+    let side = session_side_pad(app, area);
     let inset = Rect {
         x: main.x.saturating_add(side),
         y: main.y,
@@ -1431,6 +1470,100 @@ mod paint_tests {
         assert!(
             top.contains(':'),
             "sticky header must keep the clock: {top:?}"
+        );
+    }
+
+    fn first_non_space_x(buf: &ratatui::buffer::Buffer, y: u16) -> Option<u16> {
+        let area = buf.area();
+        (area.x..area.x.saturating_add(area.width)).find(|&x| {
+            buf.cell((x, y))
+                .is_some_and(|c| c.symbol() != " " && !c.symbol().is_empty())
+        })
+    }
+
+    #[test]
+    fn sticky_todo_panel_aligns_with_chat_and_leaves_gaps() {
+        let mut a = session_with_overflow();
+        a.replace_todos(vec![whycodes_core::TodoItem::new(
+            "a",
+            "ALIGN_TODO_MARKER pending work",
+            whycodes_core::TodoStatus::Pending,
+        )]);
+        let (buf, _text) = paint_full_shell(&mut a, 100, 24);
+
+        let header = a.todos_hit.rect.expect("todo header hit");
+        let chat = a.chat_area.expect("chat hit");
+        let bar = a.chat_scrollbar_hit.expect("overflowing chat paints a bar");
+
+        let header_row = row_text(&buf, header.y);
+        assert!(
+            header_row.contains("Todos"),
+            "todo header missing: {header_row:?}"
+        );
+        let todo_x = first_non_space_x(&buf, header.y).expect("todo header text");
+        assert_eq!(
+            todo_x, chat.x,
+            "todo header must start on the chat body column (todo_x={todo_x} chat.x={})",
+            chat.x
+        );
+
+        assert!(
+            chat.y >= header.y + 2 + layout::PANEL_GAP,
+            "chat.y={} must sit below todo panel + PANEL_GAP (header.y={})",
+            chat.y,
+            header.y
+        );
+        let gap_y = chat.y.saturating_sub(1);
+        let gap = row_text(&buf, gap_y);
+        assert!(
+            !gap.contains("Todos") && !gap.contains("ALIGN_TODO_MARKER") && !gap.contains('❯'),
+            "blank row between todos and transcript: {gap:?}"
+        );
+        assert!(
+            gap.chars().all(|c| c == ' ' || c == '\n'),
+            "panel gap row must be empty: {gap:?}"
+        );
+
+        assert_eq!(
+            bar.x + bar.width,
+            chat.x + chat.width,
+            "bar on last chat col"
+        );
+        let gap_col = bar.x.saturating_sub(1);
+        for y in chat.y..chat.y.saturating_add(chat.height) {
+            let cell = buf.cell((gap_col, y)).expect("gap col");
+            assert_eq!(
+                cell.symbol(),
+                " ",
+                "column left of scrollbar must be blank at y={y}"
+            );
+        }
+    }
+
+    #[test]
+    fn tiny_body_drops_panel_gap_to_keep_the_transcript() {
+        let mut a = session_with_overflow();
+        a.upsert_subagent(crate::app::SubagentUpdate {
+            id: "task-1".into(),
+            kind: "explore".into(),
+            description: "scan".into(),
+            status: "running".into(),
+            activity: "Thinking".into(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        // 100x10 → 4 body rows after safe insets, header/footer, and TOP_PAD:
+        // strip(1) + PANEL_GAP would leave the transcript under its 3-row
+        // minimum, so the gap row must be dropped.
+        let (_buf, _) = paint_full_shell(&mut a, 100, 10);
+        let strip = a.subagent_strip_hit.first().expect("strip painted").0;
+        let chat = a.chat_area.expect("chat hit");
+        assert_eq!(
+            chat.y,
+            strip.y + 1,
+            "tiny body must not spend a row on PANEL_GAP (strip.y={} chat.y={})",
+            strip.y,
+            chat.y
         );
     }
 }
