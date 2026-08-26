@@ -1,7 +1,6 @@
 use super::*;
 use std::io::{BufReader, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::thread;
 
 fn mock_server(responses: Vec<(u16, &'static str)>) -> String {
@@ -52,44 +51,74 @@ fn local_spec(base: String, encoding: TokenEncoding) -> ProviderSpec {
     }
 }
 
-/// Load unofficial extras plugins so conformance tests still cover the
-/// OAuth engine against those specs. Not used by the default binary.
-///
-/// Loaded once per process — never `clear_registry()`, which would race
-/// parallel tests that also register specs.
-fn load_extras_plugins() {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    ONCE.call_once(|| {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extras/auth-plugins");
-        crate::plugin::load_dir(&root);
-    });
-}
-
-fn oauth_providers() -> Vec<String> {
-    load_extras_plugins();
-    crate::spec::registered_providers()
-        .into_iter()
-        .filter(|n| {
-            // Parallel unit tests may register throwaway specs (`demo`, …).
-            matches!(
-                n.as_str(),
-                "anthropic" | "openai" | "google" | "github-copilot" | "xai" | "google-antigravity"
-            )
-        })
-        .collect()
-}
-
-fn extras_spec(name: &str) -> ProviderSpec {
-    load_extras_plugins();
-    spec_for(name).unwrap_or_else(|e| panic!("{name}: {e}"))
-}
-
 fn derived_cred(url: impl Into<String>, scheme: &str) -> DerivedCredential {
     DerivedCredential {
         url: url.into(),
         auth_scheme: scheme.to_string(),
         headers: Vec::new(),
     }
+}
+
+/// Synthetic specs covering each flow kind. Unofficial client ids live
+/// outside this repo and are not loaded by tests.
+fn https_spec(name: &str, flow: FlowKind) -> ProviderSpec {
+    let mut spec = local_spec("https://example.com/token".into(), TokenEncoding::Form);
+    spec.name = name.into();
+    spec.label = name.into();
+    spec.authorize_url = "https://example.com/authorize".into();
+    spec.token_url = "https://example.com/token".into();
+    spec.flow = flow;
+    spec.suggested_models = vec!["fixture-model".into()];
+    match flow {
+        FlowKind::PasteCodePkce => {
+            spec.token_encoding = TokenEncoding::Json;
+            spec.redirect_uri = Some("https://example.com/callback".into());
+        }
+        FlowKind::LoopbackPkce => {
+            spec.redirect_uri = None;
+            spec.callback_path = "/callback".into();
+        }
+        FlowKind::DeviceCode => {
+            spec.redirect_uri = None;
+            spec.callback_path = String::new();
+            spec.authorize_url = "https://example.com/device/code".into();
+            spec.derived = Some(derived_cred("https://example.com/derived", "token"));
+        }
+    }
+    spec
+}
+
+fn register_fixture_specs() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let paste = https_spec("fixture-paste", FlowKind::PasteCodePkce);
+        let mut loopback = https_spec("fixture-loopback", FlowKind::LoopbackPkce);
+        loopback.loopback_port = Some(1455);
+        let mut ephemeral = https_spec("fixture-loopback-ephemeral", FlowKind::LoopbackPkce);
+        ephemeral.loopback_host = Some("127.0.0.1".into());
+        let device = https_spec("fixture-device", FlowKind::DeviceCode);
+        for spec in [paste, loopback, ephemeral, device] {
+            crate::spec::register_spec(spec);
+        }
+    });
+}
+
+fn fixture_providers() -> Vec<String> {
+    register_fixture_specs();
+    [
+        "fixture-paste",
+        "fixture-loopback",
+        "fixture-loopback-ephemeral",
+        "fixture-device",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn fixture_spec(name: &str) -> ProviderSpec {
+    register_fixture_specs();
+    spec_for(name).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 
 struct TestUi {
@@ -155,7 +184,7 @@ impl LoginUi for TestUi {
 
 #[test]
 fn specs_exist_for_all_advertised_providers() {
-    for name in oauth_providers() {
+    for name in fixture_providers() {
         let spec = spec_for(&name).expect(&name);
         assert_eq!(spec.name, name);
         assert!(!spec.client_id.is_empty());
@@ -166,7 +195,7 @@ fn specs_exist_for_all_advertised_providers() {
 
 #[test]
 fn every_oauth_provider_suggests_at_least_one_model() {
-    for name in oauth_providers() {
+    for name in fixture_providers() {
         assert!(
             !suggested_models(&name).is_empty(),
             "{name}: a logged-in user must see a model in the picker"
@@ -182,46 +211,33 @@ fn unknown_provider_is_rejected() {
         Err(AuthError::UnsupportedProvider(_))
     ));
     assert!(!supports_oauth("mistral"));
-    load_extras_plugins();
-    assert!(supports_oauth("anthropic"));
+    register_fixture_specs();
+    assert!(supports_oauth("fixture-paste"));
 }
 
 #[test]
 fn flow_kinds_match_registered_redirects() {
-    // These encode deployment facts about the public clients; if a
-    // provider changes its registration this test is the tripwire.
-    assert_eq!(extras_spec("openai").flow, FlowKind::LoopbackPkce);
-    assert_eq!(extras_spec("openai").loopback_port, Some(1455));
-    assert_eq!(extras_spec("google").flow, FlowKind::LoopbackPkce);
-    assert_eq!(extras_spec("anthropic").flow, FlowKind::PasteCodePkce);
-    assert_eq!(extras_spec("github-copilot").flow, FlowKind::DeviceCode);
-    assert_eq!(extras_spec("xai").flow, FlowKind::LoopbackPkce);
     assert_eq!(
-        extras_spec("xai").loopback_host.as_deref(),
+        fixture_spec("fixture-loopback").flow,
+        FlowKind::LoopbackPkce
+    );
+    assert_eq!(fixture_spec("fixture-loopback").loopback_port, Some(1455));
+    assert_eq!(
+        fixture_spec("fixture-loopback-ephemeral").flow,
+        FlowKind::LoopbackPkce
+    );
+    assert_eq!(
+        fixture_spec("fixture-loopback-ephemeral")
+            .loopback_host
+            .as_deref(),
         Some("127.0.0.1")
     );
-    assert_eq!(extras_spec("xai").callback_path, "/callback");
-}
-
-#[test]
-fn antigravity_requests_native_client_scopes() {
-    let spec = extras_spec("google-antigravity");
-    assert_eq!(spec.flow, FlowKind::LoopbackPkce);
-    assert_eq!(spec.loopback_port, Some(51121));
-    assert_eq!(spec.loopback_host.as_deref(), Some("127.0.0.1"));
-    assert_eq!(spec.callback_path, "/oauth-callback");
-    for scope in [
-        "https://www.googleapis.com/auth/cloud-platform",
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile",
-        "https://www.googleapis.com/auth/cclog",
-        "https://www.googleapis.com/auth/experimentsandconfigs",
-    ] {
-        assert!(
-            spec.scopes.split_whitespace().any(|s| s == scope),
-            "google-antigravity missing native scope {scope}"
-        );
-    }
+    assert_eq!(
+        fixture_spec("fixture-loopback-ephemeral").callback_path,
+        "/callback"
+    );
+    assert_eq!(fixture_spec("fixture-paste").flow, FlowKind::PasteCodePkce);
+    assert_eq!(fixture_spec("fixture-device").flow, FlowKind::DeviceCode);
 }
 
 #[test]
@@ -321,7 +337,7 @@ fn openai_account_id_rejects_malformed_or_wrongly_typed_claims() {
 
 #[test]
 fn derived_usable_token_comes_from_extra() {
-    let spec = extras_spec("github-copilot");
+    let spec = fixture_spec("fixture-device");
     let mut token = OAuthToken {
         access_token: "gh".to_string(),
         refresh_token: None,
@@ -348,8 +364,8 @@ fn derived_usable_token_comes_from_extra() {
 
 #[test]
 fn usable_token_prefers_current_derived_key_and_checks_its_type() {
-    let derived = extras_spec("github-copilot");
-    let direct = extras_spec("openai");
+    let derived = fixture_spec("fixture-device");
+    let direct = fixture_spec("fixture-loopback");
     let mut token = OAuthToken {
         access_token: "oauth-access".to_string(),
         refresh_token: None,
@@ -407,14 +423,13 @@ fn set_derived_extra_replaces_values_in_canonical_keys() {
 }
 
 // ── Conformance suite ────────────────────────────────────────────────
-// Adding a provider must be *only* a new spec literal in `spec_for` +
-// a name in `oauth_providers()`. These tests reject malformed literals,
-// drift between the moving parts, and wrong grant encodings — with no
-// network involved.
+// Adding a provider is installing a `kind: "auth"` plugin. These tests
+// reject malformed specs, drift between the moving parts, and wrong
+// grant encodings — with no network and no unofficial client ids.
 
 #[test]
 fn conformance_every_advertised_provider_validates() {
-    for name in oauth_providers() {
+    for name in fixture_providers() {
         let spec = spec_for(&name).expect(&name);
         let issues = validate(&spec);
         assert!(issues.is_empty(), "{name}: {}", issues.join("; "));
@@ -429,7 +444,7 @@ fn unsupported_provider_error_mentions_plugin() {
 
 #[test]
 fn conformance_authorize_url_has_required_pkce_params() {
-    for name in oauth_providers() {
+    for name in fixture_providers() {
         let spec = spec_for(&name).expect(&name);
         if spec.flow == FlowKind::DeviceCode {
             continue; // device flow starts at the token endpoint family
@@ -480,7 +495,7 @@ fn conformance_grant_bodies_match_declared_encoding() {
         challenge: "ch".to_string(),
         state: "st".to_string(),
     };
-    for name in oauth_providers() {
+    for name in fixture_providers() {
         let spec = spec_for(&name).expect(&name);
         if spec.flow == FlowKind::DeviceCode {
             continue;
@@ -518,7 +533,7 @@ fn conformance_grant_bodies_match_declared_encoding() {
 #[test]
 fn conformance_validate_catches_broken_specs() {
     // Guard the guard: a deliberately broken spec must produce issues.
-    let mut broken = extras_spec("google");
+    let mut broken = fixture_spec("fixture-loopback");
     broken.client_id = String::new();
     broken.flow = FlowKind::PasteCodePkce; // …but redirect_uri stays None
     broken.authorize_url = "http://insecure.example.com".into();
@@ -528,7 +543,7 @@ fn conformance_validate_catches_broken_specs() {
 
 #[test]
 fn validate_reports_each_flow_specific_error_branch() {
-    let mut loopback = extras_spec("openai");
+    let mut loopback = fixture_spec("fixture-loopback");
     loopback.callback_path = "callback".into();
     loopback.redirect_uri = Some("https://example.com/callback".into());
     loopback.loopback_host = Some("example.com".into());
@@ -537,14 +552,14 @@ fn validate_reports_each_flow_specific_error_branch() {
     assert!(issues.contains("set redirect_uri = None"));
     assert!(issues.contains("loopback_host must be"));
 
-    let mut paste = extras_spec("anthropic");
+    let mut paste = fixture_spec("fixture-paste");
     paste.redirect_uri = Some("http://insecure.example/callback".into());
     paste.loopback_host = Some("localhost".into());
     let issues = validate(&paste).join("\n");
     assert!(issues.contains("registered https redirect_uri"));
     assert!(issues.contains("loopback_host is only for LoopbackPkce"));
 
-    let mut device = extras_spec("github-copilot");
+    let mut device = fixture_spec("fixture-device");
     device.callback_path = "/callback".into();
     device.redirect_uri = Some("https://example.com/callback".into());
     let issues = validate(&device).join("\n");
@@ -553,7 +568,7 @@ fn validate_reports_each_flow_specific_error_branch() {
 
 #[test]
 fn validate_reports_metadata_extra_and_derived_errors() {
-    let mut spec = extras_spec("github-copilot");
+    let mut spec = fixture_spec("fixture-device");
     spec.label = String::new();
     spec.client_id = "client id".into();
     spec.token_url = "relative".into();
@@ -595,12 +610,12 @@ fn validate_reports_metadata_extra_and_derived_errors() {
 
 #[tokio::test]
 async fn access_token_resolves_fresh_direct_credentials() {
-    load_extras_plugins();
+    register_fixture_specs();
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
     store
         .set(
-            "openai",
+            "fixture-loopback",
             ProviderAuth {
                 method: "imported".to_string(),
                 token: OAuthToken {
@@ -614,18 +629,20 @@ async fn access_token_resolves_fresh_direct_credentials() {
         .unwrap();
 
     assert_eq!(
-        access_token("openai", dir.path()).await.as_deref(),
+        access_token("fixture-loopback", dir.path())
+            .await
+            .as_deref(),
         Some("stored-access")
     );
     assert!(access_token("unknown", dir.path()).await.is_none());
-    assert!(access_token("google", dir.path()).await.is_none());
+    assert!(access_token("fixture-paste", dir.path()).await.is_none());
 }
 
 #[tokio::test]
 async fn force_refresh_without_login_is_none() {
-    load_extras_plugins();
+    register_fixture_specs();
     let dir = tempfile::tempdir().unwrap();
-    assert!(force_refresh("anthropic", dir.path()).await.is_none());
+    assert!(force_refresh("fixture-paste", dir.path()).await.is_none());
 }
 
 #[tokio::test]
@@ -633,12 +650,12 @@ async fn force_refresh_without_renewal_path_keeps_credential() {
     // A stored credential with no refresh token (and no derived
     // exchange) cannot be renewed: force_refresh must return None and
     // must NOT delete the stored credential.
-    load_extras_plugins();
+    register_fixture_specs();
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
     store
         .set(
-            "anthropic",
+            "fixture-paste",
             ProviderAuth {
                 method: "oauth".to_string(),
                 token: OAuthToken {
@@ -650,8 +667,8 @@ async fn force_refresh_without_renewal_path_keeps_credential() {
             },
         )
         .unwrap();
-    assert!(force_refresh("anthropic", dir.path()).await.is_none());
-    assert!(store.get("anthropic").unwrap().is_some());
+    assert!(force_refresh("fixture-paste", dir.path()).await.is_none());
+    assert!(store.get("fixture-paste").unwrap().is_some());
 }
 
 fn device_spec(base: String) -> ProviderSpec {
@@ -1205,7 +1222,8 @@ async fn login_with_ui_dispatches_a_known_provider() {
     let mut ui = TestUi {
         pasted: String::new(),
     };
-    let error = login_with_ui("anthropic", &store, false, &mut ui)
+    register_fixture_specs();
+    let error = login_with_ui("fixture-paste", &store, false, &mut ui)
         .await
         .unwrap_err();
     assert!(matches!(error, AuthError::FlowCancelled(_)));

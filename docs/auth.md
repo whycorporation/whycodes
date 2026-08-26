@@ -20,11 +20,9 @@ directory into `~/.config/com.whycorporation.whycodes/plugins/` or
 `<project>/.whycodes/plugins/`. The CLI loads those dirs at startup;
 `kind: "auth"` plugins never become shell tools.
 
-WhyCodes does **not** ship subscription-login plugins in the default
-install. Unofficial examples live in `extras/auth-plugins/` (not
-published, not installed). Copying one in may violate that provider's
-terms — they reuse first-party / community CLI OAuth clients and may
-attach that client's inference identity.
+WhyCodes does **not** ship subscription-login plugins. Install a local
+`kind: "auth"` plugin if you choose to; third-party OAuth clients may
+violate that provider's terms and are not part of this repository.
 
 Until a plugin is installed, `whycodes auth login`, `/login`, and
 `auth status` report that no OAuth providers are registered.
@@ -69,9 +67,17 @@ The OAuth engine in `whycodes-auth` is generic (PKCE paste-code, loopback,
 device-code). Client ids, redirect ports, and optional inference identity
 come from the installed plugin — core never ships them.
 
-The unofficial examples under `extras/auth-plugins/` reuse public OAuth
-clients from first-party / community CLIs. They are **not** WhyCodes
-products. After you copy one in:
+When a plugin registers one of these provider names, LLM routing for that
+token is:
+
+| Provider | Flow | Works for API calls |
+|----------|------|---------------------|
+| `anthropic` | PKCE; the public client's redirect shows `code#state` on a console page → paste it into the terminal | ✅ yes — token sent as `Authorization: Bearer` + `anthropic-beta: oauth-2025-04-20` |
+| `openai` | PKCE → loopback callback on the registered port `localhost:1455` | ✅ yes — JWT-shaped subscription tokens are routed to the Codex backend (`chatgpt.com/backend-api/codex/responses`, Responses API) with the stored `chatgpt-account-id`; API keys keep the `api.openai.com` chat-completions path (`crates/llm/src/codex.rs`) |
+| `github-copilot` | GitHub device-code grant → GitHub token is exchanged for the short-lived Copilot API token | ✅ yes — `github-copilot` provider calls `api.githubcopilot.com/chat/completions`; the Copilot token re-exchanges automatically near expiry |
+| `google` | PKCE → loopback callback on an ephemeral port | ✅ yes — `ya29.…` OAuth tokens are routed to the Code Assist endpoint (`cloudcode-pa.googleapis.com/v1internal`) with `loadCodeAssist`/`onboardUser` project discovery (`GOOGLE_CLOUD_PROJECT` overrides); `AIza…` API keys keep the `generativelanguage` route (`crates/llm/src/codeassist.rs`) |
+| `google-antigravity` | PKCE → loopback callback on the native hub port `127.0.0.1:51121` (`/oauth-callback`); Antigravity client id + scopes (`cclog`, `experimentsandconfigs`) | ✅ yes — tokens go to `daily-cloudcode-pa.googleapis.com` with `ideType: ANTIGRAVITY`. A loaded plugin may supply the hub User-Agent via `inference.user_agent`. Picker ids such as `gemini-3.1-pro` remap to hub wire ids (`gemini-3.1-pro-low`). Distinct from `google` (Gemini CLI / Code Assist sunset for consumer accounts). |
+| `xai` | PKCE → loopback callback on an ephemeral `127.0.0.1` port (`/callback`); public Grok Build client | ✅ yes — SuperGrok / X Premium tokens go to `cli-chat-proxy.grok.com`. Extra proxy headers (`X-XAI-Token-Auth`, …) come from the plugin's `inference` object. Console keys (`xai-…`) stay on `api.x.ai` (`crates/llm/src/providers/xai.rs`) |
 
 | Provider | Flow | Works for API calls |
 |----------|------|---------------------|
@@ -145,15 +151,16 @@ Checklist:
 2. **Install** the directory under the user or project plugins folder.
    Restart (or start a new `whycodes` process) so `load_from_dirs` registers
    it. `whycodes auth login <provider>` then lists it.
-3. **`docs/auth.md`** — add a row to the flow table above if this is a
-   documented extra.
+3. **`docs/auth.md`** — add a row to the flow table above if the LLM
+   crate already routes that provider name.
 
-The suite then verifies, for every loaded extras plugin: `validate()`
-invariants (https URLs, flow/redirect consistency, unique authorize extras,
-derived-exchange description), the authorize URL carries all required PKCE
-params and never the verifier, and the grant bodies match the declared
-`token_encoding` (including `client_secret` presence). CLI tests
-(`crates/cli/tests/cli_args.rs`) pin the `auth` surface offline.
+The suite then verifies, for synthetic fixture specs covering each flow
+kind: `validate()` invariants (https URLs, flow/redirect consistency,
+unique authorize extras, derived-exchange description), the authorize URL
+carries all required PKCE params and never the verifier, and the grant
+bodies match the declared `token_encoding` (including `client_secret`
+presence). CLI tests (`crates/cli/tests/cli_args.rs`) pin the `auth`
+surface offline.
 
 If the provider's *API calls* need a nonstandard endpoint or headers, that
 is a separate, explicit step: a provider module in `crates/llm` (see
