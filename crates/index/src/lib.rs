@@ -36,19 +36,11 @@ pub use store::{Entry, IndexStore};
 pub use walk::{WalkEntry, WalkStats, walk_root};
 use watch::{Change, ChangeKind, Command};
 
-/// Project-local WhyCodes dir: `.whycodes`, or legacy `.whycode` if that is
-/// the only one present. Duplicated from `whycodes-core::paths` because
-/// `index` is a leaf crate and must not depend on `core`.
+/// Project-local WhyCodes dir: `.whycodes`.
+/// Duplicated from `whycodes-core::paths` because `index` is a leaf crate
+/// and must not depend on `core`.
 fn project_meta_dir(working_dir: &Path) -> PathBuf {
-    let preferred = working_dir.join(".whycodes");
-    if preferred.exists() {
-        return preferred;
-    }
-    let legacy = working_dir.join(".whycode");
-    if legacy.exists() {
-        return legacy;
-    }
-    preferred
+    working_dir.join(".whycodes")
 }
 
 /// Default cap on indexed entries per root.
@@ -190,7 +182,7 @@ impl WorkspaceIndex {
     }
 
     /// Roots of the index: `[working_dir]` plus every directory listed in
-    /// `.whycodes/external_dirs_allowed` (legacy `.whycode/` is still read).
+    /// `.whycodes/external_dirs_allowed`.
     pub fn project_roots(working_dir: &Path) -> Vec<PathBuf> {
         let mut roots = vec![working_dir.to_path_buf()];
         let allow = project_meta_dir(working_dir).join("external_dirs_allowed");

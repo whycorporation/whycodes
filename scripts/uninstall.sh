@@ -6,7 +6,7 @@
 
 set -eu
 
-INSTALL_DIR="${WHYCODES_INSTALL_DIR:-${WHYCODE_INSTALL_DIR:-$HOME/.local/bin}}"
+INSTALL_DIR="${WHYCODES_INSTALL_DIR:-$HOME/.local/bin}"
 PURGE=0
 
 for arg in "$@"; do
@@ -17,13 +17,11 @@ for arg in "$@"; do
 done
 
 removed=0
-for name in whycodes whycode; do
-    if [ -e "$INSTALL_DIR/$name" ] || [ -L "$INSTALL_DIR/$name" ]; then
-        rm -f "$INSTALL_DIR/$name"
-        printf 'Removed %s\n' "$INSTALL_DIR/$name"
-        removed=1
-    fi
-done
+if [ -e "$INSTALL_DIR/whycodes" ] || [ -L "$INSTALL_DIR/whycodes" ]; then
+    rm -f "$INSTALL_DIR/whycodes"
+    printf 'Removed %s\n' "$INSTALL_DIR/whycodes"
+    removed=1
+fi
 if [ "$removed" -eq 0 ]; then
     printf 'No binary at %s\n' "$INSTALL_DIR/whycodes"
 fi
@@ -31,13 +29,9 @@ fi
 if [ "$PURGE" -eq 1 ]; then
     for dir in \
         "${XDG_CONFIG_HOME:-$HOME/.config}/whycodes" \
-        "${XDG_CONFIG_HOME:-$HOME/.config}/whycode" \
         "${XDG_DATA_HOME:-$HOME/.local/share}/whycodes" \
-        "${XDG_DATA_HOME:-$HOME/.local/share}/whycode" \
         "$HOME/Library/Application Support/com.whycorporation.whycodes" \
-        "$HOME/Library/Application Support/com.whycorporation.whycode" \
-        "$HOME/Library/Caches/com.whycorporation.whycodes" \
-        "$HOME/Library/Caches/com.whycorporation.whycode"
+        "$HOME/Library/Caches/com.whycorporation.whycodes"
     do
         if [ -d "$dir" ]; then
             rm -rf "$dir"

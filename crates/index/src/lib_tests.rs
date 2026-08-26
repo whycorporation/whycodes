@@ -156,27 +156,6 @@ fn project_roots_reads_allowlist() {
 }
 
 #[test]
-fn project_roots_reads_legacy_whycode_allowlist() {
-    let dir = fixture();
-    let ext = tempfile::TempDir::new().unwrap();
-    fs::create_dir_all(dir.path().join(".whycode")).unwrap();
-    fs::write(
-        dir.path().join(".whycode/external_dirs_allowed"),
-        format!("{}\n", ext.path().display()),
-    )
-    .unwrap();
-    let roots = WorkspaceIndex::project_roots(dir.path());
-    assert_eq!(roots.len(), 2);
-    assert_eq!(roots[0], dir.path());
-    assert_eq!(roots[1], ext.path());
-
-    // Preferred `.whycodes` wins even when the legacy dir is still present.
-    fs::create_dir_all(dir.path().join(".whycodes")).unwrap();
-    let roots = WorkspaceIndex::project_roots(dir.path());
-    assert_eq!(roots, vec![dir.path().to_path_buf()]);
-}
-
-#[test]
 fn empty_roots_is_safe() {
     let idx = WorkspaceIndex::start_with(vec![], IndexOptions::default());
     assert!(idx.roots().is_empty());

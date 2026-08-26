@@ -99,7 +99,6 @@ pub type TodoSink = Arc<dyn Fn(Vec<TodoItem>) + Send + Sync>;
 ///
 /// With a non-empty `session_id`: `.whycodes/todos/<id>.json`.
 /// Otherwise (tests, missing id): `.whycodes/todos.json`.
-/// Falls back to a legacy `.whycode/` directory when that is the only one present.
 pub fn todos_path(working_dir: &Path, session_id: Option<&str>) -> PathBuf {
     let dir = crate::paths::project_dir(working_dir);
     match session_id.map(str::trim).filter(|s| !s.is_empty()) {

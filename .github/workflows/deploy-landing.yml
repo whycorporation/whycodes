@@ -21,7 +21,7 @@ jobs:
       - name: Checkout landing
         uses: actions/checkout@v7
         with:
-          repository: whycorporation/whycode-landing
+          repository: whycorporation/whycodes-landing
           token: ${{ secrets.LANDING_GITHUB_TOKEN }}
           path: landing
 

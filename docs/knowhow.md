@@ -156,12 +156,12 @@ already the string `whycodes`.
 **Fix:** User-facing copy and crates/binary/env are `WhyCodes` / `whycodes` /
 `WHYCODES_*`. Clone, release, and raw.githubusercontent URLs are
 `whycorporation/whycodes`. Homepage is `https://why.codes`. Installers and
-Homebrew ship only `whycodes`. Legacy `.whycode/`, `WHYCODE_HOME`, and an
-already-installed `whycode` binary still resolve.
+Homebrew ship only `whycodes`. There is no `whycode` binary alias, env, or
+project-local directory.
 
 **Prevention:** Replace `whycode` only at identifier boundaries. Homebrew
 class = formula filename, homepage = `https://why.codes`. Do not re-add a
-`whycode` install alias.
+`whycode` install alias, `WHYCODE_HOME`, or `.whycode/` fallback.
 
 ### 2026-08-26 — stream decode errors need JSONL at the chunk site
 

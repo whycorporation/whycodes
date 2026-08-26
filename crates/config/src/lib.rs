@@ -1187,7 +1187,7 @@ impl Config {
     /// Load config using priority-based layering:
     /// 1. Built-in defaults
     /// 2. Global config (~/.config/whycodes/config.toml)
-    /// 3. Project config (`<project>/.whycodes/config.toml`, or `.whycode/` if that is the only one)
+    /// 3. Project config (`<project>/.whycodes/config.toml`)
     /// 4. Environment variables (WHYCODES_*)
     ///
     /// Returns the merged configuration.
@@ -1722,7 +1722,7 @@ impl Config {
 
     /// Load custom commands from markdown files (OpenCode paths adapted):
     /// - global: `~/.config/.../commands/*.md`
-    /// - project: `<project>/.whycodes/commands/*.md` (legacy `.whycode/` is still read)
+    /// - project: `<project>/.whycodes/commands/*.md`
     pub fn load_command_files(&mut self, project_dir: &Path) {
         if let Ok(global_dir) = Self::default_path()
             && let Some(parent) = global_dir.parent()
