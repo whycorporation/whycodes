@@ -3035,19 +3035,11 @@ async fn apply_auth_flow_event(
                 let already_on = *provider == p;
                 if !already_on {
                     let m = whycodes_auth::providers::suggested_models(&p)
-                        .first()
-                        .copied()
-                        .unwrap_or("");
+                        .into_iter()
+                        .next()
+                        .unwrap_or_default();
                     if !m.is_empty() {
-                        apply_model_choice(
-                            app,
-                            provider,
-                            model,
-                            api_key,
-                            p.clone(),
-                            m.to_string(),
-                            config,
-                        );
+                        apply_model_choice(app, provider, model, api_key, p.clone(), m, config);
                     }
                 }
                 if let Ok(dir) = Config::data_dir()
@@ -4616,13 +4608,13 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 let mut rows = Vec::new();
                 if let Ok(dir) = Config::data_dir() {
                     let store = whycodes_auth::TokenStore::new(&dir);
-                    for name in whycodes_auth::OAUTH_PROVIDERS {
-                        let label = whycodes_auth::providers::spec_for(name)
+                    for name in whycodes_auth::oauth_providers() {
+                        let label = whycodes_auth::providers::spec_for(&name)
                             .map(|s| s.label)
-                            .unwrap_or(name);
-                        let connected = store.get(name).ok().flatten().is_some();
+                            .unwrap_or_else(|_| name.clone());
+                        let connected = store.get(&name).ok().flatten().is_some();
                         rows.push(crate::app::LoginProviderRow {
-                            provider: (*name).to_string(),
+                            provider: name.clone(),
                             label: label.to_string(),
                             connected,
                         });
@@ -4635,10 +4627,14 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                     spawn_oauth_login(ctx.app, &ctx.auth_tx, dir, arg);
                 }
             } else {
-                ctx.app.status_message = format!(
-                    "OAuth login not available for `{arg}` ({})",
-                    whycodes_auth::OAUTH_PROVIDERS.join(", ")
-                );
+                ctx.app.status_message = format!("OAuth login not available for `{arg}` ({})", {
+                    let names = whycodes_auth::oauth_providers();
+                    if names.is_empty() {
+                        "install an auth plugin".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                });
             }
         }
         "/agent" => {

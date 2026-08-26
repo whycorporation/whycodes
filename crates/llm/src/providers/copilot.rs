@@ -19,13 +19,11 @@ pub struct CopilotProvider {
     name: String,
 }
 
-/// POST with the headers the Copilot API expects: bearer token plus the
-/// editor identity pair it uses for client gating.
+/// POST with bearer auth. Extra editor-identity headers come from a loaded
+/// Copilot auth plugin (`inference.headers`); core traffic is WhyCodes.
 fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
-    crate::client_identity::post(url)
+    crate::client_identity::post_for_provider(url, "github-copilot")
         .header("Authorization", format!("Bearer {api_key}"))
-        .header("Editor-Version", "vscode/1.95.0")
-        .header("Copilot-Integration-Id", "vscode-chat")
 }
 
 impl CopilotProvider {

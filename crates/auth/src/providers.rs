@@ -1,29 +1,7 @@
-//! Per-provider OAuth specifications, login flows, and transparent refresh.
+//! Generic OAuth login flows and transparent refresh.
 //!
-//! The flows reuse the public, pre-registered OAuth client ids that
-//! first-party and community terminal agents already ship (Claude Code,
-//! Codex CLI, Gemini CLI, VS Code's GitHub client, Grok Build). whycodes
-//! cannot register its own client for these providers, so subscription
-//! login rides on the same identifiers a user's first-party CLI would use.
-//!
-//! Flow shape per provider:
-//! - `anthropic` — PKCE, browser. The public Claude client's registered
-//!   redirect is a console page that displays `code#state`; the user pastes
-//!   it back into the terminal.
-//! - `openai` — PKCE, browser → loopback callback on the fixed port the
-//!   Codex client has registered (`localhost:1455/auth/callback`).
-//! - `google` — PKCE, browser → loopback callback on an ephemeral port
-//!   (Google permits any loopback port for installed-app clients).
-//! - `github-copilot` — GitHub device-code flow (the only grant GitHub
-//!   offers this client), then the GitHub token is exchanged for the
-//!   short-lived Copilot API token.
-//! - `xai` — PKCE, browser → loopback callback on an ephemeral
-//!   `127.0.0.1` port (the public Grok Build client is registered that
-//!   way per RFC 8252). SuperGrok / X Premium tokens go to `api.x.ai`.
-//!
-//! Security: tokens are printed nowhere. URLs contain only the PKCE
-//! challenge (never the verifier). The verifier and tokens stay in memory
-//! or in the 0600 store.
+//! Provider client ids, redirect ports, and identity headers come from
+//! auth plugins (`crate::spec`). Built-in WhyCodes ships an empty registry.
 
 use std::io::{BufRead, Write as _};
 use std::path::Path;
@@ -33,10 +11,10 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::OAUTH_PROVIDERS;
 use crate::error::{AuthError, Result};
 use crate::flow;
 use crate::pkce::Pkce;
+use crate::spec::{DerivedCredential, FlowKind, ProviderSpec, TokenEncoding};
 use crate::store::TokenStore;
 use crate::token::{OAuthToken, ProviderAuth};
 
@@ -49,210 +27,6 @@ const BROWSER_FLOW_TIMEOUT: Duration = if cfg!(test) {
 };
 /// Device-flow polls stop after the provider's own `expires_in` (15 min cap).
 const DEVICE_FLOW_MAX: Duration = Duration::from_secs(15 * 60);
-
-/// How a provider completes the browser step.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlowKind {
-    /// Browser → provider redirects to a loopback listener we host.
-    LoopbackPkce,
-    /// Browser shows `code#state` on a provider page; the user pastes it
-    /// back (used when the public client's registered redirect is fixed and
-    /// is not a loopback address).
-    PasteCodePkce,
-    /// GitHub device-code grant (user enters a short code on github.com).
-    DeviceCode,
-}
-
-/// How the token endpoint wants grant payloads encoded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TokenEncoding {
-    /// `application/x-www-form-urlencoded` — the RFC 6749 standard.
-    Form,
-    /// `application/json` — Anthropic's token endpoint.
-    Json,
-}
-
-/// A provider whose API credential is *derived* from the OAuth token by a
-/// second exchange (GitHub OAuth token → short-lived Copilot API token).
-/// Everything the exchange needs is described here so the flow code stays
-/// provider-agnostic.
-#[derive(Clone, Copy, Debug)]
-pub struct DerivedCredential {
-    /// Exchange endpoint, called as GET with the OAuth token.
-    pub url: &'static str,
-    /// Authorization header scheme for the exchange: "token" (GitHub) or
-    /// "Bearer".
-    pub auth_scheme: &'static str,
-    /// Extra request headers (client gating, e.g. Editor-Version).
-    pub headers: &'static [(&'static str, &'static str)],
-}
-
-/// Static description of one provider's OAuth endpoints.
-///
-/// Adding a provider is *only* adding a literal here — no code branches
-/// elsewhere. `validate()` (run by the conformance tests) rejects malformed
-/// specs.
-pub struct ProviderSpec {
-    pub name: &'static str,
-    pub label: &'static str,
-    pub flow: FlowKind,
-    pub client_id: &'static str,
-    /// Installed-app client secret where the provider requires one (Google).
-    /// These are public by design — they ship in plaintext in the
-    /// first-party open-source CLIs.
-    pub client_secret: Option<&'static str>,
-    pub authorize_url: &'static str,
-    pub token_url: &'static str,
-    pub scopes: &'static str,
-    /// Grant encoding for `token_url`.
-    pub token_encoding: TokenEncoding,
-    /// Fixed redirect for flows whose client has one registered
-    /// (`PasteCodePkce`). Loopback flows construct theirs from the bound
-    /// port, so this stays `None` there.
-    pub redirect_uri: Option<&'static str>,
-    /// Fixed loopback port when the registered redirect demands one
-    /// (OpenAI). `None` → bind an ephemeral port.
-    pub loopback_port: Option<u16>,
-    /// Host used in the loopback redirect URI. `None` → `localhost`.
-    /// xAI's public client is registered for `127.0.0.1` (RFC 8252).
-    pub loopback_host: Option<&'static str>,
-    /// Path the loopback listener answers on.
-    pub callback_path: &'static str,
-    /// Extra authorize-url query pairs (provider-specific switches).
-    pub extra_authorize: &'static [(&'static str, &'static str)],
-    /// Set when the API credential is derived from the OAuth token by a
-    /// second exchange instead of being the access token itself.
-    pub derived: Option<DerivedCredential>,
-}
-
-/// Look up the OAuth spec for a provider name.
-pub fn spec_for(provider: &str) -> Result<ProviderSpec> {
-    match provider {
-        // Public Claude Code client. The registered redirect is the console
-        // page that displays the code — hence the paste flow.
-        "anthropic" => Ok(ProviderSpec {
-            name: "anthropic",
-            label: "Anthropic (Claude Pro/Max)",
-            flow: FlowKind::PasteCodePkce,
-            client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-            client_secret: None,
-            authorize_url: "https://claude.ai/oauth/authorize",
-            token_url: "https://console.anthropic.com/v1/oauth/token",
-            scopes: "org:create_api_key user:profile user:inference",
-            token_encoding: TokenEncoding::Json,
-            redirect_uri: Some("https://console.anthropic.com/oauth/code/callback"),
-            loopback_port: None,
-            loopback_host: None,
-            callback_path: "",
-            extra_authorize: &[("code", "true")],
-            derived: None,
-        }),
-        // Public Codex CLI client. Redirect is registered as
-        // http://localhost:1455/auth/callback — the port is not optional.
-        "openai" => Ok(ProviderSpec {
-            name: "openai",
-            label: "OpenAI (ChatGPT Plus/Pro)",
-            flow: FlowKind::LoopbackPkce,
-            client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
-            client_secret: None,
-            authorize_url: "https://auth.openai.com/oauth/authorize",
-            token_url: "https://auth.openai.com/oauth/token",
-            scopes: "openid profile email offline_access",
-            token_encoding: TokenEncoding::Form,
-            redirect_uri: None,
-            loopback_port: Some(1455),
-            loopback_host: None,
-            callback_path: "/auth/callback",
-            extra_authorize: &[
-                ("id_token_add_organizations", "true"),
-                ("codex_cli_simplified_flow", "true"),
-            ],
-            derived: None,
-        }),
-        // Public Gemini CLI installed-app client. Any loopback port works.
-        "google" => Ok(ProviderSpec {
-            name: "google",
-            label: "Google (Gemini)",
-            flow: FlowKind::LoopbackPkce,
-            client_id: "REDACTED_GEMINI_CLI_CLIENT_ID",
-            client_secret: Some("REDACTED_GEMINI_CLI_CLIENT_SECRET"),
-            authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
-            token_url: "https://oauth2.googleapis.com/token",
-            scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
-            token_encoding: TokenEncoding::Form,
-            redirect_uri: None,
-            loopback_port: None,
-            loopback_host: None,
-            callback_path: "/oauth2callback",
-            extra_authorize: &[("access_type", "offline"), ("prompt", "consent")],
-            derived: None,
-        }),
-        // Public VS Code GitHub client (device flow enabled). Copilot API
-        // access comes from exchanging the GitHub token afterwards.
-        "github-copilot" => Ok(ProviderSpec {
-            name: "github-copilot",
-            label: "GitHub Copilot",
-            flow: FlowKind::DeviceCode,
-            client_id: "Iv1.b507a08c87ecfe98",
-            client_secret: None,
-            authorize_url: "https://github.com/login/device/code",
-            token_url: "https://github.com/login/oauth/access_token",
-            scopes: "read:user",
-            token_encoding: TokenEncoding::Form,
-            redirect_uri: None,
-            loopback_port: None,
-            loopback_host: None,
-            callback_path: "",
-            extra_authorize: &[],
-            derived: Some(DerivedCredential {
-                url: "https://api.github.com/copilot_internal/v2/token",
-                auth_scheme: "token",
-                headers: &[("Editor-Version", "vscode/1.95.0")],
-            }),
-        }),
-        // Public Grok Build client. Redirect is loopback
-        // `http://127.0.0.1/callback` (port-agnostic per RFC 8252).
-        "xai" => Ok(ProviderSpec {
-            name: "xai",
-            label: "xAI (Grok / SuperGrok)",
-            flow: FlowKind::LoopbackPkce,
-            client_id: "b1a00492-073a-47ea-816f-4c329264a828",
-            client_secret: None,
-            authorize_url: "https://auth.x.ai/oauth2/authorize",
-            token_url: "https://auth.x.ai/oauth2/token",
-            scopes: "openid profile email offline_access grok-cli:access api:access",
-            token_encoding: TokenEncoding::Form,
-            redirect_uri: None,
-            loopback_port: None,
-            loopback_host: Some("127.0.0.1"),
-            callback_path: "/callback",
-            extra_authorize: &[("referrer", "whycodes")],
-            derived: None,
-        }),
-        "google-antigravity" => Ok(ProviderSpec {
-            name: "google-antigravity",
-            label: "Antigravity (Gemini 3, Claude, GPT-OSS)",
-            flow: FlowKind::LoopbackPkce,
-            client_id: "REDACTED_ANTIGRAVITY_CLIENT_ID",
-            client_secret: Some("REDACTED_ANTIGRAVITY_CLIENT_SECRET"),
-            authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
-            token_url: "https://oauth2.googleapis.com/token",
-            // Native Antigravity also requests `cclog` + `experimentsandconfigs`.
-            // Without them `loadCodeAssist` classifies the session as Gemini
-            // Code Assist (sunset for consumer accounts on 2026-06-18) and
-            // returns "This client is no longer supported".
-            scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs",
-            token_encoding: TokenEncoding::Form,
-            redirect_uri: None,
-            loopback_port: Some(51121),
-            loopback_host: Some("127.0.0.1"),
-            callback_path: "/oauth-callback",
-            extra_authorize: &[("access_type", "offline"), ("prompt", "consent")],
-            derived: None,
-        }),
-        other => Err(AuthError::UnsupportedProvider(other.to_string())),
-    }
-}
 
 /// User-interaction hooks for the login flows. The CLI implements this
 /// with stdout/stdin ([`CliLoginUi`]); the TUI drives it from status lines
@@ -368,7 +142,7 @@ async fn login_with_spec<U: LoginUi>(
             FlowKind::DeviceCode => device_login(spec, open_browser, ui).await?,
         }
     };
-    persist_token(store, spec.name, "oauth", &token)?;
+    persist_token(store, spec.name.as_str(), "oauth", &token)?;
     Ok(ProviderAuth {
         method: "oauth".to_string(),
         token,
@@ -384,7 +158,7 @@ async fn login_with_spec<U: LoginUi>(
 pub async fn access_token(provider: &str, data_dir: &Path) -> Option<String> {
     let spec = spec_for(provider).ok()?;
     let store = TokenStore::new(data_dir);
-    let auth = store.get(spec.name).ok()??;
+    let auth = store.get(&spec.name).ok()??;
     let token = ensure_fresh(&spec, &store, &auth.method, auth.token)
         .await
         .ok()?;
@@ -409,7 +183,7 @@ pub async fn force_refresh(provider: &str, data_dir: &Path) -> Option<String> {
 
 async fn force_refresh_with_spec(spec: &ProviderSpec, data_dir: &Path) -> Option<String> {
     let store = TokenStore::new(data_dir);
-    let auth = store.get(spec.name).ok()??;
+    let auth = store.get(&spec.name).ok()??;
     let method = auth.method.clone();
     let token = force_fresh(spec, &store, &method, auth.token).await.ok()?;
     usable_token(spec, &token)
@@ -424,7 +198,7 @@ async fn force_fresh(
 ) -> Result<OAuthToken> {
     if spec.derived.is_some() {
         tracing::debug!(
-            provider = spec.name,
+            provider = %spec.name,
             "derived API token rejected; forcing re-exchange"
         );
         return reexchange_derived(spec, store, method, token).await;
@@ -434,13 +208,13 @@ async fn force_fresh(
         return Err(AuthError::NotLoggedIn(spec.name.to_string()));
     };
     tracing::debug!(
-        provider = spec.name,
+        provider = %spec.name,
         "OAuth credential rejected; forcing refresh"
     );
     let refreshed = refresh_grant(spec, &refresh)
         .await
         .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
-    persist_token(store, spec.name, method, &refreshed)?;
+    persist_token(store, spec.name.as_str(), method, &refreshed)?;
     Ok(refreshed)
 }
 
@@ -463,13 +237,13 @@ async fn ensure_fresh(
         return Err(AuthError::NotLoggedIn(spec.name.to_string()));
     };
     tracing::debug!(
-        provider = spec.name,
+        provider = %spec.name,
         "OAuth access token expired; refreshing"
     );
     let refreshed = refresh_grant(spec, &refresh)
         .await
         .map_err(|e| AuthError::Refresh(spec.name.to_string(), e.to_string()))?;
-    persist_token(store, spec.name, method, &refreshed)?;
+    persist_token(store, spec.name.as_str(), method, &refreshed)?;
     Ok(refreshed)
 }
 
@@ -518,19 +292,19 @@ async fn loopback_login(
         None => flow::bind_loopback()?.0,
     };
     let port = listener.local_addr().map_err(AuthError::Io)?.port();
-    let host = spec.loopback_host.unwrap_or("localhost");
+    let host = spec.loopback_host.as_deref().unwrap_or("localhost");
     let redirect_uri = format!("http://{host}:{port}{}", spec.callback_path);
     let url = flow::authorize_url(
-        spec.authorize_url,
-        spec.client_id,
+        &spec.authorize_url,
+        &spec.client_id,
         &redirect_uri,
-        spec.scopes,
+        &spec.scopes,
         &pkce,
-        spec.extra_authorize,
+        &spec.extra_authorize,
     );
 
     let opened = maybe_open_browser(open_browser, &url);
-    ui.show_sign_in(spec.label, &url, opened);
+    ui.show_sign_in(&spec.label, &url, opened);
     ui.note("Waiting for the sign-in to complete…");
 
     let expected_state = pkce.state.clone();
@@ -555,23 +329,23 @@ async fn paste_code_login(
     let pkce = Pkce::new();
     // Paste flows exist because the registered redirect is a fixed provider
     // page (not loopback) — `validate()` guarantees it is set.
-    let redirect_uri = spec.redirect_uri.ok_or_else(|| {
+    let redirect_uri = spec.redirect_uri.as_deref().ok_or_else(|| {
         AuthError::Provider(format!(
             "{}: paste-code flow needs a registered redirect_uri in the spec",
             spec.name
         ))
     })?;
     let url = flow::authorize_url(
-        spec.authorize_url,
-        spec.client_id,
+        &spec.authorize_url,
+        &spec.client_id,
         redirect_uri,
-        spec.scopes,
+        &spec.scopes,
         &pkce,
-        spec.extra_authorize,
+        &spec.extra_authorize,
     );
 
     let opened = maybe_open_browser(open_browser, &url);
-    ui.show_sign_in(spec.label, &url, opened);
+    ui.show_sign_in(&spec.label, &url, opened);
     let pasted = ui.prompt_pasted_code().await?;
     let pasted = pasted.trim();
     if pasted.is_empty() {
@@ -602,9 +376,12 @@ async fn device_login(
 ) -> Result<OAuthToken> {
     let client = http_client()?;
     let resp = client
-        .post(spec.authorize_url)
+        .post(&spec.authorize_url)
         .header("Accept", "application/json")
-        .form(&[("client_id", spec.client_id), ("scope", spec.scopes)])
+        .form(&[
+            ("client_id", spec.client_id.as_str()),
+            ("scope", spec.scopes.as_str()),
+        ])
         .send()
         .await?
         .error_for_status()
@@ -637,10 +414,10 @@ async fn device_login(
         }
         tokio::time::sleep(Duration::from_secs(interval)).await;
         let poll = client
-            .post(spec.token_url)
+            .post(&spec.token_url)
             .header("Accept", "application/json")
             .form(&[
-                ("client_id", spec.client_id),
+                ("client_id", spec.client_id.as_str()),
                 ("device_code", device_code.as_str()),
                 ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ])
@@ -682,9 +459,9 @@ async fn device_login(
         expires_at: None, // GitHub OAuth tokens from the device flow do not expire
         extra: Default::default(),
     };
-    if let Some(derived) = spec.derived {
+    if let Some(derived) = spec.derived.as_ref() {
         let (derived_token, derived_expires) =
-            exchange_derived_token(&derived, &token.access_token).await?;
+            exchange_derived_token(derived, &token.access_token).await?;
         set_derived_extra(&mut token, &derived_token, derived_expires);
     }
     Ok(token)
@@ -697,14 +474,14 @@ async fn exchange_derived_token(
     access_token: &str,
 ) -> Result<(String, DateTime<Utc>)> {
     let mut req = http_client()?
-        .get(derived.url)
+        .get(&derived.url)
         .header("Accept", "application/json")
         .header(
             "Authorization",
             format!("{} {access_token}", derived.auth_scheme),
         );
-    for (k, v) in derived.headers {
-        req = req.header(*k, *v);
+    for (k, v) in &derived.headers {
+        req = req.header(k.as_str(), v.as_str());
     }
     let resp = req.send().await?;
     let status = resp.status();
@@ -778,10 +555,11 @@ async fn reexchange_derived(
 ) -> Result<OAuthToken> {
     let derived = spec
         .derived
+        .as_ref()
         .ok_or_else(|| AuthError::Provider(format!("{}: no derived credential spec", spec.name)))?;
-    let (derived_token, expires) = exchange_derived_token(&derived, &token.access_token).await?;
+    let (derived_token, expires) = exchange_derived_token(derived, &token.access_token).await?;
     set_derived_extra(&mut token, &derived_token, expires);
-    persist_token(store, spec.name, method, &token)?;
+    persist_token(store, spec.name.as_str(), method, &token)?;
     Ok(token)
 }
 
@@ -833,7 +611,7 @@ fn code_exchange_body(
                 ("redirect_uri", redirect_uri.to_string()),
                 ("code_verifier", pkce.verifier.clone()),
             ];
-            if let Some(secret) = spec.client_secret {
+            if let Some(secret) = spec.client_secret.as_deref() {
                 form.push(("client_secret", secret.to_string()));
             }
             GrantBody::Form(form)
@@ -855,7 +633,7 @@ fn refresh_body(spec: &ProviderSpec, refresh_token: &str) -> GrantBody {
                 ("client_id", spec.client_id.to_string()),
                 ("refresh_token", refresh_token.to_string()),
             ];
-            if let Some(secret) = spec.client_secret {
+            if let Some(secret) = spec.client_secret.as_deref() {
                 form.push(("client_secret", secret.to_string()));
             }
             GrantBody::Form(form)
@@ -865,7 +643,7 @@ fn refresh_body(spec: &ProviderSpec, refresh_token: &str) -> GrantBody {
 
 async fn send_grant(spec: &ProviderSpec, body: GrantBody) -> Result<OAuthToken> {
     let client = http_client()?;
-    let req = client.post(spec.token_url);
+    let req = client.post(&spec.token_url);
     let resp = match body {
         GrantBody::Json(json) => req.json(&json).send().await?,
         GrantBody::Form(form) => {
@@ -962,194 +740,7 @@ fn http_client() -> Result<reqwest::Client> {
         .map_err(AuthError::Http)
 }
 
-/// True when `provider` has an OAuth flow at all (for CLI validation).
-pub fn supports_oauth(provider: &str) -> bool {
-    OAUTH_PROVIDERS.contains(&provider)
-}
-
-/// Models worth offering in pickers for a subscription (OAuth) login.
-///
-/// These backends do not expose a freely listable `/models` endpoint for
-/// subscription credentials (Code Assist is RPC-style, Codex is a Responses
-/// API), so pickers cannot discover them live and suggest these instead.
-/// Verified against vendor model docs on 2026-08; re-check when a vendor
-/// announces a generation bump.
-pub fn suggested_models(provider: &str) -> &'static [&'static str] {
-    match provider {
-        "anthropic" => &["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"],
-        "openai" => &["gpt-5.6", "gpt-5.6-terra", "gpt-5.6-luna"],
-        "github-copilot" => &["gpt-4.1", "gpt-4o"],
-        "google" => &["gemini-3.6-flash", "gemini-3.5-flash"],
-        "xai" => &["grok-4.6", "grok-4.5", "grok-build-0.1"],
-        "google-antigravity" => &[
-            "gemini-3.1-pro-low",
-            "gemini-3.5-flash-low",
-            "claude-sonnet-4-6",
-        ],
-        _ => &[],
-    }
-}
-
-/// Validate a provider spec against the invariants the flow code relies on.
-/// Returns the list of violations (empty = valid). Driven by the
-/// conformance tests so that adding a provider is *only* adding a spec
-/// literal — a malformed literal fails the test suite, not production.
-pub fn validate(spec: &ProviderSpec) -> Vec<String> {
-    fn check(issues: &mut Vec<String>, cond: bool, msg: impl Into<String>) {
-        if !cond {
-            issues.push(msg.into());
-        }
-    }
-
-    let mut issues: Vec<String> = Vec::new();
-
-    check(&mut issues, !spec.name.is_empty(), "name is empty");
-    check(
-        &mut issues,
-        OAUTH_PROVIDERS.contains(&spec.name),
-        format!("{}: missing from OAUTH_PROVIDERS in lib.rs", spec.name),
-    );
-    check(
-        &mut issues,
-        !spec.label.is_empty(),
-        format!("{}: label is empty", spec.name),
-    );
-    check(
-        &mut issues,
-        !spec.client_id.is_empty() && !spec.client_id.contains(char::is_whitespace),
-        format!("{}: client_id is empty or contains whitespace", spec.name),
-    );
-    for (field, url) in [
-        ("authorize_url", spec.authorize_url),
-        ("token_url", spec.token_url),
-    ] {
-        let ok = matches!(url::Url::parse(url), Ok(u) if u.scheme() == "https");
-        check(
-            &mut issues,
-            ok,
-            format!("{}: {field} must be an absolute https URL", spec.name),
-        );
-    }
-    check(
-        &mut issues,
-        !spec.scopes.trim().is_empty(),
-        format!("{}: scopes are empty", spec.name),
-    );
-    if let Some(secret) = spec.client_secret {
-        check(
-            &mut issues,
-            !secret.is_empty(),
-            format!("{}: client_secret is Some(\"\")", spec.name),
-        );
-    }
-
-    // Flow-specific invariants.
-    match spec.flow {
-        FlowKind::LoopbackPkce => {
-            check(
-                &mut issues,
-                spec.callback_path.starts_with('/'),
-                format!(
-                    "{}: loopback flow needs callback_path starting with '/'",
-                    spec.name
-                ),
-            );
-            check(
-                &mut issues,
-                spec.redirect_uri.is_none(),
-                format!(
-                    "{}: loopback flow builds its redirect from the bound port; set redirect_uri = None",
-                    spec.name
-                ),
-            );
-            if let Some(host) = spec.loopback_host {
-                check(
-                    &mut issues,
-                    host == "localhost" || host == "127.0.0.1",
-                    format!(
-                        "{}: loopback_host must be \"localhost\" or \"127.0.0.1\"",
-                        spec.name
-                    ),
-                );
-            }
-        }
-        FlowKind::PasteCodePkce => {
-            let ok = match spec.redirect_uri {
-                Some(uri) => matches!(url::Url::parse(uri), Ok(u) if u.scheme() == "https"),
-                None => false,
-            };
-            check(
-                &mut issues,
-                ok,
-                format!(
-                    "{}: paste-code flow needs a registered https redirect_uri",
-                    spec.name
-                ),
-            );
-        }
-        FlowKind::DeviceCode => {
-            check(
-                &mut issues,
-                spec.redirect_uri.is_none() && spec.callback_path.is_empty(),
-                format!(
-                    "{}: device flow has no redirect; leave redirect_uri None and callback_path empty",
-                    spec.name
-                ),
-            );
-        }
-    }
-    if spec.flow != FlowKind::LoopbackPkce {
-        check(
-            &mut issues,
-            spec.loopback_host.is_none(),
-            format!("{}: loopback_host is only for LoopbackPkce", spec.name),
-        );
-    }
-
-    // Authorize-url extras: no empty or duplicate keys.
-    for (i, (k, v)) in spec.extra_authorize.iter().enumerate() {
-        check(
-            &mut issues,
-            !k.is_empty() && !v.is_empty(),
-            format!(
-                "{}: extra_authorize[{i}] has an empty key or value",
-                spec.name
-            ),
-        );
-        check(
-            &mut issues,
-            !spec.extra_authorize[..i].iter().any(|(ek, _)| ek == k),
-            format!("{}: duplicate extra_authorize key `{k}`", spec.name),
-        );
-    }
-
-    // Derived credential exchange description.
-    if let Some(d) = spec.derived {
-        let ok = matches!(url::Url::parse(d.url), Ok(u) if u.scheme() == "https");
-        check(
-            &mut issues,
-            ok,
-            format!("{}: derived.url must be an absolute https URL", spec.name),
-        );
-        check(
-            &mut issues,
-            matches!(d.auth_scheme, "token" | "Bearer"),
-            format!(
-                "{}: derived.auth_scheme must be \"token\" or \"Bearer\"",
-                spec.name
-            ),
-        );
-        for (k, v) in d.headers {
-            check(
-                &mut issues,
-                !k.is_empty() && !v.is_empty(),
-                format!("{}: derived header has an empty key or value", spec.name),
-            );
-        }
-    }
-
-    issues
-}
+pub use crate::spec::{spec_for, suggested_models, supports_oauth, validate};
 
 #[cfg(test)]
 #[path = "providers_tests.rs"]

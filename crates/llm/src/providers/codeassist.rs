@@ -9,7 +9,8 @@
 //!
 //! Antigravity subscription tokens (`whycodes auth login google-antigravity`)
 //! use the same RPC shape against `daily-cloudcode-pa.googleapis.com` with
-//! the native hub User-Agent and `{ ideType: ANTIGRAVITY }` metadata.
+//! `{ ideType: ANTIGRAVITY }` metadata. The hub User-Agent is not hardcoded;
+//! a loaded auth plugin may supply one via `inference.user_agent`.
 //!
 //! Code Assist needs a Cloud project id. Resolution order:
 //! stored OAuth extra `project_id` → `GOOGLE_CLOUD_PROJECT` env →
@@ -32,28 +33,23 @@ const ANTIGRAVITY_BASES: &[&str] = &[
     "https://daily-cloudcode-pa.googleapis.com/v1internal",
     "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal",
 ];
-const ANTIGRAVITY_USER_AGENT: &str =
-    "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)";
 
 #[derive(Clone, Copy)]
 struct Profile {
     oauth_provider: &'static str,
     bases: &'static [&'static str],
-    user_agent: Option<&'static str>,
     antigravity: bool,
 }
 
 const GEMINI_CLI: Profile = Profile {
     oauth_provider: "google",
     bases: GEMINI_CLI_BASES,
-    user_agent: None,
     antigravity: false,
 };
 
 const ANTIGRAVITY: Profile = Profile {
     oauth_provider: "google-antigravity",
     bases: ANTIGRAVITY_BASES,
-    user_agent: Some(ANTIGRAVITY_USER_AGENT),
     antigravity: true,
 };
 
@@ -116,12 +112,10 @@ fn authorize(
     req: reqwest::RequestBuilder,
     key: &str,
 ) -> reqwest::RequestBuilder {
-    let req = req.header("Authorization", format!("Bearer {key}"));
-    if let Some(ua) = profile.user_agent {
-        req.header("User-Agent", ua)
-    } else {
-        crate::client_identity::with_identity(req)
-    }
+    crate::client_identity::with_plugin_identity(
+        req.header("Authorization", format!("Bearer {key}")),
+        profile.oauth_provider,
+    )
 }
 
 fn failover_http(status: u16) -> bool {

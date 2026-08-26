@@ -19,7 +19,7 @@ Two rules keep the graph acyclic:
 |---|---|---|
 | Foundations | `core` | Leaf types, `Tool` trait, sandbox settings, errors, logging, `paths` (`WHYCODES_HOME`) |
 | | `command-risk` | Shell command risk classification (pure, no I/O) |
-| | `auth` | OAuth: PKCE / device code, token store |
+| | `auth` | OAuth engine + token store; specs from auth plugins |
 | | `config` | Config load / merge / validate |
 | | `storage` | SQLite for sessions and memories |
 | | `format` | Markdown, highlighting, diffs, tables |
@@ -33,7 +33,7 @@ Two rules keep the graph acyclic:
 | Services | `llm` | LLM providers |
 | | `session` | Conversation state, compaction, undo/redo |
 | | `memory` | `MEMORY.md`, semantic recall, code index |
-| | `plugin` | Shell plugin loader |
+| | `plugin` | Shell + auth plugin discovery (`plugin.json`) |
 | | `tools` | Tool system and built-ins |
 | | `mcp` | MCP client; tools bind as `{server}_{tool}` |
 | Orchestration | `agent` | Agent loop, subagents, swarm, `AGENTS.md` |

@@ -1,0 +1,226 @@
+//! Auth plugins: `plugin.json` with `"kind": "auth"` registers an OAuth spec.
+//!
+//! WhyCodes does not ship subscription-login plugins in the default install.
+//! Drop a plugin directory into the user or project plugins folder (or pass
+//! extra dirs to [`load_from_dirs`]) to enable `whycodes auth login`.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+
+use crate::error::{AuthError, Result};
+use crate::spec::{
+    DerivedCredential, FlowKind, InferenceIdentity, ProviderSpec, TokenEncoding, register_spec,
+    validate,
+};
+
+/// On-disk auth plugin. Shell plugins use the same filename; we only accept
+/// objects with `"kind": "auth"` (and an `auth` object).
+#[derive(Debug, Deserialize)]
+struct AuthPluginFile {
+    #[serde(default)]
+    kind: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    auth: Option<AuthPluginBody>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuthPluginBody {
+    provider: String,
+    #[serde(default)]
+    label: String,
+    flow: FlowKind,
+    client_id: String,
+    #[serde(default)]
+    client_secret: Option<String>,
+    authorize_url: String,
+    token_url: String,
+    scopes: String,
+    #[serde(default)]
+    token_encoding: TokenEncoding,
+    #[serde(default)]
+    redirect_uri: Option<String>,
+    #[serde(default)]
+    loopback_port: Option<u16>,
+    #[serde(default)]
+    loopback_host: Option<String>,
+    #[serde(default)]
+    callback_path: String,
+    #[serde(default)]
+    extra_authorize: HashMap<String, String>,
+    #[serde(default)]
+    derived: Option<DerivedFile>,
+    #[serde(default)]
+    suggested_models: Vec<String>,
+    #[serde(default)]
+    inference: Option<InferenceIdentity>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DerivedFile {
+    url: String,
+    #[serde(default = "default_auth_scheme")]
+    auth_scheme: String,
+    #[serde(default)]
+    headers: HashMap<String, String>,
+}
+
+fn default_auth_scheme() -> String {
+    "Bearer".into()
+}
+
+/// Parse one plugin JSON document into a spec. `kind` must be `auth`.
+pub fn spec_from_json(text: &str) -> Result<ProviderSpec> {
+    let file: AuthPluginFile = serde_json::from_str(text)
+        .map_err(|e| AuthError::TokenExchange(format!("auth plugin: {e}")))?;
+    if !file.kind.is_empty() && file.kind != "auth" {
+        return Err(AuthError::TokenExchange(format!(
+            "auth plugin: kind {:?} is not \"auth\"",
+            file.kind
+        )));
+    }
+    let body = file
+        .auth
+        .ok_or_else(|| AuthError::TokenExchange("auth plugin: missing \"auth\" object".into()))?;
+    let extra_authorize: Vec<(String, String)> = body.extra_authorize.into_iter().collect();
+    let derived = body.derived.map(|d| DerivedCredential {
+        url: d.url,
+        auth_scheme: d.auth_scheme,
+        headers: d.headers.into_iter().collect(),
+    });
+    let label = if body.label.is_empty() {
+        if file.name.is_empty() {
+            body.provider.clone()
+        } else {
+            file.name
+        }
+    } else {
+        body.label
+    };
+    Ok(ProviderSpec {
+        name: body.provider,
+        label,
+        flow: body.flow,
+        client_id: body.client_id,
+        client_secret: body.client_secret.filter(|s| !s.is_empty()),
+        authorize_url: body.authorize_url,
+        token_url: body.token_url,
+        scopes: body.scopes,
+        token_encoding: body.token_encoding,
+        redirect_uri: body.redirect_uri.filter(|s| !s.is_empty()),
+        loopback_port: body.loopback_port,
+        loopback_host: body.loopback_host.filter(|s| !s.is_empty()),
+        callback_path: body.callback_path,
+        extra_authorize,
+        derived,
+        suggested_models: body.suggested_models,
+        inference: body.inference,
+    })
+}
+
+/// Parse, validate, and register one plugin JSON document.
+pub fn register_from_json(text: &str) -> Result<String> {
+    let spec = spec_from_json(text)?;
+    let issues = validate(&spec);
+    if !issues.is_empty() {
+        return Err(AuthError::TokenExchange(format!(
+            "auth plugin `{}` invalid: {}",
+            spec.name,
+            issues.join("; ")
+        )));
+    }
+    let name = spec.name.clone();
+    register_spec(spec);
+    Ok(name)
+}
+
+/// Load every `plugin.json` / `manifest.json` under `dir` that looks like an
+/// auth plugin. Shell plugins (no `kind: auth`) are skipped. Returns how
+/// many specs were registered.
+pub fn load_dir(dir: &Path) -> usize {
+    let mut n = 0;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            n += load_dir(&path);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if name != "plugin.json" && name != "manifest.json" {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if !looks_like_auth_plugin(&text) {
+            continue;
+        }
+        match register_from_json(&text) {
+            Ok(provider) => {
+                tracing::info!(
+                    path = %path.display(),
+                    provider,
+                    "registered auth plugin"
+                );
+                n += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "auth plugin rejected"
+                );
+            }
+        }
+    }
+    n
+}
+
+fn looks_like_auth_plugin(text: &str) -> bool {
+    text.contains("\"kind\"") && text.contains("auth")
+}
+
+/// Load auth plugins from each existing directory. Later dirs override.
+pub fn load_from_dirs(dirs: &[PathBuf]) -> usize {
+    dirs.iter().map(|d| load_dir(d)).sum()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::spec::supports_oauth;
+
+    #[test]
+    fn rejects_shell_kind() {
+        let err = spec_from_json(r#"{"kind":"shell","name":"x","command":"echo"}"#).unwrap_err();
+        assert!(err.to_string().contains("kind"), "{err}");
+    }
+
+    #[test]
+    fn parses_device_flow() {
+        let json = r#"{
+            "kind": "auth",
+            "auth": {
+                "provider": "plugin-demo-device",
+                "label": "Demo",
+                "flow": "device-code",
+                "client_id": "abc",
+                "authorize_url": "https://example.com/device/code",
+                "token_url": "https://example.com/token",
+                "scopes": "read",
+                "suggested_models": ["m1"]
+            }
+        }"#;
+        let name = register_from_json(json).unwrap();
+        assert_eq!(name, "plugin-demo-device");
+        assert!(supports_oauth("plugin-demo-device"));
+    }
+}

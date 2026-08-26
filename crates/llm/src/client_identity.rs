@@ -1,7 +1,8 @@
 //! Client identity headers for LLM HTTP requests.
 //!
-//! Gateways (OmniRoute, OpenRouter, LiteLLM, etc.) use these to label traffic
-//! as coming from whycodes rather than a generic HTTP client.
+//! Core traffic identifies as WhyCodes. Auth plugins may attach extra
+//! inference headers (or a different User-Agent) when the user has
+//! installed them; the default binary never impersonates another product.
 
 use std::sync::OnceLock;
 
@@ -64,6 +65,38 @@ pub fn post(url: &str) -> RequestBuilder {
     with_identity(shared_client().post(url))
 }
 
+/// Identity for a named LLM provider.
+///
+/// With no auth plugin, this is the honest WhyCodes identity. A loaded
+/// plugin's `inference` object may replace the User-Agent and add headers
+/// (unofficial subscription plugins live outside the default install).
+pub fn with_plugin_identity(req: RequestBuilder, provider: &str) -> RequestBuilder {
+    match whycodes_auth::inference_identity(provider) {
+        Some(id)
+            if id.user_agent.as_deref().is_some_and(|s| !s.is_empty())
+                || !id.headers.is_empty() =>
+        {
+            let mut req = match id.user_agent.as_deref().filter(|s| !s.is_empty()) {
+                Some(ua) => req.header("User-Agent", ua),
+                None => req.header("User-Agent", USER_AGENT),
+            };
+            for (k, v) in id.headers {
+                if k.eq_ignore_ascii_case("user-agent") {
+                    continue;
+                }
+                req = req.header(k, v);
+            }
+            req
+        }
+        _ => with_identity(req),
+    }
+}
+
+/// POST with [`with_plugin_identity`] already applied.
+pub fn post_for_provider(url: &str, provider: &str) -> RequestBuilder {
+    with_plugin_identity(shared_client().post(url), provider)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,6 +129,11 @@ mod tests {
         // Clones are cheap and keep the pool warm.
         let _a = http_client();
         let _b = http_client();
+    }
+
+    #[test]
+    fn plugin_identity_falls_back_to_whycodes() {
+        let _ = with_plugin_identity(http_client().get("https://example.invalid/"), "no-such");
     }
 
     #[test]

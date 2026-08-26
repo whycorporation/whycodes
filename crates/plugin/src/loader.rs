@@ -21,6 +21,9 @@ pub struct PluginManifest {
     /// Reserved. Config `[hooks]` stay the hook path; marketplace hooks are out.
     #[serde(default)]
     pub hooks: Vec<String>,
+    /// `"auth"` registers an OAuth spec instead of a shell tool.
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,7 +121,8 @@ impl PluginManager {
         n
     }
 
-    /// Expand every loaded plugin into shell tool specs (skips those with no command).
+    /// Expand every loaded plugin into shell tool specs (skips auth plugins
+    /// and those with no command).
     pub fn shell_specs(&self) -> Vec<ShellPluginSpec> {
         self.plugins
             .iter()
@@ -147,6 +151,9 @@ impl Default for PluginManager {
 
 impl LoadedPlugin {
     pub fn shell_specs(&self) -> Vec<ShellPluginSpec> {
+        if self.manifest.kind.eq_ignore_ascii_case("auth") {
+            return Vec::new();
+        }
         let fallback = self
             .manifest
             .command
@@ -450,6 +457,7 @@ mod tests {
             command: command.map(str::to_string),
             tools: vec![],
             hooks: vec![],
+            kind: String::new(),
         }
     }
 
@@ -463,6 +471,7 @@ mod tests {
             command: Some("/bin/echo".into()),
             tools: vec![],
             hooks: vec!["reserved".into()],
+            kind: String::new(),
         });
         assert!(mgr.find("reg").is_some());
         assert!(mgr.find("missing").is_none());
@@ -558,6 +567,20 @@ mod tests {
         assert!(mgr.shell_specs().is_empty());
         assert!(inferred_command(&PathBuf::new()).is_none());
         assert!(inferred_command(tmp.path().join("none").as_path()).is_none());
+    }
+
+    #[test]
+    fn shell_specs_skip_auth_kind() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_plugin(
+            tmp.path(),
+            "oauth",
+            r#"{"kind":"auth","name":"oauth","command":"echo should-not-run","auth":{"provider":"demo"}}"#,
+        );
+        let mut mgr = PluginManager::new();
+        assert_eq!(mgr.discover_dir(tmp.path()), 1);
+        assert!(mgr.find("oauth").is_some());
+        assert!(mgr.shell_specs().is_empty());
     }
 
     #[test]

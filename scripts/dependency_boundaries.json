@@ -24,6 +24,7 @@
     "llm",
     "mcp",
     "memory",
+    "plugin",
     "protocol",
     "server",
     "session",

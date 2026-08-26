@@ -11,20 +11,21 @@
 //! the auth step and the chat provider agree on the account's project.
 
 use crate::error::{AuthError, Result};
+use crate::spec::inference_identity;
 use crate::token::OAuthToken;
 use serde_json::{Value, json};
 
 const BASE: &str = "https://daily-cloudcode-pa.googleapis.com/v1internal";
 
-/// User-Agent identifying as the native Antigravity client. Captured from the
-/// real 2.8.0 `antigravity/hub` release and pinned to that reference client's
-/// `os_type`/`arch` (darwin/arm64), independent of the host — the control plane
-/// gates on this header matching the reference, not the machine running whycodes.
-const ANTIGRAVITY_USER_AGENT: &str =
-    "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)";
-
 /// Canonical `extra` key used to persist a resolved Google Cloud project id.
 pub const PROJECT_ID_KEY: &str = "project_id";
+
+fn request_user_agent() -> String {
+    inference_identity("google-antigravity")
+        .and_then(|id| id.user_agent)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| concat!("whycodes/", env!("CARGO_PKG_VERSION")).to_string())
+}
 
 /// Client metadata the Code Assist service expects. The native Antigravity
 /// client sends only `ideType` — the extra `platform`/`pluginType` keys from
@@ -56,7 +57,7 @@ async fn send(
     let mut req = reqwest::Client::new()
         .request(method, &url)
         .header("Authorization", format!("Bearer {token}"))
-        .header("User-Agent", ANTIGRAVITY_USER_AGENT);
+        .header("User-Agent", request_user_agent());
     if let Some(body) = body {
         req = req.header("Content-Type", "application/json").json(body);
     }
@@ -299,10 +300,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_agent_matches_native_reference_client() {
-        assert_eq!(
-            ANTIGRAVITY_USER_AGENT,
-            "antigravity/hub/2.8.0 (aidev_client; os_type=darwin; arch=arm64; cl=963137146)"
+    fn user_agent_is_whycodes_without_plugin() {
+        let ua = request_user_agent();
+        assert!(
+            ua.starts_with("whycodes/"),
+            "core CCA traffic must not impersonate Antigravity without a plugin: {ua}"
         );
     }
 
