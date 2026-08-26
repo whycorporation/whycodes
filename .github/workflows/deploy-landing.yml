@@ -1,0 +1,48 @@
+# GitHub-hosted minutes are billed out. The 1Panel runner lives on this repo
+# (whycorporation/whycodes), so landing production deploys run here.
+name: Deploy landing
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [deploy-landing]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Cloudflare Workers
+    runs-on: self-hosted
+    defaults:
+      run:
+        working-directory: landing
+    steps:
+      - name: Checkout landing
+        uses: actions/checkout@v7
+        with:
+          repository: whycorporation/whycode-landing
+          token: ${{ secrets.LANDING_GITHUB_TOKEN }}
+          path: landing
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.18.0
+          package_json_file: landing/package.json
+
+      - name: Install node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: landing/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm deploy
