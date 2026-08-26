@@ -1,7 +1,7 @@
 //! Sticky todo panel under the header (Grok Build-style).
 //!
-//! Header is always one row (`▸`/`▾ Todos  done/total` plus a compact
-//! progress track). Click the header (or `t` in scrollback) to fold.
+//! Header is always one row (`▸`/`▾ Todos` plus a right-aligned
+//! `done/total pct%` track). Click the header (or `t` in scrollback) to fold.
 //! Finished items stay in the list so they can be reopened after the
 //! panel auto-collapses when everything is done.
 //!
@@ -136,27 +136,19 @@ fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16, side: u16) -> L
     let collapsed = is_collapsed(app);
     let all_done = all_terminal(&app.todos);
     let chevron = if collapsed { "\u{25b8} " } else { "\u{25be} " };
-    let counts = if all_done {
-        format!("{done}/{total} done")
-    } else {
-        format!("{done}/{total}")
-    };
-
     let mut chevron_style = Style::default().fg(palette.dim);
-    let mut label_style = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
-    let mut count_style = if all_done {
+    let label_style = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
+    let count_style = if all_done {
         Style::default()
             .fg(palette.success)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(palette.dim)
     };
+    // Hover brightens the chevron so the header still reads as clickable,
+    // but never underlines — a line under "Todos" fights the compact row.
     if app.todos_hit.hovered {
-        chevron_style = chevron_style
-            .fg(palette.fg)
-            .add_modifier(Modifier::UNDERLINED);
-        label_style = label_style.add_modifier(Modifier::UNDERLINED);
-        count_style = count_style.add_modifier(Modifier::UNDERLINED);
+        chevron_style = chevron_style.fg(palette.fg);
     }
 
     let mut spans = Vec::new();
@@ -165,18 +157,16 @@ fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16, side: u16) -> L
     }
     spans.push(Span::styled(chevron, chevron_style));
     spans.push(Span::styled("Todos", label_style));
-    spans.push(Span::styled(format!("  {counts}"), count_style));
 
     let used: usize = spans.iter().map(|s| s.content.width()).sum();
     let bar_w = HEADER_BAR_CELLS;
     // Text (and the right-aligned track) stay inside [side, width - side).
     let inner_end = (width as usize).saturating_sub(side as usize);
-    // "  " + bar
-    if total > 0 && inner_end >= used + 2 + bar_w as usize {
+    if total > 0 && inner_end > used {
+        let pct = ((done as f64 / total as f64) * 100.0).round() as u16;
+        let stats = format!("{done}/{total} {pct}%");
+        let stats_w = stats.width();
         let frac = done as f64 / total as f64;
-        let bar = progress_bar_string(bar_w, frac);
-        let pad = inner_end.saturating_sub(used + 1 + bar_w as usize);
-        spans.push(Span::raw(" ".repeat(pad.max(1))));
         let bar_color = if all_done {
             palette.success
         } else if app.todos.iter().any(|t| t.status == TodoStatus::InProgress) {
@@ -184,7 +174,23 @@ fn header_line(app: &TuiApp, palette: &ThemePalette, width: u16, side: u16) -> L
         } else {
             palette.accent
         };
-        spans.push(Span::styled(bar, Style::default().fg(bar_color)));
+        // Prefer `2/4 50% ████░░░░`; drop the track if the row is too tight.
+        let with_bar = 1 + stats_w + 1 + bar_w as usize;
+        let stats_only = 1 + stats_w;
+        if inner_end >= used + with_bar {
+            let pad = inner_end.saturating_sub(used + stats_w + 1 + bar_w as usize);
+            spans.push(Span::raw(" ".repeat(pad.max(1))));
+            spans.push(Span::styled(stats, count_style));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                progress_bar_string(bar_w, frac),
+                Style::default().fg(bar_color),
+            ));
+        } else if inner_end >= used + stats_only {
+            let pad = inner_end.saturating_sub(used + stats_w);
+            spans.push(Span::raw(" ".repeat(pad.max(1))));
+            spans.push(Span::styled(stats, count_style));
+        }
     }
 
     Line::from(spans)
@@ -298,7 +304,8 @@ mod tests {
         assert!(!app.todos_collapsed);
         assert_eq!(panel_height(&app, 24), 5);
         let text = paint(&mut app, 60, 6);
-        assert!(text.contains("▾ Todos  2/4"), "{text}");
+        assert!(text.contains("▾ Todos"), "{text}");
+        assert!(text.contains("2/4 50%"), "{text}");
         assert!(text.contains("□ pending one"), "{text}");
         assert!(text.contains("▶ working now"), "{text}");
         assert!(text.contains("✓ done item"), "{text}");
@@ -308,6 +315,37 @@ mod tests {
             "progress track: {text}"
         );
         assert!(app.todos_hit.rect.is_some());
+        let header = text.lines().next().expect("header");
+        assert!(
+            header.contains("2/4 50% "),
+            "count + percent sit next to the track: {header:?}"
+        );
+    }
+
+    #[test]
+    fn hover_does_not_underline_todos_label() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.replace_todos(vec![item("a", "open", TodoStatus::Pending)]);
+        app.todos_hit.hovered = true;
+        let palette = app.config.palette();
+        let backend = TestBackend::new(40, 2);
+        let mut terminal = Terminal::new(backend).expect("term");
+        terminal
+            .draw(|f| render_panel(f, f.area(), &mut app, &palette, 0))
+            .expect("draw");
+        let buf = terminal.backend().buffer();
+        let mut found = false;
+        for x in 0..40u16 {
+            let cell = buf.cell((x, 0)).expect("cell");
+            if cell.symbol() == "T" {
+                found = true;
+                assert!(
+                    !cell.style().add_modifier.contains(Modifier::UNDERLINED),
+                    "Todos label must not underline on hover"
+                );
+            }
+        }
+        assert!(found, "Todos T cell");
     }
 
     #[test]
@@ -320,7 +358,9 @@ mod tests {
         assert!(app.todos_collapsed);
         assert_eq!(panel_height(&app, 24), 1);
         let text = paint(&mut app, 40, 1);
-        assert!(text.contains("▸ Todos  2/2 done"), "{text}");
+        assert!(text.contains("▸ Todos"), "{text}");
+        assert!(text.contains("2/2 100%"), "{text}");
+        assert!(!text.contains(" done"), "{text}");
         assert!(!text.contains('□'), "{text}");
         assert!(!text.contains("✓ one"), "{text}");
         assert!(!text.contains("✗ two"), "{text}");
@@ -329,7 +369,8 @@ mod tests {
         assert!(!app.todos_collapsed);
         assert_eq!(panel_height(&app, 24), 3);
         let text = paint(&mut app, 40, 4);
-        assert!(text.contains("▾ Todos  2/2 done"), "{text}");
+        assert!(text.contains("▾ Todos"), "{text}");
+        assert!(text.contains("2/2 100%"), "{text}");
         assert!(text.contains("✓ one"), "{text}");
         assert!(text.contains("✗ two"), "{text}");
     }
@@ -365,7 +406,8 @@ mod tests {
         assert!(app.todos_collapsed);
         assert_eq!(panel_height(&app, 24), 1);
         let text = paint(&mut app, 40, 2);
-        assert!(text.contains("▸ Todos  0/1"), "{text}");
+        assert!(text.contains("▸ Todos"), "{text}");
+        assert!(text.contains("0/1 0%"), "{text}");
         assert!(!text.contains("still open"), "{text}");
     }
 
