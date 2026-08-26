@@ -10,8 +10,10 @@ use ratatui::{
     style::{Color, Style},
 };
 
-/// Columns reserved for the scrollbar track when content overflows.
+/// Width of the scrollbar track itself (last column of the area).
 pub const SCROLLBAR_GUTTER: u16 = 1;
+/// Blank column between transcript text and the bar when a scrollbar shows.
+pub const SCROLLBAR_GAP: u16 = 1;
 
 /// Track / thumb pair derived from the active palette.
 #[derive(Clone, Copy)]
@@ -78,7 +80,8 @@ pub fn paint_scrollbar(
 
 /// Paint a scrollbar on the right edge of `area` when `total > visible`.
 ///
-/// Returns the content rect (full width if no bar, else width − gutter).
+/// Returns the content rect (full width if no bar, else width − gap − gutter).
+/// The 1-col bar stays in the last column of `area`.
 pub fn content_with_scrollbar(
     buf: &mut Buffer,
     area: Rect,
@@ -93,7 +96,9 @@ pub fn content_with_scrollbar(
     let content = Rect {
         x: area.x,
         y: area.y,
-        width: area.width.saturating_sub(SCROLLBAR_GUTTER),
+        width: area
+            .width
+            .saturating_sub(SCROLLBAR_GUTTER.saturating_add(SCROLLBAR_GAP)),
         height: area.height,
     };
     let sb = Rect {

@@ -17,7 +17,13 @@ pub fn strip_height(app: &TuiApp) -> u16 {
     if app.has_subagent_strip() { 1 } else { 0 }
 }
 
-pub fn render_strip(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePalette) {
+pub fn render_strip(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut TuiApp,
+    palette: &ThemePalette,
+    side: u16,
+) {
     app.subagent_strip_hit.clear();
     if area.height == 0 || app.subagents.is_empty() {
         return;
@@ -44,8 +50,14 @@ pub fn render_strip(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &T
         .find(|s| s.is_running())
         .or_else(|| app.subagents.last());
 
-    let mut spans = vec![Span::styled(
-        format!(" {count} "),
+    // The count badge starts exactly on the shared body column (no hidden
+    // leading space, or the strip sits one col right of the chat text).
+    let mut spans = Vec::new();
+    if side > 0 {
+        spans.push(Span::raw(" ".repeat(side as usize)));
+    }
+    spans.push(Span::styled(
+        format!("{count} "),
         Style::default()
             .fg(if running > 0 {
                 palette.accent
@@ -53,7 +65,7 @@ pub fn render_strip(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &T
                 palette.dim
             })
             .add_modifier(Modifier::BOLD),
-    )];
+    ));
     if let Some(row) = focus {
         spans.push(Span::styled("· ", Style::default().fg(palette.dim)));
         spans.push(Span::styled(
@@ -67,6 +79,7 @@ pub fn render_strip(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &T
             ));
         }
         spans.push(Span::styled("  Ctrl+G", Style::default().fg(palette.dim)));
+        // Hit target stays full-width even though the label is indented.
         app.subagent_strip_hit.push((area, row.id.clone()));
     }
 
@@ -181,7 +194,7 @@ mod tests {
         let backend = TestBackend::new(w, h);
         let mut terminal = Terminal::new(backend).expect("term");
         terminal
-            .draw(|f| render_strip(f, f.area(), app, &palette))
+            .draw(|f| render_strip(f, f.area(), app, &palette, 0))
             .expect("draw");
         let buf = terminal.backend().buffer().clone();
         let mut out = String::new();
@@ -223,6 +236,39 @@ mod tests {
         assert!(text.contains("explore"), "{text}");
         assert!(text.contains("scan the crate"), "{text}");
         assert!(text.contains("Ctrl+G"), "{text}");
+    }
+
+    #[test]
+    fn strip_indents_text_by_side_and_keeps_full_width_hit() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.upsert_subagent(crate::app::SubagentUpdate {
+            id: "task-1".into(),
+            kind: "explore".into(),
+            description: "scan the crate".into(),
+            status: "running".into(),
+            activity: "Thinking".into(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        let palette = app.config.palette();
+        let backend = TestBackend::new(80, 1);
+        let mut terminal = Terminal::new(backend).expect("term");
+        terminal
+            .draw(|f| render_strip(f, f.area(), &mut app, &palette, 2))
+            .expect("draw");
+        let buf = terminal.backend().buffer().clone();
+        let mut row = String::new();
+        for x in 0..buf.area().width {
+            if let Some(c) = buf.cell((x, 0)) {
+                row.push_str(c.symbol());
+            }
+        }
+        assert!(row.starts_with("  "), "side indent: {row:?}");
+        assert!(row.contains("1 subagent"), "{row}");
+        let (hit, id) = app.subagent_strip_hit.first().expect("hit");
+        assert_eq!(hit.x, 0);
+        assert_eq!(hit.width, 80, "hit stays full width");
+        assert_eq!(id, "task-1");
     }
 
     #[test]
