@@ -16,6 +16,7 @@ drift visible, not to be at zero.
 | `check_swallowed_error_budget.py` | `let _ = call(…)`, `Err(_) =>`, `.ok();` in non-test code | `scripts/swallowed_error_budget.json` |
 | `check_dependency_boundaries.py` | `whycodes-*` edges between workspace crates | `scripts/dependency_boundaries.json` |
 | `check_sdk_protocol.py` | Protocol v1 tags (`SdkEvent` / `ErrorCode`) vs TypeScript `KNOWN_EVS` | (no JSON; fails on drift) |
+| `check_tracked_secrets.py` | Tracked scratch dirs, private keys, live-looking PATs | (no JSON; fails on a hit) |
 
 Run them the way CI does:
 
@@ -24,6 +25,7 @@ python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
 python scripts/check_sdk_protocol.py
+python scripts/check_tracked_secrets.py
 ```
 
 Each prints the offending file and line, not just a count — a check that only

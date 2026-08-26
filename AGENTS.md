@@ -34,6 +34,7 @@ Whenever you edit Rust source, `Cargo.toml`, or anything that affects compilatio
    python scripts/check_panic_budget.py
    python scripts/check_swallowed_error_budget.py
    python scripts/check_dependency_boundaries.py
+   python scripts/check_tracked_secrets.py
    cargo fmt --all --check
    cargo clippy -p whycodes-<crate> --all-targets -- -D warnings
    ```
@@ -51,7 +52,7 @@ When a turn produces real project changes (source, config, docs that belong in t
 1. **Commit** on the current branch after the build (and relevant tests) are green. Do not leave a pile of uncommitted work for the user to remember.
 2. **Push** to `origin` on the same branch (`git push -u origin HEAD` if needed). No force-push unless the user explicitly asks.
 3. Use a clear commit message (what / why). Prefer one logical commit per turn; split only when the user prefers.
-4. **Do not** commit secrets (API keys, `.env`, credentials), local junk (`.omo/`, scratch logs), or huge generated artifacts unless the project already tracks them.
+4. **Do not** commit secrets (API keys, `.env`, credentials), local junk (`.omo/`, `.whycode/`, scratch logs), or huge generated artifacts unless the project already tracks them. CI runs `python scripts/check_tracked_secrets.py`. Do not `git push --mirror` (local Cline checkpoint refs stay on the machine).
 5. If push fails (auth, non-fast-forward), report the error and stop — do not rewrite remote history.
 
 The user should **not** have to say “commit and push” every time. This is the default for this repo.

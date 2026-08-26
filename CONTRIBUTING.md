@@ -25,6 +25,7 @@ python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
 python scripts/check_sdk_protocol.py   # Rust ↔ TypeScript protocol v1 tags
+python scripts/check_tracked_secrets.py
 ```
 
 TypeScript SDK (`sdk/typescript`): `npm ci && npm test` after changing
@@ -68,6 +69,23 @@ Notes:
   `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, `AGENTS.md`) stay uppercase.
   Agent-facing tool *string* names (`webfetch`, `git_status`) are a stable
   product API — do not rename them to match Rust modules.
+
+After clone, install the repo git hooks once so a stray `git push --mirror`
+cannot publish local Cline checkpoints or stash:
+
+```bash
+sh scripts/install_git_hooks.sh
+```
+
+## Secrets and local scratch
+
+Do not commit `.env`, `auth.json`, private keys, `.omo/`, `.whycode/`,
+`.whycodes/todos/`, coverage dumps, or editor scratch. CI runs
+`python scripts/check_tracked_secrets.py` on the index (not rewritten
+history). Author emails in `git log` are left as-is.
+
+The pre-push hook (`scripts/pre-push`) only allows `refs/heads/*` and
+`refs/tags/*`. Checkpoints under `refs/cline/` stay on the machine.
 
 ## Reporting bugs
 
