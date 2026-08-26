@@ -14,7 +14,6 @@ fn prunes_heavy_dirs() {
 fn hidden_rules() {
     assert!(!is_pruned_dir(".github"));
     assert!(!is_pruned_dir(".whycodes"));
-    assert!(!is_pruned_dir(".whycode"));
     assert!(is_pruned_dir(".idea"));
     assert!(!is_pruned_file(".gitignore"));
     assert!(is_pruned_file(".env"));

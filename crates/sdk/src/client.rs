@@ -752,18 +752,16 @@ fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
     if let Some(p) = explicit {
         return Ok(p.to_path_buf());
     }
-    for key in ["WHYCODES", "WHYCODE"] {
-        if let Ok(p) = std::env::var(key)
-            && !p.is_empty()
-        {
-            return Ok(PathBuf::from(p));
-        }
+    if let Ok(p) = std::env::var("WHYCODES")
+        && !p.is_empty()
+    {
+        return Ok(PathBuf::from(p));
     }
     if let Ok(exe) = std::env::current_exe() {
         if exe
             .file_stem()
             .and_then(|s| s.to_str())
-            .is_some_and(|n| n == "whycodes" || n == "whycode")
+            .is_some_and(|n| n == "whycodes")
         {
             return Ok(exe);
         }
@@ -779,9 +777,9 @@ fn resolve_binary(explicit: Option<&Path>) -> Result<PathBuf, SdkError> {
 
 fn binary_names() -> &'static [&'static str] {
     if cfg!(windows) {
-        &["whycodes.exe", "whycode.exe"]
+        &["whycodes.exe"]
     } else {
-        &["whycodes", "whycode"]
+        &["whycodes"]
     }
 }
 

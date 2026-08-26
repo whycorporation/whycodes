@@ -173,11 +173,9 @@ impl SessionTokenCache {
 
 /// Parse `WHYCODES_IMAGE_B64:image/png\n<base64>` payloads from the read tool.
 fn split_whycodes_image_payload(content: &str) -> Option<(String, String, String)> {
-    const MARKS: &[&str] = &["WHYCODES_IMAGE_B64:", "WHYCODE_IMAGE_B64:"];
-    let (idx, mark_len) = MARKS
-        .iter()
-        .find_map(|mark| content.find(mark).map(|idx| (idx, mark.len())))?;
-    let after = &content[idx + mark_len..];
+    const MARK: &str = "WHYCODES_IMAGE_B64:";
+    let idx = content.find(MARK)?;
+    let after = &content[idx + MARK.len()..];
     let (media, rest) = after.split_once('\n')?;
     let media = media.trim();
     let b64 = rest.trim();
@@ -2591,10 +2589,6 @@ mod tests {
     #[test]
     fn image_payload_parsing_and_unicode_caps_cover_boundaries() {
         assert!(split_whycodes_image_payload("plain").is_none());
-        assert!(split_whycodes_image_payload("WHYCODE_IMAGE_B64:image/png").is_none());
-        let legacy = split_whycodes_image_payload("WHYCODE_IMAGE_B64:image/png\nYWJj").unwrap();
-        assert_eq!(legacy.0, "image/png");
-        assert_eq!(legacy.1, "YWJj");
         assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/png").is_none());
         assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:\nabc").is_none());
         assert!(split_whycodes_image_payload("WHYCODES_IMAGE_B64:image/png\n ").is_none());

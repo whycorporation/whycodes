@@ -16,7 +16,7 @@ param(
 $ErrorActionPreference = "Stop"
 $removed = $false
 
-foreach ($name in @("whycodes.exe", "whycodes.exe.old", "whycode.exe", "whycode.exe.old")) {
+foreach ($name in @("whycodes.exe", "whycodes.exe.old")) {
     $path = Join-Path $InstallDir $name
     if (Test-Path $path) {
         Remove-Item $path -Force
@@ -31,9 +31,7 @@ if (-not $removed) {
 if ($Purge) {
     foreach ($dir in @(
         "$env:APPDATA\whycorporation\whycodes",
-        "$env:APPDATA\whycorporation\whycode",
-        "$env:LOCALAPPDATA\whycorporation\whycodes",
-        "$env:LOCALAPPDATA\whycorporation\whycode"
+        "$env:LOCALAPPDATA\whycorporation\whycodes"
     )) {
         if (Test-Path $dir) {
             Remove-Item $dir -Recurse -Force

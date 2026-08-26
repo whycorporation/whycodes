@@ -515,11 +515,7 @@ export function normalizeBase(addr: string): string {
 function resolveBinary(explicit?: string): string {
   if (explicit) return explicit;
   if (process.env.WHYCODES) return process.env.WHYCODES;
-  if (process.env.WHYCODE) return process.env.WHYCODE;
-  const names =
-    process.platform === "win32"
-      ? ["whycodes.exe", "whycode.exe"]
-      : ["whycodes", "whycode"];
+  const names = process.platform === "win32" ? ["whycodes.exe"] : ["whycodes"];
   for (const sibling of names) {
     if (existsSync(sibling)) return sibling;
   }

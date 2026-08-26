@@ -1140,10 +1140,8 @@ mod paths_tests {
     fn empty_home_env_is_ignored() {
         let _g = recover_paths_lock();
         let prev = std::env::var_os("WHYCODES_HOME");
-        let prev_legacy = std::env::var_os("WHYCODE_HOME");
         unsafe {
             std::env::set_var("WHYCODES_HOME", "");
-            std::env::remove_var("WHYCODE_HOME");
         }
         assert!(whycodes_home().is_none());
         let data = data_dir();
@@ -1153,10 +1151,6 @@ mod paths_tests {
             Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
             None => unsafe { std::env::remove_var("WHYCODES_HOME") },
         }
-        match prev_legacy {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
-        }
         assert!(!data.as_os_str().is_empty());
         assert!(!cfg.as_os_str().is_empty());
         assert_eq!(file, cfg.join("config.toml"));
@@ -1165,38 +1159,10 @@ mod paths_tests {
     }
 
     #[test]
-    fn legacy_whycode_home_env_is_honoured() {
-        let _g = recover_paths_lock();
-        let dir = tempfile::tempdir().expect("tempdir");
-        let prev_new = std::env::var_os("WHYCODES_HOME");
-        let prev_old = std::env::var_os("WHYCODE_HOME");
-        unsafe {
-            std::env::remove_var("WHYCODES_HOME");
-            std::env::set_var("WHYCODE_HOME", dir.path());
-        }
-        let home = whycodes_home();
-        let data = data_dir();
-        match prev_new {
-            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
-        }
-        match prev_old {
-            Some(v) => unsafe { std::env::set_var("WHYCODE_HOME", v) },
-            None => unsafe { std::env::remove_var("WHYCODE_HOME") },
-        }
-        assert_eq!(home.as_deref(), Some(dir.path()));
-        assert_eq!(data, dir.path());
-    }
-
-    #[test]
-    fn project_dir_prefers_whycodes_then_legacy() {
+    fn project_dir_is_whycodes() {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         assert_eq!(project_dir(root), root.join(".whycodes"));
-
-        std::fs::create_dir(root.join(".whycode")).unwrap();
-        assert_eq!(project_dir(root), root.join(".whycode"));
-
         std::fs::create_dir(root.join(".whycodes")).unwrap();
         assert_eq!(project_dir(root), root.join(".whycodes"));
     }

@@ -41,7 +41,7 @@ pub const SKIP_DIRS: &[&str] = &[
 ];
 
 /// Dot-directories still indexed despite the hidden-skip rule (project metadata).
-pub const HIDDEN_DIR_WHITELIST: &[&str] = &[".github", ".whycodes", ".whycode", ".config"];
+pub const HIDDEN_DIR_WHITELIST: &[&str] = &[".github", ".whycodes", ".config"];
 
 /// Well-known dotfiles kept in the index; every other `.`-prefixed file is
 /// skipped (secret hygiene — `.env` and friends must not flow into prompts).

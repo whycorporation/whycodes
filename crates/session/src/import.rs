@@ -18,7 +18,7 @@ pub enum ImportKind {
 impl ImportKind {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_ascii_lowercase().as_str() {
-            "whycodes" | "whycode" | "native" => Self::WhyCodes,
+            "whycodes" | "native" => Self::WhyCodes,
             "claude" | "claude-code" => Self::Claude,
             "codex" => Self::Codex,
             "opencode" => Self::OpenCode,
@@ -274,7 +274,6 @@ mod tests {
     fn import_kind_parse_covers_aliases_and_fallback() {
         assert_eq!(ImportKind::parse(" native "), ImportKind::WhyCodes);
         assert_eq!(ImportKind::parse("whycodes"), ImportKind::WhyCodes);
-        assert_eq!(ImportKind::parse("whycode"), ImportKind::WhyCodes);
         assert_eq!(ImportKind::parse("CLAUDE-CODE"), ImportKind::Claude);
         assert_eq!(ImportKind::parse("codex"), ImportKind::Codex);
         assert_eq!(ImportKind::parse("opencode"), ImportKind::OpenCode);
