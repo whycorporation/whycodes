@@ -72,6 +72,12 @@ fn end_to_end_scan_query_browse() {
         true
     });
     assert!(seen >= 5);
+    let mut stopped = 0;
+    idx.visit(&mut |_| {
+        stopped += 1;
+        false
+    });
+    assert_eq!(stopped, 1);
 
     // Resolve.
     let m = &hits[0];
