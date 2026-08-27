@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolProfile {
-    /// Hot path for coding: files, search, shell, patch, todos, subagent.
+    /// Hot path for coding: files, search, shell, todos, subagent, tool_search.
     #[default]
     Core,
     /// Every built-in tool (github, web, lsp, plan, …).
@@ -47,29 +47,24 @@ impl ToolProfile {
     }
 }
 
-/// Stable, sorted-friendly core set. Keep ≤ ~12 primary names for TTFT.
-/// Names must match `Tool::name()` registrations in `executor.rs`
-/// (`todowrite` / `todoread` / alias `todo` — not snake_case).
+/// Stable, sorted-friendly core set. Keep ≤ ~12 primary names for TTFT
+/// (`todo` is an alias of `todowrite`, not a thirteenth tool).
+/// Everything else (`apply_patch`, `bg`, `memory`, `schedule`, `swarm`, …)
+/// is deferred and loaded via `tool_search`.
+/// Names must match `Tool::name()` registrations in `executor.rs`.
 const CORE_TOOL_NAMES: &[&str] = &[
-    "apply_patch",
     "bash",
-    "bg", // background job list/read/kill
     "edit",
     "glob",
     "grep",
     "list",
-    "memory",
-    "question", // clarify with structured options (Grok-style)
+    "question",
     "read",
-    "schedule", // delayed shell / prompt enqueue
-    "shell",    // legacy alias of bash
-    "swarm",    // parallel multi-agent + file conflict notify
-    "swarm_msg",
     "task",
     "todo", // alias of todowrite
     "todoread",
     "todowrite",
-    "tool_search", // deferred tool discovery (Claude Code ToolSearch spirit)
+    "tool_search",
     "write",
 ];
 
@@ -108,5 +103,29 @@ mod tests {
         assert!(ToolProfile::Core.includes("tool_search"));
         assert!(!ToolProfile::Core.includes("worktree"));
         assert!(!ToolProfile::Core.includes("webfetch"));
+    }
+
+    #[test]
+    fn core_defers_specialized_tools() {
+        for name in [
+            "apply_patch",
+            "bg",
+            "memory",
+            "schedule",
+            "shell",
+            "swarm",
+            "swarm_msg",
+        ] {
+            assert!(
+                !ToolProfile::Core.includes(name),
+                "{name} should be deferred"
+            );
+            assert!(ToolProfile::Full.includes(name), "{name} stays in Full");
+        }
+        assert!(
+            CORE_TOOL_NAMES.len() <= 13,
+            "core set grew: {}",
+            CORE_TOOL_NAMES.len()
+        );
     }
 }

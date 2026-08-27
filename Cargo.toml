@@ -67,6 +67,9 @@ tempfile = "3"
 rustc-hash = "2"
 # ripgrep's directory walker: gitignore-aware, parallel. Backs whycodes-index.
 ignore = "0.4"
+# ripgrep's in-process searcher (mmap, SIMD, binary detection). Backs the grep tool.
+grep-searcher = "0.1"
+grep-regex = "0.1"
 # helix/fzf-grade fuzzy matcher with background worker threads. Backs the
 # TUI file picker in whycodes-index.
 nucleo = "0.5"
