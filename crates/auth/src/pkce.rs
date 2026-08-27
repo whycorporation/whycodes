@@ -1,7 +1,7 @@
 //! PKCE (RFC 7636) helpers for the browser + localhost callback flow.
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use rand::RngCore;
+use rand::Rng;
 use sha2::{Digest, Sha256};
 
 /// A PKCE verifier/challenge pair plus the OAuth `state` nonce.
@@ -13,7 +13,7 @@ pub struct Pkce {
 
 fn random_urlsafe(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
-    rand::thread_rng().fill_bytes(&mut buf);
+    rand::rng().fill_bytes(&mut buf);
     URL_SAFE_NO_PAD.encode(buf)
 }
 

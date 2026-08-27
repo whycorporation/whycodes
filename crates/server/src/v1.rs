@@ -10,8 +10,8 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::sse::{Event, KeepAlive, Sse},
+    response::{IntoResponse, Response},
 };
-use futures::stream::Stream;
 use serde::Deserialize;
 use whycodes_agent::events::{TurnEvent, new_cancel_flag};
 use whycodes_protocol::sdk::{
@@ -144,8 +144,7 @@ pub async fn run(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
     Json(req): Json<RunRequest>,
-) -> Result<Sse<std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>>, StatusCode>
-{
+) -> Result<Response, StatusCode> {
     if req.message.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -182,7 +181,7 @@ pub async fn run(
                 yield Ok(Event::default().data(done));
             }
         };
-        return Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep));
+        return Ok(Sse::new(stream).keep_alive(keep).into_response());
     }
 
     let max_turns = req.max_turns.or(state.max_turns).map(|n| n.max(1));
@@ -267,7 +266,7 @@ pub async fn run(
         }
     };
 
-    Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep))
+    Ok(Sse::new(stream).keep_alive(keep).into_response())
 }
 
 #[derive(Deserialize)]

@@ -7,7 +7,6 @@ use axum::{
     response::sse::{Event, KeepAlive, Sse},
     response::{Html, IntoResponse, Response},
 };
-use futures::stream::Stream;
 use serde::Deserialize;
 use std::convert::Infallible;
 use std::path::PathBuf;
@@ -303,8 +302,7 @@ pub async fn chat(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
     Json(req): Json<ChatRequest>,
-) -> Result<Sse<std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>>, StatusCode>
-{
+) -> Result<Response, StatusCode> {
     if req.message.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -342,7 +340,7 @@ pub async fn chat(
                 serde_json::json!({"type": "done"}).to_string()
             ));
         };
-        return Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep));
+        return Ok(Sse::new(stream).keep_alive(keep).into_response());
     }
 
     let max_turns = req.max_turns.or(state.max_turns).map(|n| n.max(1));
@@ -409,7 +407,7 @@ pub async fn chat(
         ));
     };
 
-    Ok(Sse::new(Box::pin(stream) as _).keep_alive(keep))
+    Ok(Sse::new(stream).keep_alive(keep).into_response())
 }
 
 fn emit_status(tx: &tokio::sync::mpsc::UnboundedSender<TurnEvent>, status: impl Into<String>) {

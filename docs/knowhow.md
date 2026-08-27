@@ -1408,15 +1408,15 @@ happy path. Do not "fix" by dropping the crate off the 100% list.
 | CI budgets (panic / swallow / edges) | `scripts/check_*.py`, `scripts/*_budget.json`, `scripts/dependency_boundaries.json` |
 | CI workflow | `.github/workflows/ci.yml` |
 
-## Axum: `/s/:id` vs `/s/:id.json` route conflict (2026-08-13)
+## Axum: `/s/{id}` vs `/s/{id}.json` route conflict (2026-08-13)
 
 **Symptom:** `whycodes serve` panics at router build:
-`Invalid route "/s/:id.json": insertion failed due to conflict with previously registered route: /s/:id`.
+`Invalid route "/s/{id}.json": insertion failed due to conflict with previously registered route: /s/{id}`.
 
-**Cause:** axum/matchit treats `:id` as capturing the rest of the segment; a second
-static-suffix route on the same path pattern is rejected.
+**Cause:** axum/matchit treats `{id}` as capturing the rest of the segment; a second
+static-suffix route on the same path pattern is rejected. (axum 0.8 renamed `:id` → `{id}`.)
 
-**Fix:** one route `/s/:id` and dispatch on whether `id` ends with `.json` / `.md`
+**Fix:** one route `/s/{id}` and dispatch on whether `id` ends with `.json` / `.md`
 (`share_dispatch` in `crates/server/src/routes.rs`).
 
 
