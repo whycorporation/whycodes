@@ -924,10 +924,40 @@ fn key_from_env_config_and_missing_message() {
 
     let anthropic = missing_api_key_message("anthropic");
     assert!(anthropic.contains("ANTHROPIC_API_KEY"), "{anthropic}");
-    assert!(anthropic.contains("auth login"), "{anthropic}");
+    // Subscription login is plugin-loaded; default installs have an empty
+    // OAuth registry so the hint is absent unless an auth plugin registered.
+    assert_eq!(
+        anthropic.contains("auth login"),
+        whycodes_auth::providers::supports_oauth("anthropic"),
+        "{anthropic}"
+    );
     let custom = missing_api_key_message("acme");
     assert!(custom.contains("ACME_API_KEY"), "{custom}");
     assert!(!custom.contains("auth login"), "{custom}");
+
+    // Cover the hint branch without depending on extras plugins.
+    whycodes_auth::register_spec(whycodes_auth::ProviderSpec {
+        name: "cli-oauth-hint-demo".into(),
+        label: "Demo".into(),
+        flow: whycodes_auth::FlowKind::DeviceCode,
+        client_id: "cid".into(),
+        client_secret: None,
+        authorize_url: "https://example.com/auth".into(),
+        token_url: "https://example.com/token".into(),
+        scopes: "read".into(),
+        token_encoding: whycodes_auth::TokenEncoding::Form,
+        redirect_uri: None,
+        loopback_port: None,
+        loopback_host: None,
+        callback_path: String::new(),
+        extra_authorize: vec![],
+        derived: None,
+        suggested_models: vec![],
+        inference: None,
+    });
+    let hinted = missing_api_key_message("cli-oauth-hint-demo");
+    assert!(hinted.contains("CLI-OAUTH-HINT-DEMO_API_KEY"), "{hinted}");
+    assert!(hinted.contains("auth login"), "{hinted}");
 }
 
 #[test]
