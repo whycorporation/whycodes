@@ -690,7 +690,31 @@ pub struct SubagentUpdate {
     pub output: String,
 }
 
-/// One child session shown in the top strip / tasks pane / framed view.
+/// One background shell job shown in the sticky tasks panel.
+#[derive(Debug, Clone)]
+pub struct BgJobUi {
+    pub id: String,
+    pub summary: String,
+    /// `running` | `done` | `failed` | `killed`
+    pub status: String,
+    pub started_at: Instant,
+    pub elapsed_ms: u64,
+}
+
+impl BgJobUi {
+    pub fn is_running(&self) -> bool {
+        self.status == "running"
+    }
+
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "done" | "failed" | "killed" | "completed" | "cancelled"
+        )
+    }
+}
+
+/// One child session shown in the sticky tasks panel / framed view.
 #[derive(Debug, Clone)]
 pub struct SubagentUi {
     pub id: String,
@@ -709,15 +733,11 @@ impl SubagentUi {
         self.status == "running"
     }
 
-    pub fn bullet(&self, spin: usize) -> &'static str {
-        if self.is_running() {
-            const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            FRAMES[spin % FRAMES.len()]
-        } else if self.status == "completed" {
-            "✓"
-        } else {
-            "✗"
-        }
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self.status.as_str(),
+            "completed" | "failed" | "cancelled" | "done" | "killed"
+        )
     }
 
     pub fn headline(&self) -> String {
@@ -1263,6 +1283,8 @@ pub struct TuiApp {
     pub auth_code_sink: Option<tokio::sync::oneshot::Sender<String>>,
     /// Running background shell jobs (status bar chip).
     pub bg_running_count: usize,
+    /// Background jobs listed in the sticky tasks panel (running + recent).
+    pub bg_jobs: Vec<BgJobUi>,
     /// Model switch from the picker dialog: `(provider, model)`.
     pub pending_model: Option<(String, String)>,
     /// Reasoning effort from the picker / `/effort` (`low`/`medium`/`high`/`xhigh`).
@@ -1352,11 +1374,18 @@ pub struct TuiApp {
     pub todos_collapsed: bool,
     /// Header row of the sticky todo panel (click to fold).
     pub todos_hit: crate::hit_area::HitArea,
-    /// Live + finished child sessions (Grok tasks pane / top strip).
+    /// Live + finished child sessions (sticky tasks panel).
     pub subagents: Vec<SubagentUi>,
+    /// Fold the sticky tasks list to a single header row (same as todos).
+    /// Auto-collapses when every item is done; click / Ctrl+G reopens it.
+    pub tasks_collapsed: bool,
+    /// Header row of the sticky tasks panel (click to fold).
+    pub tasks_hit: crate::hit_area::HitArea,
+    /// Last-paint hit boxes for expanded task rows (click to open a subagent).
+    pub tasks_row_hits: Vec<(Rect, String)>,
     /// When set, the framed child transcript overlays the parent session.
     pub open_subagent: Option<String>,
-    /// Last-paint hit boxes for the top subagent strip (click to open).
+    /// Alias of [`Self::tasks_row_hits`] for older click tests.
     pub subagent_strip_hit: Vec<(Rect, String)>,
 }
 
@@ -1805,6 +1834,7 @@ impl TuiApp {
             pending_suggestion: None,
             auth_code_sink: None,
             bg_running_count: 0,
+            bg_jobs: Vec::new(),
             pending_model: None,
             pending_effort: None,
             effort_picker_selected: 0,
@@ -1847,6 +1877,9 @@ impl TuiApp {
             todos_collapsed: false,
             todos_hit: crate::hit_area::HitArea::default(),
             subagents: Vec::new(),
+            tasks_collapsed: false,
+            tasks_hit: crate::hit_area::HitArea::default(),
+            tasks_row_hits: Vec::new(),
             open_subagent: None,
             subagent_strip_hit: Vec::new(),
         }
@@ -1863,6 +1896,7 @@ impl TuiApp {
             elapsed_ms,
             output,
         } = update;
+        let was_all_done = self.all_tasks_terminal();
         if let Some(row) = self.subagents.iter_mut().find(|s| s.id == id) {
             row.kind = kind.clone();
             row.description = description.clone();
@@ -1924,6 +1958,7 @@ impl TuiApp {
             });
             self.messages.push(msg);
         }
+        self.sync_tasks_collapse(was_all_done);
         self.mark_dirty();
     }
 
@@ -1931,8 +1966,71 @@ impl TuiApp {
         self.subagents.iter().filter(|s| s.is_running()).count()
     }
 
+    pub fn running_task_count(&self) -> usize {
+        self.running_subagent_count() + self.bg_jobs.iter().filter(|j| j.is_running()).count()
+    }
+
+    pub fn task_count(&self) -> usize {
+        self.subagents.len() + self.bg_jobs.len()
+    }
+
+    pub fn task_terminal_count(&self) -> usize {
+        self.subagents.iter().filter(|s| s.is_terminal()).count()
+            + self.bg_jobs.iter().filter(|j| j.is_terminal()).count()
+    }
+
+    pub fn all_tasks_terminal(&self) -> bool {
+        self.task_count() > 0 && self.task_terminal_count() == self.task_count()
+    }
+
+    fn sync_tasks_collapse(&mut self, was_all_done: bool) {
+        if self.task_count() == 0 {
+            self.tasks_collapsed = false;
+            self.tasks_hit.clear();
+            self.tasks_row_hits.clear();
+        } else if self.all_tasks_terminal() && !was_all_done {
+            self.tasks_collapsed = true;
+        } else if !self.all_tasks_terminal() && was_all_done {
+            self.tasks_collapsed = false;
+        }
+    }
+
+    /// Insert or update a background job row in the sticky tasks panel.
+    pub fn upsert_bg_job(
+        &mut self,
+        id: impl Into<String>,
+        status: &str,
+        summary: impl Into<String>,
+    ) {
+        let was_all_done = self.all_tasks_terminal();
+        let id = id.into();
+        let summary = summary.into();
+        let now = Instant::now();
+        if let Some(row) = self.bg_jobs.iter_mut().find(|j| j.id == id) {
+            row.status = status.to_string();
+            if !summary.is_empty() {
+                row.summary = summary;
+            }
+            row.elapsed_ms = now.saturating_duration_since(row.started_at).as_millis() as u64;
+        } else {
+            self.bg_jobs.push(BgJobUi {
+                id,
+                summary,
+                status: status.to_string(),
+                started_at: now,
+                elapsed_ms: 0,
+            });
+        }
+        const RETAIN: usize = 16;
+        if self.bg_jobs.len() > RETAIN {
+            let drop_n = self.bg_jobs.len() - RETAIN;
+            self.bg_jobs.drain(0..drop_n);
+        }
+        self.sync_tasks_collapse(was_all_done);
+    }
+
     pub fn has_subagent_strip(&self) -> bool {
-        !self.subagents.is_empty()
+        self.task_count() > 0
     }
 
     pub fn open_subagent_view(&mut self, id: &str) {
@@ -1948,13 +2046,20 @@ impl TuiApp {
         }
     }
 
+    /// Fold / unfold the sticky tasks panel (header click or Ctrl+G).
+    /// Empty list: Ctrl+G still opens the sidebar Agents tab as a fallback.
     pub fn toggle_tasks_pane(&mut self) {
-        if self.sidebar.visible && self.sidebar.active_tab == SidebarTab::Agents {
-            self.sidebar.visible = false;
-        } else {
-            self.sidebar.visible = true;
-            self.sidebar.active_tab = SidebarTab::Agents;
+        if self.task_count() == 0 {
+            if self.sidebar.visible && self.sidebar.active_tab == SidebarTab::Agents {
+                self.sidebar.visible = false;
+            } else {
+                self.sidebar.visible = true;
+                self.sidebar.active_tab = SidebarTab::Agents;
+            }
+            self.mark_dirty();
+            return;
         }
+        self.tasks_collapsed = !self.tasks_collapsed;
         self.mark_dirty();
     }
 
@@ -2001,6 +2106,14 @@ impl TuiApp {
                 self.todos_hit.hovered = false;
                 changed = true;
             }
+            if self.effort_hit.hovered {
+                self.effort_hit.hovered = false;
+                changed = true;
+            }
+            if self.tasks_hit.hovered {
+                self.tasks_hit.hovered = false;
+                changed = true;
+            }
             return changed;
         };
         let mut changed = false;
@@ -2011,6 +2124,7 @@ impl TuiApp {
         changed |= self.model_hit.update_hover(c, r);
         changed |= self.effort_hit.update_hover(c, r);
         changed |= self.todos_hit.update_hover(c, r);
+        changed |= self.tasks_hit.update_hover(c, r);
         // Slash dropdown hover row (index into matches, not absolute cmd).
         if self.slash_suggest.active {
             if let Some(idx) = self.slash_suggest.row_index_at(c, r) {

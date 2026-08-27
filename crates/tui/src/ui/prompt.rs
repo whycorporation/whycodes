@@ -88,6 +88,7 @@ pub fn prompt_height(app: &TuiApp, area_width: u16) -> u16 {
 /// emulator caret sits on the draft while typing goes elsewhere.
 fn prompt_owns_caret(app: &TuiApp) -> bool {
     !app.modal_is_open()
+        && app.open_subagent.is_none()
         && (app.focus == crate::app::FocusPane::Prompt || matches!(app.mode, AppMode::Command))
 }
 

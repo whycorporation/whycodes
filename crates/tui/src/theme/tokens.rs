@@ -68,7 +68,7 @@ pub mod layout {
     pub const TOP_PAD: u16 = 2;
     /// Blank rows between the transcript and the turn-status / prompt.
     pub const CHAT_GAP: u16 = 1;
-    /// Blank rows between sticky panels (subagent strip / todos) and the transcript.
+    /// Blank rows between sticky panels (tasks / todos) and the transcript.
     pub const PANEL_GAP: u16 = 1;
     /// Gap under the prompt (bottom breathing room inside body).
     pub const BOTTOM_PAD: u16 = 1;
