@@ -144,6 +144,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-28 — Homebrew formula is a binary tap, not a self-update target
+
+**Symptom:** `brew install whycodes` against `v0.1.0` 404s (`whycodes-*.tar.gz`
+does not exist). Completions generation writes `~/.local/share/whycodes` and
+fails in Homebrew's sandbox. `whycodes upgrade` would overwrite Cellar
+binaries and break `brew doctor`.
+
+**Root cause:** The first tagged release shipped `whycode-<triple>.tar.gz`
+with a `whycode` binary. `Formula/whycodes.rb` was regenerated for the
+post-rebrand `whycodes-*` names. `whycodes completions` always initialized
+logging. Self-update always replaced `current_exe()`.
+
+**Fix:** Formula updater falls back to `whycode-*` + `bin.install "whycode"
+=> "whycodes"`. Completions short-circuit before Tokio/logging. Upgrade
+refuses Homebrew prefixes (`Cellar`, `/opt/homebrew`, Linuxbrew). Formula
+installs completions, `livecheck`, and a `brew upgrade` caveat. macOS
+release builds set `MACOSX_DEPLOYMENT_TARGET`.
+
+**Prevention:** `scripts/test_update_homebrew_formula.sh` covers current and
+legacy SHA256SUMS. `upgrade_helpers::homebrew_prefix_is_not_self_updated`
+locks the Cellar/prefix check.
+
 ### 2026-08-28 — Ctrl+G is a sticky Tasks panel, not the sidebar
 
 **Symptom:** Ctrl+G opened the Agents sidebar (block borders, “No subagents”,

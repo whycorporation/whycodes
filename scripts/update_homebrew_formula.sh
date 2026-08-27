@@ -4,7 +4,8 @@
 # After `release.yml` attaches binaries and SHA256SUMS, this rewrites the
 # formula as a prebuilt-binary install (macOS + Linux x86_64). Artifact names
 # must match `.github/workflows/release.yml`, `scripts/install.sh`, and
-# `crates/cli/src/upgrade.rs`.
+# `crates/cli/src/upgrade.rs`. v0.1.0 still uses the pre-rebrand `whycode-*`
+# archive names; later tags are `whycodes-*`.
 #
 # `release.yml` runs this after every tagged publish and commits the result
 # to main. Manual use is for backfill or local review:
@@ -77,10 +78,29 @@ digest_for() {
     printf '%s' "$dig"
 }
 
-# Artifact names must match release.yml + install.sh / upgrade.rs.
-linux_x64="whycodes-x86_64-unknown-linux-gnu.tar.gz"
-mac_arm="whycodes-aarch64-apple-darwin.tar.gz"
-mac_x64="whycodes-x86_64-apple-darwin.tar.gz"
+# Prefer current `whycodes-*` artifact names (release.yml + install.sh).
+# v0.1.0 shipped as `whycode-*` with a `whycode` binary inside the archive.
+pick_artifact() {
+    current="$1"
+    legacy="$2"
+    if grep -E -q "[[:space:]](\\*)?${current}\$" "$sums"; then
+        printf '%s' "$current"
+    elif grep -E -q "[[:space:]](\\*)?${legacy}\$" "$sums"; then
+        printf '%s' "$legacy"
+    else
+        die "neither ${current} nor ${legacy} is listed in SHA256SUMS"
+    fi
+}
+
+linux_x64="$(pick_artifact \
+    "whycodes-x86_64-unknown-linux-gnu.tar.gz" \
+    "whycode-x86_64-unknown-linux-gnu.tar.gz")"
+mac_arm="$(pick_artifact \
+    "whycodes-aarch64-apple-darwin.tar.gz" \
+    "whycode-aarch64-apple-darwin.tar.gz")"
+mac_x64="$(pick_artifact \
+    "whycodes-x86_64-apple-darwin.tar.gz" \
+    "whycode-x86_64-apple-darwin.tar.gz")"
 
 sha_linux_x64="$(digest_for "$linux_x64")"
 sha_mac_arm="$(digest_for "$mac_arm")"
@@ -134,16 +154,35 @@ class Whycodes < Formula
     depends_on "rust" => :build
   end
 
+  livecheck do
+    url "https://github.com/${REPO}/releases/latest"
+    strategy :github_latest
+  end
+
   def install
     if build.head?
-      system "cargo", "install", *std_cargo_args(path: "crates/cli")
-    else
+      system "cargo", "install", "--locked", *std_cargo_args(path: "crates/cli")
+    elsif File.exist?("whycodes")
       bin.install "whycodes"
+    elsif File.exist?("whycode")
+      # v0.1.0 archives still ship the pre-rebrand binary name.
+      bin.install "whycode" => "whycodes"
+    else
+      odie "archive did not contain a whycodes binary"
     end
+    generate_completions_from_executable(bin/"whycodes", "completions")
+  end
+
+  def caveats
+    <<~EOS
+      The binary is unsigned, so macOS Gatekeeper may warn on first run.
+      Update with \`brew upgrade whycodes\` rather than \`whycodes upgrade\`.
+    EOS
   end
 
   test do
     assert_match "whycodes", shell_output("#{bin}/whycodes --version")
+    assert_match "whycodes", shell_output("#{bin}/whycodes completions bash")
   end
 end
 EOF

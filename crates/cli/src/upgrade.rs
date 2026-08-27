@@ -296,8 +296,49 @@ pub(crate) fn current_binary() -> Result<PathBuf> {
     std::env::current_exe().context("could not determine the path of the running binary")
 }
 
+/// Homebrew (and Linuxbrew) own the prefix; overwriting a Cellar binary
+/// breaks `brew upgrade` / `brew doctor`. Install-script and cargo installs
+/// are fine to self-update.
+pub(crate) fn package_manager_upgrade_hint(path: &Path) -> Option<&'static str> {
+    if looks_like_homebrew(path) {
+        Some("this install is managed by Homebrew; update with `brew upgrade whycodes`")
+    } else {
+        None
+    }
+}
+
+pub(crate) fn looks_like_homebrew(path: &Path) -> bool {
+    if path_looks_like_homebrew(&path.to_string_lossy()) {
+        return true;
+    }
+    // `brew` links `$(brew --prefix)/bin/whycodes` → Cellar. `current_exe`
+    // often returns the symlink, not the resolved path.
+    let Ok(target) = path.read_link() else {
+        return false;
+    };
+    let resolved = if target.is_absolute() {
+        target
+    } else {
+        path.parent().unwrap_or(path).join(target)
+    };
+    path_looks_like_homebrew(&resolved.to_string_lossy())
+}
+
+pub(crate) fn path_looks_like_homebrew(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_ascii_lowercase();
+    p.contains("/cellar/")
+        || p.contains("/opt/homebrew/")
+        || p.contains("/linuxbrew/")
+        || p.contains("/homebrew/cellar/")
+}
+
 /// Run the upgrade. Returns the new version when one was installed.
 pub async fn run() -> Result<Option<String>> {
+    let target = current_binary()?;
+    if let Some(hint) = package_manager_upgrade_hint(&target) {
+        bail!("{hint}");
+    }
+
     let current = env!("CARGO_PKG_VERSION");
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
@@ -314,7 +355,7 @@ pub async fn run() -> Result<Option<String>> {
     match decide_upgrade(current, &version, &sums, &archive_name, &archive)? {
         UpgradeDecision::UpToDate => Ok(None),
         UpgradeDecision::Install(binary) => {
-            replace_binary(&current_binary()?, &binary)?;
+            replace_binary(&target, &binary)?;
             Ok(Some(version))
         }
     }

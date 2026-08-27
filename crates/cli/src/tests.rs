@@ -1192,6 +1192,7 @@ fn strip_agents_fence_and_cancel_message() {
 mod upgrade_helpers {
     use crate::upgrade::*;
     use std::io::Write;
+    use std::path::Path;
 
     #[test]
     fn archive_for_every_published_target_and_unknown() {
@@ -1420,6 +1421,61 @@ mod upgrade_helpers {
         let p = current_binary().unwrap();
         assert!(p.is_absolute() || p.file_name().is_some());
         assert!(release_asset_url(42).ends_with("/assets/42"));
+    }
+
+    #[test]
+    fn homebrew_prefix_is_not_self_updated() {
+        assert!(path_looks_like_homebrew(
+            "/opt/homebrew/Cellar/whycodes/0.1.0/bin/whycodes"
+        ));
+        assert!(path_looks_like_homebrew("/opt/homebrew/bin/whycodes"));
+        assert!(path_looks_like_homebrew(
+            "/home/linuxbrew/.linuxbrew/Cellar/whycodes/0.1.0/bin/whycodes"
+        ));
+        assert!(path_looks_like_homebrew(
+            "/usr/local/Cellar/whycodes/0.1.0/bin/whycodes"
+        ));
+        assert!(path_looks_like_homebrew(r"C:\opt\homebrew\bin\whycodes"));
+        assert!(!path_looks_like_homebrew("/home/me/.local/bin/whycodes"));
+        assert!(!path_looks_like_homebrew("/home/me/.cargo/bin/whycodes"));
+        assert!(!path_looks_like_homebrew("/usr/bin/whycodes"));
+        assert!(
+            package_manager_upgrade_hint(Path::new("/opt/homebrew/bin/whycodes"))
+                .unwrap()
+                .contains("brew upgrade whycodes")
+        );
+    }
+
+    #[test]
+    fn homebrew_bin_symlink_into_cellar_is_detected() {
+        let dir = tempfile::tempdir().unwrap();
+        let cellar = dir
+            .path()
+            .join("Cellar")
+            .join("whycodes")
+            .join("0.1.0")
+            .join("bin");
+        std::fs::create_dir_all(&cellar).unwrap();
+        let real = cellar.join("whycodes");
+        std::fs::write(&real, b"x").unwrap();
+        let bindir = dir.path().join("bin");
+        std::fs::create_dir_all(&bindir).unwrap();
+        let link = bindir.join("whycodes");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&real, &link).unwrap();
+            assert!(
+                package_manager_upgrade_hint(&link).is_some(),
+                "symlink {} -> {}",
+                link.display(),
+                real.display()
+            );
+        }
+        assert!(package_manager_upgrade_hint(&real).is_some());
+        let script_install = dir.path().join(".local").join("bin").join("whycodes");
+        std::fs::create_dir_all(script_install.parent().unwrap()).unwrap();
+        std::fs::write(&script_install, b"x").unwrap();
+        assert!(package_manager_upgrade_hint(&script_install).is_none());
     }
 
     #[tokio::test]

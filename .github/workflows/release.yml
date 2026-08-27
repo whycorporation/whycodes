@@ -30,8 +30,10 @@ jobs:
           # Apple/Windows still need GitHub-hosted (or extra self-hosted runners).
           - target: aarch64-apple-darwin
             runner: macos-latest
+            macosx_deployment_target: "11.0"
           - target: x86_64-apple-darwin
             runner: macos-latest
+            macosx_deployment_target: "10.15"
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
     steps:
@@ -46,6 +48,9 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build
+        env:
+          # Homebrew bottles/prebuilts should not require the latest macOS SDK.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
         run: cargo build --release --locked -p whycodes-cli --target ${{ matrix.target }}
 
       # One archive per target, named so the installers can construct the URL
