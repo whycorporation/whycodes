@@ -53,7 +53,8 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 | # | Check | Pass |
 |---|--------|------|
 | 1 | First frame paints (home / prompt), no flash-and-quit | |
-| 2 | `q` or `Ctrl+Q` leaves alt-screen; shell prompt, cursor, colours restore | |
+| 1b | Prompt focus: blinking bar caret inside the box after `❯` (DECSCUSR). Tab to scrollback hides it. Unsupported hosts may keep a block | |
+| 2 | `q` or `Ctrl+Q` leaves alt-screen; shell prompt, cursor **shape**, colours restore | |
 | 3 | Theme looks 24-bit, not 256-colour banding (`COLORTERM=truecolor`) | |
 | 4 | Drag-select copies trimmed text (not a row of pad spaces) | |
 | 5 | **Shift+drag** still uses the host’s native selection | |

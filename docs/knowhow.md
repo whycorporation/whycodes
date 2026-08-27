@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-27 — prompt caret is a native blinking bar, not a software blink
+
+**Symptom:** Wanted an insert-style `|` that blinks inside the prompt. A
+cell-flip blink would force animation cadence (~25 fps) and break idle 0
+draws/s.
+
+**Root cause:** The emulator already blinks its own caret (DECSCUSR).
+`frame.set_cursor_position` only places it; `SetCursorStyle::BlinkingBar`
+(`CSI 5 q`) is a one-shot at TUI start. Software blink is a redraw loop.
+
+**Fix:** Enable blinking bar after alt-screen; restore `DefaultUserShape`
+(`CSI 0 q`) on exit / panic. Hide the caret when scrollback or a modal owns
+keys (`prompt_owns_caret`). Do not treat the caret as `is_animating`.
+
+**Prevention:** Assert caret placement + hide in `prompt.rs`. Assert restore
+CSI in `restore_terminal_resets_cursor_style_to_user_default`. Never poll at
+`REDRAW_ANIMATE` just to blink a glyph.
+
 ### 2026-08-26 — keyboard-enhancement CSI query stalled first frame ~2 s
 
 **Symptom:** `bench_first_frame.py` reported ~2024 ms in-proc TTFF. Real
