@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-28 — Ctrl+G is a sticky Tasks panel, not the sidebar
+
+**Symptom:** Ctrl+G opened the Agents sidebar (block borders, “No subagents”,
+a `Ctrl+G` hint) while Todos sat as a Grok header + progress track under the
+status bar. Hovering off the effort chip left it underlined. Opening a child
+transcript left the native prompt caret blinking through the overlay.
+
+**Root cause:** `ToggleTasksPane` flipped `sidebar.visible` / `SidebarTab::Agents`.
+`update_chrome_hover` forgot `effort_hit` on mouse-leave. `prompt_owns_caret`
+only checked `modal_is_open()`, and the framed child is not a dialog.
+
+**Fix:** Sticky Tasks panel reuses the Todos chrome (▸/▾ header, `done/total
+pct%` track, status-bar background, chat-column indent). Ctrl+G / header click
+folds it; item click inspects a subagent. Empty list still falls back to the
+Agents tab. Hover leave now clears `effort_hit`. Caret hides while
+`open_subagent` is set.
+
+**Prevention:** `ui::subagents` tests cover empty/collapse/overflow/indent.
+`tasks_panel_click_toggles_collapse` and the Ctrl+G input test assert the
+sidebar stays closed when work exists.
+
 ### 2026-08-27 — bash timeout must kill the process group; writes are atomic
 
 **Symptom:** `bash timeout=N` returned “timed out” but `sleep 999` / hung
