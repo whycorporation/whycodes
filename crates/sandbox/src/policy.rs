@@ -209,12 +209,15 @@ pub(crate) fn spawn_capture_timeout(
     }
 }
 
-enum WaitResult {
+pub(crate) enum WaitResult {
     Done(Output),
     TimedOut(u64),
 }
 
-fn wait_child_timeout(child: &mut Child, limit: Duration) -> Result<WaitResult, SandboxError> {
+pub(crate) fn wait_child_timeout(
+    child: &mut Child,
+    limit: Duration,
+) -> Result<WaitResult, SandboxError> {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let (tx_out, rx_out) = mpsc::channel();

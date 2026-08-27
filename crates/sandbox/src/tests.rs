@@ -4,6 +4,7 @@
 
 use super::*;
 use std::path::PathBuf;
+use std::time::Duration;
 use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
 
 #[test]
@@ -485,4 +486,57 @@ fn run_timeout_kills_sleep() {
         started.elapsed() < std::time::Duration::from_secs(8),
         "timeout should not wait for sleep 30"
     );
+}
+
+fn host_req(command: &str) -> SandboxRequest {
+    SandboxRequest {
+        command: command.into(),
+        working_dir: PathBuf::from("/tmp"),
+        settings: SandboxSettings {
+            mode: SandboxMode::Off,
+            network: true,
+            fallback: SandboxFallback::Allow,
+        },
+    }
+}
+
+#[test]
+fn run_timeout_fast_command_collects_output() {
+    let out = crate::policy::run_timeout(&host_req("echo covered"), Some(Duration::from_secs(5)))
+        .expect("echo should finish before the timeout");
+    assert!(out.status.success());
+    assert!(
+        out.stdout_lossy().contains("covered"),
+        "stdout={}",
+        out.stdout_lossy()
+    );
+}
+
+#[test]
+fn run_without_timeout_uses_blocking_wait() {
+    let out = crate::run(&host_req("printf hi")).expect("run");
+    assert!(out.status.success());
+    assert_eq!(out.stdout_lossy(), "hi");
+}
+
+#[test]
+fn zero_timeout_falls_back_to_blocking_wait() {
+    let out = crate::policy::run_timeout(&host_req("echo z"), Some(Duration::ZERO)).expect("zero");
+    assert!(out.status.success());
+    assert!(out.stdout_lossy().contains('z'));
+}
+
+#[test]
+fn wait_child_timeout_without_pipes_and_kill_unused_pid() {
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("true")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn true");
+    let result = crate::policy::wait_child_timeout(&mut child, Duration::from_secs(2)).unwrap();
+    assert!(matches!(result, crate::policy::WaitResult::Done(_)));
+
+    crate::kill_pid_group(u32::MAX);
 }
