@@ -48,14 +48,14 @@ impl Tool for WriteTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("");
-        let content = args["content"].as_str().unwrap_or("");
+        let path_str = args["path"].as_str().unwrap_or("").to_string();
+        let content = args["content"].as_str().unwrap_or("").to_string();
 
-        let full_path = if std::path::Path::new(path_str).is_absolute() {
-            path_str.to_string()
+        let full_path = if std::path::Path::new(&path_str).is_absolute() {
+            path_str
         } else {
             std::path::Path::new(&ctx.working_dir)
-                .join(path_str)
+                .join(&path_str)
                 .to_string_lossy()
                 .to_string()
         };
@@ -68,7 +68,13 @@ impl Tool for WriteTool {
             };
         }
 
-        // Create parent directories if needed
+        let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
+        crate::blocking::tool(move || Self::run(full_path, shown, content)).await
+    }
+}
+
+impl WriteTool {
+    fn run(full_path: String, shown: String, content: String) -> ToolResult {
         if let Some(parent) = std::path::Path::new(&full_path).parent()
             && let Err(e) = std::fs::create_dir_all(parent)
         {
@@ -79,14 +85,12 @@ impl Tool for WriteTool {
             };
         }
 
-        let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
-
-        match std::fs::write(&full_path, content) {
+        match std::fs::write(&full_path, &content) {
             Ok(_) => ToolResult {
                 tool_call_id: String::new(),
                 // Grok-like: +lines preview so the TUI can paint add colours
                 // (and syntax-highlight when the path has a known extension).
-                content: format_write_preview(&shown, content),
+                content: format_write_preview(&shown, &content),
                 is_error: false,
             },
             Err(e) => ToolResult {

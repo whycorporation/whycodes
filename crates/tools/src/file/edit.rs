@@ -56,16 +56,16 @@ impl Tool for EditTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("");
-        let old_string = args["old_string"].as_str().unwrap_or("");
-        let new_string = args["new_string"].as_str().unwrap_or("");
+        let path_str = args["path"].as_str().unwrap_or("").to_string();
+        let old_string = args["old_string"].as_str().unwrap_or("").to_string();
+        let new_string = args["new_string"].as_str().unwrap_or("").to_string();
         let replace_all = args["replace_all"].as_bool().unwrap_or(false);
 
-        let full_path = if std::path::Path::new(path_str).is_absolute() {
-            path_str.to_string()
+        let full_path = if std::path::Path::new(&path_str).is_absolute() {
+            path_str
         } else {
             std::path::Path::new(&ctx.working_dir)
-                .join(path_str)
+                .join(&path_str)
                 .to_string_lossy()
                 .to_string()
         };
@@ -79,11 +79,25 @@ impl Tool for EditTool {
         }
 
         let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
+        crate::blocking::tool(move || {
+            Self::run(full_path, shown, old_string, new_string, replace_all)
+        })
+        .await
+    }
+}
 
+impl EditTool {
+    fn run(
+        full_path: String,
+        shown: String,
+        old_string: String,
+        new_string: String,
+        replace_all: bool,
+    ) -> ToolResult {
         match std::fs::read_to_string(&full_path) {
             Ok(original) => {
                 if replace_all {
-                    let count = original.matches(old_string).count();
+                    let count = original.matches(&old_string).count();
                     if count == 0 {
                         return ToolResult {
                             tool_call_id: String::new(),
@@ -91,13 +105,17 @@ impl Tool for EditTool {
                             is_error: true,
                         };
                     }
-                    let modified = original.replace(old_string, new_string);
-                    let start = first_line_number(&original, old_string);
+                    let modified = original.replace(&old_string, &new_string);
+                    let start = first_line_number(&original, &old_string);
                     match std::fs::write(&full_path, &modified) {
                         Ok(_) => ToolResult {
                             tool_call_id: String::new(),
                             content: format_edit_preview_at(
-                                &shown, old_string, new_string, count, start,
+                                &shown,
+                                &old_string,
+                                &new_string,
+                                count,
+                                start,
                             ),
                             is_error: false,
                         },
@@ -108,7 +126,7 @@ impl Tool for EditTool {
                         },
                     }
                 } else {
-                    let count = original.matches(old_string).count();
+                    let count = original.matches(&old_string).count();
                     if count == 0 {
                         ToolResult {
                             tool_call_id: String::new(),
@@ -125,13 +143,17 @@ impl Tool for EditTool {
                             is_error: true,
                         }
                     } else {
-                        let modified = original.replacen(old_string, new_string, 1);
-                        let start = first_line_number(&original, old_string);
+                        let modified = original.replacen(&old_string, &new_string, 1);
+                        let start = first_line_number(&original, &old_string);
                         match std::fs::write(&full_path, &modified) {
                             Ok(_) => ToolResult {
                                 tool_call_id: String::new(),
                                 content: format_edit_preview_at(
-                                    &shown, old_string, new_string, 1, start,
+                                    &shown,
+                                    &old_string,
+                                    &new_string,
+                                    1,
+                                    start,
                                 ),
                                 is_error: false,
                             },

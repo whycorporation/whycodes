@@ -518,6 +518,17 @@ mod tests {
     }
 
     #[test]
+    fn search_respects_gitignore() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".gitignore"), "secret.rs\n").unwrap();
+        write(&dir, "keep.rs", "match me\n");
+        write(&dir, "secret.rs", "match me\n");
+        let out = GrepTool::search("match", dir.path(), None, false, 0, 50, "/", None).unwrap();
+        assert!(out.contains("keep.rs"), "{out}");
+        assert!(!out.contains("secret.rs"), "{out}");
+    }
+
+    #[test]
     fn search_large_file_skipped() {
         let dir = TempDir::new().unwrap();
         let big = vec![b'a'; (MAX_GREP_FILE_BYTES + 1) as usize];

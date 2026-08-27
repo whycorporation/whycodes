@@ -57,6 +57,18 @@ impl Tool for GlobTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let working_dir = ctx.working_dir.clone();
+        let file_index = ctx.file_index.clone();
+        crate::blocking::tool(move || Self::run(args, working_dir, file_index)).await
+    }
+}
+
+impl GlobTool {
+    fn run(
+        args: serde_json::Value,
+        working_dir: String,
+        file_index: Option<std::sync::Arc<whycodes_index::WorkspaceIndex>>,
+    ) -> ToolResult {
         let pattern_str = args["pattern"].as_str().unwrap_or("").trim();
         if pattern_str.is_empty() {
             return ToolResult {
@@ -66,9 +78,9 @@ impl Tool for GlobTool {
             };
         }
 
-        let root_arg = args["path"].as_str().unwrap_or(&ctx.working_dir);
-        let root = resolve_path(&ctx.working_dir, root_arg);
-        let root_shown = display_path(&root, &ctx.working_dir);
+        let root_arg = args["path"].as_str().unwrap_or(&working_dir);
+        let root = resolve_path(&working_dir, root_arg);
+        let root_shown = display_path(&root, &working_dir);
 
         if !root.exists() {
             return ToolResult {
@@ -131,7 +143,7 @@ impl Tool for GlobTool {
         let indexed = if targets_hidden {
             None
         } else {
-            ctx.file_index
+            file_index
                 .as_deref()
                 .and_then(|idx| super::paths::index_entries(idx, &root))
         };

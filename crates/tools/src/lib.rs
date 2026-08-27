@@ -4,6 +4,7 @@
 //! paths (`whycodes_tools::read`, `whycodes_tools::blame`, …) for callers.
 
 pub mod agent_tools;
+pub(crate) mod blocking;
 pub mod display;
 pub mod executor;
 pub mod file;

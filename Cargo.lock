@@ -4368,6 +4368,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "glob",
+ "ignore",
  "regex",
  "reqwest",
  "rustc-hash",

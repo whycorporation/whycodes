@@ -123,7 +123,7 @@ const SERIAL_TOOLS: &[&str] = &[
     "edit",
     "apply_patch",
     "git_commit",
-    "todo_write",
+    "todowrite",
     "todo",
     "task",
     "swarm",
@@ -3971,12 +3971,24 @@ mod permission_detail_tests {
         assert!(is_parallel_safe_tool("read", &PermissionSet::default()));
         assert!(is_parallel_safe_tool("grep", &PermissionSet::default()));
         assert!(is_parallel_safe_tool("glob", &PermissionSet::default()));
+        assert!(is_parallel_safe_tool("todoread", &PermissionSet::default()));
         for name in SERIAL_TOOLS {
             assert!(
                 !is_parallel_safe_tool(name, &PermissionSet::default()),
                 "{name}"
             );
         }
+        // Real registration names (see tools/executor.rs), not snake_case typos.
+        assert!(SERIAL_TOOLS.contains(&"todowrite"));
+        assert!(!SERIAL_TOOLS.contains(&"todo_write"));
+        assert!(!is_parallel_safe_tool(
+            "todowrite",
+            &PermissionSet::default()
+        ));
+        assert!(is_parallel_safe_tool(
+            "todo_write",
+            &PermissionSet::default()
+        ));
     }
 
     #[test]

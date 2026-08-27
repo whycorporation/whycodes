@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use serde_json::json;
-use std::io::Write;
-use std::process::Command;
+use std::path::Path;
 
+use crate::file::paths::display_path;
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -27,7 +27,8 @@ impl Tool for ApplyPatchTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch to a file"
+        "Apply a unified diff patch to a file. Prefer `edit` for exact string replacements; \
+         use this when you already have a unified diff (@@ hunks). Native — no `patch(1)`."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -40,7 +41,7 @@ impl Tool for ApplyPatchTool {
                 },
                 "patch_content": {
                     "type": "string",
-                    "description": "The unified diff patch content to apply"
+                    "description": "Unified diff patch content (---/+++ headers optional; @@ hunks required)"
                 }
             },
             "required": ["path", "patch_content"]
@@ -48,27 +49,34 @@ impl Tool for ApplyPatchTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("");
-        let patch_content = args["patch_content"].as_str().unwrap_or("");
+        let path_str = args["path"].as_str().unwrap_or("").to_string();
+        let patch_content = args["patch_content"].as_str().unwrap_or("").to_string();
 
         if path_str.is_empty() {
             return ToolResult {
                 tool_call_id: String::new(),
-                content: "Error: 'path' parameter is required.".to_string(),
+                content: "Error: 'path' parameter is required".to_string(),
+                is_error: true,
+            };
+        }
+        if patch_content.is_empty() {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: "Error: 'patch_content' parameter is required".to_string(),
                 is_error: true,
             };
         }
 
-        let full_path = if std::path::Path::new(path_str).is_absolute() {
-            path_str.to_string()
+        let full_path = if Path::new(&path_str).is_absolute() {
+            path_str
         } else {
-            std::path::Path::new(&ctx.working_dir)
-                .join(path_str)
+            Path::new(&ctx.working_dir)
+                .join(&path_str)
                 .to_string_lossy()
                 .to_string()
         };
 
-        if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
+        if let Err(msg) = ctx.check_file_write(Path::new(&full_path)) {
             return ToolResult {
                 tool_call_id: String::new(),
                 content: msg,
@@ -76,105 +84,314 @@ impl Tool for ApplyPatchTool {
             };
         }
 
-        // Write patch content to a temporary file
-        let temp_dir = match std::env::temp_dir().to_str() {
-            Some(d) => d.to_string(),
-            None => "/tmp".to_string(),
-        };
-        let temp_file = format!("{}/whycodes_patch_{}.diff", temp_dir, std::process::id());
+        let shown = display_path(Path::new(&full_path), &ctx.working_dir);
+        crate::blocking::tool(move || apply_to_file(&full_path, &shown, &patch_content)).await
+    }
+}
 
-        let mut file = match std::fs::File::create(&temp_file) {
-            Ok(f) => f,
-            Err(e) => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Error creating temp patch file: {}", e),
-                    is_error: true,
-                };
-            }
-        };
-
-        if let Err(e) = file.write_all(patch_content.as_bytes()) {
+fn apply_to_file(full_path: &str, shown: &str, patch_content: &str) -> ToolResult {
+    let original = match std::fs::read_to_string(full_path) {
+        Ok(s) => s,
+        Err(e) => {
             return ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Error writing patch content to temp file: {}", e),
+                content: format!("Error reading '{shown}': {e}"),
                 is_error: true,
             };
         }
+    };
 
-        // Ensure temp file is flushed
-        drop(file);
-
-        let stdin = match std::fs::File::open(&temp_file) {
-            Ok(f) => f,
-            Err(e) => {
-                // Best-effort cleanup; ignore failure on the error path.
-                drop(std::fs::remove_file(&temp_file));
-                return ToolResult {
+    match apply_unified_diff(&original, patch_content) {
+        Ok(modified) => match std::fs::write(full_path, &modified) {
+            Ok(_) => {
+                let hunks = count_hunks(patch_content);
+                ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Error reopening temp patch file: {}", e),
-                    is_error: true,
-                };
-            }
-        };
-
-        // Run patch command
-        let output = Command::new("patch")
-            .arg("-u")
-            .arg(&full_path)
-            .stdin(stdin)
-            .output();
-
-        // Clean up temp file
-        let _ = std::fs::remove_file(&temp_file);
-
-        match output {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let mut result = String::new();
-
-                if !stdout.is_empty() {
-                    result.push_str(&stdout);
-                }
-                if !stderr.is_empty() {
-                    if !result.is_empty() {
-                        result.push('\n');
-                    }
-                    result.push_str(&stderr);
-                }
-
-                if output.status.success() {
-                    ToolResult {
-                        tool_call_id: String::new(),
-                        content: if result.is_empty() {
-                            format!("Patch applied successfully to '{}'", full_path)
-                        } else {
-                            format!("Patch applied successfully to '{}'\n{}", full_path, result)
-                        },
-                        is_error: false,
-                    }
-                } else {
-                    ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!(
-                            "Patch failed on '{}': {}",
-                            full_path,
-                            if result.is_empty() {
-                                "unknown error"
-                            } else {
-                                &result
-                            }
-                        ),
-                        is_error: true,
-                    }
+                    content: format!(
+                        "Patch applied to `{shown}` ({hunks} hunk{}).",
+                        if hunks == 1 { "" } else { "s" }
+                    ),
+                    is_error: false,
                 }
             }
             Err(e) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Error running patch command: {}", e),
+                content: format!("Error writing '{shown}': {e}"),
                 is_error: true,
             },
+        },
+        Err(e) => ToolResult {
+            tool_call_id: String::new(),
+            content: format!("Failed to apply patch to `{shown}`: {e}"),
+            is_error: true,
+        },
+    }
+}
+
+fn count_hunks(patch: &str) -> usize {
+    patch.lines().filter(|l| l.starts_with("@@")).count().max(1)
+}
+
+/// Apply a unified diff to `original`. Context lines (` `) and removals (`-`)
+/// must match the file. Headers (`---`, `+++`, `diff `, `index `, `\\`) are
+/// skipped. Multiple hunks are applied in order against the growing file.
+fn apply_unified_diff(original: &str, patch: &str) -> Result<String, String> {
+    let hunks = parse_hunks(patch)?;
+    if hunks.is_empty() {
+        return Err("no @@ hunks in patch".into());
+    }
+
+    let mut lines: Vec<String> = original
+        .split_inclusive('\n')
+        .map(|s| s.to_string())
+        .collect();
+    if lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    // `split_inclusive` keeps `\n` on every line except a possible last line
+    // without terminator. Normalize to content-without-newline + flag.
+    let mut file: Vec<(String, bool)> = lines
+        .into_iter()
+        .map(|l| {
+            if let Some(stripped) = l.strip_suffix('\n') {
+                (stripped.to_string(), true)
+            } else {
+                (l, false)
+            }
+        })
+        .collect();
+
+    // Apply from the end so earlier hunk line numbers stay valid.
+    let mut ordered: Vec<(usize, Hunk)> = hunks.into_iter().enumerate().collect();
+    ordered.sort_by_key(|(i, h)| (std::cmp::Reverse(h.old_start), std::cmp::Reverse(*i)));
+
+    for (_i, hunk) in ordered {
+        apply_hunk(&mut file, &hunk)?;
+    }
+
+    let mut out = String::new();
+    for (text, nl) in file {
+        out.push_str(&text);
+        if nl {
+            out.push('\n');
         }
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone)]
+struct Hunk {
+    old_start: usize, // 1-based; 0 means empty file
+    ops: Vec<Op>,
+}
+
+#[derive(Debug, Clone)]
+enum Op {
+    Context(String),
+    Remove(String),
+    Add(String),
+}
+
+fn parse_hunks(patch: &str) -> Result<Vec<Hunk>, String> {
+    let mut hunks = Vec::new();
+    let mut current: Option<Hunk> = None;
+
+    for raw in patch.lines() {
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
+        if line.starts_with("@@") {
+            if let Some(h) = current.take() {
+                hunks.push(h);
+            }
+            let old_start = parse_hunk_header(line)?;
+            current = Some(Hunk {
+                old_start,
+                ops: Vec::new(),
+            });
+            continue;
+        }
+        let Some(hunk) = current.as_mut() else {
+            // File headers / noise before the first hunk.
+            continue;
+        };
+        if let Some(rest) = line.strip_prefix('+') {
+            hunk.ops.push(Op::Add(rest.to_string()));
+        } else if let Some(rest) = line.strip_prefix('-') {
+            hunk.ops.push(Op::Remove(rest.to_string()));
+        } else if let Some(rest) = line.strip_prefix(' ') {
+            hunk.ops.push(Op::Context(rest.to_string()));
+        } else if line.starts_with('\\') || line.is_empty() {
+            continue;
+        } else {
+            // GNU patch treats a missing prefix as context.
+            hunk.ops.push(Op::Context(line.to_string()));
+        }
+    }
+    if let Some(h) = current {
+        hunks.push(h);
+    }
+    Ok(hunks)
+}
+
+fn parse_hunk_header(line: &str) -> Result<usize, String> {
+    // @@ -old_start,old_count +new_start,new_count @@
+    let rest = line
+        .strip_prefix("@@")
+        .and_then(|s| s.split("@@").next())
+        .ok_or_else(|| format!("malformed hunk header: {line}"))?;
+    let old = rest
+        .split_whitespace()
+        .find(|t| t.starts_with('-'))
+        .ok_or_else(|| format!("malformed hunk header: {line}"))?;
+    let num = old.trim_start_matches('-').split(',').next().unwrap_or("0");
+    num.parse::<usize>()
+        .map_err(|_| format!("malformed hunk header: {line}"))
+}
+
+fn apply_hunk(file: &mut Vec<(String, bool)>, hunk: &Hunk) -> Result<(), String> {
+    let start = if hunk.old_start == 0 {
+        0
+    } else {
+        hunk.old_start.saturating_sub(1)
+    };
+    if start > file.len() {
+        return Err(format!(
+            "hunk starts at line {} but file has {} lines",
+            hunk.old_start,
+            file.len()
+        ));
+    }
+
+    let mut i = start;
+    let mut inserts: Vec<(usize, String)> = Vec::new();
+    let mut removes: Vec<usize> = Vec::new();
+
+    for op in &hunk.ops {
+        match op {
+            Op::Context(text) => {
+                let Some((existing, _)) = file.get(i) else {
+                    return Err(format!(
+                        "context mismatch at line {}: file ended, expected `{text}`",
+                        i + 1
+                    ));
+                };
+                if existing != text {
+                    return Err(format!(
+                        "context mismatch at line {}: expected `{text}`, found `{existing}`",
+                        i + 1
+                    ));
+                }
+                i += 1;
+            }
+            Op::Remove(text) => {
+                let Some((existing, _)) = file.get(i) else {
+                    return Err(format!(
+                        "removal mismatch at line {}: file ended, expected `{text}`",
+                        i + 1
+                    ));
+                };
+                if existing != text {
+                    return Err(format!(
+                        "removal mismatch at line {}: expected `{text}`, found `{existing}`",
+                        i + 1
+                    ));
+                }
+                removes.push(i);
+                i += 1;
+            }
+            Op::Add(text) => {
+                inserts.push((i, text.clone()));
+            }
+        }
+    }
+
+    // Apply removes from the end so indices stay valid, then inserts.
+    for idx in removes.into_iter().rev() {
+        file.remove(idx);
+        for (ins_at, _) in inserts.iter_mut() {
+            if *ins_at > idx {
+                *ins_at -= 1;
+            }
+        }
+    }
+    // Reverse so consecutive adds at the same index keep source order.
+    for (idx, text) in inserts.into_iter().rev() {
+        file.insert(idx, (text, true));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn applies_single_hunk_replace() {
+        let original = "alpha\nbeta\ngamma\n";
+        let patch = "\
+--- a/x
++++ b/x
+@@ -1,3 +1,3 @@
+ alpha
+-beta
++BETA
+ gamma
+";
+        let out = apply_unified_diff(original, patch).unwrap();
+        assert_eq!(out, "alpha\nBETA\ngamma\n");
+    }
+
+    #[test]
+    fn applies_insert_at_end() {
+        let original = "one\n";
+        let patch = "\
+@@ -1 +1,2 @@
+ one
++two
+";
+        let out = apply_unified_diff(original, patch).unwrap();
+        assert_eq!(out, "one\ntwo\n");
+    }
+
+    #[test]
+    fn rejects_context_mismatch() {
+        let original = "alpha\nbeta\n";
+        let patch = "\
+@@ -1,2 +1,2 @@
+ alpha
+-nope
++yes
+";
+        let err = apply_unified_diff(original, patch).unwrap_err();
+        assert!(err.contains("mismatch"), "{err}");
+    }
+
+    #[test]
+    fn applies_two_hunks() {
+        let original = "a\nb\nc\nd\n";
+        let patch = "\
+@@ -1,2 +1,2 @@
+-a
++A
+ b
+@@ -3,2 +3,2 @@
+ c
+-d
++D
+";
+        let out = apply_unified_diff(original, patch).unwrap();
+        assert_eq!(out, "A\nb\nc\nD\n");
+    }
+
+    #[test]
+    fn consecutive_adds_keep_order() {
+        let original = "keep\n";
+        let patch = "\
+@@ -1 +1,3 @@
+ keep
++one
++two
+";
+        let out = apply_unified_diff(original, patch).unwrap();
+        assert_eq!(out, "keep\none\ntwo\n");
     }
 }
