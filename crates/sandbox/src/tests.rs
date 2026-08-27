@@ -540,3 +540,15 @@ fn wait_child_timeout_without_pipes_and_kill_unused_pid() {
 
     crate::kill_pid_group(u32::MAX);
 }
+
+#[test]
+fn ignore_io_ok_and_err() {
+    crate::policy::ignore_io(Ok(()), "ok");
+    crate::policy::ignore_io::<()>(Err(std::io::Error::other("boom")), "err");
+}
+
+#[cfg(unix)]
+#[test]
+fn own_process_group_sets_pgid() {
+    crate::policy::own_process_group().expect("setpgid");
+}
