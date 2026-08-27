@@ -67,12 +67,12 @@ impl Tool for ReadTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("").trim();
+        let path_str = args["path"].as_str().unwrap_or("").trim().to_string();
         if path_str.is_empty() {
             return err("Missing required parameter `path`.");
         }
 
-        if let Some(internal) = super::internal::read_internal(path_str, ctx) {
+        if let Some(internal) = super::internal::read_internal(&path_str, ctx) {
             return internal;
         }
 
@@ -82,9 +82,23 @@ impl Tool for ReadTool {
             .map(|n| n as usize)
             .unwrap_or(DEFAULT_LIMIT)
             .clamp(1, HARD_LIMIT);
+        let working_dir = ctx.working_dir.clone();
+        let ctx_clone = ctx.clone();
+        crate::blocking::tool(move || Self::run(path_str, offset, limit, working_dir, ctx_clone))
+            .await
+    }
+}
 
-        let full_path = resolve_path(&ctx.working_dir, path_str);
-        let shown = display_path(&full_path, &ctx.working_dir);
+impl ReadTool {
+    fn run(
+        path_str: String,
+        offset: usize,
+        limit: usize,
+        working_dir: String,
+        ctx: ToolContext,
+    ) -> ToolResult {
+        let full_path = resolve_path(&working_dir, &path_str);
+        let shown = display_path(&full_path, &working_dir);
 
         if !full_path.exists() {
             let mut msg = format!("File not found: {}", shown);

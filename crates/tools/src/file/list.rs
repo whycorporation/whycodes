@@ -3,7 +3,7 @@ use serde_json::json;
 use std::path::Path;
 
 use super::paths::{
-    display_path, glob_match, human_size, is_skip_dir, list_dir_entries, resolve_path,
+    display_path, glob_match, human_size, list_dir_entries, resolve_path, walk_entries,
 };
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
@@ -71,9 +71,21 @@ impl Tool for ListTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
+        let working_dir = ctx.working_dir.clone();
+        let file_index = ctx.file_index.clone();
+        crate::blocking::tool(move || Self::run(args, working_dir, file_index)).await
+    }
+}
+
+impl ListTool {
+    fn run(
+        args: serde_json::Value,
+        working_dir: String,
+        file_index: Option<std::sync::Arc<whycodes_index::WorkspaceIndex>>,
+    ) -> ToolResult {
         let rel = args.get("path").and_then(|v| v.as_str()).unwrap_or(".");
-        let target = resolve_path(&ctx.working_dir, rel);
-        let shown = display_path(&target, &ctx.working_dir);
+        let target = resolve_path(&working_dir, rel);
+        let shown = display_path(&target, &working_dir);
 
         if !target.exists() {
             return ToolResult {
@@ -117,37 +129,37 @@ impl Tool for ListTool {
             .unwrap_or(DEFAULT_MAX_ENTRIES)
             .clamp(1, HARD_MAX_ENTRIES);
 
-        let (entries, truncated, dir_count, file_count) =
-            if recursive {
-                // Fast path: the warm workspace index already knows the tree.
-                match ctx.file_index.as_deref().and_then(|idx| {
-                    list_recursive_index(idx, &target, &ignore, max_depth, max_entries)
-                }) {
-                    Some(out) => out,
-                    None => list_recursive(&target, &ignore, max_depth, max_entries),
+        let (entries, truncated, dir_count, file_count) = if recursive {
+            // Fast path: the warm workspace index already knows the tree.
+            match file_index
+                .as_deref()
+                .and_then(|idx| list_recursive_index(idx, &target, &ignore, max_depth, max_entries))
+            {
+                Some(out) => out,
+                None => list_recursive(&target, &ignore, max_depth, max_entries),
+            }
+        } else {
+            match list_dir_entries(&target, &ignore) {
+                Ok(all) => {
+                    let dir_count = all.iter().filter(|e| e.is_dir).count();
+                    let file_count = all.len() - dir_count;
+                    let truncated = all.len() > max_entries;
+                    let entries: Vec<(String, bool, Option<u64>)> = all
+                        .into_iter()
+                        .take(max_entries)
+                        .map(|e| (e.name, e.is_dir, e.size))
+                        .collect();
+                    (entries, truncated, dir_count, file_count)
                 }
-            } else {
-                match list_dir_entries(&target, &ignore) {
-                    Ok(all) => {
-                        let dir_count = all.iter().filter(|e| e.is_dir).count();
-                        let file_count = all.len() - dir_count;
-                        let truncated = all.len() > max_entries;
-                        let entries: Vec<(String, bool, Option<u64>)> = all
-                            .into_iter()
-                            .take(max_entries)
-                            .map(|e| (e.name, e.is_dir, e.size))
-                            .collect();
-                        (entries, truncated, dir_count, file_count)
-                    }
-                    Err(e) => {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: e,
-                            is_error: true,
-                        };
-                    }
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: e,
+                        is_error: true,
+                    };
                 }
-            };
+            }
+        };
 
         let mut out = format!("Contents of {}:\n", shown);
         if entries.is_empty() {
@@ -199,13 +211,6 @@ type ListEntry = (String, bool, Option<u64>);
 /// Recursive listing result: entries, truncated flag, dir count, file count.
 type ListRecursiveOut = (Vec<ListEntry>, bool, usize, usize);
 
-struct WalkState<'a> {
-    entries: &'a mut Vec<ListEntry>,
-    dir_count: &'a mut usize,
-    file_count: &'a mut usize,
-    truncated: &'a mut bool,
-}
-
 /// Index-backed recursive listing: same shape as [`list_recursive`] without
 /// touching the filesystem. Returns None when the index is cold / out of
 /// scope (caller falls back to the walk).
@@ -249,7 +254,7 @@ fn list_recursive_index(
     Some((out, truncated, dir_count, file_count))
 }
 
-/// Recursive listing with depth limit and skip-dir pruning.
+/// Recursive listing with depth limit, gitignore, and skip-dir pruning.
 /// Returns (display_name, is_dir, size), truncated flag, total dir/file counts.
 fn list_recursive(
     root: &Path,
@@ -260,71 +265,29 @@ fn list_recursive(
     let mut entries = Vec::new();
     let mut dir_count = 0usize;
     let mut file_count = 0usize;
-    let mut truncated = false;
-
-    fn walk(
-        root: &Path,
-        dir: &Path,
-        depth: usize,
-        max_depth: usize,
-        ignore: &[String],
-        max_entries: usize,
-        state: &mut WalkState,
-    ) {
-        if *state.truncated {
-            return;
-        }
-        let Ok(level) = list_dir_entries(dir, ignore) else {
-            return;
-        };
-        for e in level {
-            if e.is_dir {
-                *state.dir_count += 1;
-            } else {
-                *state.file_count += 1;
-            }
-
-            if state.entries.len() >= max_entries {
-                *state.truncated = true;
-                return;
-            }
-
-            let rel = e
-                .path
-                .strip_prefix(root)
-                .map(|p| p.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_else(|_| e.name.clone());
-
-            state.entries.push((rel, e.is_dir, e.size));
-
-            if e.is_dir && depth < max_depth && !is_skip_dir(&e.name) {
-                walk(
-                    root,
-                    &e.path,
-                    depth + 1,
-                    max_depth,
-                    ignore,
-                    max_entries,
-                    state,
-                );
-            }
-        }
-    }
-
-    walk(
+    // Walk past `max_entries` so totals stay accurate, same as the index path.
+    let truncated = walk_entries(
         root,
-        root,
-        1,
         max_depth,
-        ignore,
-        max_entries,
-        &mut WalkState {
-            entries: &mut entries,
-            dir_count: &mut dir_count,
-            file_count: &mut file_count,
-            truncated: &mut truncated,
+        usize::MAX,
+        &mut |_path, rel, is_dir, size| {
+            let name = rel.rsplit('/').next().unwrap_or(rel);
+            if ignore.iter().any(|pat| glob_match(pat, name)) {
+                return true;
+            }
+            if is_dir {
+                dir_count += 1;
+            } else {
+                file_count += 1;
+            }
+            if entries.len() < max_entries {
+                entries.push((rel.to_string(), is_dir, size));
+            }
+            true
         },
     );
+    let truncated =
+        truncated || entries.len() >= max_entries && (dir_count + file_count) > entries.len();
 
     // Keep dirs-first-ish: directories first, then name
     entries.sort_by(|a, b| {

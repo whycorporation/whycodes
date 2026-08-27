@@ -55,61 +55,65 @@ impl Tool for GitLogTool {
     }
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let count = args["count"].as_u64().unwrap_or(10);
-        let author = args["author"].as_str();
-        let since = args["since"].as_str();
-        let path_filter = args["path"].as_str();
+        let working_dir = ctx.working_dir.clone();
+        crate::blocking::tool(move || {
+            let count = args["count"].as_u64().unwrap_or(10);
+            let author = args["author"].as_str();
+            let since = args["since"].as_str();
+            let path_filter = args["path"].as_str();
 
-        let mut cmd = Command::new("git");
-        cmd.arg("log")
-            .arg("--oneline")
-            .arg("-n")
-            .arg(count.to_string());
+            let mut cmd = Command::new("git");
+            cmd.arg("log")
+                .arg("--oneline")
+                .arg("-n")
+                .arg(count.to_string());
 
-        if let Some(a) = author {
-            cmd.arg("--author").arg(a);
-        }
+            if let Some(a) = author {
+                cmd.arg("--author").arg(a);
+            }
 
-        if let Some(s) = since {
-            cmd.arg("--since").arg(s);
-        }
+            if let Some(s) = since {
+                cmd.arg("--since").arg(s);
+            }
 
-        if let Some(path) = path_filter {
-            cmd.arg("--").arg(path);
-        }
+            if let Some(path) = path_filter {
+                cmd.arg("--").arg(path);
+            }
 
-        cmd.current_dir(&ctx.working_dir);
+            cmd.current_dir(&working_dir);
 
-        let output = match cmd.output() {
-            Ok(o) => o,
-            Err(e) => {
+            let output = match cmd.output() {
+                Ok(o) => o,
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!("Failed to run git log: {}", e),
+                        is_error: true,
+                    };
+                }
+            };
+
+            if !output.status.success() {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Failed to run git log: {}", e),
+                    content: String::from_utf8_lossy(&output.stderr).to_string(),
                     is_error: true,
                 };
             }
-        };
 
-        if !output.status.success() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: String::from_utf8_lossy(&output.stderr).to_string(),
-                is_error: true,
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let content = if stdout.is_empty() {
+                "No commits found.".to_string()
+            } else {
+                stdout
             };
-        }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let content = if stdout.is_empty() {
-            "No commits found.".to_string()
-        } else {
-            stdout
-        };
-
-        ToolResult {
-            tool_call_id: String::new(),
-            content,
-            is_error: false,
-        }
+            ToolResult {
+                tool_call_id: String::new(),
+                content,
+                is_error: false,
+            }
+        })
+        .await
     }
 }

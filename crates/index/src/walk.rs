@@ -65,6 +65,28 @@ pub fn walk_root(
     cancel: &AtomicBool,
     on_entry: &(dyn Fn(WalkEntry) + Sync),
 ) -> WalkStats {
+    walk_root_limited(
+        root,
+        threads,
+        max_entries,
+        usize::MAX,
+        scanned,
+        cancel,
+        on_entry,
+    )
+}
+
+/// Like [`walk_root`] with a directory-depth cap (`max_depth`, 1 = children of
+/// `root` only). Used by the `list` tool's recursive mode.
+pub fn walk_root_limited(
+    root: &Path,
+    threads: usize,
+    max_entries: usize,
+    max_depth: usize,
+    scanned: &AtomicUsize,
+    cancel: &AtomicBool,
+    on_entry: &(dyn Fn(WalkEntry) + Sync),
+) -> WalkStats {
     let mut builder = WalkBuilder::new(root);
     builder
         .hidden(false) // hidden entries are filtered by our policy (whitelisted ones stay)
@@ -74,6 +96,11 @@ pub fn walk_root(
         .git_exclude(true)
         .ignore(true)
         .require_git(false)
+        .max_depth(if max_depth == usize::MAX {
+            None
+        } else {
+            Some(max_depth)
+        })
         .threads(threads.max(1));
 
     // `filter_entry` drives descent control in both serial and parallel mode:

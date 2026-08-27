@@ -53,7 +53,7 @@ impl Tool for GitCommitTool {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let message = match args["message"].as_str() {
-            Some(m) => m,
+            Some(m) => m.to_string(),
             None => {
                 return ToolResult {
                     tool_call_id: String::new(),
@@ -73,15 +73,20 @@ impl Tool for GitCommitTool {
             .unwrap_or_default();
 
         let push = args["push"].as_bool().unwrap_or(false);
+        let working_dir = ctx.working_dir.clone();
+        crate::blocking::tool(move || Self::run(working_dir, message, files, push)).await
+    }
+}
 
+impl GitCommitTool {
+    fn run(working_dir: String, message: String, files: Vec<String>, push: bool) -> ToolResult {
         if !files.is_empty() {
-            // Stage specific files then commit
             let mut add_cmd = Command::new("git");
             add_cmd.arg("add");
             for f in &files {
                 add_cmd.arg(f);
             }
-            add_cmd.current_dir(&ctx.working_dir);
+            add_cmd.current_dir(&working_dir);
 
             let add_output = match add_cmd.output() {
                 Ok(o) => o,
@@ -103,8 +108,8 @@ impl Tool for GitCommitTool {
             }
 
             let mut commit_cmd = Command::new("git");
-            commit_cmd.arg("commit").arg("-m").arg(message);
-            commit_cmd.current_dir(&ctx.working_dir);
+            commit_cmd.arg("commit").arg("-m").arg(&message);
+            commit_cmd.current_dir(&working_dir);
 
             let commit_output = match commit_cmd.output() {
                 Ok(o) => o,
@@ -133,7 +138,7 @@ impl Tool for GitCommitTool {
             };
 
             if push {
-                let push_result = git_push(ctx);
+                let push_result = git_push(&working_dir);
                 return ToolResult {
                     tool_call_id: String::new(),
                     content: format!("{}\n{}", result, push_result),
@@ -148,10 +153,9 @@ impl Tool for GitCommitTool {
             };
         }
 
-        // No files specified: commit all modified tracked files
         let mut cmd = Command::new("git");
-        cmd.arg("commit").arg("-a").arg("-m").arg(message);
-        cmd.current_dir(&ctx.working_dir);
+        cmd.arg("commit").arg("-a").arg("-m").arg(&message);
+        cmd.current_dir(&working_dir);
 
         let output = match cmd.output() {
             Ok(o) => o,
@@ -180,7 +184,7 @@ impl Tool for GitCommitTool {
         };
 
         if push {
-            let push_result = git_push(ctx);
+            let push_result = git_push(&working_dir);
             return ToolResult {
                 tool_call_id: String::new(),
                 content: format!("{}\n{}", result, push_result),
@@ -196,10 +200,10 @@ impl Tool for GitCommitTool {
     }
 }
 
-fn git_push(ctx: &ToolContext) -> String {
+fn git_push(working_dir: &str) -> String {
     let mut cmd = Command::new("git");
     cmd.arg("push");
-    cmd.current_dir(&ctx.working_dir);
+    cmd.current_dir(working_dir);
 
     match cmd.output() {
         Ok(o) => {

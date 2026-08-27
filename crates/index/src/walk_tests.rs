@@ -82,6 +82,30 @@ fn walk_caps_entries() {
 }
 
 #[test]
+fn walk_root_limited_caps_depth() {
+    let dir = tempfile::TempDir::new().unwrap();
+    fs::create_dir_all(dir.path().join("a/b")).unwrap();
+    fs::write(dir.path().join("top.txt"), "x").unwrap();
+    fs::write(dir.path().join("a/mid.txt"), "x").unwrap();
+    fs::write(dir.path().join("a/b/deep.txt"), "x").unwrap();
+    let scanned = AtomicUsize::new(0);
+    let cancel = AtomicBool::new(false);
+    let out = Mutex::new(Vec::new());
+    walk_root_limited(dir.path(), 1, 100_000, 1, &scanned, &cancel, &|e| {
+        out.lock().unwrap().push(e.rel);
+    });
+    let names: Vec<String> = out.lock().unwrap().iter().map(|s| s.to_string()).collect();
+    assert!(names.iter().any(|n| n == "top.txt"), "{names:?}");
+    assert!(names.iter().any(|n| n == "a" || n == "a/"), "{names:?}");
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.contains("mid") || n.contains("deep")),
+        "{names:?}"
+    );
+}
+
+#[test]
 fn walk_is_cancellable() {
     let dir = tempfile::TempDir::new().unwrap();
     for i in 0..100 {

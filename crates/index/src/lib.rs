@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 pub use fuzzy::FileMatch;
 use fuzzy::FuzzyEngine;
 pub use store::{Entry, IndexStore};
-pub use walk::{WalkEntry, WalkStats, walk_root};
+pub use walk::{WalkEntry, WalkStats, walk_root, walk_root_limited};
 use watch::{Change, ChangeKind, Command};
 
 /// Project-local WhyCodes dir: `.whycodes`.

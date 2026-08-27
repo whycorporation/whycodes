@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-27 — file-tool cold walk must use gitignore; SERIAL_TOOLS names must match `Tool::name()`
+
+**Symptom:** `grep`/`glob`/`list` advertised `.gitignore` respect, but the
+cold `walk_files` path only pruned `SKIP_DIRS` / hidden dirs. Concurrent
+`todowrite` calls could race because `SERIAL_TOOLS` listed `todo_write`.
+
+**Root cause:** The workspace index already walked with `ignore`; file tools
+fell back to a hand-rolled walker. Parallel-safety used a snake_case typo
+that never matched the registered name (`todowrite`). `glob`/`list`/`read`/
+`edit`/`write`/`git_*` also ran `std::fs` / `Command::output` on Tokio
+workers. `apply_patch` shelled out to `patch(1)` (missing on Windows, PID
+temp-file races).
+
+**Fix:** Cold walks use `ignore::WalkBuilder` (same engine as the index).
+`SERIAL_TOOLS` uses `todowrite`. FS/git tools go through `spawn_blocking`.
+`apply_patch` applies unified diffs in-process.
+
+**Prevention:** Keep a gitignore assertion on the cold walk. Assert serial
+names against real `Tool::name()` registrations, not snake_case guesses.
+
 ### 2026-08-27 — prompt caret is a native blinking bar, not a software blink
 
 **Symptom:** Wanted an insert-style `|` that blinks inside the prompt. A

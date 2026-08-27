@@ -248,54 +248,113 @@ pub fn list_dir_entries(dir: &Path, ignore: &[String]) -> Result<Vec<DirEntryInf
 /// Callback for recursive file visits. Return `false` to stop the walk.
 pub type VisitFn<'a> = dyn FnMut(&Path, &str /* relative path */) -> bool + 'a;
 
-/// Walk files under `root`, pruning `SKIP_DIRS` / hidden dirs.
+/// Callback for recursive directory+file visits. Return `false` to stop.
+/// Args: (absolute path, root-relative `/` path, is_dir, size).
+pub type VisitEntryFn<'a> = dyn FnMut(&Path, &str, bool, Option<u64>) -> bool + 'a;
+
+/// Walk files under `root`, honouring `.gitignore` / `.ignore` (same engine
+/// as the workspace index / ripgrep) and pruning `SKIP_DIRS` / hidden dirs.
 ///
+/// Hidden *files* are still visited so an explicit glob/grep for `.env` works
+/// on the cold path; the warm index continues to omit them (secret hygiene).
 /// `relative` paths use `/` separators. Stops early when visitor returns false.
 pub fn walk_files(root: &Path, visit: &mut VisitFn<'_>) {
-    fn walk_inner(root: &Path, dir: &Path, visit: &mut VisitFn<'_>) -> bool {
-        let Ok(rd) = fs::read_dir(dir) else {
-            return true;
-        };
-        // Collect + sort for stable results across filesystems
-        let mut paths: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
-        paths.sort();
+    let _ = walk_entries(
+        root,
+        usize::MAX,
+        usize::MAX,
+        &mut |path, rel, is_dir, _size| {
+            if is_dir { true } else { visit(path, rel) }
+        },
+    );
+}
 
-        for path in paths {
-            let name = path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default();
-
-            let is_dir = path.is_dir();
-            if is_dir {
-                if is_skip_dir(&name) {
-                    continue;
-                }
-                if !walk_inner(root, &path, visit) {
-                    return false;
-                }
-            } else {
-                let rel = path
-                    .strip_prefix(root)
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
-                    .unwrap_or_else(|_| path.display().to_string());
-                if !visit(&path, &rel) {
-                    return false;
-                }
-            }
-        }
-        true
-    }
-
+/// Gitignore-aware recursive walk of files *and* directories.
+///
+/// `max_depth` is ignore-crate depth (`1` = children of `root` only).
+/// `max_entries` caps delivered entries (visitor is not called past the cap).
+/// Returns `true` when the walk stopped early (cap or visitor returned false).
+pub fn walk_entries(
+    root: &Path,
+    max_depth: usize,
+    max_entries: usize,
+    visit: &mut VisitEntryFn<'_>,
+) -> bool {
     if root.is_file() {
         let rel = root
             .file_name()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| root.display().to_string());
-        let _ = visit(root, &rel);
-        return;
+        let size = file_len(root);
+        let _ = visit(root, &rel, false, size);
+        return false;
     }
-    walk_inner(root, root, visit);
+    if !root.is_dir() {
+        return false;
+    }
+
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .follow_links(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .ignore(true)
+        .require_git(false)
+        .max_depth(if max_depth == usize::MAX {
+            None
+        } else {
+            Some(max_depth)
+        })
+        .threads(1);
+
+    builder.filter_entry(|entry| {
+        if entry.depth() == 0 {
+            return true;
+        }
+        let name = entry.file_name().to_string_lossy();
+        let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+        if is_dir { !is_skip_dir(&name) } else { true }
+    });
+
+    let mut truncated = false;
+    let mut delivered = 0usize;
+    for entry in builder.build() {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        if entry.depth() == 0 {
+            continue;
+        }
+        let Some(ft) = entry.file_type() else {
+            continue;
+        };
+        if ft.is_symlink() {
+            continue;
+        }
+        let is_dir = ft.is_dir();
+        let path = entry.path();
+        let rel = path
+            .strip_prefix(root)
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_else(|_| path.display().to_string());
+        let size = if is_dir {
+            None
+        } else {
+            entry.metadata().ok().map(|m| m.len())
+        };
+        if delivered >= max_entries {
+            truncated = true;
+            break;
+        }
+        delivered += 1;
+        if !visit(path, &rel, is_dir, size) {
+            truncated = true;
+            break;
+        }
+    }
+    truncated
 }
 
 /// Seek-friendly check: file size via metadata.
@@ -350,6 +409,29 @@ mod tests {
         });
         assert!(found.iter().any(|f| f.contains("main.rs")));
         assert!(!found.iter().any(|f| f.contains("foo.o")));
+    }
+
+    #[test]
+    fn walk_respects_gitignore() {
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join(".gitignore"), "ignored.txt\nbuild/\n").unwrap();
+        fs::write(dir.path().join("keep.rs"), "ok").unwrap();
+        fs::write(dir.path().join("ignored.txt"), "nope").unwrap();
+        fs::create_dir_all(dir.path().join("build")).unwrap();
+        fs::write(dir.path().join("build/out.rs"), "nope").unwrap();
+
+        let mut found = Vec::new();
+        walk_files(dir.path(), &mut |_p, rel| {
+            found.push(rel.to_string());
+            true
+        });
+        assert!(found.iter().any(|f| f == "keep.rs"), "{found:?}");
+        assert!(
+            !found
+                .iter()
+                .any(|f| f == "ignored.txt" || f.contains("out.rs")),
+            "{found:?}"
+        );
     }
 
     #[test]

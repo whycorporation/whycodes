@@ -56,7 +56,7 @@ impl Tool for GitBlameTool {
 
     async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
         let file = match args["file"].as_str() {
-            Some(f) => f,
+            Some(f) => f.to_string(),
             None => {
                 return ToolResult {
                     tool_call_id: String::new(),
@@ -66,55 +66,59 @@ impl Tool for GitBlameTool {
             }
         };
 
-        let mut cmd = Command::new("git");
-        cmd.arg("blame");
+        let working_dir = ctx.working_dir.clone();
+        crate::blocking::tool(move || {
+            let mut cmd = Command::new("git");
+            cmd.arg("blame");
 
-        if let Some(rev) = args["revision"].as_str() {
-            cmd.arg(rev);
-        }
+            if let Some(rev) = args["revision"].as_str() {
+                cmd.arg(rev);
+            }
 
-        let line_start = args["line_start"].as_u64();
-        let line_end = args["line_end"].as_u64();
+            let line_start = args["line_start"].as_u64();
+            let line_end = args["line_end"].as_u64();
 
-        if let (Some(start), Some(end)) = (line_start, line_end) {
-            cmd.arg("-L").arg(format!("{},{}", start, end));
-        } else if let Some(start) = line_start {
-            cmd.arg("-L").arg(format!("{},", start));
-        }
+            if let (Some(start), Some(end)) = (line_start, line_end) {
+                cmd.arg("-L").arg(format!("{},{}", start, end));
+            } else if let Some(start) = line_start {
+                cmd.arg("-L").arg(format!("{},", start));
+            }
 
-        cmd.arg("--").arg(file);
-        cmd.current_dir(&ctx.working_dir);
+            cmd.arg("--").arg(&file);
+            cmd.current_dir(&working_dir);
 
-        let output = match cmd.output() {
-            Ok(o) => o,
-            Err(e) => {
+            let output = match cmd.output() {
+                Ok(o) => o,
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!("Failed to run git blame: {}", e),
+                        is_error: true,
+                    };
+                }
+            };
+
+            if !output.status.success() {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Failed to run git blame: {}", e),
+                    content: String::from_utf8_lossy(&output.stderr).to_string(),
                     is_error: true,
                 };
             }
-        };
 
-        if !output.status.success() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: String::from_utf8_lossy(&output.stderr).to_string(),
-                is_error: true,
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let content = if stdout.is_empty() {
+                "No blame information available.".to_string()
+            } else {
+                stdout
             };
-        }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let content = if stdout.is_empty() {
-            "No blame information available.".to_string()
-        } else {
-            stdout
-        };
-
-        ToolResult {
-            tool_call_id: String::new(),
-            content,
-            is_error: false,
-        }
+            ToolResult {
+                tool_call_id: String::new(),
+                content,
+                is_error: false,
+            }
+        })
+        .await
     }
 }
