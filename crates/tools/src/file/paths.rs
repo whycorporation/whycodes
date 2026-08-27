@@ -59,49 +59,6 @@ pub fn is_skip_dir(name: &str) -> bool {
     whycodes_index::policy::is_pruned_dir(name)
 }
 
-/// Entries under `root` from the warm workspace index, shaped like
-/// [`walk_files`] results: (absolute path, `root`-relative `/` path, is_dir).
-///
-/// Returns `None` when the index is absent, still scanning (cold), or `root`
-/// is not inside the primary index root — callers then fall back to walking.
-/// Note the index never lists hidden files (secret hygiene: `.env` & co. stay
-/// out of agent context); patterns explicitly targeting dotfiles should walk.
-pub fn index_entries(
-    index: &whycodes_index::WorkspaceIndex,
-    root: &Path,
-) -> Option<Vec<(PathBuf, String, bool, u64)>> {
-    if !index.is_ready() {
-        return None;
-    }
-    // The index canonicalizes roots; match that so symlinked working dirs
-    // (e.g. /tmp on macOS) still hit the fast path.
-    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let primary = index.primary_root();
-    let rel_root = root.strip_prefix(primary).ok()?;
-    let prefix = rel_root.to_string_lossy().replace('\\', "/");
-    let prefix = prefix.trim_matches('/').to_string();
-    let mut out = Vec::new();
-    index.visit(&mut |e| {
-        let in_scope = if prefix.is_empty() {
-            true
-        } else {
-            e.rel.len() > prefix.len()
-                && e.rel.starts_with(&prefix)
-                && e.rel.as_bytes()[prefix.len()] == b'/'
-        };
-        if in_scope {
-            let rel = if prefix.is_empty() {
-                e.rel.to_string()
-            } else {
-                e.rel[prefix.len() + 1..].to_string()
-            };
-            out.push((primary.join(&*e.rel), rel, e.is_dir, e.size));
-        }
-        true
-    });
-    Some(out)
-}
-
 /// Visit index entries under `root` without cloning the whole store.
 ///
 /// `visit` receives `(abs, rel, is_dir, size)` and returns `false` to stop.
