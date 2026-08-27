@@ -27,8 +27,9 @@ impl Tool for ApplyPatchTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch to a file. Prefer `edit` for exact string replacements; \
-         use this when you already have a unified diff (@@ hunks). Native — no `patch(1)`."
+        "Apply a unified diff. Prefer `edit` for exact string replacements. \
+         `path` is required for a single-file patch without `+++` headers; omit it \
+         (or pass `.`) for a multi-file `diff --git` / `+++ b/…` patch. Native — no `patch(1)`."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -37,14 +38,14 @@ impl Tool for ApplyPatchTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the file to patch"
+                    "description": "File to patch when the diff has no +++ headers. Optional for multi-file diffs (use `.` or omit)."
                 },
                 "patch_content": {
                     "type": "string",
-                    "description": "Unified diff patch content (---/+++ headers optional; @@ hunks required)"
+                    "description": "Unified diff (---/+++ headers optional for a single file; @@ hunks required)"
                 }
             },
-            "required": ["path", "patch_content"]
+            "required": ["patch_content"]
         })
     }
 
@@ -52,13 +53,6 @@ impl Tool for ApplyPatchTool {
         let path_str = args["path"].as_str().unwrap_or("").to_string();
         let patch_content = args["patch_content"].as_str().unwrap_or("").to_string();
 
-        if path_str.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "Error: 'path' parameter is required".to_string(),
-                is_error: true,
-            };
-        }
         if patch_content.is_empty() {
             return ToolResult {
                 tool_call_id: String::new(),
@@ -67,15 +61,138 @@ impl Tool for ApplyPatchTool {
             };
         }
 
-        let full_path = if Path::new(&path_str).is_absolute() {
-            path_str
-        } else {
-            Path::new(&ctx.working_dir)
-                .join(&path_str)
-                .to_string_lossy()
-                .to_string()
-        };
+        let files = split_patch_files(&patch_content);
+        if files.is_empty() {
+            return ToolResult {
+                tool_call_id: String::new(),
+                content: "Error: patch has no @@ hunks".to_string(),
+                is_error: true,
+            };
+        }
 
+        let working_dir = ctx.working_dir.clone();
+        let ctx_clone = ctx.clone();
+        crate::blocking::tool(move || apply_files(&working_dir, &path_str, files, &ctx_clone)).await
+    }
+}
+
+/// One file's hunks inside a (possibly multi-file) unified diff.
+struct FilePatch {
+    /// Path from `+++ b/…` / `diff --git`, if present.
+    header_path: Option<String>,
+    body: String,
+}
+
+fn split_patch_files(patch: &str) -> Vec<FilePatch> {
+    let mut files = Vec::new();
+    let mut header_path: Option<String> = None;
+    let mut body = String::new();
+    let mut saw_hunk = false;
+
+    let flush = |files: &mut Vec<FilePatch>,
+                 header_path: &mut Option<String>,
+                 body: &mut String,
+                 saw_hunk: &mut bool| {
+        if *saw_hunk && !body.is_empty() {
+            files.push(FilePatch {
+                header_path: header_path.take(),
+                body: std::mem::take(body),
+            });
+        }
+        *saw_hunk = false;
+        body.clear();
+        *header_path = None;
+    };
+
+    for raw in patch.lines() {
+        let line = raw.strip_suffix('\r').unwrap_or(raw);
+        if line.starts_with("diff --git ") {
+            flush(&mut files, &mut header_path, &mut body, &mut saw_hunk);
+            header_path = path_from_diff_git(line);
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("+++ ") {
+            let p = strip_diff_path(rest);
+            if !p.is_empty() && p != "/dev/null" {
+                header_path = Some(p);
+            }
+        }
+        if line.starts_with("@@") {
+            saw_hunk = true;
+        }
+        body.push_str(raw);
+        body.push('\n');
+    }
+    flush(&mut files, &mut header_path, &mut body, &mut saw_hunk);
+    files
+}
+
+fn path_from_diff_git(line: &str) -> Option<String> {
+    // `diff --git a/foo.rs b/foo.rs`
+    let rest = line.strip_prefix("diff --git ")?;
+    let b = rest.split_whitespace().nth(1)?;
+    let p = strip_diff_path(b);
+    if p.is_empty() || p == "/dev/null" {
+        None
+    } else {
+        Some(p)
+    }
+}
+
+fn strip_diff_path(raw: &str) -> String {
+    let s = raw
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_start_matches("a/")
+        .trim_start_matches("b/");
+    s.to_string()
+}
+
+fn resolve_target(
+    working_dir: &str,
+    explicit: &str,
+    header: Option<&str>,
+) -> Result<String, String> {
+    if let Some(h) = header.filter(|s| !s.is_empty() && *s != ".") {
+        let p = Path::new(h);
+        if p.is_absolute() {
+            return Ok(h.to_string());
+        }
+        return Ok(Path::new(working_dir).join(h).to_string_lossy().to_string());
+    }
+    if !explicit.is_empty() && explicit != "." {
+        let p = Path::new(explicit);
+        if p.is_absolute() {
+            return Ok(explicit.to_string());
+        }
+        return Ok(Path::new(working_dir)
+            .join(explicit)
+            .to_string_lossy()
+            .to_string());
+    }
+    Err("Error: 'path' is required when the patch has no +++ / diff --git headers".into())
+}
+
+fn apply_files(
+    working_dir: &str,
+    explicit_path: &str,
+    files: Vec<FilePatch>,
+    ctx: &ToolContext,
+) -> ToolResult {
+    let mut reports = Vec::new();
+    for file in files {
+        let full_path =
+            match resolve_target(working_dir, explicit_path, file.header_path.as_deref()) {
+                Ok(p) => p,
+                Err(msg) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: msg,
+                        is_error: true,
+                    };
+                }
+            };
         if let Err(msg) = ctx.check_file_write(Path::new(&full_path)) {
             return ToolResult {
                 tool_call_id: String::new(),
@@ -83,9 +200,17 @@ impl Tool for ApplyPatchTool {
                 is_error: true,
             };
         }
-
-        let shown = display_path(Path::new(&full_path), &ctx.working_dir);
-        crate::blocking::tool(move || apply_to_file(&full_path, &shown, &patch_content)).await
+        let shown = display_path(Path::new(&full_path), working_dir);
+        let result = apply_to_file(&full_path, &shown, &file.body);
+        if result.is_error {
+            return result;
+        }
+        reports.push(result.content);
+    }
+    ToolResult {
+        tool_call_id: String::new(),
+        content: reports.join("\n"),
+        is_error: false,
     }
 }
 
@@ -102,7 +227,7 @@ fn apply_to_file(full_path: &str, shown: &str, patch_content: &str) -> ToolResul
     };
 
     match apply_unified_diff(&original, patch_content) {
-        Ok(modified) => match std::fs::write(full_path, &modified) {
+        Ok(modified) => match crate::file::atomic::write_atomic(Path::new(full_path), &modified) {
             Ok(_) => {
                 let hunks = count_hunks(patch_content);
                 ToolResult {
@@ -393,5 +518,27 @@ mod tests {
 ";
         let out = apply_unified_diff(original, patch).unwrap();
         assert_eq!(out, "keep\none\ntwo\n");
+    }
+
+    #[test]
+    fn split_multi_file_diff_git() {
+        let patch = "\
+diff --git a/one.rs b/one.rs
+--- a/one.rs
++++ b/one.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/two.rs b/two.rs
+--- a/two.rs
++++ b/two.rs
+@@ -1 +1 @@
+-a
++b
+";
+        let files = split_patch_files(patch);
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0].header_path.as_deref(), Some("one.rs"));
+        assert_eq!(files[1].header_path.as_deref(), Some("two.rs"));
     }
 }

@@ -1,10 +1,14 @@
 use async_trait::async_trait;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, SearcherBuilder, Sink, SinkContext, SinkMatch};
+use rayon::prelude::*;
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use super::paths::{MAX_GREP_FILE_BYTES, display_path, file_len, resolve_path, walk_files};
+use super::paths::{
+    MAX_GREP_FILE_BYTES, display_path, file_len, resolve_path, visit_index, walk_files,
+};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -170,7 +174,7 @@ impl GrepTool {
         }
 
         let mut matches: Vec<String> = Vec::new();
-        let mut files_searched = 0usize;
+        let files_searched;
         let mut truncated = false;
 
         if path.is_file() {
@@ -187,43 +191,81 @@ impl GrepTool {
             // Fast path: enumerate from the warm workspace index (no walk).
             // Dotfile-targeting includes bypass it (index skips hidden files).
             let targets_hidden = file_glob.is_some_and(|g| g.starts_with('.') || g.contains("/."));
-            let indexed = if targets_hidden {
-                None
-            } else {
-                file_index.and_then(|idx| super::paths::index_entries(idx, path))
-            };
 
-            let mut visit_one = |file: &Path, rel: &str| -> bool {
-                if matches.len() >= max_results {
-                    truncated = true;
-                    return false;
-                }
+            // Collect candidate files (index visit is cheap; content search is not).
+            let mut files: Vec<(PathBuf, String)> = Vec::new();
+            let mut collect = |file: &Path, rel: &str| -> bool {
                 if let Some(g) = glob.as_ref() {
                     let name = file
                         .file_name()
                         .map(|s| s.to_string_lossy().into_owned())
                         .unwrap_or_default();
-                    // Match basename or full relative path
                     if !g.matches(&name) && !g.matches(rel) {
                         return true;
                     }
                 }
-                files_searched += 1;
-                Self::search_file(file, rel, &matcher, context, &mut matches, max_results);
-                matches.len() < max_results
+                files.push((file.to_path_buf(), rel.to_string()));
+                true
             };
 
-            if let Some(entries) = indexed {
-                for (file, rel, is_dir, _size) in entries {
+            let used_index = if targets_hidden {
+                false
+            } else if let Some(idx) = file_index {
+                visit_index(idx, path, &mut |file, rel, is_dir, _size| {
                     if is_dir {
-                        continue;
+                        return true;
                     }
-                    if !visit_one(&file, &rel) {
-                        break;
-                    }
-                }
+                    collect(file, rel)
+                })
+                .is_some()
             } else {
-                walk_files(path, &mut |file, rel| visit_one(file, rel));
+                false
+            };
+            if !used_index {
+                walk_files(path, &mut |file, rel| collect(file, rel));
+            }
+
+            files_searched = files.len();
+            let stop = AtomicBool::new(false);
+            let remaining = AtomicUsize::new(max_results);
+            let per_file: Vec<(usize, Vec<String>)> = files
+                .par_iter()
+                .enumerate()
+                .map(|(i, (file, rel))| {
+                    if stop.load(Ordering::Relaxed) {
+                        return (i, Vec::new());
+                    }
+                    let cap = remaining.load(Ordering::Relaxed);
+                    if cap == 0 {
+                        stop.store(true, Ordering::Relaxed);
+                        return (i, Vec::new());
+                    }
+                    let mut local = Vec::new();
+                    Self::search_file(file, rel, &matcher, context, &mut local, cap);
+                    if !local.is_empty() {
+                        let n = local.len();
+                        let prev = remaining.fetch_sub(n.min(cap), Ordering::Relaxed);
+                        if prev <= n {
+                            stop.store(true, Ordering::Relaxed);
+                        }
+                    }
+                    (i, local)
+                })
+                .collect();
+            // Restore discovery order so tests and the model see a stable listing.
+            let mut ordered: Vec<(usize, Vec<String>)> = per_file;
+            ordered.sort_by_key(|(i, _)| *i);
+            for (_, mut local) in ordered {
+                if matches.len() >= max_results {
+                    truncated = true;
+                    break;
+                }
+                let room = max_results - matches.len();
+                if local.len() > room {
+                    local.truncate(room);
+                    truncated = true;
+                }
+                matches.append(&mut local);
             }
             if matches.len() >= max_results {
                 truncated = true;

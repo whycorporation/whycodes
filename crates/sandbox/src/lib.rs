@@ -13,8 +13,8 @@ mod host;
 mod policy;
 
 pub use policy::{
-    Backend, PreparedCommand, SandboxError, SandboxOutcome, SandboxRequest, prepare, prepare_with,
-    run,
+    Backend, PreparedCommand, SandboxError, SandboxOutcome, SandboxRequest, kill_pid_group,
+    prepare, prepare_with, run, run_timeout,
 };
 
 use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};

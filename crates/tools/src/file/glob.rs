@@ -140,29 +140,26 @@ impl GlobTool {
         // Patterns targeting dotfiles bypass it (the index skips hidden files
         // by design) and take the classic walk below.
         let targets_hidden = pattern_str.starts_with('.') || pattern_str.contains("/.");
-        let indexed = if targets_hidden {
-            None
-        } else {
-            file_index
-                .as_deref()
-                .and_then(|idx| super::paths::index_entries(idx, &root))
-        };
-
-        let mut walked = false;
-        if let Some(entries) = &indexed {
-            for (path, rel, is_dir, _size) in entries {
-                if *is_dir {
-                    continue;
+        let used_index = if targets_hidden {
+            false
+        } else if let Some(idx) = file_index.as_deref() {
+            super::paths::visit_index(idx, &root, &mut |path, rel, is_dir, _size| {
+                if is_dir {
+                    return true;
                 }
                 let name = path
                     .file_name()
                     .map(|s| s.to_string_lossy().into_owned())
                     .unwrap_or_default();
-                if !match_one(&name, rel, &mut results) {
-                    break;
-                }
-            }
+                match_one(&name, rel, &mut results)
+            })
+            .is_some()
         } else {
+            false
+        };
+
+        let mut walked = false;
+        if !used_index {
             walked = true;
             walk_files(&root, &mut |path, rel| {
                 let name = path

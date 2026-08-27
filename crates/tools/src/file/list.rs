@@ -221,20 +221,19 @@ fn list_recursive_index(
     max_depth: usize,
     max_entries: usize,
 ) -> Option<ListRecursiveOut> {
-    let entries = super::paths::index_entries(index, root)?;
     let mut out: Vec<ListEntry> = Vec::new();
     let mut dir_count = 0usize;
     let mut file_count = 0usize;
     let mut truncated = false;
-    for (_abs, rel, is_dir, size) in entries {
+    super::paths::visit_index(index, root, &mut |_abs, rel, is_dir, size| {
         // Depth in components: `a/b/c` is 3 (walk starts counting at 1).
         let depth = rel.bytes().filter(|b| *b == b'/').count() + 1;
         if depth > max_depth {
-            continue;
+            return true;
         }
-        let name = rel.rsplit('/').next().unwrap_or(&rel);
+        let name = rel.rsplit('/').next().unwrap_or(rel);
         if ignore.iter().any(|pat| glob_match(pat, name)) {
-            continue;
+            return true;
         }
         if is_dir {
             dir_count += 1;
@@ -243,10 +242,15 @@ fn list_recursive_index(
         }
         if out.len() >= max_entries {
             truncated = true;
-            continue; // keep counting for accurate totals
+            return true; // keep counting for accurate totals
         }
-        out.push((rel, is_dir, if is_dir { None } else { Some(size) }));
-    }
+        out.push((
+            rel.to_string(),
+            is_dir,
+            if is_dir { None } else { Some(size) },
+        ));
+        true
+    })?;
     out.sort_by(|a, b| {
         b.1.cmp(&a.1)
             .then_with(|| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()))

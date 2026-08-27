@@ -85,7 +85,7 @@ impl WriteTool {
             };
         }
 
-        match std::fs::write(&full_path, &content) {
+        match crate::file::atomic::write_atomic(std::path::Path::new(&full_path), &content) {
             Ok(_) => ToolResult {
                 tool_call_id: String::new(),
                 // Grok-like: +lines preview so the TUI can paint add colours

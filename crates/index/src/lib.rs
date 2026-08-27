@@ -368,10 +368,13 @@ impl WorkspaceIndex {
     }
 
     /// Visit every primary-root entry without cloning (tools hot path).
-    pub fn visit(&self, f: &mut dyn FnMut(&Entry)) {
+    /// Return `false` from `f` to stop early.
+    pub fn visit(&self, f: &mut dyn FnMut(&Entry) -> bool) {
         if let Some(state) = self.shared.states.first() {
             for e in read(&state.store).entries() {
-                f(e);
+                if !f(e) {
+                    return;
+                }
             }
         }
     }

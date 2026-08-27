@@ -1,4 +1,5 @@
 pub mod apply_patch;
+pub(crate) mod atomic;
 pub mod edit;
 pub mod external_directory;
 pub mod glob;

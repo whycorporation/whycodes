@@ -115,7 +115,10 @@ impl EditTool {
                     let count = spans.len();
                     let modified = apply_spans(&original, &spans, &new_string);
                     let start = first_line_number(&original, &matched);
-                    match std::fs::write(&full_path, &modified) {
+                    match crate::file::atomic::write_atomic(
+                        std::path::Path::new(&full_path),
+                        &modified,
+                    ) {
                         Ok(()) => ToolResult {
                             tool_call_id: String::new(),
                             content: format_edit_preview_at(
