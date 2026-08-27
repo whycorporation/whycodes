@@ -3044,13 +3044,13 @@ async fn apply_auth_flow_event(
             Ok(_) => {
                 let already_on = *provider == p;
                 if !already_on {
+                    // Switch even when the plugin lists no models — otherwise
+                    // a successful login leaves the previous provider selected.
                     let m = whycodes_auth::providers::suggested_models(&p)
                         .into_iter()
-                        .next()
-                        .unwrap_or_default();
-                    if !m.is_empty() {
-                        apply_model_choice(app, provider, model, api_key, p.clone(), m, config);
-                    }
+                        .find(|name| !name.is_empty())
+                        .unwrap_or_else(|| model.clone());
+                    apply_model_choice(app, provider, model, api_key, p.clone(), m, config);
                 }
                 if let Ok(dir) = Config::data_dir()
                     && let Some(tok) = whycodes_auth::providers::access_token(&p, &dir).await
@@ -8177,6 +8177,7 @@ mod tests {
         )
         .await;
         assert!(app.status_message.contains("Signed in"));
+        // Plugin-less installs have no suggested models; still switch provider.
         assert_eq!(provider, "openai");
         assert!(
             app.messages
@@ -8185,6 +8186,40 @@ mod tests {
             "{:?}",
             app.messages.iter().map(|m| &m.content).collect::<Vec<_>>()
         );
+
+        whycodes_auth::register_spec(whycodes_auth::ProviderSpec {
+            name: "tui-oauth-switch-demo".into(),
+            label: "Demo".into(),
+            flow: whycodes_auth::FlowKind::DeviceCode,
+            client_id: "cid".into(),
+            client_secret: None,
+            authorize_url: "https://example.com/auth".into(),
+            token_url: "https://example.com/token".into(),
+            scopes: "read".into(),
+            token_encoding: whycodes_auth::TokenEncoding::Form,
+            redirect_uri: None,
+            loopback_port: None,
+            loopback_host: None,
+            callback_path: String::new(),
+            extra_authorize: vec![],
+            derived: None,
+            suggested_models: vec!["demo-model".into()],
+            inference: None,
+        });
+        apply_auth_flow_event(
+            &mut app,
+            AuthFlowEvent::Done {
+                provider: "tui-oauth-switch-demo".into(),
+                result: Ok("ok".into()),
+            },
+            &mut provider,
+            &mut model,
+            &mut key,
+            &config,
+        )
+        .await;
+        assert_eq!(provider, "tui-oauth-switch-demo");
+        assert_eq!(model, "demo-model");
     }
 
     #[test]
