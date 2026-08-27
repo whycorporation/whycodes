@@ -351,6 +351,34 @@ async fn test_edit_tool_not_found() {
     assert!(result.is_error, "should error when text not found");
 }
 
+#[tokio::test]
+async fn test_edit_tool_whitespace_tolerant_unique() {
+    let dir = TempDir::new().unwrap();
+    let ctx = temp_ctx(&dir);
+    let executor = ToolExecutor::new();
+    let tool = executor.get("edit").expect("edit tool not found");
+
+    make_file(
+        &dir,
+        "indent.rs",
+        "fn run() {\n    let x = 1;\n    let y = 2;\n}\n",
+    );
+
+    let args = serde_json::json!({
+        "path": "indent.rs",
+        "old_string": "fn run() {\n  let x = 1;\n  let y = 2;\n}",
+        "new_string": "fn run() {\n    let x = 1;\n    let y = 3;\n}"
+    });
+    let result = tool.execute(args, &ctx).await;
+    assert!(
+        !result.is_error,
+        "unique indent mismatch should fuzzy-match: {}",
+        result.content
+    );
+    let modified = std::fs::read_to_string(dir.path().join("indent.rs")).unwrap();
+    assert_eq!(modified, "fn run() {\n    let x = 1;\n    let y = 3;\n}\n");
+}
+
 // ---------------------------------------------------------------------------
 // Grep tool
 // ---------------------------------------------------------------------------

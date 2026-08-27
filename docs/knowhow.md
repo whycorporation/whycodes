@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-27 — grep uses in-process ripgrep; Core is ~12 names; edit is whitespace-tolerant
+
+**Symptom:** `grep` walked files with the `regex` crate (no SIMD/mmap engine).
+Core advertised ~20 tools (`apply_patch`, `swarm`, `schedule`, `memory`, …)
+and blew the TTFT budget. `edit` failed when the model’s `old_string` only
+differed in indent or extra spaces.
+
+**Root cause:** Content search never used the ripgrep crates already in the
+workspace. Core grew by adding every “useful” tool instead of deferring via
+`tool_search`. Exact substring replace is brittle against LLM copy-paste.
+
+**Fix:** `grep` uses `grep_searcher` + `grep_regex`. Core is the coding loop
+plus `tool_search` (≤13 entries counting the `todo` alias). `edit` falls back
+to a unique token-sequence match (whitespace between tokens may differ; typos
+and glued tokens do not).
+
+**Prevention:** `core_defers_specialized_tools` ratchets the list. Grep tests
+cover context / binary / gitignore. Edit tests cover indent mismatch and
+uniqueness.
+
 ### 2026-08-27 — file-tool cold walk must use gitignore; SERIAL_TOOLS names must match `Tool::name()`
 
 **Symptom:** `grep`/`glob`/`list` advertised `.gitignore` respect, but the

@@ -1,13 +1,10 @@
 use async_trait::async_trait;
+use grep_regex::RegexMatcherBuilder;
+use grep_searcher::{BinaryDetection, SearcherBuilder, Sink, SinkContext, SinkMatch};
 use serde_json::json;
-use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use super::paths::{
-    BINARY_SNIFF_LEN, MAX_GREP_FILE_BYTES, display_path, file_len, is_binary_bytes, resolve_path,
-    walk_files,
-};
+use super::paths::{MAX_GREP_FILE_BYTES, display_path, file_len, resolve_path, walk_files};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -35,7 +32,7 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents with regex (in-process, no ripgrep required). \
+        "Search file contents with regex (ripgrep engine, in-process — no `rg` binary). \
          Respects .gitignore; skips binaries and heavy dirs (target, node_modules, .git, …). \
          Prefer over shell grep for project code search."
     }
@@ -154,14 +151,11 @@ impl GrepTool {
         working_dir: &str,
         file_index: Option<&whycodes_index::WorkspaceIndex>,
     ) -> Result<String, String> {
-        let mut builder = regex::RegexBuilder::new(pattern);
-        builder.case_insensitive(case_insensitive);
-        // Avoid catastrophic backtracking hanging the agent
-        builder.size_limit(1 << 20);
-        builder.dfa_size_limit(1 << 20);
-        let re = builder
-            .build()
-            .map_err(|e| format!("invalid regex: {}", e))?;
+        let matcher = RegexMatcherBuilder::new()
+            .case_insensitive(case_insensitive)
+            .line_terminator(Some(b'\n'))
+            .build(pattern)
+            .map_err(|e| format!("invalid regex: {e}"))?;
 
         let glob = match file_glob {
             Some(g) => Some(glob::Pattern::new(g).map_err(|e| format!("invalid glob: {}", e))?),
@@ -184,7 +178,7 @@ impl GrepTool {
             Self::search_file(
                 path,
                 &display_path(path, working_dir),
-                &re,
+                &matcher,
                 context,
                 &mut matches,
                 max_results,
@@ -215,7 +209,7 @@ impl GrepTool {
                     }
                 }
                 files_searched += 1;
-                Self::search_file(file, rel, &re, context, &mut matches, max_results);
+                Self::search_file(file, rel, &matcher, context, &mut matches, max_results);
                 matches.len() < max_results
             };
 
@@ -262,7 +256,7 @@ impl GrepTool {
     fn search_file(
         file: &Path,
         display: &str,
-        re: &regex::Regex,
+        matcher: &grep_regex::RegexMatcher,
         context: usize,
         matches: &mut Vec<String>,
         max_results: usize,
@@ -270,81 +264,100 @@ impl GrepTool {
         if matches.len() >= max_results {
             return;
         }
-
-        // Size gate
         if file_len(file).is_some_and(|n| n > MAX_GREP_FILE_BYTES) {
             return;
         }
 
-        let Ok(f) = fs::File::open(file) else {
-            return;
+        let mut searcher = SearcherBuilder::new()
+            .binary_detection(BinaryDetection::quit(b'\0'))
+            .line_number(true)
+            .before_context(context)
+            .after_context(context)
+            .build();
+        let before = matches.len();
+        let mut sink = CollectSink {
+            display,
+            matches,
+            max_results,
         };
-        let mut reader = BufReader::with_capacity(64 * 1024, f);
-
-        // Sniff binary from the first chunk without loading the whole file.
-        let mut head = [0u8; BINARY_SNIFF_LEN];
-        use std::io::Read;
-        let Ok(n) = reader.read(&mut head) else {
-            return;
-        };
-        if is_binary_bytes(&head[..n]) {
-            return;
+        if let Err(err) = searcher.search_path(matcher, file, &mut sink) {
+            tracing::debug!(
+                path = %file.display(),
+                error = %err,
+                "skipping file that could not be searched"
+            );
         }
-
-        // Re-open for line iteration (simpler than mix of read+seek on all platforms)
-        let Ok(f) = fs::File::open(file) else {
-            return;
-        };
-        let reader = BufReader::with_capacity(64 * 1024, f);
-        let lines: Vec<String> = if context > 0 {
-            // Need random access for context windows
-            reader.lines().map_while(Result::ok).collect()
-        } else {
-            // Stream without materializing everything when no context
-            for (idx, line) in reader.lines().enumerate() {
-                if matches.len() >= max_results {
-                    return;
-                }
-                let Ok(line) = line else { continue };
-                if re.is_match(&line) {
-                    let clipped = clip_line(&line, 500);
-                    matches.push(format!("{}:{}:{}", display, idx + 1, clipped));
-                }
-            }
-            return;
-        };
-
-        for (idx, line) in lines.iter().enumerate() {
-            if matches.len() >= max_results {
-                return;
-            }
-            if re.is_match(line) {
-                if context == 0 {
-                    matches.push(format!("{}:{}:{}", display, idx + 1, clip_line(line, 500)));
-                } else {
-                    let from = idx.saturating_sub(context);
-                    let to = (idx + context + 1).min(lines.len());
-                    for (j, ctx_line) in lines[from..to].iter().enumerate() {
-                        if matches.len() >= max_results {
-                            return;
-                        }
-                        let lineno = from + j + 1;
-                        let mark = if from + j == idx { ':' } else { '-' };
-                        matches.push(format!(
-                            "{}:{}{}{}",
-                            display,
-                            lineno,
-                            mark,
-                            clip_line(ctx_line, 500)
-                        ));
-                    }
-                    if matches.len() < max_results {
-                        matches.push("--".into());
-                    }
-                }
-            }
+        // Preserve the historical `path:line-…` / `--` context separator after
+        // each file so existing tests and model-facing output stay stable.
+        if context > 0
+            && matches.len() > before
+            && matches.len() < max_results
+            && matches.last().is_none_or(|s| s != "--")
+        {
+            matches.push("--".into());
         }
     }
+}
+
+/// Collects ripgrep sink events into the existing `path:line:text` format.
+struct CollectSink<'a> {
+    display: &'a str,
+    matches: &'a mut Vec<String>,
+    max_results: usize,
+}
+
+impl Sink for CollectSink<'_> {
+    type Error = std::io::Error;
+
+    fn matched(
+        &mut self,
+        _searcher: &grep_searcher::Searcher,
+        mat: &SinkMatch<'_>,
+    ) -> Result<bool, Self::Error> {
+        if self.matches.len() >= self.max_results {
+            return Ok(false);
+        }
+        let lineno = mat.line_number().unwrap_or(0);
+        let line = utf8_line(mat.bytes());
+        self.matches.push(format!(
+            "{}:{}:{}",
+            self.display,
+            lineno,
+            clip_line(&line, 500)
+        ));
+        Ok(self.matches.len() < self.max_results)
+    }
+
+    fn context(
+        &mut self,
+        _searcher: &grep_searcher::Searcher,
+        ctx: &SinkContext<'_>,
+    ) -> Result<bool, Self::Error> {
+        if self.matches.len() >= self.max_results {
+            return Ok(false);
+        }
+        let lineno = ctx.line_number().unwrap_or(0);
+        let line = utf8_line(ctx.bytes());
+        self.matches.push(format!(
+            "{}:{}-{}",
+            self.display,
+            lineno,
+            clip_line(&line, 500)
+        ));
+        Ok(true)
+    }
+
+    fn context_break(&mut self, _searcher: &grep_searcher::Searcher) -> Result<bool, Self::Error> {
+        if self.matches.len() < self.max_results && self.matches.last().is_none_or(|s| s != "--") {
+            self.matches.push("--".into());
+        }
+        Ok(true)
+    }
+}
+
+fn utf8_line(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    text.trim_end_matches(['\n', '\r']).to_string()
 }
 
 fn clip_line(line: &str, max_chars: usize) -> String {
@@ -359,6 +372,7 @@ fn clip_line(line: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::TempDir;
 
     fn write(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
