@@ -263,7 +263,8 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
         ))
         .or_else(|_| model.run(tvec!(ids_t.into(), mask_t.into())))?;
 
-    let output = result[0].to_array_view::<f32>()?;
+    // tract 0.23 renamed Tensor::to_array_view → to_plain_array_view.
+    let output = result[0].to_plain_array_view::<f32>()?;
     let shape = output.shape();
     let mut pooled = match shape.len() {
         3 => {
