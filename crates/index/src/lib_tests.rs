@@ -67,7 +67,10 @@ fn end_to_end_scan_query_browse() {
     // Tools view.
     assert!(idx.entries().iter().any(|e| &*e.rel == "src/main.rs"));
     let mut seen = 0;
-    idx.visit(&mut |_| seen += 1);
+    idx.visit(&mut |_| {
+        seen += 1;
+        true
+    });
     assert!(seen >= 5);
 
     // Resolve.
@@ -106,7 +109,10 @@ fn watcher_picks_up_changes() {
     loop {
         let gone = {
             let mut found = false;
-            idx.visit(&mut |e| found |= &*e.rel == "src/new_file.rs");
+            idx.visit(&mut |e| {
+                found |= &*e.rel == "src/new_file.rs";
+                true
+            });
             !found
         };
         if gone || Instant::now() >= deadline {
@@ -115,7 +121,10 @@ fn watcher_picks_up_changes() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let mut found = false;
-    idx.visit(&mut |e| found |= &*e.rel == "src/new_file.rs");
+    idx.visit(&mut |e| {
+        found |= &*e.rel == "src/new_file.rs";
+        true
+    });
     assert!(!found, "delete must be removed from store");
 }
 
@@ -481,7 +490,10 @@ fn apply_changes_upsert_and_remove() {
         kind: ChangeKind::Upsert,
     }]);
     let mut found = false;
-    idx.visit(&mut |e| found |= &*e.rel == "src/extra.rs");
+    idx.visit(&mut |e| {
+        found |= &*e.rel == "src/extra.rs";
+        true
+    });
     assert!(found, "upsert must land in the store");
 
     fs::remove_file(&new).unwrap();
@@ -491,7 +503,10 @@ fn apply_changes_upsert_and_remove() {
         kind: ChangeKind::Upsert,
     }]);
     found = false;
-    idx.visit(&mut |e| found |= &*e.rel == "src/extra.rs");
+    idx.visit(&mut |e| {
+        found |= &*e.rel == "src/extra.rs";
+        true
+    });
     assert!(!found, "gone file collapses to remove");
 
     idx.apply_test_changes(vec![Change {
@@ -500,7 +515,10 @@ fn apply_changes_upsert_and_remove() {
         kind: ChangeKind::Remove,
     }]);
     found = false;
-    idx.visit(&mut |e| found |= &*e.rel == "src/main.rs");
+    idx.visit(&mut |e| {
+        found |= &*e.rel == "src/main.rs";
+        true
+    });
     assert!(!found);
 
     idx.apply_test_changes(vec![Change {

@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
@@ -94,6 +96,8 @@ pub enum SandboxError {
     Io(#[from] std::io::Error),
     #[error("working directory is invalid: {0}")]
     BadWorkingDir(String),
+    #[error("command timed out after {0} seconds")]
+    TimedOut(u64),
 }
 
 pub fn prepare(request: &SandboxRequest) -> Result<PreparedCommand, SandboxError> {
@@ -134,15 +138,35 @@ pub fn prepare_with(
 }
 
 pub fn run(request: &SandboxRequest) -> Result<SandboxOutcome, SandboxError> {
-    run_with(request, bwrap::bwrap_path().is_some())
+    run_timeout(request, None)
 }
 
+/// Like [`run`] but kill the process group if `timeout` elapses.
+///
+/// Dropping a `spawn_blocking` future does **not** stop `Command::output()`.
+/// The timeout must live inside this spawn so the child (and its group) die.
+pub fn run_timeout(
+    request: &SandboxRequest,
+    timeout: Option<Duration>,
+) -> Result<SandboxOutcome, SandboxError> {
+    run_with_timeout(request, bwrap::bwrap_path().is_some(), timeout)
+}
+
+#[cfg(test)]
 pub(crate) fn run_with(
     request: &SandboxRequest,
     bwrap_available: bool,
 ) -> Result<SandboxOutcome, SandboxError> {
+    run_with_timeout(request, bwrap_available, None)
+}
+
+pub(crate) fn run_with_timeout(
+    request: &SandboxRequest,
+    bwrap_available: bool,
+    timeout: Option<Duration>,
+) -> Result<SandboxOutcome, SandboxError> {
     let prepared = prepare_with(request, bwrap_available)?;
-    let output = spawn_capture(&prepared)?;
+    let output = spawn_capture_timeout(&prepared, timeout)?;
     Ok(SandboxOutcome {
         backend: prepared.backend,
         warning: prepared.warning,
@@ -152,14 +176,141 @@ pub(crate) fn run_with(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn spawn_capture(prepared: &PreparedCommand) -> Result<Output, SandboxError> {
+    spawn_capture_timeout(prepared, None)
+}
+
+pub(crate) fn spawn_capture_timeout(
+    prepared: &PreparedCommand,
+    timeout: Option<Duration>,
+) -> Result<Output, SandboxError> {
     let mut cmd = Command::new(&prepared.program);
     cmd.args(&prepared.args)
         .current_dir(&prepared.working_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    Ok(cmd.output()?)
+    configure_new_process_group(&mut cmd);
+    let child = cmd.spawn()?;
+    let Some(limit) = timeout.filter(|d| !d.is_zero()) else {
+        return Ok(child.wait_with_output()?);
+    };
+    let mut child = child;
+    match wait_child_timeout(&mut child, limit)? {
+        WaitResult::Done(output) => Ok(output),
+        WaitResult::TimedOut(secs) => {
+            kill_process_group(&mut child);
+            if let Err(e) = child.wait() {
+                tracing::debug!(error = %e, "wait after timeout kill");
+            }
+            Err(SandboxError::TimedOut(secs))
+        }
+    }
+}
+
+enum WaitResult {
+    Done(Output),
+    TimedOut(u64),
+}
+
+fn wait_child_timeout(child: &mut Child, limit: Duration) -> Result<WaitResult, SandboxError> {
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (tx_out, rx_out) = mpsc::channel();
+    let (tx_err, rx_err) = mpsc::channel();
+    let has_out = stdout.is_some();
+    let has_err = stderr.is_some();
+    if let Some(mut out) = stdout {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Err(e) = std::io::Read::read_to_end(&mut out, &mut buf) {
+                tracing::debug!(error = %e, "drain stdout");
+            }
+            if tx_out.send(buf).is_err() {
+                tracing::debug!("stdout receiver dropped");
+            }
+        });
+    }
+    if let Some(mut err) = stderr {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Err(e) = std::io::Read::read_to_end(&mut err, &mut buf) {
+                tracing::debug!(error = %e, "drain stderr");
+            }
+            if tx_err.send(buf).is_err() {
+                tracing::debug!("stderr receiver dropped");
+            }
+        });
+    }
+
+    let deadline = Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = if has_out {
+                    rx_out.recv().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let stderr = if has_err {
+                    rx_err.recv().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                return Ok(WaitResult::Done(Output {
+                    status,
+                    stdout,
+                    stderr,
+                }));
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return Ok(WaitResult::TimedOut(limit.as_secs().max(1)));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+}
+
+fn configure_new_process_group(cmd: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                // Own process group so timeout can kill bash + grandchildren.
+                libc::setpgid(0, 0);
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+}
+
+/// Kill `pid` and every process in its group (Unix). No-op on other platforms
+/// besides what the caller does with `Child::kill`.
+pub fn kill_pid_group(pid: u32) {
+    #[cfg(unix)]
+    unsafe {
+        libc::kill(-(pid as i32), libc::SIGKILL);
+    }
+    #[cfg(not(unix))]
+    let _ = pid;
+}
+
+fn kill_process_group(child: &mut Child) {
+    kill_pid_group(child.id());
+    if let Err(e) = child.kill() {
+        tracing::debug!(error = %e, "kill child after timeout");
+    }
 }
 
 fn resolve_working_dir(path: &Path) -> Result<PathBuf, SandboxError> {

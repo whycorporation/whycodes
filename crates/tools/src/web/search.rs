@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 
-use super::fetch::html_to_text;
+use super::fetch::{html_to_text, http_client};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -79,7 +79,7 @@ impl Tool for WebSearchTool {
                 };
             }
 
-            match reqwest::get(&url).await {
+            match http_client().get(&url).send().await {
                 Ok(response) => match response.json::<serde_json::Value>().await {
                     Ok(data) => {
                         let mut results = String::new();
@@ -139,7 +139,7 @@ impl Tool for WebSearchTool {
             };
         }
 
-        match reqwest::get(&url).await {
+        match http_client().get(&url).send().await {
             Ok(response) => match response.text().await {
                 Ok(html) => {
                     // Simple extraction of result snippets

@@ -7,7 +7,7 @@ use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
 /// Process-wide client so TLS/connection pool stays warm across fetches.
-fn http_client() -> &'static reqwest::Client {
+pub(crate) fn http_client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
         reqwest::Client::builder()

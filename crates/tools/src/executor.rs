@@ -471,6 +471,7 @@ mod tests {
         assert!(core_names.contains(&"todo"));
         assert!(!core_names.contains(&"todo_write"));
         assert!(!core_names.contains(&"apply_patch"));
+        assert!(core_names.contains(&"bg"));
         assert!(!core_names.contains(&"shell"));
         assert!(!core_names.contains(&"memory"));
         assert!(!core_names.contains(&"swarm"));

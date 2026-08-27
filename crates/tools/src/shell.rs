@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use super::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
-use whycodes_sandbox::{SandboxRequest, run as sandbox_run};
+use whycodes_sandbox::{SandboxRequest, run_timeout as sandbox_run};
 
 pub struct ShellTool {
     name: &'static str,
@@ -74,11 +74,12 @@ impl Tool for ShellTool {
             working_dir: PathBuf::from(&ctx.working_dir),
             settings: ctx.sandbox.clone(),
         };
+        let timeout = std::time::Duration::from_secs(timeout_secs.max(1));
 
-        let result = tokio::task::spawn_blocking(move || sandbox_run(&request));
-
-        match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), result).await {
-            Ok(Ok(Ok(outcome))) => {
+        // Timeout lives inside the spawn: dropping this future must not leak
+        // `sleep 999` / hung `cargo test` on a blocking thread.
+        match tokio::task::spawn_blocking(move || sandbox_run(&request, Some(timeout))).await {
+            Ok(Ok(outcome)) => {
                 let (content, success) = outcome.display_content();
                 ToolResult {
                     tool_call_id: String::new(),
@@ -86,19 +87,19 @@ impl Tool for ShellTool {
                     is_error: !success,
                 }
             }
-            Ok(Ok(Err(e))) => ToolResult {
+            Ok(Err(whycodes_sandbox::SandboxError::TimedOut(secs))) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Sandbox error: {e}"),
+                content: format!("Command timed out after {secs} seconds"),
                 is_error: true,
             },
             Ok(Err(e)) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Task join error: {e}"),
+                content: format!("Sandbox error: {e}"),
                 is_error: true,
             },
-            Err(_) => ToolResult {
+            Err(e) => ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Command timed out after {timeout_secs} seconds"),
+                content: format!("Task join error: {e}"),
                 is_error: true,
             },
         }

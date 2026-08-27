@@ -4307,6 +4307,7 @@ dependencies = [
 name = "whycodes-sandbox"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
@@ -4427,6 +4428,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "rayon",
  "reqwest",
  "rustc-hash",
  "serde",

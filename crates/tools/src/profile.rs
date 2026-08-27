@@ -48,12 +48,14 @@ impl ToolProfile {
 }
 
 /// Stable, sorted-friendly core set. Keep ≤ ~12 primary names for TTFT
-/// (`todo` is an alias of `todowrite`, not a thirteenth tool).
-/// Everything else (`apply_patch`, `bg`, `memory`, `schedule`, `swarm`, …)
+/// (`todo` is an alias of `todowrite`; `bg` is the counterpart of
+/// `bash background=true` — not extra product surface).
+/// Everything else (`apply_patch`, `memory`, `schedule`, `swarm`, …)
 /// is deferred and loaded via `tool_search`.
 /// Names must match `Tool::name()` registrations in `executor.rs`.
 const CORE_TOOL_NAMES: &[&str] = &[
     "bash",
+    "bg", // list/read/kill for `bash background=true`
     "edit",
     "glob",
     "grep",
@@ -107,9 +109,9 @@ mod tests {
 
     #[test]
     fn core_defers_specialized_tools() {
+        assert!(ToolProfile::Core.includes("bg"));
         for name in [
             "apply_patch",
-            "bg",
             "memory",
             "schedule",
             "shell",
@@ -123,7 +125,7 @@ mod tests {
             assert!(ToolProfile::Full.includes(name), "{name} stays in Full");
         }
         assert!(
-            CORE_TOOL_NAMES.len() <= 13,
+            CORE_TOOL_NAMES.len() <= 14,
             "core set grew: {}",
             CORE_TOOL_NAMES.len()
         );

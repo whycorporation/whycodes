@@ -27,7 +27,7 @@ impl Tool for ToolSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Discover tools not in the core profile (apply_patch, bg, memory, schedule, swarm, \
+        "Discover tools not in the core profile (apply_patch, memory, schedule, swarm, \
          web, browser, github, lsp, git_*, plan, …) and activate them for this session. \
          Actions: search (keywords), select (name or comma-separated names), list \
          (activated + deferred catalogue)."

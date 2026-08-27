@@ -448,6 +448,8 @@ fn sandbox_error_display() {
     assert!(bad.to_string().contains("invalid"));
     let io = SandboxError::from(std::io::Error::other("e"));
     assert!(io.to_string().contains("I/O"));
+    let t = SandboxError::TimedOut(3);
+    assert!(t.to_string().contains("timed out"));
 }
 
 #[test]
@@ -460,4 +462,27 @@ fn spawn_capture_missing_program_is_io_error() {
         warning: None,
     });
     assert!(matches!(err, Err(SandboxError::Io(_))));
+}
+
+#[test]
+fn run_timeout_kills_sleep() {
+    let req = SandboxRequest {
+        command: "sleep 30".into(),
+        working_dir: PathBuf::from("/tmp"),
+        settings: SandboxSettings {
+            mode: SandboxMode::Off,
+            network: true,
+            fallback: SandboxFallback::Allow,
+        },
+    };
+    let started = std::time::Instant::now();
+    let err = crate::policy::run_timeout(&req, Some(std::time::Duration::from_secs(1)));
+    assert!(
+        matches!(err, Err(SandboxError::TimedOut(_))),
+        "expected timeout, got {err:?}"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "timeout should not wait for sleep 30"
+    );
 }

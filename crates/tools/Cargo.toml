@@ -28,6 +28,7 @@ glob.workspace = true
 ignore.workspace = true
 grep-searcher.workspace = true
 grep-regex.workspace = true
+rayon.workspace = true
 tracing.workspace = true
 tempfile.workspace = true
 reqwest.workspace = true

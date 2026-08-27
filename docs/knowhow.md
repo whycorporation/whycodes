@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-27 — bash timeout must kill the process group; writes are atomic
+
+**Symptom:** `bash timeout=N` returned “timed out” but `sleep 999` / hung
+`cargo test` kept running (and held a Tokio blocking thread). `edit`/`write`
+used `std::fs::write`, so a crash could leave a half-written file. `bg` was
+deferred while `bash background=true` stayed in Core.
+
+**Root cause:** Timeout wrapped `spawn_blocking` from the outside;
+`Command::output()` is not cancelled when the future is dropped. Writes were
+in-place. Core shrank `bg` independently of background shell.
+
+**Fix:** `run_timeout` lives inside the spawn, `setpgid` + `kill(-pid)`,
+atomic temp+rename for edit/write/apply_patch, `bg` back in Core. Grep
+searches files with rayon; index visit no longer clones the whole store.
+
+**Prevention:** `run_timeout_kills_sleep` in sandbox tests. Atomic helper
+has its own unit test.
+
 ### 2026-08-27 — grep uses in-process ripgrep; Core is ~12 names; edit is whitespace-tolerant
 
 **Symptom:** `grep` walked files with the `regex` crate (no SIMD/mmap engine).

@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use whycodes_core::SandboxSettings;
-use whycodes_sandbox::{SandboxRequest, prepare};
+use whycodes_sandbox::{SandboxRequest, kill_pid_group, prepare};
 
 /// Soft cap on concurrent running jobs.
 pub const DEFAULT_MAX_BACKGROUND_JOBS: usize = 8;
@@ -308,6 +308,11 @@ impl BackgroundRegistry {
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
                 .kill_on_drop(true);
+            #[cfg(unix)]
+            {
+                // Own process group so `bg` kill / drop reaps grandchildren.
+                cmd.process_group(0);
+            }
 
             let mut child = match cmd.spawn() {
                 Ok(c) => c,
@@ -344,6 +349,9 @@ impl BackgroundRegistry {
             // Poll kill flag while waiting.
             let status = loop {
                 if kill_flag.load(Ordering::SeqCst) {
+                    if let Some(pid) = child.id() {
+                        kill_pid_group(pid);
+                    }
                     let _ = child.start_kill();
                     let _ = child.wait().await;
                     break None; // killed

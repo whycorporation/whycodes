@@ -89,17 +89,63 @@ pub fn index_entries(
                 && e.rel.starts_with(&prefix)
                 && e.rel.as_bytes()[prefix.len()] == b'/'
         };
-        if !in_scope {
-            return;
+        if in_scope {
+            let rel = if prefix.is_empty() {
+                e.rel.to_string()
+            } else {
+                e.rel[prefix.len() + 1..].to_string()
+            };
+            out.push((primary.join(&*e.rel), rel, e.is_dir, e.size));
         }
-        let rel = if prefix.is_empty() {
-            e.rel.to_string()
-        } else {
-            e.rel[prefix.len() + 1..].to_string()
-        };
-        out.push((primary.join(&*e.rel), rel, e.is_dir, e.size));
+        true
     });
     Some(out)
+}
+
+/// Visit index entries under `root` without cloning the whole store.
+///
+/// `visit` receives `(abs, rel, is_dir, size)` and returns `false` to stop.
+/// `None` means the index is cold / `root` is outside the primary root.
+pub fn visit_index(
+    index: &whycodes_index::WorkspaceIndex,
+    root: &Path,
+    visit: &mut dyn FnMut(&Path, &str, bool, u64) -> bool,
+) -> Option<()> {
+    if !index.is_ready() {
+        return None;
+    }
+    let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let primary = index.primary_root();
+    let rel_root = root.strip_prefix(primary).ok()?;
+    let prefix = rel_root.to_string_lossy().replace('\\', "/");
+    let prefix = prefix.trim_matches('/').to_string();
+    let mut keep = true;
+    index.visit(&mut |e| {
+        if !keep {
+            return false;
+        }
+        let in_scope = if prefix.is_empty() {
+            true
+        } else {
+            e.rel.len() > prefix.len()
+                && e.rel.starts_with(&prefix)
+                && e.rel.as_bytes()[prefix.len()] == b'/'
+        };
+        if in_scope {
+            let rel = if prefix.is_empty() {
+                e.rel.to_string()
+            } else {
+                e.rel[prefix.len() + 1..].to_string()
+            };
+            let abs = primary.join(&*e.rel);
+            if !visit(&abs, &rel, e.is_dir, e.size) {
+                keep = false;
+                return false;
+            }
+        }
+        true
+    });
+    Some(())
 }
 
 /// Human-readable byte size (e.g. `12.4 KB`).
