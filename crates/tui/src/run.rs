@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
     Event, KeyCode, KeyEventKind, KeyboardEnhancementFlags, MouseEventKind,
@@ -527,6 +528,8 @@ fn restore_terminal_on(out: &mut impl Write) {
         DisableBracketedPaste,
         DisableMouseCapture,
         LeaveAlternateScreen,
+        // Prompt used a blinking bar; give the shell the user's shape back.
+        SetCursorStyle::DefaultUserShape,
         crossterm::cursor::Show
     );
 }
@@ -686,6 +689,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         );
         anyhow::anyhow!("failed to enter alternate screen ({e})")
     })?;
+    // Insert-style blinking bar in the prompt. The emulator blinks it, so
+    // idle stays 0 draws/s (a software caret would force animation cadence).
+    // Unsupported hosts keep their default shape; restore on the way out.
+    if let Err(e) = execute!(tui_out, SetCursorStyle::BlinkingBar) {
+        tracing::debug!(error = %e, "set blinking bar cursor style failed");
+    }
     // Lets terminals that support it (Kitty, WezTerm, Alacritty…) report
     // Shift+Enter distinctly, so multi-line input gets a portable binding.
     //
@@ -1793,7 +1802,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         terminal.backend_mut(),
         DisableBracketedPaste,
         DisableMouseCapture,
-        LeaveAlternateScreen
+        LeaveAlternateScreen,
+        SetCursorStyle::DefaultUserShape
     );
     let _ = terminal.show_cursor();
     // Normal exit — panic hook no longer needs to touch the terminal.
@@ -5631,6 +5641,17 @@ fn session_details(session: &Session, agent: &str, app: &TuiApp, config: &Config
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_terminal_resets_cursor_style_to_user_default() {
+        let mut out = Vec::new();
+        restore_terminal_on(&mut out);
+        let bytes = String::from_utf8_lossy(&out);
+        assert!(
+            bytes.contains("\u{1b}[0 q"),
+            "DECSCUSR default shape missing after TUI exit: {bytes:?}"
+        );
+    }
 
     #[test]
     fn keyboard_enhancement_query_skips_bench_and_zero_size() {

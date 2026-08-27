@@ -83,6 +83,14 @@ pub fn prompt_height(app: &TuiApp, area_width: u16) -> u16 {
         + HINT_GAP
 }
 
+/// Native terminal caret belongs in the prompt (insert-style blinking bar).
+/// Hidden while a modal owns keys or scrollback is focused — otherwise the
+/// emulator caret sits on the draft while typing goes elsewhere.
+fn prompt_owns_caret(app: &TuiApp) -> bool {
+    !app.modal_is_open()
+        && (app.focus == crate::app::FocusPane::Prompt || matches!(app.mode, AppMode::Command))
+}
+
 /// Inner width available for input text inside a prompt area.
 fn content_width(app: &TuiApp, area_width: u16) -> u16 {
     let area_width = if app.messages.is_empty() {
@@ -325,8 +333,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     // ratatui re-wrap would add vertical lines that spill past the box height.
     frame.render_widget(Paragraph::new(Text::from(lines)), text_rect);
 
-    // Cursor when the prompt owns focus.
-    if prompt_focused {
+    // Native caret (blinking bar, set once at TUI start). Overlay / scrollback
+    // hide it so it does not sit on the prompt while keys go elsewhere.
+    if prompt_owns_caret(app) {
         let vis_row = cursor_row.saturating_sub(view_start);
         if vis_row < input_rows as usize {
             let x = content_x
@@ -1370,6 +1379,70 @@ mod overflow_render_tests {
                 assert_ne!(buf[(x, y)].symbol(), "W", "paste leftover in gap ({x},{y})");
             }
         }
+    }
+
+    fn backend_cursor_visible(terminal: &mut Terminal<TestBackend>) -> bool {
+        format!("{:?}", terminal.backend()).contains("cursor: true")
+    }
+
+    #[test]
+    fn focused_prompt_places_native_caret_after_prefix() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.focus = crate::app::FocusPane::Prompt;
+        app.input_buffer = "hi".into();
+        app.input_cursor = 1; // after 'h'
+        assert!(prompt_owns_caret(&app));
+        let backend = TestBackend::new(60, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let palette = app.config.palette();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut app, &palette))
+            .expect("draw prompt");
+        assert!(
+            backend_cursor_visible(&mut terminal),
+            "focused prompt must show the native caret"
+        );
+        let pos = terminal
+            .get_cursor_position()
+            .expect("focused prompt must place a native caret");
+        let buffer = terminal.backend().buffer();
+        let (row_i, col) = (0..8u16)
+            .find_map(|y| cell_seq_col(buffer, y, 60, "❯ h").map(|x| (y, x)))
+            .expect("input row");
+        // `❯ ` is 2 cols; caret sits on the char after the prefix + cursor_col.
+        assert_eq!(pos.y, row_i);
+        assert_eq!(pos.x, col + PREFIX_WIDTH + 1);
+    }
+
+    #[test]
+    fn unfocused_prompt_hides_native_caret() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.focus = crate::app::FocusPane::Scrollback;
+        app.add_message(crate::app::ChatRole::User, "hi");
+        app.input_buffer = "draft".into();
+        app.input_cursor = app.input_buffer.len();
+        assert!(!prompt_owns_caret(&app));
+        let backend = TestBackend::new(60, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let palette = app.config.palette();
+        terminal
+            .draw(|frame| render(frame, frame.area(), &mut app, &palette))
+            .expect("draw prompt");
+        assert!(
+            !backend_cursor_visible(&mut terminal),
+            "scrollback focus must hide the prompt caret"
+        );
+    }
+
+    #[test]
+    fn modal_hides_prompt_caret() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.focus = crate::app::FocusPane::Prompt;
+        app.mode = AppMode::Help;
+        assert!(
+            !prompt_owns_caret(&app),
+            "help overlay must not leave a caret on the draft"
+        );
     }
 
     #[test]
