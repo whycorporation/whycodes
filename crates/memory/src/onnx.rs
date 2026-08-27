@@ -146,7 +146,11 @@ mod sha2_wrap {
             self.h.update(data);
         }
         pub fn finalize_hex(self) -> String {
-            format!("{:x}", self.h.finalize())
+            self.h
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect()
         }
     }
 }

@@ -21,7 +21,7 @@ anyhow.workspace = true
 rustc-hash.workspace = true
 # TextMate highlighting; `default-fancy` matches two-face when that feature is on.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-two-face = { version = "0.4", default-features = false, features = ["syntect-fancy"], optional = true }
+two-face = { version = "0.5", default-features = false, features = ["syntect-fancy"], optional = true }
 regex = "1"
 # Pure-Rust Mermaid → Unicode box-drawing for fenced ```mermaid blocks.
 mermaid-text = { version = "0.57", optional = true }

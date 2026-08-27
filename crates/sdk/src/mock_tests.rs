@@ -171,12 +171,7 @@ async fn question(Path(id): Path<String>) -> StatusCode {
     }
 }
 
-async fn run(
-    Path(id): Path<String>,
-) -> Result<
-    Sse<futures::stream::BoxStream<'static, Result<Event, std::convert::Infallible>>>,
-    StatusCode,
-> {
+async fn run(Path(id): Path<String>) -> Result<impl axum::response::IntoResponse, StatusCode> {
     if id == "missing" {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -206,7 +201,7 @@ async fn run(
         let data = serde_json::to_string(&ev).unwrap();
         Ok::<_, std::convert::Infallible>(Event::default().data(data))
     }));
-    Ok(Sse::new(Box::pin(stream) as _).keep_alive(KeepAlive::default()))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
 async fn spawn_ok() -> (String, tokio::task::JoinHandle<()>) {
@@ -218,16 +213,16 @@ async fn bind_with(mode: Mode) -> (String, tokio::task::JoinHandle<()>) {
     let app = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/sessions", get(list_sessions).post(create_session))
-        .route("/v1/sessions/:id", get(get_session))
-        .route("/v1/sessions/:id/messages", get(history))
-        .route("/v1/sessions/:id/model", post(set_model))
-        .route("/v1/sessions/:id/rename", post(rename))
-        .route("/v1/sessions/:id/rewind", post(rewind))
-        .route("/v1/sessions/:id/compact", post(compact))
-        .route("/v1/sessions/:id/cancel", post(cancel))
-        .route("/v1/sessions/:id/permission", post(permission))
-        .route("/v1/sessions/:id/question", post(question))
-        .route("/v1/sessions/:id/run", post(run))
+        .route("/v1/sessions/{id}", get(get_session))
+        .route("/v1/sessions/{id}/messages", get(history))
+        .route("/v1/sessions/{id}/model", post(set_model))
+        .route("/v1/sessions/{id}/rename", post(rename))
+        .route("/v1/sessions/{id}/rewind", post(rewind))
+        .route("/v1/sessions/{id}/compact", post(compact))
+        .route("/v1/sessions/{id}/cancel", post(cancel))
+        .route("/v1/sessions/{id}/permission", post(permission))
+        .route("/v1/sessions/{id}/question", post(question))
+        .route("/v1/sessions/{id}/run", post(run))
         .route("/v1/models", get(list_models))
         .with_state(mode);
     bind_app(app).await
@@ -420,9 +415,9 @@ async fn request_options_are_sent_as_protocol_json() {
     let app = Router::new()
         .route("/v1/health", get(healthy))
         .route("/v1/sessions", post(create))
-        .route("/v1/sessions/:id/model", post(model))
-        .route("/v1/sessions/:id/compact", post(compact_body))
-        .route("/v1/sessions/:id/run", post(run_body));
+        .route("/v1/sessions/{id}/model", post(model))
+        .route("/v1/sessions/{id}/compact", post(compact_body))
+        .route("/v1/sessions/{id}/run", post(run_body));
     let (base, _server) = bind_app(app).await;
     let client = WhyCodesClient::connect(base).await.unwrap();
 
@@ -467,7 +462,7 @@ async fn http_and_decode_failures_return_stable_error_codes() {
         .route("/v1/health", get(healthy))
         .route("/v1/sessions", get(unauthorized).post(bad_request))
         .route("/v1/models", get(invalid_json))
-        .route("/v1/sessions/:id/cancel", post(server_error));
+        .route("/v1/sessions/{id}/cancel", post(server_error));
     let (base, _server) = bind_app(app).await;
     let client = WhyCodesClient::connect(base).await.unwrap();
 
@@ -526,7 +521,7 @@ async fn run_collects_cancel_and_error_event_branches() {
 
     let app = Router::new()
         .route("/v1/health", get(healthy))
-        .route("/v1/sessions/:id/run", post(events));
+        .route("/v1/sessions/{id}/run", post(events));
     let (base, _server) = bind_app(app).await;
     let client = WhyCodesClient::connect(base).await.unwrap();
 

@@ -54,16 +54,16 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 colored.workspace = true
-dialoguer = "0.11"
-indicatif = "0.17"
-axum = { version = "0.7", features = ["macros"], optional = true }
+dialoguer = "0.12"
+indicatif = "0.18"
+axum = { version = "0.8", features = ["macros"], optional = true }
 chrono.workspace = true
 directories.workspace = true
 reqwest.workspace = true
-sha2 = { version = "0.10", optional = true }
+sha2 = { version = "0.11", optional = true }
 flate2 = { version = "1", optional = true }
 tar = { version = "0.4", optional = true }
-zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
+zip = { version = "8", default-features = false, features = ["deflate"], optional = true }
 
 [dev-dependencies]
 whycodes-sdk = { path = "../sdk" }

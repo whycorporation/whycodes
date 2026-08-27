@@ -18,7 +18,7 @@ whycodes-core = { path = "../core" }
 whycodes-tools = { path = "../tools" }
 
 [dev-dependencies]
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 async-stream = "0.3"
 tokio = { workspace = true, features = ["full", "test-util", "macros", "rt-multi-thread"] }
 http-body-util = "0.1"

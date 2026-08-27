@@ -79,7 +79,11 @@ pub fn expected_digest(sums: &str, name: &str) -> Option<String> {
 pub(crate) fn digest_of(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Optional token for private repos (`GITHUB_TOKEN` or `GH_TOKEN`).

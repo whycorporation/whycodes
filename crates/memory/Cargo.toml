@@ -21,9 +21,9 @@ chrono = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 tract-onnx = { version = "0.23", optional = true }
-tokenizers = { version = "0.21", optional = true, default-features = false, features = ["onig"] }
+tokenizers = { version = "0.23", optional = true, default-features = false, features = ["onig"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

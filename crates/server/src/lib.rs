@@ -113,31 +113,31 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/models", get(routes::list_models))
         .route("/api/sessions", get(routes::list_sessions))
         .route("/api/session/new", post(routes::create_session))
-        .route("/api/session/:id", get(routes::get_session))
+        .route("/api/session/{id}", get(routes::get_session))
         .route(
-            "/api/session/:id/messages",
+            "/api/session/{id}/messages",
             get(routes::get_session_messages),
         )
-        .route("/api/session/:id/chat", post(routes::chat))
+        .route("/api/session/{id}/chat", post(routes::chat))
         .route("/v1/health", get(v1::health))
         .route(
             "/v1/sessions",
             get(v1::list_sessions).post(v1::create_session),
         )
-        .route("/v1/sessions/:id", get(v1::get_session))
-        .route("/v1/sessions/:id/run", post(v1::run))
-        .route("/v1/sessions/:id/cancel", post(v1::cancel))
-        .route("/v1/sessions/:id/permission", post(v1::permission))
-        .route("/v1/sessions/:id/question", post(v1::question))
-        .route("/v1/sessions/:id/messages", get(v1::history))
-        .route("/v1/sessions/:id/model", post(v1::set_model))
-        .route("/v1/sessions/:id/rename", post(v1::rename))
-        .route("/v1/sessions/:id/rewind", post(v1::rewind))
-        .route("/v1/sessions/:id/compact", post(v1::compact))
+        .route("/v1/sessions/{id}", get(v1::get_session))
+        .route("/v1/sessions/{id}/run", post(v1::run))
+        .route("/v1/sessions/{id}/cancel", post(v1::cancel))
+        .route("/v1/sessions/{id}/permission", post(v1::permission))
+        .route("/v1/sessions/{id}/question", post(v1::question))
+        .route("/v1/sessions/{id}/messages", get(v1::history))
+        .route("/v1/sessions/{id}/model", post(v1::set_model))
+        .route("/v1/sessions/{id}/rename", post(v1::rename))
+        .route("/v1/sessions/{id}/rewind", post(v1::rewind))
+        .route("/v1/sessions/{id}/compact", post(v1::compact))
         .route("/v1/models", get(v1::list_models))
         // Single param route: id may be bare, `foo.json`, or `foo.md`
-        // (axum rejects overlapping `/s/:id` + `/s/:id.json`).
-        .route("/s/:id", get(routes::share_dispatch))
+        // (axum rejects overlapping `/s/{id}` + `/s/{id}.json`).
+        .route("/s/{id}", get(routes::share_dispatch))
         .route("/api/shares", get(routes::list_shares))
         .layer(CorsLayer::permissive())
         .with_state(state)
