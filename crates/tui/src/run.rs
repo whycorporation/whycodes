@@ -827,7 +827,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Animation = glyphs that change every frame (spinner / stream).
             // Static toasts are *not* animation — jcode measured ~180 wasted
             // full frames per notice when they pulled the loop to 40 ms.
-            let animate = rt.agent_busy || app.running_subagent_count() > 0;
+            let animate = rt.agent_busy || app.running_task_count() > 0;
             if app.needs_redraw || animate || first_frame {
                 if app.pending_full_clears > 0 {
                     if let Err(e) = terminal.clear() {
@@ -1339,7 +1339,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             let poll_for =
                 crate::redraw_schedule::poll_interval(&crate::redraw_schedule::RedrawNeed {
                     agent_busy: rt.agent_busy,
-                    running_subagents: app.running_subagent_count() > 0,
+                    running_subagents: app.running_task_count() > 0,
                     awaiting_matches,
                     needs_redraw: app.needs_redraw,
                     toasts_visible: !app.toasts.is_empty(),
@@ -3469,7 +3469,7 @@ fn refresh_live_session_ui(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Se
 }
 
 fn should_tick_spinner(app: &TuiApp, agent_busy: bool) -> bool {
-    (agent_busy || app.running_subagent_count() > 0)
+    (agent_busy || app.running_task_count() > 0)
         && !matches!(
             app.current_agent_state,
             AgentState::WaitingForPermission | AgentState::WaitingForQuestion
@@ -3769,6 +3769,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
             match status.as_str() {
                 "running" => {
                     app.bg_running_count = app.bg_running_count.saturating_add(1);
+                    app.upsert_bg_job(&id, "running", &summary);
                     app.status_message = format!("bg {id} started");
                     app.toasts.push(
                         crate::toast::ToastKind::Info,
@@ -3777,6 +3778,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
                 }
                 "done" => {
                     app.bg_running_count = app.bg_running_count.saturating_sub(1);
+                    app.upsert_bg_job(&id, "done", &summary);
                     app.toasts.push(
                         crate::toast::ToastKind::Success,
                         truncate_toast(&format!("bg {id} done · {summary}"), 56),
@@ -3784,6 +3786,7 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
                 }
                 "failed" => {
                     app.bg_running_count = app.bg_running_count.saturating_sub(1);
+                    app.upsert_bg_job(&id, "failed", &summary);
                     app.toasts.push(
                         crate::toast::ToastKind::Warning,
                         truncate_toast(&format!("bg {id} failed · {summary}"), 64),
@@ -3791,12 +3794,14 @@ fn apply_turn_event(app: &mut TuiApp, ev: TurnEvent) {
                 }
                 "killed" => {
                     app.bg_running_count = app.bg_running_count.saturating_sub(1);
+                    app.upsert_bg_job(&id, "killed", &summary);
                     app.toasts.push(
                         crate::toast::ToastKind::Info,
                         truncate_toast(&format!("bg {id} killed"), 40),
                     );
                 }
                 _ => {
+                    app.upsert_bg_job(&id, &status, &summary);
                     app.status_message = format!("bg {id} {status}");
                 }
             }
@@ -6409,6 +6414,12 @@ mod tests {
             },
         );
         assert_eq!(app.bg_running_count, 1);
+        assert!(
+            app.bg_jobs
+                .iter()
+                .any(|j| j.id == "bg-1" && j.status == "running"),
+            "running bg job must appear in the sticky tasks list"
+        );
         apply_turn_event(
             &mut app,
             TurnEvent::Background {

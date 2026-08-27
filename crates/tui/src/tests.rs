@@ -486,6 +486,38 @@ fn todo_panel_click_toggles_collapse() {
 }
 
 #[test]
+fn tasks_panel_click_toggles_collapse() {
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    app.upsert_subagent(crate::app::SubagentUpdate {
+        id: "child-1".into(),
+        kind: "explore".into(),
+        description: "look".into(),
+        status: "running".into(),
+        activity: "Thinking".into(),
+        elapsed_ms: 10,
+        output: String::new(),
+    });
+    assert!(!app.tasks_collapsed);
+    app.tasks_hit.set_rect(Some(Rect {
+        x: 0,
+        y: 2,
+        width: 40,
+        height: 1,
+    }));
+    let click = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 4,
+        row: 2,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, click));
+    assert!(app.tasks_collapsed);
+}
+
+#[test]
 fn replace_todos_no_op_does_not_mark_dirty() {
     let mut app = TuiApp::new(test_config());
     app.needs_redraw = false;

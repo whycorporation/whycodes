@@ -33,7 +33,7 @@ pub enum Action {
     ToggleSidebar,
     SidebarNextTab,
     SidebarPrevTab,
-    /// Ctrl+G — Grok tasks pane (subagents + background).
+    /// Ctrl+G — sticky tasks panel (subagents + background jobs).
     ToggleTasksPane,
     /// Open the framed child transcript (Enter on a subagent row).
     OpenSubagent,
@@ -316,7 +316,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Ctrl+P", "Provider setup", KeymapContext::Normal),
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),
-        KeyBinding::new("Ctrl+G", "Tasks pane (subagents)", KeymapContext::Normal),
+        KeyBinding::new("Ctrl+G", "Toggle tasks panel", KeymapContext::Normal),
         KeyBinding::new("[ / ]", "Sidebar tabs (scrollback)", KeymapContext::Normal),
         KeyBinding::new("Ctrl+A", "Toggle auto scroll", KeymapContext::Normal),
         KeyBinding::new("Ctrl+L", "Clear session", KeymapContext::Normal),

@@ -139,6 +139,10 @@ fn catalog() -> Vec<HelpLine> {
             desc: "Toggle sidebar",
         },
         HelpLine::Binding {
+            key: "Ctrl+G",
+            desc: "Toggle tasks panel",
+        },
+        HelpLine::Binding {
             key: "Ctrl+A",
             desc: "Toggle auto-scroll",
         },

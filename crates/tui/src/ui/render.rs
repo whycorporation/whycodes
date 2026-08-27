@@ -230,27 +230,27 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     } else {
         session_side_pad(app, body)
     };
-    let strip_h = subagents::strip_height(app);
+    let tasks_h = subagents::panel_height(app, body.height);
     // Reserve PANEL_GAP in the todo budget so the transcript still gets ≥ 3 rows.
     let todo_h = todos::panel_height(
         app,
         body.height
-            .saturating_sub(strip_h)
+            .saturating_sub(tasks_h)
             .saturating_sub(layout::PANEL_GAP),
     );
-    // Drop the gap row on tiny bodies (e.g. strip-only at height 3-4) instead
+    // Drop the gap row on tiny bodies (e.g. header-only at height 3-4) instead
     // of letting it squeeze the transcript below its 3-row minimum.
-    let gap_h = if body.height >= strip_h + todo_h + layout::PANEL_GAP + 3 {
+    let gap_h = if body.height >= tasks_h + todo_h + layout::PANEL_GAP + 3 {
         layout::PANEL_GAP
     } else {
         0
     };
-    let (strip, todo_area, body) = if strip_h == 0 && todo_h == 0 {
+    let (tasks_area, todo_area, body) = if tasks_h == 0 && todo_h == 0 {
         (None, None, body)
     } else {
         let mut constraints = Vec::new();
-        if strip_h > 0 {
-            constraints.push(Constraint::Length(strip_h));
+        if tasks_h > 0 {
+            constraints.push(Constraint::Length(tasks_h));
         }
         if todo_h > 0 {
             constraints.push(Constraint::Length(todo_h));
@@ -262,7 +262,7 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
             .constraints(constraints)
             .split(body);
         let mut i = 0;
-        let strip = if strip_h > 0 {
+        let tasks_area = if tasks_h > 0 {
             let a = chunks[i];
             i += 1;
             Some(a)
@@ -279,10 +279,14 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         let gap_area = chunks[i];
         i += 1;
         super::layout::fill_blank(frame, gap_area, palette.bg);
-        (strip, todo_area, chunks[i])
+        (tasks_area, todo_area, chunks[i])
     };
-    if let Some(area) = strip {
-        subagents::render_strip(frame, area, app, palette, side);
+    if let Some(area) = tasks_area {
+        subagents::render_panel(frame, area, app, palette, side);
+    } else {
+        app.tasks_hit.clear();
+        app.tasks_row_hits.clear();
+        app.subagent_strip_hit.clear();
     }
     if let Some(area) = todo_area {
         todos::render_panel(frame, area, app, palette, side);
@@ -1541,6 +1545,53 @@ mod paint_tests {
     }
 
     #[test]
+    fn sticky_tasks_panel_aligns_with_chat_and_leaves_gaps() {
+        let mut a = session_with_overflow();
+        a.upsert_subagent(crate::app::SubagentUpdate {
+            id: "task-1".into(),
+            kind: "explore".into(),
+            description: "ALIGN_TASK_MARKER scan".into(),
+            status: "running".into(),
+            activity: "Thinking".into(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        let (buf, _text) = paint_full_shell(&mut a, 100, 24);
+
+        let header = a.tasks_hit.rect.expect("tasks header hit");
+        let chat = a.chat_area.expect("chat hit");
+
+        let header_row = row_text(&buf, header.y);
+        assert!(
+            header_row.contains("Tasks"),
+            "tasks header missing: {header_row:?}"
+        );
+        let task_x = first_non_space_x(&buf, header.y).expect("tasks header text");
+        assert_eq!(
+            task_x, chat.x,
+            "tasks header must start on the chat body column (task_x={task_x} chat.x={})",
+            chat.x
+        );
+
+        assert!(
+            chat.y >= header.y + 2 + layout::PANEL_GAP,
+            "chat.y={} must sit below tasks panel + PANEL_GAP (header.y={})",
+            chat.y,
+            header.y
+        );
+        let gap_y = chat.y.saturating_sub(1);
+        let gap = row_text(&buf, gap_y);
+        assert!(
+            !gap.contains("Tasks") && !gap.contains("ALIGN_TASK_MARKER") && !gap.contains('❯'),
+            "blank row between tasks and transcript: {gap:?}"
+        );
+        assert!(
+            gap.chars().all(|c| c == ' ' || c == '\n'),
+            "panel gap row must be empty: {gap:?}"
+        );
+    }
+
+    #[test]
     fn tiny_body_drops_panel_gap_to_keep_the_transcript() {
         let mut a = session_with_overflow();
         a.upsert_subagent(crate::app::SubagentUpdate {
@@ -1553,16 +1604,16 @@ mod paint_tests {
             output: String::new(),
         });
         // 100x10 → 4 body rows after safe insets, header/footer, and TOP_PAD:
-        // strip(1) + PANEL_GAP would leave the transcript under its 3-row
-        // minimum, so the gap row must be dropped.
+        // tasks header(1) + PANEL_GAP would leave the transcript under its
+        // 3-row minimum, so the gap row must be dropped.
         let (_buf, _) = paint_full_shell(&mut a, 100, 10);
-        let strip = a.subagent_strip_hit.first().expect("strip painted").0;
+        let header = a.tasks_hit.rect.expect("tasks header painted");
         let chat = a.chat_area.expect("chat hit");
         assert_eq!(
             chat.y,
-            strip.y + 1,
-            "tiny body must not spend a row on PANEL_GAP (strip.y={} chat.y={})",
-            strip.y,
+            header.y + 1,
+            "tiny body must not spend a row on PANEL_GAP (header.y={} chat.y={})",
+            header.y,
             chat.y
         );
     }

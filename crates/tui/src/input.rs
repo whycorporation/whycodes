@@ -801,9 +801,15 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 app.mouse_sel = None;
                 return true;
             }
+            if app.tasks_hit.contains(mouse.column, mouse.row) {
+                app.toggle_tasks_pane();
+                app.mouse_sel = None;
+                return true;
+            }
             if let Some(id) = app
-                .subagent_strip_hit
+                .tasks_row_hits
                 .iter()
+                .chain(app.subagent_strip_hit.iter())
                 .find(|(r, _)| {
                     mouse.column >= r.x
                         && mouse.column < r.x.saturating_add(r.width)
@@ -2310,6 +2316,27 @@ mod event_tests {
         assert!(a.sidebar.visible);
         handle_event(&mut a, ctrl('g'));
         assert_eq!(a.sidebar.active_tab, SidebarTab::Agents);
+        assert!(a.sidebar.visible, "empty tasks list still uses Agents tab");
+
+        let mut a = app();
+        a.upsert_subagent(crate::app::SubagentUpdate {
+            id: "kid".into(),
+            kind: "explore".into(),
+            description: "look".into(),
+            status: "running".into(),
+            activity: "Thinking".into(),
+            elapsed_ms: 0,
+            output: String::new(),
+        });
+        assert!(!a.tasks_collapsed);
+        handle_event(&mut a, ctrl('g'));
+        assert!(a.tasks_collapsed);
+        assert!(
+            !a.sidebar.visible,
+            "Ctrl+G must fold the sticky panel, not open the sidebar"
+        );
+        handle_event(&mut a, ctrl('g'));
+        assert!(!a.tasks_collapsed);
 
         a.focus = FocusPane::Scrollback;
         handle_event(&mut a, key(KeyCode::Char(']')));
