@@ -504,6 +504,13 @@ fn main() -> anyhow::Result<()> {
     // forms clap still handles) exit without a thread pool.
     let cli = Cli::parse();
 
+    // Completions are stdout-only. Skip Tokio, logging, and plugin discovery
+    // so Homebrew `generate_completions_from_executable` can run in a sandbox
+    // that cannot write `~/.local/share/whycodes`.
+    if let Some(Commands::Completions { shell }) = &cli.command {
+        return cmd_completions(*shell);
+    }
+
     let rt = runtime_for(&cli)?;
     rt.block_on(async_main(cli))
 }
@@ -4465,21 +4472,24 @@ async fn cmd_upgrade() -> anyhow::Result<()> {
         Err(e) => {
             // Not fatal: a machine with no network, or a platform with no
             // published binary, should still be told how to proceed.
+            let msg = e.to_string();
             println!(
                 "  {} {}",
                 "!".yellow(),
-                upgrade::format_upgrade_outcome(current, Err(e.to_string()))
+                upgrade::format_upgrade_outcome(current, Err(msg.clone()))
             );
-            println!();
-            println!("  Build from source instead:");
-            println!(
-                "    {}",
-                "git clone https://github.com/whycorporation/whycodes.git".dimmed()
-            );
-            println!(
-                "    {}",
-                "cd whycodes && cargo install --path crates/cli".dimmed()
-            );
+            if !msg.contains("brew upgrade") {
+                println!();
+                println!("  Build from source instead:");
+                println!(
+                    "    {}",
+                    "git clone https://github.com/whycorporation/whycodes.git".dimmed()
+                );
+                println!(
+                    "    {}",
+                    "cd whycodes && cargo install --path crates/cli".dimmed()
+                );
+            }
         }
     }
 

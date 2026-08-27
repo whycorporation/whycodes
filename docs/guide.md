@@ -2,6 +2,18 @@
 
 How to run whycodes, drive the TUI, and configure it. Authentication details
 live in [auth.md](auth.md). Crate layout is in [architecture.md](architecture.md).
+Install and Homebrew notes: [packaging.md](packaging.md).
+
+On macOS:
+
+```bash
+brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
+brew install whycodes
+```
+
+`brew upgrade whycodes` is the update path for that install. `whycodes
+upgrade` is for the curl/PowerShell installers and will refuse to overwrite
+a Homebrew prefix.
 
 ## Command line
 

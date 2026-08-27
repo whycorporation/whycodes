@@ -33,17 +33,19 @@ irm https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/insta
 ```
 
 ```bash
-# Homebrew
+# Homebrew (macOS; Linuxbrew x86_64)
 brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
 brew install whycodes
+brew upgrade whycodes
 
 # From source
 cargo build --release -p whycodes-cli
 ```
 
-Update with `whycodes upgrade`. The install scripts verify release artifacts
-against the published `SHA256SUMS`. For downloadable binaries, installation
-details and uninstall instructions, see
+Update with `whycodes upgrade` (install-script / cargo installs) or
+`brew upgrade whycodes` (Homebrew). The install scripts verify release
+artifacts against the published `SHA256SUMS`. For downloadable binaries,
+installation details and uninstall instructions, see
 [docs/packaging.md](docs/packaging.md).
 
 Shell completions are generated from the live CLI:
