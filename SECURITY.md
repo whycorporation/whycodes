@@ -47,8 +47,15 @@ and permissions), and issues in third-party LLM providers themselves.
 
 Credentials live in the user data directory (`0600`, symlink refused), not
 in git. The index is checked by `scripts/check_tracked_secrets.py` (scratch
-dirs, private keys, live-looking PATs). Public installed-app OAuth client
-ids in `crates/auth` are not secrets.
+dirs, private keys, live-looking PATs). The repository ships **no** OAuth
+client ids at all: subscription login only works after the user installs a
+local `kind: "auth"` plugin (see `docs/auth.md`), so there is nothing
+client-id-shaped in `crates/auth` to protect or leak.
+
+Dependency advisories are checked in CI with `cargo audit --deny warnings`
+against the RustSec database. Exceptions live in `.cargo/audit.toml` as a
+ratchet: each entry is a dated, justified unmaintained-crate notice on a
+transitive dependency — actual vulnerabilities are never ignored there.
 
 Commit author emails are part of history and are **not** rewritten. Do not
 force-push a history filter unless a live credential actually landed in a
