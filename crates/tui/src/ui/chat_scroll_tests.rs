@@ -797,6 +797,7 @@ fn paint_home_clears_chat_hits() {
 #[test]
 fn paint_home_shows_question_mark_without_wordmark() {
     let mut app = TuiApp::new(cfg());
+    app.project_label = "whycodes".into();
     let buf = paint_and_snapshot(&mut app, 80, 24);
     let text = buffer_text(&buf);
     assert!(
@@ -814,6 +815,10 @@ fn paint_home_shows_question_mark_without_wordmark() {
     assert!(
         !text.contains("█   █ █▀▀▀"),
         "home must not paint a spaced Why Codes wordmark: {text}"
+    );
+    assert!(
+        !text.contains("whycodes"),
+        "home body must not repeat the project label under the model: {text}"
     );
 }
 

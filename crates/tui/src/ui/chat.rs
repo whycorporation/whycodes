@@ -172,17 +172,17 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         .take(6)
         .collect();
     let mut lines: Vec<Line> = Vec::new();
-    // `?` mark + meta + recent sessions. Recents sit under the mark so an
-    // empty workspace still centers; a history list pushes up. Header already
-    // shows `?whycodes`, so the home body does not repeat the wordmark.
+    // `?` mark + agent/model + recent sessions. Recents sit under the mark so
+    // an empty workspace still centers; a history list pushes up. Header
+    // already shows `?whycodes`; the home body does not repeat the project.
     let recents_h = if recents.is_empty() {
         0
     } else {
         2 + recents.len() as u16
     };
     let mark_h = HOME_LOGO_MARK.len() as u16;
-    // `?` mark, gap, meta, hints, recents.
-    let content_h = mark_h + 1 + 2 + 2 + recents_h;
+    // `?` mark, gap, agent/model meta, hints, recents.
+    let content_h = mark_h + 1 + 1 + 2 + recents_h;
     let top = area.height.saturating_sub(content_h) / 2;
     for _ in 0..top {
         lines.push(Line::from(""));
@@ -222,12 +222,6 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         &meta_part,
         area.width,
         agent_color,
-        palette.dim,
-        false,
-    ));
-    lines.push(center_line(
-        &app.project_label,
-        area.width,
         palette.dim,
         false,
     ));
