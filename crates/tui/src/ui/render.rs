@@ -211,15 +211,15 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(layout::HEADER_H),
             Constraint::Min(3),
             Constraint::Length(1),
         ])
         .split(area);
 
     status::render(frame, outer[0], app, palette);
-    // One blank row under the header so the transcript / home logo / sidebar
-    // cannot paint into that chrome (safe-area + header stay empty of chat).
+    // TOP_PAD blank rows under the header so the transcript / home logo /
+    // sidebar cannot paint into that chrome.
     let body = layout::below_header(outer[1]);
     status::render_footer(frame, outer[2], app, palette);
 
@@ -1173,7 +1173,7 @@ mod paint_tests {
         let (buf, _text) = paint_full_shell(&mut a, 100, 24);
 
         let safe_top = row_text(&buf, 0);
-        let header = row_text(&buf, layout::SAFE_TOP);
+        let header = row_text(&buf, layout::SAFE_TOP + 1);
 
         // Terminal edge (SAFE_TOP) is empty of chrome and of chat.
         assert!(
@@ -1185,7 +1185,7 @@ mod paint_tests {
             "safe-area row must not hold chat: {safe_top:?}"
         );
 
-        // Status header sits on the first inset row and is not overwritten.
+        // Status header sits on the first inset rows and is not overwritten.
         assert!(
             header.contains("whycodes"),
             "header brand missing: {header:?}"
@@ -1194,18 +1194,21 @@ mod paint_tests {
             !header.contains("why codes"),
             "wordmark must be one word: {header:?}"
         );
-        assert!(
-            !header.contains("SAFEAREA_TOP_MARKER"),
-            "chat spilled into the header: {header:?}"
-        );
-        assert!(
-            !header.contains('\u{276F}'),
-            "user-prompt arrow spilled into the header: {header:?}"
-        );
+        for dy in 0..layout::HEADER_H {
+            let row = row_text(&buf, layout::SAFE_TOP + dy);
+            assert!(
+                !row.contains("SAFEAREA_TOP_MARKER"),
+                "chat spilled into header row {dy}: {row:?}"
+            );
+            assert!(
+                !row.contains('\u{276F}'),
+                "user-prompt arrow spilled into header row {dy}: {row:?}"
+            );
+        }
 
         // TOP_PAD blank rows between header and transcript.
-        for dy in 1..=layout::TOP_PAD {
-            let gap = row_text(&buf, layout::SAFE_TOP + dy);
+        for dy in 0..layout::TOP_PAD {
+            let gap = row_text(&buf, layout::SAFE_TOP + layout::HEADER_H + dy);
             assert!(
                 !gap.contains("SAFEAREA_TOP_MARKER"),
                 "chat spilled into header gap row {dy}: {gap:?}"
@@ -1218,12 +1221,12 @@ mod paint_tests {
 
         let chat = a.chat_area.expect("session publishes a chat hit rect");
         assert!(
-            chat.y >= layout::SAFE_TOP + 1 + layout::TOP_PAD,
+            chat.y >= layout::SAFE_TOP + layout::HEADER_H + layout::TOP_PAD,
             "chat.y={chat:?} must sit below header + TOP_PAD"
         );
         assert!(
-            chat.y > layout::SAFE_TOP,
-            "chat must not overlap the header row"
+            chat.y > layout::SAFE_TOP + layout::HEADER_H - 1,
+            "chat must not overlap the header rows"
         );
     }
 
@@ -1236,7 +1239,7 @@ mod paint_tests {
         a.clamp_chat_scroll();
         let (buf, _) = paint_full_shell(&mut a, 100, 24);
 
-        let header = row_text(&buf, layout::SAFE_TOP);
+        let header = row_text(&buf, layout::SAFE_TOP + 1);
         assert!(
             header.contains("whycodes"),
             "header lost after scroll: {header:?}"
@@ -1250,8 +1253,8 @@ mod paint_tests {
             "scrolled user band spilled into the header: {header:?}"
         );
 
-        for dy in 1..=layout::TOP_PAD {
-            let gap = row_text(&buf, layout::SAFE_TOP + dy);
+        for dy in 0..layout::TOP_PAD {
+            let gap = row_text(&buf, layout::SAFE_TOP + layout::HEADER_H + dy);
             assert!(
                 !gap.contains("SAFEAREA_TOP_MARKER"),
                 "scrolled chat spilled into header gap row {dy}: {gap:?}"
@@ -1260,7 +1263,7 @@ mod paint_tests {
 
         // Oldest user prompt is visible somewhere below the gap, not above it.
         let mut found = false;
-        for y in (layout::SAFE_TOP + 1 + layout::TOP_PAD)..buf.area().height {
+        for y in (layout::SAFE_TOP + layout::HEADER_H + layout::TOP_PAD)..buf.area().height {
             if row_text(&buf, y).contains("SAFEAREA_TOP_MARKER") {
                 found = true;
                 break;

@@ -1,9 +1,10 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: upright status square + block `?` + dual-tone brand · project · shortcuts.
+// Top: block `?` (home mark) + fg wordmark · project · shortcuts.
 // Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
 use crate::theme::ThemePalette;
+use crate::tokens::HEADER_MARK;
 use crate::ui::status_bar::StatusBar;
 use ratatui::{
     Frame,
@@ -42,23 +43,13 @@ fn branch_icon() -> &'static str {
     })
 }
 
-/// Landing mark + dual-tone wordmark: block `?` then bold fg `why` + accent `codes`.
-fn brand_spans(palette: &ThemePalette) -> Vec<Span<'static>> {
+/// Home-matching wordmark: dim `why` + bold fg `codes` (no accent/blue).
+fn brand_wordmark(palette: &ThemePalette) -> Vec<Span<'static>> {
     vec![
-        Span::styled(
-            crate::tokens::HEADER_MARK,
-            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw(" "),
-        Span::styled(
-            "why",
-            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled("why", Style::default().fg(palette.dim)),
         Span::styled(
             "codes",
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ),
     ]
 }
@@ -90,7 +81,6 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
     }
 
     let glyph = status_glyph(app, palette);
-    let brand = brand_spans(palette);
 
     let title_raw = app.session_title.trim();
     let dir_raw = app.project_label.trim();
@@ -127,29 +117,41 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    let mut left: Vec<Span<'_>> = vec![glyph, Span::raw("  ")];
-    left.extend(brand);
+    let mark_style = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
+    let mut chrome: Vec<Span<'_>> = vec![Span::raw("  "), glyph, Span::raw("  ")];
+    chrome.extend(brand_wordmark(palette));
     if !dir.is_empty() {
-        left.push(Span::styled(
+        chrome.push(Span::styled(
             format!("  ·  {dir}"),
             Style::default().fg(palette.dim),
         ));
     }
 
-    let left_w: usize = left.iter().map(|s| s.content.as_ref().width()).sum();
+    let mark_w = HEADER_MARK.first().map(|row| row.width()).unwrap_or(0);
+    let chrome_w: usize = chrome.iter().map(|s| s.content.as_ref().width()).sum();
     let right_w: usize = right.iter().map(|s| s.content.as_ref().width()).sum();
     let mid = area
         .width
-        .saturating_sub(left_w as u16)
+        .saturating_sub(mark_w as u16)
+        .saturating_sub(chrome_w as u16)
         .saturating_sub(right_w as u16)
         .saturating_sub(1) as usize;
+    chrome.push(Span::raw(" ".repeat(mid)));
+    chrome.extend(right);
 
-    let mut spans: Vec<Span<'_>> = left;
-    spans.push(Span::raw(" ".repeat(mid)));
-    spans.extend(right);
+    // Put session chrome on the bowl row (row 1), matching the home `?` stem.
+    let chrome_row = if area.height > 1 { 1 } else { 0 };
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    for (i, row) in HEADER_MARK.iter().enumerate().take(area.height as usize) {
+        let mut spans = vec![Span::styled(*row, mark_style)];
+        if i as u16 == chrome_row {
+            spans.extend(std::mem::take(&mut chrome));
+        }
+        lines.push(Line::from(spans));
+    }
 
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.bg)),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
         area,
     );
 }
@@ -420,8 +422,10 @@ mod tests {
     fn paints_whycodes_wordmark_as_one_word() {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
-        assert!(text.contains("▀▄▀"), "{text}");
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
+        assert!(text.contains("▄█████▄"), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
     }
@@ -431,7 +435,9 @@ mod tests {
         // Default app: empty provider, empty messages, Idle → /connect hint.
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("Get started"), "{text}");
         assert!(text.contains("/connect"), "{text}");
     }
@@ -440,7 +446,9 @@ mod tests {
     fn hides_get_started_when_configured() {
         let app = app_ready();
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(!text.contains("Get started"), "{text}");
         assert!(text.contains("enter send"), "{text}");
     }
@@ -450,7 +458,9 @@ mod tests {
         let mut app = app_ready();
         app.mode = AppMode::Help;
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("q/esc"), "{text}");
         assert!(text.contains("close"), "{text}");
     }
@@ -460,7 +470,9 @@ mod tests {
         let mut app = app_ready();
         app.mode = AppMode::Command;
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("enter"), "{text}");
         assert!(text.contains("run"), "{text}");
         assert!(text.contains("esc"), "{text}");
@@ -472,7 +484,9 @@ mod tests {
         let mut app = app_ready();
         app.mode = AppMode::Dialog;
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("y/n"), "{text}");
         assert!(text.contains("confirm"), "{text}");
     }
@@ -481,7 +495,9 @@ mod tests {
     fn shortcuts_normal_prompt_focus() {
         let app = app_ready();
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("enter send"), "{text}");
         assert!(text.contains("tab scrollback"), "{text}");
         assert!(text.contains("^t agent"), "{text}");
@@ -493,7 +509,9 @@ mod tests {
         let mut app = app_ready();
         app.focus = FocusPane::Scrollback;
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("j/k select"), "{text}");
         assert!(text.contains("y copy"), "{text}");
         assert!(text.contains("e fold"), "{text}");
@@ -505,7 +523,9 @@ mod tests {
         let mut app = app_ready();
         app.current_agent_state = AgentState::Generating;
         let palette = app.config.palette();
-        let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("esc cancel"), "{text}");
         assert!(text.contains("tab focus"), "{text}");
         assert!(!text.contains("enter send"), "{text}");
