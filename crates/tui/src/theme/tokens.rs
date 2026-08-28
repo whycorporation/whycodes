@@ -55,11 +55,11 @@ pub const HOME_LOGO_CODE: &[&str] = &[
     "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
 ];
 
-/// Compact header/status mark: the same cube `?` in one cell row.
+/// Header/status mark: the same cube `?` as [`HOME_LOGO_MARK`], four rows.
 ///
-/// Half-block raster of the landing path so the header glyph matches
-/// [`HOME_LOGO_MARK`] instead of the terminal's ASCII `?`.
-pub const HEADER_MARK: &str = "▀▄▀";
+/// Bowl, right stem, gap, square dot — compact enough for chrome, same
+/// silhouette and half-block font as the home splash.
+pub const HEADER_MARK: &[&str] = &["  ▄█████▄  ", " ██▀   ▀██ ", "      ▄██▀ ", "     ██    "];
 
 /// Spacing and chrome metrics shared by home / session shells.
 pub mod layout {
@@ -85,6 +85,8 @@ pub mod layout {
             SIDE_PAD
         }
     }
+    /// Status/header chrome height (block `?` mark rows).
+    pub const HEADER_H: u16 = 4;
     /// Blank rows under the status header so chat does not sit flush on it.
     pub const TOP_PAD: u16 = 2;
     /// Blank rows between the transcript and the turn-status / prompt.
@@ -202,6 +204,7 @@ mod tests {
             assert!(layout::SIDE_PAD_NARROW >= 1);
             assert!(layout::PROMPT_MIN_WIDTH >= 8);
             assert!(layout::SIDEBAR_MIN_BODY > layout::SIDEBAR_MIN_CHAT);
+            assert!(layout::HEADER_H >= 1);
             assert!(layout::CHAT_GAP >= 1);
             assert!(layout::PANEL_GAP >= 1);
         }
@@ -273,8 +276,22 @@ mod tests {
             widths.windows(2).all(|w| w[0] == w[1]),
             "joined WhyCodes rows must stay aligned: {widths:?}"
         );
-        assert_eq!(HEADER_MARK, "▀▄▀");
-        assert_eq!(HEADER_MARK.chars().count(), 3);
+        let header_w: Vec<usize> = HEADER_MARK.iter().map(|l| l.chars().count()).collect();
+        assert!(
+            header_w.windows(2).all(|w| w[0] == w[1]),
+            "header mark rows must stay aligned: {header_w:?}"
+        );
+        assert_eq!(HEADER_MARK.len(), layout::HEADER_H as usize);
+        assert!(
+            HEADER_MARK[0].contains('▄'),
+            "header mark must use the same half-block bowl: {:?}",
+            HEADER_MARK[0]
+        );
+        assert!(
+            HEADER_MARK[3].contains('█'),
+            "header mark must keep the square dot: {:?}",
+            HEADER_MARK[3]
+        );
     }
 
     #[test]

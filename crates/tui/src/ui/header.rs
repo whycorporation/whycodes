@@ -2,6 +2,7 @@
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
+use crate::tokens::HEADER_MARK;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -11,31 +12,25 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    // Landing block `?` + dual-tone wordmark, matching the top status bar.
-    let brand_mark = Span::styled(
-        crate::tokens::HEADER_MARK,
-        Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
-    );
-    let brand_why = Span::styled(
-        " why",
-        Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
-    );
-    let brand_code = Span::styled(
-        "codes ",
-        Style::default()
-            .fg(palette.accent)
-            .add_modifier(Modifier::BOLD),
-    );
+    // Home-matching block `?` + dim/fg wordmark (no accent/blue).
+    let mark_style = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
     let agent_color = app
         .config
         .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
-    let agent = Span::styled(
-        format!(" {} ", app.agent_name),
-        Style::default()
-            .fg(agent_color)
-            .add_modifier(Modifier::BOLD),
-    );
-    let mut spans = vec![brand_mark, brand_why, brand_code, agent];
+    let mut chrome = vec![
+        Span::raw("  "),
+        Span::styled("why", Style::default().fg(palette.dim)),
+        Span::styled(
+            "codes ",
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" {} ", app.agent_name),
+            Style::default()
+                .fg(agent_color)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
     if let Some(ref badge) = app.intent_badge {
         let badge_color = match app.intent_kind.as_deref() {
             Some("question") => palette.info,
@@ -43,15 +38,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             Some("change") => palette.success,
             _ => palette.dim,
         };
-        spans.push(Span::styled(
+        chrome.push(Span::styled(
             format!("[{badge}]"),
             Style::default()
                 .fg(badge_color)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::raw(" "));
+        chrome.push(Span::raw(" "));
     }
-    spans.push(Span::styled(
+    chrome.push(Span::styled(
         format!(
             "{}/{} ",
             if app.provider_name.is_empty() {
@@ -68,9 +63,18 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         Style::default().fg(app.config.model_color(palette)),
     ));
 
+    let chrome_row = if area.height > 1 { 1 } else { 0 };
+    let mut lines: Vec<Line<'_>> = Vec::new();
+    for (i, row) in HEADER_MARK.iter().enumerate().take(area.height as usize) {
+        let mut spans = vec![Span::styled(*row, mark_style)];
+        if i as u16 == chrome_row {
+            spans.extend(std::mem::take(&mut chrome));
+        }
+        lines.push(Line::from(spans));
+    }
+
     frame.render_widget(
-        Paragraph::new(Text::from(Line::from(spans)))
-            .style(Style::default().bg(palette.status_bar_bg)),
+        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.status_bar_bg)),
         area,
     );
 }
@@ -112,9 +116,11 @@ mod tests {
     fn paints_wordmark_agent_and_placeholder_provider() {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
-        let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
-        // Block `?` (▀▄▀) plus dual-tone wordmark as one word (`whycodes`).
-        assert!(text.contains("▀▄▀"), "{text}");
+        let text = paint(100, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
+        // Block `?` (home silhouette) plus fg wordmark as one word (`whycodes`).
+        assert!(text.contains("▄█████▄"), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
         assert!(text.contains("build"), "{text}");
@@ -128,7 +134,9 @@ mod tests {
         app.provider_name = "anthropic".into();
         app.model_name = "claude-sonnet".into();
         let palette = app.config.palette();
-        let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(100, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("anthropic/claude-sonnet"), "{text}");
     }
 
@@ -136,7 +144,9 @@ mod tests {
     fn no_intent_badge_by_default() {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
-        let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(100, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(!text.contains('['), "no badge without intent: {text}");
     }
 
@@ -152,7 +162,9 @@ mod tests {
             app.intent_badge = Some(badge.to_string());
             app.intent_kind = Some(kind.to_string());
             let palette = app.config.palette();
-            let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
+            let text = paint(100, crate::tokens::layout::HEADER_H, |f| {
+                render(f, f.area(), &app, &palette)
+            });
             assert!(text.contains(&format!("[{badge}]")), "kind {kind}: {text}");
         }
     }
@@ -163,7 +175,9 @@ mod tests {
         app.agent_name = "coder".into();
         app.agent_cycle_idx = 2;
         let palette = app.config.palette();
-        let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
+        let text = paint(100, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
         assert!(text.contains("coder"), "{text}");
         // Cycle index must stay in the palette's color list.
         let _ = palette.agent_color_by_index(2);
