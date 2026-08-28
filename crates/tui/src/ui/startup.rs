@@ -42,7 +42,7 @@ impl StartupScreen {
             duration_ms,
             elapsed_ms: 0,
             done: false,
-            version: String::from("0.1.0"),
+            version: env!("CARGO_PKG_VERSION").to_string(),
             provider_info: String::from("Loading..."),
             project_path: std::env::current_dir()
                 .map(|p| p.display().to_string())

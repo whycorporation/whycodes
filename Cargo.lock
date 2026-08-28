@@ -4725,7 +4725,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-agent"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4755,7 +4755,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-auth"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4774,7 +4774,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -4819,14 +4819,14 @@ dependencies = [
 
 [[package]]
 name = "whycodes-command-risk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
 ]
 
 [[package]]
 name = "whycodes-config"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -4840,7 +4840,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4859,7 +4859,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-format"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "criterion",
@@ -4874,7 +4874,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-function"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "serde_json",
@@ -4884,7 +4884,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-index"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "ignore",
@@ -4897,7 +4897,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-llm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4920,7 +4920,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-lsp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4933,7 +4933,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4952,7 +4952,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4971,7 +4971,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-plugin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -4986,7 +4986,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-protocol"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4995,7 +4995,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-sandbox"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "tempfile",
@@ -5006,7 +5006,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-schema"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -5015,7 +5015,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-sdk"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "futures",
@@ -5030,7 +5030,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5059,7 +5059,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-session"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5078,7 +5078,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-skill"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -5092,7 +5092,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-storage"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5108,7 +5108,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-tools"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5139,7 +5139,7 @@ dependencies = [
 
 [[package]]
 name = "whycodes-tui"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
