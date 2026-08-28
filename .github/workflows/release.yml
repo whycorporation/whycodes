@@ -139,7 +139,8 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          scripts/update_homebrew_formula.sh "$TAG"
+          # `sh` so a missing git +x bit cannot 126 the job (v0.2.0).
+          sh scripts/update_homebrew_formula.sh "$TAG"
           git add Formula/whycodes.rb
           if git diff --cached --quiet; then
             echo "Formula already matches $TAG"

@@ -66,6 +66,8 @@ jobs:
           sh -n scripts/install.sh
           sh -n scripts/uninstall.sh
           sh -n scripts/update_homebrew_formula.sh
+          # release.yml used to exec this without `sh`; a 100644 mode 126'd v0.2.0.
+          test -x scripts/update_homebrew_formula.sh
           sh -n scripts/tui_term_matrix.sh
           sh -n scripts/pre-push
           sh -n scripts/install_git_hooks.sh
