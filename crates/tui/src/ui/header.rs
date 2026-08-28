@@ -11,7 +11,11 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    // Dual-tone wordmark matches the top status bar brand treatment.
+    // Landing `?` mark + dual-tone wordmark, matching the top status bar.
+    let brand_mark = Span::styled(
+        crate::tokens::HEADER_MARK,
+        Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+    );
     let brand_why = Span::styled(
         " why",
         Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
@@ -31,7 +35,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             .fg(agent_color)
             .add_modifier(Modifier::BOLD),
     );
-    let mut spans = vec![brand_why, brand_code, agent];
+    let mut spans = vec![brand_mark, brand_why, brand_code, agent];
     if let Some(ref badge) = app.intent_badge {
         let badge_color = match app.intent_kind.as_deref() {
             Some("question") => palette.info,
@@ -109,7 +113,8 @@ mod tests {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
         let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
-        // Dual-tone wordmark is one word (`whycodes`), then the agent chip.
+        // Landing `?` plus dual-tone wordmark as one word (`whycodes`).
+        assert!(text.contains('?'), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
         assert!(text.contains("build"), "{text}");

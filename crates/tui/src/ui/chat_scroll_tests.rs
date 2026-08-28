@@ -795,18 +795,21 @@ fn paint_home_clears_chat_hits() {
 }
 
 #[test]
-fn paint_home_wordmark_is_one_word() {
+fn paint_home_shows_question_mark() {
     let mut app = TuiApp::new(cfg());
     let buf = paint_and_snapshot(&mut app, 80, 24);
     let text = buffer_text(&buf);
-    // Y's last █ sits flush against C's █ — a gap would insert a space.
     assert!(
-        text.contains("█   ██▀▀▀"),
-        "WhyCodes home logo must join WHY+CODES with no column gap: {text}"
+        text.contains("▄█████▄"),
+        "home must paint the landing `?` bowl: {text}"
     );
     assert!(
-        !text.contains("█   █ █▀▀▀"),
-        "home logo must not read as Why Codes: {text}"
+        text.contains("███▀ ▀███"),
+        "home `?` must keep the left-open bowl: {text}"
+    );
+    assert!(
+        !text.contains("█   ██▀▀▀"),
+        "old WHYCODES block logo must be gone: {text}"
     );
 }
 

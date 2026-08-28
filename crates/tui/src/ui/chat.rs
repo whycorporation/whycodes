@@ -1,10 +1,10 @@
 // ── ui/chat.rs: session message list ───────────────────────────────────
 // User: elevated band + ❯ prefix. Assistant: free-flow body + turn footer.
-// Home: centered WhyCodes wordmark (WHY + CODES, one word).
+// Home: centered landing `?` mark.
 
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::theme::ThemePalette;
-use crate::tokens::{HOME_LOGO_CODE, HOME_LOGO_WHY, layout};
+use crate::tokens::{HOME_LOGO, layout};
 use crate::ui::scrollbar::{SCROLLBAR_GAP, SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
 #[cfg(test)]
@@ -179,29 +179,29 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     } else {
         2 + recents.len() as u16
     };
-    let content_h = 4 + 1 + 2 + 2 + recents_h; // logo + gap + meta + hints + list
+    let logo_h = HOME_LOGO.len() as u16;
+    let content_h = logo_h + 1 + 2 + 2 + recents_h; // logo + gap + meta + hints + list
     let top = area.height.saturating_sub(content_h) / 2;
     for _ in 0..top {
         lines.push(Line::from(""));
     }
 
-    // Center logo horizontally. WHY sits flush against CODES (WhyCodes, not Why Codes).
-    let logo_w = HOME_LOGO_WHY[1].chars().count() + HOME_LOGO_CODE[1].chars().count();
+    // Center the landing `?` mark.
+    let logo_w = HOME_LOGO
+        .first()
+        .map(|row| row.chars().count())
+        .unwrap_or(0);
     let left_pad = area
         .width
         .saturating_sub(logo_w as u16 + 2)
         .saturating_div(2) as usize;
     let pad = " ".repeat(left_pad);
 
-    for i in 0..4 {
+    for row in HOME_LOGO {
         lines.push(Line::from(vec![
             Span::raw(pad.clone()),
             Span::styled(
-                HOME_LOGO_WHY[i].to_string(),
-                Style::default().fg(palette.dim),
-            ),
-            Span::styled(
-                HOME_LOGO_CODE[i].to_string(),
+                *row,
                 Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
             ),
         ]));
