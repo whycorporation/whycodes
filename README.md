@@ -1,8 +1,12 @@
-# WhyCodes
+<p align="center">
+  <img src="assets/banner.svg" alt="whycodes — a fast, provider-independent coding agent for the terminal" width="720">
+</p>
 
-[![CI](https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg)](https://github.com/whycorporation/whycodes/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/whycorporation/whycodes)](https://github.com/whycorporation/whycodes/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<p align="center">
+  <a href="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml"><img src="https://github.com/whycorporation/whycodes/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/whycorporation/whycodes/releases"><img src="https://img.shields.io/github/v/release/whycorporation/whycodes" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 **A fast, provider-independent coding agent for the terminal, written in Rust.**
 
@@ -11,6 +15,10 @@ and drives an LLM through multi-turn tool use — in a full-screen TUI or as a
 machine-readable one-shot CLI. It focuses on a small native footprint, an
 idle-efficient TUI, and a workflow that is not tied to any single model
 provider.
+
+<p align="center">
+  <img src="assets/tui-home.svg" alt="The whycodes TUI home screen" width="820">
+</p>
 
 ## Highlights
 
@@ -96,6 +104,19 @@ whycodes auth login xai                    # SuperGrok / X Premium
 
 The full guide — CLI reference, TUI keys, slash commands, agents, tools and
 configuration — is in **[docs/guide.md](docs/guide.md)**.
+
+## Features
+
+| | |
+|---|---|
+| **Agents** | `build` (full access), `plan` and `ask` (read-only) as primary agents; `general`, `explore` and `scout` subagents via the `task` tool; parallel workers in git worktrees via `swarm` |
+| **Tools** | File edit/patch, in-process search, shell, git and GitHub, web fetch/search, a CDP-driven browser, background jobs, scheduling and to-do tracking |
+| **Sessions** | Persisted per project; resume with `--continue` / `--resume`, import transcripts from other agent CLIs, share over the local server |
+| **Memory** | Human-editable `MEMORY.md`, semantic facts with embeddings, optional code RAG index — all per project, all optional |
+| **Headless / CI** | `generate` with `--format json` or `stream-json` (NDJSON), multiple prompts run concurrently, non-zero exit on failure |
+| **Safety** | Permission gates per tool, shell command risk analysis, an optional OS sandbox (bubblewrap), HTTP domain allowlists and tool hooks |
+| **Extensibility** | MCP servers (stdio and HTTP), LSP language servers, skills, shell plugins, custom slash commands, themes |
+| **Embedding** | Rust and TypeScript SDKs over daemon protocol v1 (`whycodes serve`) |
 
 ## Performance
 
