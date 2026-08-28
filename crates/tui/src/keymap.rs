@@ -33,6 +33,13 @@ pub enum Action {
     ToggleSidebar,
     SidebarNextTab,
     SidebarPrevTab,
+    /// Jump to sidebar tab 1–6 (scrollback; prompt still types digits).
+    SidebarTab1,
+    SidebarTab2,
+    SidebarTab3,
+    SidebarTab4,
+    SidebarTab5,
+    SidebarTab6,
     /// Ctrl+G — sticky tasks panel (subagents + background jobs).
     ToggleTasksPane,
     /// Open the framed child transcript (Enter on a subagent row).
@@ -162,12 +169,35 @@ impl Keymap {
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
                     (true, KeyCode::Char('g')) => return Some(Action::ToggleTasksPane),
+                    // Ctrl+. / Ctrl+, cycle tabs from either focus (prompt still
+                    // types bare `.` / `,`). Avoid Ctrl+[ (CSI/Esc) and Ctrl+Tab
+                    // (MRU session switch in the run loop).
+                    (true, KeyCode::Char('.')) => return Some(Action::SidebarNextTab),
+                    (true, KeyCode::Char(',')) => return Some(Action::SidebarPrevTab),
                     // Sidebar tabs: [ / ] in scrollback (prompt still types them).
                     (false, KeyCode::Char(']')) if focus == FocusPane::Scrollback => {
                         return Some(Action::SidebarNextTab);
                     }
                     (false, KeyCode::Char('[')) if focus == FocusPane::Scrollback => {
                         return Some(Action::SidebarPrevTab);
+                    }
+                    (false, KeyCode::Char('1')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarTab1);
+                    }
+                    (false, KeyCode::Char('2')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarTab2);
+                    }
+                    (false, KeyCode::Char('3')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarTab3);
+                    }
+                    (false, KeyCode::Char('4')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarTab4);
+                    }
+                    (false, KeyCode::Char('5')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarTab5);
+                    }
+                    (false, KeyCode::Char('6')) if focus == FocusPane::Scrollback => {
+                        return Some(Action::SidebarTab6);
                     }
                     (true, KeyCode::Char('p')) => return Some(Action::OpenProviderDialog),
                     (true, KeyCode::Char('m')) => return Some(Action::OpenModelDialog),
@@ -317,6 +347,12 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Ctrl+M", "Model selection", KeymapContext::Normal),
         KeyBinding::new("Ctrl+B", "Toggle sidebar", KeymapContext::Normal),
         KeyBinding::new("Ctrl+G", "Toggle tasks panel", KeymapContext::Normal),
+        KeyBinding::new(
+            "Ctrl+. / Ctrl+,",
+            "Sidebar next / prev tab",
+            KeymapContext::Normal,
+        ),
+        KeyBinding::new("1–6", "Sidebar tab (scrollback)", KeymapContext::Normal),
         KeyBinding::new("[ / ]", "Sidebar tabs (scrollback)", KeymapContext::Normal),
         KeyBinding::new("Ctrl+A", "Toggle auto scroll", KeymapContext::Normal),
         KeyBinding::new("Ctrl+L", "Clear session", KeymapContext::Normal),
@@ -576,6 +612,65 @@ mod tests {
                 &key(KeyCode::Char('['))
             ),
             Some(Action::SidebarPrevTab)
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Prompt,
+                &ctrl(KeyCode::Char('.'))
+            ),
+            Some(Action::SidebarNextTab)
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Prompt,
+                &ctrl(KeyCode::Char(','))
+            ),
+            Some(Action::SidebarPrevTab)
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Prompt,
+                &key(KeyCode::Char('.'))
+            ),
+            None,
+            "bare `.` still types in the prompt"
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Prompt,
+                &key(KeyCode::Char('1'))
+            ),
+            None,
+            "digits still type in the prompt"
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Scrollback,
+                &key(KeyCode::Char('1'))
+            ),
+            Some(Action::SidebarTab1)
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Scrollback,
+                &key(KeyCode::Char('6'))
+            ),
+            Some(Action::SidebarTab6)
+        );
+        assert_eq!(
+            k.resolve(
+                KeymapContext::Normal,
+                FocusPane::Prompt,
+                &ctrl(KeyCode::Tab)
+            ),
+            None,
+            "Ctrl+Tab stays session-MRU (run loop); keymap must not steal it"
         );
         assert_eq!(
             k.resolve(

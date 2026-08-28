@@ -1112,6 +1112,29 @@ fn test_sidebar_default() {
 }
 
 #[test]
+fn sidebar_tab_click_selects() {
+    use crossterm::event::{Event, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::layout::Rect;
+
+    let mut app = TuiApp::new(test_config());
+    app.sidebar.visible = true;
+    app.sidebar.tab_hits[2].set_rect(Some(Rect {
+        x: 10,
+        y: 1,
+        width: 5,
+        height: 1,
+    }));
+    let click = Event::Mouse(MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 12,
+        row: 1,
+        modifiers: KeyModifiers::NONE,
+    });
+    assert!(crate::input::handle_event(&mut app, click));
+    assert_eq!(app.sidebar.active_tab, SidebarTab::Mcp);
+}
+
+#[test]
 fn sidebar_tabs_cycle() {
     let all = SidebarTab::ALL;
     assert!(all.len() >= 2);

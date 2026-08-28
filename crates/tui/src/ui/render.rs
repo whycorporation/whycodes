@@ -397,6 +397,7 @@ fn render_session(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &The
         sidebar::render(frame, chunks[1], app, palette);
         chunks[0]
     } else {
+        app.sidebar.clear_tab_hits();
         area
     };
 

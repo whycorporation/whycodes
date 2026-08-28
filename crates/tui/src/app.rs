@@ -436,6 +436,8 @@ pub struct SidebarState {
     pub mcp_status: Vec<String>,
     /// Agent-pinned preview (file / diff / mermaid).
     pub preview: SidebarPreview,
+    /// Last-paint hit boxes for the tab strip (click / hover).
+    pub tab_hits: [crate::hit_area::HitArea; SidebarTab::ALL.len()],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -478,6 +480,10 @@ impl SidebarTab {
             Self::Agents => "Agents",
         }
     }
+
+    pub fn at(index: usize) -> Option<Self> {
+        Self::ALL.get(index).copied()
+    }
 }
 
 /// What the Preview tab shows.
@@ -507,7 +513,45 @@ impl Default for SidebarState {
             diagnostics: 0,
             mcp_status: vec![],
             preview: SidebarPreview::None,
+            tab_hits: [crate::hit_area::HitArea::default(); SidebarTab::ALL.len()],
         }
+    }
+}
+
+impl SidebarState {
+    pub fn clear_tab_hits(&mut self) {
+        for hit in &mut self.tab_hits {
+            hit.clear();
+        }
+    }
+
+    pub fn tab_at(&self, col: u16, row: u16) -> Option<SidebarTab> {
+        self.tab_hits
+            .iter()
+            .zip(SidebarTab::ALL)
+            .find(|(hit, _)| hit.contains(col, row))
+            .map(|(_, tab)| tab)
+    }
+
+    /// Sticky hover for the tab strip. Returns true if any flag flipped.
+    pub fn update_tab_hover(&mut self, pos: Option<(u16, u16)>) -> bool {
+        let mut changed = false;
+        match pos {
+            Some((c, r)) => {
+                for hit in &mut self.tab_hits {
+                    changed |= hit.update_hover(c, r);
+                }
+            }
+            None => {
+                for hit in &mut self.tab_hits {
+                    if hit.hovered {
+                        hit.hovered = false;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
     }
 }
 
@@ -2052,6 +2096,7 @@ impl TuiApp {
         if self.task_count() == 0 {
             if self.sidebar.visible && self.sidebar.active_tab == SidebarTab::Agents {
                 self.sidebar.visible = false;
+                self.sidebar.clear_tab_hits();
             } else {
                 self.sidebar.visible = true;
                 self.sidebar.active_tab = SidebarTab::Agents;
@@ -2060,6 +2105,13 @@ impl TuiApp {
             return;
         }
         self.tasks_collapsed = !self.tasks_collapsed;
+        self.mark_dirty();
+    }
+
+    /// Jump to a sidebar tab (opens the rail if it was hidden).
+    pub fn select_sidebar_tab(&mut self, tab: SidebarTab) {
+        self.sidebar.visible = true;
+        self.sidebar.active_tab = tab;
         self.mark_dirty();
     }
 
@@ -2114,6 +2166,7 @@ impl TuiApp {
                 self.tasks_hit.hovered = false;
                 changed = true;
             }
+            changed |= self.sidebar.update_tab_hover(None);
             return changed;
         };
         let mut changed = false;
@@ -2125,6 +2178,7 @@ impl TuiApp {
         changed |= self.effort_hit.update_hover(c, r);
         changed |= self.todos_hit.update_hover(c, r);
         changed |= self.tasks_hit.update_hover(c, r);
+        changed |= self.sidebar.update_tab_hover(Some((c, r)));
         // Slash dropdown hover row (index into matches, not absolute cmd).
         if self.slash_suggest.active {
             if let Some(idx) = self.slash_suggest.row_index_at(c, r) {
