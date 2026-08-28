@@ -609,6 +609,31 @@ Post-tool also sets `WHYCODES_TOOL_IS_ERROR` (`0`/`1`) and
 `WHYCODES_TOOL_OUTPUT` (truncated). Hooks run after the risk gate and
 permission prompt, before execution. Subagent loops do not invoke hooks yet.
 
+### Session notifications (Discord / Telegram)
+
+Get a ping when a turn finishes or when the agent is blocked on a permission
+prompt. Off until `on` is non-empty **and** at least one channel is set:
+
+```toml
+[notify]
+on = ["turn_done", "need_input"]           # events to send
+discord_webhook = "${DISCORD_WEBHOOK_URL}" # Discord Incoming Webhook
+telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"
+telegram_chat_id = "${TELEGRAM_CHAT_ID}"
+# timeout_secs = 8                         # per-channel HTTP timeout, 1–60
+```
+
+`${VAR}` values are read from the environment after config load, so a
+committed project config never has to contain the secret. Env overrides
+(`WHYCODES_NOTIFY_ON`, `WHYCODES_NOTIFY_DISCORD_WEBHOOK`,
+`WHYCODES_NOTIFY_TELEGRAM_BOT_TOKEN`, `WHYCODES_NOTIFY_TELEGRAM_CHAT_ID`,
+`WHYCODES_NOTIFY_TIMEOUT_SECS`) beat both config layers.
+
+Sends are fire-and-forget: failures are logged, never surfaced to the agent
+loop, and never block a turn. Discord URLs must be real Incoming Webhook URLs
+(`https://discord.com/api/webhooks/…`); Telegram always posts to
+`api.telegram.org`.
+
 ### Custom commands
 
 Markdown files become slash commands named after the file, from

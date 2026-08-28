@@ -108,6 +108,10 @@ pub struct Config {
     /// Background jobs and lightweight scheduling (FEATURES §11).
     #[serde(default)]
     pub automation: AutomationConfig,
+
+    /// Discord / Telegram session notifications (off by default).
+    #[serde(default)]
+    pub notify: NotifyConfig,
 }
 
 /// Process-local background shell jobs and schedule/loop knobs.
@@ -651,6 +655,7 @@ impl Default for Config {
             memory: MemoryConfig::default(),
             swarm: SwarmConfig::default(),
             automation: AutomationConfig::default(),
+            notify: NotifyConfig::default(),
         }
     }
 }
@@ -1054,6 +1059,177 @@ fn default_compaction_threshold() -> usize {
     150_000
 }
 
+/// Session notifications over Discord Incoming Webhooks and/or Telegram bots.
+///
+/// Off until `on` is non-empty **and** at least one channel is configured.
+/// Secrets should live in env (`WHYCODES_NOTIFY_*`) or `${VAR}` substitution,
+/// not in a committed project config.
+///
+/// ```toml
+/// [notify]
+/// on = ["turn_done", "need_input"]
+/// discord_webhook = "${DISCORD_WEBHOOK_URL}"
+/// telegram_bot_token = "${TELEGRAM_BOT_TOKEN}"
+/// telegram_chat_id = "${TELEGRAM_CHAT_ID}"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NotifyConfig {
+    /// Events that fire a message. Empty = disabled.
+    /// Known values: `turn_done`, `need_input`.
+    #[serde(default)]
+    pub on: Vec<String>,
+    /// Discord Incoming Webhook URL. Empty / omitted = skip Discord.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord_webhook: Option<String>,
+    /// Telegram bot token from BotFather. Empty / omitted = skip Telegram.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_bot_token: Option<String>,
+    /// Telegram chat / group / channel id (`sendMessage` `chat_id`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram_chat_id: Option<String>,
+    /// HTTP timeout per channel. Default 8s, clamped 1–60.
+    #[serde(default = "default_notify_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_notify_timeout_secs() -> u64 {
+    8
+}
+
+impl Default for NotifyConfig {
+    fn default() -> Self {
+        Self {
+            on: Vec::new(),
+            discord_webhook: None,
+            telegram_bot_token: None,
+            telegram_chat_id: None,
+            timeout_secs: default_notify_timeout_secs(),
+        }
+    }
+}
+
+impl NotifyConfig {
+    /// True when this event is listed in `on` (case-insensitive).
+    pub fn wants(&self, event: NotifyEvent) -> bool {
+        self.on.iter().any(|e| NotifyEvent::parse(e) == Some(event))
+    }
+
+    /// Discord webhook after trim; `None` if unset/blank.
+    pub fn discord_webhook_url(&self) -> Option<&str> {
+        nonempty_str(self.discord_webhook.as_deref())
+    }
+
+    /// Telegram bot token after trim; `None` if unset/blank.
+    pub fn telegram_token(&self) -> Option<&str> {
+        nonempty_str(self.telegram_bot_token.as_deref())
+    }
+
+    /// Telegram chat id after trim; `None` if unset/blank.
+    pub fn telegram_chat(&self) -> Option<&str> {
+        nonempty_str(self.telegram_chat_id.as_deref())
+    }
+
+    /// True when Discord and/or a complete Telegram pair is configured.
+    pub fn has_channel(&self) -> bool {
+        self.discord_webhook_url().is_some()
+            || (self.telegram_token().is_some() && self.telegram_chat().is_some())
+    }
+
+    /// True when this event should actually be sent.
+    pub fn enabled_for(&self, event: NotifyEvent) -> bool {
+        self.wants(event) && self.has_channel()
+    }
+
+    fn merge_with(&self, other: &NotifyConfig) -> NotifyConfig {
+        let mut merged = self.clone();
+        if !other.on.is_empty() {
+            merged.on = other.on.clone();
+        }
+        if other.discord_webhook.is_some() {
+            merged.discord_webhook = other.discord_webhook.clone();
+        }
+        if other.telegram_bot_token.is_some() {
+            merged.telegram_bot_token = other.telegram_bot_token.clone();
+        }
+        if other.telegram_chat_id.is_some() {
+            merged.telegram_chat_id = other.telegram_chat_id.clone();
+        }
+        if other.timeout_secs != default_notify_timeout_secs() {
+            merged.timeout_secs = other.timeout_secs;
+        }
+        merged
+    }
+}
+
+/// Lifecycle events that can fire a session notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyEvent {
+    /// Parent agent turn finished (success or cancel). Subagents do not fire this.
+    TurnDone,
+    /// Interactive wait: permission dialog, `question` tool, or SDK/daemon ask.
+    NeedInput,
+}
+
+impl NotifyEvent {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TurnDone => "turn_done",
+            Self::NeedInput => "need_input",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "turn_done" | "turn-done" | "done" => Some(Self::TurnDone),
+            "need_input" | "need-input" | "input" => Some(Self::NeedInput),
+            _ => None,
+        }
+    }
+}
+
+fn parse_notify_on_csv(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_ascii_lowercase())
+        .collect()
+}
+
+fn nonempty_str(s: Option<&str>) -> Option<&str> {
+    s.map(str::trim).filter(|s| !s.is_empty())
+}
+
+fn nonempty_opt(s: String) -> Option<String> {
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
+/// Discord Incoming Webhook host allowlist (no arbitrary POST target).
+pub fn is_discord_webhook_url(url: &str) -> bool {
+    let url = url.trim();
+    if !url.starts_with("https://") {
+        return false;
+    }
+    let Ok(host) = network::host_from_url(url) else {
+        return false;
+    };
+    let host = host.to_ascii_lowercase();
+    if host != "discord.com" && host != "discordapp.com" {
+        return false;
+    }
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("HTTPS://"))
+        .unwrap_or(url);
+    let path_start = rest.find('/').unwrap_or(rest.len());
+    let path = rest[path_start..].split(['?', '#']).next().unwrap_or("");
+    path.starts_with("/api/webhooks/") && path.len() > "/api/webhooks/".len()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TuiConfig {
     #[serde(default)]
@@ -1157,6 +1333,7 @@ impl Config {
                     provider.name = key.clone();
                 }
             }
+            cfg.expand_notify_secrets();
             Ok(cfg)
         } else {
             Ok(Self::default())
@@ -1223,6 +1400,7 @@ impl Config {
 
         // Layer 4: environment variables
         config.apply_env_overrides();
+        config.expand_notify_secrets();
 
         Ok(config)
     }
@@ -1362,6 +1540,24 @@ impl Config {
                 "1" | "true" | "yes" | "on" => self.swarm.worktrees = true,
                 _ => {}
             }
+        }
+
+        if let Ok(val) = std::env::var("WHYCODES_NOTIFY_ON") {
+            self.notify.on = parse_notify_on_csv(&val);
+        }
+        if let Ok(val) = std::env::var("WHYCODES_NOTIFY_DISCORD_WEBHOOK") {
+            self.notify.discord_webhook = Some(val);
+        }
+        if let Ok(val) = std::env::var("WHYCODES_NOTIFY_TELEGRAM_BOT_TOKEN") {
+            self.notify.telegram_bot_token = Some(val);
+        }
+        if let Ok(val) = std::env::var("WHYCODES_NOTIFY_TELEGRAM_CHAT_ID") {
+            self.notify.telegram_chat_id = Some(val);
+        }
+        if let Ok(val) = std::env::var("WHYCODES_NOTIFY_TIMEOUT_SECS")
+            && let Ok(n) = val.parse::<u64>()
+        {
+            self.notify.timeout_secs = n.clamp(1, 60);
         }
     }
 
@@ -1703,6 +1899,8 @@ impl Config {
             merged.automation.max_background_jobs = other.automation.max_background_jobs;
         }
 
+        merged.notify = self.notify.merge_with(&other.notify);
+
         merged
     }
 
@@ -1942,6 +2140,25 @@ impl Config {
         self.command_configs.get(command)
     }
 
+    /// Expand `${VAR}` / `$VAR` in Discord / Telegram secret fields.
+    ///
+    /// Call after layered load so `config.toml` can store
+    /// `discord_webhook = "${DISCORD_WEBHOOK_URL}"` without committing the URL.
+    pub fn expand_notify_secrets(&mut self) {
+        if let Some(url) = self.notify.discord_webhook.take() {
+            let expanded = Self::substitute_vars(&url);
+            self.notify.discord_webhook = nonempty_opt(expanded);
+        }
+        if let Some(token) = self.notify.telegram_bot_token.take() {
+            let expanded = Self::substitute_vars(&token);
+            self.notify.telegram_bot_token = nonempty_opt(expanded);
+        }
+        if let Some(chat) = self.notify.telegram_chat_id.take() {
+            let expanded = Self::substitute_vars(&chat);
+            self.notify.telegram_chat_id = nonempty_opt(expanded);
+        }
+    }
+
     // ── Variable substitution ───────────────────────────────────────────
 
     /// Replace `${VAR_NAME}` and `$VAR_NAME` patterns with environment
@@ -2061,6 +2278,47 @@ impl Config {
                     "Provider '{}' base_url points to localhost ({}). \
                      This is fine for local development but will not work in production.",
                     name, url
+                ));
+            }
+        }
+
+        if let Some(url) = self.notify.discord_webhook.as_deref()
+            && !url.trim().is_empty()
+            && !is_discord_webhook_url(url)
+        {
+            issues.push(
+                "notify.discord_webhook is set but is not a Discord Incoming Webhook URL \
+                 (https://discord.com/api/webhooks/… or https://discordapp.com/api/webhooks/…)."
+                    .to_string(),
+            );
+        }
+        if self
+            .notify
+            .telegram_bot_token
+            .as_deref()
+            .is_some_and(|t| !t.trim().is_empty())
+            != self
+                .notify
+                .telegram_chat_id
+                .as_deref()
+                .is_some_and(|c| !c.trim().is_empty())
+        {
+            issues.push(
+                "Telegram notify needs both notify.telegram_bot_token and notify.telegram_chat_id \
+                 (or WHYCODES_NOTIFY_TELEGRAM_BOT_TOKEN / WHYCODES_NOTIFY_TELEGRAM_CHAT_ID)."
+                    .to_string(),
+            );
+        }
+        if self.notify.timeout_secs == 0 || self.notify.timeout_secs > 60 {
+            issues.push(format!(
+                "notify.timeout_secs is {} (expected 1–60).",
+                self.notify.timeout_secs
+            ));
+        }
+        for event in &self.notify.on {
+            if NotifyEvent::parse(event).is_none() {
+                issues.push(format!(
+                    "notify.on contains unknown event '{event}'. Expected turn_done and/or need_input."
                 ));
             }
         }
