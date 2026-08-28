@@ -20,7 +20,7 @@ use super::question::{QuestionPrompter, default_question_prompter, run_question_
 use super::subagent::{SubagentRunner, SubagentTask};
 use super::tool_stream::ToolCallAssembler;
 use whycodes_command_risk::{Decision, RiskThreshold, assess, decide};
-use whycodes_config::HookConfig;
+use whycodes_config::{HookConfig, NotifyConfig};
 use whycodes_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
 
 /// Tool names that run an arbitrary shell command string.
@@ -165,6 +165,8 @@ pub struct Agent {
     network: NetworkPolicy,
     /// Config-driven pre/post tool hooks (empty by default).
     hooks: Vec<HookConfig>,
+    /// Discord / Telegram session notifications (off by default).
+    notify: NotifyConfig,
     /// When session estimate exceeds this, compact before the next LLM call
     /// (Claude Code / OpenCode style). `0` disables auto-compact.
     compaction_threshold: usize,
@@ -460,6 +462,7 @@ impl Agent {
             sandbox: SandboxSettings::default(),
             network: NetworkPolicy::unrestricted(),
             hooks: Vec::new(),
+            notify: NotifyConfig::default(),
             // Match config default when `with_config` is not used.
             compaction_threshold: 150_000,
             compaction_llm: true,
@@ -558,6 +561,7 @@ impl Agent {
         self.sandbox = config.security.sandbox_settings();
         self.network = config.security.network_policy();
         self.hooks = config.hooks.clone();
+        self.notify = config.notify.clone();
         self.compaction_threshold = config.session.compaction_threshold;
         self.compaction_llm = !matches!(
             config
@@ -1885,6 +1889,13 @@ impl Agent {
                 "response_cache": self.response_cache,
                 "model_race": self.model_race,
             })),
+        );
+
+        crate::notify::spawn_turn_done(
+            &self.notify,
+            "Turn done",
+            &format!("Session · {}", session.title),
+            Some(session.id.as_str()),
         );
 
         // Hindsight-style auto-retain (heuristic + optional LLM). Best-effort

@@ -392,6 +392,157 @@ fn merge_hooks_nonempty_replaces() {
 }
 
 #[test]
+fn notify_defaults_disabled() {
+    let cfg = Config::default();
+    assert!(cfg.notify.on.is_empty());
+    assert!(!cfg.notify.has_channel());
+    assert!(!cfg.notify.enabled_for(NotifyEvent::TurnDone));
+    assert_eq!(cfg.notify.timeout_secs, 8);
+    assert_eq!(NotifyEvent::TurnDone.as_str(), "turn_done");
+    assert_eq!(NotifyEvent::NeedInput.as_str(), "need_input");
+    assert_eq!(NotifyEvent::parse("TURN_DONE"), Some(NotifyEvent::TurnDone));
+    assert_eq!(
+        NotifyEvent::parse("need-input"),
+        Some(NotifyEvent::NeedInput)
+    );
+    assert_eq!(NotifyEvent::parse("done"), Some(NotifyEvent::TurnDone));
+    assert_eq!(NotifyEvent::parse("input"), Some(NotifyEvent::NeedInput));
+    assert_eq!(NotifyEvent::parse("nope"), None);
+}
+
+#[test]
+fn notify_toml_and_merge() {
+    let overlay: Config = toml::from_str(
+        r#"
+        [notify]
+        on = ["turn_done", "need_input"]
+        discord_webhook = "https://discord.com/api/webhooks/1/abc"
+        telegram_bot_token = "123:abc"
+        telegram_chat_id = "42"
+        timeout_secs = 12
+        "#,
+    )
+    .unwrap();
+    assert!(overlay.notify.wants(NotifyEvent::TurnDone));
+    assert!(overlay.notify.wants(NotifyEvent::NeedInput));
+    assert!(overlay.notify.has_channel());
+    assert_eq!(overlay.notify.timeout_secs, 12);
+
+    let merged = Config::default().merge_with(&overlay);
+    assert_eq!(merged.notify.on, overlay.notify.on);
+    assert_eq!(
+        merged.notify.discord_webhook.as_deref(),
+        Some("https://discord.com/api/webhooks/1/abc")
+    );
+    assert_eq!(merged.notify.telegram_chat_id.as_deref(), Some("42"));
+    assert_eq!(merged.notify.timeout_secs, 12);
+
+    let empty_overlay = Config::default();
+    let keep = merged.merge_with(&empty_overlay);
+    assert_eq!(keep.notify.on, overlay.notify.on);
+    assert_eq!(keep.notify.timeout_secs, 12);
+}
+
+#[test]
+fn notify_env_overrides_and_secret_expand() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: serialized by ENV_LOCK.
+    unsafe {
+        std::env::set_var("WHYCODES_NOTIFY_ON", "turn_done, need_input");
+        std::env::set_var(
+            "WHYCODES_NOTIFY_DISCORD_WEBHOOK",
+            "https://discord.com/api/webhooks/9/xyz",
+        );
+        std::env::set_var("WHYCODES_NOTIFY_TELEGRAM_BOT_TOKEN", "bot:token");
+        std::env::set_var("WHYCODES_NOTIFY_TELEGRAM_CHAT_ID", "-1001");
+        std::env::set_var("WHYCODES_NOTIFY_TIMEOUT_SECS", "20");
+        std::env::set_var(
+            "WHYCODES_NOTIFY_EXPAND_URL",
+            "https://discord.com/api/webhooks/e/x",
+        );
+    }
+    let mut cfg = Config::default();
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.notify.on,
+        vec!["turn_done".to_string(), "need_input".to_string()]
+    );
+    assert_eq!(
+        cfg.notify.discord_webhook.as_deref(),
+        Some("https://discord.com/api/webhooks/9/xyz")
+    );
+    assert_eq!(cfg.notify.telegram_token(), Some("bot:token"));
+    assert_eq!(cfg.notify.telegram_chat(), Some("-1001"));
+    assert_eq!(cfg.notify.timeout_secs, 20);
+
+    cfg.notify.discord_webhook = Some("${WHYCODES_NOTIFY_EXPAND_URL}".into());
+    cfg.notify.telegram_bot_token = Some("  ".into());
+    cfg.notify.telegram_chat_id = Some("${MISSING_NOTIFY_CHAT}".into());
+    cfg.expand_notify_secrets();
+    assert_eq!(
+        cfg.notify.discord_webhook.as_deref(),
+        Some("https://discord.com/api/webhooks/e/x")
+    );
+    assert!(cfg.notify.telegram_bot_token.is_none());
+    assert_eq!(
+        cfg.notify.telegram_chat_id.as_deref(),
+        Some("${MISSING_NOTIFY_CHAT}")
+    );
+
+    unsafe {
+        std::env::remove_var("WHYCODES_NOTIFY_ON");
+        std::env::remove_var("WHYCODES_NOTIFY_DISCORD_WEBHOOK");
+        std::env::remove_var("WHYCODES_NOTIFY_TELEGRAM_BOT_TOKEN");
+        std::env::remove_var("WHYCODES_NOTIFY_TELEGRAM_CHAT_ID");
+        std::env::remove_var("WHYCODES_NOTIFY_TIMEOUT_SECS");
+        std::env::remove_var("WHYCODES_NOTIFY_EXPAND_URL");
+    }
+}
+
+#[test]
+fn notify_validate_and_webhook_allowlist() {
+    assert!(is_discord_webhook_url(
+        "https://discord.com/api/webhooks/1/token"
+    ));
+    assert!(is_discord_webhook_url(
+        "https://discordapp.com/api/webhooks/1/token?wait=true"
+    ));
+    assert!(!is_discord_webhook_url(
+        "http://discord.com/api/webhooks/1/t"
+    ));
+    assert!(!is_discord_webhook_url(
+        "https://evil.example/api/webhooks/1/t"
+    ));
+    assert!(!is_discord_webhook_url("https://discord.com/api/webhooks/"));
+    assert!(!is_discord_webhook_url("not-a-url"));
+
+    let mut cfg = Config::default();
+    cfg.notify.discord_webhook = Some("https://example.com/hooks/x".into());
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("discord_webhook"), "{err}");
+
+    cfg.notify.discord_webhook = None;
+    cfg.notify.telegram_bot_token = Some("tok".into());
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("telegram"), "{err}");
+
+    cfg.notify.telegram_bot_token = None;
+    cfg.notify.telegram_chat_id = Some("1".into());
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("telegram"), "{err}");
+
+    cfg.notify.telegram_chat_id = None;
+    cfg.notify.timeout_secs = 0;
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("timeout_secs"), "{err}");
+
+    cfg.notify.timeout_secs = 8;
+    cfg.notify.on = vec!["nope".into()];
+    let err = cfg.validate().unwrap_err().to_string();
+    assert!(err.contains("notify.on"), "{err}");
+}
+
+#[test]
 fn mcp_http_url_infers_auto() {
     let toml = r#"
         [mcp_servers.remote]
@@ -1108,6 +1259,7 @@ fn hook_and_security_defaults_and_serde() {
         [tui]
         [memory]
         [swarm]
+        [notify]
         [[hooks]]
         command = "true"
         "#,
@@ -1118,6 +1270,8 @@ fn hook_and_security_defaults_and_serde() {
     assert!(cfg.tui.agent_colors.is_empty());
     assert!(cfg.memory.enabled);
     assert!(cfg.swarm.enabled);
+    assert!(cfg.notify.on.is_empty());
+    assert_eq!(cfg.notify.timeout_secs, 8);
     assert_eq!(cfg.hooks[0].tool_match, "*");
     assert_eq!(cfg.hooks[0].timeout_secs, 30);
 }
