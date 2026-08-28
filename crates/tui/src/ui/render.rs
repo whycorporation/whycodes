@@ -1173,7 +1173,7 @@ mod paint_tests {
         let (buf, _text) = paint_full_shell(&mut a, 100, 24);
 
         let safe_top = row_text(&buf, 0);
-        let header = row_text(&buf, layout::SAFE_TOP + 1);
+        let header = row_text(&buf, layout::SAFE_TOP);
 
         // Terminal edge (SAFE_TOP) is empty of chrome and of chat.
         assert!(
@@ -1185,7 +1185,7 @@ mod paint_tests {
             "safe-area row must not hold chat: {safe_top:?}"
         );
 
-        // Status header sits on the first inset rows and is not overwritten.
+        // Status header sits on the first inset row and is not overwritten.
         assert!(
             header.contains("whycodes"),
             "header brand missing: {header:?}"
@@ -1194,21 +1194,18 @@ mod paint_tests {
             !header.contains("why codes"),
             "wordmark must be one word: {header:?}"
         );
-        for dy in 0..layout::HEADER_H {
-            let row = row_text(&buf, layout::SAFE_TOP + dy);
-            assert!(
-                !row.contains("SAFEAREA_TOP_MARKER"),
-                "chat spilled into header row {dy}: {row:?}"
-            );
-            assert!(
-                !row.contains('\u{276F}'),
-                "user-prompt arrow spilled into header row {dy}: {row:?}"
-            );
-        }
+        assert!(
+            !header.contains("SAFEAREA_TOP_MARKER"),
+            "chat spilled into the header: {header:?}"
+        );
+        assert!(
+            !header.contains('\u{276F}'),
+            "user-prompt arrow spilled into the header: {header:?}"
+        );
 
         // TOP_PAD blank rows between header and transcript.
-        for dy in 0..layout::TOP_PAD {
-            let gap = row_text(&buf, layout::SAFE_TOP + layout::HEADER_H + dy);
+        for dy in 1..=layout::TOP_PAD {
+            let gap = row_text(&buf, layout::SAFE_TOP + dy);
             assert!(
                 !gap.contains("SAFEAREA_TOP_MARKER"),
                 "chat spilled into header gap row {dy}: {gap:?}"
@@ -1225,8 +1222,8 @@ mod paint_tests {
             "chat.y={chat:?} must sit below header + TOP_PAD"
         );
         assert!(
-            chat.y > layout::SAFE_TOP + layout::HEADER_H - 1,
-            "chat must not overlap the header rows"
+            chat.y > layout::SAFE_TOP,
+            "chat must not overlap the header row"
         );
     }
 
@@ -1239,7 +1236,7 @@ mod paint_tests {
         a.clamp_chat_scroll();
         let (buf, _) = paint_full_shell(&mut a, 100, 24);
 
-        let header = row_text(&buf, layout::SAFE_TOP + 1);
+        let header = row_text(&buf, layout::SAFE_TOP);
         assert!(
             header.contains("whycodes"),
             "header lost after scroll: {header:?}"
@@ -1253,8 +1250,8 @@ mod paint_tests {
             "scrolled user band spilled into the header: {header:?}"
         );
 
-        for dy in 0..layout::TOP_PAD {
-            let gap = row_text(&buf, layout::SAFE_TOP + layout::HEADER_H + dy);
+        for dy in 1..=layout::TOP_PAD {
+            let gap = row_text(&buf, layout::SAFE_TOP + dy);
             assert!(
                 !gap.contains("SAFEAREA_TOP_MARKER"),
                 "scrolled chat spilled into header gap row {dy}: {gap:?}"

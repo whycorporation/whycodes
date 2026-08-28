@@ -55,11 +55,8 @@ pub const HOME_LOGO_CODE: &[&str] = &[
     "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
 ];
 
-/// Header/status mark: the same cube `?` as [`HOME_LOGO_MARK`], four rows.
-///
-/// Bowl, right stem, gap, square dot — compact enough for chrome, same
-/// silhouette and half-block font as the home splash.
-pub const HEADER_MARK: &[&str] = &["  ▄█████▄  ", " ██▀   ▀██ ", "      ▄██▀ ", "     ██    "];
+/// Compact header/status mark: the landing `?` as a single glyph.
+pub const HEADER_MARK: &str = "?";
 
 /// Spacing and chrome metrics shared by home / session shells.
 pub mod layout {
@@ -85,8 +82,8 @@ pub mod layout {
             SIDE_PAD
         }
     }
-    /// Status/header chrome height (block `?` mark rows).
-    pub const HEADER_H: u16 = 4;
+    /// Status/header chrome height.
+    pub const HEADER_H: u16 = 1;
     /// Blank rows under the status header so chat does not sit flush on it.
     pub const TOP_PAD: u16 = 2;
     /// Blank rows between the transcript and the turn-status / prompt.
@@ -276,22 +273,8 @@ mod tests {
             widths.windows(2).all(|w| w[0] == w[1]),
             "joined WhyCodes rows must stay aligned: {widths:?}"
         );
-        let header_w: Vec<usize> = HEADER_MARK.iter().map(|l| l.chars().count()).collect();
-        assert!(
-            header_w.windows(2).all(|w| w[0] == w[1]),
-            "header mark rows must stay aligned: {header_w:?}"
-        );
-        assert_eq!(HEADER_MARK.len(), layout::HEADER_H as usize);
-        assert!(
-            HEADER_MARK[0].contains('▄'),
-            "header mark must use the same half-block bowl: {:?}",
-            HEADER_MARK[0]
-        );
-        assert!(
-            HEADER_MARK[3].contains('█'),
-            "header mark must keep the square dot: {:?}",
-            HEADER_MARK[3]
-        );
+        assert_eq!(HEADER_MARK, "?");
+        assert_eq!(layout::HEADER_H, 1);
     }
 
     #[test]
