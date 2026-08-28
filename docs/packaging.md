@@ -53,6 +53,25 @@ If `main` is protected against `GITHUB_TOKEN` pushes, the Homebrew job will
 fail after a successful release; bump the formula locally with the script
 above or allow that bot push.
 
+## Landing (why.codes)
+
+GitHub stars, contributor count, and the latest tag on
+[why.codes](https://why.codes) come from the public API at **build time**, not
+from hand-edited copy.
+
+`release.yml` dispatches [`deploy-landing.yml`](../.github/workflows/deploy-landing.yml)
+after a tagged publish. That job checks out `whycorporation/whycodes-landing`
+and runs `pnpm deploy`, which refreshes `app/data/github.json` then prerenders
+Cloudflare Workers.
+
+Manual refresh (no new tag):
+
+```bash
+gh workflow run deploy-landing.yml
+```
+
+The committed JSON is a fallback so offline `pnpm build` still has numbers.
+
 ### Later
 
 - Dedicated tap repo (`whycorporation/homebrew-whycodes`) if formula noise in
