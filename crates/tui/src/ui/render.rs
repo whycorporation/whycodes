@@ -1,6 +1,6 @@
 // ── ui/render.rs: home + session shells ────────────────────────────────
 //
-// Home: header · centered `?` + WHYCODES + prompt · footer (branch · cwd).
+// Home: header · centered `?` + recents + prompt · footer (branch · cwd).
 // Session: header · [ main | sidebar? ] · footer; main has side pad,
 // messages scroll, prompt at bottom. Turn-status strip while busy;
 // viewport metrics for row-based scrollback selection.
