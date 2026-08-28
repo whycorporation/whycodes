@@ -79,15 +79,6 @@ token is:
 | `google-antigravity` | PKCE → loopback callback on the native hub port `127.0.0.1:51121` (`/oauth-callback`); Antigravity client id + scopes (`cclog`, `experimentsandconfigs`) | ✅ yes — tokens go to `daily-cloudcode-pa.googleapis.com` with `ideType: ANTIGRAVITY`. A loaded plugin may supply the hub User-Agent via `inference.user_agent`. Picker ids such as `gemini-3.1-pro` remap to hub wire ids (`gemini-3.1-pro-low`). Distinct from `google` (Gemini CLI / Code Assist sunset for consumer accounts). |
 | `xai` | PKCE → loopback callback on an ephemeral `127.0.0.1` port (`/callback`); public Grok Build client | ✅ yes — SuperGrok / X Premium tokens go to `cli-chat-proxy.grok.com`. Extra proxy headers (`X-XAI-Token-Auth`, …) come from the plugin's `inference` object. Console keys (`xai-…`) stay on `api.x.ai` (`crates/llm/src/providers/xai.rs`) |
 
-| Provider | Flow | Works for API calls |
-|----------|------|---------------------|
-| `anthropic` | PKCE; the public client's redirect shows `code#state` on a console page → paste it into the terminal | ✅ yes — token sent as `Authorization: Bearer` + `anthropic-beta: oauth-2025-04-20` |
-| `openai` | PKCE → loopback callback on the registered port `localhost:1455` | ✅ yes — JWT-shaped subscription tokens are routed to the Codex backend (`chatgpt.com/backend-api/codex/responses`, Responses API) with the stored `chatgpt-account-id`; API keys keep the `api.openai.com` chat-completions path (`crates/llm/src/codex.rs`) |
-| `github-copilot` | GitHub device-code grant → GitHub token is exchanged for the short-lived Copilot API token | ✅ yes — `github-copilot` provider calls `api.githubcopilot.com/chat/completions`; the Copilot token re-exchanges automatically near expiry |
-| `google` | PKCE → loopback callback on an ephemeral port | ✅ yes — `ya29.…` OAuth tokens are routed to the Code Assist endpoint (`cloudcode-pa.googleapis.com/v1internal`) with `loadCodeAssist`/`onboardUser` project discovery (`GOOGLE_CLOUD_PROJECT` overrides); `AIza…` API keys keep the `generativelanguage` route (`crates/llm/src/codeassist.rs`) |
-| `google-antigravity` | PKCE → loopback callback on the native hub port `127.0.0.1:51121` (`/oauth-callback`); Antigravity client id + scopes (`cclog`, `experimentsandconfigs`) | ✅ yes — tokens go to `daily-cloudcode-pa.googleapis.com` with `ideType: ANTIGRAVITY`. A loaded plugin may supply the hub User-Agent via `inference.user_agent`. Picker ids such as `gemini-3.1-pro` remap to hub wire ids (`gemini-3.1-pro-low`). Distinct from `google` (Gemini CLI / Code Assist sunset for consumer accounts). |
-| `xai` | PKCE → loopback callback on an ephemeral `127.0.0.1` port (`/callback`); public Grok Build client | ✅ yes — SuperGrok / X Premium tokens go to `cli-chat-proxy.grok.com`. Extra proxy headers (`X-XAI-Token-Auth`, …) come from the plugin's `inference` object. Console keys (`xai-…`) stay on `api.x.ai` (`crates/llm/src/providers/xai.rs`) |
-
 Expired access tokens refresh transparently on next use (GitHub's token
 does not expire; the derived Copilot token does and is re-exchanged). If a
 provider still answers 401 on a token the store considered fresh, the

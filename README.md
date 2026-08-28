@@ -91,16 +91,9 @@ whycodes --continue                                 # resume last session
 whycodes -P openai -m gpt-4o generate "Refactor this module"
 ```
 
-Or sign in with a subscription instead of an API key:
-
-```bash
-whycodes auth login anthropic              # Claude Pro/Max
-whycodes auth login openai                 # ChatGPT Plus/Pro
-whycodes auth login github-copilot
-whycodes auth login google                 # Gemini
-whycodes auth login google-antigravity     # Antigravity (Gemini 3, Claude, GPT-OSS)
-whycodes auth login xai                    # SuperGrok / X Premium
-```
+Subscription OAuth login (`whycodes auth login <provider>`) is available
+only after installing a local `kind: "auth"` plugin — WhyCodes ships no
+third-party OAuth clients. See [docs/auth.md](docs/auth.md).
 
 The full guide — CLI reference, TUI keys, slash commands, agents, tools and
 configuration — is in **[docs/guide.md](docs/guide.md)**.

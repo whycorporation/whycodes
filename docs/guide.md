@@ -444,10 +444,11 @@ hint = "Don't use Box::leak on production paths; prefer Arc."
 
 ### Subscription login
 
-`whycodes auth login` signs in with an existing subscription
-(`anthropic`, `openai`, `github-copilot`, `google`, `google-antigravity`,
-`xai`). Resolution order is env var → config `api_key` → OAuth store, so
-an explicit key always wins. Details: [auth.md](auth.md).
+`whycodes auth login <provider>` signs in with an existing subscription,
+but only after a local `kind: "auth"` plugin is installed — the default
+install ships no OAuth clients. Resolution order is env var → config
+`api_key` → OAuth store, so an explicit key always wins.
+Details: [auth.md](auth.md).
 
 ### Themes
 
