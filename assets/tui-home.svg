@@ -6,39 +6,7 @@
 <circle cx="48" cy="20" r="6.5" fill="#febc2e"/>
 <circle cx="70" cy="20" r="6.5" fill="#28c840"/>
 <text x="436" y="25" text-anchor="middle" fill="#7d7d88" font-size="13">whycodes — ~/my-project</text>
-<rect x="391.0" y="144.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="400.0" y="134.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="409.0" y="134.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="418.0" y="134.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="427.0" y="134.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="436.0" y="134.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="445.0" y="144.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="382.0" y="154.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="391.0" y="154.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="400.0" y="154.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="409.0" y="154.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="427.0" y="154.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="436.0" y="154.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="445.0" y="154.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="454.0" y="154.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="436.0" y="174.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="445.0" y="174.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="454.0" y="174.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="418.0" y="204.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="427.0" y="194.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="436.0" y="194.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="445.0" y="194.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="454.0" y="194.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="409.0" y="214.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="418.0" y="214.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="427.0" y="214.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="436.0" y="214.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="409.0" y="254.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="418.0" y="254.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="427.0" y="254.0" width="9.4" height="20.4" fill="#eeeeee"/>
-<rect x="409.0" y="274.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="418.0" y="274.0" width="9.4" height="10.4" fill="#eeeeee"/>
-<rect x="427.0" y="274.0" width="9.4" height="10.4" fill="#eeeeee"/>
+<g transform="translate(382.0 173.5) scale(2.531)"><path fill="#FAFAFA" d="M19.464 20.54H10.363V17.998L15.816 12.546H19.731V7.832H12.29V10.558H3.21V7.832L8.662 2.4H23.359L28.79 7.832V12.546L23.359 17.998H19.464V20.54ZM19.464 29.6H10.363V23.266H19.464V29.6Z"/></g>
 <path d="M 157.0 444.0 H 156.5 A 4.0 4.0 0 0 0 152.5 448.0 V 454.0" stroke="#7fd88f" stroke-width="1.4" fill="none" stroke-linecap="square"/>
 <path d="M 157.0 444.0 H 166.0" stroke="#7fd88f" stroke-width="1.4" fill="none" stroke-linecap="square"/>
 <path d="M 166.0 444.0 H 175.0" stroke="#7fd88f" stroke-width="1.4" fill="none" stroke-linecap="square"/>
