@@ -12,7 +12,7 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    // Tiny `?` + dim/fg wordmark (no accent/blue), matching the top status bar.
+    // Tiny `?` glued to the wordmark: bold fg `why` + dim `codes`.
     let agent_color = app
         .config
         .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
@@ -21,12 +21,11 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             HEADER_MARK,
             Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ),
-        Span::raw(" "),
-        Span::styled("why", Style::default().fg(palette.dim)),
         Span::styled(
-            "codes ",
+            "why",
             Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ),
+        Span::styled("codes ", Style::default().fg(palette.dim)),
         Span::styled(
             format!(" {} ", app.agent_name),
             Style::default()

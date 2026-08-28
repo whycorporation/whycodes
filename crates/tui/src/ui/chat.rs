@@ -224,11 +224,11 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         lines.push(Line::from(vec![
             Span::raw(pad.clone()),
             Span::raw(word_inset.clone()),
-            Span::styled(*why, Style::default().fg(palette.dim)),
             Span::styled(
-                *code,
+                *why,
                 Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
             ),
+            Span::styled(*code, Style::default().fg(palette.dim)),
         ]));
     }
 
