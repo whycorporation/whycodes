@@ -395,6 +395,8 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     );
 
     let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
+    let perm_prompter =
+        perm_prompter.with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
     let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
 
     let q_timeout = if config.tools.question.timeout_enabled {
@@ -2221,6 +2223,8 @@ async fn spawn_new_session_runtime(
     );
 
     let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
+    let perm_prompter =
+        perm_prompter.with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
     let perm_prompter: Arc<ChannelPermissionPrompter> = Arc::new(perm_prompter);
     let q_timeout = if config.tools.question.timeout_enabled {
         Some(Duration::from_secs(

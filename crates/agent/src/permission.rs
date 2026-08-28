@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::notify::{NotifyHandle, spawn_need_input_wait};
+
 /// Asked before running a tool when permission action is `Ask`.
 #[async_trait]
 pub trait PermissionPrompter: Send + Sync {
@@ -21,18 +23,27 @@ pub struct PermissionRequest {
 /// Channel-based prompter: blocks the agent until the UI replies.
 pub struct ChannelPermissionPrompter {
     tx: mpsc::UnboundedSender<PermissionRequest>,
+    notify: Option<NotifyHandle>,
 }
 
 impl ChannelPermissionPrompter {
     pub fn new() -> (Self, mpsc::UnboundedReceiver<PermissionRequest>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self { tx }, rx)
+        (Self { tx, notify: None }, rx)
+    }
+
+    pub fn with_notify(mut self, notify: NotifyHandle) -> Self {
+        self.notify = Some(notify);
+        self
     }
 }
 
 #[async_trait]
 impl PermissionPrompter for ChannelPermissionPrompter {
     async fn ask(&self, tool_name: &str, detail: &str) -> bool {
+        if let Some(cfg) = self.notify.as_deref() {
+            spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
+        }
         let (reply_tx, reply_rx) = oneshot::channel();
         if self
             .tx
@@ -70,12 +81,25 @@ impl PermissionPrompter for AutoDenyPrompter {
 }
 
 /// Stdin y/n prompter for the plain CLI.
-pub struct StdinPrompter;
+#[derive(Default)]
+pub struct StdinPrompter {
+    notify: Option<NotifyHandle>,
+}
+
+impl StdinPrompter {
+    pub fn with_notify(mut self, notify: NotifyHandle) -> Self {
+        self.notify = Some(notify);
+        self
+    }
+}
 
 #[async_trait]
 impl PermissionPrompter for StdinPrompter {
     async fn ask(&self, tool_name: &str, detail: &str) -> bool {
         use std::io::{self, Write};
+        if let Some(cfg) = self.notify.as_deref() {
+            spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
+        }
         eprintln!();
         eprintln!("⚠ Permission required for tool `{}`", tool_name);
         if !detail.is_empty() {
@@ -115,7 +139,7 @@ pub fn default_prompter() -> Arc<dyn PermissionPrompter> {
     if !atty_stderr() {
         return Arc::new(AutoDenyPrompter);
     }
-    Arc::new(StdinPrompter)
+    Arc::new(StdinPrompter::default())
 }
 
 fn atty_stderr() -> bool {
