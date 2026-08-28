@@ -1,5 +1,5 @@
 // ── ui/dialogs/help.rs: Keyboard Shortcuts cheatsheet ─────────────────
-// Visual model: Grok Build `shortcuts_help` (Ctrl+. popup).
+// Visual model: Grok Build `shortcuts_help` (searchable cheatsheet).
 //   ModalWindow chrome · " / to search" · full-width divider ·
 //   `── Section ──` headers · `◆ key` + right-aligned description.
 
@@ -137,6 +137,18 @@ fn catalog() -> Vec<HelpLine> {
         HelpLine::Binding {
             key: "Ctrl+B",
             desc: "Toggle sidebar",
+        },
+        HelpLine::Binding {
+            key: "Ctrl+. / Ctrl+,",
+            desc: "Sidebar next / prev tab",
+        },
+        HelpLine::Binding {
+            key: "1–6",
+            desc: "Sidebar tab (scrollback)",
+        },
+        HelpLine::Binding {
+            key: "[ / ]",
+            desc: "Sidebar tabs (scrollback)",
         },
         HelpLine::Binding {
             key: "Ctrl+G",

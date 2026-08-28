@@ -339,6 +339,9 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         }
         Some(Action::ToggleSidebar) => {
             app.sidebar.visible = !app.sidebar.visible;
+            if !app.sidebar.visible {
+                app.sidebar.clear_tab_hits();
+            }
             app.mark_dirty();
             true
         }
@@ -352,15 +355,33 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         }
         Some(Action::SidebarNextTab) => {
             if app.sidebar.visible {
-                app.sidebar.active_tab = app.sidebar.active_tab.next();
-                app.mark_dirty();
+                app.select_sidebar_tab(app.sidebar.active_tab.next());
+            } else {
+                app.select_sidebar_tab(app.sidebar.active_tab);
             }
             true
         }
         Some(Action::SidebarPrevTab) => {
             if app.sidebar.visible {
-                app.sidebar.active_tab = app.sidebar.active_tab.prev();
-                app.mark_dirty();
+                app.select_sidebar_tab(app.sidebar.active_tab.prev());
+            } else {
+                app.select_sidebar_tab(app.sidebar.active_tab);
+            }
+            true
+        }
+        Some(tab_action)
+            if matches!(
+                tab_action,
+                Action::SidebarTab1
+                    | Action::SidebarTab2
+                    | Action::SidebarTab3
+                    | Action::SidebarTab4
+                    | Action::SidebarTab5
+                    | Action::SidebarTab6
+            ) =>
+        {
+            if let Some(tab) = sidebar_tab_from_action(tab_action) {
+                app.select_sidebar_tab(tab);
             }
             true
         }
@@ -727,6 +748,19 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
     }
 }
 
+fn sidebar_tab_from_action(action: Action) -> Option<crate::app::SidebarTab> {
+    let idx = match action {
+        Action::SidebarTab1 => 0,
+        Action::SidebarTab2 => 1,
+        Action::SidebarTab3 => 2,
+        Action::SidebarTab4 => 3,
+        Action::SidebarTab5 => 4,
+        Action::SidebarTab6 => 5,
+        _ => return None,
+    };
+    crate::app::SidebarTab::at(idx)
+}
+
 fn clamp_cursor(s: &str, idx: usize) -> usize {
     if idx >= s.len() {
         return s.len();
@@ -843,6 +877,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
             }
             if app.effort_hit.contains(mouse.column, mouse.row) {
                 open_effort_dialog(app);
+                app.mouse_sel = None;
+                return true;
+            }
+            if let Some(tab) = app.sidebar.tab_at(mouse.column, mouse.row) {
+                app.select_sidebar_tab(tab);
                 app.mouse_sel = None;
                 return true;
             }
@@ -2341,6 +2380,30 @@ mod event_tests {
         a.focus = FocusPane::Scrollback;
         handle_event(&mut a, key(KeyCode::Char(']')));
         handle_event(&mut a, key(KeyCode::Char('[')));
+
+        let mut a = app();
+        a.focus = FocusPane::Prompt;
+        handle_event(&mut a, ctrl('.'));
+        assert!(a.sidebar.visible, "Ctrl+. opens the sidebar from prompt");
+        assert_eq!(a.sidebar.active_tab, SidebarTab::Files);
+        handle_event(&mut a, ctrl('.'));
+        assert_eq!(a.sidebar.active_tab, SidebarTab::Diagnostics);
+        handle_event(&mut a, ctrl(','));
+        assert_eq!(a.sidebar.active_tab, SidebarTab::Files);
+
+        a.focus = FocusPane::Scrollback;
+        handle_event(&mut a, key(KeyCode::Char('3')));
+        assert_eq!(a.sidebar.active_tab, SidebarTab::Mcp);
+        handle_event(&mut a, key(KeyCode::Char('6')));
+        assert_eq!(a.sidebar.active_tab, SidebarTab::Agents);
+
+        a.focus = FocusPane::Prompt;
+        a.input_buffer.clear();
+        a.input_cursor = 0;
+        handle_event(&mut a, key(KeyCode::Char('1')));
+        assert_eq!(a.input_buffer, "1", "digits still type in the prompt");
+        handle_event(&mut a, key(KeyCode::Char('.')));
+        assert!(a.input_buffer.ends_with('.'), "bare `.` still types");
 
         handle_event(&mut a, ctrl('a'));
         assert!(!a.auto_scroll);
