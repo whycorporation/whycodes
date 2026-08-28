@@ -11,7 +11,7 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    // Landing `?` mark + dual-tone wordmark, matching the top status bar.
+    // Landing block `?` + dual-tone wordmark, matching the top status bar.
     let brand_mark = Span::styled(
         crate::tokens::HEADER_MARK,
         Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
@@ -113,8 +113,8 @@ mod tests {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
         let text = paint(100, 1, |f| render(f, f.area(), &app, &palette));
-        // Landing `?` plus dual-tone wordmark as one word (`whycodes`).
-        assert!(text.contains('?'), "{text}");
+        // Block `?` (▀▄▀) plus dual-tone wordmark as one word (`whycodes`).
+        assert!(text.contains("▀▄▀"), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
         assert!(text.contains("build"), "{text}");
