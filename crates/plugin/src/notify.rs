@@ -58,6 +58,12 @@ pub fn spawn_notify(cfg: NotifyConfig, payload: NotifyPayload) {
 
 /// Awaited send (tests). Logs per-channel failures; never panics.
 pub async fn send_notify(cfg: &NotifyConfig, payload: &NotifyPayload) {
+    send_to_channels(cfg, payload, TELEGRAM_API_BASE).await;
+}
+
+/// Channel fan-out with the Telegram API base as a parameter so tests can
+/// aim it at a loopback mock; production always passes [`TELEGRAM_API_BASE`].
+async fn send_to_channels(cfg: &NotifyConfig, payload: &NotifyPayload, telegram_base: &str) {
     if !cfg.enabled_for(payload.event) {
         return;
     }
@@ -65,17 +71,22 @@ pub async fn send_notify(cfg: &NotifyConfig, payload: &NotifyPayload) {
     let text = format_message(payload);
 
     if let Some(url) = cfg.discord_webhook_url() {
-        match post_discord(url, &text, timeout).await {
-            Ok(()) => {}
-            Err(e) => tracing::warn!(error = %e, "notify: discord webhook failed"),
+        // The allowlist gate lives at the fan-out, before any request is
+        // built, so a config value can never aim the notifier at an
+        // arbitrary POST target.
+        if !discord_url_allowed(url) {
+            tracing::warn!(
+                "notify: discord webhook URL is not an allowed Discord Incoming Webhook"
+            );
+        } else if let Err(e) = post_discord(url, &text, timeout).await {
+            tracing::warn!(error = %e, "notify: discord webhook failed");
         }
     }
 
-    if let (Some(token), Some(chat)) = (cfg.telegram_token(), cfg.telegram_chat()) {
-        match post_telegram(token, chat, &text, timeout).await {
-            Ok(()) => {}
-            Err(e) => tracing::warn!(error = %e, "notify: telegram send failed"),
-        }
+    if let (Some(token), Some(chat)) = (cfg.telegram_token(), cfg.telegram_chat())
+        && let Err(e) = post_telegram(telegram_base, token, chat, &text, timeout).await
+    {
+        tracing::warn!(error = %e, "notify: telegram send failed");
     }
 }
 
@@ -102,15 +113,26 @@ fn truncate_chars(s: &str, max: usize) -> String {
     out
 }
 
-async fn post_discord(url: &str, content: &str, timeout: Duration) -> Result<(), String> {
-    if !is_discord_webhook_url(url) {
-        return Err("discord webhook URL is not an allowed Discord Incoming Webhook".into());
+/// Discord host allowlist, relaxed to loopback origins under `cfg(test)` so
+/// the full send path can run against a local mock server.
+fn discord_url_allowed(url: &str) -> bool {
+    if cfg!(test) && url.starts_with("http://127.0.0.1:") {
+        return true;
     }
+    is_discord_webhook_url(url)
+}
+
+/// POST to a Discord webhook. The caller (`send_to_channels`) has already
+/// allowlisted the host; this only shapes the body (mentions disabled).
+async fn post_discord(url: &str, content: &str, timeout: Duration) -> Result<(), String> {
     let body = json!({ "content": content, "allowed_mentions": { "parse": [] } });
     post_json(url, &body, timeout, None).await
 }
 
-fn telegram_send_url(token: &str) -> Result<String, String> {
+/// Fixed Telegram Bot API origin; only tests substitute a different base.
+const TELEGRAM_API_BASE: &str = "https://api.telegram.org";
+
+fn telegram_send_url(base: &str, token: &str) -> Result<String, String> {
     if token.is_empty()
         || token.contains('/')
         || token.contains('?')
@@ -121,22 +143,29 @@ fn telegram_send_url(token: &str) -> Result<String, String> {
     {
         return Err("telegram bot token contains invalid characters".into());
     }
-    Ok(format!("https://api.telegram.org/bot{token}/sendMessage"))
+    Ok(format!("{base}/bot{token}/sendMessage"))
 }
 
 async fn post_telegram(
+    base: &str,
     token: &str,
     chat_id: &str,
     text: &str,
     timeout: Duration,
 ) -> Result<(), String> {
-    let url = telegram_send_url(token)?;
+    let url = telegram_send_url(base, token)?;
     let body = json!({
         "chat_id": chat_id,
         "text": text,
         "disable_web_page_preview": true,
     });
     post_json(&url, &body, timeout, None).await
+}
+
+/// Shared reqwest-error → String mapper; a named fn (not a closure) so an
+/// unreachable branch (client build failure) cannot hold a coverage region.
+fn err_string(e: reqwest::Error) -> String {
+    e.to_string()
 }
 
 async fn post_json(
@@ -148,7 +177,7 @@ async fn post_json(
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(err_string)?;
     let mut req = client
         .post(url)
         .header("content-type", "application/json")
@@ -158,7 +187,7 @@ async fn post_json(
             req = req.header(*k, *v);
         }
     }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
+    let resp = req.send().await.map_err(err_string)?;
     let status = resp.status();
     if status.is_success() {
         return Ok(());
@@ -205,6 +234,28 @@ mod tests {
     }
 
     #[test]
+    fn format_message_keeps_short_session_id_whole() {
+        let p = NotifyPayload::turn_done("t", "b", Some("ab12".into()));
+        let msg = format_message(&p);
+        assert!(msg.contains("`ab12`"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn post_json_reports_connect_error() {
+        // Port 1 on loopback: nothing listens; the send itself must fail
+        // and surface as an Err, not a panic.
+        let err = post_json(
+            "http://127.0.0.1:1/hook",
+            &json!({}),
+            Duration::from_secs(1),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
     fn format_message_truncates() {
         let p = NotifyPayload::need_input("Need input", "x".repeat(3000), None);
         let msg = format_message(&p);
@@ -214,10 +265,17 @@ mod tests {
 
     #[test]
     fn telegram_url_rejects_path_injection() {
-        assert!(telegram_send_url("123:abc").is_ok());
-        assert!(telegram_send_url("123/evil").is_err());
-        assert!(telegram_send_url("123?x=1").is_err());
-        assert!(telegram_send_url("").is_err());
+        assert_eq!(
+            telegram_send_url(TELEGRAM_API_BASE, "123:abc").as_deref(),
+            Ok("https://api.telegram.org/bot123:abc/sendMessage")
+        );
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "123/evil").is_err());
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "123?x=1").is_err());
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "123#f").is_err());
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "123 x").is_err());
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "123\nx").is_err());
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "123\rx").is_err());
+        assert!(telegram_send_url(TELEGRAM_API_BASE, "").is_err());
     }
 
     #[test]
@@ -260,30 +318,190 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_discord_rejects_non_webhook() {
-        let err = post_discord(
-            "https://example.com/not-discord",
+    async fn post_discord_sends_content_with_mentions_disabled() {
+        let (url, captured) = capture_post("HTTP/1.1 204 No Content");
+        post_discord(&url, "hi", Duration::from_secs(2))
+            .await
+            .expect("mock 204");
+        let raw = captured.lock().expect("lock").clone();
+        assert!(raw.contains("\"content\":\"hi\""), "{raw}");
+        assert!(raw.contains("allowed_mentions"), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn post_json_sets_extra_headers() {
+        let (url, captured) = capture_post("HTTP/1.1 200 OK");
+        post_json(
+            &url,
+            &json!({}),
+            Duration::from_secs(2),
+            Some(&[("x-test-header", "v1")]),
+        )
+        .await
+        .expect("mock 200");
+        let raw = captured.lock().expect("lock").clone();
+        assert!(raw.to_lowercase().contains("x-test-header: v1"), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn post_telegram_hits_send_message_route() {
+        let (url, captured) = capture_post("HTTP/1.1 200 OK");
+        let base = url.strip_suffix("/hook").expect("mock URL shape");
+        post_telegram(base, "123:abc", "42", "hi", Duration::from_secs(2))
+            .await
+            .expect("mock 200");
+        let raw = captured.lock().expect("lock").clone();
+        assert!(raw.contains("POST /bot123:abc/sendMessage"), "{raw}");
+        assert!(raw.contains("\"chat_id\":\"42\""), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn post_telegram_rejects_bad_token_without_request() {
+        let err = post_telegram(
+            TELEGRAM_API_BASE,
+            "bad/token",
+            "1",
             "hi",
             Duration::from_secs(1),
         )
         .await
         .unwrap_err();
-        assert!(err.contains("allowed"), "{err}");
+        assert!(err.contains("invalid characters"), "{err}");
     }
 
     #[tokio::test]
-    async fn send_notify_posts_telegram_when_configured() {
-        let (url, captured) = capture_post("HTTP/1.1 200 OK");
-        // Direct post_json path used by telegram; token URL is always api.telegram.org.
-        post_json(
-            &url,
-            &json!({"chat_id": "1", "text": "hi"}),
-            Duration::from_secs(2),
-            None,
-        )
-        .await
-        .unwrap();
+    async fn send_to_channels_posts_both_channels() {
+        let (discord_url, discord_captured) = capture_post("HTTP/1.1 204 No Content");
+        let (tg_url, tg_captured) = capture_post("HTTP/1.1 200 OK");
+        let tg_base = tg_url.strip_suffix("/hook").expect("mock URL shape");
+        let cfg = NotifyConfig {
+            on: vec!["turn_done".into()],
+            discord_webhook: Some(discord_url),
+            telegram_bot_token: Some("123:abc".into()),
+            telegram_chat_id: Some("42".into()),
+            ..NotifyConfig::default()
+        };
+        let payload = NotifyPayload::turn_done("t", "b", Some("sessionid".into()));
+        send_to_channels(&cfg, &payload, tg_base).await;
+        let discord_raw = discord_captured.lock().expect("lock").clone();
+        assert!(discord_raw.contains("\"content\""), "{discord_raw}");
+        let tg_raw = tg_captured.lock().expect("lock").clone();
+        assert!(tg_raw.contains("sendMessage"), "{tg_raw}");
+    }
+
+    #[tokio::test]
+    async fn send_to_channels_logs_failures_without_stopping() {
+        // Discord: disallowed host → allowlist warn. Telegram: mock 500 →
+        // send warn. Both branches run; neither aborts the fan-out.
+        let (tg_url, tg_captured) = capture_post("HTTP/1.1 500 Internal Server Error");
+        let tg_base = tg_url.strip_suffix("/hook").expect("mock URL shape");
+        let cfg = NotifyConfig {
+            on: vec!["turn_done".into()],
+            discord_webhook: Some("https://example.com/api/webhooks/1/x".into()),
+            telegram_bot_token: Some("123:abc".into()),
+            telegram_chat_id: Some("42".into()),
+            ..NotifyConfig::default()
+        };
+        let payload = NotifyPayload::turn_done("t", "b", None);
+        send_to_channels(&cfg, &payload, tg_base).await;
+        let tg_raw = tg_captured.lock().expect("lock").clone();
+        assert!(
+            tg_raw.contains("sendMessage"),
+            "telegram must still run: {tg_raw}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_to_channels_telegram_only_skips_discord() {
+        let (tg_url, captured) = capture_post("HTTP/1.1 200 OK");
+        let tg_base = tg_url.strip_suffix("/hook").expect("mock URL shape");
+        let cfg = NotifyConfig {
+            on: vec!["turn_done".into()],
+            telegram_bot_token: Some("123:abc".into()),
+            telegram_chat_id: Some("42".into()),
+            ..NotifyConfig::default()
+        };
+        send_to_channels(&cfg, &NotifyPayload::turn_done("t", "b", None), tg_base).await;
         let raw = captured.lock().expect("lock").clone();
-        assert!(raw.contains("chat_id"), "{raw}");
+        assert!(raw.contains("sendMessage"), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn send_to_channels_discord_only_success() {
+        let (discord_url, captured) = capture_post("HTTP/1.1 204 No Content");
+        let cfg = NotifyConfig {
+            on: vec!["turn_done".into()],
+            discord_webhook: Some(discord_url),
+            ..NotifyConfig::default()
+        };
+        send_to_channels(
+            &cfg,
+            &NotifyPayload::turn_done("t", "b", None),
+            "http://127.0.0.1:1",
+        )
+        .await;
+        let raw = captured.lock().expect("lock").clone();
+        assert!(raw.contains("\"content\""), "{raw}");
+    }
+
+    #[tokio::test]
+    async fn send_to_channels_warns_on_discord_http_error() {
+        let (discord_url, _captured) = capture_post("HTTP/1.1 500 Internal Server Error");
+        let cfg = NotifyConfig {
+            on: vec!["turn_done".into()],
+            discord_webhook: Some(discord_url),
+            ..NotifyConfig::default()
+        };
+        send_to_channels(
+            &cfg,
+            &NotifyPayload::turn_done("t", "b", None),
+            "http://127.0.0.1:1",
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn send_to_channels_skips_disabled_event() {
+        // need_input not in `on` → no channel is contacted (no mock server
+        // exists; a request would error loudly if one were attempted).
+        let cfg = NotifyConfig {
+            on: vec!["turn_done".into()],
+            telegram_bot_token: Some("123:abc".into()),
+            telegram_chat_id: Some("42".into()),
+            ..NotifyConfig::default()
+        };
+        let payload = NotifyPayload::need_input("t", "b", None);
+        send_to_channels(&cfg, &payload, "http://127.0.0.1:1").await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_notify_sends_when_enabled() {
+        // Exercises the spawned production path end-to-end: spawn_notify →
+        // send_notify → Discord POST against the loopback mock (allowed
+        // under cfg(test)).
+        let (url, captured) = capture_post("HTTP/1.1 204 No Content");
+        let cfg = NotifyConfig {
+            on: vec!["need_input".into()],
+            discord_webhook: Some(url),
+            ..NotifyConfig::default()
+        };
+        spawn_notify(cfg, NotifyPayload::need_input("t", "b", None));
+        for _ in 0..50 {
+            if !captured.lock().expect("lock").is_empty() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let raw = captured.lock().expect("lock").clone();
+        assert!(raw.contains("\"content\""), "{raw}");
+    }
+
+    #[test]
+    fn discord_allowlist_still_blocks_non_discord_hosts() {
+        // The cfg(test) loopback exception must not widen the production
+        // allowlist: non-loopback, non-Discord origins stay rejected.
+        assert!(!discord_url_allowed("https://example.com/api/webhooks/1/x"));
+        assert!(!discord_url_allowed("http://evil.test/api/webhooks/1/x"));
+        assert!(discord_url_allowed("https://discord.com/api/webhooks/1/x"));
     }
 }
