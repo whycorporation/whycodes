@@ -1,6 +1,8 @@
-# Local cargo state; keep shared rustflags (Boot/TTFF RELRO) in repo.
+# Local cargo state; keep shared rustflags (Boot/TTFF RELRO) and the
+# cargo-audit exception policy in repo.
 .cargo/*
 !.cargo/config.toml
+!.cargo/audit.toml
 target/
 **/*.rs.bk
 

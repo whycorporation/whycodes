@@ -1,0 +1,20 @@
+# cargo-audit policy. CI runs `cargo audit --deny warnings`; every entry here
+# is a deliberate, dated exception — the same ratchet discipline as the panic
+# and swallowed-error budgets. Remove an entry as soon as the owning
+# dependency ships a fix.
+#
+# All current entries are "unmaintained" notices on transitive deps, not
+# vulnerabilities. Actual RUSTSEC vulnerabilities must never be ignored here
+# without a linked issue explaining the mitigation.
+
+[advisories]
+ignore = [
+    # bincode 1.x via syntect (syntax highlighting). syntect has not moved to
+    # bincode 2 upstream; only deserializes its own bundled asset dumps.
+    "RUSTSEC-2025-0141",
+    # yaml-rust via syntect, same owner as above; parses bundled .sublime-syntax
+    # definitions, not user input.
+    "RUSTSEC-2024-0320",
+    # paste (proc-macro, compile-time only) via tokenizers.
+    "RUSTSEC-2024-0436",
+]
