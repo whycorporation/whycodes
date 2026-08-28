@@ -1,5 +1,5 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: upright status square + dual-tone brand · project · shortcuts.
+// Top: upright status square + `?` mark + dual-tone brand · project · shortcuts.
 // Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
@@ -42,9 +42,14 @@ fn branch_icon() -> &'static str {
     })
 }
 
-/// Dual-tone wordmark: bold fg `why` + bold accent `codes`.
+/// Landing mark + dual-tone wordmark: `?` then bold fg `why` + accent `codes`.
 fn brand_spans(palette: &ThemePalette) -> Vec<Span<'static>> {
     vec![
+        Span::styled(
+            crate::tokens::HEADER_MARK,
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
         Span::styled(
             "why",
             Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
@@ -416,6 +421,7 @@ mod tests {
         let app = TuiApp::new(cfg());
         let palette = app.config.palette();
         let text = paint(120, 1, |f| render(f, f.area(), &app, &palette));
+        assert!(text.contains('?'), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
     }
