@@ -1,5 +1,5 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: block `?` (home mark) + fg wordmark · project · shortcuts.
+// Top: `?` mark + fg wordmark · project · shortcuts.
 // Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
@@ -117,41 +117,37 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    let mark_style = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
-    let mut chrome: Vec<Span<'_>> = vec![Span::raw("  "), glyph, Span::raw("  ")];
-    chrome.extend(brand_wordmark(palette));
+    let mut left: Vec<Span<'_>> = vec![
+        Span::styled(
+            HEADER_MARK,
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("  "),
+        glyph,
+        Span::raw("  "),
+    ];
+    left.extend(brand_wordmark(palette));
     if !dir.is_empty() {
-        chrome.push(Span::styled(
+        left.push(Span::styled(
             format!("  ·  {dir}"),
             Style::default().fg(palette.dim),
         ));
     }
 
-    let mark_w = HEADER_MARK.first().map(|row| row.width()).unwrap_or(0);
-    let chrome_w: usize = chrome.iter().map(|s| s.content.as_ref().width()).sum();
+    let left_w: usize = left.iter().map(|s| s.content.as_ref().width()).sum();
     let right_w: usize = right.iter().map(|s| s.content.as_ref().width()).sum();
     let mid = area
         .width
-        .saturating_sub(mark_w as u16)
-        .saturating_sub(chrome_w as u16)
+        .saturating_sub(left_w as u16)
         .saturating_sub(right_w as u16)
         .saturating_sub(1) as usize;
-    chrome.push(Span::raw(" ".repeat(mid)));
-    chrome.extend(right);
 
-    // Put session chrome on the bowl row (row 1), matching the home `?` stem.
-    let chrome_row = if area.height > 1 { 1 } else { 0 };
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for (i, row) in HEADER_MARK.iter().enumerate().take(area.height as usize) {
-        let mut spans = vec![Span::styled(*row, mark_style)];
-        if i as u16 == chrome_row {
-            spans.extend(std::mem::take(&mut chrome));
-        }
-        lines.push(Line::from(spans));
-    }
+    let mut spans: Vec<Span<'_>> = left;
+    spans.push(Span::raw(" ".repeat(mid)));
+    spans.extend(right);
 
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
+        Paragraph::new(Text::from(Line::from(spans))).style(Style::default().bg(palette.bg)),
         area,
     );
 }
@@ -425,7 +421,7 @@ mod tests {
         let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
             render(f, f.area(), &app, &palette)
         });
-        assert!(text.contains("▄█████▄"), "{text}");
+        assert!(text.contains('?'), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
     }

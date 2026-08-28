@@ -12,13 +12,16 @@ use ratatui::{
 };
 
 pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalette) {
-    // Home-matching block `?` + dim/fg wordmark (no accent/blue).
-    let mark_style = Style::default().fg(palette.fg).add_modifier(Modifier::BOLD);
+    // Tiny `?` + dim/fg wordmark (no accent/blue), matching the top status bar.
     let agent_color = app
         .config
         .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
-    let mut chrome = vec![
-        Span::raw("  "),
+    let mut spans = vec![
+        Span::styled(
+            HEADER_MARK,
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
         Span::styled("why", Style::default().fg(palette.dim)),
         Span::styled(
             "codes ",
@@ -38,15 +41,15 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
             Some("change") => palette.success,
             _ => palette.dim,
         };
-        chrome.push(Span::styled(
+        spans.push(Span::styled(
             format!("[{badge}]"),
             Style::default()
                 .fg(badge_color)
                 .add_modifier(Modifier::BOLD),
         ));
-        chrome.push(Span::raw(" "));
+        spans.push(Span::raw(" "));
     }
-    chrome.push(Span::styled(
+    spans.push(Span::styled(
         format!(
             "{}/{} ",
             if app.provider_name.is_empty() {
@@ -63,18 +66,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         Style::default().fg(app.config.model_color(palette)),
     ));
 
-    let chrome_row = if area.height > 1 { 1 } else { 0 };
-    let mut lines: Vec<Line<'_>> = Vec::new();
-    for (i, row) in HEADER_MARK.iter().enumerate().take(area.height as usize) {
-        let mut spans = vec![Span::styled(*row, mark_style)];
-        if i as u16 == chrome_row {
-            spans.extend(std::mem::take(&mut chrome));
-        }
-        lines.push(Line::from(spans));
-    }
-
     frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.status_bar_bg)),
+        Paragraph::new(Text::from(Line::from(spans)))
+            .style(Style::default().bg(palette.status_bar_bg)),
         area,
     );
 }
@@ -119,8 +113,8 @@ mod tests {
         let text = paint(100, crate::tokens::layout::HEADER_H, |f| {
             render(f, f.area(), &app, &palette)
         });
-        // Block `?` (home silhouette) plus fg wordmark as one word (`whycodes`).
-        assert!(text.contains("▄█████▄"), "{text}");
+        // Tiny `?` plus fg wordmark as one word (`whycodes`).
+        assert!(text.contains('?'), "{text}");
         assert!(text.contains("whycodes"), "{text}");
         assert!(!text.contains("why codes"), "{text}");
         assert!(text.contains("build"), "{text}");
