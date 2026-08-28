@@ -1,5 +1,5 @@
 // ── ui/status.rs: Top header + bottom cwd / context bar ────────────────
-// Top: `?` mark + fg wordmark · project · shortcuts.
+// Top: status square + `?whycodes` (fg why, dim codes) · project · shortcuts.
 // Bottom: git branch + cwd (click-to-copy, hover underline) · Grok context bar.
 
 use crate::app::{AgentState, AppMode, FocusPane, TuiApp};
@@ -43,14 +43,18 @@ fn branch_icon() -> &'static str {
     })
 }
 
-/// Home-matching wordmark: dim `why` + bold fg `codes` (no accent/blue).
+/// Home-matching wordmark: `?` then bold fg `why` + dim `codes`.
 fn brand_wordmark(palette: &ThemePalette) -> Vec<Span<'static>> {
     vec![
-        Span::styled("why", Style::default().fg(palette.dim)),
         Span::styled(
-            "codes",
+            HEADER_MARK,
             Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            "why",
+            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("codes", Style::default().fg(palette.dim)),
     ]
 }
 
@@ -117,15 +121,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         shortcuts_spans(app, palette)
     };
 
-    let mut left: Vec<Span<'_>> = vec![
-        Span::styled(
-            HEADER_MARK,
-            Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
-        glyph,
-        Span::raw("  "),
-    ];
+    let mut left: Vec<Span<'_>> = vec![glyph, Span::raw("  ")];
     left.extend(brand_wordmark(palette));
     if !dir.is_empty() {
         left.push(Span::styled(
