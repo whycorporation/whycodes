@@ -515,6 +515,13 @@ fn notify_validate_and_webhook_allowlist() {
     ));
     assert!(!is_discord_webhook_url("https://discord.com/api/webhooks/"));
     assert!(!is_discord_webhook_url("not-a-url"));
+    // `https://` prefix passes, but host parse fails — covers the
+    // `host_from_url` Err arm that the 100% crate floor requires.
+    assert!(!is_discord_webhook_url("https://"));
+    assert!(!is_discord_webhook_url("https:///api/webhooks/1/t"));
+    assert!(!is_discord_webhook_url(
+        "https://[no-close/api/webhooks/1/t"
+    ));
 
     let mut cfg = Config::default();
     cfg.notify.discord_webhook = Some("https://example.com/hooks/x".into());

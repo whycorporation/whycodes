@@ -1221,10 +1221,8 @@ pub fn is_discord_webhook_url(url: &str) -> bool {
     if host != "discord.com" && host != "discordapp.com" {
         return false;
     }
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("HTTPS://"))
-        .unwrap_or(url);
+    // Prefix already required above; `HTTPS://` is rejected by `starts_with`.
+    let rest = url.strip_prefix("https://").unwrap_or(url);
     let path_start = rest.find('/').unwrap_or(rest.len());
     let path = rest[path_start..].split(['?', '#']).next().unwrap_or("");
     path.starts_with("/api/webhooks/") && path.len() > "/api/webhooks/".len()
