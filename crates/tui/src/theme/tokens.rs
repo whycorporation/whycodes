@@ -40,21 +40,6 @@ pub const HOME_LOGO_MARK: &[&str] = &[
     "     ▀▀▀     ",
 ];
 
-/// Home-screen block wordmark: WhyCodes as one word (`WHY` + `CODES`, no gap).
-pub const HOME_LOGO_WHY: &[&str] = &[
-    "                 ",
-    "█   █ █   █ █   █",
-    "█ █ █ █▀▀▀█ █▄▄▄█",
-    "▀█▀█▀ █   █   █  ",
-];
-
-pub const HOME_LOGO_CODE: &[&str] = &[
-    "             ▄          ",
-    "█▀▀▀ █▀▀█ █▀▀█ █▀▀█ █▀▀▀",
-    "█    █  █ █  █ █▀▀  ▀▀▀█",
-    "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
-];
-
 /// Compact header/status mark: the landing `?` as a single glyph.
 pub const HEADER_MARK: &str = "?";
 
@@ -223,19 +208,15 @@ mod tests {
     #[test]
     fn home_logo_rows_are_uniform_width() {
         let mark_w: Vec<usize> = HOME_LOGO_MARK.iter().map(|l| l.chars().count()).collect();
-        let why_w: Vec<usize> = HOME_LOGO_WHY.iter().map(|l| l.chars().count()).collect();
-        let code_w: Vec<usize> = HOME_LOGO_CODE.iter().map(|l| l.chars().count()).collect();
         assert!(
             mark_w.windows(2).all(|w| w[0] == w[1]),
             "mark rows must stay aligned: {mark_w:?}"
         );
-        assert!(why_w.windows(2).all(|w| w[0] == w[1]), "{why_w:?}");
-        assert!(code_w.windows(2).all(|w| w[0] == w[1]), "{code_w:?}");
-        assert!(mark_w[0] > 0 && why_w[0] > 0 && code_w[0] > 0);
+        assert!(mark_w[0] > 0);
     }
 
     #[test]
-    fn home_logo_is_question_mark_plus_wordmark() {
+    fn home_logo_is_question_mark() {
         // Bowl is open on the left (the cube-`?` cut); stem sits on the right.
         assert!(
             HOME_LOGO_MARK[2].trim_start().starts_with('█'),
@@ -251,27 +232,6 @@ mod tests {
             HOME_LOGO_MARK[6].contains('█'),
             "square dot must be present: {:?}",
             HOME_LOGO_MARK[6]
-        );
-        // Letter rows: last WHY glyph sits flush against first CODES glyph.
-        let why = HOME_LOGO_WHY[1];
-        let code = HOME_LOGO_CODE[1];
-        assert!(
-            !why.ends_with(' '),
-            "WHY must not trail a gap column: {why:?}"
-        );
-        assert!(
-            code.starts_with('█'),
-            "CODES must start on the next cell: {code:?}"
-        );
-        let joined: Vec<String> = HOME_LOGO_WHY
-            .iter()
-            .zip(HOME_LOGO_CODE)
-            .map(|(w, c)| format!("{w}{c}"))
-            .collect();
-        let widths: Vec<usize> = joined.iter().map(|l| l.chars().count()).collect();
-        assert!(
-            widths.windows(2).all(|w| w[0] == w[1]),
-            "joined WhyCodes rows must stay aligned: {widths:?}"
         );
         assert_eq!(HEADER_MARK, "?");
         assert_eq!(layout::HEADER_H, 1);

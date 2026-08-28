@@ -1,10 +1,10 @@
 // ── ui/chat.rs: session message list ───────────────────────────────────
 // User: elevated band + ❯ prefix. Assistant: free-flow body + turn footer.
-// Home: centered landing `?` mark + WhyCodes block wordmark.
+// Home: centered landing `?` mark, then recents (no WHYCODES wordmark).
 
 use crate::app::{ChatBlock, ChatRole, TuiApp};
 use crate::theme::ThemePalette;
-use crate::tokens::{HOME_LOGO_CODE, HOME_LOGO_MARK, HOME_LOGO_WHY, layout};
+use crate::tokens::{HOME_LOGO_MARK, layout};
 use crate::ui::scrollbar::{SCROLLBAR_GAP, SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use crate::widgets::wrap::wrap_text;
 #[cfg(test)]
@@ -172,17 +172,17 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         .take(6)
         .collect();
     let mut lines: Vec<Line> = Vec::new();
-    // Logo + meta + recent sessions (Grok welcome). Recents sit under the
-    // brand so an empty workspace still centers; a history list pushes up.
+    // `?` mark + meta + recent sessions. Recents sit under the mark so an
+    // empty workspace still centers; a history list pushes up. Header already
+    // shows `?whycodes`, so the home body does not repeat the wordmark.
     let recents_h = if recents.is_empty() {
         0
     } else {
         2 + recents.len() as u16
     };
     let mark_h = HOME_LOGO_MARK.len() as u16;
-    let word_h = HOME_LOGO_WHY.len() as u16;
-    // `?` mark, gap, WHYCODES block, gap, meta, hints, recents.
-    let content_h = mark_h + 1 + word_h + 1 + 2 + 2 + recents_h;
+    // `?` mark, gap, meta, hints, recents.
+    let content_h = mark_h + 1 + 2 + 2 + recents_h;
     let top = area.height.saturating_sub(content_h) / 2;
     for _ in 0..top {
         lines.push(Line::from(""));
@@ -192,43 +192,19 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         .first()
         .map(|row| row.chars().count())
         .unwrap_or(0);
-    let word_w = HOME_LOGO_WHY
-        .get(1)
-        .map(|row| row.chars().count())
-        .unwrap_or(0)
-        + HOME_LOGO_CODE
-            .get(1)
-            .map(|row| row.chars().count())
-            .unwrap_or(0);
-    let logo_w = mark_w.max(word_w);
     let left_pad = area
         .width
-        .saturating_sub(logo_w as u16 + 2)
+        .saturating_sub(mark_w as u16 + 2)
         .saturating_div(2) as usize;
     let pad = " ".repeat(left_pad);
-    let mark_inset = " ".repeat(logo_w.saturating_sub(mark_w) / 2);
-    let word_inset = " ".repeat(logo_w.saturating_sub(word_w) / 2);
 
     for row in HOME_LOGO_MARK {
         lines.push(Line::from(vec![
             Span::raw(pad.clone()),
-            Span::raw(mark_inset.clone()),
             Span::styled(
                 *row,
                 Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
             ),
-        ]));
-    }
-    lines.push(Line::from(""));
-    for (why, code) in HOME_LOGO_WHY.iter().zip(HOME_LOGO_CODE) {
-        lines.push(Line::from(vec![
-            Span::raw(pad.clone()),
-            Span::raw(word_inset.clone()),
-            Span::styled(
-                *why,
-                Style::default().fg(palette.fg).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(*code, Style::default().fg(palette.dim)),
         ]));
     }
 
