@@ -28,8 +28,8 @@ pub mod dark {
 /// Home-screen mark: landing cube `?` (Black Ops One) in half-block cells.
 ///
 /// Left-open bowl, right stem, then a separated square dot — same silhouette
-/// as `AppLogo.vue` / `favicon.svg`. Header chrome uses the compact `?`.
-pub const HOME_LOGO: &[&str] = &[
+/// as `AppLogo.vue` / `favicon.svg`.
+pub const HOME_LOGO_MARK: &[&str] = &[
     "   ▄█████▄   ",
     "  ███▀ ▀███  ",
     "        ███  ",
@@ -40,8 +40,26 @@ pub const HOME_LOGO: &[&str] = &[
     "     ▀▀▀     ",
 ];
 
-/// Compact header/status mark matching [`HOME_LOGO`].
-pub const HEADER_MARK: &str = "?";
+/// Home-screen block wordmark: WhyCodes as one word (`WHY` + `CODES`, no gap).
+pub const HOME_LOGO_WHY: &[&str] = &[
+    "                 ",
+    "█   █ █   █ █   █",
+    "█ █ █ █▀▀▀█ █▄▄▄█",
+    "▀█▀█▀ █   █   █  ",
+];
+
+pub const HOME_LOGO_CODE: &[&str] = &[
+    "             ▄          ",
+    "█▀▀▀ █▀▀█ █▀▀█ █▀▀█ █▀▀▀",
+    "█    █  █ █  █ █▀▀  ▀▀▀█",
+    "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀",
+];
+
+/// Compact header/status mark: the same cube `?` in one cell row.
+///
+/// Half-block raster of the landing path so the header glyph matches
+/// [`HOME_LOGO_MARK`] instead of the terminal's ASCII `?`.
+pub const HEADER_MARK: &str = "▀▄▀";
 
 /// Spacing and chrome metrics shared by home / session shells.
 pub mod layout {
@@ -204,33 +222,59 @@ mod tests {
 
     #[test]
     fn home_logo_rows_are_uniform_width() {
-        let widths: Vec<usize> = HOME_LOGO.iter().map(|l| l.chars().count()).collect();
+        let mark_w: Vec<usize> = HOME_LOGO_MARK.iter().map(|l| l.chars().count()).collect();
+        let why_w: Vec<usize> = HOME_LOGO_WHY.iter().map(|l| l.chars().count()).collect();
+        let code_w: Vec<usize> = HOME_LOGO_CODE.iter().map(|l| l.chars().count()).collect();
         assert!(
-            widths.windows(2).all(|w| w[0] == w[1]),
-            "home logo rows must stay aligned: {widths:?}"
+            mark_w.windows(2).all(|w| w[0] == w[1]),
+            "mark rows must stay aligned: {mark_w:?}"
         );
-        assert!(widths[0] > 0);
+        assert!(why_w.windows(2).all(|w| w[0] == w[1]), "{why_w:?}");
+        assert!(code_w.windows(2).all(|w| w[0] == w[1]), "{code_w:?}");
+        assert!(mark_w[0] > 0 && why_w[0] > 0 && code_w[0] > 0);
     }
 
     #[test]
-    fn home_logo_is_question_mark() {
+    fn home_logo_is_question_mark_plus_wordmark() {
         // Bowl is open on the left (the cube-`?` cut); stem sits on the right.
         assert!(
-            HOME_LOGO[2].trim_start().starts_with('█'),
+            HOME_LOGO_MARK[2].trim_start().starts_with('█'),
             "stem must sit on the right of the bowl: {:?}",
-            HOME_LOGO[2]
+            HOME_LOGO_MARK[2]
         );
         assert!(
-            HOME_LOGO[5].chars().all(|c| c == ' '),
+            HOME_LOGO_MARK[5].chars().all(|c| c == ' '),
             "dot must be separated from the stem: {:?}",
-            HOME_LOGO[5]
+            HOME_LOGO_MARK[5]
         );
         assert!(
-            HOME_LOGO[6].contains('█'),
+            HOME_LOGO_MARK[6].contains('█'),
             "square dot must be present: {:?}",
-            HOME_LOGO[6]
+            HOME_LOGO_MARK[6]
         );
-        assert_eq!(HEADER_MARK, "?");
+        // Letter rows: last WHY glyph sits flush against first CODES glyph.
+        let why = HOME_LOGO_WHY[1];
+        let code = HOME_LOGO_CODE[1];
+        assert!(
+            !why.ends_with(' '),
+            "WHY must not trail a gap column: {why:?}"
+        );
+        assert!(
+            code.starts_with('█'),
+            "CODES must start on the next cell: {code:?}"
+        );
+        let joined: Vec<String> = HOME_LOGO_WHY
+            .iter()
+            .zip(HOME_LOGO_CODE)
+            .map(|(w, c)| format!("{w}{c}"))
+            .collect();
+        let widths: Vec<usize> = joined.iter().map(|l| l.chars().count()).collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "joined WhyCodes rows must stay aligned: {widths:?}"
+        );
+        assert_eq!(HEADER_MARK, "▀▄▀");
+        assert_eq!(HEADER_MARK.chars().count(), 3);
     }
 
     #[test]

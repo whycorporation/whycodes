@@ -795,7 +795,7 @@ fn paint_home_clears_chat_hits() {
 }
 
 #[test]
-fn paint_home_shows_question_mark() {
+fn paint_home_shows_question_mark_and_wordmark() {
     let mut app = TuiApp::new(cfg());
     let buf = paint_and_snapshot(&mut app, 80, 24);
     let text = buffer_text(&buf);
@@ -808,8 +808,12 @@ fn paint_home_shows_question_mark() {
         "home `?` must keep the left-open bowl: {text}"
     );
     assert!(
-        !text.contains("█   ██▀▀▀"),
-        "old WHYCODES block logo must be gone: {text}"
+        text.contains("█   ██▀▀▀"),
+        "home must join WHY+CODES with no column gap: {text}"
+    );
+    assert!(
+        !text.contains("█   █ █▀▀▀"),
+        "home wordmark must not read as Why Codes: {text}"
     );
 }
 
