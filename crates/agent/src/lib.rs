@@ -8,6 +8,7 @@ pub mod intent;
 pub mod magic_keywords;
 pub mod mcp_load;
 pub mod memory_retain;
+pub mod notify;
 pub mod permission;
 pub mod question;
 pub mod routing;
