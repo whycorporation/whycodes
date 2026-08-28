@@ -16,7 +16,7 @@ use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 /// Crate version only (semver from Cargo.toml).
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Full version string: `0.1.0 (abc1234 2026-08-04)`.
+/// Full version string: `0.2.0 (abc1234 2026-08-29)`.
 ///
 /// Git hash and build date come from `build.rs` so release binaries and
 /// `whycodes --version` / install smoke checks identify an exact build.
