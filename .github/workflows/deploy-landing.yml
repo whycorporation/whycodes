@@ -42,8 +42,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+      - name: Test GitHub snapshot
+        run: pnpm test
+
       - name: Deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: pnpm deploy

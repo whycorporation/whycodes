@@ -36,6 +36,7 @@ Thumbs.db
 
 # Claude/local agent worktrees
 .claude/
+.tmp-landing-github/
 
 # Credentials and coverage dumps (never commit)
 *.pem

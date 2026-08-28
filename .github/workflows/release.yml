@@ -2,6 +2,7 @@ name: Release
 
 permissions:
   contents: write
+  actions: write
 
 on:
   push:
@@ -151,3 +152,21 @@ jobs:
           git commit -m "chore(homebrew): bump formula to ${TAG}"
           git pull --rebase origin main
           git push origin HEAD:main
+
+  # Prerender why.codes with the just-published tag, star count, and
+  # contributor total. deploy-landing.yml fetches GitHub at build time.
+  landing:
+    name: Refresh landing
+    needs: publish
+    if: github.repository == 'whycorporation/whycodes'
+    runs-on: self-hosted
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - name: Dispatch landing deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run deploy-landing.yml --repo "$GITHUB_REPOSITORY"
