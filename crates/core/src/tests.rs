@@ -1113,6 +1113,7 @@ mod todo_tests {
 
 mod paths_tests {
     use super::*;
+    use std::borrow::Cow;
 
     static PATHS_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1165,6 +1166,37 @@ mod paths_tests {
         assert_eq!(project_dir(root), root.join(".whycodes"));
         std::fs::create_dir(root.join(".whycodes")).unwrap();
         assert_eq!(project_dir(root), root.join(".whycodes"));
+    }
+
+    #[test]
+    fn display_path_strips_windows_verbatim_prefix() {
+        assert_eq!(display_path(Path::new(r"\\?\C:\dev")), r"C:\dev");
+        assert_eq!(display_path(Path::new(r"\\?\c:\Users\me")), r"c:\Users\me");
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\dir")),
+            r"\\server\share\dir"
+        );
+        assert_eq!(display_path(Path::new(r"C:\dev")), r"C:\dev");
+        assert_eq!(display_path(Path::new("/tmp/proj")), "/tmp/proj");
+        assert_eq!(display_path(Path::new(".")), ".");
+        // Device namespace — not a drive / UNC path; leave the prefix.
+        assert_eq!(
+            display_path(Path::new(r"\\?\pipe\whycodes")),
+            r"\\?\pipe\whycodes"
+        );
+        assert_eq!(
+            display_path(Path::new(r"\\?\Volume{guid}\")),
+            r"\\?\Volume{guid}\"
+        );
+        assert_eq!(display_path(Path::new(r"\\?\")), r"\\?\");
+        assert_eq!(display_path(Path::new(r"\\?\C")), r"\\?\C");
+        assert_eq!(display_path(Path::new(r"\\?\UNC")), r"\\?\UNC");
+        assert_eq!(display_path(Path::new(r"\\?\UNC\")), r"\\");
+        assert_eq!(strip_windows_verbatim_prefix(""), Cow::Borrowed(""));
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\1:\not-a-drive"),
+            Cow::Borrowed(r"\\?\1:\not-a-drive")
+        );
     }
 
     #[test]

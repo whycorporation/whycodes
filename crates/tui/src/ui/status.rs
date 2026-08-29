@@ -251,7 +251,7 @@ pub fn render_footer(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &
     // Reserve right cluster (+ gap) so path truncation doesn't collide.
     let right_reserve = right_w.saturating_add(1).min(area.width);
 
-    let path_full = app.project_dir.display().to_string();
+    let path_full = whycodes_core::display_path(&app.project_dir);
     let mut spans: Vec<Span<'_>> = Vec::new();
     let mut path_start_cols: u16 = 0;
 
@@ -603,6 +603,15 @@ mod tests {
         let text = paint_footer(&mut app, 120);
         assert!(text.contains("/tmp/proj"), "{text}");
         assert!(app.cwd_hit.rect.is_some(), "cwd hit recorded");
+    }
+
+    #[test]
+    fn footer_strips_windows_verbatim_cwd() {
+        let mut app = footer_app();
+        app.project_dir = std::path::PathBuf::from(r"\\?\C:\dev");
+        let text = paint_footer(&mut app, 120);
+        assert!(text.contains(r"C:\dev"), "{text}");
+        assert!(!text.contains(r"\\?\"), "{text}");
     }
 
     #[test]

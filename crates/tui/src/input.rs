@@ -970,7 +970,7 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                     let row = mouse.row;
                     app.mouse_sel = None;
                     if app.cwd_contains(col, row) {
-                        let path = app.project_dir.display().to_string();
+                        let path = whycodes_core::display_path(&app.project_dir);
                         if crate::clipboard::copy_text(&path) {
                             app.toasts.push(
                                 crate::toast::ToastKind::Success,

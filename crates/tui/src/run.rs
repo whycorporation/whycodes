@@ -314,7 +314,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .project_dir
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| app.project_dir.display().to_string());
+        .unwrap_or_else(|| whycodes_core::display_path(&app.project_dir));
     app.refresh_git_branch();
     app.apply_context_window(
         &opts.provider,

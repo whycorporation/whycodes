@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-29 — Windows TUI footer shows `\\?\C:\…` after canonicalize
+
+**Symptom:** Bottom-left chrome paints `≡ main  \\?\C:\dev  0 / 200k`. Click-to-copy
+pastes the same extended path.
+
+**Root cause:** `app.project_dir` is `Path::canonicalize()` (`crates/tui/src/run.rs`).
+On Windows that returns a Win32 verbatim path (`\\?\C:\…` / `\\?\UNC\…`). The
+footer and copy handler used `Path::display()` as-is.
+
+**Fix:** Keep the canonical `PathBuf` for FS work. Format for humans with
+`whycodes_core::display_path`, which strips `\\?\` / `\\?\UNC\` for drive and
+UNC paths and leaves device-namespace paths (`\\?\pipe\…`) alone.
+
+**Prevention:** `paths_tests::display_path_strips_windows_verbatim_prefix` and
+`footer_strips_windows_verbatim_cwd`. Do not `display()` a canonicalized
+Windows path in chrome.
+
 ### 2026-08-28 — Homebrew formula is a binary tap, not a self-update target
 
 **Symptom:** `brew install whycodes` against `v0.1.0` 404s (`whycodes-*.tar.gz`
