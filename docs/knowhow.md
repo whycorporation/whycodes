@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Tool-result cap footer is billed every turn; recap must strip it
+
+**Symptom:** Capped `bash`/`read`/`grep` dumps keep a long
+`[... N characters truncated for context management]` footer in the model
+transcript. Re-running prune/shake then reports the *footer* as omitted payload
+and the original `N` is lost.
+
+**Root cause:** `cap_tool_text_to` (`crates/session/src/session.rs`) appends the
+notice after taking `max_chars`, then treats the whole string as payload on the
+next pass. The notice is paid on every later LLM request, not just once.
+
+**Fix:** Footer is `\n[{n} chars truncated]` (cl100k: 7 tokens vs 12). Strip a
+trailing current/legacy notice before measuring so recap is idempotent and
+preserves the original omitted count.
+
+**Prevention:** `image_payload_parsing_and_unicode_caps_cover_boundaries` covers
+idempotent recap, tighter recap, and legacy rewrite. Do not lengthen the footer.
+
 ### 2026-08-29 — Windows TUI footer shows `\\?\C:\…` after canonicalize
 
 **Symptom:** Bottom-left chrome paints `≡ main  \\?\C:\dev  0 / 200k`. Click-to-copy

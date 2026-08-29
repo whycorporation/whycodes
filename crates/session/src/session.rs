@@ -196,21 +196,81 @@ fn cap_tool_text(text: String) -> String {
     cap_tool_text_to(text, TOOL_RESULT_MAX_CHARS)
 }
 
+/// Footer paid on every capped tool dump. `{n}` is the omitted scalar count.
+///
+/// Kept short on purpose: this string sits in the model transcript, not just
+/// the TUI. cl100k encodes `\n[1302 chars truncated]` in 7 tokens versus 12
+/// for the older `characters truncated for context management` sentence.
+fn truncation_notice(omitted: usize) -> String {
+    format!("\n[{omitted} chars truncated]")
+}
+
+/// Split a trailing cap footer (current or legacy) from `text`.
+///
+/// Returns `(body, Some(omitted))` when a notice is present so a later, tighter
+/// cap can keep the original omitted count instead of reporting the footer
+/// itself as truncated payload.
+fn split_truncation_notice(text: &str) -> (&str, Option<usize>) {
+    const CURRENT: &str = " chars truncated]";
+    if let Some(rest) = text.strip_suffix(CURRENT)
+        && let Some(idx) = rest.rfind("\n[")
+    {
+        let num = &rest[idx + 2..];
+        if let Ok(n) = num.parse::<usize>() {
+            return (&text[..idx], Some(n));
+        }
+    }
+
+    const LEGACY: &str = " characters truncated for context management]";
+    if let Some(rest) = text.strip_suffix(LEGACY)
+        && let Some(idx) = rest.rfind("\n\n[... ")
+    {
+        let num = &rest[idx + 7..];
+        if let Ok(n) = num.parse::<usize>() {
+            return (&text[..idx], Some(n));
+        }
+    }
+
+    (text, None)
+}
+
+fn with_truncation_notice(text: String, body_len: usize, omitted: usize) -> String {
+    if omitted == 0 {
+        return text;
+    }
+    let notice = truncation_notice(omitted);
+    if text.len() == body_len + notice.len() && text.ends_with(&notice) {
+        return text;
+    }
+    let mut out = String::with_capacity(body_len + notice.len());
+    out.push_str(&text[..body_len]);
+    out.push_str(&notice);
+    out
+}
+
 fn cap_tool_text_to(text: String, max_chars: usize) -> String {
-    // Single walk: byte length is a cheap upper bound (UTF-8 ≥ 1 byte/scalar).
-    // When under the limit in bytes we cannot exceed max_chars; skip counting.
-    if text.len() <= max_chars {
+    let (body, prior_omitted) = split_truncation_notice(&text);
+    let omitted_tail = prior_omitted.unwrap_or(0);
+    let body_len = body.len();
+
+    // Byte length is a cheap upper bound (UTF-8 ≥ 1 byte/scalar).
+    if omitted_tail == 0 && body_len <= max_chars {
         return text;
     }
-    let total = text.chars().count();
-    if total <= max_chars {
-        return text;
+
+    let body_chars = if body.is_ascii() {
+        body_len
+    } else {
+        body.chars().count()
+    };
+
+    if body_chars <= max_chars {
+        return with_truncation_notice(text, body_len, omitted_tail);
     }
-    let mut out: String = text.chars().take(max_chars).collect();
-    let omitted = total - max_chars;
-    out.push_str(&format!(
-        "\n\n[... {omitted} characters truncated for context management]"
-    ));
+
+    let omitted = body_chars - max_chars + omitted_tail;
+    let mut out: String = body.chars().take(max_chars).collect();
+    out.push_str(&truncation_notice(omitted));
     out
 }
 
@@ -2043,8 +2103,9 @@ mod tests {
             is_error: false,
         }]);
         let text = session.messages[0].content.as_text().unwrap();
-        assert!(text.contains("characters truncated for context management"));
-        assert!(text.chars().count() < TOOL_RESULT_MAX_CHARS + 200);
+        assert!(text.contains("chars truncated"));
+        assert!(text.ends_with("[5000 chars truncated]"));
+        assert!(text.chars().count() < TOOL_RESULT_MAX_CHARS + 40);
     }
 
     #[test]
@@ -2214,20 +2275,22 @@ mod tests {
             is_error: Some(false),
         }]);
 
+        // Ingest already capped the tool-role body; only the assistant
+        // ToolResult block still needs a pass.
         let modified = session.truncate_large_tool_results();
-        assert_eq!(modified, 2);
+        assert_eq!(modified, 1);
         let tool_text = session.messages[1].content.as_text().unwrap();
-        assert!(tool_text.contains("characters truncated for context management"));
+        assert!(tool_text.contains("chars truncated"));
         assert!(
-            tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 200,
+            tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 40,
             "kept chars + notice suffix"
         );
 
-        // running again keeps it capped (already-truncated text is under the
-        // cap except for the notice suffix, which is short)
-        session.truncate_large_tool_results();
+        // running again is a no-op: the footer is stripped before the cap, so
+        // the body stays at TOOL_RESULT_MAX_CHARS.
+        assert_eq!(session.truncate_large_tool_results(), 0);
         let tool_text = session.messages[1].content.as_text().unwrap();
-        assert!(tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 200);
+        assert!(tool_text.chars().count() < TOOL_RESULT_MAX_CHARS + 40);
     }
 
     #[test]
@@ -2275,7 +2338,7 @@ mod tests {
         let shaken = session.shake_old_tool_results();
         assert!(shaken > 0);
         let old = session.messages[1].content.as_text().unwrap();
-        // Cap plus the `[... N characters truncated …]` notice.
+        // Cap plus the `[N chars truncated]` notice.
         assert!(
             old.chars().count() <= TOOL_RESULT_SHAKE_CHARS + 80,
             "{}",
@@ -2604,7 +2667,36 @@ mod tests {
 
         let unicode = "é".repeat(10);
         assert_eq!(cap_tool_text_to(unicode.clone(), 10), unicode);
-        assert!(cap_tool_text_to("é".repeat(11), 10).contains("1 characters truncated"));
+        assert_eq!(
+            cap_tool_text_to("é".repeat(11), 10),
+            format!("{}{}", "é".repeat(10), "\n[1 chars truncated]")
+        );
+
+        let once = cap_tool_text_to("a".repeat(20), 10);
+        assert_eq!(
+            once,
+            format!("{}{}", "a".repeat(10), "\n[10 chars truncated]")
+        );
+        assert_eq!(cap_tool_text_to(once.clone(), 10), once);
+        assert_eq!(
+            cap_tool_text_to(once, 4),
+            format!("{}{}", "a".repeat(4), "\n[16 chars truncated]")
+        );
+
+        let legacy = format!(
+            "{}{}",
+            "b".repeat(10),
+            "\n\n[... 5 characters truncated for context management]"
+        );
+        assert_eq!(
+            cap_tool_text_to(legacy.clone(), 10),
+            format!("{}{}", "b".repeat(10), "\n[5 chars truncated]")
+        );
+        assert_eq!(
+            cap_tool_text_to(legacy, 4),
+            format!("{}{}", "b".repeat(4), "\n[11 chars truncated]")
+        );
+        assert_eq!(split_truncation_notice("plain"), ("plain", None));
 
         let mut session = Session::new(test_project_path(), String::new());
         session.add_tool_results(vec![whycodes_core::types::ToolResult {
@@ -2904,7 +2996,7 @@ mod tests {
             created_at: None,
         }]);
         assert_eq!(session.truncate_large_tool_results(), 2);
-        assert_eq!(session.truncate_large_tool_results(), 2);
+        assert_eq!(session.truncate_large_tool_results(), 0);
 
         let mut pruning = Session::new(test_project_path(), String::new());
         for i in 0..5 {
@@ -2933,14 +3025,14 @@ mod tests {
             });
         }
         assert_eq!(pruning.prune_old_tool_results(), 2);
-        assert_eq!(pruning.prune_old_tool_results(), 2);
+        assert_eq!(pruning.prune_old_tool_results(), 0);
         assert!(matches!(
             &pruning.messages[0].content,
             MessageContent::Blocks(blocks)
                 if blocks.iter().all(|block| match block {
                     ContentBlock::Text { text }
                     | ContentBlock::ToolResult { content: text, .. } =>
-                        text.contains("characters truncated for context management"),
+                        text.contains("chars truncated"),
                     ContentBlock::Image { .. }
                     | ContentBlock::ToolUse { .. }
                     | ContentBlock::Thinking { .. }
