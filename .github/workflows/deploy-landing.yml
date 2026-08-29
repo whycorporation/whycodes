@@ -40,7 +40,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:
-          version: 11.24.0
+          # Match landing/package.json "packageManager" (do not also pin version).
           package_json_file: landing/package.json
 
       - name: Install node
