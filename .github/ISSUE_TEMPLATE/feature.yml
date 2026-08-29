@@ -1,0 +1,22 @@
+name: Feature request
+description: A change or addition that is not a bug
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/roadmap.md](https://github.com/whycorporation/whycodes/blob/main/docs/roadmap.md) first. Items under **Out** are standing decisions, not open work.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should WhyCodes do instead? Keep it concrete.
+    validations:
+      required: true

@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work the way the docs or the CLI say it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problems belong in a [private advisory](https://github.com/whycorporation/whycodes/security/advisories/new), not here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Command you ran, what you expected, what you got.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `whycodes --version` (or the git SHA if you built from source).
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and terminal
+      description: For example Linux / Alacritty, macOS / Terminal.app, Windows / Windows Terminal.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (TUI / hang / silent exit)
+      description: |
+        Last lines of `~/.local/share/whycodes/logs/unified.jsonl` if this is a TUI or lifecycle bug. Redact credentials.
+      render: text

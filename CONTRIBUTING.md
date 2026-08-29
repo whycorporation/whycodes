@@ -1,7 +1,8 @@
 # Contributing to WhyCodes
 
 Thank you for taking the time to contribute. This document is the short path
-from clone to a merged change.
+from clone to a merged change. Participation is covered by the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Getting started
 
@@ -87,7 +88,7 @@ Commit messages look like `area: what changed` — for example
 - Do not repeat a parent directory in the file name (`git/blame.rs`, not
   `git/git_blame.rs`).
 - Root meta files (`README.md`, `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`,
-  `AGENTS.md`) stay uppercase.
+  `CODE_OF_CONDUCT.md`, `SUPPORT.md`, `AGENTS.md`) stay uppercase.
 - Agent-facing tool *string* names (`webfetch`, `git_status`) are a stable
   product API — do not rename them to match Rust modules.
 
@@ -111,12 +112,23 @@ Do not commit `.env`, `auth.json`, private keys, `.omo/`, `.whycode/`,
 `python scripts/check_tracked_secrets.py` on the index (not rewritten
 history). Author emails in `git log` are left as-is.
 
+## Code of Conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+Unacceptable behaviour can be reported as described there — do not put
+private details in a public issue.
+
 ## Reporting bugs
 
-Open an issue with the command you ran, what you expected, and what happened.
+Open an issue (templates under `.github/ISSUE_TEMPLATE/`) with the command
+you ran, what you expected, and what happened. More on where to ask:
+[SUPPORT.md](SUPPORT.md).
+
 For TUI problems, the last lines of
 `~/.local/share/whycodes/logs/unified.jsonl` are the fastest diagnostic — see
 [docs/knowhow.md](docs/knowhow.md) for what the lifecycle events mean.
+
+Issues labelled `good first issue` are meant for a first contribution.
 
 **Security issues:** please use the process in [SECURITY.md](SECURITY.md)
 instead of opening a public issue.
