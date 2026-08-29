@@ -107,3 +107,25 @@ From source, the binary lands at `target/release/whycodes`. Optional extras
 ```bash
 cargo build --release -p whycodes-cli --features full
 ```
+
+## Install counts (no phone-home)
+
+The CLI does not report installs or launches. The number that exists today
+is how often GitHub served a release archive:
+
+```bash
+python scripts/release_downloads.py
+python scripts/release_downloads.py --json
+```
+
+That is `download_count` on `.tar.gz` / `.zip` assets (`install.sh`,
+Homebrew, `whycodes upgrade`, a browser click). It is **not** unique
+people: upgrades, CI, and retries inflate it; `cargo install` is
+invisible. `SHA256SUMS` is counted separately because the installer
+fetches it next to every archive.
+
+Do not put that total on the landing page as “users”. Homebrew-core
+analytics (if the formula is accepted) is the next install graph; an
+anonymous opt-out ping is only if daily-active use is still needed after
+that. A WhyCodes GitHub login is not an install counter — see
+[roadmap.md](roadmap.md).

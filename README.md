@@ -144,7 +144,7 @@ coverage — see [docs/coverage.md](docs/coverage.md).
 | [docs/benchmarks.md](docs/benchmarks.md) | Measuring startup, RSS, idle draws |
 | [docs/coverage.md](docs/coverage.md) | Measuring line coverage |
 | [docs/budgets.md](docs/budgets.md) | CI quality budgets |
-| [docs/packaging.md](docs/packaging.md) | Homebrew, installers, release artifacts |
+| [docs/packaging.md](docs/packaging.md) | Homebrew, installers, release download counts |
 
 ## Contributing
 
