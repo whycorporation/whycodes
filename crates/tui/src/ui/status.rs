@@ -182,6 +182,11 @@ fn shortcuts_spans(app: &TuiApp, palette: &ThemePalette) -> Vec<Span<'static>> {
                         parts.push(("e", "fold"));
                         parts.push(("tab", "prompt"));
                     }
+                    FocusPane::Todos => {
+                        parts.push(("j/k", "scroll"));
+                        parts.push(("t", "fold"));
+                        parts.push(("tab", "prompt"));
+                    }
                 }
             }
         }
@@ -507,6 +512,19 @@ mod tests {
         assert!(text.contains("j/k select"), "{text}");
         assert!(text.contains("y copy"), "{text}");
         assert!(text.contains("e fold"), "{text}");
+        assert!(text.contains("tab prompt"), "{text}");
+    }
+
+    #[test]
+    fn shortcuts_normal_todos_focus() {
+        let mut app = app_ready();
+        app.focus = FocusPane::Todos;
+        let palette = app.config.palette();
+        let text = paint(120, crate::tokens::layout::HEADER_H, |f| {
+            render(f, f.area(), &app, &palette)
+        });
+        assert!(text.contains("j/k scroll"), "{text}");
+        assert!(text.contains("t fold"), "{text}");
         assert!(text.contains("tab prompt"), "{text}");
     }
 

@@ -1730,6 +1730,36 @@ fn tab_toggles_focus_to_scrollback_when_messages_exist() {
 }
 
 #[test]
+fn tab_cycles_prompt_todos_scrollback_when_list_overflows() {
+    use crate::app::FocusPane;
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    let mut app = TuiApp::new(test_config());
+    app.replace_todos(
+        (0..12)
+            .map(|i| {
+                whycodes_core::TodoItem::new(
+                    format!("t{i}"),
+                    format!("item {i}"),
+                    whycodes_core::TodoStatus::Pending,
+                )
+            })
+            .collect(),
+    );
+    app.todos_viewport_rows = 8;
+    app.add_message(ChatRole::User, "hello");
+    app.add_message(ChatRole::Assistant, "world");
+
+    let tab = || Event::Key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+    crate::input::handle_event(&mut app, tab());
+    assert_eq!(app.focus, FocusPane::Todos);
+    crate::input::handle_event(&mut app, tab());
+    assert_eq!(app.focus, FocusPane::Scrollback);
+    crate::input::handle_event(&mut app, tab());
+    assert_eq!(app.focus, FocusPane::Prompt);
+}
+
+#[test]
 fn typing_j_inserts_into_prompt_not_scroll() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 

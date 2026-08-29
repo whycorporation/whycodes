@@ -84,7 +84,7 @@ pub fn prompt_height(app: &TuiApp, area_width: u16) -> u16 {
 }
 
 /// Native terminal caret belongs in the prompt (insert-style blinking bar).
-/// Hidden while a modal owns keys or scrollback is focused — otherwise the
+/// Hidden while a modal owns keys or scrollback/todos is focused — otherwise the
 /// emulator caret sits on the draft while typing goes elsewhere.
 fn prompt_owns_caret(app: &TuiApp) -> bool {
     !app.modal_is_open()
@@ -334,8 +334,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     // ratatui re-wrap would add vertical lines that spill past the box height.
     frame.render_widget(Paragraph::new(Text::from(lines)), text_rect);
 
-    // Native caret (blinking bar, set once at TUI start). Overlay / scrollback
-    // hide it so it does not sit on the prompt while keys go elsewhere.
+    // Native caret (blinking bar, set once at TUI start). Overlay / scrollback /
+    // todos hide it so it does not sit on the prompt while keys go elsewhere.
     if prompt_owns_caret(app) {
         let vis_row = cursor_row.saturating_sub(view_start);
         if vis_row < input_rows as usize {

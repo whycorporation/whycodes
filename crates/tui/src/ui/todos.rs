@@ -5,12 +5,17 @@
 //! Finished items stay in the list so they can be reopened after the
 //! panel auto-collapses when everything is done.
 //!
+//! When the list is longer than [`MAX_ITEMS`], the extra rows scroll in
+//! place (wheel over the panel, ↑/↓ after focusing the list). There is no
+//! `+N more` overflow line.
+//!
 //! Glyphs and per-status colors follow Grok's `TodoPane`: hollow square,
 //! play triangle, check mark, ballot X — icon color separate from text.
 
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
 use crate::ui::progress_bar::progress_bar_string;
+use crate::ui::scrollbar::{SCROLLBAR_GAP, SCROLLBAR_GUTTER, ScrollbarColors, paint_scrollbar};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -21,7 +26,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 use whycodes_core::todo::{TodoItem, TodoStatus, all_terminal, terminal_count};
 
-/// Max item rows (not counting the header or overflow line).
+/// Max item rows (not counting the header). Extra items scroll in place.
 pub const MAX_ITEMS: usize = 8;
 
 /// Compact track in the header (Grok context-bar cells).
@@ -45,8 +50,7 @@ pub fn panel_height(app: &TuiApp, body_h: u16) -> u16 {
         1
     } else {
         let shown = app.todos.len().min(MAX_ITEMS);
-        let extra = usize::from(app.todos.len() > MAX_ITEMS);
-        (1 + shown + extra) as u16
+        (1 + shown) as u16
     };
     want.min(max)
 }
@@ -205,34 +209,13 @@ pub fn render_panel(
 ) {
     if area.height == 0 || app.todos.is_empty() {
         app.todos_hit.clear();
+        app.todos_body_hit.clear();
+        app.todos_scrollbar_hit.clear();
+        app.todos_viewport_rows = 0;
         return;
     }
     let collapsed = is_collapsed(app) || area.height == 1;
 
-    let mut lines: Vec<Line> = Vec::new();
-    lines.push(header_line(app, palette, area.width, side));
-
-    if !collapsed {
-        let mut budget = area.height.saturating_sub(1) as usize;
-        let overflow = app.todos.len() > MAX_ITEMS.min(budget);
-        if overflow {
-            budget = budget.saturating_sub(1);
-        }
-        let take = budget.min(MAX_ITEMS).min(app.todos.len());
-        for item in app.todos.iter().take(take) {
-            lines.push(item_line_indented(item, palette, area.width, side));
-        }
-        let hidden = app.todos.len().saturating_sub(take);
-        if hidden > 0 {
-            let indent = format!("{}  ", " ".repeat(side as usize));
-            lines.push(Line::from(Span::styled(
-                format!("{indent}… +{hidden} more"),
-                Style::default().fg(palette.dim),
-            )));
-        }
-    }
-
-    // Header row is the click target (Grok HitArea: set after paint).
     let header = Rect {
         x: area.x,
         y: area.y,
@@ -241,10 +224,76 @@ pub fn render_panel(
     };
     app.todos_hit.set_rect(Some(header));
 
+    let mut lines: Vec<Line> = Vec::new();
+    lines.push(header_line(app, palette, area.width, side));
+
+    if collapsed {
+        app.todos_body_hit.clear();
+        app.todos_scrollbar_hit.clear();
+        app.todos_viewport_rows = 0;
+        frame.render_widget(
+            Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.status_bar_bg)),
+            area,
+        );
+        return;
+    }
+
+    let vis = (area.height.saturating_sub(1) as usize).min(MAX_ITEMS);
+    let body = Rect {
+        x: area.x,
+        y: area.y.saturating_add(1),
+        width: area.width,
+        height: vis as u16,
+    };
+    app.todos_viewport_rows = vis;
+    app.clamp_todos_scroll();
+
+    let overflowing = app.todos.len() > vis;
+    let reserved = if overflowing {
+        SCROLLBAR_GUTTER.saturating_add(SCROLLBAR_GAP)
+    } else {
+        0
+    };
+    let text_w = area.width.saturating_sub(reserved);
+    let start = app.todos_scroll;
+    let take = vis.min(app.todos.len().saturating_sub(start));
+    for item in app.todos.iter().skip(start).take(take) {
+        lines.push(item_line_indented(item, palette, text_w, side));
+    }
+
     frame.render_widget(
         Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.status_bar_bg)),
         area,
     );
+
+    if overflowing && body.width > 0 && vis > 0 {
+        let colors = ScrollbarColors::from_palette(palette);
+        let sb = Rect {
+            x: area.x + area.width.saturating_sub(SCROLLBAR_GUTTER),
+            y: body.y,
+            width: SCROLLBAR_GUTTER,
+            height: body.height,
+        };
+        paint_scrollbar(
+            frame.buffer_mut(),
+            sb,
+            app.todos.len(),
+            vis,
+            start,
+            colors.track,
+            colors.thumb,
+        );
+        app.todos_scrollbar_hit.set_rect(Some(sb));
+        app.todos_body_hit.set_rect(Some(Rect {
+            x: body.x,
+            y: body.y,
+            width: body.width.saturating_sub(reserved),
+            height: body.height,
+        }));
+    } else {
+        app.todos_scrollbar_hit.clear();
+        app.todos_body_hit.set_rect(Some(body));
+    }
 }
 
 #[cfg(test)]
@@ -376,18 +425,27 @@ mod tests {
     }
 
     #[test]
-    fn overflow_line_when_many() {
+    fn overflow_scrolls_instead_of_plus_n() {
         let mut app = TuiApp::new(TuiAppConfig::default());
         app.replace_todos(
             (0..10)
                 .map(|i| item(&i.to_string(), &format!("item {i}"), TodoStatus::Pending))
                 .collect(),
         );
-        assert_eq!(panel_height(&app, 24), 10); // header + 8 + overflow
+        assert_eq!(panel_height(&app, 24), 9); // header + 8 items
         let text = paint(&mut app, 40, 12);
-        assert!(text.contains("+2 more"), "{text}");
+        assert!(!text.contains("+2 more"), "{text}");
         assert!(text.contains("item 0"), "{text}");
         assert!(!text.contains("item 9"), "{text}");
+        assert!(app.todos_can_scroll());
+        assert!(app.todos_scrollbar_hit.rect.is_some());
+        assert_eq!(app.todos_viewport_rows, 8);
+
+        assert!(app.scroll_todos(2));
+        let text = paint(&mut app, 40, 12);
+        assert!(!text.contains("item 0"), "{text}");
+        assert!(text.contains("item 9"), "{text}");
+        assert_eq!(app.todos_scroll, 2);
     }
 
     #[test]
@@ -458,13 +516,13 @@ mod tests {
             item_row.starts_with("    □"),
             "side + 2 item indent: {item_row:?}"
         );
-        let overflow = text
-            .lines()
-            .find(|l| l.contains("+2 more"))
-            .expect("overflow");
         assert!(
-            overflow.starts_with("    …"),
-            "side + 2 overflow indent: {overflow:?}"
+            !text.contains("+2 more"),
+            "overflowing lists scroll instead of +N: {text}"
+        );
+        assert!(
+            app.todos_scrollbar_hit.rect.is_some(),
+            "overflowing panel paints a scrollbar"
         );
         // Sidebar helper stays at the original two-space indent.
         let sidebar = item_line(

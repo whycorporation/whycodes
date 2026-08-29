@@ -1,6 +1,6 @@
 // ── keymap.rs: Centralized keybinding registry ────────────────────────
 // Context-aware bindings (normal / session / dialog modes).
-// Focus-aware: Prompt vs Scrollback (Grok Build model).
+// Focus-aware: Prompt vs Scrollback vs overflowing Todos.
 
 use crate::app::FocusPane;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -68,7 +68,7 @@ pub enum Action {
     ToggleTodosPanel,
     /// Cycle primary agents (Ctrl+T; Tab is focus toggle — Grok)
     SwitchAgent,
-    /// Tab: Prompt ↔ Scrollback
+    /// Tab: Prompt ↔ Todos (when overflowing) ↔ Scrollback
     ToggleFocus,
     /// Ctrl+Space: open the `@file` picker at the cursor.
     FileComplete,
@@ -213,10 +213,14 @@ impl Keymap {
                     // Page scroll works from either focus (Grok: PgUp/Dn from prompt)
                     (false, KeyCode::PageUp) => return Some(Action::ScrollPageUp),
                     (false, KeyCode::PageDown) => return Some(Action::ScrollPageDown),
-                    (false, KeyCode::Home) if focus == FocusPane::Scrollback => {
+                    (false, KeyCode::Home)
+                        if focus == FocusPane::Scrollback || focus == FocusPane::Todos =>
+                    {
                         return Some(Action::ScrollToTop);
                     }
-                    (false, KeyCode::End) if focus == FocusPane::Scrollback => {
+                    (false, KeyCode::End)
+                        if focus == FocusPane::Scrollback || focus == FocusPane::Todos =>
+                    {
                         return Some(Action::ScrollToBottom);
                     }
                     _ => {}
@@ -278,6 +282,25 @@ impl Keymap {
                         (false, false, KeyCode::Backspace) => Some(Action::FocusPrompt),
                         _ => None,
                     },
+                    FocusPane::Todos => match (ctrl, shift, key.code) {
+                        (false, false, KeyCode::Enter)
+                        | (false, false, KeyCode::Char(' '))
+                        | (false, false, KeyCode::Char('i'))
+                        | (false, false, KeyCode::Backspace) => Some(Action::FocusPrompt),
+                        (false, false, KeyCode::Up) | (false, false, KeyCode::Char('k')) => {
+                            Some(Action::ScrollDown)
+                        }
+                        (false, false, KeyCode::Down) | (false, false, KeyCode::Char('j')) => {
+                            Some(Action::ScrollUp)
+                        }
+                        (false, false, KeyCode::Char('t')) => Some(Action::ToggleTodosPanel),
+                        (false, false, KeyCode::Char('g')) => Some(Action::ScrollToTop),
+                        (false, true, KeyCode::Char('g')) | (false, true, KeyCode::Char('G')) => {
+                            Some(Action::ScrollToBottom)
+                        }
+                        (false, false, KeyCode::Char('G')) => Some(Action::ScrollToBottom),
+                        _ => None,
+                    },
                 }
             }
             KeymapContext::Dialog => match (ctrl, key.code) {
@@ -316,7 +339,11 @@ impl Keymap {
 fn normal_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("/help", "Open help", KeymapContext::Normal),
-        KeyBinding::new("Tab", "Focus prompt ↔ scrollback", KeymapContext::Normal),
+        KeyBinding::new(
+            "Tab",
+            "Focus prompt ↔ todos ↔ scrollback",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("Ctrl+T", "Cycle primary agent", KeymapContext::Normal),
         KeyBinding::new(":", "Enter command mode (prompt)", KeymapContext::Normal),
         KeyBinding::new(
@@ -327,16 +354,24 @@ fn normal_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Enter", "Send message (prompt)", KeymapContext::Normal),
         KeyBinding::new(
             "j/k · ↑/↓",
-            "Select message (scrollback)",
+            "Select message (scrollback) / scroll todos",
             KeymapContext::Normal,
         ),
         KeyBinding::new("Ctrl+↑/↓", "Scroll transcript", KeymapContext::Normal),
         KeyBinding::new("PgUp/PgDn", "Page scroll", KeymapContext::Normal),
-        KeyBinding::new("g / G", "Top / bottom (scrollback)", KeymapContext::Normal),
+        KeyBinding::new(
+            "g / G",
+            "Top / bottom (scrollback / todos)",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("Shift+←/→", "Prev / next user turn", KeymapContext::Normal),
         KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
         KeyBinding::new("e / h", "Toggle thinking fold", KeymapContext::Normal),
-        KeyBinding::new("t", "Toggle todo panel (scrollback)", KeymapContext::Normal),
+        KeyBinding::new(
+            "t",
+            "Toggle todo panel (scrollback / todos)",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("l", "Toggle tool results", KeymapContext::Normal),
         KeyBinding::new(
             "Space / i",
@@ -409,7 +444,7 @@ mod tests {
     #[test]
     fn quit_works_from_both_focuses_and_question_mark_is_not_help() {
         let k = Keymap::new();
-        for focus in [FocusPane::Prompt, FocusPane::Scrollback] {
+        for focus in [FocusPane::Prompt, FocusPane::Scrollback, FocusPane::Todos] {
             assert_eq!(
                 k.resolve(KeymapContext::Normal, focus, &ctrl(KeyCode::Char('c'))),
                 Some(Action::Quit)
@@ -575,6 +610,56 @@ mod tests {
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('j'))),
             Some(Action::ScrollUp)
+        );
+    }
+
+    #[test]
+    fn todos_focus_bindings() {
+        let k = Keymap::new();
+        let f = FocusPane::Todos;
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Up)),
+            Some(Action::ScrollDown)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('k'))),
+            Some(Action::ScrollDown)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Down)),
+            Some(Action::ScrollUp)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('j'))),
+            Some(Action::ScrollUp)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('t'))),
+            Some(Action::ToggleTodosPanel)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('g'))),
+            Some(Action::ScrollToTop)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('G'))),
+            Some(Action::ScrollToBottom)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Home)),
+            Some(Action::ScrollToTop)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::End)),
+            Some(Action::ScrollToBottom)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Esc)),
+            Some(Action::EscapeMode)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Enter)),
+            Some(Action::FocusPrompt)
         );
     }
 

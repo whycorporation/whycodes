@@ -416,27 +416,51 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             true
         }
         Some(Action::ScrollUp) => {
-            app.scroll_rows(-1);
+            if app.focus == FocusPane::Todos {
+                app.scroll_todos(1);
+            } else {
+                app.scroll_rows(-1);
+            }
             true
         }
         Some(Action::ScrollDown) => {
-            app.scroll_rows(1);
+            if app.focus == FocusPane::Todos {
+                app.scroll_todos(-1);
+            } else {
+                app.scroll_rows(1);
+            }
             true
         }
         Some(Action::ScrollPageUp) => {
-            app.scroll_page(true);
+            if app.focus == FocusPane::Todos {
+                app.scroll_todos(-app.todos_page_rows());
+            } else {
+                app.scroll_page(true);
+            }
             true
         }
         Some(Action::ScrollPageDown) => {
-            app.scroll_page(false);
+            if app.focus == FocusPane::Todos {
+                app.scroll_todos(app.todos_page_rows());
+            } else {
+                app.scroll_page(false);
+            }
             true
         }
         Some(Action::ScrollToTop) => {
-            app.scroll_to_top();
+            if app.focus == FocusPane::Todos {
+                app.scroll_todos_home();
+            } else {
+                app.scroll_to_top();
+            }
             true
         }
         Some(Action::ScrollToBottom) => {
-            app.scroll_to_bottom();
+            if app.focus == FocusPane::Todos {
+                app.scroll_todos_end();
+            } else {
+                app.scroll_to_bottom();
+            }
             true
         }
         // Input editing actions
@@ -615,8 +639,8 @@ fn handle_escape(app: &mut TuiApp) {
         return;
     }
 
-    // Empty prompt + scrollback focused → return to prompt
-    if app.focus == FocusPane::Scrollback {
+    // Empty prompt + scrollback/todos focused → return to prompt
+    if matches!(app.focus, FocusPane::Scrollback | FocusPane::Todos) {
         app.focus_prompt();
         app.esc_armed_at = None;
         return;
@@ -819,12 +843,20 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         // Wheel always moves the transcript (dialog path is handled above).
         // Step ≈ ⅓ viewport so one notch is visible on tall terminals; min 3.
         MouseEventKind::ScrollDown => {
-            let step = chat_wheel_step(app);
-            app.scroll_rows(-step);
+            if app.todos_panel_wheel_hit(mouse.column, mouse.row) {
+                app.scroll_todos(1);
+            } else {
+                let step = chat_wheel_step(app);
+                app.scroll_rows(-step);
+            }
         }
         MouseEventKind::ScrollUp => {
-            let step = chat_wheel_step(app);
-            app.scroll_rows(step);
+            if app.todos_panel_wheel_hit(mouse.column, mouse.row) {
+                app.scroll_todos(-1);
+            } else {
+                let step = chat_wheel_step(app);
+                app.scroll_rows(step);
+            }
         }
         MouseEventKind::Moved => {
             return true;
@@ -832,6 +864,13 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
         MouseEventKind::Down(MouseButton::Left) => {
             if app.todos_hit.contains(mouse.column, mouse.row) {
                 app.toggle_todos_panel();
+                app.mouse_sel = None;
+                return true;
+            }
+            if app.todos_wheel_hit(mouse.column, mouse.row) {
+                if app.todos_can_scroll() {
+                    app.focus_todos();
+                }
                 app.mouse_sel = None;
                 return true;
             }
@@ -1022,7 +1061,8 @@ pub fn chat_wheel_step(app: &TuiApp) -> isize {
 }
 
 /// Fold queued chat-wheel events into a single `scroll_rows` and drop them
-/// from `events`.
+/// from `events`. Wheel over an overflowing todo list is folded into
+/// `scroll_todos` instead — otherwise a trackpad flick never reaches the panel.
 ///
 /// A trackpad flick is dozens of `ScrollUp`/`ScrollDown` plus `Moved`.
 /// Handling each through `handle_mouse` is cheap; painting after each is not.
@@ -1035,23 +1075,37 @@ pub fn coalesce_chat_wheels(app: &mut TuiApp, events: &mut Vec<Event>) {
         return;
     }
     let step = chat_wheel_step(app);
-    let mut delta = 0isize;
+    let mut chat_delta = 0isize;
+    let mut todo_delta = 0isize;
     events.retain(|ev| match ev {
         Event::Mouse(m) => match m.kind {
             MouseEventKind::ScrollUp => {
-                delta += step;
-                false
+                if app.todos_panel_wheel_hit(m.column, m.row) {
+                    todo_delta -= 1;
+                    false
+                } else {
+                    chat_delta += step;
+                    false
+                }
             }
             MouseEventKind::ScrollDown => {
-                delta -= step;
-                false
+                if app.todos_panel_wheel_hit(m.column, m.row) {
+                    todo_delta += 1;
+                    false
+                } else {
+                    chat_delta -= step;
+                    false
+                }
             }
             _ => true,
         },
         _ => true,
     });
-    if delta != 0 {
-        app.scroll_rows(delta);
+    if todo_delta != 0 {
+        app.scroll_todos(todo_delta);
+    }
+    if chat_delta != 0 {
+        app.scroll_rows(chat_delta);
     }
 }
 
@@ -2800,6 +2854,89 @@ mod event_tests {
         let n = events.len();
         coalesce_chat_wheels(&mut a, &mut events);
         assert_eq!(events.len(), n, "modal leaves the batch alone");
+    }
+
+    fn overflowing_todos(app: &mut TuiApp) {
+        app.replace_todos(
+            (0..12)
+                .map(|i| {
+                    whycodes_core::TodoItem::new(
+                        format!("t{i}"),
+                        format!("item {i}"),
+                        whycodes_core::TodoStatus::Pending,
+                    )
+                })
+                .collect(),
+        );
+        app.todos_viewport_rows = 8;
+        app.todos_body_hit.set_rect(Some(Rect {
+            x: 0,
+            y: 3,
+            width: 40,
+            height: 8,
+        }));
+        app.todos_hit.set_rect(Some(Rect {
+            x: 0,
+            y: 2,
+            width: 40,
+            height: 1,
+        }));
+    }
+
+    #[test]
+    fn todo_wheel_scrolls_list_not_chat() {
+        let mut a = app();
+        overflowing_todos(&mut a);
+        a.chat_viewport_rows = 20;
+        a.chat_content_width = 40;
+        a.add_message(ChatRole::User, "keep chat still");
+        handle_event(&mut a, mouse(MouseEventKind::ScrollDown, 4, 5));
+        assert_eq!(a.todos_scroll, 1);
+        assert_eq!(a.scroll_offset, 0);
+        handle_event(&mut a, mouse(MouseEventKind::ScrollUp, 4, 5));
+        assert_eq!(a.todos_scroll, 0);
+    }
+
+    #[test]
+    fn todo_body_click_focuses_list_and_keys_scroll() {
+        let mut a = app();
+        overflowing_todos(&mut a);
+        a.add_message(ChatRole::User, "hi");
+        handle_event(&mut a, mouse(MouseEventKind::Down(MouseButton::Left), 4, 5));
+        assert_eq!(a.focus, FocusPane::Todos);
+        handle_event(&mut a, key(KeyCode::Down));
+        assert_eq!(a.todos_scroll, 1);
+        handle_event(&mut a, key(KeyCode::Char('j')));
+        assert_eq!(a.todos_scroll, 2);
+        handle_event(&mut a, key(KeyCode::Up));
+        assert_eq!(a.todos_scroll, 1);
+        handle_event(&mut a, key(KeyCode::Char('G')));
+        assert_eq!(a.todos_scroll, 4);
+        handle_event(&mut a, key(KeyCode::Char('g')));
+        assert_eq!(a.todos_scroll, 0);
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert_eq!(a.focus, FocusPane::Prompt);
+    }
+
+    #[test]
+    fn coalesce_wheels_over_todos_do_not_move_chat() {
+        let mut a = app();
+        overflowing_todos(&mut a);
+        a.chat_viewport_rows = 12;
+        a.chat_content_width = 40;
+        for i in 0..20 {
+            a.add_message(ChatRole::User, format!("line {i}"));
+        }
+        let mut events = vec![
+            mouse(MouseEventKind::ScrollDown, 4, 5),
+            mouse(MouseEventKind::ScrollDown, 4, 5),
+            mouse(MouseEventKind::Moved, 4, 5),
+            mouse(MouseEventKind::ScrollUp, 4, 5),
+        ];
+        coalesce_chat_wheels(&mut a, &mut events);
+        assert_eq!(events.len(), 1, "wheels folded, move kept");
+        assert_eq!(a.todos_scroll, 1);
+        assert_eq!(a.scroll_offset, 0);
     }
 
     #[test]

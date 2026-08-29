@@ -292,6 +292,9 @@ fn render_shell(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
         todos::render_panel(frame, area, app, palette, side);
     } else {
         app.todos_hit.clear();
+        app.todos_body_hit.clear();
+        app.todos_scrollbar_hit.clear();
+        app.todos_viewport_rows = 0;
     }
 
     if app.messages.is_empty() {

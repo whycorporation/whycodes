@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Sticky todo overflow must scroll, not `+N more`
+
+**Symptom:** Long session todo lists hid extra rows behind `… +N more`. Wheel
+events always moved the transcript, so the hidden items were unreachable.
+
+**Root cause:** `todos::render_panel` reserved a row for an overflow label
+instead of a window. `coalesce_chat_wheels` folded *every* wheel into
+`scroll_rows` before `handle_mouse`, so a hit-test in the mouse path never
+saw the flick.
+
+**Fix:** Item rows scroll in a `MAX_ITEMS` window with the shared solid
+scrollbar. Wheel over the expanded panel (including coalesced flicks) calls
+`scroll_todos`. Keyboard focus `FocusPane::Todos` (click the rows, or Tab
+when overflowing) maps ↑/↓/j/k. Header click / `t` still folds.
+
+**Prevention:** Keep todo-hit routing in `coalesce_chat_wheels`. Do not
+reintroduce a `+N more` line.
+
 ### 2026-08-30 — Interactive auto-update must not run in CI or headless
 
 **Symptom:** A pipeline that invokes `whycodes generate` or `--format json`

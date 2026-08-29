@@ -101,6 +101,7 @@ pub struct ViewSnapshot {
     pub session_id: String,
     pub todos: Vec<whycodes_core::TodoItem>,
     pub todos_collapsed: bool,
+    pub todos_scroll: usize,
 }
 
 impl Default for ViewSnapshot {
@@ -124,6 +125,7 @@ impl Default for ViewSnapshot {
             session_id: String::new(),
             todos: Vec::new(),
             todos_collapsed: false,
+            todos_scroll: 0,
         }
     }
 }

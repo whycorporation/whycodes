@@ -1180,12 +1180,15 @@ pub enum AgentState {
 /// Grok's model: when scrollback is focused, j/k navigate the transcript
 /// without typing into the prompt; when the prompt is focused, every letter
 /// goes to the draft. Tab toggles. Typing while scrollback is focused
-/// auto-focuses the prompt (simple mode).
+/// auto-focuses the prompt (simple mode). Overflowing sticky todos take a
+/// third pane so ↑/↓ scroll the list instead of the transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FocusPane {
     #[default]
     Prompt,
     Scrollback,
+    /// Sticky todo list when it overflows (wheel works without this).
+    Todos,
 }
 
 /// Double-Esc window for "press again to clear" (Grok: 800ms).
@@ -1418,6 +1421,14 @@ pub struct TuiApp {
     pub todos_collapsed: bool,
     /// Header row of the sticky todo panel (click to fold).
     pub todos_hit: crate::hit_area::HitArea,
+    /// Item rows of the expanded todo panel (wheel / click-to-focus).
+    pub todos_body_hit: crate::hit_area::HitArea,
+    /// Solid scrollbar on overflowing todo rows (last-paint).
+    pub todos_scrollbar_hit: crate::hit_area::HitArea,
+    /// First visible todo index when the list is taller than the panel.
+    pub todos_scroll: usize,
+    /// Item rows painted last frame (excludes the header). `0` before paint.
+    pub todos_viewport_rows: usize,
     /// Live + finished child sessions (sticky tasks panel).
     pub subagents: Vec<SubagentUi>,
     /// Fold the sticky tasks list to a single header row (same as todos).
@@ -1920,6 +1931,10 @@ impl TuiApp {
             todos: Vec::new(),
             todos_collapsed: false,
             todos_hit: crate::hit_area::HitArea::default(),
+            todos_body_hit: crate::hit_area::HitArea::default(),
+            todos_scrollbar_hit: crate::hit_area::HitArea::default(),
+            todos_scroll: 0,
+            todos_viewport_rows: 0,
             subagents: Vec::new(),
             tasks_collapsed: false,
             tasks_hit: crate::hit_area::HitArea::default(),
@@ -2158,6 +2173,14 @@ impl TuiApp {
                 self.todos_hit.hovered = false;
                 changed = true;
             }
+            if self.todos_body_hit.hovered {
+                self.todos_body_hit.hovered = false;
+                changed = true;
+            }
+            if self.todos_scrollbar_hit.hovered {
+                self.todos_scrollbar_hit.hovered = false;
+                changed = true;
+            }
             if self.effort_hit.hovered {
                 self.effort_hit.hovered = false;
                 changed = true;
@@ -2177,6 +2200,8 @@ impl TuiApp {
         changed |= self.model_hit.update_hover(c, r);
         changed |= self.effort_hit.update_hover(c, r);
         changed |= self.todos_hit.update_hover(c, r);
+        changed |= self.todos_body_hit.update_hover(c, r);
+        changed |= self.todos_scrollbar_hit.update_hover(c, r);
         changed |= self.tasks_hit.update_hover(c, r);
         changed |= self.sidebar.update_tab_hover(Some((c, r)));
         // Slash dropdown hover row (index into matches, not absolute cmd).
@@ -2542,11 +2567,114 @@ impl TuiApp {
         self.auto_scroll = false;
     }
 
+    /// Keyboard focus for an overflowing sticky todo list.
+    pub fn focus_todos(&mut self) {
+        if !self.todos_can_scroll() {
+            return;
+        }
+        self.focus = FocusPane::Todos;
+        self.selected_msg = None;
+        self.clamp_todos_scroll();
+        self.mark_dirty();
+    }
+
     pub fn toggle_focus(&mut self) {
         match self.focus {
-            FocusPane::Prompt => self.focus_scrollback(),
+            FocusPane::Prompt => {
+                if self.todos_can_scroll() {
+                    self.focus_todos();
+                } else {
+                    self.focus_scrollback();
+                }
+            }
+            FocusPane::Todos => {
+                if self.messages.is_empty() {
+                    self.focus_prompt();
+                } else {
+                    self.focus_scrollback();
+                }
+            }
             FocusPane::Scrollback => self.focus_prompt(),
         }
+    }
+
+    /// True when the expanded list is taller than the painted item window.
+    pub fn todos_can_scroll(&self) -> bool {
+        !self.todos_collapsed && self.todos.len() > self.todos_visible_capacity()
+    }
+
+    fn todos_visible_capacity(&self) -> usize {
+        if self.todos_viewport_rows > 0 {
+            self.todos_viewport_rows
+        } else {
+            crate::ui::todos::MAX_ITEMS.min(self.todos.len())
+        }
+    }
+
+    fn todos_max_scroll(&self) -> usize {
+        self.todos
+            .len()
+            .saturating_sub(self.todos_visible_capacity())
+    }
+
+    pub fn clamp_todos_scroll(&mut self) {
+        let max = self.todos_max_scroll();
+        if self.todos_scroll > max {
+            self.todos_scroll = max;
+        }
+        if !self.todos_can_scroll() && self.focus == FocusPane::Todos {
+            self.focus = FocusPane::Prompt;
+        }
+    }
+
+    /// Scroll the sticky todo list. Positive `delta` moves toward later items.
+    pub fn scroll_todos(&mut self, delta: isize) -> bool {
+        if !self.todos_can_scroll() {
+            return false;
+        }
+        let max = self.todos_max_scroll();
+        let prev = self.todos_scroll;
+        if delta > 0 {
+            self.todos_scroll = (self.todos_scroll + delta as usize).min(max);
+        } else {
+            self.todos_scroll = self.todos_scroll.saturating_sub((-delta) as usize);
+        }
+        if self.todos_scroll != prev {
+            self.mark_dirty();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn todos_page_rows(&self) -> isize {
+        self.todos_visible_capacity().max(1) as isize
+    }
+
+    pub fn scroll_todos_home(&mut self) {
+        if self.todos_scroll != 0 {
+            self.todos_scroll = 0;
+            self.mark_dirty();
+        }
+    }
+
+    pub fn scroll_todos_end(&mut self) {
+        let max = self.todos_max_scroll();
+        if self.todos_scroll != max {
+            self.todos_scroll = max;
+            self.mark_dirty();
+        }
+    }
+
+    /// Pointer is over the expanded todo body or its scrollbar (not the header).
+    pub fn todos_wheel_hit(&self, col: u16, row: u16) -> bool {
+        self.todos_body_hit.contains(col, row) || self.todos_scrollbar_hit.contains(col, row)
+    }
+
+    /// Expanded overflowing list: header, items, or scrollbar.
+    pub fn todos_panel_wheel_hit(&self, col: u16, row: u16) -> bool {
+        self.todos_can_scroll()
+            && (self.todos_hit.contains(col, row) || self.todos_wheel_hit(col, row))
     }
 
     /// Save non-empty draft to history and clear the prompt (Grok double-Esc).
@@ -2983,6 +3111,7 @@ impl TuiApp {
         view.session_id = self.session_id.clone();
         view.todos = self.todos.clone();
         view.todos_collapsed = self.todos_collapsed;
+        view.todos_scroll = self.todos_scroll;
     }
 
     /// Restore a previously saved per-session view state (switching back).
@@ -3005,6 +3134,7 @@ impl TuiApp {
         self.session_id = view.session_id.clone();
         self.todos = view.todos.clone();
         self.todos_collapsed = view.todos_collapsed;
+        self.todos_scroll = view.todos_scroll;
         self.dialogs.clear();
         self.mark_dirty();
         self.request_full_clear(2);
@@ -3032,6 +3162,7 @@ impl TuiApp {
         self.session_id = std::mem::take(&mut view.session_id);
         self.todos = std::mem::take(&mut view.todos);
         self.todos_collapsed = view.todos_collapsed;
+        self.todos_scroll = view.todos_scroll;
     }
 
     /// Move this app's view fields back into `view` (no transcript clone).
@@ -3055,6 +3186,8 @@ impl TuiApp {
         view.session_id = std::mem::take(&mut self.session_id);
         view.todos = std::mem::take(&mut self.todos);
         view.todos_collapsed = self.todos_collapsed;
+        view.todos_scroll = self.todos_scroll;
+        self.todos_scroll = 0;
     }
 
     /// Replace the session todo list. Auto-collapses when every item is
@@ -3068,14 +3201,24 @@ impl TuiApp {
         self.todos = todos;
         if self.todos.is_empty() {
             self.todos_collapsed = false;
+            self.todos_scroll = 0;
             self.todos_hit.clear();
+            self.todos_body_hit.clear();
+            self.todos_scrollbar_hit.clear();
+            if self.focus == FocusPane::Todos {
+                self.focus = FocusPane::Prompt;
+            }
         } else if all_done && !was_all_done {
             // Just finished (or loaded a completed list) — fold to the header.
             self.todos_collapsed = true;
+            if self.focus == FocusPane::Todos {
+                self.focus = FocusPane::Prompt;
+            }
         } else if !all_done && was_all_done {
             // New open work after a completed list — show the items.
             self.todos_collapsed = false;
         }
+        self.clamp_todos_scroll();
         self.mark_dirty();
     }
 
@@ -3085,6 +3228,10 @@ impl TuiApp {
             return;
         }
         self.todos_collapsed = !self.todos_collapsed;
+        if self.todos_collapsed && self.focus == FocusPane::Todos {
+            self.focus = FocusPane::Prompt;
+        }
+        self.clamp_todos_scroll();
         self.mark_dirty();
     }
 
