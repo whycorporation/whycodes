@@ -751,6 +751,9 @@ fn merge_with_general_security_memory_swarm() {
         Some(Path::new("/proj"))
     );
     assert_eq!(merged.general.log_level.as_deref(), Some("debug"));
+    overlay.general.auto_update = false;
+    let merged = base.merge_with(&overlay);
+    assert!(!merged.general.auto_update);
     assert_eq!(merged.security.bash_risk_threshold, "caution");
     assert_eq!(merged.security.sandbox, "off");
     assert!(!merged.security.sandbox_network);
@@ -1082,6 +1085,8 @@ fn apply_env_overrides_sandbox_and_memory() {
         "WHYCODES_NETWORK_ALLOWLIST",
         "WHYCODES_NETWORK_DENYLIST",
         "WHYCODES_NO_MEMORY",
+        "WHYCODES_NO_AUTO_UPDATE",
+        "WHYCODES_AUTO_UPDATE",
         "WHYCODES_MEMORY",
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
@@ -1324,6 +1329,26 @@ fn load_existing_fills_provider_name_from_key() {
 }
 
 #[test]
+fn load_migrates_missing_schema_version() {
+    with_isolated_home(|home| {
+        std::fs::write(home.join("config.toml"), "default_agent = \"plan\"\n").unwrap();
+        let cfg = Config::load().unwrap();
+        assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
+        assert!(cfg.general.auto_update);
+        assert_eq!(cfg.default_agent, "plan");
+        let on_disk = std::fs::read_to_string(home.join("config.toml")).unwrap();
+        assert!(on_disk.contains("schema_version"), "{on_disk}");
+    });
+}
+
+#[test]
+fn migrate_schema_is_idempotent() {
+    let mut cfg = Config::default();
+    assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
+    assert!(!cfg.migrate_schema().unwrap());
+}
+
+#[test]
 fn load_rejects_bad_toml_and_unreadable_file() {
     with_isolated_home(|home| {
         std::fs::write(home.join("config.toml"), "[[[not toml").unwrap();
@@ -1385,6 +1410,8 @@ fn apply_env_overrides_cover_every_knob() {
         "WHYCODES_NETWORK_ALLOWLIST",
         "WHYCODES_NETWORK_DENYLIST",
         "WHYCODES_NO_MEMORY",
+        "WHYCODES_NO_AUTO_UPDATE",
+        "WHYCODES_AUTO_UPDATE",
         "WHYCODES_MEMORY",
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
@@ -1452,6 +1479,20 @@ fn apply_env_overrides_cover_every_knob() {
     unsafe { std::env::set_var("WHYCODES_MEMORY", "off") };
     cfg.apply_env_overrides();
     assert!(!cfg.memory.enabled);
+
+    assert!(cfg.general.auto_update);
+    unsafe { std::env::set_var("WHYCODES_NO_AUTO_UPDATE", "1") };
+    cfg.apply_env_overrides();
+    assert!(!cfg.general.auto_update);
+    unsafe { std::env::set_var("WHYCODES_AUTO_UPDATE", "on") };
+    cfg.apply_env_overrides();
+    assert!(cfg.general.auto_update);
+    unsafe { std::env::set_var("WHYCODES_AUTO_UPDATE", "off") };
+    cfg.apply_env_overrides();
+    assert!(!cfg.general.auto_update);
+    unsafe { std::env::set_var("WHYCODES_AUTO_UPDATE", "maybe") };
+    cfg.apply_env_overrides();
+    assert!(!cfg.general.auto_update);
     unsafe { std::env::set_var("WHYCODES_MEMORY", "maybe") };
     cfg.apply_env_overrides();
 

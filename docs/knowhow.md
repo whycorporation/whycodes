@@ -144,6 +144,21 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Interactive auto-update must not run in CI or headless
+
+**Symptom:** A pipeline that invokes `whycodes generate` or `--format json`
+could replace the binary mid-job if GitHub had a newer tag.
+
+**Root cause:** Self-update talks to GitHub Releases. That is fine for a
+human TUI start, not for CI, ACP, or structured output.
+
+**Fix:** `should_auto_update` is true only for a bare invoke / `run` with
+text output, and never when `--no-auto-update`, `CI`, or
+`WHYCODES_NO_AUTO_UPDATE` is set. Homebrew prefixes still refuse to
+self-replace.
+
+**Prevention:** Keep auto-update off the headless command match arm.
+
 ### 2026-08-30 — Tool-result cap footer is billed every turn; recap must strip it
 
 **Symptom:** Capped `bash`/`read`/`grep` dumps keep a long

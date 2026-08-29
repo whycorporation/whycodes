@@ -13,6 +13,7 @@ fn cli(command: Option<Commands>) -> Cli {
         continue_session: false,
         resume: None,
         debug: false,
+        no_auto_update: false,
         no_memory: false,
     }
 }
@@ -171,6 +172,40 @@ fn runtime_choice_per_command() {
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Config {
         cmd: ConfigCmd::Show
     }))));
+}
+
+#[test]
+fn auto_update_only_interactive_text_sessions() {
+    assert!(should_auto_update(&cli(None), true));
+    assert!(should_auto_update(
+        &cli(Some(Commands::Run {
+            prompt: None,
+            max_turns: None,
+            format: OutputFormat::Text,
+        })),
+        true
+    ));
+    assert!(!should_auto_update(
+        &cli(Some(Commands::Run {
+            prompt: Some("hi".into()),
+            max_turns: None,
+            format: OutputFormat::Json,
+        })),
+        true
+    ));
+    assert!(!should_auto_update(
+        &cli(Some(Commands::Generate {
+            prompt: vec!["x".into()],
+            max_turns: None,
+            jobs: 1,
+            format: OutputFormat::Text,
+        })),
+        true
+    ));
+    let mut off = cli(None);
+    off.no_auto_update = true;
+    assert!(!should_auto_update(&off, true));
+    assert!(!should_auto_update(&cli(None), false));
 }
 
 #[test]

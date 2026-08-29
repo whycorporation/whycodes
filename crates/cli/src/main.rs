@@ -76,6 +76,10 @@ pub struct Cli {
     /// Disable cross-session semantic / auto memory for this process
     #[arg(long = "no-memory", global = true)]
     pub no_memory: bool,
+
+    /// Skip the interactive startup self-update for this process
+    #[arg(long = "no-auto-update", global = true)]
+    pub no_auto_update: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -993,6 +997,8 @@ async fn cmd_run(
     // Interactive mode always starts (OpenCode-style). API key is optional until
     // the user actually sends a prompt that needs the LLM.
     let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+
+    maybe_auto_update(cli, &config).await;
 
     // Full-screen TUI unless --plain / WHYCODES_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
@@ -4444,6 +4450,52 @@ async fn cmd_debug() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Interactive TUI/REPL may self-update before drawing. Headless / CI / ACP
+/// paths never do — a silent binary replace mid-pipeline is worse than a
+/// stale version. Failures are ignored so a flaky network cannot block a
+/// session.
+#[cfg(feature = "self-update")]
+async fn maybe_auto_update(cli: &Cli, config: &Config) {
+    if !should_auto_update(cli, config.general.auto_update) {
+        return;
+    }
+    match upgrade::run_quiet().await {
+        Ok(Some(version)) => {
+            eprintln!(
+                "whycodes: updated {} → {version} (disable with --no-auto-update)",
+                PKG_VERSION
+            );
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::debug!("startup auto-update skipped: {e}");
+        }
+    }
+}
+
+#[cfg(not(feature = "self-update"))]
+async fn maybe_auto_update(_cli: &Cli, _config: &Config) {}
+
+pub(crate) fn should_auto_update(cli: &Cli, config_enabled: bool) -> bool {
+    if cli.no_auto_update {
+        return false;
+    }
+    if !config_enabled {
+        return false;
+    }
+    if std::env::var_os("WHYCODES_NO_AUTO_UPDATE").is_some() {
+        return false;
+    }
+    if std::env::var_os("CI").is_some() {
+        return false;
+    }
+    match &cli.command {
+        None => true,
+        Some(Commands::Run { format, .. }) => matches!(format, OutputFormat::Text),
+        Some(_) => false,
+    }
 }
 
 /// `upgrade` — Self-update from the latest GitHub release

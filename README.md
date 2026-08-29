@@ -64,8 +64,10 @@ cargo build --release -p whycodes-cli
 ```
 
 Update with `whycodes upgrade` (script / cargo installs) or `brew upgrade
-whycodes` (Homebrew). The install scripts verify release artifacts against the
-published `SHA256SUMS`. Downloadable binaries and uninstall instructions:
+whycodes` (Homebrew). Interactive sessions also self-update from GitHub
+Releases unless you pass `--no-auto-update`. The install scripts verify
+release artifacts against the published `SHA256SUMS`. Downloadable binaries
+and uninstall instructions:
 [docs/packaging.md](docs/packaging.md).
 
 <details>

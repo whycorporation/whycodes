@@ -120,6 +120,13 @@ warn on first run. `whycodes upgrade` replaces the running binary with the
 newest release (checksum verified) and leaves the existing one in place if
 anything fails — except Homebrew installs, which it will not touch.
 
+Interactive TUI/REPL sessions also check GitHub for a newer release and
+install it the same way (`SHA256SUMS`, no Homebrew prefix). Disable with
+`--no-auto-update`, `WHYCODES_NO_AUTO_UPDATE=1`, or
+`[general] auto_update = false`. Headless / CI / ACP paths never auto-update.
+This is not product telemetry: the only request is GitHub's public latest
+release API.
+
 From source, the binary lands at `target/release/whycodes`. Optional extras
 (Unicode mermaid + extra highlight languages, ~+1.7 MB):
 

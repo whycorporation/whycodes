@@ -76,6 +76,11 @@ pub struct Config {
     #[serde(default)]
     pub general: GeneralConfig,
 
+    /// On-disk schema version. Missing / `0` is migrated to
+    /// [`CONFIG_SCHEMA_VERSION`] on load.
+    #[serde(default)]
+    pub schema_version: u32,
+
     /// MCP server configurations (OpenCode-compatible)
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
@@ -647,6 +652,7 @@ impl Default for Config {
             session: SessionConfig::default(),
             tui: TuiConfig::default(),
             general: GeneralConfig::default(),
+            schema_version: CONFIG_SCHEMA_VERSION,
             mcp_servers: HashMap::new(),
             permission: HashMap::new(),
             commands: HashMap::new(),
@@ -890,6 +896,9 @@ pub struct ToolsConfig {
 fn default_true() -> bool {
     true
 }
+
+/// Current `config.toml` schema. Bump when a load-time rewrite is required.
+pub const CONFIG_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionConfig {
@@ -1273,11 +1282,25 @@ fn default_prompt_suggestions() -> String {
     "off".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneralConfig {
     pub project_path: Option<PathBuf>,
     pub log_level: Option<String>,
     pub default_gcp_project: Option<String>,
+    /// Check GitHub for a newer release when an interactive session starts.
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+}
+
+impl Default for GeneralConfig {
+    fn default() -> Self {
+        Self {
+            project_path: None,
+            log_level: None,
+            default_gcp_project: None,
+            auto_update: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1332,9 +1355,28 @@ impl Config {
                 }
             }
             cfg.expand_notify_secrets();
+            cfg.migrate_schema()?;
             Ok(cfg)
         } else {
             Ok(Self::default())
+        }
+    }
+
+    /// Rewrite an older `config.toml` in place so later loads see the current
+    /// schema. Missing `schema_version` is treated as `0`.
+    pub fn migrate_schema(&mut self) -> Result<bool> {
+        if self.schema_version >= CONFIG_SCHEMA_VERSION {
+            return Ok(false);
+        }
+        self.schema_version = CONFIG_SCHEMA_VERSION;
+        // Best-effort: a read-only home should still run with the in-memory
+        // defaults for new fields. The next writable save persists the bump.
+        match self.save() {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                tracing::warn!("config schema migrate could not rewrite config.toml: {e}");
+                Ok(true)
+            }
         }
     }
 
@@ -1387,7 +1429,10 @@ impl Config {
         if project_config_path.exists() {
             match std::fs::read_to_string(&project_config_path) {
                 Ok(content) => match toml::from_str::<Config>(&content) {
-                    Ok(project) => {
+                    Ok(mut project) => {
+                        if project.schema_version < CONFIG_SCHEMA_VERSION {
+                            project.schema_version = CONFIG_SCHEMA_VERSION;
+                        }
                         config = config.merge_with(&project);
                     }
                     Err(e) => warn_project_config("parse", &project_config_path, e),
@@ -1510,6 +1555,21 @@ impl Config {
             )
         {
             self.memory.enabled = false;
+        }
+        if let Ok(val) = std::env::var("WHYCODES_NO_AUTO_UPDATE")
+            && matches!(
+                val.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        {
+            self.general.auto_update = false;
+        }
+        if let Ok(val) = std::env::var("WHYCODES_AUTO_UPDATE") {
+            match val.to_ascii_lowercase().as_str() {
+                "0" | "false" | "no" | "off" => self.general.auto_update = false,
+                "1" | "true" | "yes" | "on" => self.general.auto_update = true,
+                _ => {}
+            }
         }
         if let Ok(val) = std::env::var("WHYCODES_MEMORY") {
             match val.to_ascii_lowercase().as_str() {
@@ -1752,6 +1812,16 @@ impl Config {
         }
         if other.general.log_level.is_some() {
             merged.general.log_level = other.general.log_level.clone();
+        }
+        if other.general.default_gcp_project.is_some() {
+            merged.general.default_gcp_project = other.general.default_gcp_project.clone();
+        }
+        // auto_update defaults true; only an explicit false in a higher layer wins.
+        if !other.general.auto_update {
+            merged.general.auto_update = false;
+        }
+        if other.schema_version > merged.schema_version {
+            merged.schema_version = other.schema_version;
         }
 
         // MCP servers: higher-priority entries override by name

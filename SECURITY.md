@@ -14,8 +14,8 @@ in the next release after the report is confirmed.
 
 ## Supported versions
 
-Only the latest tagged release receives security fixes. `whycodes upgrade`
-moves you to it.
+Only the latest tagged release receives security fixes. Interactive sessions
+self-update to it unless disabled; `whycodes upgrade` does the same on demand.
 
 ## Scope
 

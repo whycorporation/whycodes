@@ -43,7 +43,8 @@ These are still in force. The full historical log is
   non-Linux keeps working).
 - Public release is last: coding, perf and plugins rank ahead of opening
   the repo.
-- No CLI telemetry, update-check, or phone-home. Install volume is GitHub
+- No CLI telemetry or phone-home. Interactive sessions may check GitHub
+  Releases for a newer binary (opt-out). Install volume is GitHub
   release `download_count` (`python scripts/release_downloads.py`) and,
   later, Homebrew-core analytics — not unique people and not daily use.
 - Do not add a WhyCodes GitHub login for usage stats. Copilot OAuth is a
