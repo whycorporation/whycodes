@@ -1287,7 +1287,8 @@ pub struct GeneralConfig {
     pub project_path: Option<PathBuf>,
     pub log_level: Option<String>,
     pub default_gcp_project: Option<String>,
-    /// Check GitHub for a newer release when an interactive session starts.
+    /// Check GitHub for a newer release when an interactive TUI session starts
+    /// (home-screen confirm; never a silent replace).
     #[serde(default = "default_true")]
     pub auto_update: bool,
 }

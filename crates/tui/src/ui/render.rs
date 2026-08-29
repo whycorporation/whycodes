@@ -869,6 +869,10 @@ mod paint_tests {
 
         assert!(text.contains("deterministic draft"), "{text:?}");
         assert!(text.contains('╭') && text.contains('╯'), "{text:?}");
+        assert!(
+            text.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))),
+            "home shows product version: {text:?}"
+        );
         assert!(a.chat_viewport_rows > 0);
         assert_eq!(a.chat_content_width, buffer.area().width.saturating_sub(2));
     }

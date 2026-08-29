@@ -383,6 +383,19 @@ pub enum ConfirmAction {
     Quit,
     ClearSession,
     DeleteProvider(String),
+    /// User accepted the home-screen "update now?" prompt. The run loop
+    /// quits with [`crate::TuiExit::Upgrade`] so the CLI can replace the
+    /// binary after the terminal is restored.
+    Upgrade,
+}
+
+/// A newer GitHub release the home screen can offer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateOffer {
+    /// Script / cargo install — `whycodes upgrade` can replace the binary.
+    SelfInstall(String),
+    /// Homebrew prefix — tell the user to `brew upgrade`, do not self-replace.
+    Homebrew(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1359,6 +1372,12 @@ pub struct TuiApp {
     pub sessions_rows: Vec<SessionDashboardRow>,
     /// Re-fetch `GET /v1/models` for the active provider (config base + key).
     pub pending_catalog_refresh: bool,
+    /// GitHub found a newer tag. Offered once on the empty home screen.
+    pub available_update: Option<UpdateOffer>,
+    /// True after the update confirm/alert has been shown (or skipped).
+    pub update_prompted: bool,
+    /// User accepted the update confirm — run loop returns [`crate::TuiExit::Upgrade`].
+    pub pending_upgrade: bool,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
     pub primary_agents: Vec<String>,
@@ -1902,6 +1921,9 @@ impl TuiApp {
             pending_session_switch: None,
             sessions_rows: Vec::new(),
             pending_catalog_refresh: false,
+            available_update: None,
+            update_prompted: false,
+            pending_upgrade: false,
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),

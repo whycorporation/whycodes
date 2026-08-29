@@ -181,7 +181,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         2 + recents.len() as u16
     };
     let mark_h = HOME_LOGO_MARK.len() as u16;
-    // `?` mark, gap, agent/model meta, hints, recents.
+    // `?` mark, gap, agent/model/version meta, hints, recents.
     let content_h = mark_h + 1 + 1 + 2 + recents_h;
     let top = area.height.saturating_sub(content_h) / 2;
     for _ in 0..top {
@@ -213,9 +213,10 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
         .config
         .agent_color(&app.agent_name, app.agent_cycle_idx, palette);
     let meta_part = format!(
-        "  ·  {}/{}",
+        "  ·  {}/{}  ·  v{}",
         empty_dash(&app.provider_name),
-        empty_dash(&app.model_name)
+        empty_dash(&app.model_name),
+        env!("CARGO_PKG_VERSION")
     );
     lines.push(center_line_colored(
         &app.agent_name,

@@ -32,8 +32,8 @@ use whycodes_session::SessionHistory;
 use whycodes_session::session::Session;
 
 use crate::app::{
-    AgentState, AppMode, ChatRole, DialogKind, FocusPane, TuiApp, format_elapsed_ms,
-    format_token_count, format_usage_short,
+    AgentState, AppMode, ChatRole, ConfirmAction, DialogKind, FocusPane, TuiApp, UpdateOffer,
+    format_elapsed_ms, format_token_count, format_usage_short,
 };
 use crate::config::TuiAppConfig;
 use crate::input;
@@ -200,6 +200,18 @@ pub struct TuiRunOptions {
     pub resume_session_id: Option<String>,
     /// When set, turns go to `whycodes serve` over HTTP instead of an in-process agent.
     pub remote: Option<crate::remote::RemoteAttach>,
+    /// Background GitHub latest-release check. `None` skips the home popup.
+    pub update_rx: Option<tokio::sync::mpsc::UnboundedReceiver<UpdateOffer>>,
+}
+
+/// How the TUI left the event loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TuiExit {
+    /// User quit. Session summary already printed.
+    Quit,
+    /// User accepted the home-screen update prompt. CLI should install after
+    /// the terminal is restored (binary replace while alt-screen is up is messy).
+    Upgrade,
 }
 
 /// Sentinel for `TuiRunOptions::resume_session_id`: most recently updated session.
@@ -599,7 +611,7 @@ pub enum TurnOutcome {
 }
 
 /// Run the full-screen TUI until the user quits.
-pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
+pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // Wall clock for the Cline-style exit summary (process open → quit).
     let session_started = Instant::now();
 
@@ -786,6 +798,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
     let mut spinner_frame: usize = 0;
     // Title may arrive before TurnOutcome restores the real rt.session; hold it.
     let mut pending_async_title: Option<(String, String)> = None;
+    let mut update_rx = opts.update_rx;
 
     apply_boot_prompt(&mut app, missing_key, opts.initial_prompt.clone());
 
@@ -813,6 +826,20 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
             // Unconditional mark_dirty here used to lock the idle poll at
             // 40 ms (~25 fps full paints) for as long as the dialog stayed open.
             refresh_live_session_ui(&mut app, &rt, &runtimes);
+
+            if let Some(rx) = update_rx.as_mut() {
+                match rx.try_recv() {
+                    Ok(offer) => {
+                        app.available_update = Some(offer);
+                        app.mark_dirty();
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        update_rx = None;
+                    }
+                }
+            }
+            maybe_offer_update(&mut app);
 
             // Expire toasts before drawing, so one never lingers a frame past
             // its time.
@@ -1837,7 +1864,12 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<()> {
         })),
     );
 
-    result
+    result?;
+    Ok(if app.pending_upgrade {
+        TuiExit::Upgrade
+    } else {
+        TuiExit::Quit
+    })
 }
 
 /// Read the event that woke `poll`, then drain anything already queued.
@@ -3539,6 +3571,43 @@ fn apply_boot_prompt(app: &mut TuiApp, missing_key: bool, initial_prompt: Option
     {
         app.add_message(ChatRole::User, &p);
         app.pending_prompt = Some(p);
+    }
+}
+
+/// Home-screen update prompt. Never interrupts an existing dialog or a
+/// session that already has messages — a confirm over a live turn is worse
+/// than a stale binary.
+fn maybe_offer_update(app: &mut TuiApp) {
+    if app.update_prompted || app.dialogs.is_open() {
+        return;
+    }
+    if !app.messages.is_empty() {
+        if app.available_update.is_some() {
+            app.update_prompted = true;
+        }
+        return;
+    }
+    let Some(offer) = app.available_update.clone() else {
+        return;
+    };
+    app.update_prompted = true;
+    let current = env!("CARGO_PKG_VERSION");
+    match offer {
+        UpdateOffer::SelfInstall(version) => {
+            app.confirm(
+                "Update available",
+                format!("v{current} → v{version} is on GitHub.\nUpdate now?"),
+                ConfirmAction::Upgrade,
+            );
+        }
+        UpdateOffer::Homebrew(version) => {
+            app.alert(
+                "Update available",
+                format!(
+                    "v{current} → v{version} is on GitHub.\nThis install is Homebrew — run `brew upgrade whycodes`."
+                ),
+            );
+        }
     }
 }
 
@@ -6734,6 +6803,38 @@ mod tests {
     }
 
     #[test]
+    fn maybe_offer_update_confirms_on_empty_home() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.available_update = Some(UpdateOffer::SelfInstall("9.9.9".into()));
+        maybe_offer_update(&mut app);
+        assert!(app.update_prompted);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Confirm {
+                on_confirm: ConfirmAction::Upgrade,
+                ..
+            })
+        ));
+
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.available_update = Some(UpdateOffer::Homebrew("9.9.9".into()));
+        maybe_offer_update(&mut app);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Alert { .. })
+        ));
+        maybe_offer_update(&mut app);
+        assert!(app.update_prompted);
+
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        app.add_message(ChatRole::User, "hi");
+        app.available_update = Some(UpdateOffer::SelfInstall("9.9.9".into()));
+        maybe_offer_update(&mut app);
+        assert!(app.update_prompted);
+        assert!(!app.dialogs.is_open());
+    }
+
+    #[test]
     fn run_options_and_turn_outcome_exist() {
         let opts = TuiRunOptions {
             project_dir: PathBuf::from("/tmp"),
@@ -6746,6 +6847,7 @@ mod tests {
             config: Config::default(),
             resume_session_id: Some(RESUME_LATEST.into()),
             remote: None,
+            update_rx: None,
         };
         assert_eq!(opts.resume_session_id.as_deref(), Some(RESUME_LATEST));
         let _ = TurnOutcome::Remote {
@@ -8527,6 +8629,7 @@ mod tests {
             config: Config::default(),
             resume_session_id: None,
             remote: None,
+            update_rx: None,
         }
     }
 

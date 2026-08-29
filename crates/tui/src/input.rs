@@ -1799,6 +1799,10 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             ConfirmAction::DeleteProvider(name) => {
                 app.status_message = format!("Provider '{name}' would be deleted");
             }
+            ConfirmAction::Upgrade => {
+                app.pending_upgrade = true;
+                app.running = false;
+            }
         },
         DialogKind::Alert { .. } => {
             // Close alert on confirm.
@@ -3026,6 +3030,15 @@ mod event_tests {
         open_dialog(&mut a, DialogKind::Sessions);
         handle_event(&mut a, key(KeyCode::Enter));
         assert_eq!(a.pending_session_switch, Some(3));
+    }
+
+    #[test]
+    fn confirm_upgrade_marks_pending_and_quits() {
+        let mut a = app();
+        a.confirm("Update available", "Update now?", ConfirmAction::Upgrade);
+        handle_event(&mut a, key(KeyCode::Char('y')));
+        assert!(a.pending_upgrade);
+        assert!(!a.running);
     }
 
     #[test]

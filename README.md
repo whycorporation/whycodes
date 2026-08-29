@@ -64,8 +64,9 @@ cargo build --release -p whycodes-cli
 ```
 
 Update with `whycodes upgrade` (script / cargo installs) or `brew upgrade
-whycodes` (Homebrew). Interactive sessions also self-update from GitHub
-Releases unless you pass `--no-auto-update`. The install scripts verify
+whycodes` (Homebrew). Interactive TUI sessions check GitHub for a newer
+release and ask on the home screen before installing. Pass `--no-auto-update`
+to skip the prompt. The install scripts verify
 release artifacts against the published `SHA256SUMS`. Downloadable binaries
 and uninstall instructions:
 [docs/packaging.md](docs/packaging.md).

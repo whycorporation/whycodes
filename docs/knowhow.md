@@ -162,6 +162,23 @@ when overflowing) maps ↑/↓/j/k. Header click / `t` still folds.
 **Prevention:** Keep todo-hit routing in `coalesce_chat_wheels`. Do not
 reintroduce a `+N more` line.
 
+### 2026-08-30 — Home-screen update is a confirm, never a silent replace
+
+**Symptom:** Interactive start used to call `upgrade::run_quiet()` before
+the TUI painted. A newer GitHub tag replaced the binary with no prompt.
+
+**Root cause:** Auto-update was wired as a silent install so the next
+process start would pick up the new binary. Users never saw a choice, and
+a Homebrew prefix still needed a different message.
+
+**Fix:** Background `check_latest` after first paint. Empty home screen
+opens a confirm (`Update now?`) or a Homebrew alert. Accept quits the TUI
+(`TuiExit::Upgrade`) and the CLI installs after the terminal is restored.
+`--no-auto-update` / `CI` / `WHYCODES_NO_AUTO_UPDATE` still skip the check.
+
+**Prevention:** Do not call `upgrade::run` from TUI boot. Keep the GitHub
+fetch off the first-paint path.
+
 ### 2026-08-30 — Interactive auto-update must not run in CI or headless
 
 **Symptom:** A pipeline that invokes `whycodes generate` or `--format json`
@@ -175,7 +192,8 @@ text output, and never when `--no-auto-update`, `CI`, or
 `WHYCODES_NO_AUTO_UPDATE` is set. Homebrew prefixes still refuse to
 self-replace.
 
-**Prevention:** Keep auto-update off the headless command match arm.
+**Prevention:** Keep auto-update off the headless command match arm. The
+TUI path must confirm before `upgrade::run`.
 
 ### 2026-08-30 — Tool-result cap footer is billed every turn; recap must strip it
 

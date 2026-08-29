@@ -77,7 +77,7 @@ pub struct Cli {
     #[arg(long = "no-memory", global = true)]
     pub no_memory: bool,
 
-    /// Skip the interactive startup self-update for this process
+    /// Skip the home-screen "update available?" prompt for this process
     #[arg(long = "no-auto-update", global = true)]
     pub no_auto_update: bool,
 }
@@ -998,8 +998,6 @@ async fn cmd_run(
     // the user actually sends a prompt that needs the LLM.
     let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
-    maybe_auto_update(cli, &config).await;
-
     // Full-screen TUI unless --plain / WHYCODES_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
     // while still having a controlling terminal — tui_available() opens
@@ -1022,7 +1020,8 @@ async fn cmd_run(
     let max_turns = ignore_max_turns_interactive(max_turns);
 
     if use_tui {
-        return whycodes_tui::run(whycodes_tui::TuiRunOptions {
+        let update_rx = spawn_update_check(cli, &config);
+        let exit = whycodes_tui::run(whycodes_tui::TuiRunOptions {
             project_dir,
             provider,
             model,
@@ -1033,6 +1032,7 @@ async fn cmd_run(
             config,
             resume_session_id: resume_want,
             remote: None,
+            update_rx,
         })
         .await
         .map_err(|e| {
@@ -1050,7 +1050,8 @@ async fn cmd_run(
             } else {
                 e
             }
-        });
+        })?;
+        return after_tui_exit(exit).await;
     }
 
     let agent_info = {
@@ -3227,8 +3228,10 @@ async fn cmd_connect(cli: &Cli, addr: &str, session: Option<&str>) -> anyhow::Re
         config,
         resume_session_id: None,
         remote: Some(whycodes_tui::RemoteAttach::new(base, session_id)),
+        update_rx: None,
     })
     .await
+    .map(|_| ())
 }
 
 /// `serve` — Warm multi-session API + local share server.
@@ -4452,31 +4455,71 @@ async fn cmd_debug() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Interactive TUI/REPL may self-update before drawing. Headless / CI / ACP
-/// paths never do — a silent binary replace mid-pipeline is worse than a
-/// stale version. Failures are ignored so a flaky network cannot block a
-/// session.
-#[cfg(feature = "self-update")]
-async fn maybe_auto_update(cli: &Cli, config: &Config) {
+/// Ask GitHub for a newer tag in the background. The TUI paints first; if a
+/// release exists, the home screen offers a confirm (never a silent replace).
+fn spawn_update_check(
+    cli: &Cli,
+    config: &Config,
+) -> Option<tokio::sync::mpsc::UnboundedReceiver<whycodes_tui::UpdateOffer>> {
     if !should_auto_update(cli, config.general.auto_update) {
-        return;
+        return None;
     }
-    match upgrade::run_quiet().await {
-        Ok(Some(version)) => {
-            eprintln!(
-                "whycodes: updated {} → {version} (disable with --no-auto-update)",
-                PKG_VERSION
-            );
-        }
-        Ok(None) => {}
-        Err(e) => {
-            tracing::debug!("startup auto-update skipped: {e}");
-        }
+    #[cfg(feature = "self-update")]
+    {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            match upgrade::check_latest().await {
+                Ok(Some(rel)) => {
+                    let offer = if rel.homebrew {
+                        whycodes_tui::UpdateOffer::Homebrew(rel.version)
+                    } else {
+                        whycodes_tui::UpdateOffer::SelfInstall(rel.version)
+                    };
+                    if tx.send(offer).is_err() {
+                        tracing::debug!("update offer dropped: tui already quit");
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::debug!("startup update check skipped: {e}");
+                }
+            }
+        });
+        Some(rx)
+    }
+    #[cfg(not(feature = "self-update"))]
+    {
+        let _ = cli;
+        let _ = config;
+        None
     }
 }
 
-#[cfg(not(feature = "self-update"))]
-async fn maybe_auto_update(_cli: &Cli, _config: &Config) {}
+async fn after_tui_exit(exit: whycodes_tui::TuiExit) -> anyhow::Result<()> {
+    match exit {
+        whycodes_tui::TuiExit::Quit => Ok(()),
+        whycodes_tui::TuiExit::Upgrade => {
+            #[cfg(feature = "self-update")]
+            {
+                match upgrade::run().await {
+                    Ok(Some(version)) => {
+                        eprintln!(
+                            "whycodes: updated {} → {version} — restart to use it",
+                            PKG_VERSION
+                        );
+                    }
+                    Ok(None) => {
+                        eprintln!("whycodes: already on the latest release");
+                    }
+                    Err(e) => {
+                        eprintln!("whycodes: update failed: {e}");
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
 
 pub(crate) fn should_auto_update(cli: &Cli, config_enabled: bool) -> bool {
     if cli.no_auto_update {

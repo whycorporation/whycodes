@@ -334,30 +334,15 @@ pub(crate) fn path_looks_like_homebrew(path: &str) -> bool {
 
 /// Run the upgrade. Returns the new version when one was installed.
 pub async fn run() -> Result<Option<String>> {
-    run_inner(false).await
-}
-
-/// Same as [`run`], but skip the GitHub round-trip when the current binary
-/// is already known not-newer (Homebrew prefix, or a stale-but-equal tag
-/// after `is_newer` would still need the release JSON). Used at TUI start
-/// so a missing network cannot stall the session after the check begins.
-pub async fn run_quiet() -> Result<Option<String>> {
-    run_inner(true).await
-}
-
-async fn run_inner(quiet: bool) -> Result<Option<String>> {
     let target = current_binary()?;
     if let Some(hint) = package_manager_upgrade_hint(&target) {
-        if quiet {
-            return Ok(None);
-        }
         bail!("{hint}");
     }
 
     let current = env!("CARGO_PKG_VERSION");
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::limited(10))
-        .timeout(std::time::Duration::from_secs(if quiet { 8 } else { 30 }))
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .context("building HTTP client")?;
 
@@ -378,6 +363,31 @@ async fn run_inner(quiet: bool) -> Result<Option<String>> {
             Ok(Some(version))
         }
     }
+}
+
+/// Metadata for a newer GitHub release. Does not download the archive.
+pub struct LatestRelease {
+    pub version: String,
+    pub homebrew: bool,
+}
+
+/// Ask GitHub whether a newer tag exists. Homebrew prefixes still report the
+/// tag so the TUI can tell the user to `brew upgrade` instead of self-replacing.
+pub async fn check_latest() -> Result<Option<LatestRelease>> {
+    let target = current_binary()?;
+    let homebrew = package_manager_upgrade_hint(&target).is_some();
+    let current = env!("CARGO_PKG_VERSION");
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .context("building HTTP client")?;
+    let body = latest_release_json(&client).await?;
+    let version = release_version(&body)?;
+    if !is_newer(&version, current) {
+        return Ok(None);
+    }
+    Ok(Some(LatestRelease { version, homebrew }))
 }
 
 #[derive(Debug, PartialEq, Eq)]
