@@ -43,7 +43,7 @@
     "prepublishOnly": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "@types/node": "^22.15.0",
+    "@types/node": "^26.4.0",
     "typescript": "^7.0.2"
   }
 }
