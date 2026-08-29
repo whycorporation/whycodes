@@ -72,6 +72,15 @@ gh workflow run deploy-landing.yml
 
 The committed JSON is a fallback so offline `pnpm build` still has numbers.
 
+`https://why.codes/install` (and `/install.sh`, `/install.ps1`) are Nitro
+routes on that Worker. Each request fetches
+`scripts/install.sh` / `install.ps1` from GitHub raw (`main`) and falls back
+to a snapshot baked at deploy (`server/data/install.json`). The homepage
+`curl | bash` line is that alias — not a second installer.
+
+A push to `scripts/install.sh` / `install.ps1` on `main` also runs
+`deploy-landing.yml`, so the baked snapshot stays current.
+
 ### Later
 
 - Dedicated tap repo (`whycorporation/homebrew-whycodes`) if formula noise in
@@ -83,7 +92,17 @@ The committed JSON is a fallback so offline `pnpm build` still has numbers.
 ## Install scripts (already production)
 
 See `scripts/install.sh`, `install.ps1`, and `whycodes upgrade`. Those remain
-the primary path until package managers are first-class.
+the primary path until package managers are first-class. Users should run:
+
+```bash
+curl -fsSL https://why.codes/install | bash
+```
+
+```powershell
+irm https://why.codes/install.ps1 | iex
+```
+
+GitHub raw URLs still work; why.codes is the short alias.
 
 The scripts verify the download against the release `SHA256SUMS`. They do
 not modify `PATH`; they print the install directory if it is not already on

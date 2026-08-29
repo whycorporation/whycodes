@@ -3,6 +3,9 @@
     Install whycodes from a GitHub release.
 
 .DESCRIPTION
+    irm https://why.codes/install.ps1 | iex
+
+    GitHub raw is the same file if why.codes is unreachable:
     irm https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.ps1 | iex
 
     The downloaded archive is verified against the release's SHA256SUMS before

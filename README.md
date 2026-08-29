@@ -41,13 +41,13 @@ provider.
 ### Install script (Linux, macOS)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.sh | sh
+curl -fsSL https://why.codes/install | bash
 ```
 
 ### Install script (Windows)
 
 ```powershell
-irm https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.ps1 | iex
+irm https://why.codes/install.ps1 | iex
 ```
 
 ### Homebrew (macOS; Linuxbrew x86_64)

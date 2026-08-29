@@ -1,11 +1,22 @@
 # Landing production deploys run on this repo's Linux runner.
-# Triggered only by workflow_dispatch / repository_dispatch — never pull_request.
+# Triggered by workflow_dispatch, repository_dispatch, tagged-release
+# dispatch from release.yml, and pushes that change the install scripts.
+# Never pull_request.
 name: Deploy landing
 
 on:
   workflow_dispatch:
   repository_dispatch:
     types: [deploy-landing]
+  # Snapshot fallback on why.codes/install is baked at deploy. Request-time
+  # fetch already prefers GitHub raw; this keeps the snapshot from going stale
+  # when the installer itself changes without a tagged release.
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
+      - '.github/workflows/deploy-landing.yml'
 
 permissions:
   contents: read

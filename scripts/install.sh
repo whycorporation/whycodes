@@ -1,6 +1,9 @@
 #!/usr/bin/env sh
 # Install whycodes from a GitHub release.
 #
+#   curl -fsSL https://why.codes/install | bash
+#
+# GitHub raw is the same file if why.codes is unreachable:
 #   curl -fsSL https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.sh | sh
 #
 # Public repos: no auth required.
