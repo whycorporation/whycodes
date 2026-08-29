@@ -3,7 +3,7 @@
 Current focus and standing decisions. Completed phase plans live under
 [archive/](archive/README.md) — do not treat them as open work.
 
-Last updated: **2026-08-15**.
+Last updated: **2026-08-29**.
 
 ## Now
 
@@ -43,3 +43,9 @@ These are still in force. The full historical log is
   non-Linux keeps working).
 - Public release is last: coding, perf and plugins rank ahead of opening
   the repo.
+- No CLI telemetry, update-check, or phone-home. Install volume is GitHub
+  release `download_count` (`python scripts/release_downloads.py`) and,
+  later, Homebrew-core analytics — not unique people and not daily use.
+- Do not add a WhyCodes GitHub login for usage stats. Copilot OAuth is a
+  model credential, not a WhyCodes account. Optional GitHub identity is
+  only for a user-facing feature (never `repo` scope, never required).

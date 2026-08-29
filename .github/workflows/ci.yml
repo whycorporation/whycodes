@@ -75,6 +75,7 @@ jobs:
           sh scripts/test_tui_term_matrix.sh
           sh scripts/test_pre_push.sh
           python scripts/test_tracked_secrets.py
+          python scripts/test_release_downloads.py
       - name: Installer syntax (PowerShell)
         # Self-hosted Linux often has no pwsh; skip rather than fail CI.
         run: |
