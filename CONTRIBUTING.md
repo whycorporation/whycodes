@@ -62,7 +62,8 @@ Things to know about CI:
 - Linux CI runs on a **self-hosted** runner, so pull requests from forks are
   skipped there on purpose (untrusted workflow + checkout on that machine).
   Open the PR anyway; a maintainer will run the suite from a same-repo
-  branch.
+  branch. A new push to the same PR or to `main` cancels the previous CI run
+  so the single runner is not stuck on stale jobs.
 
 ## Conventions
 

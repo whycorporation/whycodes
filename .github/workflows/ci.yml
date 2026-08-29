@@ -12,6 +12,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# One pipeline per PR / branch. The repo has a single self-hosted Linux runner;
+# without this, every push to main queues 7 jobs behind the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 # Linux jobs run on the repo's self-hosted runner (no GitHub-hosted minutes).
 # Fork pull requests never do: untrusted workflow + checkout on that machine
 # is a takeover. Same-repo PRs and pushes to main still run here.
