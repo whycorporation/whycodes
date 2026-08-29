@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: User guide
+    url: https://github.com/whycorporation/whycodes/blob/main/docs/guide.md
+    about: CLI, TUI, agents, tools, configuration, and the SDK
+  - name: Security vulnerability
+    url: https://github.com/whycorporation/whycodes/security/advisories/new
+    about: Private report — do not open a public issue for security problems
+  - name: Code of Conduct
+    url: https://github.com/whycorporation/whycodes/blob/main/CODE_OF_CONDUCT.md
+    about: Community standards. For a private report, open an issue titled [conduct] with no sensitive details

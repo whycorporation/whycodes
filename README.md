@@ -150,8 +150,10 @@ coverage — see [docs/coverage.md](docs/coverage.md).
 
 Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) is the short
 path from clone to a merged change; [AGENTS.md](AGENTS.md) holds the rules
-for coding agents working in this repo. Please report vulnerabilities through
-[SECURITY.md](SECURITY.md), not public issues.
+for coding agents working in this repo. By participating you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md). Help and bug reports: [SUPPORT.md](SUPPORT.md).
+Please report vulnerabilities through [SECURITY.md](SECURITY.md), not public
+issues.
 
 ## License
 

@@ -13,6 +13,8 @@ Start here, then pick the page you need.
 | [benchmarks.md](benchmarks.md) | Contributors | How to measure startup, RSS, idle draws |
 | [budgets.md](budgets.md) | Contributors | CI quality budgets (panic, swallow, edges) |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | Contributors | Setup and required checks |
+| [../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) | Everyone | Community standards |
+| [../SUPPORT.md](../SUPPORT.md) | Everyone | Where to ask for help |
 | [../SECURITY.md](../SECURITY.md) | Everyone | Vulnerability reporting |
 | [../AGENTS.md](../AGENTS.md) | Agents | Build, commit, and crate rules |
 | [packaging.md](packaging.md) | Maintainers | Homebrew, installers, release download counts |
