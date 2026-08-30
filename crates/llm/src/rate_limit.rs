@@ -3,9 +3,14 @@
 //! Handles HTTP 429 responses by parsing `Retry-After` headers and provides
 //! a token bucket rate limiter to proactively avoid hitting limits.
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+/// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Parse a Retry-After header value (can be seconds as an integer or an HTTP date).
 pub fn parse_retry_after(header_value: &str) -> Duration {
@@ -71,7 +76,7 @@ impl RateLimiter {
     pub fn acquire(&self) -> Duration {
         // If paused due to a 429, return the remaining pause time
         if self.paused.load(Ordering::SeqCst) {
-            let pause = *self.pause_until.lock().unwrap();
+            let pause = *lock(&self.pause_until);
             if let Some(until) = pause {
                 let now = Instant::now();
                 if now < until {
@@ -82,8 +87,8 @@ impl RateLimiter {
             }
         }
 
-        let mut tokens = self.tokens.lock().unwrap();
-        let mut last = self.last_refill.lock().unwrap();
+        let mut tokens = lock(&self.tokens);
+        let mut last = lock(&self.last_refill);
 
         let now = Instant::now();
         let elapsed = now.duration_since(*last).as_secs_f64();
@@ -107,7 +112,7 @@ impl RateLimiter {
     /// `retry_after` should be the parsed `Retry-After` duration.
     pub fn pause(&self, retry_after: Duration) {
         let until = Instant::now() + retry_after;
-        *self.pause_until.lock().unwrap() = Some(until);
+        *lock(&self.pause_until) = Some(until);
         self.paused.store(true, Ordering::SeqCst);
     }
 

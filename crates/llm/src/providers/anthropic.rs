@@ -272,13 +272,7 @@ impl AnthropicProvider {
             body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
         }
 
-        if let Some(temp) = request.temperature {
-            body["temperature"] = Value::Number(serde_json::Number::from_f64(temp as f64).unwrap());
-        }
-
-        if let Some(top_p) = request.top_p {
-            body["top_p"] = Value::Number(serde_json::Number::from_f64(top_p as f64).unwrap());
-        }
+        crate::openai_compat::apply_sampling(&mut body, request);
 
         crate::thinking::ThinkingConfig::apply_anthropic(&mut body, request.thinking.as_ref());
 

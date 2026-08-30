@@ -19,10 +19,10 @@ Bu belge bir denetim raporu. Mevcut ratchet’ler (`panic_budget`, `swallowed_er
 Proje, katmanlı crate grafiği, `thiserror` başlangıcı, `spawn_blocking` yardımcısı ve `Arc<[Message]>` gibi birkaç **doğru** hamle yapmış. Asıl sapmalar:
 
 1. **God-file / god-struct.** `run.rs` ~9k satır, `TuiApp` 112 `pub` alan, `cli/src/main.rs` ~4.6k satır.
-2. **Stringly-typed hata.** `whycodes_core::Error` neredeyse tamamen `String`; `Clone` Serde varyantında **orijinal hatayı siler**.
+2. **Stringly-typed hata.** `whycodes_core::Error` neredeyse tamamen `String`. `Clone` Serde kolu artık mesajı korur (`Serde(String)`); domain varyantları hâlâ yok.
 3. **Kütüphane crate’lerinde `anyhow`.** `lsp`, `mcp`, `memory`, `storage`, `plugin` uygulama sınırında `anyhow::Result` döndürüyor.
 4. **`async_trait` + `tokio/full` leaf crate’lerde.** Edition 2024’te native `async fn` in traits var; `core` bile `tokio` + `anyhow` çekiyor.
-5. **22 adet `Number::from_f64(...).unwrap()`** LLM provider’larında (NaN/Inf → abort, çünkü `panic = "abort"`).
+5. ~~**22 adet `Number::from_f64(...).unwrap()`** LLM provider’larında~~ **ödendi (2026-08-30):** `openai_compat::{json_number, apply_sampling}` NaN/Inf’i atlar; panic bütçesi llm 22→0.
 6. **Yutulan hatalar** TUI 49 / CLI 32 / agent 29 — ratchet var, sıfırlama yok.
 
 Aşağıdaki bölümler kanıt + önerilen yön.
@@ -66,25 +66,24 @@ pub enum Error {
 impl Clone for Error {
     fn clone(&self) -> Self {
         match self {
-            Self::Serde(_e) => {
-                // serde_json::Error doesn't implement Clone
-                Self::Serde(serde_json::from_str::<serde_json::Value>("not json").unwrap_err())
-            }
+            Self::Serde(s) => Self::Serde(s.clone()),
             // ...
         }
     }
 }
 ```
 
+**Ödendi (2026-08-30, madde 2):** `Serde` artık `String` tutuyor; `From<serde_json::Error>` mesajı kopyalıyor. Sahte `from_str("not json")` yok. Domain varyantları (`RateLimited`, `ProviderHttp`, …) hâlâ açık.
+
 Rust kitabı ve `thiserror` geleneği: **çağıranın eşleşebileceği** varyantlar, `#[source]` / `#[from]` ile zincir, `Display` kullanıcıya.
 
 Burada:
 
 - `Llm("rate limit")` ile `Llm("tls eof")` aynı tip. Retry / TUI / CI farklı davranamaz; `llm::error_class::classify` string parse etmek zorunda kalıyor.
-- `Clone` Serde kolu **gerçek parse hatasını atıp sahte bir JSON hatası** üretiyor. `Error`’ı clone’layan her yol yanıltıcı log üretir.
+- ~~`Clone` Serde kolu sahte JSON hatası üretiyordu.~~ Mesaj korunuyor; string çantası duruyor.
 - `Http(String)` `reqwest::Error`’ı yutuyor; `auth::AuthError` ise `#[from] reqwest::Error` kullanıyor — tutarsız.
 
-**Yön:** `Error`’ı domain varyantlarına ayır (`RateLimited { retry_after }`, `ProviderHttp { status, body }`, …) veya crate-yerel hataları `#[from]` ile sar. `Clone` gerekiyorsa `Arc<Error>` / `thiserror` + `#[error(transparent)]` veya mesajı `Arc<str>` tut. Serde clone için `to_string()` ile `Other`/`SerdeMessage` kullan; sahte `unwrap_err()` üretme.
+**Yön:** `Error`’ı domain varyantlarına ayır (`RateLimited { retry_after }`, `ProviderHttp { status, body }`, …) veya crate-yerel hataları `#[from]` ile sar. `Clone` gerekiyorsa `Arc<Error>` / `thiserror` + `#[error(transparent)]` veya mesajı `Arc<str>` tut.
 
 `Error: Clone` ihtiyacı büyük ihtimalle event/TUI kopyasından geliyor — o zaman hata **değer** değil, **rapor** olmalı (`struct ErrorReport { kind, message }`).
 
@@ -109,47 +108,32 @@ Burada:
 
 `llm` panic bütçesinin tamamı bu kalıp:
 
-```56:61:crates/llm/src/providers/openai.rs
-if let Some(temp) = request.temperature {
-    body["temperature"] = Value::Number(serde_json::Number::from_f64(temp as f64).unwrap());
-}
+```56:56:crates/llm/src/providers/openai.rs
+crate::openai_compat::apply_sampling(&mut body, request);
 ```
 
-Aynı satır `anthropic`, `custom`, `deepseek`, `groq`, `mistral`, `openrouter`, `together`, `xai`, … `from_f64` **NaN/Inf için `None`**. Config veya model cevabı bozulursa release’te **abort**.
-
-**Yön:** Tek yardımcı:
-
-```rust
-fn json_f64(v: f64) -> Option<Value> {
-    serde_json::Number::from_f64(v).map(Value::Number)
-}
-```
-
-`None` ise alanı atla veya `Error::Llm`. Bütçe 22 → 0.
+**Ödendi (2026-08-30):** `json_number` / `set_json_f64` / `apply_sampling` NaN/Inf’i atlar. OpenAI-uyumlu gövdeler tek çağrı; Google/Ollama/Code Assist aynı helper’ı kendi path’lerinde kullanır. Panic bütçesi llm 22→0.
 
 ### 4. CLI `status.unwrap()` (kısa devre ile “güvenli”, yine de anti-pattern)
 
-```3144:3147:crates/cli/src/main.rs
+```3144:3148:crates/cli/src/main.rs
 let status = std::process::Command::new("gh")
     .args(["pr", "list"])
     .status();
-if status.is_err() || !status.unwrap().success() {
+match status {
+    Ok(s) if s.success() => {}
 ```
 
-`||` kısa devre ettiği için `Err` iken `unwrap` çalışmaz. Okunabilirlik ve Clippy `unwrap_used` açısından yanlış. `match status { Ok(s) if s.success() => …, _ => … }`.
-
-Ayrıca bu `async fn` içinde **`std::process::Command`** — Tokio worker’ı bloklar. `tokio::process` veya `spawn_blocking`.
+**Ödendi (2026-08-30):** `match status` — panic bütçesi cli 2→0. `async fn` içinde blocking `std::process::Command` hâlâ duruyor (`tokio::process` / `spawn_blocking` ayrı iş).
 
 ### 5. TUI: sabit string `parse().unwrap()`
 
-```4378:4384:crates/tui/src/run.rs
-std::net::TcpStream::connect_timeout(
-    &format!("127.0.0.1:{port}").parse().unwrap(),
-    Duration::from_millis(80),
-)
+```4378:4382:crates/tui/src/run.rs
+let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 ```
 
-`u16` port ile teorik olarak her zaman geçerli. Yine de `SocketAddr::from(([127, 0, 0, 1], port))` — `unwrap` yok, tahsis yok. Panic bütçesindeki tek TUI `unwrap` bu.
+**Ödendi (2026-08-30):** `SocketAddr::from` — panic bütçesi tui 1→0.
 
 `format` crate: gömülü tmTheme için `.expect("embedded tmTheme must parse")` — build-time asset; `const`/test ile CI’da doğrulanmış olsa `expect` kabul edilebilir. `include_str` + unit test “theme parses” daha idiomatic.
 
@@ -333,7 +317,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 ### 20. Provider kopyala-yapıştır
 
-`temperature`/`top_p` JSON gövdesi her OpenAI-uyumlu dosyada tekrar. `openai_compat` zaten mesaj/tool çeviriyor; sayısal alanlar da orada olmalı — 22 unwrap tek fonksiyona iner.
+`temperature`/`top_p` OpenAI-uyumlu gövdeler `apply_sampling` ile tek yerde. Google/Ollama/Code Assist hâlâ kendi anahtarlarını (`generationConfig`, `options`) yazıyor — aynı helper, farklı path.
 
 `#[async_trait] impl LlmProvider` her dosyada neredeyse aynı `complete`/`stream` iskeleti.
 
@@ -343,12 +327,12 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 | Crate | Asıl sapma |
 |-------|------------|
-| **core** | String `Error`, `Clone` kaybı, `tokio`/`anyhow`, `ToolContext` String path, `index` bağımlılığı |
+| **core** | String `Error` (Serde clone mesajı korunuyor), `tokio`/`anyhow`, `ToolContext` String path, `index` bağımlılığı |
 | **config** | 2580 satır tek `lib.rs`, her alan `pub`, `anyhow`+`thiserror` |
-| **llm** | 22 unwrap, `async_trait`, string `Error::Llm`, provider tekrarı |
+| **llm** | `async_trait`, string `Error::Llm`, provider tekrarı (sampling unwrap’ları ödendi) |
 | **agent** | 4.4k satır, 6× too_many_arguments, 184 clone, sync Mutex + sync fs |
-| **tui** | 9k `run.rs`, 112 alanlı `TuiApp`, 49 yutulan hata, her modül `pub` |
-| **cli** | 4.6k `main.rs`, `anyhow` OK, blocking `Command`, 32 yutulan hata |
+| **tui** | 9k `run.rs`, 112 alanlı `TuiApp`, yutulan hatalar, her modül `pub` |
+| **cli** | 4.6k `main.rs`, `anyhow` OK, blocking `Command`, yutulan hatalar |
 | **lsp/mcp** | Kamu `anyhow::Result`, `dead_code` Child tutma (yorumlu — `ManuallyDrop`/`AbortOnDrop` daha net) |
 | **memory** | `anyhow`, senkron indirme, 28 alanlı settings |
 | **storage** | `anyhow`, `tokio` (SQLite senkron `rusqlite` — async sınır belirsiz) |
@@ -360,9 +344,9 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 ## Önerilen sıra (kod değişikliği değil, yol haritası)
 
-1. **`json_number(f64)`** — llm bütçesi 22→0, NaN abort kapanır.
-2. **`Error::clone` Serde kolu** — sahte hata yerine mesaj kopyala; sonra string varyantlarını daralt.
-3. **`SocketAddr::from` + CLI `match status`** — kalan production unwrap’lar.
+1. ~~**`json_number(f64)`**~~ **ödendi** — llm panic bütçesi 22→0.
+2. ~~**`Error::clone` Serde kolu**~~ **ödendi** — mesaj korunuyor; string varyantlarını daraltmak ayrı iş.
+3. ~~**`SocketAddr::from` + CLI `match status`**~~ **ödendi** — cli 2→0, tui 1→0.
 4. **`anyhow`’i leaf crate’lerden çıkar** — `lsp`/`mcp`/`storage`/`memory` yerel `thiserror`.
 5. **`TurnOpts` / render context struct** — `too_many_arguments` allow’ları sil.
 6. **`config/src/` modüllere böl**; `cli/src/cmd/`; `tui/src/run/` (loop, slash, persist, tests).
@@ -371,7 +355,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 9. **`tokio` feature kesimi**; `core`’dan `tokio`/`anyhow` düşür.
 10. **`workspace.lints` + `rust-version`**; `unwrap_used = warn`.
 
-1–3 küçük PR; 4–6 orta; 7–10 refaktör. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–3 ödendi (2026-08-30). 4–6 orta; 7–10 refaktör. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
@@ -379,7 +363,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 | Metrik | Değer |
 |--------|------:|
-| Panic-like (`unwrap`/`expect`) | llm 22, cli 2, tui 1, format 1 (`expect`) |
+| Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-08-30) |
 | Yutulan hata bütçesi | tui 49, cli 32, agent 29, tools 9, memory 8, core 7 |
 | `#[async_trait]` | 76 |
 | `HashMap` / `FxHashMap` hit | ~153 / ~13 |

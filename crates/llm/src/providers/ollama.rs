@@ -45,7 +45,7 @@ impl OllamaProvider {
         });
 
         if let Some(temp) = request.temperature {
-            body["options"]["temperature"] = temp.into();
+            crate::openai_compat::set_json_f64(&mut body["options"], "temperature", temp);
         }
 
         if let Some(max_tokens) = request.max_tokens {
@@ -53,7 +53,7 @@ impl OllamaProvider {
         }
 
         if let Some(top_p) = request.top_p {
-            body["options"]["top_p"] = top_p.into();
+            crate::openai_compat::set_json_f64(&mut body["options"], "top_p", top_p);
         }
 
         if !request.tools.is_empty() {

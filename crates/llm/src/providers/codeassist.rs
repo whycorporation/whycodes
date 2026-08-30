@@ -421,8 +421,7 @@ fn build_inner_request(request: &LlmRequest) -> Value {
         gen_config["maxOutputTokens"] = max_tokens.into();
     }
     if let Some(temp) = request.temperature {
-        gen_config["temperature"] =
-            Value::Number(serde_json::Number::from_f64(temp as f64).unwrap_or_else(|| 0.into()));
+        crate::openai_compat::set_json_f64(&mut gen_config, "temperature", temp);
     }
     if !gen_config.as_object().is_none_or(|o| o.is_empty()) {
         inner["generationConfig"] = gen_config;

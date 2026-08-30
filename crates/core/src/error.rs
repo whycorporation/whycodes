@@ -9,7 +9,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error("Serialization error: {0}")]
-    Serde(#[from] serde_json::Error),
+    Serde(String),
 
     #[error("LLM error: {0}")]
     Llm(String),
@@ -33,15 +33,18 @@ pub enum Error {
     Other(String),
 }
 
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Self::Serde(err.to_string())
+    }
+}
+
 impl Clone for Error {
     fn clone(&self) -> Self {
         match self {
             Self::Config(s) => Self::Config(s.clone()),
             Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
-            Self::Serde(_e) => {
-                // serde_json::Error doesn't implement Clone, so we create a new one
-                Self::Serde(serde_json::from_str::<serde_json::Value>("not json").unwrap_err())
-            }
+            Self::Serde(s) => Self::Serde(s.clone()),
             Self::Llm(s) => Self::Llm(s.clone()),
             Self::Tool(s) => Self::Tool(s.clone()),
             Self::Session(s) => Self::Session(s.clone()),

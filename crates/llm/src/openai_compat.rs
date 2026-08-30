@@ -11,6 +11,29 @@ use whycodes_core::types::{
     ToolDefinition,
 };
 
+/// JSON number from a finite float. `None` for NaN/Inf — JSON has no non-finite numbers,
+/// and `Number::from_f64` would otherwise force an `unwrap` (abort in release).
+pub fn json_number(n: impl Into<f64>) -> Option<Value> {
+    serde_json::Number::from_f64(n.into()).map(Value::Number)
+}
+
+/// Set `body[key]` when `n` is finite; skip NaN/Inf so encoding never panics.
+pub fn set_json_f64(body: &mut Value, key: &str, n: impl Into<f64>) {
+    if let Some(v) = json_number(n) {
+        body[key] = v;
+    }
+}
+
+/// Copy finite `temperature` / `top_p` onto an OpenAI-style request body.
+pub fn apply_sampling(body: &mut Value, request: &LlmRequest) {
+    if let Some(temp) = request.temperature {
+        set_json_f64(body, "temperature", temp);
+    }
+    if let Some(top_p) = request.top_p {
+        set_json_f64(body, "top_p", top_p);
+    }
+}
+
 /// Flatten `err` + `source()` chain so reqwest decode failures keep TLS/EOF/JSON
 /// causes that `{e}` alone drops (`error decoding response body`).
 pub fn error_source_chain(err: &dyn std::error::Error) -> String {
@@ -1214,5 +1237,35 @@ mod tests {
         let mut body = json!({ "model": "x", "stream": true });
         attach_stream_usage_option(&mut body);
         assert_eq!(body["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn json_number_skips_non_finite_and_encodes_finite() {
+        assert!(json_number(f64::NAN).is_none());
+        assert!(json_number(f64::INFINITY).is_none());
+        assert!(json_number(f64::NEG_INFINITY).is_none());
+        assert_eq!(json_number(0.5).unwrap(), json!(0.5));
+
+        let mut body = json!({});
+        set_json_f64(&mut body, "temperature", f32::NAN);
+        assert!(body.get("temperature").is_none());
+        apply_sampling(
+            &mut body,
+            &LlmRequest {
+                system: String::new(),
+                messages: std::sync::Arc::from(Vec::<Message>::new()),
+                tools: vec![],
+                max_tokens: None,
+                temperature: Some(0.5),
+                top_p: Some(0.25),
+                top_k: None,
+                stop_sequences: None,
+                thinking: None,
+                use_prompt_cache: false,
+            },
+        );
+        // 0.5 / 0.25 are exact in f32 and f64, so they round-trip as JSON numbers.
+        assert_eq!(body["temperature"], json!(0.5));
+        assert_eq!(body["top_p"], json!(0.25));
     }
 }

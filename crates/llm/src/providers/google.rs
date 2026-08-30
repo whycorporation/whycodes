@@ -238,7 +238,7 @@ impl GoogleProvider {
             if body.get("generationConfig").is_none() {
                 body["generationConfig"] = serde_json::json!({});
             }
-            body["generationConfig"]["temperature"] = temp.into();
+            crate::openai_compat::set_json_f64(&mut body["generationConfig"], "temperature", temp);
         }
 
         if !request.tools.is_empty() {

@@ -4376,18 +4376,10 @@ fn open_db_quiet() -> Option<whycodes_storage::db::Database> {
 }
 
 fn share_server_up(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{port}/api/health");
-    // Sync quick check via TCP connect (no reqwest dependency in tui path)
-    std::net::TcpStream::connect_timeout(
-        &format!("127.0.0.1:{port}").parse().unwrap(),
-        Duration::from_millis(80),
-    )
-    .is_ok()
-        && {
-            // optional: ignore unused url
-            let _ = url;
-            true
-        }
+    // Sync quick check via TCP connect (no reqwest dependency in tui path).
+    // `SocketAddr::from` is infallible for a `u16` port — no parse/unwrap.
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 }
 
 fn unshare_session(project_dir: &std::path::Path, id: &str) -> usize {

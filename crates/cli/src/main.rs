@@ -3144,12 +3144,15 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
                 let status = std::process::Command::new("gh")
                     .args(["pr", "list"])
                     .status();
-                if status.is_err() || !status.unwrap().success() {
-                    println!(
-                        "{} GitHub CLI not available. Install: {}",
-                        "⚠".yellow(),
-                        "https://cli.github.com/".cyan()
-                    );
+                match status {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        println!(
+                            "{} GitHub CLI not available. Install: {}",
+                            "⚠".yellow(),
+                            "https://cli.github.com/".cyan()
+                        );
+                    }
                 }
             }
             Some(PrAction::View { number }) => {
@@ -3157,8 +3160,11 @@ async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()> {
                 let status = std::process::Command::new("gh")
                     .args(["pr", "view", &number.to_string()])
                     .status();
-                if status.is_err() || !status.unwrap().success() {
-                    println!("{} Could not view PR.", "⚠".yellow());
+                match status {
+                    Ok(s) if s.success() => {}
+                    _ => {
+                        println!("{} Could not view PR.", "⚠".yellow());
+                    }
                 }
             }
             Some(PrAction::Create { title, base }) => {

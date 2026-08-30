@@ -123,7 +123,18 @@ mod error_tests {
                 std::mem::discriminant(&err),
                 std::mem::discriminant(&cloned)
             );
+            assert_eq!(err.to_string(), cloned.to_string());
         }
+    }
+
+    #[test]
+    fn clone_preserves_serde_message() {
+        let serde_err = serde_json::from_str::<serde_json::Value>("invalid").unwrap_err();
+        let original = serde_err.to_string();
+        let err = Error::from(serde_err);
+        assert!(err.to_string().contains(&original));
+        assert_eq!(err.to_string(), err.clone().to_string());
+        assert!(matches!(err, Error::Serde(_)));
     }
 }
 

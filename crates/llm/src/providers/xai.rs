@@ -72,13 +72,7 @@ impl XaiProvider {
             body["parallel_tool_calls"] = serde_json::json!(true);
         }
 
-        if let Some(temp) = request.temperature {
-            body["temperature"] = Value::Number(serde_json::Number::from_f64(temp as f64).unwrap());
-        }
-
-        if let Some(top_p) = request.top_p {
-            body["top_p"] = Value::Number(serde_json::Number::from_f64(top_p as f64).unwrap());
-        }
+        crate::openai_compat::apply_sampling(&mut body, request);
 
         crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
 
