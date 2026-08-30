@@ -144,6 +144,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — `anthropic/` on a local proxy still demanded an API key
+
+**Symptom:** Model picker `anthropic/…` showed “No API key for anthropic”
+even when `[providers.anthropic] base_url = "http://127.0.0.1:…"` pointed
+at a local LiteLLM / Ollama / reverse-proxy.
+
+**Root cause:** Two stacked bugs:
+
+1. `provider_requires_api_key` only skipped `ollama`. Built-in Anthropic
+   (and OpenAI) always required a credential, so the TUI never sent the
+   turn.
+2. `AnthropicProvider` always posted to `https://api.anthropic.com/v1/messages`,
+   ignoring config `base_url`. A local proxy never saw the request.
+
+**Fix:** Local/loopback `base_url` skips the key gate for any provider.
+Anthropic and OpenAI rebuild their request URL from config. Empty keys
+omit `x-api-key` / `Authorization` instead of sending a blank header.
+
+**Prevention:** Do not treat the model id prefix (`anthropic/`) as
+“must talk to api.anthropic.com”. Honor `base_url`. Keep cloud hosts
+key-gated.
+
 ### 2026-08-30 — Ollama chat hangs if URL/key/stream-stop are wrong
 
 **Symptom:** Selecting Ollama (or posting to a host on a non-default port

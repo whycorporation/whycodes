@@ -12,12 +12,25 @@ use async_trait::async_trait;
 
 pub struct OpenAiProvider {
     name: String,
+    chat_url: String,
 }
 
 impl OpenAiProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_config(config: &whycodes_core::types::ProviderConfig) -> Self {
+        Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()))
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "openai".to_string(),
+            chat_url: match base.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(raw) => super::custom::normalize_chat_completions_url(raw),
+                None => "https://api.openai.com/v1/chat/completions".to_string(),
+            },
         }
     }
 
@@ -62,6 +75,16 @@ impl OpenAiProvider {
     }
 }
 
+fn openai_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
+    let req = crate::client_identity::post(url);
+    let key = api_key.trim();
+    if key.is_empty() {
+        req
+    } else {
+        req.header("Authorization", format!("Bearer {key}"))
+    }
+}
+
 #[async_trait]
 impl LlmProvider for OpenAiProvider {
     fn name(&self) -> &str {
@@ -69,7 +92,7 @@ impl LlmProvider for OpenAiProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.openai.com/v1/chat/completions"
+        &self.chat_url
     }
 
     async fn complete(
@@ -86,8 +109,7 @@ impl LlmProvider for OpenAiProvider {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = crate::client_identity::post(self.default_base_url())
-            .header("Authorization", format!("Bearer {}", api_key))
+        let resp = openai_post(self.default_base_url(), api_key)
             .json(&body)
             .send()
             .await
@@ -135,8 +157,7 @@ impl LlmProvider for OpenAiProvider {
         let mut body = self.build_body(request, model);
         crate::openai_compat::attach_stream_usage_option(&mut body);
 
-        let resp = crate::client_identity::post(self.default_base_url())
-            .header("Authorization", format!("Bearer {}", api_key))
+        let resp = openai_post(self.default_base_url(), api_key)
             .json(&body)
             .send()
             .await

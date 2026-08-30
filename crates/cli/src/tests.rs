@@ -957,7 +957,7 @@ fn key_from_env_config_and_missing_message() {
         Some("".into())
     );
 
-    let anthropic = missing_api_key_message("anthropic");
+    let anthropic = missing_api_key_message_for("anthropic", None);
     assert!(anthropic.contains("ANTHROPIC_API_KEY"), "{anthropic}");
     // Subscription login is plugin-loaded; default installs have an empty
     // OAuth registry so the hint is absent unless an auth plugin registered.
@@ -966,7 +966,7 @@ fn key_from_env_config_and_missing_message() {
         whycodes_auth::providers::supports_oauth("anthropic"),
         "{anthropic}"
     );
-    let custom = missing_api_key_message("acme");
+    let custom = missing_api_key_message_for("acme", None);
     assert!(custom.contains("ACME_API_KEY"), "{custom}");
     assert!(!custom.contains("auth login"), "{custom}");
 
@@ -990,16 +990,36 @@ fn key_from_env_config_and_missing_message() {
         suggested_models: vec![],
         inference: None,
     });
-    let hinted = missing_api_key_message("cli-oauth-hint-demo");
+    let hinted = missing_api_key_message_for("cli-oauth-hint-demo", None);
     assert!(hinted.contains("CLI-OAUTH-HINT-DEMO_API_KEY"), "{hinted}");
     assert!(hinted.contains("auth login"), "{hinted}");
 
-    let ollama = missing_api_key_message("ollama");
+    let ollama = missing_api_key_message_for("ollama", None);
     assert!(
-        ollama.contains("OLLAMA_HOST") || ollama.contains("localhost:11434"),
+        ollama.contains("local host") || ollama.contains("Ollama"),
         "{ollama}"
     );
     assert!(!ollama.contains("OLLAMA_API_KEY"), "{ollama}");
+
+    let mut cfg = Config::default();
+    cfg.providers.insert(
+        "anthropic".into(),
+        ProviderConfig {
+            name: "anthropic".into(),
+            api_key: None,
+            api_base: None,
+            base_url: Some("http://127.0.0.1:4554".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let proxied = missing_api_key_message_for("anthropic", Some(&cfg));
+    assert!(proxied.contains("local host"), "{proxied}");
+    assert!(!proxied.contains("ANTHROPIC_API_KEY"), "{proxied}");
+    let cloud = missing_api_key_message_for("anthropic", None);
+    assert!(cloud.contains("ANTHROPIC_API_KEY"), "{cloud}");
 }
 
 #[test]

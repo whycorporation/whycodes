@@ -1,6 +1,7 @@
 pub mod cache;
 pub mod capabilities;
 pub mod client_identity;
+pub mod endpoint;
 pub mod error_class;
 pub mod fallback;
 pub mod model_catalog;
@@ -29,6 +30,10 @@ pub use capabilities::{ModelCapabilities, detect_capabilities, resolve_context_w
 pub use client_identity::{
     HTTP_REFERER, USER_AGENT, X_TITLE, post_for_provider, with_plugin_identity,
 };
+pub use endpoint::{
+    DEFAULT_ANTHROPIC_MESSAGES_URL, is_local_llm_endpoint, normalize_anthropic_messages_url,
+    provider_config_skips_api_key, provider_requires_api_key,
+};
 pub use error_class::{ClassifiedError, ErrorKind, classify, classify_message};
 pub use model_catalog::{
     CATALOG_TTL, CatalogFetchRequest, ModelCatalog, base_url_from_provider_config,
@@ -39,11 +44,6 @@ pub use model_catalog::{
 pub use openai_compat::{error_source_chain, stream_chunk_error};
 pub use provider::{LlmProvider, ProviderRegistry};
 pub use providers::ollama::{DEFAULT_OLLAMA_HOST, normalize_ollama_chat_url};
-
-/// Local Ollama needs no credential. Cloud providers still do.
-pub fn provider_requires_api_key(provider: &str) -> bool {
-    !provider.eq_ignore_ascii_case("ollama")
-}
 pub use race::{RaceOutcome, StreamTarget, stream_raced};
 pub use response_cache::{CachedText, ResponseCache, text_only_response};
 pub use retry::{RetryPolicy, execute_with_policy, retry_with_backoff};
@@ -54,14 +54,3 @@ pub use transport::{
     user_facing_error,
 };
 pub use types::*;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn ollama_does_not_require_api_key() {
-        assert!(!super::provider_requires_api_key("ollama"));
-        assert!(!super::provider_requires_api_key("Ollama"));
-        assert!(super::provider_requires_api_key("openai"));
-        assert!(super::provider_requires_api_key("anthropic"));
-    }
-}

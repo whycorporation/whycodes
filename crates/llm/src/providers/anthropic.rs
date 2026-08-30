@@ -214,6 +214,7 @@ fn content_block_to_anthropic(b: &ContentBlock) -> Value {
 
 pub struct AnthropicProvider {
     name: String,
+    messages_url: String,
 }
 
 /// POST with the right auth header for the credential type.
@@ -222,20 +223,35 @@ pub struct AnthropicProvider {
 /// anthropic`) must go in `Authorization: Bearer` with the oauth beta flag;
 /// plain API keys go in `x-api-key`. Sending an OAuth token as `x-api-key`
 /// is rejected by the API.
+///
+/// Local proxies often have no credential — skip both headers when `api_key`
+/// is empty rather than sending `x-api-key:`.
 fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
     let req = crate::client_identity::post(url).header("anthropic-version", "2023-06-01");
-    if api_key.starts_with("sk-ant-oat") {
-        req.header("Authorization", format!("Bearer {api_key}"))
+    let key = api_key.trim();
+    if key.is_empty() {
+        req
+    } else if key.starts_with("sk-ant-oat") {
+        req.header("Authorization", format!("Bearer {key}"))
             .header("anthropic-beta", "oauth-2025-04-20")
     } else {
-        req.header("x-api-key", api_key)
+        req.header("x-api-key", key)
     }
 }
 
 impl AnthropicProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_config(config: &whycodes_core::types::ProviderConfig) -> Self {
+        Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()))
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "anthropic".to_string(),
+            messages_url: crate::endpoint::normalize_anthropic_messages_url(base),
         }
     }
 
@@ -331,7 +347,7 @@ impl LlmProvider for AnthropicProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.anthropic.com/v1/messages"
+        &self.messages_url
     }
 
     async fn complete(

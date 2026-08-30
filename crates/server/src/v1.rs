@@ -164,7 +164,8 @@ pub async fn run(
         .interval(Duration::from_secs(15))
         .text("ping");
 
-    if api_key.is_empty() && whycodes_llm::provider_requires_api_key(&provider) {
+    if api_key.is_empty() && whycodes_llm::provider_requires_api_key(&provider, Some(&state.config))
+    {
         let msg = format!(
             "No API key for provider `{provider}`. Set {}_API_KEY, config, or `whycodes auth login`.",
             provider.to_uppercase()
