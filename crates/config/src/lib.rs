@@ -1346,21 +1346,21 @@ impl Config {
     /// Load config from the default location
     pub fn load() -> Result<Self> {
         let path = Self::default_path()?;
-        if path.exists() {
-            let content = std::fs::read_to_string(&path)?;
-            let mut cfg: Config = toml::from_str(&content).map_err(|e| toml_err(e.to_string()))?;
-            // When a table is keyed `[providers.foo]` but omits `name`, use the key.
-            for (key, provider) in &mut cfg.providers {
-                if provider.name.is_empty() {
-                    provider.name = key.clone();
-                }
-            }
-            cfg.expand_notify_secrets();
-            cfg.migrate_schema()?;
-            Ok(cfg)
-        } else {
-            Ok(Self::default())
+        if !path.exists() {
+            let cfg = Self::default();
+            return Ok(cfg);
         }
+        let content = std::fs::read_to_string(&path)?;
+        let mut cfg: Config = toml::from_str(&content).map_err(|e| toml_err(e.to_string()))?;
+        // When a table is keyed `[providers.foo]` but omits `name`, use the key.
+        for (key, provider) in &mut cfg.providers {
+            if provider.name.is_empty() {
+                provider.name = key.clone();
+            }
+        }
+        cfg.expand_notify_secrets();
+        cfg.migrate_schema()?;
+        Ok(cfg)
     }
 
     /// Rewrite an older `config.toml` in place so later loads see the current
@@ -1800,9 +1800,8 @@ impl Config {
         if other.tui.key_bindings.is_some() {
             merged.tui.key_bindings = other.tui.key_bindings.clone();
         }
-        if other.tui.show_sidebar {
-            merged.tui.show_sidebar = true;
-        }
+        // Higher layer can only turn the sidebar on (default is off).
+        merged.tui.show_sidebar |= other.tui.show_sidebar;
         for (name, spec) in &other.tui.agent_colors {
             merged.tui.agent_colors.insert(name.clone(), spec.clone());
         }
@@ -1818,9 +1817,7 @@ impl Config {
             merged.general.default_gcp_project = other.general.default_gcp_project.clone();
         }
         // auto_update defaults true; only an explicit false in a higher layer wins.
-        if !other.general.auto_update {
-            merged.general.auto_update = false;
-        }
+        merged.general.auto_update &= other.general.auto_update;
         if other.schema_version > merged.schema_version {
             merged.schema_version = other.schema_version;
         }

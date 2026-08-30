@@ -726,6 +726,8 @@ fn merge_with_general_security_memory_swarm() {
     let mut overlay = Config::default();
     overlay.general.project_path = Some(PathBuf::from("/proj"));
     overlay.general.log_level = Some("debug".into());
+    overlay.general.default_gcp_project = Some("gcp-proj".into());
+    overlay.schema_version = CONFIG_SCHEMA_VERSION + 1;
     overlay.security.bash_risk_threshold = "caution".into();
     overlay.security.sandbox = "off".into();
     overlay.security.sandbox_network = false;
@@ -751,6 +753,11 @@ fn merge_with_general_security_memory_swarm() {
         Some(Path::new("/proj"))
     );
     assert_eq!(merged.general.log_level.as_deref(), Some("debug"));
+    assert_eq!(
+        merged.general.default_gcp_project.as_deref(),
+        Some("gcp-proj")
+    );
+    assert_eq!(merged.schema_version, CONFIG_SCHEMA_VERSION + 1);
     overlay.general.auto_update = false;
     let merged = base.merge_with(&overlay);
     assert!(!merged.general.auto_update);
@@ -1346,6 +1353,22 @@ fn migrate_schema_is_idempotent() {
     let mut cfg = Config::default();
     assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
     assert!(!cfg.migrate_schema().unwrap());
+}
+
+#[test]
+fn migrate_schema_keeps_bump_when_save_fails() {
+    with_isolated_home(|home| {
+        // `save()` writes `$WHYCODES_HOME/config.toml`; a directory there makes
+        // the rewrite fail so the warn/Ok(true) path is exercised.
+        std::fs::create_dir(home.join("config.toml")).unwrap();
+        let mut cfg = Config {
+            schema_version: 0,
+            ..Config::default()
+        };
+        assert!(cfg.migrate_schema().unwrap());
+        assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
+        assert!(home.join("config.toml").is_dir());
+    });
 }
 
 #[test]
