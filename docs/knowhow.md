@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — `should_auto_update` unit test fails on GitHub Actions
+
+**Symptom:** `Test (linux)` red in ~1 min:
+`cli::tests::auto_update_only_interactive_text_sessions` panics on
+`assert!(should_auto_update(&cli(None), true))`.
+
+**Root cause:** `should_auto_update` treats `CI` as a production opt-out
+(headless/CI must not phone GitHub Releases). GitHub Actions sets
+`CI=true`, so the "interactive session should check" assertion is
+always false in CI even though the command/config logic is correct.
+
+**Fix:** Gate env flags through `should_auto_update_with_env` and assert
+those in the unit test. Do not `set_var`/`remove_var` `CI` in parallel
+tests — it is process-global.
+
+**Prevention:** Tests that encode "feature on" must not read `CI` /
+`WHYCODES_NO_*` from the live process. Inject the flags.
+
 ### 2026-08-30 — `anthropic/` on a local proxy still demanded an API key
 
 **Symptom:** Model picker `anthropic/…` showed “No API key for anthropic”

@@ -176,36 +176,51 @@ fn runtime_choice_per_command() {
 
 #[test]
 fn auto_update_only_interactive_text_sessions() {
-    assert!(should_auto_update(&cli(None), true));
-    assert!(should_auto_update(
+    // Do not call `should_auto_update` for the "on" cases: GitHub Actions
+    // sets `CI=true`, which is a real production opt-out.
+    assert!(should_auto_update_with_env(&cli(None), true, false, false));
+    assert!(should_auto_update_with_env(
         &cli(Some(Commands::Run {
             prompt: None,
             max_turns: None,
             format: OutputFormat::Text,
         })),
-        true
+        true,
+        false,
+        false
     ));
-    assert!(!should_auto_update(
+    assert!(!should_auto_update_with_env(
         &cli(Some(Commands::Run {
             prompt: Some("hi".into()),
             max_turns: None,
             format: OutputFormat::Json,
         })),
-        true
+        true,
+        false,
+        false
     ));
-    assert!(!should_auto_update(
+    assert!(!should_auto_update_with_env(
         &cli(Some(Commands::Generate {
             prompt: vec!["x".into()],
             max_turns: None,
             jobs: 1,
             format: OutputFormat::Text,
         })),
-        true
+        true,
+        false,
+        false
     ));
     let mut off = cli(None);
     off.no_auto_update = true;
-    assert!(!should_auto_update(&off, true));
-    assert!(!should_auto_update(&cli(None), false));
+    assert!(!should_auto_update_with_env(&off, true, false, false));
+    assert!(!should_auto_update_with_env(
+        &cli(None),
+        false,
+        false,
+        false
+    ));
+    assert!(!should_auto_update_with_env(&cli(None), true, true, false));
+    assert!(!should_auto_update_with_env(&cli(None), true, false, true));
 }
 
 #[test]
