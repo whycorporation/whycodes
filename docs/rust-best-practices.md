@@ -20,7 +20,7 @@ Proje, katmanlı crate grafiği, `thiserror` başlangıcı, `spawn_blocking` yar
 
 1. **God-file / god-struct.** `run.rs` ~9k satır, `TuiApp` 112 `pub` alan, `cli/src/main.rs` ~4.6k satır.
 2. **Stringly-typed hata.** `whycodes_core::Error` neredeyse tamamen `String`. `Clone` Serde kolu artık mesajı korur (`Serde(String)`); domain varyantları hâlâ yok.
-3. **Kütüphane crate’lerinde `anyhow`.** `memory`/`session`/`config` hâlâ `anyhow::Result`; `lsp`/`mcp`/`storage`/`skill` crate-yerel `thiserror`.
+3. ~~**Kütüphane crate’lerinde `anyhow`.**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` kamu yüzeyi `whycodes_core::Error`. `anyhow` uygulama sınırında (`cli`/`tui`/`server`/`agent`/`tools`/`llm`).
 4. **`async_trait` + `tokio/full` leaf crate’lerde.** Edition 2024’te native `async fn` in traits var; `core` hâlâ `tokio` çekiyor (`anyhow` düştü).
 5. ~~**22 adet `Number::from_f64(...).unwrap()`** LLM provider’larında~~ **ödendi (2026-08-30):** `openai_compat::{json_number, apply_sampling}` NaN/Inf’i atlar; panic bütçesi llm 22→0.
 6. **Yutulan hatalar** TUI 49 / CLI 32 / agent 29 — ratchet var, sıfırlama yok.
@@ -95,13 +95,15 @@ Burada:
 |-------|----------|-------------|-----|
 | `cli` | evet | hayır | Uygun (composition root) |
 | `server` | evet | hayır | Handler’lar `anyhow` (uygulama sınırı) |
-| `memory` | evet | hayır | ONNX indirme yolu dahil |
-| `session`, `config`, `llm`, `agent`, `tools`, `tui` | evet | evet | `session`/`config` kamu yüzey hâlâ `anyhow` |
+| `memory` | hayır | evet | `MemoryError` (ONNX indirme yolu dahil) |
+| `session` | hayır | evet | `SessionError` |
+| `config` | hayır | hayır | Kamu yüzey `whycodes_core::Error` |
+| `llm`, `agent`, `tools`, `tui` | evet | evet | Uygulama / orkestrasyon sınırı |
 | `lsp`, `mcp`, `storage`, `skill` | hayır | evet | Crate-yerel `Result` (2026-08-30) |
 | `core`, `plugin`, `format` | hayır | `core` evet | Kullanılmayan `anyhow` düştü |
 | `auth`, `sdk`, `sandbox` | hayır | evet | Hedef model |
 
-**Yön:** `anyhow` yalnızca `whycodes-cli` (+ belki `server` handler’ları) için. `memory`/`session`/`config` sonraki PR.
+**Yön:** `anyhow` yalnızca `whycodes-cli` (+ `server`/`tui`/`agent`/`tools`/`llm` uygulama sınırı) için. Leaf kütüphane crate’leri crate-yerel `thiserror` (veya `core::Error`).
 
 ### 3. `serde_json::Number::from_f64(...).unwrap()` × 22
 
@@ -307,15 +309,15 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 | Crate | Asıl sapma |
 |-------|------------|
 | **core** | String `Error` (Serde clone mesajı korunuyor), `tokio`, `ToolContext` String path, `index` bağımlılığı |
-| **config** | 2580 satır tek `lib.rs`, her alan `pub`, `anyhow`+`thiserror` |
+| **config** | 2580 satır tek `lib.rs`, her alan `pub`; kamu yüzey `core::Error` |
 | **llm** | `async_trait`, string `Error::Llm`, provider tekrarı (sampling unwrap’ları ödendi) |
 | **agent** | 4.4k satır, kalan too_many_arguments, 184 clone, sync Mutex + sync fs |
 | **tui** | 9k `run.rs`, 112 alanlı `TuiApp`, yutulan hatalar, her modül `pub` |
 | **cli** | 4.6k `main.rs`, `anyhow` OK, blocking `Command`, yutulan hatalar |
 | **lsp/mcp** | Crate-yerel `thiserror`; `dead_code` Child tutma (yorumlu — `ManuallyDrop`/`AbortOnDrop` daha net) |
-| **memory** | `anyhow`, senkron indirme, 28 alanlı settings |
+| **memory** | `MemoryError`; senkron indirme, 28 alanlı settings |
 | **storage** | Crate-yerel `StorageError` (SQLite senkron `rusqlite`) |
-| **session** | 3.3k satır, `anyhow`+`thiserror` |
+| **session** | 3.3k satır, `SessionError` |
 | **format** | Gömülü theme `expect` (düşük risk) |
 | **auth/sdk/sandbox/command-risk** | En yakın idiomatic küme |
 
@@ -326,7 +328,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 1. ~~**`json_number(f64)`**~~ **ödendi** — llm panic bütçesi 22→0.
 2. ~~**`Error::clone` Serde kolu**~~ **ödendi** — mesaj korunuyor; string varyantlarını daraltmak ayrı iş.
 3. ~~**`SocketAddr::from` + CLI `match status`**~~ **ödendi** — cli 2→0, tui 1→0.
-4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **kısmen ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill` crate-yerel `thiserror`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü. `memory`/`session`/`config` hâlâ `anyhow`.
+4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` `core::Error`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü.
 5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
 6. **`config/src/` modüllere böl**; `cli/src/cmd/`; `tui/src/run/` (loop, slash, persist, tests).
 7. **`TuiApp` alanlarını `pub(crate)`** + invariant metodları; diğer crate’ler zaten `run()` kullanıyor.
@@ -334,7 +336,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 9. **`tokio` feature kesimi**; `core`’dan `tokio` düşür (`anyhow` düştü).
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–3, 4 (kısmen), 5 (`TurnOpts`), 10 ödendi (2026-08-30). God-file / `TuiApp` / `async_trait` ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–5, 10 ödendi (2026-08-30). God-file / `TuiApp` / `async_trait` ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 

@@ -2,6 +2,7 @@
 //!
 //! Best-effort: unknown parts become text. Tools do not replay.
 
+use crate::error::{Result, SessionError};
 use whycodes_core::types::{Message, MessageContent, Role};
 
 /// Source format. `Auto` peeks at the file.
@@ -29,7 +30,7 @@ impl ImportKind {
 }
 
 /// Parse `raw` into native messages.
-pub fn import_messages(raw: &str, kind: ImportKind) -> anyhow::Result<Vec<Message>> {
+pub fn import_messages(raw: &str, kind: ImportKind) -> Result<Vec<Message>> {
     let kind = if kind == ImportKind::Auto {
         detect(raw)
     } else {
@@ -43,7 +44,9 @@ pub fn import_messages(raw: &str, kind: ImportKind) -> anyhow::Result<Vec<Messag
         ImportKind::Pi => parse_pi(raw)?,
     };
     if msgs.is_empty() {
-        anyhow::bail!("no user/assistant messages found in import");
+        return Err(SessionError::msg(
+            "no user/assistant messages found in import",
+        ));
     }
     Ok(msgs)
 }
@@ -92,7 +95,7 @@ fn first_jsonl_object(raw: &str) -> Option<serde_json::Value> {
     None
 }
 
-fn parse_whycodes(raw: &str) -> anyhow::Result<Vec<Message>> {
+fn parse_whycodes(raw: &str) -> Result<Vec<Message>> {
     let v: serde_json::Value = serde_json::from_str(raw)?;
     if let Some(arr) = v.get("messages").and_then(|m| m.as_array()) {
         return Ok(arr.iter().filter_map(value_to_message).collect());
@@ -100,14 +103,16 @@ fn parse_whycodes(raw: &str) -> anyhow::Result<Vec<Message>> {
     if let Some(arr) = v.as_array() {
         return Ok(arr.iter().filter_map(value_to_message).collect());
     }
-    anyhow::bail!("not a whycodes session JSON (expected messages array)")
+    Err(SessionError::msg(
+        "not a whycodes session JSON (expected messages array)",
+    ))
 }
 
-fn parse_opencode(raw: &str) -> anyhow::Result<Vec<Message>> {
+fn parse_opencode(raw: &str) -> Result<Vec<Message>> {
     parse_whycodes(raw)
 }
 
-fn parse_claude(raw: &str) -> anyhow::Result<Vec<Message>> {
+fn parse_claude(raw: &str) -> Result<Vec<Message>> {
     let mut out = Vec::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -125,7 +130,7 @@ fn parse_claude(raw: &str) -> anyhow::Result<Vec<Message>> {
     Ok(out)
 }
 
-fn parse_codex(raw: &str) -> anyhow::Result<Vec<Message>> {
+fn parse_codex(raw: &str) -> Result<Vec<Message>> {
     let mut out = Vec::new();
     for line in raw.lines() {
         let line = line.trim();
@@ -170,7 +175,7 @@ fn parse_codex(raw: &str) -> anyhow::Result<Vec<Message>> {
     Ok(out)
 }
 
-fn parse_pi(raw: &str) -> anyhow::Result<Vec<Message>> {
+fn parse_pi(raw: &str) -> Result<Vec<Message>> {
     let mut out = Vec::new();
     for line in raw.lines() {
         let line = line.trim();

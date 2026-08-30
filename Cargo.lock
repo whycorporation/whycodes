@@ -4849,11 +4849,9 @@ dependencies = [
 name = "whycodes-config"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.20",
  "toml",
  "tracing",
  "whycodes-core",
@@ -4973,12 +4971,12 @@ dependencies = [
 name = "whycodes-memory"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "chrono",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
+ "thiserror 2.0.20",
  "tokenizers",
  "tracing",
  "tract-onnx",
@@ -5079,7 +5077,6 @@ dependencies = [
 name = "whycodes-session"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "chrono",
  "futures",
  "rusqlite",

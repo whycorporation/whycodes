@@ -10,6 +10,7 @@
 
 pub mod code_index;
 pub mod embed;
+pub mod error;
 pub mod markdown;
 pub mod onnx;
 pub mod paths;
@@ -20,6 +21,7 @@ pub mod settings;
 pub mod sync;
 
 pub use embed::{DEFAULT_DIM, cosine, decode_blob, embed, encode_blob};
+pub use error::{MemoryError, Result};
 pub use project_key::{project_key, project_root};
 pub use retain::{extract_heuristic, llm_retain_prompt, parse_llm_facts};
 pub use service::{

@@ -9,6 +9,8 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::error::{MemoryError, Result};
+
 /// all-MiniLM-L6-v2 hidden size.
 pub const ONNX_DIM: usize = 384;
 
@@ -27,7 +29,7 @@ const TOKENIZER_SHA256: &str =
     "";
 
 /// Ensure model + tokenizer files exist (download + checksum if needed).
-pub fn ensure_model(data_dir: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
+pub fn ensure_model(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
     let dir = model_dir(data_dir);
     std::fs::create_dir_all(&dir)?;
     let onnx_path = dir.join("model.onnx");
@@ -50,7 +52,7 @@ pub fn ensure_model(data_dir: &Path) -> anyhow::Result<(PathBuf, PathBuf)> {
     Ok((onnx_path, tok_path))
 }
 
-fn ensure_file(path: &Path, url: &str, pinned: Option<&str>) -> anyhow::Result<()> {
+fn ensure_file(path: &Path, url: &str, pinned: Option<&str>) -> Result<()> {
     let sidecar = sha_sidecar(path);
     if path.exists() {
         verify_or_repair(path, &sidecar, pinned)?;
@@ -62,23 +64,23 @@ fn ensure_file(path: &Path, url: &str, pinned: Option<&str>) -> anyhow::Result<(
         && !digest.eq_ignore_ascii_case(expected)
     {
         let _ = std::fs::remove_file(path);
-        anyhow::bail!(
+        return Err(MemoryError::msg(format!(
             "checksum mismatch for {}: got {digest}, expected {expected}",
             path.display()
-        );
+        )));
     }
     write_sidecar(&sidecar, &digest)?;
     Ok(())
 }
 
-fn verify_or_repair(path: &Path, sidecar: &Path, pinned: Option<&str>) -> anyhow::Result<()> {
+fn verify_or_repair(path: &Path, sidecar: &Path, pinned: Option<&str>) -> Result<()> {
     let digest = sha256_file(path)?;
     if let Some(expected) = pinned {
         if !digest.eq_ignore_ascii_case(expected) {
-            anyhow::bail!(
+            return Err(MemoryError::msg(format!(
                 "checksum mismatch for {}: got {digest}, expected {expected}. Delete the file to re-download.",
                 path.display()
-            );
+            )));
         }
         // Keep sidecar in sync
         let _ = write_sidecar(sidecar, &digest);
@@ -87,10 +89,10 @@ fn verify_or_repair(path: &Path, sidecar: &Path, pinned: Option<&str>) -> anyhow
     if sidecar.exists() {
         let expected = std::fs::read_to_string(sidecar)?.trim().to_string();
         if !expected.is_empty() && !digest.eq_ignore_ascii_case(&expected) {
-            anyhow::bail!(
+            return Err(MemoryError::msg(format!(
                 "checksum mismatch for {} (sidecar). got {digest}, expected {expected}. Delete both to re-download.",
                 path.display()
-            );
+            )));
         }
     } else {
         write_sidecar(sidecar, &digest)?;
@@ -104,13 +106,13 @@ fn sha_sidecar(path: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-fn write_sidecar(path: &Path, digest: &str) -> anyhow::Result<()> {
+fn write_sidecar(path: &Path, digest: &str) -> Result<()> {
     std::fs::write(path, format!("{digest}\n"))?;
     Ok(())
 }
 
 /// SHA-256 hex digest of a file (streaming).
-pub fn sha256_file(path: &Path) -> anyhow::Result<String> {
+pub fn sha256_file(path: &Path) -> Result<String> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256Hasher::new();
@@ -169,7 +171,7 @@ impl Sha256Hasher {
     }
 }
 
-fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
+fn download(url: &str, dest: &Path) -> Result<()> {
     let tmp = dest.with_extension("partial");
     let try_curl = std::process::Command::new("curl")
         .args(["-fsSL", "-L", "-o"])
@@ -190,10 +192,10 @@ fn download(url: &str, dest: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     let _ = std::fs::remove_file(&tmp);
-    anyhow::bail!(
+    Err(MemoryError::msg(format!(
         "failed to download {url}; install curl or wget, or place the file at {}",
         dest.display()
-    )
+    )))
 }
 
 /// Run MiniLM when the `onnx` feature is enabled; otherwise `None`.
@@ -216,7 +218,7 @@ pub fn try_embed(text: &str, data_dir: &Path) -> Option<Vec<f32>> {
 }
 
 /// Smoke: ensure model, embed a probe string, return dim. Errors if onnx feature off.
-pub fn smoke_embed(data_dir: &Path) -> anyhow::Result<(usize, f32)> {
+pub fn smoke_embed(data_dir: &Path) -> Result<(usize, f32)> {
     #[cfg(feature = "onnx")]
     {
         let v = embed_onnx("whycodes memory onnx smoke test", data_dir)?;
@@ -226,20 +228,22 @@ pub fn smoke_embed(data_dir: &Path) -> anyhow::Result<(usize, f32)> {
     #[cfg(not(feature = "onnx"))]
     {
         let _ = data_dir;
-        anyhow::bail!("build with --features onnx to run ONNX smoke")
+        Err(MemoryError::msg(
+            "build with --features onnx to run ONNX smoke",
+        ))
     }
 }
 
 #[cfg(feature = "onnx")]
-fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
+fn embed_onnx(text: &str, data_dir: &Path) -> Result<Vec<f32>> {
     use tract_onnx::prelude::*;
 
     let (onnx_path, tok_path) = ensure_model(data_dir)?;
     let tokenizer = tokenizers::Tokenizer::from_file(&tok_path)
-        .map_err(|e| anyhow::anyhow!("tokenizer load: {e}"))?;
+        .map_err(|e| MemoryError::msg(format!("tokenizer load: {e}")))?;
     let encoding = tokenizer
         .encode(text, true)
-        .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?;
+        .map_err(|e| MemoryError::msg(format!("tokenize: {e}")))?;
 
     let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
     let mask: Vec<i64> = encoding
@@ -251,13 +255,16 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
     let type_ids = vec![0i64; len];
 
     let model = tract_onnx::onnx()
-        .model_for_path(&onnx_path)?
-        .into_optimized()?
-        .into_runnable()?;
+        .model_for_path(&onnx_path)
+        .map_err(MemoryError::wrap)?
+        .into_optimized()
+        .map_err(MemoryError::wrap)?
+        .into_runnable()
+        .map_err(MemoryError::wrap)?;
 
-    let ids_t = Tensor::from_shape(&[1, len], &ids)?;
-    let mask_t = Tensor::from_shape(&[1, len], &mask)?;
-    let type_t = Tensor::from_shape(&[1, len], &type_ids)?;
+    let ids_t = Tensor::from_shape(&[1, len], &ids).map_err(MemoryError::wrap)?;
+    let mask_t = Tensor::from_shape(&[1, len], &mask).map_err(MemoryError::wrap)?;
+    let type_t = Tensor::from_shape(&[1, len], &type_ids).map_err(MemoryError::wrap)?;
 
     let result = model
         .run(tvec!(
@@ -265,10 +272,13 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
             mask_t.clone().into(),
             type_t.into()
         ))
-        .or_else(|_| model.run(tvec!(ids_t.into(), mask_t.into())))?;
+        .or_else(|_| model.run(tvec!(ids_t.into(), mask_t.into())))
+        .map_err(MemoryError::wrap)?;
 
     // tract 0.23 renamed Tensor::to_array_view → to_plain_array_view.
-    let output = result[0].to_plain_array_view::<f32>()?;
+    let output = result[0]
+        .to_plain_array_view::<f32>()
+        .map_err(MemoryError::wrap)?;
     let shape = output.shape();
     let mut pooled = match shape.len() {
         3 => {
@@ -286,7 +296,7 @@ fn embed_onnx(text: &str, data_dir: &Path) -> anyhow::Result<Vec<f32>> {
             p
         }
         2 => (0..shape[1]).map(|d| output[[0, d]]).collect(),
-        n => anyhow::bail!("unexpected ONNX output rank {n}"),
+        n => return Err(MemoryError::msg(format!("unexpected ONNX output rank {n}"))),
     };
     let norm: f32 = pooled.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > f32::EPSILON {

@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::embed::{cosine, decode_blob, encode_blob};
+use crate::error::{MemoryError, Result};
 use crate::service::{CodeHit, MemoryService};
 
 const EXT_OK: &[&str] = &[
@@ -15,9 +16,9 @@ const EXT_OK: &[&str] = &[
 
 impl MemoryService {
     /// Walk the project, chunk text files, embed, replace prior index for this bank.
-    pub fn index_codebase(&self, max_files: usize, max_chunks: usize) -> anyhow::Result<usize> {
+    pub fn index_codebase(&self, max_files: usize, max_chunks: usize) -> Result<usize> {
         if !self.settings.enabled {
-            anyhow::bail!("memory is disabled");
+            return Err(MemoryError::msg("memory is disabled"));
         }
         let root = crate::project_key::project_root(&self.project_path);
         let mut files = Vec::new();
@@ -68,12 +69,7 @@ impl MemoryService {
     }
 
     /// Semantic search over indexed code chunks.
-    pub fn search_code(
-        &self,
-        query: &str,
-        top_k: usize,
-        min_score: f32,
-    ) -> anyhow::Result<Vec<CodeHit>> {
+    pub fn search_code(&self, query: &str, top_k: usize, min_score: f32) -> Result<Vec<CodeHit>> {
         let db = self.open_db()?;
         let rows = db.list_code_chunks(&self.bank_key, 50_000)?;
         let q = self.embed_text(query);

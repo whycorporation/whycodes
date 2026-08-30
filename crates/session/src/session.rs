@@ -4,6 +4,8 @@ use whycodes_core::types::{
     ContentBlock, LlmRequest, Message, MessageContent, Role, SessionInfo, ToolDefinition,
 };
 
+use crate::error::Result;
+
 /// Soft cap on tool result bodies kept in the transcript (Unicode scalars).
 ///
 /// Large dumps (test output, full file reads) dominate context; the agent can
@@ -1363,7 +1365,7 @@ impl Session {
     ///
     /// Session metadata (including provider-reported token usage) is upserted.
     /// Messages are replaced as a set so repeated saves do not duplicate rows.
-    pub fn save_to_db(&self, db: &whycodes_storage::db::Database) -> anyhow::Result<()> {
+    pub fn save_to_db(&self, db: &whycodes_storage::db::Database) -> Result<()> {
         db.upsert_session(
             &self.id,
             &self.title,
@@ -1397,10 +1399,7 @@ impl Session {
     }
 
     /// Load a session and its messages from the SQLite database by session id.
-    pub fn load_from_db(
-        db: &whycodes_storage::db::Database,
-        id: &str,
-    ) -> anyhow::Result<Option<Self>> {
+    pub fn load_from_db(db: &whycodes_storage::db::Database, id: &str) -> Result<Option<Self>> {
         let Some(row) = db.get_session(id)? else {
             return Ok(None);
         };
@@ -1420,9 +1419,9 @@ impl Session {
                         .ok()
                         .map(|dt| dt.with_timezone(&chrono::Utc));
                 }
-                Ok::<_, anyhow::Error>(msg)
+                Ok::<_, crate::error::SessionError>(msg)
             })
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_>>()?;
 
         let project_path = std::path::PathBuf::from(row.project_path);
         let title_source = crate::title::infer_source_from_title(&row.title, &project_path);
@@ -1612,7 +1611,7 @@ mod persist_tests {
 impl Session {
     /// Export the session as a shareable JSON file.
     /// Writes to .whycodes/shares/{session_id}.json and returns the file path.
-    pub fn export_share(&self) -> anyhow::Result<String> {
+    pub fn export_share(&self) -> Result<String> {
         let shares_dir = whycodes_core::project_dir(&self.project_path).join("shares");
         std::fs::create_dir_all(&shares_dir)?;
 
@@ -2607,8 +2606,8 @@ mod tests {
 
         let error = session.export_share().unwrap_err();
         assert!(
-            matches!(error.downcast_ref::<std::io::Error>(), Some(e) if e.kind() == std::io::ErrorKind::NotADirectory),
-            "unexpected export error: {error:#}"
+            matches!(error, crate::error::SessionError::Io(ref e) if e.kind() == std::io::ErrorKind::NotADirectory),
+            "unexpected export error: {error}"
         );
     }
 

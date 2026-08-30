@@ -1,8 +1,10 @@
+pub mod error;
 pub mod history;
 pub mod import;
 pub mod session;
 pub mod title;
 
+pub use error::{Result, SessionError};
 pub use history::SessionHistory;
 pub use import::{ImportKind, import_messages};
 pub use session::{

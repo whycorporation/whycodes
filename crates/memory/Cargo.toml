@@ -20,7 +20,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 tracing = { workspace = true }
 sha2 = "0.11"
 tract-onnx = { version = "0.23", optional = true }

@@ -2074,7 +2074,11 @@ fn open_memory_service(
 ) -> anyhow::Result<whycodes_memory::MemoryService> {
     let project_dir = resolve_dir(cli);
     let data_dir = Config::data_dir()?;
-    whycodes_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
+    Ok(whycodes_memory::MemoryService::open(
+        project_dir,
+        data_dir,
+        memory_settings(config),
+    )?)
 }
 
 async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()> {

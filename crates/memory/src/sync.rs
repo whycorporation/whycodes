@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::Result;
 use crate::service::MemoryService;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,7 +24,7 @@ pub struct MemoryExportEntry {
 
 impl MemoryService {
     /// Export all facts for this bank as JSON (portable across machines).
-    pub fn export_json(&self) -> anyhow::Result<String> {
+    pub fn export_json(&self) -> Result<String> {
         let rows = self.list(50_000)?;
         let exp = MemoryExport {
             version: 1,
@@ -44,7 +45,7 @@ impl MemoryService {
     }
 
     /// Import facts from export JSON. Re-embeds on import. Returns (added, skipped).
-    pub fn import_json(&self, json: &str) -> anyhow::Result<(usize, usize)> {
+    pub fn import_json(&self, json: &str) -> Result<(usize, usize)> {
         let exp: MemoryExport = serde_json::from_str(json)?;
         let mut added = 0usize;
         let mut skipped = 0usize;

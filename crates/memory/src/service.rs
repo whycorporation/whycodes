@@ -9,6 +9,7 @@ use whycodes_storage::models::{MemoryRow, SessionChunkRow};
 pub use whycodes_storage::models::CodeChunkRow;
 
 use crate::embed::{cosine, decode_blob, embed, encode_blob};
+use crate::error::{MemoryError, Result};
 use crate::markdown;
 use crate::paths::{ensure_memory_dir, memory_md};
 use crate::project_key::project_key;
@@ -51,7 +52,7 @@ impl MemoryService {
         project_path: impl Into<PathBuf>,
         data_dir: impl Into<PathBuf>,
         settings: MemorySettings,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let project_path = project_path.into();
         let data_dir = data_dir.into();
         let key = project_key(&project_path);
@@ -76,7 +77,7 @@ impl MemoryService {
         })
     }
 
-    pub fn open_db(&self) -> anyhow::Result<Database> {
+    pub fn open_db(&self) -> Result<Database> {
         Ok(Database::open(
             self.db_path.to_str().unwrap_or("whycodes.db"),
         )?)
@@ -102,16 +103,16 @@ impl MemoryService {
         embed(text, self.settings.embed_dim)
     }
 
-    pub fn remember(&self, text: &str, source_session: Option<&str>) -> anyhow::Result<String> {
+    pub fn remember(&self, text: &str, source_session: Option<&str>) -> Result<String> {
         if !self.settings.enabled {
-            anyhow::bail!("memory is disabled");
+            return Err(MemoryError::msg("memory is disabled"));
         }
         let text = text.trim();
         if text.is_empty() {
-            anyhow::bail!("memory text is empty");
+            return Err(MemoryError::msg("memory text is empty"));
         }
         if self.is_duplicate(text)? {
-            anyhow::bail!("duplicate memory (already stored)");
+            return Err(MemoryError::msg("duplicate memory (already stored)"));
         }
         let id = uuid::Uuid::new_v4().to_string();
         let short_id = &id[..8.min(id.len())];
@@ -124,19 +125,19 @@ impl MemoryService {
     }
 
     /// True if an existing fact is nearly identical (cosine ≥ 0.92).
-    pub fn is_duplicate(&self, text: &str) -> anyhow::Result<bool> {
+    pub fn is_duplicate(&self, text: &str) -> Result<bool> {
         let hits = self.search(text, 1, 0.92)?;
         Ok(!hits.is_empty())
     }
 
-    pub fn list(&self, limit: usize) -> anyhow::Result<Vec<MemoryRow>> {
+    pub fn list(&self, limit: usize) -> Result<Vec<MemoryRow>> {
         let db = self.open_db()?;
         Ok(db.list_memories(&self.bank_key, limit)?)
     }
 
-    pub fn delete(&self, id_or_prefix: &str) -> anyhow::Result<bool> {
+    pub fn delete(&self, id_or_prefix: &str) -> Result<bool> {
         if !self.settings.enabled {
-            anyhow::bail!("memory is disabled");
+            return Err(MemoryError::msg("memory is disabled"));
         }
         let db = self.open_db()?;
         let id = resolve_id(&db, &self.bank_key, id_or_prefix)?;
@@ -152,9 +153,9 @@ impl MemoryService {
         Ok(removed)
     }
 
-    pub fn clear(&self) -> anyhow::Result<usize> {
+    pub fn clear(&self) -> Result<usize> {
         if !self.settings.enabled {
-            anyhow::bail!("memory is disabled");
+            return Err(MemoryError::msg("memory is disabled"));
         }
         let db = self.open_db()?;
         let n = db.clear_memories(&self.bank_key)?;
@@ -162,12 +163,7 @@ impl MemoryService {
         Ok(n)
     }
 
-    pub fn search(
-        &self,
-        query: &str,
-        top_k: usize,
-        min_score: f32,
-    ) -> anyhow::Result<Vec<RecallHit>> {
+    pub fn search(&self, query: &str, top_k: usize, min_score: f32) -> Result<Vec<RecallHit>> {
         let db = self.open_db()?;
         let rows = db.list_memories(&self.bank_key, 10_000)?;
         let q = self.embed_text(query);
@@ -203,7 +199,7 @@ impl MemoryService {
         turn_index: usize,
         user_text: &str,
         assistant_text: &str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         if !self.settings.enabled {
             return Ok(());
         }
@@ -246,7 +242,7 @@ impl MemoryService {
         query: &str,
         top_k: usize,
         min_score: f32,
-    ) -> anyhow::Result<Vec<SessionHit>> {
+    ) -> Result<Vec<SessionHit>> {
         let db = self.open_db()?;
         let rows = db.list_session_chunks(&self.bank_key, 10_000)?;
         let q = self.embed_text(query);
@@ -275,7 +271,7 @@ impl MemoryService {
     }
 
     /// Drop oldest unused facts when the bank is over `consolidate_max`.
-    pub fn consolidate(&self) -> anyhow::Result<usize> {
+    pub fn consolidate(&self) -> Result<usize> {
         if !self.settings.enabled || !self.settings.consolidate {
             return Ok(0);
         }
@@ -312,7 +308,7 @@ impl MemoryService {
         assistant_text: Option<&str>,
         source_session: Option<&str>,
         turn_index: usize,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>> {
         if !self.settings.enabled || !self.settings.auto_retain {
             return Ok(Vec::new());
         }
@@ -341,7 +337,7 @@ impl MemoryService {
         &self,
         candidates: Vec<String>,
         source_session: Option<&str>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>> {
         let mut saved = Vec::new();
         for fact in candidates {
             match self.remember(&fact, source_session) {
@@ -360,7 +356,7 @@ impl MemoryService {
 
     /// Ensure a code index exists for this bank (no-op if already non-empty).
     /// Returns `Some(n)` when a new index was built, `None` when skipped.
-    pub fn ensure_code_index(&self) -> anyhow::Result<Option<usize>> {
+    pub fn ensure_code_index(&self) -> Result<Option<usize>> {
         if !self.settings.enabled || !self.settings.auto_index {
             return Ok(None);
         }
@@ -381,7 +377,7 @@ impl MemoryService {
         &self,
         raw_llm: &str,
         source_session: Option<&str>,
-    ) -> anyhow::Result<Vec<String>> {
+    ) -> Result<Vec<String>> {
         if !self.settings.enabled || !self.settings.auto_retain {
             return Ok(Vec::new());
         }
@@ -392,7 +388,7 @@ impl MemoryService {
         self.save_facts(candidates, source_session)
     }
 
-    pub fn build_inject_block(&self, query: Option<&str>) -> anyhow::Result<String> {
+    pub fn build_inject_block(&self, query: Option<&str>) -> Result<String> {
         if !self.settings.enabled {
             return Ok(String::new());
         }
@@ -547,7 +543,7 @@ impl MemoryService {
     }
 }
 
-fn resolve_id(db: &Database, bank_key: &str, id_or_prefix: &str) -> anyhow::Result<Option<String>> {
+fn resolve_id(db: &Database, bank_key: &str, id_or_prefix: &str) -> Result<Option<String>> {
     let id_or_prefix = id_or_prefix.trim();
     if id_or_prefix.is_empty() {
         return Ok(None);
@@ -565,10 +561,10 @@ fn resolve_id(db: &Database, bank_key: &str, id_or_prefix: &str) -> anyhow::Resu
     match matches.len() {
         0 => Ok(None),
         1 => Ok(Some(matches[0].id.clone())),
-        _ => anyhow::bail!(
+        _ => Err(MemoryError::msg(format!(
             "ambiguous memory id prefix '{id_or_prefix}' matches {} entries",
             matches.len()
-        ),
+        ))),
     }
 }
 

@@ -5308,7 +5308,11 @@ fn memory_service(
     config: &Config,
 ) -> anyhow::Result<whycodes_memory::MemoryService> {
     let data_dir = Config::data_dir()?;
-    whycodes_memory::MemoryService::open(project_dir, data_dir, memory_settings(config))
+    Ok(whycodes_memory::MemoryService::open(
+        project_dir,
+        data_dir,
+        memory_settings(config),
+    )?)
 }
 
 /// Shorten a UUID-style session id for status lines (`a1b2c3d4…`).
@@ -5343,7 +5347,7 @@ pub fn resolve_and_load_session(
         let Some(row) = list.into_iter().next() else {
             return Ok(None);
         };
-        return Session::load_from_db(db, &row.id);
+        return Ok(Session::load_from_db(db, &row.id)?);
     }
 
     if let Some(s) = Session::load_from_db(db, want)? {
@@ -5359,7 +5363,7 @@ pub fn resolve_and_load_session(
         .collect();
     match matches.len() {
         0 => Ok(None),
-        1 => Session::load_from_db(db, &matches[0].id),
+        1 => Ok(Session::load_from_db(db, &matches[0].id)?),
         n => anyhow::bail!("ambiguous session id prefix '{want}' ({n} matches); use a longer id"),
     }
 }
