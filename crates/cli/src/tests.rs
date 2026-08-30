@@ -1,6 +1,12 @@
 //! Unit tests. Sibling file so llvm-cov can ignore tests.rs.
 
 use super::*;
+use crate::cmd::auth::auth_expiry_label;
+use crate::cmd::config::{get_config_value, set_config_value};
+use crate::cmd::debug::should_auto_update_with_env;
+use whycodes_agent::agent::Agent;
+use whycodes_core::types::{ModelConfig, ProviderConfig};
+use whycodes_protocol::{CiEvent, ResultMeta};
 
 fn cli(command: Option<Commands>) -> Cli {
     Cli {

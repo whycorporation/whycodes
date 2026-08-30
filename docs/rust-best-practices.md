@@ -146,8 +146,8 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 
 | Dosya | Satır | Sorun |
 |-------|------:|--------|
-| `crates/tui/src/run.rs` | 9170 | Event loop + slash + session + compact + testler |
-| `crates/cli/src/main.rs` | ~~4651~~ **4211** | Command bodies; argument schema moved to `args.rs` (2026-08-30) |
+| `crates/tui/src/run.rs` | ~~9170~~ | **ödendi (#46):** `run/{mod,slash,persist,tests}.rs` |
+| `crates/cli/src/main.rs` | ~~4651~~ **~250** | **ödendi (#46):** command bodies in `cli/src/cmd/` |
 | `crates/agent/src/agent.rs` | 4470 | Turn loop + tool gate + swarm + compact |
 | `crates/tui/src/ui/chat.rs` | 4112 | |
 | `crates/tui/src/input.rs` | 3949 | |
@@ -157,9 +157,9 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 
 Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `config` zaten “load / merge / validate” üç iş — `load.rs`, `merge.rs`, `schema.rs`, `types.rs` doğal kesit.
 
-`cli`: `Commands` enum `cli/src/args.rs`'ye taşındı (2026-08-30); gövdeler için `cli/src/cmd/{auth,session,github}.rs` sonraki doğal kesit.
+`cli`: `Commands` enum `cli/src/args.rs`; gövdeler `cli/src/cmd/{auth,session,github,…}.rs` (#46).
 
-`run.rs` içindeki `#[cfg(test)]` blokları `run/` alt modülüne veya `tui/tests/`’e çıkmalı; 9k satırlık dosyada review imkânsız.
+`tui`: event loop `run/mod.rs`; slash / persist / tests sibling modules (#46).
 
 ### 7. God-struct: her şey `pub`
 
@@ -330,13 +330,13 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 3. ~~**`SocketAddr::from` + CLI `match status`**~~ **ödendi** — cli 2→0, tui 1→0.
 4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` `core::Error`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü.
 5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
-6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. `cli/src/cmd/` ve `tui/src/run/` ayrı follow-up.
+6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. ~~`cli/src/cmd/` ve `tui/src/run/`~~ **ödendi (#46).**
 7. ~~**`TuiApp` alanlarını `pub(crate)`**~~ **ödendi (2026-08-30):** struct + 116 alan crate-içi; kök re-export düştü. Invariant metodları / `SessionRuntime` ayrı follow-up.
 8. ~~**`async_trait` → explicit native futures**~~ **ödendi (2026-08-31):** `Tool`, `LlmProvider`, ve object-safe MCP çağrıları `BoxFuture`/`ToolFuture` ile dyn dispatch'i korurken `async-trait` bağımlılığını `core`/`tools`/`llm`/`lsp` üzerinden kaldırdı. Permission prompt traitleri ayrı follow-up.
 9. ~~**`tokio` feature kesimi**~~ **ödendi (2026-08-31):** workspace Tokio `default-features = false`; her crate yalnız kullandığı runtime, macro, sync, time, process, io-util veya net feature'larını ister. `core`/`function`/`session` bağımlılık temizliği de önceki işte tamamlandı.
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–10 ödendi (2026-08-31); kalan geniş iş `cli`/`tui` command/event-loop kesitleri ve permission-prompt traitleridir. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–10 ödendi (2026-08-31); `cli/src/cmd/` ve `tui/src/run/` kesitleri #46. Kalan: permission-prompt traitler, `too_many_arguments`, `SessionRuntime` invariant metodları, `unwrap_used` (#47). Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
