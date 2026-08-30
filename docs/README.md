@@ -7,6 +7,7 @@ Start here, then pick the page you need.
 | [guide.md](guide.md) | Users | CLI, TUI, agents, tools, memory, configuration, SDK |
 | [auth.md](auth.md) | Users | API keys, OAuth login, credential import |
 | [architecture.md](architecture.md) | Contributors | Crate map and one-way layering |
+| [rust-best-practices.md](rust-best-practices.md) | Contributors | Rust idiom audit (errors, modules, async, panics) |
 | [roadmap.md](roadmap.md) | Contributors | Current focus and deferred work |
 | [knowhow.md](knowhow.md) | Contributors | Bugs that are easy to reintroduce |
 | [tui-term-matrix.md](tui-term-matrix.md) | Contributors | Manual TUI pass on Alacritty / Kitty / VTE |

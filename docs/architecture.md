@@ -60,3 +60,6 @@ Distribution notes: [packaging.md](packaging.md).
 
 Before changing the TUI event loop, mouse handling or terminal setup, read
 [knowhow.md](knowhow.md).
+
+Rust idiom notes (error types, god-files, `anyhow` in libraries):
+[rust-best-practices.md](rust-best-practices.md).
