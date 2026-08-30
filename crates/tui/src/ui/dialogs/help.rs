@@ -122,6 +122,18 @@ fn catalog() -> Vec<HelpLine> {
             desc: "Clear input",
         },
         HelpLine::Binding {
+            key: "Ctrl+W / Ctrl+⌫",
+            desc: "Delete previous word",
+        },
+        HelpLine::Binding {
+            key: "Ctrl+Del / Alt+D",
+            desc: "Delete next word",
+        },
+        HelpLine::Binding {
+            key: "Ctrl+←/→",
+            desc: "Move by word",
+        },
+        HelpLine::Binding {
             key: "↑/↓",
             desc: "History (empty prompt)",
         },

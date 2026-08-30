@@ -61,6 +61,14 @@ pub enum Action {
     InputHistoryNext,
     InputNewline,
     InputClear,
+    /// Delete the previous whitespace-delimited word (Ctrl+W / Ctrl+Backspace).
+    InputKillWordBack,
+    /// Delete the next whitespace-delimited word (Ctrl+Delete / Alt+D).
+    InputKillWordForward,
+    /// Move to the previous word start (Ctrl+Left / Alt+B).
+    InputWordLeft,
+    /// Move to the next word start (Ctrl+Right / Alt+F).
+    InputWordRight,
     ToggleToolCall,
     ToggleThinking,
     ToggleToolResult,
@@ -147,6 +155,7 @@ impl Keymap {
     pub fn resolve(&self, ctx: KeymapContext, focus: FocusPane, key: &KeyEvent) -> Option<Action> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
 
         match ctx {
             KeymapContext::Normal | KeymapContext::Session => {
@@ -227,26 +236,44 @@ impl Keymap {
                 }
 
                 match focus {
-                    FocusPane::Prompt => match (ctrl, shift, key.code) {
-                        (false, _, KeyCode::Enter) => Some(Action::SubmitInput),
-                        // Arrows edit the draft; Up on empty → history
-                        (false, false, KeyCode::Up) => Some(Action::InputHistoryPrev),
-                        (false, false, KeyCode::Down) => Some(Action::InputHistoryNext),
-                        (false, false, KeyCode::Left) => Some(Action::InputLeft),
-                        (false, false, KeyCode::Right) => Some(Action::InputRight),
-                        // Shift+arrows: turn jump without leaving prompt
-                        (false, true, KeyCode::Left) => Some(Action::JumpPrevTurn),
-                        (false, true, KeyCode::Right) => Some(Action::JumpNextTurn),
-                        (false, _, KeyCode::Home) => Some(Action::InputHome),
-                        (false, _, KeyCode::End) => Some(Action::InputEnd),
-                        (false, _, KeyCode::Backspace) => Some(Action::InputBackspace),
-                        (false, _, KeyCode::Delete) => Some(Action::InputDelete),
-                        (true, _, KeyCode::Char('u')) => Some(Action::InputClear),
-                        // Ctrl+Up/Down: pure scroll while typing
-                        (true, _, KeyCode::Up) => Some(Action::ScrollDown),
-                        (true, _, KeyCode::Down) => Some(Action::ScrollUp),
-                        _ => None,
-                    },
+                    FocusPane::Prompt => {
+                        // Readline / IDE word editing. Prompt-only so Ctrl+W in
+                        // `/sessions` still closes a live row (dialog handler).
+                        if alt && !ctrl {
+                            match key.code {
+                                KeyCode::Backspace => return Some(Action::InputKillWordBack),
+                                KeyCode::Char('b') => return Some(Action::InputWordLeft),
+                                KeyCode::Char('f') => return Some(Action::InputWordRight),
+                                KeyCode::Char('d') => return Some(Action::InputKillWordForward),
+                                _ => {}
+                            }
+                        }
+                        match (ctrl, shift, key.code) {
+                            (false, _, KeyCode::Enter) => Some(Action::SubmitInput),
+                            // Arrows edit the draft; Up on empty → history
+                            (false, false, KeyCode::Up) => Some(Action::InputHistoryPrev),
+                            (false, false, KeyCode::Down) => Some(Action::InputHistoryNext),
+                            (false, false, KeyCode::Left) => Some(Action::InputLeft),
+                            (false, false, KeyCode::Right) => Some(Action::InputRight),
+                            // Shift+arrows: turn jump without leaving prompt
+                            (false, true, KeyCode::Left) => Some(Action::JumpPrevTurn),
+                            (false, true, KeyCode::Right) => Some(Action::JumpNextTurn),
+                            (false, _, KeyCode::Home) => Some(Action::InputHome),
+                            (false, _, KeyCode::End) => Some(Action::InputEnd),
+                            (false, _, KeyCode::Backspace) => Some(Action::InputBackspace),
+                            (false, _, KeyCode::Delete) => Some(Action::InputDelete),
+                            (true, _, KeyCode::Char('u')) => Some(Action::InputClear),
+                            (true, _, KeyCode::Char('w')) => Some(Action::InputKillWordBack),
+                            (true, _, KeyCode::Backspace) => Some(Action::InputKillWordBack),
+                            (true, _, KeyCode::Delete) => Some(Action::InputKillWordForward),
+                            (true, _, KeyCode::Left) => Some(Action::InputWordLeft),
+                            (true, _, KeyCode::Right) => Some(Action::InputWordRight),
+                            // Ctrl+Up/Down: pure scroll while typing
+                            (true, _, KeyCode::Up) => Some(Action::ScrollDown),
+                            (true, _, KeyCode::Down) => Some(Action::ScrollUp),
+                            _ => None,
+                        }
+                    }
                     FocusPane::Scrollback => match (ctrl, shift, key.code) {
                         (false, false, KeyCode::Enter) => Some(Action::FocusPrompt),
                         (false, false, KeyCode::Char(' ')) => Some(Action::FocusPrompt),
@@ -365,6 +392,17 @@ fn normal_bindings() -> Vec<KeyBinding> {
             KeymapContext::Normal,
         ),
         KeyBinding::new("Shift+←/→", "Prev / next user turn", KeymapContext::Normal),
+        KeyBinding::new(
+            "Ctrl+W / Ctrl+⌫",
+            "Delete previous word (prompt)",
+            KeymapContext::Normal,
+        ),
+        KeyBinding::new(
+            "Ctrl+Del / Alt+D",
+            "Delete next word (prompt)",
+            KeymapContext::Normal,
+        ),
+        KeyBinding::new("Ctrl+←/→", "Move by word (prompt)", KeymapContext::Normal),
         KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
         KeyBinding::new("e / h", "Toggle thinking fold", KeymapContext::Normal),
         KeyBinding::new(
@@ -513,6 +551,59 @@ mod tests {
             Some(Action::InputClear)
         );
         assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('w'))),
+            Some(Action::InputKillWordBack)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Backspace)),
+            Some(Action::InputKillWordBack)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Delete)),
+            Some(Action::InputKillWordForward)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Left)),
+            Some(Action::InputWordLeft)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Right)),
+            Some(Action::InputWordRight)
+        );
+        let alt_backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT);
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &alt_backspace),
+            Some(Action::InputKillWordBack)
+        );
+        let alt_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT);
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &alt_d),
+            Some(Action::InputKillWordForward)
+        );
+        let alt_b = KeyEvent::new(KeyCode::Char('b'), KeyModifiers::ALT);
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &alt_b),
+            Some(Action::InputWordLeft)
+        );
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &alt_f),
+            Some(Action::InputWordRight)
+        );
+        // Product chords must not be stolen by word-editing.
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('a'))),
+            Some(Action::ToggleAutoScroll)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('b'))),
+            Some(Action::ToggleSidebar)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &shift(KeyCode::Left)),
+            Some(Action::JumpPrevTurn)
+        );
+        assert_eq!(
             k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Up)),
             Some(Action::ScrollDown)
         );
@@ -606,6 +697,11 @@ mod tests {
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('k'))),
             Some(Action::ScrollDown)
+        );
+        // Ctrl+W is prompt-only; scrollback must not steal session-picker close.
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('w'))),
+            None
         );
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('j'))),

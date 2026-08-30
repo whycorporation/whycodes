@@ -476,6 +476,10 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
                     | Action::InputEnd
                     | Action::InputNewline
                     | Action::InputClear
+                    | Action::InputKillWordBack
+                    | Action::InputKillWordForward
+                    | Action::InputWordLeft
+                    | Action::InputWordRight
                     | Action::InputHistoryPrev
                     | Action::InputHistoryNext
             ) {
@@ -499,6 +503,14 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             match app.mode {
                 AppMode::Normal => {
                     if let KeyCode::Char(c) = key.code {
+                        // Unmapped Ctrl/Alt chords must not type a letter
+                        // (Ctrl+W used to insert `w` before word-kill existed).
+                        if key.modifiers.intersects(
+                            crossterm::event::KeyModifiers::CONTROL
+                                | crossterm::event::KeyModifiers::ALT,
+                        ) {
+                            return true;
+                        }
                         app.focus_prompt();
                         // Second `/` while the draft is already a bare slash
                         // (typical after Esc dismisses the popup but leaves `/`)
@@ -522,6 +534,12 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
                 }
                 AppMode::Command => {
                     if let KeyCode::Char(c) = key.code {
+                        if key.modifiers.intersects(
+                            crossterm::event::KeyModifiers::CONTROL
+                                | crossterm::event::KeyModifiers::ALT,
+                        ) {
+                            return true;
+                        }
                         app.command.buffer.push(c);
                     }
                 }
@@ -708,6 +726,62 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.file_suggest.dismiss();
             app.request_full_clear(1);
         }
+        Action::InputKillWordBack if app.input_cursor > 0 => {
+            let end = clamp_cursor(&app.input_buffer, app.input_cursor);
+            if let Some(span) = crate::paste::placeholder_ending_at(&app.input_buffer, end)
+                .or_else(|| crate::paste::placeholder_at(&app.input_buffer, end.saturating_sub(1)))
+            {
+                app.remove_paste_span(span.start, span.end, span.id);
+            } else {
+                let start = prev_word_boundary(&app.input_buffer, end);
+                delete_range_expanding_placeholders(app, start, end);
+            }
+            app.request_full_clear(1);
+            app.slash_suggest.refresh(&app.input_buffer);
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
+        }
+        Action::InputKillWordForward if app.input_cursor < app.input_buffer.len() => {
+            let start = clamp_cursor(&app.input_buffer, app.input_cursor);
+            if let Some(span) = crate::paste::placeholder_starting_at(&app.input_buffer, start)
+                .or_else(|| crate::paste::placeholder_at(&app.input_buffer, start))
+            {
+                app.remove_paste_span(span.start, span.end, span.id);
+            } else {
+                let end = next_word_boundary(&app.input_buffer, start);
+                delete_range_expanding_placeholders(app, start, end);
+            }
+            app.request_full_clear(1);
+            app.slash_suggest.refresh(&app.input_buffer);
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
+        }
+        Action::InputWordLeft => {
+            let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+            if let Some(span) = crate::paste::placeholder_ending_at(&app.input_buffer, pos) {
+                app.input_cursor = span.start;
+            } else if let Some(span) =
+                crate::paste::placeholder_at(&app.input_buffer, pos.saturating_sub(1))
+            {
+                app.input_cursor = span.start;
+            } else {
+                app.input_cursor = prev_word_boundary(&app.input_buffer, pos);
+            }
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
+        }
+        Action::InputWordRight if app.input_cursor < app.input_buffer.len() => {
+            let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
+            if let Some(span) = crate::paste::placeholder_starting_at(&app.input_buffer, pos)
+                .or_else(|| crate::paste::placeholder_at(&app.input_buffer, pos))
+            {
+                app.input_cursor = span.end;
+            } else {
+                app.input_cursor = next_word_boundary(&app.input_buffer, pos);
+            }
+            app.file_suggest
+                .refresh(&app.input_buffer, app.input_cursor);
+        }
         Action::InputLeft => {
             let pos = clamp_cursor(&app.input_buffer, app.input_cursor);
             if let Some(span) = crate::paste::placeholder_ending_at(&app.input_buffer, pos) {
@@ -816,6 +890,68 @@ fn next_boundary(s: &str, idx: usize) -> usize {
         i += 1;
     }
     i
+}
+
+/// Byte index of the previous whitespace-delimited word start.
+///
+/// Skips trailing whitespace, then the preceding non-whitespace run. A
+/// collapsed paste placeholder that overlaps the range is treated as one unit
+/// by the caller (`delete_range_expanding_placeholders`).
+fn prev_word_boundary(s: &str, idx: usize) -> usize {
+    let mut i = clamp_cursor(s, idx);
+    while i > 0 {
+        let prev = prev_boundary(s, i);
+        if !s[prev..i].chars().next().is_some_and(char::is_whitespace) {
+            break;
+        }
+        i = prev;
+    }
+    while i > 0 {
+        let prev = prev_boundary(s, i);
+        if s[prev..i].chars().next().is_some_and(char::is_whitespace) {
+            break;
+        }
+        i = prev;
+    }
+    i
+}
+
+/// Byte index after the next whitespace-delimited word.
+fn next_word_boundary(s: &str, idx: usize) -> usize {
+    let mut i = clamp_cursor(s, idx);
+    while i < s.len() {
+        let next = next_boundary(s, i);
+        if !s[i..next].chars().next().is_some_and(char::is_whitespace) {
+            break;
+        }
+        i = next;
+    }
+    while i < s.len() {
+        let next = next_boundary(s, i);
+        if s[i..next].chars().next().is_some_and(char::is_whitespace) {
+            break;
+        }
+        i = next;
+    }
+    i
+}
+
+/// Delete `start..end`, expanding to cover any paste placeholder that overlaps.
+fn delete_range_expanding_placeholders(app: &mut TuiApp, start: usize, end: usize) {
+    let mut lo = start.min(end);
+    let mut hi = start.max(end);
+    for span in crate::paste::find_placeholders(&app.input_buffer) {
+        if span.end > lo && span.start < hi {
+            lo = lo.min(span.start);
+            hi = hi.max(span.end);
+            app.pending_pastes.retain(|b| b.id != span.id);
+        }
+    }
+    if lo < hi && hi <= app.input_buffer.len() {
+        app.input_buffer.replace_range(lo..hi, "");
+    }
+    app.input_cursor = lo;
+    crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
 }
 
 fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
@@ -2144,6 +2280,25 @@ mod utf8_cursor_tests {
         assert!(!is_bare_slash_draft(""));
         assert!(!is_bare_slash_draft("/h"));
     }
+
+    #[test]
+    fn word_boundaries_skip_whitespace_then_the_token() {
+        let s = "hello world";
+        assert_eq!(prev_word_boundary(s, s.len()), 6);
+        assert_eq!(prev_word_boundary(s, 6), 0);
+        assert_eq!(prev_word_boundary(s, 0), 0);
+        assert_eq!(next_word_boundary(s, 0), 5);
+        assert_eq!(next_word_boundary(s, 5), 11);
+        assert_eq!(next_word_boundary(s, s.len()), s.len());
+
+        let trailing = "hello  ";
+        assert_eq!(prev_word_boundary(trailing, trailing.len()), 0);
+        let leading = "  hello";
+        assert_eq!(next_word_boundary(leading, 0), leading.len());
+        assert_eq!(prev_word_boundary("", 0), 0);
+        assert_eq!(next_word_boundary("", 0), 0);
+        assert_eq!(prev_word_boundary("şa ğ", "şa ğ".len()), 4);
+    }
 }
 
 #[cfg(test)]
@@ -2236,6 +2391,116 @@ mod event_tests {
         assert!(handle_event(&mut a, ctrl('u')));
         assert!(a.input_buffer.is_empty());
         assert_eq!(a.input_cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_w_and_ctrl_backspace_kill_the_previous_word() {
+        let mut a = app();
+        a.input_buffer = "hello world".into();
+        a.input_cursor = a.input_buffer.len();
+        assert!(handle_event(&mut a, ctrl('w')));
+        assert_eq!(a.input_buffer, "hello ");
+        assert_eq!(a.input_cursor, 6);
+
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL))
+        ));
+        assert_eq!(a.input_buffer, "");
+        assert_eq!(a.input_cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_w_deletes_a_collapsed_paste_token_as_one_unit() {
+        let mut a = app();
+        let token = crate::paste::placeholder(1, 3);
+        a.input_buffer = format!("see {token}");
+        a.input_cursor = a.input_buffer.len();
+        a.pending_pastes.push(crate::paste::PastedBlock {
+            id: 1,
+            content: "a\nb\nc".into(),
+        });
+        assert!(handle_event(&mut a, ctrl('w')));
+        assert_eq!(a.input_buffer, "see ");
+        assert!(a.pending_pastes.is_empty());
+    }
+
+    #[test]
+    fn ctrl_delete_and_alt_d_kill_the_next_word() {
+        let mut a = app();
+        a.input_buffer = "hello world".into();
+        a.input_cursor = 0;
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Delete, KeyModifiers::CONTROL))
+        ));
+        assert_eq!(a.input_buffer, " world");
+        assert_eq!(a.input_cursor, 0);
+
+        a.input_buffer = "hello world".into();
+        a.input_cursor = 5;
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT))
+        ));
+        assert_eq!(a.input_buffer, "hello");
+        assert_eq!(a.input_cursor, 5);
+    }
+
+    #[test]
+    fn ctrl_arrows_move_by_word_without_stealing_shift_turn_jump() {
+        let mut a = app();
+        a.input_buffer = "hello world".into();
+        a.input_cursor = a.input_buffer.len();
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL))
+        ));
+        assert_eq!(a.input_cursor, 6);
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL))
+        ));
+        assert_eq!(a.input_cursor, 0);
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL))
+        ));
+        assert_eq!(a.input_cursor, 5);
+
+        // Shift+Left is turn-jump, not word-left — cursor stays put.
+        assert!(handle_event(
+            &mut a,
+            Event::Key(KeyEvent::new(KeyCode::Left, KeyModifiers::SHIFT))
+        ));
+        assert_eq!(a.input_cursor, 5);
+        assert_eq!(a.input_buffer, "hello world");
+    }
+
+    #[test]
+    fn unmapped_ctrl_letter_does_not_insert_into_the_prompt() {
+        let mut a = app();
+        a.input_buffer = "hi".into();
+        a.input_cursor = 2;
+        // Ctrl+X is unbound; must not type `x`.
+        assert!(handle_event(&mut a, ctrl('x')));
+        assert_eq!(a.input_buffer, "hi");
+        assert_eq!(a.input_cursor, 2);
+    }
+
+    #[test]
+    fn session_picker_ctrl_w_still_closes_a_live_row() {
+        let mut a = app();
+        a.session_list.sessions = vec![crate::app::SessionEntry {
+            id: "live".into(),
+            title: "t".into(),
+            messages: 1,
+            updated_at: None,
+            live: Some(2),
+        }];
+        open_dialog(&mut a, DialogKind::SessionList);
+        assert!(handle_event(&mut a, ctrl('w')));
+        assert_eq!(a.session_list.pending_close, Some(2));
     }
 
     #[test]
