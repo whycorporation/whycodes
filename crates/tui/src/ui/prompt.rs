@@ -1,12 +1,12 @@
 // ── ui/prompt.rs: boxed prompt ─────────────────────────────────────────
-// Rounded box ╭─╮│╰─╯, ❯ prefix, agent/model/effort on the bottom border.
+// Rounded box ╭─╮│╰─╯, ❯ prefix, agent/model/effort/mode on the bottom border.
 // No panel fill — sits on the canvas background.
 //
 // Layout:
 //   (blank gap above the box)
 //   ╭─────────────────────────╮   top border
 //   │ ❯ text…                 │   1..MAX_INPUT_ROWS
-//   ╰──── agent · model · Med ─╯   bottom border / info
+//   ╰──── agent · model · Med · auto ─╯   bottom border / info
 //   hint (home only)
 //
 // The input block grows upward as text wraps, capped at MAX_INPUT_ROWS.
@@ -23,6 +23,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use whycodes_core::types::ApprovalMode;
 
 /// The input block grows from a single line up to this many visual rows.
 pub const MAX_INPUT_ROWS: u16 = 8;
@@ -361,6 +362,8 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
     } else {
         app.agent_hit.set_rect(None);
         app.model_hit.set_rect(None);
+        app.effort_hit.set_rect(None);
+        app.approval_hit.set_rect(None);
     }
 
     // Home rotating hint under the box.
@@ -523,7 +526,13 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         effort_style = effort_style.add_modifier(Modifier::UNDERLINED);
     }
     let mode_shown = app.approval_mode.label().to_string();
-    let mut mode_style = Style::default().fg(palette.dim);
+    // `auto` stays muted; `important` / `manual` are more visible so you notice
+    // the session will interrupt.
+    let mut mode_style = Style::default().fg(match app.approval_mode {
+        ApprovalMode::Auto => palette.dim,
+        ApprovalMode::Important => palette.warning,
+        ApprovalMode::Manual => palette.fg,
+    });
     if app.approval_hit.hovered {
         mode_style = mode_style.add_modifier(Modifier::UNDERLINED);
     }
@@ -572,21 +581,40 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         spans.push(Span::styled(model_shown, model_style));
     }
     let effort_shown_w = UnicodeWidthStr::width(effort_shown.as_str()) as u16;
-    if !effort_shown.is_empty() {
-        spans.push(Span::styled(" · ", sep_style));
-        spans.push(Span::styled(effort_shown, effort_style));
-    }
     let mode_shown_w = UnicodeWidthStr::width(mode_shown.as_str()) as u16;
-    if !mode_shown.is_empty() {
+    let mut show_effort = !effort_shown.is_empty();
+    let mut show_mode = !mode_shown.is_empty();
+    if show_effort {
         spans.push(Span::styled(" · ", sep_style));
-        spans.push(Span::styled(mode_shown, mode_style));
+        spans.push(Span::styled(effort_shown.clone(), effort_style));
+    }
+    if show_mode {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(mode_shown.clone(), mode_style));
     }
     spans.push(Span::styled(" ", sep_style));
 
-    let label_w: usize = spans
-        .iter()
-        .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
-        .sum();
+    let span_width = |spans: &[Span<'_>]| -> usize {
+        spans
+            .iter()
+            .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+            .sum()
+    };
+    let mut label_w = span_width(&spans);
+    // Narrow terminals drop chips before collapsing to the agent name:
+    // approval first, then effort (issue #45).
+    if label_w > max_w && show_mode {
+        spans.truncate(spans.len() - 3); // trailing space + ` · ` + mode
+        spans.push(Span::styled(" ", sep_style));
+        show_mode = false;
+        label_w = span_width(&spans);
+    }
+    if label_w > max_w && show_effort {
+        spans.truncate(spans.len() - 3); // trailing space + ` · ` + effort
+        spans.push(Span::styled(" ", sep_style));
+        show_effort = false;
+        label_w = span_width(&spans);
+    }
     if label_w == 0 || label_w > max_w {
         // Narrow box: fall back to a single truncated, still-colored agent name.
         let trunc = truncate_to_width(&format!(" {} ", app.agent_name), max_w);
@@ -652,7 +680,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         }));
         col = col.saturating_add(model_shown_w);
     }
-    if effort_shown_w > 0 {
+    if show_effort {
         col = col.saturating_add(3); // ` · `
         app.effort_hit.set_rect(Some(Rect {
             x: col,
@@ -662,7 +690,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
         }));
         col = col.saturating_add(effort_shown_w);
     }
-    if mode_shown_w > 0 {
+    if show_mode {
         col = col.saturating_add(3); // ` · `
         app.approval_hit.set_rect(Some(Rect {
             x: col,
@@ -1182,6 +1210,124 @@ mod overflow_render_tests {
         assert!(
             app.model_hit.rect.is_some(),
             "model name must be a click target"
+        );
+        assert!(
+            row.contains("auto"),
+            "footer should show approval mode: {row}"
+        );
+        assert!(
+            app.approval_hit.rect.is_some(),
+            "approval mode must be a click target"
+        );
+    }
+
+    fn draw_prompt_footer(
+        app: &mut TuiApp,
+        width: u16,
+        height: u16,
+    ) -> (
+        ratatui::Terminal<ratatui::backend::TestBackend>,
+        crate::theme::ThemePalette,
+    ) {
+        let backend = ratatui::backend::TestBackend::new(width, height);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        let palette = app.config.palette();
+        terminal
+            .draw(|f| {
+                let area = f.area();
+                render(
+                    f,
+                    Rect {
+                        x: 0,
+                        y: height.saturating_sub(8).min(area.height.saturating_sub(1)),
+                        width: area.width,
+                        height: 8.min(area.height),
+                    },
+                    app,
+                    &palette,
+                );
+            })
+            .unwrap();
+        (terminal, palette)
+    }
+
+    fn footer_line_containing(
+        buf: &ratatui::buffer::Buffer,
+        width: u16,
+        height: u16,
+        needle: &str,
+    ) -> String {
+        for y in 0..height {
+            let mut line = String::new();
+            for x in 0..width {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            if line.contains(needle) {
+                return line;
+            }
+        }
+        String::new()
+    }
+
+    #[test]
+    fn bottom_meta_approval_chip_is_dim_in_auto_and_brighter_otherwise() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "anthropic".into();
+        app.model_name = "sonnet".into();
+        app.approval_mode = ApprovalMode::Auto;
+        let (terminal, palette) = draw_prompt_footer(&mut app, 80, 16);
+        let buf = terminal.backend().buffer();
+        let auto_col = (0..16u16).find_map(|y| cell_seq_col(buf, y, 80, "auto"));
+        let auto_fg = auto_col.map(|col| {
+            let y = (0..16u16)
+                .find(|y| cell_seq_col(buf, *y, 80, "auto").is_some())
+                .unwrap();
+            buf[(col, y)].fg
+        });
+        assert_eq!(auto_fg, Some(palette.dim), "auto stays muted");
+
+        app.approval_mode = ApprovalMode::Important;
+        let (terminal, palette) = draw_prompt_footer(&mut app, 80, 16);
+        let buf = terminal.backend().buffer();
+        let y = (0..16u16)
+            .find(|y| cell_seq_col(buf, *y, 80, "important").is_some())
+            .expect("important chip");
+        let col = cell_seq_col(buf, y, 80, "important").unwrap();
+        assert_eq!(buf[(col, y)].fg, palette.warning);
+
+        app.approval_mode = ApprovalMode::Manual;
+        let (terminal, palette) = draw_prompt_footer(&mut app, 80, 16);
+        let buf = terminal.backend().buffer();
+        let y = (0..16u16)
+            .find(|y| cell_seq_col(buf, *y, 80, "manual").is_some())
+            .expect("manual chip");
+        let col = cell_seq_col(buf, y, 80, "manual").unwrap();
+        assert_eq!(buf[(col, y)].fg, palette.fg);
+    }
+
+    #[test]
+    fn bottom_meta_drops_approval_before_effort_when_narrow() {
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.agent_name = "build".into();
+        app.provider_name = "xai".into();
+        app.model_name = "grok-4".into();
+        app.approval_mode = ApprovalMode::Auto;
+        // ` build · xai/grok-4 · Med · auto ` is 33 cols; max_w = width - 4.
+        // width 32 → max_w 28: drop auto, keep Med.
+        let (terminal, _) = draw_prompt_footer(&mut app, 32, 16);
+        let buf = terminal.backend().buffer();
+        let row = footer_line_containing(buf, 32, 16, "build");
+        assert!(row.contains("build"), "{row}");
+        assert!(
+            row.contains("Med"),
+            "effort stays after dropping mode: {row}"
+        );
+        assert!(!row.contains("auto"), "approval is first to drop: {row}");
+        assert!(app.effort_hit.rect.is_some(), "effort remains clickable");
+        assert!(
+            app.approval_hit.rect.is_none(),
+            "dropped approval has no hit"
         );
     }
 

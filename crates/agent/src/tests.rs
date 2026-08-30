@@ -1,6 +1,14 @@
 use crate::agent::Agent;
+use crate::permission::PermissionPrompter;
+use crate::question::{QuestionError, QuestionPrompter};
 use crate::subagent::SubagentTask;
-use whycodes_core::types::{AgentInfo, AgentMode, PermissionAction, PermissionSet};
+use async_trait::async_trait;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use whycodes_core::types::{
+    AgentInfo, AgentMode, ApprovalMode, PermissionAction, PermissionSet, ToolCall,
+};
+use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
 
 fn make_test_agent_info(name: &str) -> AgentInfo {
     AgentInfo {
@@ -184,6 +192,234 @@ async fn deny_still_wins_for_non_shell_tools() {
         "{}",
         result.content
     );
+}
+
+struct CountingDenyPrompter {
+    asks: AtomicUsize,
+}
+
+#[async_trait]
+impl PermissionPrompter for CountingDenyPrompter {
+    async fn ask(&self, _tool_name: &str, _detail: &str) -> bool {
+        self.asks.fetch_add(1, Ordering::SeqCst);
+        false
+    }
+}
+
+struct CountingCancelQuestionPrompter {
+    asks: AtomicUsize,
+}
+
+#[async_trait]
+impl QuestionPrompter for CountingCancelQuestionPrompter {
+    async fn ask(
+        &self,
+        _questions: Vec<QuestionSpec>,
+    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
+        self.asks.fetch_add(1, Ordering::SeqCst);
+        Err(QuestionError::Cancelled)
+    }
+}
+
+fn ask_rule_agent(tool: &str) -> Agent {
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .rules
+        .insert(tool.to_string(), PermissionAction::Ask);
+    Agent::new(info)
+}
+
+fn tool_call(name: &str, arguments: serde_json::Value) -> ToolCall {
+    ToolCall {
+        id: "tc-ask".into(),
+        name: name.into(),
+        arguments,
+    }
+}
+
+async fn run_named(agent: &Agent, call: ToolCall) -> whycodes_core::types::ToolResult {
+    let session = whycodes_session::session::Session::new(
+        std::path::PathBuf::from("/work/proj"),
+        "test".to_string(),
+    );
+    let ctx = whycodes_core::ToolContext {
+        working_dir: "/work/proj".to_string(),
+        session_id: None,
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
+        file_index: None,
+        panel: None,
+        todo_sink: None,
+        swarm_hub: None,
+    };
+    agent
+        .execute_with_permission(&call, &session, &ctx, "anthropic", "m", "k", None, None)
+        .await
+}
+
+#[tokio::test]
+async fn auto_skips_permission_ask_without_calling_prompter() {
+    let prompter = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent = ask_rule_agent("webfetch").with_permission_prompter(prompter.clone());
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let result = run_named(
+        &agent,
+        tool_call(
+            "webfetch",
+            serde_json::json!({"url": "https://example.com"}),
+        ),
+    )
+    .await;
+    assert_eq!(prompter.asks.load(Ordering::SeqCst), 0);
+    assert!(
+        !result.content.contains("User denied permission"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn important_skips_low_risk_ask_but_prompts_high_risk() {
+    let low = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent = ask_rule_agent("webfetch").with_permission_prompter(low.clone());
+    agent.set_approval_mode(ApprovalMode::Important);
+    let _ = run_named(
+        &agent,
+        tool_call(
+            "webfetch",
+            serde_json::json!({"url": "https://example.com"}),
+        ),
+    )
+    .await;
+    assert_eq!(low.asks.load(Ordering::SeqCst), 0);
+
+    let high = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent = ask_rule_agent("browser").with_permission_prompter(high.clone());
+    agent.set_approval_mode(ApprovalMode::Important);
+    let result = run_named(&agent, tool_call("browser", serde_json::json!({}))).await;
+    assert_eq!(high.asks.load(Ordering::SeqCst), 1);
+    assert!(
+        result.content.contains("User denied permission"),
+        "{}",
+        result.content
+    );
+
+    let outside = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .rules
+        .insert("write".into(), PermissionAction::Ask);
+    let mut agent = Agent::new(info).with_permission_prompter(outside.clone());
+    agent.set_approval_mode(ApprovalMode::Important);
+    let result = run_named(
+        &agent,
+        tool_call(
+            "write",
+            serde_json::json!({"path": "../secret.txt", "content": "x"}),
+        ),
+    )
+    .await;
+    assert_eq!(outside.asks.load(Ordering::SeqCst), 1);
+    assert!(
+        result.content.contains("User denied permission"),
+        "{}",
+        result.content
+    );
+
+    let bash = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .rules
+        .insert("bash".into(), PermissionAction::Ask);
+    let mut agent = Agent::new(info).with_permission_prompter(bash.clone());
+    agent.set_approval_mode(ApprovalMode::Important);
+    let result = run_named(&agent, bash_call("rm -rf /tmp/scratch")).await;
+    assert_eq!(bash.asks.load(Ordering::SeqCst), 1);
+    assert!(
+        result.content.contains("User denied permission"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn manual_prompts_every_permission_ask() {
+    let prompter = Arc::new(CountingDenyPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent = ask_rule_agent("webfetch").with_permission_prompter(prompter.clone());
+    agent.set_approval_mode(ApprovalMode::Manual);
+    let result = run_named(
+        &agent,
+        tool_call(
+            "webfetch",
+            serde_json::json!({"url": "https://example.com"}),
+        ),
+    )
+    .await;
+    assert_eq!(prompter.asks.load(Ordering::SeqCst), 1);
+    assert!(
+        result.content.contains("User denied permission"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn auto_answers_question_without_ui_prompter() {
+    let prompter = Arc::new(CountingCancelQuestionPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent =
+        Agent::new(make_test_agent_info("build")).with_question_prompter(prompter.clone());
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let result = run_named(
+        &agent,
+        tool_call(
+            "question",
+            serde_json::json!({"question": "Pick", "choices": ["A", "B"]}),
+        ),
+    )
+    .await;
+    assert_eq!(prompter.asks.load(Ordering::SeqCst), 0);
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains('A'), "{}", result.content);
+}
+
+#[tokio::test]
+async fn important_and_manual_prompt_on_question() {
+    for mode in [ApprovalMode::Important, ApprovalMode::Manual] {
+        let prompter = Arc::new(CountingCancelQuestionPrompter {
+            asks: AtomicUsize::new(0),
+        });
+        let mut agent =
+            Agent::new(make_test_agent_info("build")).with_question_prompter(prompter.clone());
+        agent.set_approval_mode(mode);
+        let result = run_named(
+            &agent,
+            tool_call(
+                "question",
+                serde_json::json!({"question": "Pick", "choices": ["A", "B"]}),
+            ),
+        )
+        .await;
+        assert_eq!(prompter.asks.load(Ordering::SeqCst), 1, "{mode}");
+        assert!(result.is_error, "{}", result.content);
+        assert!(result.content.contains("cancelled"), "{}", result.content);
+    }
 }
 
 #[test]
