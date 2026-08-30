@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Prompt Backspace/Delete must not `terminal.clear()`
+
+**Symptom:** Typing in the prompt is smooth; Backspace, Delete, Ctrl+U, and
+word-kill flash the whole TUI (blank frame, then full repaint) on both the
+home screen and in-session chat.
+
+**Root cause:** `handle_input_action` called `request_full_clear(1)` on every
+prompt shrink. That path exists for *paste echo*: hosts write glyphs onto the
+PTY outside ratatui's diff, and the centered home gutters stay spaces in both
+frames so the leftover cannot be erased without a hard clear. Ordinary
+grapheme/word delete never produces that echo. `fill_blank` already paints
+the home gutters, so a normal dirty redraw is enough.
+
+**Fix:** Drop `request_full_clear` from Backspace / Delete / Ctrl+U / word-kill.
+Keep it on `insert_paste_text`, submit, session switch, and
+`event_needs_full_clear` (Paste / Resize / FocusGained).
+
+**Prevention:** Do not treat "the prompt got shorter" as "the PTY is dirty".
+Only force `terminal.clear()` when something wrote *outside* ratatui (paste
+echo, resize, focus restore) or the layout jumps (submit / new session).
+
 ### 2026-08-30 — Session token usage: Codex double-count, cold cache, stale meter
 
 **Symptom:** ChatGPT/Codex `/cost` and the context bar were high after cache hits.

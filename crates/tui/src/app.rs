@@ -1228,8 +1228,9 @@ pub struct TuiApp {
     /// paste on hosts without bracketed paste) writes onto the PTY outside
     /// ratatui's diff; breathing-room cells stay spaces in both frames so
     /// the leftover sits left of the centered home prompt until we force a
-    /// full rewrite. Backspace/delete must request this too — otherwise the
-    /// ghost cannot be erased.
+    /// full rewrite. Ordinary Backspace/Delete must *not* request this —
+    /// home gutters already `fill_blank`. Keep the counter only for paste,
+    /// resize, focus, and layout jumps (submit / session switch).
     pub pending_full_clears: u8,
 
     // ── input ──
@@ -1483,11 +1484,159 @@ impl MouseSelection {
     }
 }
 
+/// One painted row in the model picker (headers and models share one cursor).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelPickerRow {
+    /// Provider group header. `count` is the number of matching models.
+    Header {
+        provider: String,
+        count: usize,
+        collapsed: bool,
+    },
+    /// Leaf model under `provider`.
+    Model { provider: String, model: String },
+}
+
 /// Model selection dialog state.
 #[derive(Debug, Clone, Default)]
 pub struct ModelSelectionState {
     pub models: Vec<(String, String)>, // (provider_name, model_id)
     pub selected: usize,
+    /// Filter text (`/` to start, same as the help overlay).
+    pub query: String,
+    pub searching: bool,
+    /// Providers whose model lists are folded. Empty = all expanded.
+    pub collapsed: HashSet<String>,
+}
+
+impl ModelSelectionState {
+    pub fn is_searching(&self) -> bool {
+        self.searching || !self.query.is_empty()
+    }
+
+    /// Visible rows after applying search + collapse. A non-empty query
+    /// auto-expands every provider that still has a match.
+    pub fn visible_rows(&self) -> Vec<ModelPickerRow> {
+        let q = self.query.to_ascii_lowercase();
+        let mut groups: Vec<(String, Vec<String>)> = Vec::new();
+        for (provider, model) in &self.models {
+            if !q.is_empty() {
+                let p = provider.to_ascii_lowercase();
+                let m = model.to_ascii_lowercase();
+                if !p.contains(&q) && !m.contains(&q) {
+                    continue;
+                }
+            }
+            match groups.last_mut() {
+                Some((name, models)) if name == provider => models.push(model.clone()),
+                _ => groups.push((provider.clone(), vec![model.clone()])),
+            }
+        }
+        let mut rows = Vec::new();
+        for (provider, models) in groups {
+            let collapsed = q.is_empty() && self.collapsed.contains(&provider);
+            rows.push(ModelPickerRow::Header {
+                provider: provider.clone(),
+                count: models.len(),
+                collapsed,
+            });
+            if collapsed {
+                continue;
+            }
+            for model in models {
+                rows.push(ModelPickerRow::Model {
+                    provider: provider.clone(),
+                    model,
+                });
+            }
+        }
+        rows
+    }
+
+    pub fn clamp_selected(&mut self) {
+        let len = self.visible_rows().len();
+        if len == 0 {
+            self.selected = 0;
+        } else if self.selected >= len {
+            self.selected = len - 1;
+        }
+    }
+
+    /// Select the row for `(provider, model)`, expanding the group if needed.
+    pub fn select_current(&mut self, provider: &str, model: &str) {
+        self.collapsed.remove(provider);
+        let rows = self.visible_rows();
+        self.selected = rows
+            .iter()
+            .position(|row| {
+                matches!(
+                    row,
+                    ModelPickerRow::Model { provider: p, model: m }
+                        if p == provider && m == model
+                )
+            })
+            .or_else(|| {
+                rows.iter().position(|row| {
+                    matches!(
+                        row,
+                        ModelPickerRow::Header { provider: p, .. } if p == provider
+                    )
+                })
+            })
+            .unwrap_or(0);
+    }
+
+    /// Reset search and fold every provider except the active one.
+    pub fn prepare_for_open(&mut self, current_provider: &str, current_model: &str) {
+        self.query.clear();
+        self.searching = false;
+        self.collapsed.clear();
+        for (provider, _) in &self.models {
+            if provider != current_provider {
+                self.collapsed.insert(provider.clone());
+            }
+        }
+        self.select_current(current_provider, current_model);
+    }
+
+    pub fn selected_row(&self) -> Option<ModelPickerRow> {
+        self.visible_rows().into_iter().nth(self.selected)
+    }
+
+    pub fn toggle_group_at_cursor(&mut self) -> bool {
+        let Some(ModelPickerRow::Header { provider, .. }) = self.selected_row() else {
+            return false;
+        };
+        if !self.collapsed.remove(&provider) {
+            self.collapsed.insert(provider);
+        }
+        self.clamp_selected();
+        true
+    }
+
+    /// Collapse (left) or expand (right) the group under the cursor.
+    pub fn set_group_collapsed_at_cursor(&mut self, collapsed: bool) -> bool {
+        let provider = match self.selected_row() {
+            Some(ModelPickerRow::Header { provider, .. })
+            | Some(ModelPickerRow::Model { provider, .. }) => provider,
+            None => return false,
+        };
+        if collapsed {
+            self.collapsed.insert(provider.clone());
+            if let Some(idx) = self.visible_rows().iter().position(|row| {
+                matches!(
+                    row,
+                    ModelPickerRow::Header { provider: p, .. } if p == &provider
+                )
+            }) {
+                self.selected = idx;
+            }
+        } else {
+            self.collapsed.remove(&provider);
+            self.clamp_selected();
+        }
+        true
+    }
 }
 
 /// Every provider/model pair the config knows about, for the model picker.
@@ -3725,6 +3874,100 @@ mod state_tests {
 
     fn app() -> TuiApp {
         TuiApp::from_config(TuiAppConfig::default())
+    }
+
+    fn catalog() -> ModelSelectionState {
+        ModelSelectionState {
+            models: vec![
+                ("anthropic".into(), "claude-sonnet".into()),
+                ("anthropic".into(), "claude-opus".into()),
+                ("openai".into(), "gpt-4o".into()),
+            ],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn model_picker_groups_and_search() {
+        let mut s = catalog();
+        s.prepare_for_open("openai", "gpt-4o");
+        let rows = s.visible_rows();
+        assert!(
+            matches!(
+                &rows[0],
+                ModelPickerRow::Header {
+                    provider,
+                    collapsed: true,
+                    ..
+                } if provider == "anthropic"
+            ),
+            "{rows:?}"
+        );
+        assert!(
+            matches!(
+                &rows[1],
+                ModelPickerRow::Header {
+                    provider,
+                    collapsed: false,
+                    ..
+                } if provider == "openai"
+            ),
+            "{rows:?}"
+        );
+        assert!(
+            matches!(
+                &rows[2],
+                ModelPickerRow::Model { model, .. } if model == "gpt-4o"
+            ),
+            "{rows:?}"
+        );
+        assert_eq!(s.selected, 2);
+
+        s.query = "claude".into();
+        let rows = s.visible_rows();
+        assert_eq!(
+            rows.len(),
+            3,
+            "search auto-expands matching provider: {rows:?}"
+        );
+        assert!(matches!(
+            &rows[0],
+            ModelPickerRow::Header {
+                collapsed: false,
+                ..
+            }
+        ));
+        assert!(
+            rows.iter().any(
+                |r| matches!(r, ModelPickerRow::Model { model, .. } if model == "claude-sonnet")
+            )
+        );
+        assert!(
+            !rows
+                .iter()
+                .any(|r| matches!(r, ModelPickerRow::Model { model, .. } if model == "gpt-4o"))
+        );
+
+        s.query = "nope".into();
+        assert!(s.visible_rows().is_empty());
+    }
+
+    #[test]
+    fn model_picker_toggle_and_fold_keys() {
+        let mut s = catalog();
+        s.prepare_for_open("anthropic", "claude-sonnet");
+        assert!(!s.toggle_group_at_cursor(), "cursor is on a model");
+        s.selected = 0;
+        assert!(s.toggle_group_at_cursor());
+        assert!(s.collapsed.contains("anthropic"));
+        assert!(s.set_group_collapsed_at_cursor(false));
+        assert!(!s.collapsed.contains("anthropic"));
+        s.selected = 1; // model under anthropic
+        assert!(s.set_group_collapsed_at_cursor(true));
+        assert!(s.collapsed.contains("anthropic"));
+        assert!(
+            matches!(s.selected_row(), Some(ModelPickerRow::Header { provider, .. }) if provider == "anthropic")
+        );
     }
 
     fn question(prompt: &str, labels: &[&str], multi_select: bool) -> QuestionSpec {

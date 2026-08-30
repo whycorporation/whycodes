@@ -809,8 +809,8 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let mut first_frame = true;
     // Paste / resize / focus can echo glyphs onto the PTY outside ratatui's
     // diff. Clear the terminal on the next paint so leftover text cannot sit
-    // in the unpainted rows beside the prompt. `app.pending_full_clears`
-    // covers backspace after a paste (the ghost is not an Event::Paste).
+    // in the unpainted rows beside the prompt. Ordinary Backspace/Delete
+    // must not bump `pending_full_clears` — home gutters already fill_blank.
     // Deep-idle + malloc_trim clocks (jcode redraw_schedule / idle_heap).
     let mut last_user_input = Instant::now();
     let mut idle_trim_armed = true;

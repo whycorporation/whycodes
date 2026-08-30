@@ -6,10 +6,10 @@
 use crate::app::TuiApp;
 use crate::theme::ThemePalette;
 use crate::ui::scrollbar::{ScrollbarColors, paint_scrollbar};
-use ratatui::{Frame, layout::Rect, style::Style};
+use ratatui::{Frame, layout::Rect};
 
 use super::base::{dialog_frame, paint_divider};
-use super::select::{paint_picker_row, paint_section_header};
+use super::select::{paint_picker_row, paint_search_bar, paint_section_header};
 
 enum HelpLine {
     Header(&'static str),
@@ -145,6 +145,14 @@ fn catalog() -> Vec<HelpLine> {
         HelpLine::Binding {
             key: "Ctrl+M",
             desc: "Model selection",
+        },
+        HelpLine::Binding {
+            key: "/",
+            desc: "Search models (in picker)",
+        },
+        HelpLine::Binding {
+            key: "←/→",
+            desc: "Collapse / expand provider",
         },
         HelpLine::Binding {
             key: "Ctrl+B",
@@ -369,40 +377,4 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     app.dialog_list_scroll_start = start;
     app.dialog_list_visible = max_rows;
     app.dialog_list_total = total;
-}
-
-fn paint_search_bar(
-    frame: &mut Frame,
-    area: Rect,
-    query: &str,
-    searching: bool,
-    palette: &ThemePalette,
-) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-    let row = Rect {
-        x: area.x,
-        y: area.y,
-        width: area.width,
-        height: 1,
-    };
-    let style = Style::default().fg(palette.dim).bg(palette.bg);
-    let buf = frame.buffer_mut();
-    for x in row.x..row.x.saturating_add(row.width) {
-        if let Some(cell) = buf.cell_mut((x, row.y)) {
-            cell.set_symbol(" ");
-            cell.set_style(style);
-        }
-    }
-    if searching || !query.is_empty() {
-        let text = format!(" search: {query}");
-        buf.set_stringn(row.x, row.y, &text, row.width as usize, style);
-        let cursor_col = (text.chars().count() as u16).min(row.width.saturating_sub(1));
-        if let Some(cell) = buf.cell_mut((row.x + cursor_col, row.y)) {
-            cell.set_style(Style::default().fg(palette.bg).bg(palette.fg));
-        }
-    } else {
-        buf.set_stringn(row.x, row.y, " / to search", row.width as usize, style);
-    }
 }

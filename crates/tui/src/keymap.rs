@@ -437,6 +437,11 @@ fn dialog_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("Esc/q", "Close dialog", KeymapContext::Dialog),
         KeyBinding::new("Enter/y", "Confirm / Select", KeymapContext::Dialog),
         KeyBinding::new("Tab/Up/Down", "Navigate", KeymapContext::Dialog),
+        KeyBinding::new(
+            "/ · j/k · ←/→",
+            "Search / nav / fold (model picker)",
+            KeymapContext::Dialog,
+        ),
         KeyBinding::new("Ctrl+S", "Save (provider form)", KeymapContext::Dialog),
         KeyBinding::new("Ctrl+C", "Cancel", KeymapContext::Dialog),
     ]

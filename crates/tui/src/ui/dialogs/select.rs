@@ -274,6 +274,58 @@ pub fn paint_section_header(buf: &mut Buffer, row: Rect, label: &str, palette: &
     buf.set_stringn(row.x, row.y, &text, row.width as usize, style);
 }
 
+/// Grok picker search bar (` / to search` / ` search: query` + inverse cursor).
+pub fn paint_search_bar(
+    frame: &mut Frame,
+    area: Rect,
+    query: &str,
+    searching: bool,
+    palette: &ThemePalette,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let row = Rect {
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: 1,
+    };
+    let style = Style::default().fg(palette.dim).bg(palette.bg);
+    let buf = frame.buffer_mut();
+    for x in row.x..row.x.saturating_add(row.width) {
+        if let Some(cell) = buf.cell_mut((x, row.y)) {
+            cell.set_symbol(" ");
+            cell.set_style(style);
+        }
+    }
+    if searching || !query.is_empty() {
+        let text = format!(" search: {query}");
+        buf.set_stringn(row.x, row.y, &text, row.width as usize, style);
+        let cursor_col = (text.chars().count() as u16).min(row.width.saturating_sub(1));
+        if let Some(cell) = buf.cell_mut((row.x + cursor_col, row.y)) {
+            cell.set_style(Style::default().fg(palette.bg).bg(palette.fg));
+        }
+    } else {
+        buf.set_stringn(row.x, row.y, " / to search", row.width as usize, style);
+    }
+}
+
+/// Collapsible provider header: `▾ name (N)` expanded, `▸ name (N)` collapsed.
+pub fn paint_group_header(
+    buf: &mut Buffer,
+    row: Rect,
+    name: &str,
+    count: usize,
+    collapsed: bool,
+    selected: bool,
+    palette: &ThemePalette,
+) {
+    let chevron = if collapsed { "▸" } else { "▾" };
+    let label = format!("{chevron} {name} ({count})");
+    paint_picker_row(buf, row, &label, None, selected, palette, false);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

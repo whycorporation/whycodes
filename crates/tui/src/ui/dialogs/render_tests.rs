@@ -457,19 +457,51 @@ fn model_dialog_lists_provider_model_pairs() {
         ("anthropic".into(), "claude-sonnet".into()),
         ("openai".into(), "gpt-4o".into()),
     ];
-    app.model_selection.selected = 1;
+    // Header, model, header, model — select gpt-4o.
+    app.model_selection.selected = 3;
     let palette = app.config.palette();
     let (_buf, text) = paint(80, 24, |f| {
         render_model_dialog(f, &mut app, &palette);
     });
-    assert!(text.contains("anthropic / claude-sonnet"), "{text}");
-    assert!(text.contains("openai / gpt-4o"), "{text}");
+    assert!(text.contains("anthropic"), "{text}");
+    assert!(text.contains("claude-sonnet"), "{text}");
+    assert!(text.contains("openai"), "{text}");
+    assert!(text.contains("gpt-4o"), "{text}");
+    assert!(
+        text.contains("/ to search") || text.contains("search:"),
+        "{text}"
+    );
     let lines: Vec<&str> = text.lines().filter(|l| l.contains("gpt-4o")).collect();
     assert!(
         lines.iter().any(|l| l.contains('◆')),
         "selected model row must carry the diamond: {text}"
     );
     assert!(app.dialog_list_hit.is_some());
+}
+
+#[test]
+fn model_dialog_search_and_collapsed_headers() {
+    let mut app = TuiApp::new(cfg());
+    app.model_selection.models = vec![
+        ("anthropic".into(), "claude-sonnet".into()),
+        ("anthropic".into(), "claude-opus".into()),
+        ("openai".into(), "gpt-4o".into()),
+    ];
+    app.model_selection.collapsed.insert("anthropic".into());
+    app.model_selection.query = "gpt".into();
+    app.model_selection.searching = true;
+    let palette = app.config.palette();
+    let (_buf, text) = paint(80, 24, |f| {
+        render_model_dialog(f, &mut app, &palette);
+    });
+    assert!(text.contains("search: gpt"), "{text}");
+    assert!(text.contains("gpt-4o"), "{text}");
+    assert!(
+        !text.contains("claude-sonnet"),
+        "search should hide non-matching models: {text}"
+    );
+    // Query auto-expands matching groups even if they were collapsed.
+    assert!(text.contains("openai"), "{text}");
 }
 
 // ── question ───────────────────────────────────────────────────────────

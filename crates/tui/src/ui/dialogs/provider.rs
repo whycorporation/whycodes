@@ -14,8 +14,9 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 
-use super::base::dialog_frame;
-use super::select::paint_picker_row;
+use super::base::{dialog_frame, paint_divider};
+use super::select::{paint_group_header, paint_picker_row, paint_search_bar};
+use crate::app::ModelPickerRow;
 
 pub fn render_provider_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
     match app.provider_dialog.mode {
@@ -241,7 +242,13 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     let chrome = dialog_frame(
         frame,
         "Select Model",
-        &["↑/↓ nav", "Enter select", "Esc close"],
+        &[
+            "↑/↓ nav",
+            "/ search",
+            "←/→ fold",
+            "Enter select",
+            "Esc close",
+        ],
         palette,
         app.mouse_pos,
     );
@@ -250,10 +257,16 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         app.apply_modal_chrome(chrome.close_hit, chrome.modal, None);
         return;
     }
-    let ms = &app.model_selection;
+
+    app.model_selection.clamp_selected();
+    let rows = app.model_selection.visible_rows();
+    let selected = app.model_selection.selected;
+    let searching = app.model_selection.searching;
+    let query = app.model_selection.query.clone();
+    let empty_catalog = app.model_selection.models.is_empty();
 
     const HEADER_ROWS: usize = 2;
-    let item_count = ms.models.len();
+    let item_count = rows.len();
     let list_budget = (area.height as usize).saturating_sub(HEADER_ROWS).max(1);
     let needs_scrollbar = item_count > list_budget;
     let list_width = if needs_scrollbar {
@@ -261,25 +274,16 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     } else {
         area.width
     };
-    let start = scroll_to_selected(ms.selected, item_count, list_budget);
+    let start = scroll_to_selected(selected, item_count, list_budget);
 
-    let lines = vec![
-        Line::from(Span::styled(
-            "Choose a model:",
-            Style::default().fg(palette.dim),
-        )),
-        Line::from(""),
-    ];
-
-    frame.render_widget(
-        Paragraph::new(Text::from(lines)).style(Style::default().bg(palette.bg)),
-        Rect {
-            x: area.x,
-            y: area.y,
-            width: list_width,
-            height: HEADER_ROWS as u16,
-        },
-    );
+    let search_area = Rect {
+        x: area.x,
+        y: area.y,
+        width: list_width,
+        height: 1,
+    };
+    paint_search_bar(frame, search_area, &query, searching, palette);
+    paint_divider(frame, area.x, area.y.saturating_add(1), list_width, palette);
 
     let rows_area = Rect {
         x: area.x,
@@ -287,7 +291,7 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         width: list_width,
         height: area.height.saturating_sub(HEADER_ROWS as u16),
     };
-    if ms.models.is_empty() {
+    if empty_catalog {
         paint_picker_row(
             frame.buffer_mut(),
             Rect {
@@ -302,35 +306,64 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
             palette,
             true,
         );
+    } else if rows.is_empty() {
+        paint_picker_row(
+            frame.buffer_mut(),
+            Rect {
+                x: rows_area.x,
+                y: rows_area.y,
+                width: rows_area.width,
+                height: 1,
+            },
+            "No matching models.",
+            None,
+            false,
+            palette,
+            true,
+        );
     } else {
-        for (row_i, (i, (provider, model))) in ms
-            .models
+        for (row_i, (i, row)) in rows
             .iter()
             .enumerate()
             .skip(start)
             .take(list_budget)
             .enumerate()
         {
-            let row = Rect {
+            let cell = Rect {
                 x: rows_area.x,
                 y: rows_area.y + row_i as u16,
                 width: rows_area.width,
                 height: 1,
             };
-            paint_picker_row(
-                frame.buffer_mut(),
-                row,
-                &format!("{provider} / {model}"),
-                None,
-                i == ms.selected,
-                palette,
-                false,
-            );
+            match row {
+                ModelPickerRow::Header {
+                    provider,
+                    count,
+                    collapsed,
+                } => paint_group_header(
+                    frame.buffer_mut(),
+                    cell,
+                    provider,
+                    *count,
+                    *collapsed,
+                    i == selected,
+                    palette,
+                ),
+                ModelPickerRow::Model { model, .. } => paint_picker_row(
+                    frame.buffer_mut(),
+                    cell,
+                    model,
+                    None,
+                    i == selected,
+                    palette,
+                    false,
+                ),
+            }
         }
     }
 
     let mut scrollbar_hit = None;
-    if needs_scrollbar && !ms.models.is_empty() {
+    if needs_scrollbar && !rows.is_empty() {
         let colors = ScrollbarColors::from_palette(palette);
         let bar_h = area.height.saturating_sub(HEADER_ROWS as u16);
         if bar_h > 0 {

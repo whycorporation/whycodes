@@ -6,7 +6,8 @@
 // Esc hierarchy: overlays → cancel turn (run loop) → double-Esc clear draft.
 
 use crate::app::{
-    AppMode, ConfirmAction, DialogKind, ESC_DOUBLE_MS, FocusPane, MouseSelection, TuiApp,
+    AppMode, ConfirmAction, DialogKind, ESC_DOUBLE_MS, FocusPane, ModelPickerRow, MouseSelection,
+    TuiApp,
 };
 use crate::keymap::{Action, KeymapContext};
 use crossterm::event::{
@@ -682,7 +683,6 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 app.input_cursor = start;
                 crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
             }
-            app.request_full_clear(1);
             app.slash_suggest.refresh(&app.input_buffer);
             app.file_suggest
                 .refresh(&app.input_buffer, app.input_cursor);
@@ -712,7 +712,6 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 app.input_cursor = start;
                 crate::paste::prune_unused(&mut app.pending_pastes, &app.input_buffer);
             }
-            app.request_full_clear(1);
             app.slash_suggest.refresh(&app.input_buffer);
             app.file_suggest
                 .refresh(&app.input_buffer, app.input_cursor);
@@ -724,7 +723,6 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
             app.pending_pastes.clear();
             app.slash_suggest.dismiss();
             app.file_suggest.dismiss();
-            app.request_full_clear(1);
         }
         Action::InputKillWordBack if app.input_cursor > 0 => {
             let end = clamp_cursor(&app.input_buffer, app.input_cursor);
@@ -736,7 +734,6 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 let start = prev_word_boundary(&app.input_buffer, end);
                 delete_range_expanding_placeholders(app, start, end);
             }
-            app.request_full_clear(1);
             app.slash_suggest.refresh(&app.input_buffer);
             app.file_suggest
                 .refresh(&app.input_buffer, app.input_cursor);
@@ -751,7 +748,6 @@ fn handle_input_action(app: &mut TuiApp, action: Action, _key: &KeyEvent) {
                 let end = next_word_boundary(&app.input_buffer, start);
                 delete_range_expanding_placeholders(app, start, end);
             }
-            app.request_full_clear(1);
             app.slash_suggest.refresh(&app.input_buffer);
             app.file_suggest
                 .refresh(&app.input_buffer, app.input_cursor);
@@ -1474,7 +1470,16 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                     }
                     DialogKind::Model => {
                         app.model_selection.selected = idx;
-                        confirm_dialog(app, active);
+                        match app.model_selection.selected_row() {
+                            Some(ModelPickerRow::Header { .. }) => {
+                                app.model_selection.toggle_group_at_cursor();
+                                app.mark_dirty();
+                            }
+                            Some(ModelPickerRow::Model { .. }) => {
+                                confirm_dialog(app, active);
+                            }
+                            None => {}
+                        }
                     }
                     DialogKind::Agent => {
                         app.agent_picker_selected = idx;
@@ -1711,6 +1716,37 @@ fn handle_help_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
     }
 }
 
+/// Type into the model-picker search bar. Returns true when the key was consumed.
+fn handle_model_type(app: &mut TuiApp, key: &KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Char('/') if !app.model_selection.searching => {
+            app.model_selection.searching = true;
+            true
+        }
+        KeyCode::Char(c)
+            if app.model_selection.searching
+                && !c.is_control()
+                && !key.modifiers.intersects(
+                    crossterm::event::KeyModifiers::CONTROL
+                        | crossterm::event::KeyModifiers::ALT
+                        | crossterm::event::KeyModifiers::SUPER,
+                ) =>
+        {
+            app.model_selection.query.push(c);
+            app.model_selection.clamp_selected();
+            true
+        }
+        KeyCode::Backspace if app.model_selection.is_searching() => {
+            if app.model_selection.query.pop().is_none() {
+                app.model_selection.searching = false;
+            }
+            app.model_selection.clamp_selected();
+            true
+        }
+        _ => false,
+    }
+}
+
 /// Pop the active dialog and leave dialog mode when the stack is empty.
 fn dismiss_dialog(app: &mut TuiApp) {
     // Questionnaire oneshot must complete — signal the run loop.
@@ -1740,9 +1776,11 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
             }
         }
         DialogKind::Model => {
-            let len = app.model_selection.models.len();
+            let len = app.model_selection.visible_rows().len();
             if len > 0 {
                 app.model_selection.selected = idx.min(len - 1);
+            } else {
+                app.model_selection.selected = 0;
             }
         }
         DialogKind::Agent => {
@@ -1810,6 +1848,31 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
         app.mark_dirty();
         return true;
     }
+    // Model search steals letters (including j/k/q) the same way help does.
+    if matches!(active, DialogKind::Model) && handle_model_type(app, key) {
+        app.mark_dirty();
+        return true;
+    }
+    if matches!(active, DialogKind::Model)
+        && !app.model_selection.is_searching()
+        && !key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        match key.code {
+            KeyCode::Char('j') => {
+                move_in_dialog(app, &active, 1);
+                app.mark_dirty();
+                return true;
+            }
+            KeyCode::Char('k') => {
+                move_in_dialog(app, &active, -1);
+                app.mark_dirty();
+                return true;
+            }
+            _ => {}
+        }
+    }
 
     match action {
         Some(Action::DialogCancel) => {
@@ -1819,6 +1882,13 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                 app.help_query.clear();
                 app.help_searching = false;
                 app.help_scroll = 0;
+                app.mark_dirty();
+                return true;
+            }
+            if matches!(active, DialogKind::Model) && app.model_selection.is_searching() {
+                app.model_selection.query.clear();
+                app.model_selection.searching = false;
+                app.model_selection.clamp_selected();
                 app.mark_dirty();
                 return true;
             }
@@ -1848,6 +1918,15 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                 };
                 field_val.pop();
             }
+            if matches!(active, DialogKind::Model)
+                && (app.model_selection.searching || !app.model_selection.query.is_empty())
+            {
+                if app.model_selection.query.pop().is_none() {
+                    app.model_selection.searching = false;
+                }
+                app.model_selection.clamp_selected();
+                app.mark_dirty();
+            }
         }
         _ => {
             // Ctrl+W on the session picker: close the selected live session.
@@ -1869,6 +1948,24 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
                     );
                 }
                 return true;
+            }
+            // Model picker: ←/→ fold the group under the cursor.
+            if matches!(active, DialogKind::Model) {
+                match key.code {
+                    KeyCode::Left => {
+                        if app.model_selection.set_group_collapsed_at_cursor(true) {
+                            app.mark_dirty();
+                        }
+                        return true;
+                    }
+                    KeyCode::Right => {
+                        if app.model_selection.set_group_collapsed_at_cursor(false) {
+                            app.mark_dirty();
+                        }
+                        return true;
+                    }
+                    _ => {}
+                }
             }
             // PageUp / PageDown jump by viewport size (list pickers).
             let page = app.dialog_list_visible.max(1) as isize;
@@ -1943,16 +2040,17 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
         DialogKind::Alert { .. } => {
             // Close alert on confirm.
         }
-        DialogKind::Model => {
-            if let Some((p, m)) = app
-                .model_selection
-                .models
-                .get(app.model_selection.selected)
-                .cloned()
-            {
-                app.pending_model = Some((p, m));
+        DialogKind::Model => match app.model_selection.selected_row() {
+            Some(ModelPickerRow::Header { .. }) => {
+                app.model_selection.toggle_group_at_cursor();
+                app.mark_dirty();
+                return;
             }
-        }
+            Some(ModelPickerRow::Model { provider, model }) => {
+                app.pending_model = Some((provider, model));
+            }
+            None => {}
+        },
         DialogKind::Agent => {
             if let Some(name) = app.primary_agents.get(app.agent_picker_selected).cloned() {
                 app.pending_agent = Some(name);
@@ -2107,12 +2205,9 @@ pub fn open_model_dialog(app: &mut TuiApp) {
     if app.model_selection.models.is_empty() {
         fill_model_catalog_from_disk(app);
     }
-    app.model_selection.selected = app
-        .model_selection
-        .models
-        .iter()
-        .position(|(p, m)| p == &app.provider_name && m == &app.model_name)
-        .unwrap_or(0);
+    let provider = app.provider_name.clone();
+    let model = app.model_name.clone();
+    app.model_selection.prepare_for_open(&provider, &model);
     open_dialog(app, DialogKind::Model);
 }
 
@@ -2169,7 +2264,7 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
         DialogKind::Model => {
             app.model_selection.selected = move_selection(
                 app.model_selection.selected,
-                app.model_selection.models.len(),
+                app.model_selection.visible_rows().len(),
                 delta,
             );
         }
@@ -2840,7 +2935,9 @@ mod event_tests {
 
         let mut a = app();
         a.model_selection.models = vec![("acme".into(), "m1".into())];
-        open_dialog(&mut a, DialogKind::Model);
+        a.provider_name = "acme".into();
+        a.model_name = "m1".into();
+        open_model_dialog(&mut a);
         handle_event(&mut a, key(KeyCode::Enter));
         assert_eq!(
             a.pending_model
@@ -2951,7 +3048,8 @@ mod event_tests {
             mouse(MouseEventKind::Down(MouseButton::Left), 52, 20),
         );
         assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
-        assert_eq!(a.model_selection.selected, 0);
+        // Header + current model: cursor lands on the model row.
+        assert_eq!(a.model_selection.selected, 1);
 
         let mut a = app();
         a.provider_name = "xai".into();
@@ -3706,7 +3804,7 @@ mod event_tests {
 
         a.model_selection.models = vec![("p".into(), "m".into())];
         move_in_dialog_to(&mut a, &DialogKind::Model, 9);
-        assert_eq!(a.model_selection.selected, 0);
+        assert_eq!(a.model_selection.selected, 1);
 
         a.primary_agents = vec!["build".into(), "plan".into()];
         move_in_dialog_to(&mut a, &DialogKind::Agent, 9);
@@ -3945,5 +4043,131 @@ mod event_tests {
             &KeyEvent::new(KeyCode::Down, KeyModifiers::NONE),
         );
         assert_eq!(a.input_history_idx, 2, "history does not overflow");
+    }
+
+    fn model_catalog(a: &mut TuiApp) {
+        a.model_selection.models = vec![
+            ("anthropic".into(), "claude-sonnet".into()),
+            ("anthropic".into(), "claude-opus".into()),
+            ("openai".into(), "gpt-4o".into()),
+        ];
+        a.provider_name = "openai".into();
+        a.model_name = "gpt-4o".into();
+    }
+
+    #[test]
+    fn model_picker_search_fold_and_enter() {
+        let mut a = app();
+        model_catalog(&mut a);
+        open_model_dialog(&mut a);
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+        let rows = a.model_selection.visible_rows();
+        assert!(
+            matches!(
+                &rows[0],
+                crate::app::ModelPickerRow::Header {
+                    collapsed: true,
+                    provider,
+                    ..
+                } if provider == "anthropic"
+            ),
+            "{rows:?}"
+        );
+        // Enter on a header toggles collapse, does not pick a model.
+        a.model_selection.selected = 0;
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert!(a.pending_model.is_none());
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+        assert!(!a.model_selection.collapsed.contains("anthropic"));
+
+        handle_event(&mut a, key(KeyCode::Left));
+        assert!(a.model_selection.collapsed.contains("anthropic"));
+        handle_event(&mut a, key(KeyCode::Right));
+        assert!(!a.model_selection.collapsed.contains("anthropic"));
+
+        handle_event(&mut a, key(KeyCode::Char('/')));
+        assert!(a.model_selection.searching);
+        handle_event(&mut a, key(KeyCode::Char('g')));
+        handle_event(&mut a, key(KeyCode::Char('p')));
+        handle_event(&mut a, key(KeyCode::Char('t')));
+        assert_eq!(a.model_selection.query, "gpt");
+        let rows = a.model_selection.visible_rows();
+        assert!(
+            rows.iter().any(|r| matches!(
+                r,
+                crate::app::ModelPickerRow::Model { model, .. } if model == "gpt-4o"
+            )),
+            "{rows:?}"
+        );
+        assert!(!rows.iter().any(|r| matches!(
+            r,
+            crate::app::ModelPickerRow::Model { model, .. } if model.contains("claude")
+        )));
+
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert!(a.model_selection.query.is_empty());
+        assert!(!a.model_selection.searching);
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Model)));
+        handle_event(&mut a, key(KeyCode::Esc));
+        assert_eq!(a.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn model_picker_j_k_navigate_then_enter_selects_model() {
+        let mut a = app();
+        model_catalog(&mut a);
+        open_model_dialog(&mut a);
+        // Cursor starts on gpt-4o (current). j wraps; k goes to openai header.
+        handle_event(&mut a, key(KeyCode::Char('k')));
+        assert!(matches!(
+            a.model_selection.selected_row(),
+            Some(crate::app::ModelPickerRow::Header { provider, .. })
+                if provider == "openai"
+        ));
+        handle_event(&mut a, key(KeyCode::Char('j')));
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert_eq!(
+            a.pending_model
+                .as_ref()
+                .map(|(p, m)| (p.as_str(), m.as_str())),
+            Some(("openai", "gpt-4o"))
+        );
+        assert_eq!(a.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn prompt_backspace_and_word_kill_do_not_full_clear() {
+        let mut a = app();
+        a.input_buffer = "hello world".into();
+        a.input_cursor = a.input_buffer.len();
+        a.pending_full_clears = 0;
+        handle_event(&mut a, key(KeyCode::Backspace));
+        assert_eq!(a.input_buffer, "hello worl");
+        assert_eq!(a.pending_full_clears, 0);
+
+        handle_input_action(
+            &mut a,
+            crate::keymap::Action::InputKillWordBack,
+            &KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+        );
+        assert_eq!(a.input_buffer, "hello ");
+        assert_eq!(a.pending_full_clears, 0);
+
+        a.input_cursor = 0;
+        handle_input_action(
+            &mut a,
+            crate::keymap::Action::InputDelete,
+            &KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE),
+        );
+        assert_eq!(a.input_buffer, "ello ");
+        assert_eq!(a.pending_full_clears, 0);
+
+        handle_input_action(
+            &mut a,
+            crate::keymap::Action::InputClear,
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+        );
+        assert!(a.input_buffer.is_empty());
+        assert_eq!(a.pending_full_clears, 0);
     }
 }
