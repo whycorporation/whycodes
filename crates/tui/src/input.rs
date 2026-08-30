@@ -2006,6 +2006,12 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_effort = Some(level.as_str().to_string());
             }
         }
+        DialogKind::Question(_) => {
+            // Keyboard confirm is owned by `handle_question_key` in the run
+            // loop. If Enter still lands here, do not dismiss (that would
+            // cancel the questionnaire instead of answering it).
+            return;
+        }
         _ => {}
     }
     dismiss_dialog(app);
@@ -3375,6 +3381,24 @@ mod event_tests {
         handle_event(&mut a, key(KeyCode::Esc));
         assert!(a.question_dismissed);
         assert!(!a.dialogs.is_open());
+    }
+
+    #[test]
+    fn question_enter_does_not_dismiss_via_confirm_dialog() {
+        let mut a = app();
+        a.ask_question(vec![whycodes_tools::question::QuestionSpec {
+            prompt: "Go?".into(),
+            options: vec![whycodes_tools::question::QuestionOption {
+                label: "Yes".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+        }]);
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::Question(_))));
+        assert!(!a.question_dismissed);
+        assert!(a.pending_question_answers.is_none());
     }
 
     #[test]

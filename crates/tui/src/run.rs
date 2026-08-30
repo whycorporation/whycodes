@@ -1484,10 +1484,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         }
                     }
 
-                    // Questionnaire dialog (Grok-style `question` tool)
+                    // Questionnaire dialog (Grok-style `question` tool).
+                    // Press *and* Repeat: enhanced keyboard can emit Repeat for held Esc.
                     if matches!(app.dialogs.active(), Some(DialogKind::Question(_)))
                         && let Event::Key(key) = &ev
-                        && key.kind == KeyEventKind::Press
+                        && (key.kind == KeyEventKind::Press || key.kind == KeyEventKind::Repeat)
                     {
                         let handled = handle_question_key(
                             &mut app,
@@ -1499,27 +1500,6 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                             app.mark_dirty();
                             continue;
                         }
-                    }
-
-                    // Mouse single-select may finish the questionnaire from input.rs
-                    if let Some(answers) = app.pending_question_answers.take() {
-                        complete_questionnaire_ui(
-                            &mut app,
-                            &mut rt.pending_question_queue,
-                            &rt.pending_perm_queue,
-                            Some(answers),
-                        );
-                    }
-
-                    // [✗] / Esc may dismiss Question via input.rs — complete oneshot
-                    if app.question_dismissed {
-                        app.question_dismissed = false;
-                        complete_questionnaire_ui(
-                            &mut app,
-                            &mut rt.pending_question_queue,
-                            &rt.pending_perm_queue,
-                            None,
-                        );
                     }
 
                     // Ctrl+T: cycle agents (when idle). Tab is focus toggle (Grok).
@@ -1652,7 +1632,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
                     // While busy: Esc cancels (draft preserved — Grok). Typing, scroll,
                     // and focus still work so the user can queue thoughts.
+                    // Permission / question overlays own Esc/Enter — do not steal them.
+                    let overlay_owns_keys = matches!(
+                        app.dialogs.active(),
+                        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
+                    );
                     if rt.agent_busy
+                        && !overlay_owns_keys
                         && let Event::Key(key) = &ev
                         && key.kind == KeyEventKind::Press
                     {
@@ -1787,8 +1773,23 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                         );
                         break 'main;
                     }
+                    // Mouse / [✗] set flags inside handle_event — complete the
+                    // oneshot on this same event, not the next tick.
+                    flush_pending_question_replies(
+                        &mut app,
+                        &mut rt.pending_question_queue,
+                        &rt.pending_perm_queue,
+                    );
                 } // for ev in batch
             }
+
+            // Also drain on idle ticks: a click that closed the dialog must
+            // not wait for another keypress (issue #41).
+            flush_pending_question_replies(
+                &mut app,
+                &mut rt.pending_question_queue,
+                &rt.pending_perm_queue,
+            );
 
             if !app.running {
                 whycodes_core::logging::emit(
@@ -1952,6 +1953,7 @@ fn begin_cancel(
     app.status_message = "Cancelling…".into();
     app.current_agent_state = AgentState::Generating;
     app.finish_open_thinking();
+    close_interactive_overlays(app);
     app.mark_dirty();
 }
 
@@ -2072,7 +2074,26 @@ fn force_stop_turn(
         app.add_message(ChatRole::System, "⏹ Stopped.");
     }
     persist_session_best_effort(session, "force_cancelled");
+    close_interactive_overlays(app);
     app.mark_dirty();
+}
+
+/// Drop permission / question chrome when the turn is cancelled so Esc
+/// cannot leave a stuck overlay with no oneshot behind it (issue #41).
+fn close_interactive_overlays(app: &mut TuiApp) {
+    let had_overlay = matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
+    );
+    if !had_overlay {
+        return;
+    }
+    app.dialogs.clear();
+    app.pending_question_answers = None;
+    app.question_dismissed = false;
+    app.mode = AppMode::Normal;
+    app.key_context = KeymapContext::Normal;
+    app.clear_dialog_hits();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2979,19 +3000,38 @@ fn complete_questionnaire_ui(
     perm_queue: &std::collections::VecDeque<whycodes_agent::PermissionRequest>,
     answers: Option<Vec<whycodes_tools::question::QuestionAnswer>>,
 ) {
-    let answered = answers.is_some();
     if let Some(req) = queue.pop_front() {
         let _ = match answers {
             Some(a) => req.reply.send(Ok(a)),
             None => req.reply.send(Err(QuestionError::Cancelled)),
         };
     }
+    if matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
+        app.dialogs.pop();
+        app.clear_dialog_hits();
+    }
     if !matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
-        if answered {
-            app.mode = AppMode::Normal;
-            app.key_context = KeymapContext::Normal;
-        }
+        app.mode = AppMode::Normal;
+        app.key_context = KeymapContext::Normal;
         resume_after_question(app, queue, perm_queue);
+    }
+}
+
+/// Complete a questionnaire oneshot set by mouse / `[✗]` in `input.rs`.
+///
+/// Must run **after** `handle_event` (those flags are written there) and on
+/// idle ticks so a click is not stuck until the next keypress (issue #41).
+fn flush_pending_question_replies(
+    app: &mut TuiApp,
+    queue: &mut std::collections::VecDeque<QuestionRequest>,
+    perm_queue: &std::collections::VecDeque<whycodes_agent::PermissionRequest>,
+) {
+    if let Some(answers) = app.pending_question_answers.take() {
+        complete_questionnaire_ui(app, queue, perm_queue, Some(answers));
+    }
+    if app.question_dismissed {
+        app.question_dismissed = false;
+        complete_questionnaire_ui(app, queue, perm_queue, None);
     }
 }
 
@@ -3527,9 +3567,11 @@ fn should_force_stop(
 }
 
 fn maybe_open_queued_dialog(app: &mut TuiApp, rt: &SessionRuntime) {
+    // Key off the actual overlay, not a stale WaitingFor* state. A dismissed
+    // question can leave WaitingForQuestion with an empty stack (issue #41).
     if matches!(
-        app.current_agent_state,
-        AgentState::WaitingForPermission | AgentState::WaitingForQuestion
+        app.dialogs.active(),
+        Some(DialogKind::Permission { .. } | DialogKind::Question(_))
     ) {
         return;
     }
@@ -4120,6 +4162,7 @@ fn handle_question_key(
         }
         app.mode = AppMode::Normal;
         app.key_context = KeymapContext::Normal;
+        app.clear_dialog_hits();
         resume_after_question(app, pending_question_queue, pending_perm_queue);
     };
 
@@ -4134,17 +4177,15 @@ fn handle_question_key(
         }
         app.mode = AppMode::Normal;
         app.key_context = KeymapContext::Normal;
+        app.clear_dialog_hits();
         resume_after_question(app, pending_question_queue, pending_perm_queue);
     };
 
     match code {
         KeyCode::Esc => {
+            // Mid-edit Other with text: first Esc leaves the field.
+            // Empty free-text (including option-less questions) cancels immediately.
             if state.free_text_focus && !state.free_text.is_empty() {
-                state.free_text_focus = false;
-                app.dialogs.push(DialogKind::Question(state));
-                return true;
-            }
-            if state.free_text_focus {
                 state.free_text_focus = false;
                 app.dialogs.push(DialogKind::Question(state));
                 return true;
@@ -7523,6 +7564,7 @@ mod tests {
         } else {
             panic!("expected question dialog");
         }
+        // First Esc with non-empty Other text leaves the field.
         assert!(handle_question_key(
             &mut app,
             KeyCode::Esc,
@@ -7531,6 +7573,8 @@ mod tests {
         ));
         if let Some(DialogKind::Question(st)) = app.dialogs.active() {
             assert!(!st.free_text_focus);
+        } else {
+            panic!("expected question dialog after leaving Other");
         }
 
         // Space on Other focuses free text; unknown key is not consumed.
@@ -8404,6 +8448,85 @@ mod tests {
     }
 
     #[test]
+    fn empty_free_text_esc_cancels_question_immediately() {
+        let spec = whycodes_tools::question::QuestionSpec {
+            prompt: "Type it?".into(),
+            options: vec![],
+            multi_select: false,
+        };
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut q = std::collections::VecDeque::new();
+        let p = std::collections::VecDeque::new();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![spec.clone()],
+            reply: tx,
+        });
+        app.ask_question(vec![spec]);
+        assert!(
+            matches!(app.dialogs.active(), Some(DialogKind::Question(st)) if st.free_text_focus)
+        );
+        assert!(handle_question_key(&mut app, KeyCode::Esc, &mut q, &p));
+        assert!(q.is_empty());
+        assert!(!app.dialogs.is_open());
+        assert!(matches!(
+            rx.blocking_recv().unwrap(),
+            Err(QuestionError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn flush_pending_question_replies_completes_oneshot() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut q = std::collections::VecDeque::new();
+        let p = std::collections::VecDeque::new();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        app.pending_question_answers = Some(vec![whycodes_tools::question::QuestionAnswer {
+            selected: vec!["Yes".into()],
+            free_text: None,
+        }]);
+        flush_pending_question_replies(&mut app, &mut q, &p);
+        assert!(q.is_empty());
+        assert!(app.pending_question_answers.is_none());
+        assert!(rx.blocking_recv().unwrap().is_ok());
+
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        q.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        app.question_dismissed = true;
+        flush_pending_question_replies(&mut app, &mut q, &p);
+        assert!(!app.question_dismissed);
+        assert!(matches!(
+            rx.blocking_recv().unwrap(),
+            Err(QuestionError::Cancelled)
+        ));
+    }
+
+    #[test]
+    fn stale_waiting_for_question_still_opens_queued_dialog() {
+        let mut app = TuiApp::from_config(TuiAppConfig::default());
+        let mut rt = test_runtime();
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        rt.pending_question_queue.push_back(QuestionRequest {
+            questions: vec![sample_question()],
+            reply: tx,
+        });
+        app.current_agent_state = AgentState::WaitingForQuestion;
+        assert!(app.dialogs.active().is_none());
+        maybe_open_queued_dialog(&mut app, &rt);
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Question(_))
+        ));
+    }
+
+    #[test]
     fn project_diff_on_a_real_repo() {
         let dir = tempfile::tempdir().unwrap();
         let git = |args: &[&str]| {
@@ -9029,9 +9152,15 @@ mod tests {
         });
 
         app.current_agent_state = AgentState::WaitingForQuestion;
+        app.ask_question(vec![sample_question()]);
         maybe_open_queued_dialog(&mut app, &rt);
-        assert!(app.dialogs.active().is_none());
+        assert!(matches!(
+            app.dialogs.active(),
+            Some(DialogKind::Question(_))
+        ));
 
+        app.dialogs.clear();
+        app.mode = AppMode::Normal;
         app.current_agent_state = AgentState::Idle;
         maybe_open_queued_dialog(&mut app, &rt);
         assert!(matches!(

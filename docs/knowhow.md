@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Question popup Esc / `[✗]` left the agent hung (issue #41)
+
+**Symptom:** `question` tool panel stayed open on Esc, or closed on mouse/`[✗]`
+while the turn never continued.
+
+**Root cause:** (1) Empty free-text focus (option-less questions, Other) ate
+the first Esc without cancelling. (2) `pending_question_answers` /
+`question_dismissed` were drained **before** `handle_event` and only inside
+`if has_ev`, so a click never completed the oneshot until another event.
+(3) Busy-turn Esc ran even with the overlay open and cancelled the wait
+without popping the dialog. (4) `maybe_open_queued_dialog` keyed off
+`WaitingForQuestion` with an empty stack, so a dismissed panel never
+reopened.
+
+**Fix:** Drain oneshot flags **after** `handle_event` and on idle ticks;
+empty free-text Esc cancels immediately; overlay keys beat busy-cancel;
+`begin_cancel` / `force_stop` close permission/question chrome; queue
+opener keys off the actual dialog.
+
+**Prevention:** Overlay keys (permission / question) must run before
+busy-cancel. Oneshot flags written in `input.rs` must be flushed after
+`handle_event` **and** every loop tick, not only when `has_ev`.
+
 ### 2026-08-30 — `should_auto_update` unit test fails on GitHub Actions
 
 **Symptom:** `Test (linux)` red in ~1 min:
