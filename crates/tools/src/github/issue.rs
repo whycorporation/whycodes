@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use super::api::{api_url, github_headers, resolve_token};
@@ -18,8 +17,6 @@ impl GithubIssueTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for GithubIssueTool {
     fn name(&self) -> &str {
         "github_issue"
@@ -81,83 +78,89 @@ impl Tool for GithubIssueTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let action = args["action"].as_str().unwrap_or("");
-        let owner = args["owner"].as_str().unwrap_or("");
-        let repo = args["repo"].as_str().unwrap_or("");
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let action = args["action"].as_str().unwrap_or("");
+            let owner = args["owner"].as_str().unwrap_or("");
+            let repo = args["repo"].as_str().unwrap_or("");
 
-        if owner.is_empty() || repo.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "owner and repo are required.".to_string(),
-                is_error: true,
+            if owner.is_empty() || repo.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "owner and repo are required.".to_string(),
+                    is_error: true,
+                };
+            }
+
+            if let Err(msg) = ctx.network.check_url("https://api.github.com/") {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
+
+            let token = match resolve_token(args["token"].as_str()) {
+                Some(t) => t,
+                None => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content:
+                            "GitHub token not found. Set GITHUB_TOKEN env var or pass 'token' arg."
+                                .to_string(),
+                        is_error: true,
+                    };
+                }
             };
-        }
 
-        if let Err(msg) = ctx.network.check_url("https://api.github.com/") {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: msg,
-                is_error: true,
+            let headers = match github_headers(&token) {
+                Ok(h) => h,
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!("Failed to build headers: {e}"),
+                        is_error: true,
+                    };
+                }
             };
-        }
 
-        let token = match resolve_token(args["token"].as_str()) {
-            Some(t) => t,
-            None => {
-                return ToolResult {
+            let client = reqwest::Client::new();
+
+            let result = match action {
+                "create" => issue_create(&client, &headers, owner, repo, &args).await,
+                "list" => issue_list(&client, &headers, owner, repo, &args).await,
+                "view" => issue_view(&client, &headers, owner, repo, &args).await,
+                "close" => issue_set_state(&client, &headers, owner, repo, &args, "closed").await,
+                "reopen" => issue_set_state(&client, &headers, owner, repo, &args, "open").await,
+                "comment" => issue_comment(&client, &headers, owner, repo, &args).await,
+                other => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!(
+                            "Unknown action: '{other}'. Valid: create, list, view, close, reopen, comment"
+                        ),
+                        is_error: true,
+                    };
+                }
+            };
+
+            match result {
+                Ok(body) => ToolResult {
                     tool_call_id: String::new(),
-                    content:
-                        "GitHub token not found. Set GITHUB_TOKEN env var or pass 'token' arg."
-                            .to_string(),
-                    is_error: true,
-                };
-            }
-        };
-
-        let headers = match github_headers(&token) {
-            Ok(h) => h,
-            Err(e) => {
-                return ToolResult {
+                    content: body,
+                    is_error: false,
+                },
+                Err(e) => ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Failed to build headers: {e}"),
+                    content: e,
                     is_error: true,
-                };
+                },
             }
-        };
-
-        let client = reqwest::Client::new();
-
-        let result = match action {
-            "create" => issue_create(&client, &headers, owner, repo, &args).await,
-            "list" => issue_list(&client, &headers, owner, repo, &args).await,
-            "view" => issue_view(&client, &headers, owner, repo, &args).await,
-            "close" => issue_set_state(&client, &headers, owner, repo, &args, "closed").await,
-            "reopen" => issue_set_state(&client, &headers, owner, repo, &args, "open").await,
-            "comment" => issue_comment(&client, &headers, owner, repo, &args).await,
-            other => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!(
-                        "Unknown action: '{other}'. Valid: create, list, view, close, reopen, comment"
-                    ),
-                    is_error: true,
-                };
-            }
-        };
-
-        match result {
-            Ok(body) => ToolResult {
-                tool_call_id: String::new(),
-                content: body,
-                is_error: false,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: e,
-                is_error: true,
-            },
-        }
+        })
     }
 }
 

@@ -1,15 +1,14 @@
 /// Anthropic Claude LLM provider implementation.
 /// Supports streaming with extended thinking via the Anthropic Messages API.
 use async_stream::stream;
-use futures::stream::Stream;
 use serde_json::Value;
-use std::pin::Pin;
 use whycodes_core::types::{
     ContentBlock, LlmRequest, LlmResponse, Message, StreamEvent, ToolDefinition, Usage,
 };
 
-use crate::provider::LlmProvider;
-use async_trait::async_trait;
+use crate::provider::{
+    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
+};
 
 /// Usage on a `message_delta` event.
 ///
@@ -334,7 +333,6 @@ impl AnthropicProvider {
     }
 }
 
-#[async_trait]
 impl LlmProvider for AnthropicProvider {
     fn name(&self) -> &str {
         &self.name
@@ -344,139 +342,143 @@ impl LlmProvider for AnthropicProvider {
         &self.messages_url
     }
 
-    async fn complete(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse> {
-        let mut body = self.build_body(request, model);
-        body["stream"] = serde_json::Value::Bool(false);
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            let mut body = self.build_body(request, model);
+            body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-            authed_post(self.default_base_url(), key).json(&body)
-        })
-        .await?;
-
-        let status = resp.status();
-        let json: Value = resp
-            .json()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
-
-        if !status.is_success() {
-            let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycodes_core::Error::Llm(format!(
-                "Anthropic API error ({}): {}",
-                status, err_msg
-            )));
-        }
-
-        let content = json["content"]
-            .as_array()
-            .map(|blocks| {
-                blocks
-                    .iter()
-                    .map(|b| {
-                        let btype = b["type"].as_str().unwrap_or("text");
-                        match btype {
-                            "text" => ContentBlock::Text {
-                                text: b["text"].as_str().unwrap_or("").to_string(),
-                            },
-                            "tool_use" => ContentBlock::ToolUse {
-                                id: b["id"].as_str().unwrap_or("").to_string(),
-                                name: b["name"].as_str().unwrap_or("").to_string(),
-                                input: b["input"].clone(),
-                            },
-                            "thinking" => ContentBlock::Thinking {
-                                text: b["thinking"].as_str().unwrap_or("").to_string(),
-                                signature: b["signature"].as_str().map(str::to_string),
-                            },
-                            "redacted_thinking" => ContentBlock::RedactedThinking {
-                                data: b["data"].as_str().unwrap_or("").to_string(),
-                            },
-                            _ => ContentBlock::Text {
-                                text: "[unknown block]".to_string(),
-                            },
-                        }
-                    })
-                    .collect()
+            let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+                authed_post(self.default_base_url(), key).json(&body)
             })
-            .unwrap_or_default();
+            .await?;
 
-        let usage = json["usage"].clone();
-        crate::usage_dump::dump_raw_usage("anthropic", &usage);
-        Ok(LlmResponse {
-            content,
-            stop_reason: json["stop_reason"].as_str().map(|s| s.to_string()),
-            usage: Usage {
-                input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-                output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-                cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64(),
-                cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64(),
-            },
-            model: model.to_string(),
+            let status = resp.status();
+            let json: Value = resp
+                .json()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
+
+            if !status.is_success() {
+                let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
+                return Err(whycodes_core::Error::Llm(format!(
+                    "Anthropic API error ({}): {}",
+                    status, err_msg
+                )));
+            }
+
+            let content = json["content"]
+                .as_array()
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .map(|b| {
+                            let btype = b["type"].as_str().unwrap_or("text");
+                            match btype {
+                                "text" => ContentBlock::Text {
+                                    text: b["text"].as_str().unwrap_or("").to_string(),
+                                },
+                                "tool_use" => ContentBlock::ToolUse {
+                                    id: b["id"].as_str().unwrap_or("").to_string(),
+                                    name: b["name"].as_str().unwrap_or("").to_string(),
+                                    input: b["input"].clone(),
+                                },
+                                "thinking" => ContentBlock::Thinking {
+                                    text: b["thinking"].as_str().unwrap_or("").to_string(),
+                                    signature: b["signature"].as_str().map(str::to_string),
+                                },
+                                "redacted_thinking" => ContentBlock::RedactedThinking {
+                                    data: b["data"].as_str().unwrap_or("").to_string(),
+                                },
+                                _ => ContentBlock::Text {
+                                    text: "[unknown block]".to_string(),
+                                },
+                            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let usage = json["usage"].clone();
+            crate::usage_dump::dump_raw_usage("anthropic", &usage);
+            Ok(LlmResponse {
+                content,
+                stop_reason: json["stop_reason"].as_str().map(|s| s.to_string()),
+                usage: Usage {
+                    input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
+                    output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
+                    cache_creation_input_tokens: usage["cache_creation_input_tokens"].as_u64(),
+                    cache_read_input_tokens: usage["cache_read_input_tokens"].as_u64(),
+                },
+                model: model.to_string(),
+            })
         })
     }
 
-    async fn stream(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
-    {
-        let body = self.build_body(request, model);
-        let api_key = api_key.to_string();
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderStreamFuture<'a> {
+        Box::pin(async move {
+            let body = self.build_body(request, model);
+            let api_key = api_key.to_string();
 
-        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), &api_key, |key| {
-            authed_post(self.default_base_url(), key).json(&body)
-        })
-        .await?;
+            let resp =
+                crate::oauth_refresh::send_with_refresh_retry(self.name(), &api_key, |key| {
+                    authed_post(self.default_base_url(), key).json(&body)
+                })
+                .await?;
 
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(whycodes_core::Error::Llm(format!(
-                "Anthropic API error: {}",
-                text
-            )));
-        }
+            if !resp.status().is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(whycodes_core::Error::Llm(format!(
+                    "Anthropic API error: {}",
+                    text
+                )));
+            }
 
-        let s = stream! {
-            let mut stream = resp.bytes_stream();
-            let mut buffer = String::new();
+            let s = stream! {
+                let mut stream = resp.bytes_stream();
+                let mut buffer = String::new();
 
-            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                match chunk {
-                    Ok(bytes) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                        while let Some(pos) = buffer.find('\n') {
-                            let line = buffer[..pos].trim().to_string();
-                            buffer = buffer[pos + 1..].to_string();
+                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                    match chunk {
+                        Ok(bytes) => {
+                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim().to_string();
+                                buffer = buffer[pos + 1..].to_string();
 
-                            if line.is_empty() || !line.starts_with("data: ") {
-                                continue;
-                            }
+                                if line.is_empty() || !line.starts_with("data: ") {
+                                    continue;
+                                }
 
-                            let data = &line[6..];
-                            if data == "[DONE]" {
-                                yield Ok(StreamEvent::MessageStop);
-                                return;
-                            }
+                                let data = &line[6..];
+                                if data == "[DONE]" {
+                                    yield Ok(StreamEvent::MessageStop);
+                                    return;
+                                }
 
-                            for event in events_for_data(data) {
-                                yield event;
+                                for event in events_for_data(data) {
+                                    yield event;
+                                }
                             }
                         }
-                    }
-                    Err(e) => {
-                        yield Err(crate::openai_compat::stream_chunk_error("anthropic", e));
+                        Err(e) => {
+                            yield Err(crate::openai_compat::stream_chunk_error("anthropic", e));
+                        }
                     }
                 }
-            }
-        };
+            };
 
-        Ok(Box::pin(s))
+            Ok(Box::pin(s) as ProviderEventStream)
+        })
     }
 }
 

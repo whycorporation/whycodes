@@ -10,7 +10,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use crate::tool::{Tool, ToolContext};
@@ -38,8 +37,6 @@ impl BrowserTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for BrowserTool {
     fn name(&self) -> &str {
         "browser"
@@ -70,45 +67,47 @@ impl Tool for BrowserTool {
         })
     }
 
-    async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        match action {
-            "status" => status(),
-            "open" => {
-                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
-                if url.is_empty() {
-                    return err("open requires `url`");
+    fn execute<'a>(&'a self, args: Value, ctx: &'a ToolContext) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            match action {
+                "status" => status(),
+                "open" => {
+                    let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                    if url.is_empty() {
+                        return err("open requires `url`");
+                    }
+                    open_url(url)
                 }
-                open_url(url)
-            }
-            "snapshot" => snapshot(),
-            "click" => {
-                let sel = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
-                if sel.is_empty() {
-                    return err("click requires `selector`");
+                "snapshot" => snapshot(),
+                "click" => {
+                    let sel = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                    if sel.is_empty() {
+                        return err("click requires `selector`");
+                    }
+                    click(sel)
                 }
-                click(sel)
-            }
-            "type" => {
-                let sel = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
-                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                if sel.is_empty() {
-                    return err("type requires `selector`");
+                "type" => {
+                    let sel = args.get("selector").and_then(|v| v.as_str()).unwrap_or("");
+                    let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                    if sel.is_empty() {
+                        return err("type requires `selector`");
+                    }
+                    type_text(sel, text)
                 }
-                type_text(sel, text)
+                "wait" => {
+                    let ms = args.get("ms").and_then(|v| v.as_u64()).unwrap_or(1000);
+                    wait_ms(ms)
+                }
+                "screenshot" => screenshot(ctx),
+                "close" => close_browser(),
+                _ => err("action must be status|open|snapshot|click|type|wait|screenshot|close"),
             }
-            "wait" => {
-                let ms = args.get("ms").and_then(|v| v.as_u64()).unwrap_or(1000);
-                wait_ms(ms)
-            }
-            "screenshot" => screenshot(ctx),
-            "close" => close_browser(),
-            _ => err("action must be status|open|snapshot|click|type|wait|screenshot|close"),
-        }
+        })
     }
 }
 

@@ -5,11 +5,8 @@
 //! `whycodes auth login google-antigravity`.
 
 use super::codeassist;
-use crate::provider::LlmProvider;
-use async_trait::async_trait;
-use futures::stream::Stream;
-use std::pin::Pin;
-use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
+use whycodes_core::types::LlmRequest;
 
 pub struct AntigravityProvider {
     name: String,
@@ -23,7 +20,6 @@ impl AntigravityProvider {
     }
 }
 
-#[async_trait]
 impl LlmProvider for AntigravityProvider {
     fn name(&self) -> &str {
         &self.name
@@ -33,23 +29,22 @@ impl LlmProvider for AntigravityProvider {
         "https://daily-cloudcode-pa.googleapis.com/v1internal"
     }
 
-    async fn complete(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse> {
-        codeassist::complete_antigravity(request, api_key, model).await
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move { codeassist::complete_antigravity(request, api_key, model).await })
     }
 
-    async fn stream(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
-    {
-        codeassist::stream_antigravity(request, api_key, model).await
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderStreamFuture<'a> {
+        Box::pin(async move { codeassist::stream_antigravity(request, api_key, model).await })
     }
 }
 

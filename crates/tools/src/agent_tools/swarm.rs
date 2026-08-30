@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -20,8 +19,6 @@ impl SwarmTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for SwarmTool {
     fn name(&self) -> &str {
         "swarm"
@@ -82,15 +79,21 @@ impl Tool for SwarmTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let n = args["tasks"].as_array().map(|a| a.len()).unwrap_or(0);
-        ToolResult {
-            tool_call_id: String::new(),
-            content: format!(
-                "Swarm tool was not intercepted by the agent loop ({} tasks).",
-                n
-            ),
-            is_error: true,
-        }
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let n = args["tasks"].as_array().map(|a| a.len()).unwrap_or(0);
+            ToolResult {
+                tool_call_id: String::new(),
+                content: format!(
+                    "Swarm tool was not intercepted by the agent loop ({} tasks).",
+                    n
+                ),
+                is_error: true,
+            }
+        })
     }
 }

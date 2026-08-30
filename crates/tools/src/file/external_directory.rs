@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -61,8 +60,6 @@ impl ExternalDirectoryTool {
         false
     }
 }
-
-#[async_trait]
 impl Tool for ExternalDirectoryTool {
     fn name(&self) -> &str {
         "external_directory"
@@ -90,102 +87,111 @@ impl Tool for ExternalDirectoryTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("");
-        let action = args["action"].as_str().unwrap_or("read");
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let path_str = args["path"].as_str().unwrap_or("");
+            let action = args["action"].as_str().unwrap_or("read");
 
-        let full_path = if std::path::Path::new(path_str).is_absolute() {
-            path_str.to_string()
-        } else {
-            std::path::Path::new(&ctx.working_dir)
-                .join(path_str)
-                .to_string_lossy()
-                .to_string()
-        };
-
-        // Security check: verify the path is allowed
-        if !Self::is_path_allowed(&full_path, &ctx.working_dir) {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: format!(
-                    "Access denied: '{}' is not in the allowed external directories list. \
-                     Add the directory to .whycodes/external_dirs_allowed to grant access.",
-                    path_str
-                ),
-                is_error: true,
+            let full_path = if std::path::Path::new(path_str).is_absolute() {
+                path_str.to_string()
+            } else {
+                std::path::Path::new(&ctx.working_dir)
+                    .join(path_str)
+                    .to_string_lossy()
+                    .to_string()
             };
-        }
 
-        match action {
-            "list" => {
-                let entries = match std::fs::read_dir(&full_path) {
-                    Ok(entries) => entries,
-                    Err(e) => {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error listing directory '{}': {}", full_path, e),
-                            is_error: true,
-                        };
-                    }
+            // Security check: verify the path is allowed
+            if !Self::is_path_allowed(&full_path, &ctx.working_dir) {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!(
+                        "Access denied: '{}' is not in the allowed external directories list. \
+                     Add the directory to .whycodes/external_dirs_allowed to grant access.",
+                        path_str
+                    ),
+                    is_error: true,
                 };
+            }
 
-                let mut output = String::new();
-                for entry in entries {
-                    match entry {
-                        Ok(e) => {
-                            let meta = match e.metadata() {
-                                Ok(m) => m,
-                                Err(err) => {
-                                    tracing::debug!(error = %err, "entry metadata failed; skipping");
-                                    continue;
-                                }
+            match action {
+                "list" => {
+                    let entries = match std::fs::read_dir(&full_path) {
+                        Ok(entries) => entries,
+                        Err(e) => {
+                            return ToolResult {
+                                tool_call_id: String::new(),
+                                content: format!("Error listing directory '{}': {}", full_path, e),
+                                is_error: true,
                             };
-                            let name = e.file_name().to_string_lossy().to_string();
-                            let file_type = if meta.is_dir() {
-                                "d"
-                            } else if meta.is_symlink() {
-                                "l"
-                            } else {
-                                "-"
-                            };
-                            let size = meta.len();
-                            output.push_str(&format!("{:<10} {:>10} {}\n", file_type, size, name));
                         }
-                        Err(err) => {
-                            tracing::debug!(error = %err, "dir entry read failed; skipping");
-                            continue;
+                    };
+
+                    let mut output = String::new();
+                    for entry in entries {
+                        match entry {
+                            Ok(e) => {
+                                let meta = match e.metadata() {
+                                    Ok(m) => m,
+                                    Err(err) => {
+                                        tracing::debug!(error = %err, "entry metadata failed; skipping");
+                                        continue;
+                                    }
+                                };
+                                let name = e.file_name().to_string_lossy().to_string();
+                                let file_type = if meta.is_dir() {
+                                    "d"
+                                } else if meta.is_symlink() {
+                                    "l"
+                                } else {
+                                    "-"
+                                };
+                                let size = meta.len();
+                                output.push_str(&format!(
+                                    "{:<10} {:>10} {}\n",
+                                    file_type, size, name
+                                ));
+                            }
+                            Err(err) => {
+                                tracing::debug!(error = %err, "dir entry read failed; skipping");
+                                continue;
+                            }
                         }
                     }
-                }
 
-                ToolResult {
-                    tool_call_id: String::new(),
-                    content: if output.is_empty() {
-                        format!("Directory '{}' is empty", full_path)
-                    } else {
-                        output
-                    },
-                    is_error: false,
+                    ToolResult {
+                        tool_call_id: String::new(),
+                        content: if output.is_empty() {
+                            format!("Directory '{}' is empty", full_path)
+                        } else {
+                            output
+                        },
+                        is_error: false,
+                    }
                 }
-            }
-            "read" => match std::fs::read_to_string(&full_path) {
-                Ok(content) => ToolResult {
-                    tool_call_id: String::new(),
-                    content,
-                    is_error: false,
+                "read" => match std::fs::read_to_string(&full_path) {
+                    Ok(content) => ToolResult {
+                        tool_call_id: String::new(),
+                        content,
+                        is_error: false,
+                    },
+                    Err(e) => ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!("Error reading file '{}': {}", full_path, e),
+                        is_error: true,
+                    },
                 },
-                Err(e) => ToolResult {
+                _ => ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Error reading file '{}': {}", full_path, e),
+                    content: format!("Unknown action '{}'. Use 'read' or 'list'.", action),
                     is_error: true,
                 },
-            },
-            _ => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Unknown action '{}'. Use 'read' or 'list'.", action),
-                is_error: true,
-            },
-        }
+            }
+        })
     }
 }
 

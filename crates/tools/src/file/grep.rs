@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use grep_regex::RegexMatcherBuilder;
 use grep_searcher::{BinaryDetection, SearcherBuilder, Sink, SinkContext, SinkMatch};
 use rayon::prelude::*;
@@ -28,8 +27,6 @@ impl GrepTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for GrepTool {
     fn name(&self) -> &str {
         "grep"
@@ -74,72 +71,78 @@ impl Tool for GrepTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let pattern = args["pattern"].as_str().unwrap_or("").to_string();
-        if pattern.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "Missing required parameter `pattern`.".into(),
-                is_error: true,
-            };
-        }
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let pattern = args["pattern"].as_str().unwrap_or("").to_string();
+            if pattern.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "Missing required parameter `pattern`.".into(),
+                    is_error: true,
+                };
+            }
 
-        let working_dir = ctx.working_dir.clone();
-        let search_path = args["path"]
-            .as_str()
-            .map(|s| resolve_path(&working_dir, s))
-            .unwrap_or_else(|| Path::new(&working_dir).to_path_buf());
-        let file_glob = args["include"].as_str().map(|s| s.to_string());
-        let case_insensitive = args["case_insensitive"].as_bool().unwrap_or(false);
-        let context = args["context"]
-            .as_u64()
-            .map(|n| n as usize)
-            .unwrap_or(0)
-            .min(5);
-        let max_results = args["max_results"]
-            .as_u64()
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_MAX_RESULTS)
-            .clamp(1, HARD_MAX_RESULTS);
+            let working_dir = ctx.working_dir.clone();
+            let search_path = args["path"]
+                .as_str()
+                .map(|s| resolve_path(&working_dir, s))
+                .unwrap_or_else(|| Path::new(&working_dir).to_path_buf());
+            let file_glob = args["include"].as_str().map(|s| s.to_string());
+            let case_insensitive = args["case_insensitive"].as_bool().unwrap_or(false);
+            let context = args["context"]
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or(0)
+                .min(5);
+            let max_results = args["max_results"]
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or(DEFAULT_MAX_RESULTS)
+                .clamp(1, HARD_MAX_RESULTS);
 
-        let file_index = ctx.file_index.clone();
-        // FS walk + regex on a blocking pool so parallel tool batches do not
-        // pin Tokio workers (stream drain / permission UI stay responsive).
-        let result = tokio::task::spawn_blocking(move || {
-            Self::search(
-                &pattern,
-                &search_path,
-                file_glob.as_deref(),
-                case_insensitive,
-                context,
-                max_results,
-                &working_dir,
-                file_index.as_deref(),
-            )
-        })
-        .await;
+            let file_index = ctx.file_index.clone();
+            // FS walk + regex on a blocking pool so parallel tool batches do not
+            // pin Tokio workers (stream drain / permission UI stay responsive).
+            let result = tokio::task::spawn_blocking(move || {
+                Self::search(
+                    &pattern,
+                    &search_path,
+                    file_glob.as_deref(),
+                    case_insensitive,
+                    context,
+                    max_results,
+                    &working_dir,
+                    file_index.as_deref(),
+                )
+            })
+            .await;
 
-        match result {
-            Ok(Ok(output)) => ToolResult {
-                tool_call_id: String::new(),
-                content: if output.is_empty() {
-                    "No matches found.".to_string()
-                } else {
-                    output
+            match result {
+                Ok(Ok(output)) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: if output.is_empty() {
+                        "No matches found.".to_string()
+                    } else {
+                        output
+                    },
+                    is_error: false,
                 },
-                is_error: false,
-            },
-            Ok(Err(e)) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error: {}", e),
-                is_error: true,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error: grep task failed: {e}"),
-                is_error: true,
-            },
-        }
+                Ok(Err(e)) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Error: {}", e),
+                    is_error: true,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Error: grep task failed: {e}"),
+                    is_error: true,
+                },
+            }
+        })
     }
 }
 

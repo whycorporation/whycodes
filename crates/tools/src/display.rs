@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use super::tool::{Tool, ToolContext};
@@ -17,8 +16,6 @@ impl DisplayTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for DisplayTool {
     fn name(&self) -> &str {
         "display"
@@ -50,42 +47,48 @@ impl Tool for DisplayTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let content = args["content"].as_str().unwrap_or("");
-        let language = args["language"].as_str().unwrap_or("");
-        let format = args["format"].as_str().unwrap_or("code");
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let content = args["content"].as_str().unwrap_or("");
+            let language = args["language"].as_str().unwrap_or("");
+            let format = args["format"].as_str().unwrap_or("code");
 
-        let result = match format {
-            "code" => {
-                // If language is empty and content looks like a path, try to detect
-                let lang = if language.is_empty() {
-                    whycodes_format::highlight::detect_language(
-                        content.lines().next().unwrap_or(""),
-                    )
-                    .unwrap_or("")
-                } else {
-                    language
-                };
-                if lang.is_empty() {
-                    // No language — return as plain text
-                    content.to_string()
-                } else {
-                    whycodes_format::highlight::highlight_code(content, lang)
+            let result = match format {
+                "code" => {
+                    // If language is empty and content looks like a path, try to detect
+                    let lang = if language.is_empty() {
+                        whycodes_format::highlight::detect_language(
+                            content.lines().next().unwrap_or(""),
+                        )
+                        .unwrap_or("")
+                    } else {
+                        language
+                    };
+                    if lang.is_empty() {
+                        // No language — return as plain text
+                        content.to_string()
+                    } else {
+                        whycodes_format::highlight::highlight_code(content, lang)
+                    }
                 }
-            }
-            "diff" => whycodes_format::diff::render_diff_unified(content),
-            "table" => {
-                // Parse content as simple newline-and-comma table
-                content.to_string()
-            }
-            _ => content.to_string(),
-        };
+                "diff" => whycodes_format::diff::render_diff_unified(content),
+                "table" => {
+                    // Parse content as simple newline-and-comma table
+                    content.to_string()
+                }
+                _ => content.to_string(),
+            };
 
-        ToolResult {
-            tool_call_id: String::new(),
-            content: result,
-            is_error: false,
-        }
+            ToolResult {
+                tool_call_id: String::new(),
+                content: result,
+                is_error: false,
+            }
+        })
     }
 }
 

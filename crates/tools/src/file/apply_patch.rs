@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
 
@@ -19,8 +18,6 @@ impl ApplyPatchTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for ApplyPatchTool {
     fn name(&self) -> &str {
         "apply_patch"
@@ -49,30 +46,37 @@ impl Tool for ApplyPatchTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("").to_string();
-        let patch_content = args["patch_content"].as_str().unwrap_or("").to_string();
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let path_str = args["path"].as_str().unwrap_or("").to_string();
+            let patch_content = args["patch_content"].as_str().unwrap_or("").to_string();
 
-        if patch_content.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "Error: 'patch_content' parameter is required".to_string(),
-                is_error: true,
-            };
-        }
+            if patch_content.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "Error: 'patch_content' parameter is required".to_string(),
+                    is_error: true,
+                };
+            }
 
-        let files = split_patch_files(&patch_content);
-        if files.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "Error: patch has no @@ hunks".to_string(),
-                is_error: true,
-            };
-        }
+            let files = split_patch_files(&patch_content);
+            if files.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "Error: patch has no @@ hunks".to_string(),
+                    is_error: true,
+                };
+            }
 
-        let working_dir = ctx.working_dir.clone();
-        let ctx_clone = ctx.clone();
-        crate::blocking::tool(move || apply_files(&working_dir, &path_str, files, &ctx_clone)).await
+            let working_dir = ctx.working_dir.clone();
+            let ctx_clone = ctx.clone();
+            crate::blocking::tool(move || apply_files(&working_dir, &path_str, files, &ctx_clone))
+                .await
+        })
     }
 }
 

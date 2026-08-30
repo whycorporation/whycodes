@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use super::fetch::{html_to_text, http_client};
@@ -18,8 +17,6 @@ impl WebSearchTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for WebSearchTool {
     fn name(&self) -> &str {
         "websearch"
@@ -50,26 +47,92 @@ impl Tool for WebSearchTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let query = args["query"].as_str().unwrap_or("");
-        let num_results = args["num_results"].as_u64().unwrap_or(10);
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let query = args["query"].as_str().unwrap_or("");
+            let num_results = args["num_results"].as_u64().unwrap_or(10);
 
-        if query.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "Query is required.".to_string(),
-                is_error: true,
-            };
-        }
+            if query.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "Query is required.".to_string(),
+                    is_error: true,
+                };
+            }
 
-        // Try SerpAPI first
-        if let Ok(api_key) = std::env::var("SERPAPI_API_KEY") {
-            let url = format!(
-                "https://serpapi.com/search?q={}&api_key={}&num={}&engine=google",
-                urlencoding(query),
-                api_key,
-                num_results
-            );
+            // Try SerpAPI first
+            if let Ok(api_key) = std::env::var("SERPAPI_API_KEY") {
+                let url = format!(
+                    "https://serpapi.com/search?q={}&api_key={}&num={}&engine=google",
+                    urlencoding(query),
+                    api_key,
+                    num_results
+                );
+
+                if let Err(msg) = ctx.network.check_url(&url) {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: msg,
+                        is_error: true,
+                    };
+                }
+
+                match http_client().get(&url).send().await {
+                    Ok(response) => match response.json::<serde_json::Value>().await {
+                        Ok(data) => {
+                            let mut results = String::new();
+                            if let Some(organic) = data["organic_results"].as_array() {
+                                for (i, result) in organic.iter().enumerate() {
+                                    let title = strip_markup(
+                                        result["title"].as_str().unwrap_or("No title"),
+                                    );
+                                    let link = result["link"].as_str().unwrap_or("No link");
+                                    let snippet =
+                                        strip_markup(result["snippet"].as_str().unwrap_or(""));
+                                    results.push_str(&format!(
+                                        "{}. {}\n   {}\n   {}\n\n",
+                                        i + 1,
+                                        title,
+                                        link,
+                                        snippet
+                                    ));
+                                }
+                            }
+
+                            return ToolResult {
+                                tool_call_id: String::new(),
+                                content: if results.is_empty() {
+                                    "No results found.".to_string()
+                                } else {
+                                    results
+                                },
+                                is_error: false,
+                            };
+                        }
+                        Err(e) => {
+                            return ToolResult {
+                                tool_call_id: String::new(),
+                                content: format!("Error parsing search results: {}", e),
+                                is_error: true,
+                            };
+                        }
+                    },
+                    Err(e) => {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: format!("Error performing search: {}", e),
+                            is_error: true,
+                        };
+                    }
+                }
+            }
+
+            // Fallback: try DuckDuckGo HTML search
+            let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
 
             if let Err(msg) = ctx.network.check_url(&url) {
                 return ToolResult {
@@ -80,112 +143,54 @@ impl Tool for WebSearchTool {
             }
 
             match http_client().get(&url).send().await {
-                Ok(response) => match response.json::<serde_json::Value>().await {
-                    Ok(data) => {
-                        let mut results = String::new();
-                        if let Some(organic) = data["organic_results"].as_array() {
-                            for (i, result) in organic.iter().enumerate() {
-                                let title =
-                                    strip_markup(result["title"].as_str().unwrap_or("No title"));
-                                let link = result["link"].as_str().unwrap_or("No link");
-                                let snippet =
-                                    strip_markup(result["snippet"].as_str().unwrap_or(""));
-                                results.push_str(&format!(
-                                    "{}. {}\n   {}\n   {}\n\n",
-                                    i + 1,
-                                    title,
-                                    link,
-                                    snippet
-                                ));
+                Ok(response) => match response.text().await {
+                    Ok(html) => {
+                        // Simple extraction of result snippets
+                        let mut results: Vec<String> = Vec::new();
+                        for line in html.lines() {
+                            if line.contains("result__snippet")
+                                && let Some(start) = line.find('>')
+                                && let Some(end) = line.rfind('<')
+                                && start + 1 < end
+                            {
+                                let snippet = strip_markup(&line[start + 1..end]);
+                                if !snippet.is_empty() {
+                                    results.push(snippet);
+                                }
                             }
                         }
 
-                        return ToolResult {
+                        results.truncate(num_results as usize);
+
+                        ToolResult {
                             tool_call_id: String::new(),
                             content: if results.is_empty() {
-                                "No results found.".to_string()
+                                "No results found. Set SERPAPI_API_KEY for better results."
+                                    .to_string()
                             } else {
                                 results
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, s)| format!("{}. {}", i + 1, s))
+                                    .collect::<Vec<_>>()
+                                    .join("\n\n")
                             },
                             is_error: false,
-                        };
-                    }
-                    Err(e) => {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error parsing search results: {}", e),
-                            is_error: true,
-                        };
-                    }
-                },
-                Err(e) => {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error performing search: {}", e),
-                        is_error: true,
-                    };
-                }
-            }
-        }
-
-        // Fallback: try DuckDuckGo HTML search
-        let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
-
-        if let Err(msg) = ctx.network.check_url(&url) {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: msg,
-                is_error: true,
-            };
-        }
-
-        match http_client().get(&url).send().await {
-            Ok(response) => match response.text().await {
-                Ok(html) => {
-                    // Simple extraction of result snippets
-                    let mut results: Vec<String> = Vec::new();
-                    for line in html.lines() {
-                        if line.contains("result__snippet")
-                            && let Some(start) = line.find('>')
-                            && let Some(end) = line.rfind('<')
-                            && start + 1 < end
-                        {
-                            let snippet = strip_markup(&line[start + 1..end]);
-                            if !snippet.is_empty() {
-                                results.push(snippet);
-                            }
                         }
                     }
-
-                    results.truncate(num_results as usize);
-
-                    ToolResult {
+                    Err(e) => ToolResult {
                         tool_call_id: String::new(),
-                        content: if results.is_empty() {
-                            "No results found. Set SERPAPI_API_KEY for better results.".to_string()
-                        } else {
-                            results
-                                .iter()
-                                .enumerate()
-                                .map(|(i, s)| format!("{}. {}", i + 1, s))
-                                .collect::<Vec<_>>()
-                                .join("\n\n")
-                        },
-                        is_error: false,
-                    }
-                }
+                        content: format!("Error reading response: {}", e),
+                        is_error: true,
+                    },
+                },
                 Err(e) => ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Error reading response: {}", e),
+                    content: format!("Error performing search: {}", e),
                     is_error: true,
                 },
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error performing search: {}", e),
-                is_error: true,
-            },
-        }
+            }
+        })
     }
 }
 

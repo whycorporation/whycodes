@@ -363,9 +363,9 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use async_trait::async_trait;
     use whycodes_core::types::{LlmResponse, Message, MessageContent, Role, Usage};
 
+    use crate::provider::{ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture};
     use crate::retry::RetryPolicy;
 
     struct DelayProvider {
@@ -376,7 +376,6 @@ mod tests {
         fail_open: bool,
     }
 
-    #[async_trait]
     impl LlmProvider for DelayProvider {
         fn name(&self) -> &str {
             &self.name
@@ -384,38 +383,42 @@ mod tests {
         fn default_base_url(&self) -> &str {
             "http://example.invalid"
         }
-        async fn complete(
-            &self,
-            _request: &LlmRequest,
-            _api_key: &str,
-            model: &str,
-        ) -> whycodes_core::Result<LlmResponse> {
-            Ok(LlmResponse {
-                content: vec![],
-                stop_reason: None,
-                usage: Usage::default(),
-                model: model.into(),
+        fn complete<'a>(
+            &'a self,
+            _request: &'a LlmRequest,
+            _api_key: &'a str,
+            model: &'a str,
+        ) -> ProviderResponseFuture<'a> {
+            Box::pin(async move {
+                Ok(LlmResponse {
+                    content: vec![],
+                    stop_reason: None,
+                    usage: Usage::default(),
+                    model: model.into(),
+                })
             })
         }
-        async fn stream(
-            &self,
-            _request: &LlmRequest,
-            _api_key: &str,
-            _model: &str,
-        ) -> whycodes_core::Result<EventStream> {
-            self.opens.fetch_add(1, Ordering::SeqCst);
-            if self.fail_open {
-                return Err(whycodes_core::Error::Provider("boom".into()));
-            }
-            let delay = self.delay;
-            let text = self.text.clone();
-            Ok(Box::pin(async_stream::stream! {
-                if !delay.is_zero() {
-                    tokio::time::sleep(delay).await;
+        fn stream<'a>(
+            &'a self,
+            _request: &'a LlmRequest,
+            _api_key: &'a str,
+            _model: &'a str,
+        ) -> ProviderStreamFuture<'a> {
+            Box::pin(async move {
+                self.opens.fetch_add(1, Ordering::SeqCst);
+                if self.fail_open {
+                    return Err(whycodes_core::Error::Provider("boom".into()));
                 }
-                yield Ok(StreamEvent::TextDelta { text });
-                yield Ok(StreamEvent::MessageStop);
-            }))
+                let delay = self.delay;
+                let text = self.text.clone();
+                Ok(Box::pin(async_stream::stream! {
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    yield Ok(StreamEvent::TextDelta { text });
+                    yield Ok(StreamEvent::MessageStop);
+                }) as ProviderEventStream)
+            })
         }
     }
 

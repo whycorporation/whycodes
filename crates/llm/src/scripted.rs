@@ -3,18 +3,15 @@
 //! Used by agent / server / CLI tests so turns can be driven without HTTP.
 
 use std::collections::VecDeque;
-use std::pin::Pin;
 use std::sync::Mutex;
 use std::time::Duration;
 
-use async_trait::async_trait;
-use futures::Stream;
 use serde_json::Value;
 use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use crate::provider::LlmProvider;
-
-type EventStream = Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>;
+use crate::provider::{
+    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
+};
 
 /// One scripted action. Consumed in order by [`ScriptedProvider::stream`].
 #[derive(Debug, Clone)]
@@ -69,7 +66,6 @@ impl ScriptedProvider {
     }
 }
 
-#[async_trait]
 impl LlmProvider for ScriptedProvider {
     fn name(&self) -> &str {
         &self.name
@@ -79,87 +75,91 @@ impl LlmProvider for ScriptedProvider {
         "http://script.invalid"
     }
 
-    async fn complete(
-        &self,
-        _request: &LlmRequest,
-        _api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse> {
-        let mut text = String::new();
-        let mut usage = Usage::default();
-        for step in self.take_steps() {
-            match step {
-                ScriptedStep::Text(t) => text.push_str(&t),
-                ScriptedStep::Thinking(_) | ScriptedStep::ToolCall { .. } => {}
-                ScriptedStep::Usage {
-                    input_tokens,
-                    output_tokens,
-                } => {
-                    usage.input_tokens = input_tokens;
-                    usage.output_tokens = output_tokens;
-                }
-                ScriptedStep::Error(msg) | ScriptedStep::FailOpen(msg) => {
-                    return Err(whycodes_core::Error::Provider(msg));
-                }
-                ScriptedStep::Hang(d) => tokio::time::sleep(d).await,
-            }
-        }
-        Ok(LlmResponse {
-            content: if text.is_empty() {
-                vec![]
-            } else {
-                vec![ContentBlock::Text { text }]
-            },
-            stop_reason: Some("end_turn".into()),
-            usage,
-            model: model.into(),
-        })
-    }
-
-    async fn stream(
-        &self,
-        _request: &LlmRequest,
-        _api_key: &str,
-        _model: &str,
-    ) -> whycodes_core::Result<EventStream> {
-        let steps = self.take_steps();
-        if let Some(ScriptedStep::FailOpen(msg)) = steps.first() {
-            return Err(whycodes_core::Error::Provider(msg.clone()));
-        }
-        Ok(Box::pin(async_stream::stream! {
-            for step in steps {
+    fn complete<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            let mut text = String::new();
+            let mut usage = Usage::default();
+            for step in self.take_steps() {
                 match step {
-                    ScriptedStep::Text(text) => {
-                        yield Ok(StreamEvent::TextDelta { text });
-                    }
-                    ScriptedStep::ToolCall { id, name, input } => {
-                        yield Ok(StreamEvent::ToolUse { id, name, input });
-                    }
-                    ScriptedStep::Thinking(text) => {
-                        yield Ok(StreamEvent::Thinking { text });
-                    }
+                    ScriptedStep::Text(t) => text.push_str(&t),
+                    ScriptedStep::Thinking(_) | ScriptedStep::ToolCall { .. } => {}
                     ScriptedStep::Usage {
                         input_tokens,
                         output_tokens,
                     } => {
-                        yield Ok(StreamEvent::Usage {
+                        usage.input_tokens = input_tokens;
+                        usage.output_tokens = output_tokens;
+                    }
+                    ScriptedStep::Error(msg) | ScriptedStep::FailOpen(msg) => {
+                        return Err(whycodes_core::Error::Provider(msg));
+                    }
+                    ScriptedStep::Hang(d) => tokio::time::sleep(d).await,
+                }
+            }
+            Ok(LlmResponse {
+                content: if text.is_empty() {
+                    vec![]
+                } else {
+                    vec![ContentBlock::Text { text }]
+                },
+                stop_reason: Some("end_turn".into()),
+                usage,
+                model: model.into(),
+            })
+        })
+    }
+
+    fn stream<'a>(
+        &'a self,
+        _request: &'a LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> ProviderStreamFuture<'a> {
+        Box::pin(async move {
+            let steps = self.take_steps();
+            if let Some(ScriptedStep::FailOpen(msg)) = steps.first() {
+                return Err(whycodes_core::Error::Provider(msg.clone()));
+            }
+            Ok(Box::pin(async_stream::stream! {
+                for step in steps {
+                    match step {
+                        ScriptedStep::Text(text) => {
+                            yield Ok(StreamEvent::TextDelta { text });
+                        }
+                        ScriptedStep::ToolCall { id, name, input } => {
+                            yield Ok(StreamEvent::ToolUse { id, name, input });
+                        }
+                        ScriptedStep::Thinking(text) => {
+                            yield Ok(StreamEvent::Thinking { text });
+                        }
+                        ScriptedStep::Usage {
                             input_tokens,
                             output_tokens,
-                        });
-                    }
-                    ScriptedStep::Error(message) => {
-                        yield Ok(StreamEvent::Error { message });
-                    }
-                    ScriptedStep::FailOpen(_) => {}
-                    ScriptedStep::Hang(d) => {
-                        if !d.is_zero() {
-                            tokio::time::sleep(d).await;
+                        } => {
+                            yield Ok(StreamEvent::Usage {
+                                input_tokens,
+                                output_tokens,
+                            });
+                        }
+                        ScriptedStep::Error(message) => {
+                            yield Ok(StreamEvent::Error { message });
+                        }
+                        ScriptedStep::FailOpen(_) => {}
+                        ScriptedStep::Hang(d) => {
+                            if !d.is_zero() {
+                                tokio::time::sleep(d).await;
+                            }
                         }
                     }
                 }
-            }
-            yield Ok(StreamEvent::MessageStop);
-        }))
+                yield Ok(StreamEvent::MessageStop);
+            }) as ProviderEventStream)
+        })
     }
 }
 

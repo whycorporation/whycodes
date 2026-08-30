@@ -3929,7 +3929,6 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
@@ -4861,7 +4860,6 @@ dependencies = [
 name = "whycodes-core"
 version = "0.2.0"
 dependencies = [
- "async-trait",
  "chrono",
  "directories",
  "serde",
@@ -4916,7 +4914,6 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-stream",
- "async-trait",
  "chrono",
  "futures",
  "reqwest",
@@ -4937,7 +4934,6 @@ dependencies = [
 name = "whycodes-lsp"
 version = "0.2.0"
 dependencies = [
- "async-trait",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -5121,7 +5117,6 @@ name = "whycodes-tools"
 version = "0.2.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "base64 0.23.1",
  "futures",
  "glob",

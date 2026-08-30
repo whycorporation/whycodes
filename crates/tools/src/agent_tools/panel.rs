@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -25,8 +24,6 @@ impl PanelTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for PanelTool {
     fn name(&self) -> &str {
         "panel"
@@ -60,78 +57,90 @@ impl Tool for PanelTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        let path = args.get("path").and_then(|v| v.as_str());
-        let source = args.get("source").and_then(|v| v.as_str());
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let path = args.get("path").and_then(|v| v.as_str());
+            let source = args.get("source").and_then(|v| v.as_str());
 
-        let update = match action {
-            "clear" => PanelUpdate::Clear,
-            "show_file" => {
-                let Some(p) = path.filter(|s| !s.is_empty()) else {
-                    return err("show_file requires `path`");
-                };
-                let abs = resolve(ctx, p);
-                match read_capped(&abs) {
-                    Ok(text) => PanelUpdate::File {
-                        path: p.to_string(),
-                        text,
-                    },
-                    Err(e) => return err(&e),
-                }
-            }
-            "show_diff" => {
-                let label = path.unwrap_or("diff").to_string();
-                let unified = if let Some(src) = source.filter(|s| !s.is_empty()) {
-                    cap_text(src)
-                } else if let Some(p) = path.filter(|s| !s.is_empty()) {
-                    match git_diff(ctx, p) {
-                        Ok(s) if !s.trim().is_empty() => s,
-                        Ok(_) => return err("git diff is empty for that path"),
+            let update = match action {
+                "clear" => PanelUpdate::Clear,
+                "show_file" => {
+                    let Some(p) = path.filter(|s| !s.is_empty()) else {
+                        return err("show_file requires `path`");
+                    };
+                    let abs = resolve(ctx, p);
+                    match read_capped(&abs) {
+                        Ok(text) => PanelUpdate::File {
+                            path: p.to_string(),
+                            text,
+                        },
                         Err(e) => return err(&e),
                     }
-                } else {
-                    return err("show_diff requires `path` or `source`");
-                };
-                PanelUpdate::Diff {
-                    path: label,
-                    unified,
                 }
-            }
-            "show_mermaid" => {
-                let src = if let Some(s) = source.filter(|s| !s.is_empty()) {
-                    cap_text(s)
-                } else if let Some(p) = path.filter(|s| !s.is_empty()) {
-                    match read_capped(&resolve(ctx, p)) {
-                        Ok(t) => t,
-                        Err(e) => return err(&e),
+                "show_diff" => {
+                    let label = path.unwrap_or("diff").to_string();
+                    let unified = if let Some(src) = source.filter(|s| !s.is_empty()) {
+                        cap_text(src)
+                    } else if let Some(p) = path.filter(|s| !s.is_empty()) {
+                        match git_diff(ctx, p) {
+                            Ok(s) if !s.trim().is_empty() => s,
+                            Ok(_) => return err("git diff is empty for that path"),
+                            Err(e) => return err(&e),
+                        }
+                    } else {
+                        return err("show_diff requires `path` or `source`");
+                    };
+                    PanelUpdate::Diff {
+                        path: label,
+                        unified,
                     }
-                } else {
-                    return err("show_mermaid requires `source` or `path`");
-                };
-                PanelUpdate::Mermaid { source: src }
+                }
+                "show_mermaid" => {
+                    let src = if let Some(s) = source.filter(|s| !s.is_empty()) {
+                        cap_text(s)
+                    } else if let Some(p) = path.filter(|s| !s.is_empty()) {
+                        match read_capped(&resolve(ctx, p)) {
+                            Ok(t) => t,
+                            Err(e) => return err(&e),
+                        }
+                    } else {
+                        return err("show_mermaid requires `source` or `path`");
+                    };
+                    PanelUpdate::Mermaid { source: src }
+                }
+                _ => return err("action must be show_file, show_diff, show_mermaid, or clear"),
+            };
+
+            if let Some(sink) = ctx.panel.as_ref() {
+                sink(update.clone());
             }
-            _ => return err("action must be show_file, show_diff, show_mermaid, or clear"),
-        };
 
-        if let Some(sink) = ctx.panel.as_ref() {
-            sink(update.clone());
-        }
-
-        let msg = match &update {
-            PanelUpdate::Clear => "Panel cleared.".to_string(),
-            PanelUpdate::File { path, .. } => format!("Pinned file `{path}` on the side panel."),
-            PanelUpdate::Diff { path, .. } => format!("Pinned diff `{path}` on the side panel."),
-            PanelUpdate::Mermaid { .. } => "Pinned mermaid diagram on the side panel.".to_string(),
-        };
-        if ctx.panel.is_none() {
-            return ok(format!("{msg} (no TUI panel attached — preview skipped)"));
-        }
-        ok(msg)
+            let msg = match &update {
+                PanelUpdate::Clear => "Panel cleared.".to_string(),
+                PanelUpdate::File { path, .. } => {
+                    format!("Pinned file `{path}` on the side panel.")
+                }
+                PanelUpdate::Diff { path, .. } => {
+                    format!("Pinned diff `{path}` on the side panel.")
+                }
+                PanelUpdate::Mermaid { .. } => {
+                    "Pinned mermaid diagram on the side panel.".to_string()
+                }
+            };
+            if ctx.panel.is_none() {
+                return ok(format!("{msg} (no TUI panel attached — preview skipped)"));
+            }
+            ok(msg)
+        })
     }
 }
 

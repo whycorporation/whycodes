@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::process::Command;
 
@@ -18,8 +17,6 @@ impl GitCommitTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for GitCommitTool {
     fn name(&self) -> &str {
         "git_commit"
@@ -51,30 +48,36 @@ impl Tool for GitCommitTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let message = match args["message"].as_str() {
-            Some(m) => m.to_string(),
-            None => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: "Missing required parameter: message".to_string(),
-                    is_error: true,
-                };
-            }
-        };
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let message = match args["message"].as_str() {
+                Some(m) => m.to_string(),
+                None => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: "Missing required parameter: message".to_string(),
+                        is_error: true,
+                    };
+                }
+            };
 
-        let files: Vec<String> = args["files"]
-            .as_array()
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect()
-            })
-            .unwrap_or_default();
+            let files: Vec<String> = args["files"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
 
-        let push = args["push"].as_bool().unwrap_or(false);
-        let working_dir = ctx.working_dir.clone();
-        crate::blocking::tool(move || Self::run(working_dir, message, files, push)).await
+            let push = args["push"].as_bool().unwrap_or(false);
+            let working_dir = ctx.working_dir.clone();
+            crate::blocking::tool(move || Self::run(working_dir, message, files, push)).await
+        })
     }
 }
 

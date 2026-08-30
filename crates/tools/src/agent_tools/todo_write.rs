@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
 
@@ -26,8 +25,6 @@ impl TodoWriteTool {
         Self { name: "todo" }
     }
 }
-
-#[async_trait]
 impl Tool for TodoWriteTool {
     fn name(&self) -> &str {
         self.name
@@ -75,46 +72,52 @@ impl Tool for TodoWriteTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let merge = args.get("merge").and_then(|v| v.as_bool()).unwrap_or(true);
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let merge = args.get("merge").and_then(|v| v.as_bool()).unwrap_or(true);
 
-        let new_todos: Vec<TodoItem> = match serde_json::from_value(args["todos"].clone()) {
-            Ok(t) => t,
-            Err(e) => {
+            let new_todos: Vec<TodoItem> = match serde_json::from_value(args["todos"].clone()) {
+                Ok(t) => t,
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!("Error parsing todos: {e}"),
+                        is_error: true,
+                    };
+                }
+            };
+
+            let working = Path::new(&ctx.working_dir);
+            let session_id = ctx.session_id.as_deref();
+            let existing = if merge {
+                load_todos(working, session_id)
+            } else {
+                Vec::new()
+            };
+            let final_todos = apply_todo_update(existing, new_todos, merge);
+
+            if let Err(e) = save_todos(working, session_id, &final_todos) {
                 return ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Error parsing todos: {e}"),
+                    content: format!("Error writing todos: {e}"),
                     is_error: true,
                 };
             }
-        };
 
-        let working = Path::new(&ctx.working_dir);
-        let session_id = ctx.session_id.as_deref();
-        let existing = if merge {
-            load_todos(working, session_id)
-        } else {
-            Vec::new()
-        };
-        let final_todos = apply_todo_update(existing, new_todos, merge);
+            if let Some(sink) = &ctx.todo_sink {
+                sink(final_todos.clone());
+            }
 
-        if let Err(e) = save_todos(working, session_id, &final_todos) {
-            return ToolResult {
+            ToolResult {
                 tool_call_id: String::new(),
-                content: format!("Error writing todos: {e}"),
-                is_error: true,
-            };
-        }
-
-        if let Some(sink) = &ctx.todo_sink {
-            sink(final_todos.clone());
-        }
-
-        ToolResult {
-            tool_call_id: String::new(),
-            content: format_todo_result(&final_todos, working, session_id),
-            is_error: false,
-        }
+                content: format_todo_result(&final_todos, working, session_id),
+                is_error: false,
+            }
+        })
     }
 }
 

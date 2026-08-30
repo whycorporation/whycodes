@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -19,8 +18,6 @@ impl ToolSearchTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for ToolSearchTool {
     fn name(&self) -> &str {
         "tool_search"
@@ -54,11 +51,17 @@ impl Tool for ToolSearchTool {
         })
     }
 
-    async fn execute(&self, _args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        ToolResult {
-            tool_call_id: String::new(),
-            content: "tool_search was not intercepted by the agent loop.".into(),
-            is_error: true,
-        }
+    fn execute<'a>(
+        &'a self,
+        _args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            ToolResult {
+                tool_call_id: String::new(),
+                content: "tool_search was not intercepted by the agent loop.".into(),
+                is_error: true,
+            }
+        })
     }
 }

@@ -332,11 +332,11 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
 6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. `cli/src/cmd/` ve `tui/src/run/` ayrı follow-up.
 7. ~~**`TuiApp` alanlarını `pub(crate)`**~~ **ödendi (2026-08-30):** struct + 116 alan crate-içi; kök re-export düştü. Invariant metodları / `SessionRuntime` ayrı follow-up.
-8. **`async_trait` → native async** (önce `Tool`, sonra `LlmProvider`).
-9. **`tokio` feature kesimi**; `core`/`function`/`session` bağımlılık temizliği ödendi, workspace `full` ve kalan crate feature audit'i follow-up.
+8. ~~**`async_trait` → explicit native futures**~~ **ödendi (2026-08-31):** `Tool`, `LlmProvider`, ve object-safe MCP çağrıları `BoxFuture`/`ToolFuture` ile dyn dispatch'i korurken `async-trait` bağımlılığını `core`/`tools`/`llm`/`lsp` üzerinden kaldırdı. Permission prompt traitleri ayrı follow-up.
+9. ~~**`tokio` feature kesimi**~~ **ödendi (2026-08-31):** workspace Tokio `default-features = false`; her crate yalnız kullandığı runtime, macro, sync, time, process, io-util veya net feature'larını ister. `core`/`function`/`session` bağımlılık temizliği de önceki işte tamamlandı.
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–7, 10 ödendi (2026-08-30). `core`/`function`/`session` tokio dependency temizliği ve CLI argument-module ayrımı da ödendi; `cli`/`tui` command/event-loop kesitleri, `async_trait`, ve workspace feature audit'i ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–10 ödendi (2026-08-31); kalan geniş iş `cli`/`tui` command/event-loop kesitleri ve permission-prompt traitleridir. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
@@ -346,7 +346,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 |--------|------:|
 | Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-08-30) |
 | Yutulan hata bütçesi | tui 45, cli 32, agent 28, tools 9, memory 8, core 7, format 0 |
-| `#[async_trait]` | 76 |
+| `#[async_trait]` | 11 (permission-prompt follow-up; Tool/LlmProvider/MCP paid 2026-08-31) |
 | `HashMap` / `FxHashMap` hit | ~153 / ~13 |
 | `Cow<` | 1 |
 | `#[must_use]` | 0 |

@@ -9,7 +9,7 @@ repository.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
 whycodes-core = { path = "../core" }
 toml.workspace = true
 thiserror.workspace = true

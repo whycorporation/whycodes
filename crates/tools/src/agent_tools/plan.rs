@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -17,8 +16,6 @@ impl PlanTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for PlanTool {
     fn name(&self) -> &str {
         "plan"
@@ -42,67 +39,73 @@ impl Tool for PlanTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let action = args["action"].as_str().unwrap_or("");
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let action = args["action"].as_str().unwrap_or("");
 
-        let whycodes_dir = whycodes_core::project_dir(std::path::Path::new(&ctx.working_dir));
-        let plan_mode_file = whycodes_dir.join("plan_mode");
+            let whycodes_dir = whycodes_core::project_dir(std::path::Path::new(&ctx.working_dir));
+            let plan_mode_file = whycodes_dir.join("plan_mode");
 
-        match action {
-            "enter" => {
-                // Create .whycodes directory if it doesn't exist
-                if let Err(e) = std::fs::create_dir_all(&whycodes_dir) {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error creating .whycodes directory: {}", e),
-                        is_error: true,
-                    };
+            match action {
+                "enter" => {
+                    // Create .whycodes directory if it doesn't exist
+                    if let Err(e) = std::fs::create_dir_all(&whycodes_dir) {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: format!("Error creating .whycodes directory: {}", e),
+                            is_error: true,
+                        };
+                    }
+
+                    match std::fs::write(&plan_mode_file, "1") {
+                        Ok(_) => ToolResult {
+                            tool_call_id: String::new(),
+                            content: "Planning mode entered. No file modifications will be made."
+                                .to_string(),
+                            is_error: false,
+                        },
+                        Err(e) => ToolResult {
+                            tool_call_id: String::new(),
+                            content: format!("Error entering planning mode: {}", e),
+                            is_error: true,
+                        },
+                    }
                 }
-
-                match std::fs::write(&plan_mode_file, "1") {
+                "exit" => match std::fs::remove_file(&plan_mode_file) {
                     Ok(_) => ToolResult {
                         tool_call_id: String::new(),
-                        content: "Planning mode entered. No file modifications will be made."
+                        content: "Planning mode exited. File modifications are now allowed."
                             .to_string(),
                         is_error: false,
                     },
-                    Err(e) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error entering planning mode: {}", e),
-                        is_error: true,
-                    },
-                }
-            }
-            "exit" => match std::fs::remove_file(&plan_mode_file) {
-                Ok(_) => ToolResult {
-                    tool_call_id: String::new(),
-                    content: "Planning mode exited. File modifications are now allowed."
-                        .to_string(),
-                    is_error: false,
-                },
-                Err(e) => {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        ToolResult {
+                    Err(e) => {
+                        if e.kind() == std::io::ErrorKind::NotFound {
+                            ToolResult {
                             tool_call_id: String::new(),
                             content:
                                 "Planning mode is not currently active (no plan_mode file found)."
                                     .to_string(),
                             is_error: false,
                         }
-                    } else {
-                        ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!("Error exiting planning mode: {}", e),
-                            is_error: true,
+                        } else {
+                            ToolResult {
+                                tool_call_id: String::new(),
+                                content: format!("Error exiting planning mode: {}", e),
+                                is_error: true,
+                            }
                         }
                     }
-                }
-            },
-            _ => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Invalid action: '{}'. Must be 'enter' or 'exit'.", action),
-                is_error: true,
-            },
-        }
+                },
+                _ => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Invalid action: '{}'. Must be 'enter' or 'exit'.", action),
+                    is_error: true,
+                },
+            }
+        })
     }
 }

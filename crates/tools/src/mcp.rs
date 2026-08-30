@@ -1,7 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-
 use super::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -9,15 +7,14 @@ use whycodes_core::types::ToolResult;
 ///
 /// Implementors wrap an MCP client (e.g. `McpClient` from `whycodes-mcp`)
 /// and delegate `tools/call` requests.
-#[async_trait]
 pub trait McpCaller: Send + Sync {
     /// Call the named MCP tool with the given arguments, returning the
     /// text content of the result.
-    async fn call_mcp_tool(
-        &self,
-        tool_name: &str,
+    fn call_mcp_tool<'a>(
+        &'a self,
+        tool_name: &'a str,
         arguments: serde_json::Value,
-    ) -> Result<String, String>;
+    ) -> futures::future::BoxFuture<'a, Result<String, String>>;
 }
 
 /// A `Tool` that bridges an MCP server's tool into the whycodes tool system.
@@ -53,8 +50,6 @@ impl McpToolBridge {
         }
     }
 }
-
-#[async_trait]
 impl Tool for McpToolBridge {
     fn name(&self) -> &str {
         &self.tool_name
@@ -68,19 +63,25 @@ impl Tool for McpToolBridge {
         self.params_schema.clone()
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        match self.caller.call_mcp_tool(&self.tool_name, args).await {
-            Ok(text) => ToolResult {
-                tool_call_id: String::new(),
-                content: text,
-                is_error: false,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("MCP tool '{}' error: {}", self.tool_name, e),
-                is_error: true,
-            },
-        }
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            match self.caller.call_mcp_tool(&self.tool_name, args).await {
+                Ok(text) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: text,
+                    is_error: false,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("MCP tool '{}' error: {}", self.tool_name, e),
+                    is_error: true,
+                },
+            }
+        })
     }
 }
 
@@ -96,16 +97,16 @@ mod tests {
         calls: Mutex<Vec<serde_json::Value>>,
         reply: Result<String, String>,
     }
-
-    #[async_trait]
     impl McpCaller for FakeCaller {
-        async fn call_mcp_tool(
-            &self,
-            _tool_name: &str,
+        fn call_mcp_tool<'a>(
+            &'a self,
+            _tool_name: &'a str,
             arguments: serde_json::Value,
-        ) -> Result<String, String> {
-            self.calls.lock().unwrap().push(arguments);
-            self.reply.clone()
+        ) -> futures::future::BoxFuture<'a, Result<String, String>> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push(arguments);
+                self.reply.clone()
+            })
         }
     }
 

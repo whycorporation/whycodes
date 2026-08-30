@@ -250,7 +250,6 @@ impl Default for ToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use serde_json::json;
     use whycodes_core::types::{PermissionAction, ToolResult};
 
@@ -260,8 +259,6 @@ mod tests {
         desc: &'static str,
         allowed: bool,
     }
-
-    #[async_trait]
     impl Tool for FakeTool {
         fn name(&self) -> &str {
             &self.name
@@ -275,12 +272,18 @@ mod tests {
             json!({ "type": "object", "properties": {} })
         }
 
-        async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-            ToolResult {
-                tool_call_id: "fake".into(),
-                content: format!("fake-executed:{}", args),
-                is_error: false,
-            }
+        fn execute<'a>(
+            &'a self,
+            args: serde_json::Value,
+            _ctx: &'a ToolContext,
+        ) -> whycodes_core::ToolFuture<'a> {
+            Box::pin(async move {
+                ToolResult {
+                    tool_call_id: "fake".into(),
+                    content: format!("fake-executed:{}", args),
+                    is_error: false,
+                }
+            })
         }
 
         fn is_allowed(&self, _permissions: &PermissionSet) -> bool {

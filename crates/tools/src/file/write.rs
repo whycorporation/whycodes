@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::file::paths::display_path;
@@ -19,8 +18,6 @@ impl WriteTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for WriteTool {
     fn name(&self) -> &str {
         "write"
@@ -47,29 +44,35 @@ impl Tool for WriteTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("").to_string();
-        let content = args["content"].as_str().unwrap_or("").to_string();
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let path_str = args["path"].as_str().unwrap_or("").to_string();
+            let content = args["content"].as_str().unwrap_or("").to_string();
 
-        let full_path = if std::path::Path::new(&path_str).is_absolute() {
-            path_str
-        } else {
-            std::path::Path::new(&ctx.working_dir)
-                .join(&path_str)
-                .to_string_lossy()
-                .to_string()
-        };
-
-        if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: msg,
-                is_error: true,
+            let full_path = if std::path::Path::new(&path_str).is_absolute() {
+                path_str
+            } else {
+                std::path::Path::new(&ctx.working_dir)
+                    .join(&path_str)
+                    .to_string_lossy()
+                    .to_string()
             };
-        }
 
-        let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
-        crate::blocking::tool(move || Self::run(full_path, shown, content)).await
+            if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
+
+            let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
+            crate::blocking::tool(move || Self::run(full_path, shown, content)).await
+        })
     }
 }
 

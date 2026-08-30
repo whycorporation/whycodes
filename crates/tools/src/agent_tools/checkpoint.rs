@@ -3,7 +3,6 @@
 //! The tools themselves are markers. The agent loop records the boundary and
 //! later replaces exploratory turns with the rewind report.
 
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -22,8 +21,6 @@ impl CheckpointTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for CheckpointTool {
     fn name(&self) -> &str {
         "checkpoint"
@@ -48,27 +45,33 @@ impl Tool for CheckpointTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let goal = args
-            .get("goal")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        if goal.is_empty() {
-            return ToolResult {
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let goal = args
+                .get("goal")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if goal.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "checkpoint requires a non-empty `goal`".into(),
+                    is_error: true,
+                };
+            }
+            ToolResult {
                 tool_call_id: String::new(),
-                content: "checkpoint requires a non-empty `goal`".into(),
-                is_error: true,
-            };
-        }
-        ToolResult {
-            tool_call_id: String::new(),
-            content: format!(
-                "Checkpoint created.\nGoal: {goal}\n\
+                content: format!(
+                    "Checkpoint created.\nGoal: {goal}\n\
                  Run your investigation, then call rewind with a concise report."
-            ),
-            is_error: false,
-        }
+                ),
+                is_error: false,
+            }
+        })
     }
 }
 
@@ -85,8 +88,6 @@ impl RewindTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for RewindTool {
     fn name(&self) -> &str {
         "rewind"
@@ -110,26 +111,32 @@ impl Tool for RewindTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let report = args
-            .get("report")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        if report.is_empty() {
-            return ToolResult {
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let report = args
+                .get("report")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if report.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "rewind requires a non-empty `report`".into(),
+                    is_error: true,
+                };
+            }
+            ToolResult {
                 tool_call_id: String::new(),
-                content: "rewind requires a non-empty `report`".into(),
-                is_error: true,
-            };
-        }
-        ToolResult {
-            tool_call_id: String::new(),
-            content: format!(
-                "Rewind requested.\nReport captured for context replacement.\n\n{report}"
-            ),
-            is_error: false,
-        }
+                content: format!(
+                    "Rewind requested.\nReport captured for context replacement.\n\n{report}"
+                ),
+                is_error: false,
+            }
+        })
     }
 }
 

@@ -10,7 +10,7 @@ description = "Model Context Protocol client for whycodes"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "rt", "sync", "time"] }
 thiserror.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
@@ -21,7 +21,7 @@ whycodes-tools = { path = "../tools" }
 [dev-dependencies]
 axum = { version = "0.8", features = ["macros"] }
 async-stream = "0.3"
-tokio = { workspace = true, features = ["full", "test-util", "macros", "rt-multi-thread"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "test-util"] }
 http-body-util = "0.1"
 tempfile = { workspace = true }
 

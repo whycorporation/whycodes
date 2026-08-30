@@ -1,6 +1,5 @@
 use std::sync::OnceLock;
 
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -33,8 +32,6 @@ impl WebFetchTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for WebFetchTool {
     fn name(&self) -> &str {
         "webfetch"
@@ -65,69 +62,75 @@ impl Tool for WebFetchTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let url = args["url"].as_str().unwrap_or("");
-        let max_length = args["max_length"].as_u64().unwrap_or(8000) as usize;
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let url = args["url"].as_str().unwrap_or("");
+            let max_length = args["max_length"].as_u64().unwrap_or(8000) as usize;
 
-        if url.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "URL is required.".to_string(),
-                is_error: true,
-            };
-        }
+            if url.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "URL is required.".to_string(),
+                    is_error: true,
+                };
+            }
 
-        if let Err(msg) = ctx.network.check_url(url) {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: msg,
-                is_error: true,
-            };
-        }
+            if let Err(msg) = ctx.network.check_url(url) {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
 
-        let request = http_client().get(url).header(
+            let request = http_client().get(url).header(
             reqwest::header::ACCEPT,
             "application/json, text/markdown;q=0.9, text/plain;q=0.8, text/html;q=0.5, */*;q=0.1",
         );
 
-        match request.send().await {
-            Ok(response) => {
-                let status = response.status();
-                let content_type = response
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("")
-                    .to_string();
+            match request.send().await {
+                Ok(response) => {
+                    let status = response.status();
+                    let content_type = response
+                        .headers()
+                        .get(reqwest::header::CONTENT_TYPE)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
 
-                match response.bytes().await {
-                    Ok(bytes) => {
-                        let raw = String::from_utf8_lossy(&bytes);
-                        let body = format_body(&content_type, &raw);
-                        let truncated = truncate_chars(&body, max_length);
+                    match response.bytes().await {
+                        Ok(bytes) => {
+                            let raw = String::from_utf8_lossy(&bytes);
+                            let body = format_body(&content_type, &raw);
+                            let truncated = truncate_chars(&body, max_length);
 
-                        ToolResult {
-                            tool_call_id: String::new(),
-                            content: format!(
-                                "URL: {url}\nStatus: {}\nContent-Type: {content_type}\n\n{truncated}",
-                                status.as_u16()
-                            ),
-                            is_error: !status.is_success(),
+                            ToolResult {
+                                tool_call_id: String::new(),
+                                content: format!(
+                                    "URL: {url}\nStatus: {}\nContent-Type: {content_type}\n\n{truncated}",
+                                    status.as_u16()
+                                ),
+                                is_error: !status.is_success(),
+                            }
                         }
+                        Err(e) => ToolResult {
+                            tool_call_id: String::new(),
+                            content: format!("Error reading response: {e}"),
+                            is_error: true,
+                        },
                     }
-                    Err(e) => ToolResult {
-                        tool_call_id: String::new(),
-                        content: format!("Error reading response: {e}"),
-                        is_error: true,
-                    },
                 }
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Error fetching URL: {e}"),
+                    is_error: true,
+                },
             }
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Error fetching URL: {e}"),
-                is_error: true,
-            },
-        }
+        })
     }
 }
 

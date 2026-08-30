@@ -21,10 +21,9 @@ whycodes-sandbox = { path = "../sandbox" }
 whycodes-memory = { path = "../memory" }
 serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["rt", "sync"] }
 thiserror.workspace = true
 anyhow.workspace = true
-async-trait = "0.1"
 glob.workspace = true
 ignore.workspace = true
 grep-searcher.workspace = true

@@ -4,13 +4,12 @@
 /// `http://localhost:11434`. Override with config `base_url` / `api_base` or
 /// `OLLAMA_HOST` (scheme optional, e.g. `127.0.0.1:4554`).
 use async_stream::stream;
-use futures::stream::Stream;
 use serde_json::Value;
-use std::pin::Pin;
 use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, Usage};
 
-use crate::provider::LlmProvider;
-use async_trait::async_trait;
+use crate::provider::{
+    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
+};
 
 pub const DEFAULT_OLLAMA_HOST: &str = "http://localhost:11434";
 
@@ -241,7 +240,6 @@ fn events_from_ollama_object(event: &Value) -> (Vec<StreamEvent>, bool) {
     (out, done)
 }
 
-#[async_trait]
 impl LlmProvider for OllamaProvider {
     fn name(&self) -> &str {
         &self.name
@@ -251,177 +249,180 @@ impl LlmProvider for OllamaProvider {
         &self.chat_url
     }
 
-    async fn complete(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse> {
-        let mut body = self.build_body(request, model);
-        body["stream"] = serde_json::Value::Bool(false);
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            let mut body = self.build_body(request, model);
+            body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = self
-            .post_chat(&body, api_key)
-            .send()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+            let resp = self
+                .post_chat(&body, api_key)
+                .send()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
-        let status = resp.status();
-        let json: Value = resp
-            .json()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            let status = resp.status();
+            let json: Value = resp
+                .json()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
-        if !status.is_success() {
-            let err_msg = json["error"].as_str().unwrap_or("Unknown error");
-            return Err(whycodes_core::Error::Llm(format!(
-                "Ollama API error ({}): {}",
-                status, err_msg
-            )));
-        }
+            if !status.is_success() {
+                let err_msg = json["error"].as_str().unwrap_or("Unknown error");
+                return Err(whycodes_core::Error::Llm(format!(
+                    "Ollama API error ({}): {}",
+                    status, err_msg
+                )));
+            }
 
-        let mut content: Vec<ContentBlock> = Vec::new();
+            let mut content: Vec<ContentBlock> = Vec::new();
 
-        // Ollama response has "message" -> "content"
-        let message = &json["message"];
-        if let Some(text) = message["content"].as_str()
-            && !text.is_empty()
-        {
-            content.push(ContentBlock::Text {
-                text: text.to_string(),
-            });
-        }
-
-        // Check for tool calls in message
-        if let Some(tool_calls) = message["tool_calls"].as_array() {
-            for tc in tool_calls {
-                let func = &tc["function"];
-                content.push(ContentBlock::ToolUse {
-                    id: tc
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    name: func["name"].as_str().unwrap_or("").to_string(),
-                    input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
+            // Ollama response has "message" -> "content"
+            let message = &json["message"];
+            if let Some(text) = message["content"].as_str()
+                && !text.is_empty()
+            {
+                content.push(ContentBlock::Text {
+                    text: text.to_string(),
                 });
             }
-        }
 
-        let done = json["done"].as_bool().unwrap_or(false);
-        Ok(LlmResponse {
-            content,
-            stop_reason: if done { Some("stop".to_string()) } else { None },
-            usage: Usage {
-                input_tokens: json["prompt_eval_count"].as_u64().unwrap_or(0),
-                output_tokens: json["eval_count"].as_u64().unwrap_or(0),
-                cache_read_input_tokens: None,
-                cache_creation_input_tokens: None,
-            },
-            model: model.to_string(),
+            // Check for tool calls in message
+            if let Some(tool_calls) = message["tool_calls"].as_array() {
+                for tc in tool_calls {
+                    let func = &tc["function"];
+                    content.push(ContentBlock::ToolUse {
+                        id: tc
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        name: func["name"].as_str().unwrap_or("").to_string(),
+                        input: crate::openai_compat::parse_tool_arguments(&func["arguments"]),
+                    });
+                }
+            }
+
+            let done = json["done"].as_bool().unwrap_or(false);
+            Ok(LlmResponse {
+                content,
+                stop_reason: if done { Some("stop".to_string()) } else { None },
+                usage: Usage {
+                    input_tokens: json["prompt_eval_count"].as_u64().unwrap_or(0),
+                    output_tokens: json["eval_count"].as_u64().unwrap_or(0),
+                    cache_read_input_tokens: None,
+                    cache_creation_input_tokens: None,
+                },
+                model: model.to_string(),
+            })
         })
     }
 
-    async fn stream(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
-    {
-        let body = self.build_body(request, model);
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderStreamFuture<'a> {
+        Box::pin(async move {
+            let body = self.build_body(request, model);
 
-        let resp = self
-            .post_chat(&body, api_key)
-            .send()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+            let resp = self
+                .post_chat(&body, api_key)
+                .send()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(whycodes_core::Error::Llm(format!(
-                "Ollama API error: {}",
-                text
-            )));
-        }
+            if !resp.status().is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(whycodes_core::Error::Llm(format!(
+                    "Ollama API error: {}",
+                    text
+                )));
+            }
 
-        let s = stream! {
-            let mut stream = resp.bytes_stream();
-            let mut buffer = String::new();
-            let mut stopped = false;
+            let s = stream! {
+                let mut stream = resp.bytes_stream();
+                let mut buffer = String::new();
+                let mut stopped = false;
 
-            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                match chunk {
-                    Ok(bytes) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                        // Ollama streams newline-delimited JSON objects (one per line)
-                        while let Some(pos) = buffer.find('\n') {
-                            let line = buffer[..pos].trim().to_string();
-                            buffer = buffer[pos + 1..].to_string();
+                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                    match chunk {
+                        Ok(bytes) => {
+                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            // Ollama streams newline-delimited JSON objects (one per line)
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim().to_string();
+                                buffer = buffer[pos + 1..].to_string();
 
-                            if line.is_empty() {
-                                continue;
-                            }
-
-                            match serde_json::from_str::<Value>(&line) {
-                                Ok(event) => {
-                                    if let Some(err) = event.get("error") {
-                                        yield Err(whycodes_core::Error::Llm(
-                                            err.as_str().unwrap_or("Unknown error").to_string(),
-                                        ));
-                                        return;
-                                    }
-                                    let (events, done) = events_from_ollama_object(&event);
-                                    for ev in events {
-                                        yield Ok(ev);
-                                    }
-                                    if done {
-                                        yield Ok(StreamEvent::MessageStop);
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::debug!(error = %e, "skipping non-json ollama stream line");
+                                if line.is_empty() {
                                     continue;
+                                }
+
+                                match serde_json::from_str::<Value>(&line) {
+                                    Ok(event) => {
+                                        if let Some(err) = event.get("error") {
+                                            yield Err(whycodes_core::Error::Llm(
+                                                err.as_str().unwrap_or("Unknown error").to_string(),
+                                            ));
+                                            return;
+                                        }
+                                        let (events, done) = events_from_ollama_object(&event);
+                                        for ev in events {
+                                            yield Ok(ev);
+                                        }
+                                        if done {
+                                            yield Ok(StreamEvent::MessageStop);
+                                            return;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(error = %e, "skipping non-json ollama stream line");
+                                        continue;
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        yield Err(crate::openai_compat::stream_chunk_error("ollama", e));
+                        Err(e) => {
+                            yield Err(crate::openai_compat::stream_chunk_error("ollama", e));
+                        }
                     }
                 }
-            }
 
-            // Last NDJSON object may omit the trailing newline.
-            let leftover = buffer.trim();
-            if !leftover.is_empty()
-                && let Ok(event) = serde_json::from_str::<Value>(leftover)
-            {
-                if let Some(err) = event.get("error") {
-                    yield Err(whycodes_core::Error::Llm(
-                        err.as_str().unwrap_or("Unknown error").to_string(),
-                    ));
-                    return;
+                // Last NDJSON object may omit the trailing newline.
+                let leftover = buffer.trim();
+                if !leftover.is_empty()
+                    && let Ok(event) = serde_json::from_str::<Value>(leftover)
+                {
+                    if let Some(err) = event.get("error") {
+                        yield Err(whycodes_core::Error::Llm(
+                            err.as_str().unwrap_or("Unknown error").to_string(),
+                        ));
+                        return;
+                    }
+                    let (events, done) = events_from_ollama_object(&event);
+                    for ev in events {
+                        yield Ok(ev);
+                    }
+                    if done {
+                        yield Ok(StreamEvent::MessageStop);
+                        stopped = true;
+                    }
                 }
-                let (events, done) = events_from_ollama_object(&event);
-                for ev in events {
-                    yield Ok(ev);
-                }
-                if done {
+
+                // Agent loop waits for MessageStop. A closed body without `done`
+                // (or a last line without `\n`) used to hang the turn forever.
+                if !stopped {
                     yield Ok(StreamEvent::MessageStop);
-                    stopped = true;
                 }
-            }
+            };
 
-            // Agent loop waits for MessageStop. A closed body without `done`
-            // (or a last line without `\n`) used to hang the turn forever.
-            if !stopped {
-                yield Ok(StreamEvent::MessageStop);
-            }
-        };
-
-        Ok(Box::pin(s))
+            Ok(Box::pin(s) as ProviderEventStream)
+        })
     }
 }
 

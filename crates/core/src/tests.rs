@@ -1395,14 +1395,11 @@ mod swarm_hub_tests {
 
 mod tool_tests {
     use super::*;
-    use async_trait::async_trait;
 
     use crate::file_claims::FileClaimRegistry;
     use std::path::Path;
 
     struct DummyTool;
-
-    #[async_trait]
     impl Tool for DummyTool {
         fn name(&self) -> &str {
             "read"
@@ -1413,12 +1410,18 @@ mod tool_tests {
         fn parameters(&self) -> serde_json::Value {
             serde_json::json!({"type": "object"})
         }
-        async fn execute(&self, _args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-            ToolResult {
-                tool_call_id: "1".into(),
-                content: "ok".into(),
-                is_error: false,
-            }
+        fn execute<'a>(
+            &'a self,
+            _args: serde_json::Value,
+            _ctx: &'a ToolContext,
+        ) -> crate::tool::ToolFuture<'a> {
+            Box::pin(async move {
+                ToolResult {
+                    tool_call_id: "1".into(),
+                    content: "ok".into(),
+                    is_error: false,
+                }
+            })
         }
     }
 

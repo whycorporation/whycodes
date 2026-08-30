@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -25,8 +24,6 @@ impl ShellTool {
         Self { name: "shell" }
     }
 }
-
-#[async_trait]
 impl Tool for ShellTool {
     fn name(&self) -> &str {
         self.name
@@ -65,43 +62,49 @@ impl Tool for ShellTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let command_str = args["command"].as_str().unwrap_or("");
-        let timeout_secs = args["timeout"].as_u64().unwrap_or(120);
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let command_str = args["command"].as_str().unwrap_or("");
+            let timeout_secs = args["timeout"].as_u64().unwrap_or(120);
 
-        let request = SandboxRequest {
-            command: command_str.to_string(),
-            working_dir: PathBuf::from(&ctx.working_dir),
-            settings: ctx.sandbox.clone(),
-        };
-        let timeout = std::time::Duration::from_secs(timeout_secs.max(1));
+            let request = SandboxRequest {
+                command: command_str.to_string(),
+                working_dir: PathBuf::from(&ctx.working_dir),
+                settings: ctx.sandbox.clone(),
+            };
+            let timeout = std::time::Duration::from_secs(timeout_secs.max(1));
 
-        // Timeout lives inside the spawn: dropping this future must not leak
-        // `sleep 999` / hung `cargo test` on a blocking thread.
-        match tokio::task::spawn_blocking(move || sandbox_run(&request, Some(timeout))).await {
-            Ok(Ok(outcome)) => {
-                let (content, success) = outcome.display_content();
-                ToolResult {
-                    tool_call_id: String::new(),
-                    content,
-                    is_error: !success,
+            // Timeout lives inside the spawn: dropping this future must not leak
+            // `sleep 999` / hung `cargo test` on a blocking thread.
+            match tokio::task::spawn_blocking(move || sandbox_run(&request, Some(timeout))).await {
+                Ok(Ok(outcome)) => {
+                    let (content, success) = outcome.display_content();
+                    ToolResult {
+                        tool_call_id: String::new(),
+                        content,
+                        is_error: !success,
+                    }
                 }
+                Ok(Err(whycodes_sandbox::SandboxError::TimedOut(secs))) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Command timed out after {secs} seconds"),
+                    is_error: true,
+                },
+                Ok(Err(e)) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Sandbox error: {e}"),
+                    is_error: true,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("Task join error: {e}"),
+                    is_error: true,
+                },
             }
-            Ok(Err(whycodes_sandbox::SandboxError::TimedOut(secs))) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Command timed out after {secs} seconds"),
-                is_error: true,
-            },
-            Ok(Err(e)) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Sandbox error: {e}"),
-                is_error: true,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: format!("Task join error: {e}"),
-                is_error: true,
-            },
-        }
+        })
     }
 }

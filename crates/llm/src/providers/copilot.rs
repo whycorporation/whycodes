@@ -7,13 +7,12 @@
 /// github-copilot` (device flow → token exchange); refresh is handled by
 /// `whycodes-auth` before the token reaches this provider.
 use async_stream::stream;
-use futures::stream::Stream;
 use serde_json::Value;
-use std::pin::Pin;
 use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
-use crate::provider::LlmProvider;
-use async_trait::async_trait;
+use crate::provider::{
+    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
+};
 
 pub struct CopilotProvider {
     name: String,
@@ -34,7 +33,6 @@ impl CopilotProvider {
     }
 }
 
-#[async_trait]
 impl LlmProvider for CopilotProvider {
     fn name(&self) -> &str {
         &self.name
@@ -44,119 +42,122 @@ impl LlmProvider for CopilotProvider {
         "https://api.githubcopilot.com/chat/completions"
     }
 
-    async fn complete(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse> {
-        // Same request shape as OpenAI chat completions.
-        let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
-        body["stream"] = serde_json::Value::Bool(false);
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            // Same request shape as OpenAI chat completions.
+            let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
+            body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-            authed_post(self.default_base_url(), key).json(&body)
-        })
-        .await?;
+            let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+                authed_post(self.default_base_url(), key).json(&body)
+            })
+            .await?;
 
-        let status = resp.status();
-        let json: Value = resp
-            .json()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
+            let status = resp.status();
+            let json: Value = resp
+                .json()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
 
-        if !status.is_success() {
-            let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-            return Err(whycodes_core::Error::Llm(format!(
-                "Copilot API error ({}): {}",
-                status, err_msg
-            )));
-        }
+            if !status.is_success() {
+                let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
+                return Err(whycodes_core::Error::Llm(format!(
+                    "Copilot API error ({}): {}",
+                    status, err_msg
+                )));
+            }
 
-        let choice = &json["choices"][0];
-        let message = &choice["message"];
-        let content = crate::openai_compat::content_blocks_from_chat_message(message);
+            let choice = &json["choices"][0];
+            let message = &choice["message"];
+            let content = crate::openai_compat::content_blocks_from_chat_message(message);
 
-        let usage = &json["usage"];
-        Ok(LlmResponse {
-            content,
-            stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: crate::openai_compat::usage_from_chat_completion(usage),
-            model: model.to_string(),
+            let usage = &json["usage"];
+            Ok(LlmResponse {
+                content,
+                stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
+                usage: crate::openai_compat::usage_from_chat_completion(usage),
+                model: model.to_string(),
+            })
         })
     }
 
-    async fn stream(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
-    {
-        let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
-        crate::openai_compat::attach_stream_usage_option(&mut body);
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderStreamFuture<'a> {
+        Box::pin(async move {
+            let mut body = super::openai::OpenAiProvider::new().build_body(request, model);
+            crate::openai_compat::attach_stream_usage_option(&mut body);
 
-        let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-            authed_post(self.default_base_url(), key).json(&body)
-        })
-        .await?;
+            let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
+                authed_post(self.default_base_url(), key).json(&body)
+            })
+            .await?;
 
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(whycodes_core::Error::Llm(format!(
-                "Copilot API error: {}",
-                text
-            )));
-        }
+            if !resp.status().is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(whycodes_core::Error::Llm(format!(
+                    "Copilot API error: {}",
+                    text
+                )));
+            }
 
-        let s = stream! {
-            let mut stream = resp.bytes_stream();
-            let mut buffer = String::new();
+            let s = stream! {
+                let mut stream = resp.bytes_stream();
+                let mut buffer = String::new();
 
-            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                match chunk {
-                    Ok(bytes) => {
-                        buffer.push_str(&String::from_utf8_lossy(&bytes));
-                        while let Some(pos) = buffer.find('\n') {
-                            let line = buffer[..pos].trim().to_string();
-                            buffer = buffer[pos + 1..].to_string();
+                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                    match chunk {
+                        Ok(bytes) => {
+                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            while let Some(pos) = buffer.find('\n') {
+                                let line = buffer[..pos].trim().to_string();
+                                buffer = buffer[pos + 1..].to_string();
 
-                            if line.is_empty() || !line.starts_with("data: ") {
-                                continue;
-                            }
-
-                            let data = &line[6..];
-                            if data == "[DONE]" {
-                                yield Ok(StreamEvent::MessageStop);
-                                return;
-                            }
-
-                            if let Ok(event) = serde_json::from_str::<Value>(data) {
-                                let choice = &event["choices"][0];
-                                let delta = &choice["delta"];
-
-                                for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                    yield Ok(ev);
+                                if line.is_empty() || !line.starts_with("data: ") {
+                                    continue;
                                 }
 
-                                // Final include_usage chunk often has empty choices —
-                                // do not require finish_reason.
-                                if let Some(ev) =
-                                    crate::openai_compat::stream_usage_from_chunk(&event)
-                                {
-                                    yield Ok(ev);
+                                let data = &line[6..];
+                                if data == "[DONE]" {
+                                    yield Ok(StreamEvent::MessageStop);
+                                    return;
+                                }
+
+                                if let Ok(event) = serde_json::from_str::<Value>(data) {
+                                    let choice = &event["choices"][0];
+                                    let delta = &choice["delta"];
+
+                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
+                                        yield Ok(ev);
+                                    }
+
+                                    // Final include_usage chunk often has empty choices —
+                                    // do not require finish_reason.
+                                    if let Some(ev) =
+                                        crate::openai_compat::stream_usage_from_chunk(&event)
+                                    {
+                                        yield Ok(ev);
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        yield Err(crate::openai_compat::stream_chunk_error("github-copilot", e));
+                        Err(e) => {
+                            yield Err(crate::openai_compat::stream_chunk_error("github-copilot", e));
+                        }
                     }
                 }
-            }
-        };
+            };
 
-        Ok(Box::pin(s))
+            Ok(Box::pin(s) as ProviderEventStream)
+        })
     }
 }
 

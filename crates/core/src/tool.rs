@@ -1,5 +1,6 @@
-use async_trait::async_trait;
+use std::future::Future;
 use std::path::Path;
+use std::pin::Pin;
 
 use crate::file_claims::{ClaimResult, FileClaimRegistry, FileStaleEvent};
 use crate::network::NetworkPolicy;
@@ -121,8 +122,12 @@ impl ToolContext {
     }
 }
 
+/// The object-safe future returned by [`Tool::execute`].
+///
+/// This explicit erased future preserves dispatch through `Box<dyn Tool>`.
+pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>>;
+
 /// A tool that can be invoked by the LLM
-#[async_trait]
 pub trait Tool: Send + Sync {
     /// Name of the tool
     fn name(&self) -> &str;
@@ -134,7 +139,7 @@ pub trait Tool: Send + Sync {
     fn parameters(&self) -> serde_json::Value;
 
     /// Execute the tool
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult;
+    fn execute<'a>(&'a self, args: serde_json::Value, ctx: &'a ToolContext) -> ToolFuture<'a>;
 
     /// Get the full tool definition for LLM requests
     fn definition(&self) -> ToolDefinition {

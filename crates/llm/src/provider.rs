@@ -1,29 +1,40 @@
-use async_trait::async_trait;
 use futures::stream::Stream;
+use std::future::Future;
 use std::pin::Pin;
 use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
 
+/// Boxed, sendable future returned by [`LlmProvider::complete`].
+pub type ProviderResponseFuture<'a> =
+    Pin<Box<dyn Future<Output = whycodes_core::Result<LlmResponse>> + Send + 'a>>;
+
+/// Stream of provider events returned after [`LlmProvider::stream`] opens successfully.
+pub type ProviderEventStream =
+    Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>;
+
+/// Boxed, sendable future returned by [`LlmProvider::stream`].
+pub type ProviderStreamFuture<'a> =
+    Pin<Box<dyn Future<Output = whycodes_core::Result<ProviderEventStream>> + Send + 'a>>;
+
 /// Trait for LLM providers (Anthropic, OpenAI, Google, etc.)
-#[async_trait]
 pub trait LlmProvider: Send + Sync {
     fn name(&self) -> &str;
     fn default_base_url(&self) -> &str;
 
     /// Send a request and get a complete response
-    async fn complete(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse>;
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a>;
 
     /// Send a request and stream the response
-    async fn stream(
-        &self,
-        request: &LlmRequest,
-        api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>;
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderStreamFuture<'a>;
 }
 
 /// Registry of available LLM providers

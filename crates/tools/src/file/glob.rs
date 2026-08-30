@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
 
@@ -22,8 +21,6 @@ impl GlobTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for GlobTool {
     fn name(&self) -> &str {
         "glob"
@@ -56,10 +53,16 @@ impl Tool for GlobTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let working_dir = ctx.working_dir.clone();
-        let file_index = ctx.file_index.clone();
-        crate::blocking::tool(move || Self::run(args, working_dir, file_index)).await
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let working_dir = ctx.working_dir.clone();
+            let file_index = ctx.file_index.clone();
+            crate::blocking::tool(move || Self::run(args, working_dir, file_index)).await
+        })
     }
 }
 

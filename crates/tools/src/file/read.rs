@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::fs;
 use std::io::{BufRead, BufReader, Read as _};
@@ -29,8 +28,6 @@ impl ReadTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for ReadTool {
     fn name(&self) -> &str {
         "read"
@@ -66,26 +63,34 @@ impl Tool for ReadTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("").trim().to_string();
-        if path_str.is_empty() {
-            return err("Missing required parameter `path`.");
-        }
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let path_str = args["path"].as_str().unwrap_or("").trim().to_string();
+            if path_str.is_empty() {
+                return err("Missing required parameter `path`.");
+            }
 
-        if let Some(internal) = super::internal::read_internal(&path_str, ctx) {
-            return internal;
-        }
+            if let Some(internal) = super::internal::read_internal(&path_str, ctx) {
+                return internal;
+            }
 
-        let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
-        let limit = args["limit"]
-            .as_u64()
-            .map(|n| n as usize)
-            .unwrap_or(DEFAULT_LIMIT)
-            .clamp(1, HARD_LIMIT);
-        let working_dir = ctx.working_dir.clone();
-        let ctx_clone = ctx.clone();
-        crate::blocking::tool(move || Self::run(path_str, offset, limit, working_dir, ctx_clone))
+            let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
+            let limit = args["limit"]
+                .as_u64()
+                .map(|n| n as usize)
+                .unwrap_or(DEFAULT_LIMIT)
+                .clamp(1, HARD_LIMIT);
+            let working_dir = ctx.working_dir.clone();
+            let ctx_clone = ctx.clone();
+            crate::blocking::tool(move || {
+                Self::run(path_str, offset, limit, working_dir, ctx_clone)
+            })
             .await
+        })
     }
 }
 

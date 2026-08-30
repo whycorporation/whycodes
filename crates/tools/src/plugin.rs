@@ -1,12 +1,10 @@
 //! Shell plugins from `plugins.toml` and `plugin.json` trees as agent tools.
 
-use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::tool::{Tool, ToolContext};
-use whycodes_core::types::ToolResult;
 use whycodes_skill::plugin::{Plugin, PluginConfig, PluginContext};
 
 /// One external shell plugin registered as an LLM tool (`plugin_<name>`).
@@ -24,8 +22,6 @@ impl PluginShellTool {
         }
     }
 }
-
-#[async_trait]
 impl Tool for PluginShellTool {
     fn name(&self) -> &str {
         &self.tool_name
@@ -49,23 +45,29 @@ impl Tool for PluginShellTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let mut map = HashMap::new();
-        if let Some(obj) = args.as_object() {
-            for (k, v) in obj {
-                let s = match v {
-                    serde_json::Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                };
-                map.insert(k.clone(), s);
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let mut map = HashMap::new();
+            if let Some(obj) = args.as_object() {
+                for (k, v) in obj {
+                    let s = match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        other => other.to_string(),
+                    };
+                    map.insert(k.clone(), s);
+                }
             }
-        }
-        let pctx = PluginContext {
-            workspace_path: Some(ctx.working_dir.clone()),
-        };
-        let mut result = self.plugin.execute(&map, &pctx).await;
-        result.tool_call_id = String::new();
-        result
+            let pctx = PluginContext {
+                workspace_path: Some(ctx.working_dir.clone()),
+            };
+            let mut result = self.plugin.execute(&map, &pctx).await;
+            result.tool_call_id = String::new();
+            result
+        })
     }
 }
 

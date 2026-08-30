@@ -1,6 +1,5 @@
 //! Send a DM or broadcast on the swarm mailbox.
 
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -20,8 +19,6 @@ impl SwarmMsgTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for SwarmMsgTool {
     fn name(&self) -> &str {
         "swarm_msg"
@@ -50,38 +47,44 @@ impl Tool for SwarmMsgTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let Some(hub) = ctx.swarm_hub.as_ref() else {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "swarm_msg is only available inside a swarm run.".into(),
-                is_error: true,
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let Some(hub) = ctx.swarm_hub.as_ref() else {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "swarm_msg is only available inside a swarm run.".into(),
+                    is_error: true,
+                };
             };
-        };
-        let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("").trim();
-        let text = args
-            .get("text")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .trim();
-        if to.is_empty() || text.is_empty() {
-            return ToolResult {
+            let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let text = args
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if to.is_empty() || text.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "swarm_msg requires `to` and `text`.".into(),
+                    is_error: true,
+                };
+            }
+            let from = ctx
+                .agent_id
+                .as_deref()
+                .or(ctx.agent_label.as_deref())
+                .unwrap_or("worker");
+            hub.send(from, to, text);
+            ToolResult {
                 tool_call_id: String::new(),
-                content: "swarm_msg requires `to` and `text`.".into(),
-                is_error: true,
-            };
-        }
-        let from = ctx
-            .agent_id
-            .as_deref()
-            .or(ctx.agent_label.as_deref())
-            .unwrap_or("worker");
-        hub.send(from, to, text);
-        ToolResult {
-            tool_call_id: String::new(),
-            content: format!("Sent to {to}."),
-            is_error: false,
-        }
+                content: format!("Sent to {to}."),
+                is_error: false,
+            }
+        })
     }
 }
 

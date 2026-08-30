@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -17,8 +16,6 @@ impl TruncateTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for TruncateTool {
     fn name(&self) -> &str {
         "truncate"
@@ -49,18 +46,24 @@ impl Tool for TruncateTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        let text = args["text"].as_str().unwrap_or("");
-        let max_lines = args["max_lines"].as_u64().unwrap_or(200) as usize;
-        let max_chars = args["max_chars"].as_u64().unwrap_or(8000) as usize;
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let text = args["text"].as_str().unwrap_or("");
+            let max_lines = args["max_lines"].as_u64().unwrap_or(200) as usize;
+            let max_chars = args["max_chars"].as_u64().unwrap_or(8000) as usize;
 
-        let result = whycodes_format::truncate::truncate(text, max_lines, max_chars);
+            let result = whycodes_format::truncate::truncate(text, max_lines, max_chars);
 
-        ToolResult {
-            tool_call_id: String::new(),
-            content: result,
-            is_error: false,
-        }
+            ToolResult {
+                tool_call_id: String::new(),
+                content: result,
+                is_error: false,
+            }
+        })
     }
 }
 

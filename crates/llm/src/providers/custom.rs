@@ -1,14 +1,13 @@
 /// A generic OpenAI-compatible provider that can be configured at runtime.
 /// Supports custom base URLs, headers, and authentication schemas.
 use async_stream::stream;
-use async_trait::async_trait;
-use futures::stream::Stream;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::pin::Pin;
 use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat};
 
-use crate::provider::LlmProvider;
+use crate::provider::{
+    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
+};
 
 /// A provider that works with any OpenAI-compatible API endpoint.
 ///
@@ -142,7 +141,6 @@ pub fn normalize_chat_completions_url(base: &str) -> String {
     }
 }
 
-#[async_trait]
 impl LlmProvider for CustomProvider {
     fn name(&self) -> &str {
         &self.name
@@ -152,109 +150,112 @@ impl LlmProvider for CustomProvider {
         &self.base_url
     }
 
-    async fn complete(
-        &self,
-        request: &LlmRequest,
-        _api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<LlmResponse> {
-        let mut body = self.build_body(request, model);
-        body["stream"] = Value::Bool(false);
+    fn complete<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            let mut body = self.build_body(request, model);
+            body["stream"] = Value::Bool(false);
 
-        let resp = self
-            .build_request(&body)
-            .send()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+            let resp = self
+                .build_request(&body)
+                .send()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
 
-        let status = resp.status();
-        let json: Value = resp
-            .json()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("JSON: {e}")))?;
+            let status = resp.status();
+            let json: Value = resp
+                .json()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("JSON: {e}")))?;
 
-        if !status.is_success() {
-            let msg = json["error"]["message"].as_str().unwrap_or("unknown");
-            return Err(whycodes_core::Error::Llm(format!(
-                "{} API error ({}): {}",
-                self.name, status, msg
-            )));
-        }
+            if !status.is_success() {
+                let msg = json["error"]["message"].as_str().unwrap_or("unknown");
+                return Err(whycodes_core::Error::Llm(format!(
+                    "{} API error ({}): {}",
+                    self.name, status, msg
+                )));
+            }
 
-        let choice = &json["choices"][0];
-        let msg = &choice["message"];
-        let content = crate::openai_compat::content_blocks_from_chat_message(msg);
+            let choice = &json["choices"][0];
+            let msg = &choice["message"];
+            let content = crate::openai_compat::content_blocks_from_chat_message(msg);
 
-        let usage = &json["usage"];
-        Ok(LlmResponse {
-            content,
-            stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
-            usage: crate::openai_compat::usage_from_chat_completion(usage),
-            model: model.to_string(),
+            let usage = &json["usage"];
+            Ok(LlmResponse {
+                content,
+                stop_reason: choice["finish_reason"].as_str().map(|s| s.to_string()),
+                usage: crate::openai_compat::usage_from_chat_completion(usage),
+                model: model.to_string(),
+            })
         })
     }
 
-    async fn stream(
-        &self,
-        request: &LlmRequest,
-        _api_key: &str,
-        model: &str,
-    ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
-    {
-        let mut body = self.build_body(request, model);
-        crate::openai_compat::attach_stream_usage_option(&mut body);
-        let resp = self
-            .build_request(&body)
-            .send()
-            .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("HTTP: {e}")))?;
+    fn stream<'a>(
+        &'a self,
+        request: &'a LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> ProviderStreamFuture<'a> {
+        Box::pin(async move {
+            let mut body = self.build_body(request, model);
+            crate::openai_compat::attach_stream_usage_option(&mut body);
+            let resp = self
+                .build_request(&body)
+                .send()
+                .await
+                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP: {e}")))?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            // Include (NNN) so retry_with_backoff / is_retryable can see 5xx.
-            return Err(whycodes_core::Error::Llm(format!(
-                "{} API error ({}): {}",
-                self.name,
-                status.as_u16(),
-                text
-            )));
-        }
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                // Include (NNN) so retry_with_backoff / is_retryable can see 5xx.
+                return Err(whycodes_core::Error::Llm(format!(
+                    "{} API error ({}): {}",
+                    self.name,
+                    status.as_u16(),
+                    text
+                )));
+            }
 
-        let provider = self.name.clone();
-        let s = stream! {
-            let mut stream = resp.bytes_stream();
-            let mut buf = String::new();
-            while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                match chunk {
-                    Ok(bytes) => {
-                        buf.push_str(&String::from_utf8_lossy(&bytes));
-                        while let Some(pos) = buf.find('\n') {
-                            let line = buf[..pos].trim().to_string();
-                            buf = buf[pos + 1..].to_string();
-                            if line.is_empty() || !line.starts_with("data: ") { continue; }
-                            let data = &line[6..];
-                            if data == "[DONE]" { yield Ok(StreamEvent::MessageStop); return; }
-                            if let Ok(evt) = serde_json::from_str::<Value>(data) {
-                                let delta = &evt["choices"][0]["delta"];
-                                for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                    yield Ok(ev);
-                                }
-                                if let Some(ev) =
-                                    crate::openai_compat::stream_usage_from_chunk(&evt)
-                                {
-                                    yield Ok(ev);
+            let provider = self.name.clone();
+            let s = stream! {
+                let mut stream = resp.bytes_stream();
+                let mut buf = String::new();
+                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
+                    match chunk {
+                        Ok(bytes) => {
+                            buf.push_str(&String::from_utf8_lossy(&bytes));
+                            while let Some(pos) = buf.find('\n') {
+                                let line = buf[..pos].trim().to_string();
+                                buf = buf[pos + 1..].to_string();
+                                if line.is_empty() || !line.starts_with("data: ") { continue; }
+                                let data = &line[6..];
+                                if data == "[DONE]" { yield Ok(StreamEvent::MessageStop); return; }
+                                if let Ok(evt) = serde_json::from_str::<Value>(data) {
+                                    let delta = &evt["choices"][0]["delta"];
+                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
+                                        yield Ok(ev);
+                                    }
+                                    if let Some(ev) =
+                                        crate::openai_compat::stream_usage_from_chunk(&evt)
+                                    {
+                                        yield Ok(ev);
+                                    }
                                 }
                             }
                         }
-                    }
-                    Err(e) => {
-                        yield Err(crate::openai_compat::stream_chunk_error(&provider, e));
+                        Err(e) => {
+                            yield Err(crate::openai_compat::stream_chunk_error(&provider, e));
+                        }
                     }
                 }
-            }
-        };
-        Ok(Box::pin(s))
+            };
+            Ok(Box::pin(s) as ProviderEventStream)
+        })
     }
 }
 

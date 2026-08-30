@@ -1,6 +1,5 @@
 //! Cross-session memory tool (write / list / search / delete).
 
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::PathBuf;
 
@@ -37,8 +36,6 @@ fn service_for(ctx: &ToolContext) -> Result<MemoryService, String> {
     MemoryService::open(project, data_dir(), MemorySettings::default())
         .map_err(|e| format!("open memory store: {e}"))
 }
-
-#[async_trait]
 impl Tool for MemoryTool {
     fn name(&self) -> &str {
         "memory"
@@ -75,122 +72,131 @@ impl Tool for MemoryTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let action = args
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let limit = args
-            .get("limit")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(10)
-            .min(100) as usize;
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(10)
+                .min(100) as usize;
 
-        let svc = match service_for(ctx) {
-            Ok(s) => s,
-            Err(e) => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: e,
-                    is_error: true,
-                };
-            }
-        };
-
-        let result = match action.as_str() {
-            "write" => {
-                let text = args
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if text.is_empty() {
+            let svc = match service_for(ctx) {
+                Ok(s) => s,
+                Err(e) => {
                     return ToolResult {
                         tool_call_id: String::new(),
-                        content: "write requires non-empty `text`".into(),
+                        content: e,
                         is_error: true,
                     };
                 }
-                match svc.remember(text, ctx.session_id.as_deref()) {
-                    Ok(id) => Ok(format!(
-                        "Saved memory {}:\n{}",
-                        &id[..8.min(id.len())],
-                        text
-                    )),
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-            "list" => match svc.list(limit) {
-                Ok(rows) if rows.is_empty() => Ok("No memories for this project.".into()),
-                Ok(rows) => {
-                    let mut out = format!("{} memories:\n", rows.len());
-                    for r in rows {
-                        out.push_str(&format!("- [{}] {}\n", &r.id[..8.min(r.id.len())], r.text));
+            };
+
+            let result = match action.as_str() {
+                "write" => {
+                    let text = args
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if text.is_empty() {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: "write requires non-empty `text`".into(),
+                            is_error: true,
+                        };
                     }
-                    Ok(out)
+                    match svc.remember(text, ctx.session_id.as_deref()) {
+                        Ok(id) => Ok(format!(
+                            "Saved memory {}:\n{}",
+                            &id[..8.min(id.len())],
+                            text
+                        )),
+                        Err(e) => Err(e.to_string()),
+                    }
                 }
-                Err(e) => Err(e.to_string()),
-            },
-            "search" => {
-                let q = args
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if q.is_empty() {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: "search requires `text` query".into(),
-                        is_error: true,
-                    };
-                }
-                match svc.search(q, limit, 0.15) {
-                    Ok(hits) if hits.is_empty() => Ok("No matching memories.".into()),
-                    Ok(hits) => {
-                        let mut out = format!("{} hits:\n", hits.len());
-                        for h in hits {
+                "list" => match svc.list(limit) {
+                    Ok(rows) if rows.is_empty() => Ok("No memories for this project.".into()),
+                    Ok(rows) => {
+                        let mut out = format!("{} memories:\n", rows.len());
+                        for r in rows {
                             out.push_str(&format!(
-                                "- [{:.2}] [{}] {}\n",
-                                h.score,
-                                &h.entry.id[..8.min(h.entry.id.len())],
-                                h.entry.text
+                                "- [{}] {}\n",
+                                &r.id[..8.min(r.id.len())],
+                                r.text
                             ));
                         }
                         Ok(out)
                     }
                     Err(e) => Err(e.to_string()),
+                },
+                "search" => {
+                    let q = args
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if q.is_empty() {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: "search requires `text` query".into(),
+                            is_error: true,
+                        };
+                    }
+                    match svc.search(q, limit, 0.15) {
+                        Ok(hits) if hits.is_empty() => Ok("No matching memories.".into()),
+                        Ok(hits) => {
+                            let mut out = format!("{} hits:\n", hits.len());
+                            for h in hits {
+                                out.push_str(&format!(
+                                    "- [{:.2}] [{}] {}\n",
+                                    h.score,
+                                    &h.entry.id[..8.min(h.entry.id.len())],
+                                    h.entry.text
+                                ));
+                            }
+                            Ok(out)
+                        }
+                        Err(e) => Err(e.to_string()),
+                    }
                 }
-            }
-            "delete" => {
-                let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
-                if id.is_empty() {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: "delete requires `id`".into(),
-                        is_error: true,
-                    };
+                "delete" => {
+                    let id = args.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+                    if id.is_empty() {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: "delete requires `id`".into(),
+                            is_error: true,
+                        };
+                    }
+                    match svc.delete(id) {
+                        Ok(true) => Ok(format!("Deleted memory {id}")),
+                        Ok(false) => Ok(format!("No memory matching '{id}'")),
+                        Err(e) => Err(e.to_string()),
+                    }
                 }
-                match svc.delete(id) {
-                    Ok(true) => Ok(format!("Deleted memory {id}")),
-                    Ok(false) => Ok(format!("No memory matching '{id}'")),
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-            "code_search" => {
-                let q = args
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if q.is_empty() {
-                    return ToolResult {
-                        tool_call_id: String::new(),
-                        content: "code_search requires `text` query".into(),
-                        is_error: true,
-                    };
-                }
-                match svc.search_code(q, limit, 0.12) {
+                "code_search" => {
+                    let q = args
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if q.is_empty() {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: "code_search requires `text` query".into(),
+                            is_error: true,
+                        };
+                    }
+                    match svc.search_code(q, limit, 0.12) {
                     Ok(hits) if hits.is_empty() => Ok(
                         "No code hits. Run memory action=index first (or `whycodes memory index`)."
                             .into(),
@@ -211,55 +217,56 @@ impl Tool for MemoryTool {
                     }
                     Err(e) => Err(e.to_string()),
                 }
-            }
-            "index" => match svc.index_codebase(2000, 8000) {
-                Ok(n) => Ok(format!("Indexed {n} code chunks for this project.")),
-                Err(e) => Err(e.to_string()),
-            },
-            "learn" => {
-                let text = args
-                    .get("text")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim();
-                if text.is_empty() {
+                }
+                "index" => match svc.index_codebase(2000, 8000) {
+                    Ok(n) => Ok(format!("Indexed {n} code chunks for this project.")),
+                    Err(e) => Err(e.to_string()),
+                },
+                "learn" => {
+                    let text = args
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if text.is_empty() {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: "learn requires non-empty `text` (the reusable lesson)".into(),
+                            is_error: true,
+                        };
+                    }
+                    let lesson = format!("Lesson: {text}");
+                    match svc.remember(&lesson, ctx.session_id.as_deref()) {
+                        Ok(id) => Ok(format!(
+                            "Lesson stored {}:\n{lesson}",
+                            &id[..8.min(id.len())]
+                        )),
+                        Err(e) => Err(e.to_string()),
+                    }
+                }
+                _ => {
                     return ToolResult {
                         tool_call_id: String::new(),
-                        content: "learn requires non-empty `text` (the reusable lesson)".into(),
+                        content: format!(
+                            "unknown action '{action}'; use write|list|search|delete|code_search|index|learn"
+                        ),
                         is_error: true,
                     };
                 }
-                let lesson = format!("Lesson: {text}");
-                match svc.remember(&lesson, ctx.session_id.as_deref()) {
-                    Ok(id) => Ok(format!(
-                        "Lesson stored {}:\n{lesson}",
-                        &id[..8.min(id.len())]
-                    )),
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-            _ => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!(
-                        "unknown action '{action}'; use write|list|search|delete|code_search|index|learn"
-                    ),
-                    is_error: true,
-                };
-            }
-        };
+            };
 
-        match result {
-            Ok(content) => ToolResult {
-                tool_call_id: String::new(),
-                content,
-                is_error: false,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: e,
-                is_error: true,
-            },
-        }
+            match result {
+                Ok(content) => ToolResult {
+                    tool_call_id: String::new(),
+                    content,
+                    is_error: false,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: e,
+                    is_error: true,
+                },
+            }
+        })
     }
 }

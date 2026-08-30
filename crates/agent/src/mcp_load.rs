@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use whycodes_config::{Config, McpServerConfig, McpTransportKind};
@@ -16,18 +15,19 @@ struct SharedMcpCaller {
     remote_name: String,
 }
 
-#[async_trait]
 impl McpCaller for SharedMcpCaller {
-    async fn call_mcp_tool(
-        &self,
-        _tool_name: &str,
+    fn call_mcp_tool<'a>(
+        &'a self,
+        _tool_name: &'a str,
         arguments: serde_json::Value,
-    ) -> Result<String, String> {
-        let mut client = self.client.lock().await;
-        client
-            .call_tool(&self.remote_name, arguments)
-            .await
-            .map_err(|e| e.to_string())
+    ) -> futures::future::BoxFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            let mut client = self.client.lock().await;
+            client
+                .call_tool(&self.remote_name, arguments)
+                .await
+                .map_err(|e| e.to_string())
+        })
     }
 }
 

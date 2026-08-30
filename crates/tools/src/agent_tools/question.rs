@@ -7,7 +7,6 @@
 //! channel (TUI). This module owns parsing + result formatting + a stdin
 //! fallback for plain CLI / tests.
 
-use async_trait::async_trait;
 use serde_json::json;
 use std::io::{self, Write};
 
@@ -221,8 +220,6 @@ impl QuestionTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for QuestionTool {
     fn name(&self) -> &str {
         "question"
@@ -302,31 +299,37 @@ impl Tool for QuestionTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        // Fallback path when the agent did not intercept (plain CLI / tests).
-        let questions = match parse_questions(&args) {
-            Ok(q) => q,
-            Err(e) => {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: format!("Invalid question arguments: {e}"),
-                    is_error: true,
-                };
-            }
-        };
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            // Fallback path when the agent did not intercept (plain CLI / tests).
+            let questions = match parse_questions(&args) {
+                Ok(q) => q,
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: String::new(),
+                        content: format!("Invalid question arguments: {e}"),
+                        is_error: true,
+                    };
+                }
+            };
 
-        match stdin_questionnaire(&questions) {
-            Ok(answers) => ToolResult {
-                tool_call_id: String::new(),
-                content: format_question_result(&questions, &answers),
-                is_error: false,
-            },
-            Err(e) => ToolResult {
-                tool_call_id: String::new(),
-                content: e,
-                is_error: true,
-            },
-        }
+            match stdin_questionnaire(&questions) {
+                Ok(answers) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format_question_result(&questions, &answers),
+                    is_error: false,
+                },
+                Err(e) => ToolResult {
+                    tool_call_id: String::new(),
+                    content: e,
+                    is_error: true,
+                },
+            }
+        })
     }
 }
 

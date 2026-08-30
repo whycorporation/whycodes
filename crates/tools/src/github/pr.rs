@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::{Value, json};
 
 use super::api;
@@ -18,8 +17,6 @@ impl GitHubPrTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for GitHubPrTool {
     fn name(&self) -> &str {
         "github_pr"
@@ -86,57 +83,59 @@ impl Tool for GitHubPrTool {
         })
     }
 
-    async fn execute(&self, args: Value, ctx: &ToolContext) -> ToolResult {
-        let action = args["action"].as_str().unwrap_or("");
-        let owner = args["owner"].as_str().unwrap_or("");
-        let repo = args["repo"].as_str().unwrap_or("");
+    fn execute<'a>(&'a self, args: Value, ctx: &'a ToolContext) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let action = args["action"].as_str().unwrap_or("");
+            let owner = args["owner"].as_str().unwrap_or("");
+            let repo = args["repo"].as_str().unwrap_or("");
 
-        // Validate required fields
-        if owner.is_empty() || repo.is_empty() {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: "Both 'owner' and 'repo' are required.".to_string(),
-                is_error: true,
-            };
-        }
-
-        if let Err(msg) = ctx.network.check_url("https://api.github.com/") {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: msg,
-                is_error: true,
-            };
-        }
-
-        // Resolve token
-        let explicit_token = args["token"].as_str();
-        let token = match api::resolve_token(explicit_token) {
-            Some(t) => t,
-            None => {
+            // Validate required fields
+            if owner.is_empty() || repo.is_empty() {
                 return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "Both 'owner' and 'repo' are required.".to_string(),
+                    is_error: true,
+                };
+            }
+
+            if let Err(msg) = ctx.network.check_url("https://api.github.com/") {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
+
+            // Resolve token
+            let explicit_token = args["token"].as_str();
+            let token = match api::resolve_token(explicit_token) {
+                Some(t) => t,
+                None => {
+                    return ToolResult {
                     tool_call_id: String::new(),
                     content: "GitHub token is required. Provide via the 'token' parameter or set the GITHUB_TOKEN environment variable.".to_string(),
                     is_error: true,
                 };
+                }
+            };
+
+            let client = reqwest::Client::new();
+
+            match action {
+                "create" => Self::create_pr(&client, &token, owner, repo, &args).await,
+                "list" => Self::list_prs(&client, &token, owner, repo, &args).await,
+                "view" => Self::view_pr(&client, &token, owner, repo, &args).await,
+                "merge" => Self::merge_pr(&client, &token, owner, repo, &args).await,
+                _ => ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!(
+                        "Unknown action '{}'. Valid actions: create, list, view, merge.",
+                        action
+                    ),
+                    is_error: true,
+                },
             }
-        };
-
-        let client = reqwest::Client::new();
-
-        match action {
-            "create" => Self::create_pr(&client, &token, owner, repo, &args).await,
-            "list" => Self::list_prs(&client, &token, owner, repo, &args).await,
-            "view" => Self::view_pr(&client, &token, owner, repo, &args).await,
-            "merge" => Self::merge_pr(&client, &token, owner, repo, &args).await,
-            _ => ToolResult {
-                tool_call_id: String::new(),
-                content: format!(
-                    "Unknown action '{}'. Valid actions: create, list, view, merge.",
-                    action
-                ),
-                is_error: true,
-            },
-        }
+        })
     }
 }
 

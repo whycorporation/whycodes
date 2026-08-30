@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::process::Command;
 
@@ -18,8 +17,6 @@ impl GitStatusTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for GitStatusTool {
     fn name(&self) -> &str {
         "git_status"
@@ -42,52 +39,58 @@ impl Tool for GitStatusTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let working_dir = ctx.working_dir.clone();
-        crate::blocking::tool(move || {
-            let path_filter = args["path"].as_str();
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let working_dir = ctx.working_dir.clone();
+            crate::blocking::tool(move || {
+                let path_filter = args["path"].as_str();
 
-            let mut cmd = Command::new("git");
-            cmd.arg("status").arg("--short");
+                let mut cmd = Command::new("git");
+                cmd.arg("status").arg("--short");
 
-            if let Some(path) = path_filter {
-                cmd.arg("--").arg(path);
-            }
+                if let Some(path) = path_filter {
+                    cmd.arg("--").arg(path);
+                }
 
-            cmd.current_dir(&working_dir);
+                cmd.current_dir(&working_dir);
 
-            let output = match cmd.output() {
-                Ok(o) => o,
-                Err(e) => {
+                let output = match cmd.output() {
+                    Ok(o) => o,
+                    Err(e) => {
+                        return ToolResult {
+                            tool_call_id: String::new(),
+                            content: format!("Failed to run git status: {}", e),
+                            is_error: true,
+                        };
+                    }
+                };
+
+                if !output.status.success() {
                     return ToolResult {
                         tool_call_id: String::new(),
-                        content: format!("Failed to run git status: {}", e),
+                        content: String::from_utf8_lossy(&output.stderr).to_string(),
                         is_error: true,
                     };
                 }
-            };
 
-            if !output.status.success() {
-                return ToolResult {
-                    tool_call_id: String::new(),
-                    content: String::from_utf8_lossy(&output.stderr).to_string(),
-                    is_error: true,
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let content = if stdout.is_empty() {
+                    "Working tree clean. No changes staged or unstaged.".to_string()
+                } else {
+                    stdout
                 };
-            }
 
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let content = if stdout.is_empty() {
-                "Working tree clean. No changes staged or unstaged.".to_string()
-            } else {
-                stdout
-            };
-
-            ToolResult {
-                tool_call_id: String::new(),
-                content,
-                is_error: false,
-            }
+                ToolResult {
+                    tool_call_id: String::new(),
+                    content,
+                    is_error: false,
+                }
+            })
+            .await
         })
-        .await
     }
 }

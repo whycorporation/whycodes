@@ -12,6 +12,7 @@
 //! stream. Core traffic identifies as WhyCodes; an unofficial auth plugin
 //! may attach an `originator` header via `inference.headers`.
 
+use crate::provider::ProviderEventStream;
 use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{Value, json};
@@ -343,7 +344,7 @@ pub async fn stream(
         }
     };
 
-    Ok(Box::pin(s))
+    Ok(Box::pin(s) as ProviderEventStream)
 }
 
 #[cfg(test)]

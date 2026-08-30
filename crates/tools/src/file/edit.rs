@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::file::paths::display_path;
@@ -19,8 +18,6 @@ impl EditTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for EditTool {
     fn name(&self) -> &str {
         "edit"
@@ -57,34 +54,40 @@ impl Tool for EditTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let path_str = args["path"].as_str().unwrap_or("").to_string();
-        let old_string = args["old_string"].as_str().unwrap_or("").to_string();
-        let new_string = args["new_string"].as_str().unwrap_or("").to_string();
-        let replace_all = args["replace_all"].as_bool().unwrap_or(false);
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let path_str = args["path"].as_str().unwrap_or("").to_string();
+            let old_string = args["old_string"].as_str().unwrap_or("").to_string();
+            let new_string = args["new_string"].as_str().unwrap_or("").to_string();
+            let replace_all = args["replace_all"].as_bool().unwrap_or(false);
 
-        let full_path = if std::path::Path::new(&path_str).is_absolute() {
-            path_str
-        } else {
-            std::path::Path::new(&ctx.working_dir)
-                .join(&path_str)
-                .to_string_lossy()
-                .to_string()
-        };
-
-        if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
-            return ToolResult {
-                tool_call_id: String::new(),
-                content: msg,
-                is_error: true,
+            let full_path = if std::path::Path::new(&path_str).is_absolute() {
+                path_str
+            } else {
+                std::path::Path::new(&ctx.working_dir)
+                    .join(&path_str)
+                    .to_string_lossy()
+                    .to_string()
             };
-        }
 
-        let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
-        crate::blocking::tool(move || {
-            Self::run(full_path, shown, old_string, new_string, replace_all)
+            if let Err(msg) = ctx.check_file_write(std::path::Path::new(&full_path)) {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: msg,
+                    is_error: true,
+                };
+            }
+
+            let shown = display_path(std::path::Path::new(&full_path), &ctx.working_dir);
+            crate::blocking::tool(move || {
+                Self::run(full_path, shown, old_string, new_string, replace_all)
+            })
+            .await
         })
-        .await
     }
 }
 

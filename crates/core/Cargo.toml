@@ -15,7 +15,6 @@ chrono.workspace = true
 uuid.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
-async-trait = "0.1"
 directories.workspace = true
 
 [dev-dependencies]

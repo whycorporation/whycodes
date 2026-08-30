@@ -18,6 +18,7 @@
 //! project) → `onboardUser` on the free tier (long-running operation,
 //! polled). The result is cached process-wide per OAuth provider.
 
+use crate::provider::ProviderEventStream;
 use async_stream::stream;
 use futures::stream::{Stream, StreamExt};
 use serde_json::{Value, json};
@@ -762,7 +763,7 @@ async fn stream_with(
         }
     };
 
-    Ok(Box::pin(s))
+    Ok(Box::pin(s) as ProviderEventStream)
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ pub use todo::{
     TodoItem, TodoList, TodoSink, TodoStatus, all_terminal, apply_todo_update,
     apply_todowrite_args, load_todos, save_todos, terminal_count, todos_path,
 };
-pub use tool::{Tool, ToolContext};
+pub use tool::{Tool, ToolContext, ToolFuture};
 pub use types::ApprovalMode;
 
 #[cfg(test)]

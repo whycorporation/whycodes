@@ -1,9 +1,7 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use super::search::WebSearchTool;
 use crate::tool::{Tool, ToolContext};
-use whycodes_core::types::ToolResult;
 
 /// MCP-accessible web search tool.
 ///
@@ -32,8 +30,6 @@ impl McpWebSearchTool {
         "mcp"
     }
 }
-
-#[async_trait]
 impl Tool for McpWebSearchTool {
     fn name(&self) -> &str {
         "mcp_websearch"
@@ -60,8 +56,12 @@ impl Tool for McpWebSearchTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        self.inner.execute(args, ctx).await
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move { self.inner.execute(args, ctx).await })
     }
 }
 

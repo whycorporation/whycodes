@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 
 use crate::tool::{Tool, ToolContext};
@@ -17,8 +16,6 @@ impl TaskTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for TaskTool {
     fn name(&self) -> &str {
         "task"
@@ -54,17 +51,23 @@ impl Tool for TaskTool {
         })
     }
 
-    async fn execute(&self, args: serde_json::Value, _ctx: &ToolContext) -> ToolResult {
-        // Real execution is intercepted by Agent::run_turn (needs provider/model/api_key).
-        // If this path is hit, the agent loop failed to intercept.
-        let goal = args["goal"].as_str().unwrap_or("(no goal specified)");
-        ToolResult {
-            tool_call_id: String::new(),
-            content: format!(
-                "Task tool was not intercepted by the agent loop. Goal was: {}",
-                goal
-            ),
-            is_error: true,
-        }
+    fn execute<'a>(
+        &'a self,
+        args: serde_json::Value,
+        _ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            // Real execution is intercepted by Agent::run_turn (needs provider/model/api_key).
+            // If this path is hit, the agent loop failed to intercept.
+            let goal = args["goal"].as_str().unwrap_or("(no goal specified)");
+            ToolResult {
+                tool_call_id: String::new(),
+                content: format!(
+                    "Task tool was not intercepted by the agent loop. Goal was: {}",
+                    goal
+                ),
+                is_error: true,
+            }
+        })
     }
 }

@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use serde_json::json;
 use std::path::Path;
 
@@ -20,8 +19,6 @@ impl TodoReadTool {
         Self
     }
 }
-
-#[async_trait]
 impl Tool for TodoReadTool {
     fn name(&self) -> &str {
         "todoread"
@@ -39,30 +36,36 @@ impl Tool for TodoReadTool {
         })
     }
 
-    async fn execute(&self, _args: serde_json::Value, ctx: &ToolContext) -> ToolResult {
-        let todos = load_todos(Path::new(&ctx.working_dir), ctx.session_id.as_deref());
-        if todos.is_empty() {
-            return ToolResult {
+    fn execute<'a>(
+        &'a self,
+        _args: serde_json::Value,
+        ctx: &'a ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        Box::pin(async move {
+            let todos = load_todos(Path::new(&ctx.working_dir), ctx.session_id.as_deref());
+            if todos.is_empty() {
+                return ToolResult {
+                    tool_call_id: String::new(),
+                    content: "No todos yet. Use todowrite to create a task list.".to_string(),
+                    is_error: false,
+                };
+            }
+            let mut result = String::from("Todos:\n");
+            for item in &todos {
+                result.push_str(&format!(
+                    "  {} [{}] {} ({})\n",
+                    item.status.mark(),
+                    item.id,
+                    item.content,
+                    item.status.as_str()
+                ));
+            }
+            ToolResult {
                 tool_call_id: String::new(),
-                content: "No todos yet. Use todowrite to create a task list.".to_string(),
+                content: result,
                 is_error: false,
-            };
-        }
-        let mut result = String::from("Todos:\n");
-        for item in &todos {
-            result.push_str(&format!(
-                "  {} [{}] {} ({})\n",
-                item.status.mark(),
-                item.id,
-                item.content,
-                item.status.as_str()
-            ));
-        }
-        ToolResult {
-            tool_call_id: String::new(),
-            content: result,
-            is_error: false,
-        }
+            }
+        })
     }
 }
 
