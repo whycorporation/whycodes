@@ -167,7 +167,7 @@ Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `confi
 
 | Struct | `pub` alan | private |
 |--------|----------:|--------:|
-| `TuiApp` | 112 | 0 |
+| `TuiApp` | 0 | 116 (`pub(crate)`, 2026-08-30) |
 | `MemorySettings` | 28 | 0 |
 | `MemoryConfig` | 27 | 0 |
 | `Config` | 19 | 0 |
@@ -177,18 +177,18 @@ Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `confi
 
 ```1211:1236:crates/tui/src/app.rs
 pub struct TuiApp {
-    pub running: bool,
-    pub mode: AppMode,
-    pub key_context: KeymapContext,
-    pub focus: FocusPane,
-    pub messages: Vec<ChatMessage>,
-    // … 100+ more public fields
-    pub input_buffer: String,
+    pub(crate) running: bool,
+    pub(crate) mode: AppMode,
+    pub(crate) key_context: KeymapContext,
+    pub(crate) focus: FocusPane,
+    pub(crate) messages: Vec<ChatMessage>,
+    // … 100+ more crate-private fields
+    pub(crate) input_buffer: String,
 ```
 
-Invariant (`needs_redraw`, dialog stack, focus) derleme ile korunmuyor. `mark_dirty()` var ama her alan dışarıdan yazılabiliyor.
+Invariant (`needs_redraw`, dialog stack, focus) hâlâ metodla korunmuyor ama crate-dışı yazılamıyor. `mark_dirty()` var. Accessor/mutator follow-up.
 
-Serde DTO’ları (`Config`, `ProviderConfig`) için `pub` normal. **Runtime state** (`TuiApp`, `SessionRuntime`, `ToolContext`) için değil: `pub(crate)` + metodlar.
+Serde DTO’ları (`Config`, `ProviderConfig`) için `pub` normal. **Runtime state** (`SessionRuntime`, `ToolContext`) için `pub(crate)` + metodlar. `TuiApp` 2026-08-30’da `pub(crate)`.
 
 `ToolContext.working_dir: String` — yol için `PathBuf` / `&Path`. Aynı kalıp `plugin::HookContext`, tool iç fonksiyonları.
 
@@ -331,12 +331,12 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` `core::Error`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü.
 5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
 6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. `cli/src/cmd/` ve `tui/src/run/` ayrı follow-up.
-7. **`TuiApp` alanlarını `pub(crate)`** + invariant metodları; diğer crate’ler zaten `run()` kullanıyor.
+7. ~~**`TuiApp` alanlarını `pub(crate)`**~~ **ödendi (2026-08-30):** struct + 116 alan crate-içi; kök re-export düştü. Invariant metodları / `SessionRuntime` ayrı follow-up.
 8. **`async_trait` → native async** (önce `Tool`, sonra `LlmProvider`).
 9. **`tokio` feature kesimi**; `core`’dan `tokio` düşür (`anyhow` düştü).
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–6, 10 ödendi (2026-08-30). `cli`/`tui` god-file / `TuiApp` / `async_trait` ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–7, 10 ödendi (2026-08-30). `cli`/`tui` god-file / `async_trait` / `tokio` feature kesimi ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
@@ -351,6 +351,6 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 | `Cow<` | 1 |
 | `#[must_use]` | 0 |
 | 800+ satır `.rs` | 30+ dosya |
-| `TuiApp` public alan | 112 |
+| `TuiApp` public alan | 0 (`pub(crate)`, 2026-08-30) |
 
 Ölçüm: `crates/**/*.rs`, `tests/` / `*_tests.rs` / `#[cfg(test)]` hariç; panic sayımı `scripts/check_panic_budget.py` ile aynı fikirde.

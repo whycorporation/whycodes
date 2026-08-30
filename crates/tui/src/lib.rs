@@ -1,5 +1,6 @@
 // ── lib.rs: TUI crate root ────────────────────────────────────────────
 // Re-exports all public modules in the whycodes-tui crate.
+// `TuiApp` stays in `app` (not re-exported); callers use `run()`.
 
 pub mod app;
 pub mod bench;
@@ -23,7 +24,7 @@ pub mod toast;
 pub mod ui;
 pub mod widgets;
 
-pub use app::{TuiApp, UpdateOffer};
+pub use app::UpdateOffer;
 pub use remote::RemoteAttach;
 pub use run::{
     RESUME_LATEST, TuiExit, TuiRunOptions, resolve_and_load_session, run, tui_available,

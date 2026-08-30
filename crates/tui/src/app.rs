@@ -1210,20 +1210,20 @@ pub const ESC_DOUBLE_MS: u128 = 800;
 // ── TuiApp ─────────────────────────────────────────────────────────────
 pub struct TuiApp {
     // ── runtime ──
-    pub running: bool,
-    pub mode: AppMode,
-    pub key_context: KeymapContext,
+    pub(crate) running: bool,
+    pub(crate) mode: AppMode,
+    pub(crate) key_context: KeymapContext,
     /// Prompt or scrollback owns keys (Grok focus model).
-    pub focus: FocusPane,
+    pub(crate) focus: FocusPane,
 
     // ── session ──
-    pub messages: Vec<ChatMessage>,
-    pub current_agent_state: AgentState,
-    pub status_message: String,
-    pub spinner_frame: usize,
+    pub(crate) messages: Vec<ChatMessage>,
+    pub(crate) current_agent_state: AgentState,
+    pub(crate) status_message: String,
+    pub(crate) spinner_frame: usize,
     /// Paint when true. Cleared after a successful draw unless animation
     /// (spinner / live toast) still needs frames. See the TUI event loop.
-    pub needs_redraw: bool,
+    pub(crate) needs_redraw: bool,
     /// Extra `terminal.clear()` paints. Bracketed-paste echo (and key-flood
     /// paste on hosts without bracketed paste) writes onto the PTY outside
     /// ratatui's diff; breathing-room cells stay spaces in both frames so
@@ -1231,237 +1231,237 @@ pub struct TuiApp {
     /// full rewrite. Ordinary Backspace/Delete must *not* request this —
     /// home gutters already `fill_blank`. Keep the counter only for paste,
     /// resize, focus, and layout jumps (submit / session switch).
-    pub pending_full_clears: u8,
+    pub(crate) pending_full_clears: u8,
 
     // ── input ──
-    pub input_buffer: String,
+    pub(crate) input_buffer: String,
     /// Multi-line input lines beyond the first.
-    pub input_lines: Vec<String>,
-    pub input_history: Vec<String>,
-    pub input_history_idx: usize,
+    pub(crate) input_lines: Vec<String>,
+    pub(crate) input_history: Vec<String>,
+    pub(crate) input_history_idx: usize,
     /// Cursor column in the current input line.
-    pub input_cursor: usize,
+    pub(crate) input_cursor: usize,
     /// First Esc of a double-Esc clear/cancel gesture.
-    pub esc_armed_at: Option<std::time::Instant>,
+    pub(crate) esc_armed_at: Option<std::time::Instant>,
     /// Images staged on the prompt (drag-drop / path paste). Sent with the next turn.
-    pub pending_images: Vec<crate::images::PromptImage>,
+    pub(crate) pending_images: Vec<crate::images::PromptImage>,
     /// Images consumed with `pending_prompt` by the run loop (taken on submit).
-    pub pending_submit_images: Vec<crate::images::PromptImage>,
+    pub(crate) pending_submit_images: Vec<crate::images::PromptImage>,
     /// Large pastes collapsed to `[pasted #N ~ L lines]` tokens in `input_buffer`.
     /// Expanded on submit so the agent receives the full text.
-    pub pending_pastes: Vec<crate::paste::PastedBlock>,
+    pub(crate) pending_pastes: Vec<crate::paste::PastedBlock>,
 
     // ── scroll / selection ──
     /// Display rows scrolled up from the newest line (not message count).
-    pub scroll_offset: usize,
-    pub auto_scroll: bool,
+    pub(crate) scroll_offset: usize,
+    pub(crate) auto_scroll: bool,
     /// Selected message index when scrollback is focused.
-    pub selected_msg: Option<usize>,
+    pub(crate) selected_msg: Option<usize>,
     /// Chat viewport height in rows (updated each paint).
-    pub chat_viewport_rows: u16,
+    pub(crate) chat_viewport_rows: u16,
     /// Chat content width in columns (updated each paint).
-    pub chat_content_width: u16,
+    pub(crate) chat_content_width: u16,
     /// Last-paint message viewport (for wheel hit-testing).
-    pub chat_area: Option<Rect>,
+    pub(crate) chat_area: Option<Rect>,
     /// Last-paint chat scrollbar track when content overflows.
-    pub chat_scrollbar_hit: Option<Rect>,
+    pub(crate) chat_scrollbar_hit: Option<Rect>,
     /// Total display rows of the transcript at last paint (scrollbar math).
-    pub chat_scroll_total: usize,
+    pub(crate) chat_scroll_total: usize,
     /// Active chat scrollbar thumb drag (`None` = not dragging).
-    pub chat_scrollbar_grab: Option<u16>,
+    pub(crate) chat_scrollbar_grab: Option<u16>,
 
     // ── mouse text selection (app-owned; native terminal select copies pad spaces) ──
-    pub mouse_sel: Option<MouseSelection>,
+    pub(crate) mouse_sel: Option<MouseSelection>,
     /// Last drawn frame as a packed cell grid (selection → clipboard).
-    pub screen_cells: crate::cell_grid::CellGrid,
+    pub(crate) screen_cells: crate::cell_grid::CellGrid,
 
     // ── dialogs ──
-    pub dialogs: DialogManager,
-    pub provider_dialog: ProviderDialogState,
-    pub model_selection: ModelSelectionState,
-    pub session_list: SessionListState,
-    pub login_dialog: LoginDialogState,
+    pub(crate) dialogs: DialogManager,
+    pub(crate) provider_dialog: ProviderDialogState,
+    pub(crate) model_selection: ModelSelectionState,
+    pub(crate) session_list: SessionListState,
+    pub(crate) login_dialog: LoginDialogState,
     /// Last-paint hit box for the modal `[✗]` control (click = cancel).
-    pub dialog_close_hit: Option<Rect>,
+    pub(crate) dialog_close_hit: Option<Rect>,
     /// Full modal rect (border inclusive). Text selection/copy is clipped to this
     /// so background chat behind the popup cannot be selected.
-    pub dialog_modal_hit: Option<Rect>,
+    pub(crate) dialog_modal_hit: Option<Rect>,
     /// Last-paint list body for the active select-style dialog.
-    pub dialog_list_hit: Option<Rect>,
+    pub(crate) dialog_list_hit: Option<Rect>,
     /// Last-paint scrollbar track (when the list overflows).
-    pub dialog_scrollbar_hit: Option<Rect>,
+    pub(crate) dialog_scrollbar_hit: Option<Rect>,
     /// First visible row index of that list (for click → absolute index).
-    pub dialog_list_scroll_start: usize,
+    pub(crate) dialog_list_scroll_start: usize,
     /// Viewport row capacity of that list.
-    pub dialog_list_visible: usize,
+    pub(crate) dialog_list_visible: usize,
     /// Total items in that list.
-    pub dialog_list_total: usize,
+    pub(crate) dialog_list_total: usize,
     /// Active thumb drag: row within the thumb where the grab started (`None` = not dragging).
-    pub dialog_scrollbar_grab: Option<u16>,
+    pub(crate) dialog_scrollbar_grab: Option<u16>,
     /// Questionnaire closed via `[✗]` / generic dismiss — run loop completes oneshot.
-    pub question_dismissed: bool,
+    pub(crate) question_dismissed: bool,
     /// Questionnaire finished via mouse click (single-select) — run loop sends answers.
-    pub pending_question_answers: Option<Vec<QuestionAnswer>>,
+    pub(crate) pending_question_answers: Option<Vec<QuestionAnswer>>,
 
     // ── slash suggestion popup ──
-    pub slash_suggest: SlashSuggestState,
+    pub(crate) slash_suggest: SlashSuggestState,
 
     // ── `@file` picker (workspace index backed) ──
-    pub file_suggest: crate::ui::file_suggest::FileSuggestState,
+    pub(crate) file_suggest: crate::ui::file_suggest::FileSuggestState,
 
     // ── transient notices ──
-    pub toasts: crate::toast::Toasts,
-    pub help_scroll: usize,
+    pub(crate) toasts: crate::toast::Toasts,
+    pub(crate) help_scroll: usize,
     /// Filter text in the Keyboard Shortcuts popup (`/` to start).
-    pub help_query: String,
+    pub(crate) help_query: String,
     /// True while the cheatsheet search bar owns typing.
-    pub help_searching: bool,
+    pub(crate) help_searching: bool,
 
     // ── sidebar ──
-    pub sidebar: SidebarState,
+    pub(crate) sidebar: SidebarState,
 
     // ── command ──
-    pub command: CommandState,
+    pub(crate) command: CommandState,
 
     // ── theme ──
-    pub theme: ThemeName,
+    pub(crate) theme: ThemeName,
     /// Cursor in the Theme picker dialog (`ThemeName::ALL` index).
-    pub theme_selected: usize,
+    pub(crate) theme_selected: usize,
 
     // ── config ──
-    pub config: crate::config::TuiAppConfig,
+    pub(crate) config: crate::config::TuiAppConfig,
 
     /// Prompt waiting to be sent to the agent (set by submit / slash commands).
     /// Images for this turn live in `pending_submit_images` until the run loop takes them.
-    pub pending_prompt: Option<String>,
+    pub(crate) pending_prompt: Option<String>,
     /// Queued prompts from `/loop` or `schedule` (drained when idle).
-    pub pending_auto_prompts: std::collections::VecDeque<String>,
+    pub(crate) pending_auto_prompts: std::collections::VecDeque<String>,
     /// Idle follow-up suggestion (`tui.prompt_suggestions = "idle"`). Tab accepts when input empty.
-    pub pending_suggestion: Option<String>,
+    pub(crate) pending_suggestion: Option<String>,
     /// OAuth paste-code flow: while set, the next submitted input line is
     /// the pasted `code#state`, not a prompt. Dropping the sender cancels
     /// the in-flight login (the flow's receiver errors out).
-    pub auth_code_sink: Option<tokio::sync::oneshot::Sender<String>>,
+    pub(crate) auth_code_sink: Option<tokio::sync::oneshot::Sender<String>>,
     /// Running background shell jobs (status bar chip).
-    pub bg_running_count: usize,
+    pub(crate) bg_running_count: usize,
     /// Background jobs listed in the sticky tasks panel (running + recent).
-    pub bg_jobs: Vec<BgJobUi>,
+    pub(crate) bg_jobs: Vec<BgJobUi>,
     /// Model switch from the picker dialog: `(provider, model)`.
-    pub pending_model: Option<(String, String)>,
+    pub(crate) pending_model: Option<(String, String)>,
     /// Reasoning effort from the picker / `/effort` (`low`/`medium`/`high`/`xhigh`).
-    pub pending_effort: Option<String>,
+    pub(crate) pending_effort: Option<String>,
     /// Cursor in the effort picker (`ThinkingConfig::supported_efforts`).
-    pub effort_picker_selected: usize,
+    pub(crate) effort_picker_selected: usize,
     /// Last chosen `reasoning_effort` (`None` = family default).
-    pub reasoning_effort: Option<String>,
+    pub(crate) reasoning_effort: Option<String>,
     /// Agent switch from the picker dialog (prompt footer click / `/agent`).
-    pub pending_agent: Option<String>,
+    pub(crate) pending_agent: Option<String>,
     /// Cursor in the agent picker (list is `primary_agents`).
-    pub agent_picker_selected: usize,
+    pub(crate) agent_picker_selected: usize,
     /// `/login` picker result: provider id awaiting an OAuth flow spawn.
-    pub pending_login_provider: Option<String>,
+    pub(crate) pending_login_provider: Option<String>,
     /// Session id to load from the DB (picker Enter or `/resume <id>`).
-    pub pending_session_id: Option<String>,
+    pub(crate) pending_session_id: Option<String>,
     /// Dashboard: cursor row in the grouped live-session list.
-    pub sessions_cursor: usize,
+    pub(crate) sessions_cursor: usize,
     /// Dashboard: switch target — index into the parked runtimes vec,
     /// or `usize::MAX` for "stay on current".
-    pub pending_session_switch: Option<usize>,
+    pub(crate) pending_session_switch: Option<usize>,
     /// Dashboard rows snapshot, refreshed by the run loop on open.
     /// Each row: (parked index or None = active session, title, state glyph,
     /// state label, preview, unread).
-    pub sessions_rows: Vec<SessionDashboardRow>,
+    pub(crate) sessions_rows: Vec<SessionDashboardRow>,
     /// Re-fetch `GET /v1/models` for the active provider (config base + key).
-    pub pending_catalog_refresh: bool,
+    pub(crate) pending_catalog_refresh: bool,
     /// GitHub found a newer tag. Offered once on the empty home screen.
-    pub available_update: Option<UpdateOffer>,
+    pub(crate) available_update: Option<UpdateOffer>,
     /// True after the update confirm/alert has been shown (or skipped).
-    pub update_prompted: bool,
+    pub(crate) update_prompted: bool,
     /// User accepted the update confirm — run loop returns [`crate::TuiExit::Upgrade`].
-    pub pending_upgrade: bool,
+    pub(crate) pending_upgrade: bool,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
-    pub primary_agents: Vec<String>,
-    pub agent_cycle_idx: usize,
+    pub(crate) primary_agents: Vec<String>,
+    pub(crate) agent_cycle_idx: usize,
 
     // ── session chrome (status header / footer) ──
-    pub provider_name: String,
-    pub model_name: String,
-    pub agent_name: String,
+    pub(crate) provider_name: String,
+    pub(crate) model_name: String,
+    pub(crate) agent_name: String,
     /// Last turn intent badge for chrome (`Q` / `chg` / `plan`), if any.
-    pub intent_badge: Option<String>,
+    pub(crate) intent_badge: Option<String>,
     /// Full intent kind for tooltips/status (`question`, `change`, …).
-    pub intent_kind: Option<String>,
+    pub(crate) intent_kind: Option<String>,
     /// Current session display title (auto or manual).
-    pub session_title: String,
+    pub(crate) session_title: String,
     /// Short project name (basename) for the top status strip.
-    pub project_label: String,
+    pub(crate) project_label: String,
     /// Absolute working directory (bottom bar; click-to-copy target).
-    pub project_dir: PathBuf,
+    pub(crate) project_dir: PathBuf,
     /// Current git branch, if the project is a repo.
-    pub git_branch: Option<String>,
+    pub(crate) git_branch: Option<String>,
     /// Clickable cwd path (sticky hover → underline).
-    pub cwd_hit: crate::hit_area::HitArea,
+    pub(crate) cwd_hit: crate::hit_area::HitArea,
     /// Context-usage meter (hover → bar+%).
-    pub context_hit: crate::hit_area::HitArea,
+    pub(crate) context_hit: crate::hit_area::HitArea,
     /// Turn-status `[stop]` control (click → cancel turn).
-    pub turn_stop_hit: crate::hit_area::HitArea,
+    pub(crate) turn_stop_hit: crate::hit_area::HitArea,
     /// Prompt-footer agent name (click → agent picker).
-    pub agent_hit: crate::hit_area::HitArea,
+    pub(crate) agent_hit: crate::hit_area::HitArea,
     /// Prompt-footer provider/model (click → model picker).
-    pub model_hit: crate::hit_area::HitArea,
+    pub(crate) model_hit: crate::hit_area::HitArea,
     /// Prompt-footer reasoning effort (click → effort picker).
-    pub effort_hit: crate::hit_area::HitArea,
+    pub(crate) effort_hit: crate::hit_area::HitArea,
     /// Last known mouse cell (for hover tooltips).
-    pub mouse_pos: Option<(u16, u16)>,
+    pub(crate) mouse_pos: Option<(u16, u16)>,
 
     /// Tokens currently filling the context window (last provider report or estimate).
-    pub context_used: u64,
+    pub(crate) context_used: u64,
     /// Context window capacity for the *active* model
     /// (config → `/v1/models` → built-in catalog → `session.max_context_tokens`).
-    pub max_context_tokens: u64,
+    pub(crate) max_context_tokens: u64,
     /// Live context window from `GET /v1/models` for `(provider, model)`, if known.
     /// Only the single active window is kept — never the full gateway catalog.
-    pub api_context_window: Option<u32>,
+    pub(crate) api_context_window: Option<u32>,
     /// Which provider/model `api_context_window` was fetched for.
-    pub api_context_for: Option<(String, String)>,
+    pub(crate) api_context_for: Option<(String, String)>,
 
     /// When the current agent turn started (live latency while busy).
-    pub turn_started_at: Option<std::time::Instant>,
+    pub(crate) turn_started_at: Option<std::time::Instant>,
     /// Latest token usage reported for the current/last turn.
-    pub turn_usage: Option<whycodes_core::types::Usage>,
+    pub(crate) turn_usage: Option<whycodes_core::types::Usage>,
     /// Mouse `[stop]` (or future UI) requested cancel — run loop consumes this.
-    pub pending_cancel: bool,
+    pub(crate) pending_cancel: bool,
     /// Active session id (todo file key; empty before the first session).
-    pub session_id: String,
+    pub(crate) session_id: String,
     /// Session todo list (sticky panel under the header).
-    pub todos: Vec<whycodes_core::TodoItem>,
+    pub(crate) todos: Vec<whycodes_core::TodoItem>,
     /// Fold the sticky todo list to a single header row (Grok chevron).
     /// Auto-collapses when every item is done; click / `t` reopens it.
-    pub todos_collapsed: bool,
+    pub(crate) todos_collapsed: bool,
     /// Header row of the sticky todo panel (click to fold).
-    pub todos_hit: crate::hit_area::HitArea,
+    pub(crate) todos_hit: crate::hit_area::HitArea,
     /// Item rows of the expanded todo panel (wheel / click-to-focus).
-    pub todos_body_hit: crate::hit_area::HitArea,
+    pub(crate) todos_body_hit: crate::hit_area::HitArea,
     /// Solid scrollbar on overflowing todo rows (last-paint).
-    pub todos_scrollbar_hit: crate::hit_area::HitArea,
+    pub(crate) todos_scrollbar_hit: crate::hit_area::HitArea,
     /// First visible todo index when the list is taller than the panel.
-    pub todos_scroll: usize,
+    pub(crate) todos_scroll: usize,
     /// Item rows painted last frame (excludes the header). `0` before paint.
-    pub todos_viewport_rows: usize,
+    pub(crate) todos_viewport_rows: usize,
     /// Live + finished child sessions (sticky tasks panel).
-    pub subagents: Vec<SubagentUi>,
+    pub(crate) subagents: Vec<SubagentUi>,
     /// Fold the sticky tasks list to a single header row (same as todos).
     /// Auto-collapses when every item is done; click / Ctrl+G reopens it.
-    pub tasks_collapsed: bool,
+    pub(crate) tasks_collapsed: bool,
     /// Header row of the sticky tasks panel (click to fold).
-    pub tasks_hit: crate::hit_area::HitArea,
+    pub(crate) tasks_hit: crate::hit_area::HitArea,
     /// Last-paint hit boxes for expanded task rows (click to open a subagent).
-    pub tasks_row_hits: Vec<(Rect, String)>,
+    pub(crate) tasks_row_hits: Vec<(Rect, String)>,
     /// When set, the framed child transcript overlays the parent session.
-    pub open_subagent: Option<String>,
+    pub(crate) open_subagent: Option<String>,
     /// Alias of [`Self::tasks_row_hits`] for older click tests.
-    pub subagent_strip_hit: Vec<(Rect, String)>,
+    pub(crate) subagent_strip_hit: Vec<(Rect, String)>,
 }
 
 /// Drag selection over the terminal grid (absolute cell coordinates).
