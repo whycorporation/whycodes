@@ -153,7 +153,7 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 | `crates/tui/src/input.rs` | 3949 | |
 | `crates/tui/src/app.rs` | 3875 | Durum + diyalog + input + paint ipuçları |
 | `crates/session/src/session.rs` | 3386 | Persist + compact + prune |
-| `crates/config/src/lib.rs` | 2580 | Tek `lib.rs`, modül yok |
+| `crates/config/src/lib.rs` | ~~2580~~ | **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate` |
 
 Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `config` zaten “load / merge / validate” üç iş — `load.rs`, `merge.rs`, `schema.rs`, `types.rs` doğal kesit.
 
@@ -309,7 +309,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 | Crate | Asıl sapma |
 |-------|------------|
 | **core** | String `Error` (Serde clone mesajı korunuyor), `tokio`, `ToolContext` String path, `index` bağımlılığı |
-| **config** | 2580 satır tek `lib.rs`, her alan `pub`; kamu yüzey `core::Error` |
+| **config** | Modül ayrıldı (`types`/`load`/`merge`/`validate`); her alan `pub`; kamu yüzey `core::Error` |
 | **llm** | `async_trait`, string `Error::Llm`, provider tekrarı (sampling unwrap’ları ödendi) |
 | **agent** | 4.4k satır, kalan too_many_arguments, 184 clone, sync Mutex + sync fs |
 | **tui** | 9k `run.rs`, 112 alanlı `TuiApp`, yutulan hatalar, her modül `pub` |
@@ -330,13 +330,13 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 3. ~~**`SocketAddr::from` + CLI `match status`**~~ **ödendi** — cli 2→0, tui 1→0.
 4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` `core::Error`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü.
 5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
-6. **`config/src/` modüllere böl**; `cli/src/cmd/`; `tui/src/run/` (loop, slash, persist, tests).
+6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. `cli/src/cmd/` ve `tui/src/run/` ayrı follow-up.
 7. **`TuiApp` alanlarını `pub(crate)`** + invariant metodları; diğer crate’ler zaten `run()` kullanıyor.
 8. **`async_trait` → native async** (önce `Tool`, sonra `LlmProvider`).
 9. **`tokio` feature kesimi**; `core`’dan `tokio` düşür (`anyhow` düştü).
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–5, 10 ödendi (2026-08-30). God-file / `TuiApp` / `async_trait` ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–6, 10 ödendi (2026-08-30). `cli`/`tui` god-file / `TuiApp` / `async_trait` ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 

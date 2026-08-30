@@ -2,7 +2,12 @@
 //! cannot sink the crate's 100% production floor.
 
 use super::*;
+use std::collections::HashMap;
 use std::io::Write;
+use std::path::{Path, PathBuf};
+use whycodes_core::types::{
+    AgentInfo, ModelConfig, PermissionAction, PermissionSet, ProviderConfig,
+};
 
 /// Serializes tests that mutate process-global env vars (WHYCODES_HOME,
 /// WHYCODES_PROVIDER, …) so parallel test threads cannot interfere.
