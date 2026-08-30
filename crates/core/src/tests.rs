@@ -1899,14 +1899,44 @@ mod types_tests {
 
         assert_eq!(ApprovalMode::parse("auto"), Some(ApprovalMode::Auto));
         assert_eq!(ApprovalMode::parse("dontask"), Some(ApprovalMode::Auto));
+        assert_eq!(ApprovalMode::parse("don't-ask"), Some(ApprovalMode::Auto));
+        assert_eq!(ApprovalMode::parse("dont-ask"), Some(ApprovalMode::Auto));
         assert_eq!(ApprovalMode::parse("ask"), Some(ApprovalMode::Important));
+        assert_eq!(
+            ApprovalMode::parse("important"),
+            Some(ApprovalMode::Important)
+        );
+        assert_eq!(
+            ApprovalMode::parse("default"),
+            Some(ApprovalMode::Important)
+        );
         assert_eq!(ApprovalMode::parse("manual"), Some(ApprovalMode::Manual));
+        assert_eq!(ApprovalMode::parse("always"), Some(ApprovalMode::Manual));
         assert_eq!(ApprovalMode::parse("???"), None);
         assert_eq!(ApprovalMode::default(), ApprovalMode::Auto);
+        for mode in ApprovalMode::ALL {
+            assert_eq!(mode.as_str(), mode.label());
+            assert_eq!(mode.to_string(), mode.as_str());
+            assert!(!mode.description().is_empty());
+        }
         assert_eq!(ApprovalMode::Auto.as_str(), "auto");
+        assert_eq!(ApprovalMode::Important.as_str(), "important");
+        assert_eq!(ApprovalMode::Manual.as_str(), "manual");
+        assert_eq!(ApprovalMode::Auto.label(), "auto");
         assert_eq!(ApprovalMode::Important.label(), "important");
-        assert!(!ApprovalMode::Manual.description().is_empty());
-        assert_eq!(ApprovalMode::Auto.to_string(), "auto");
+        assert_eq!(ApprovalMode::Manual.label(), "manual");
+        assert_eq!(
+            ApprovalMode::Auto.description(),
+            "Auto-answer questions and auto-allow permission asks"
+        );
+        assert_eq!(
+            ApprovalMode::Important.description(),
+            "Prompt on questions and high-risk tools only"
+        );
+        assert_eq!(
+            ApprovalMode::Manual.description(),
+            "Prompt on every question and permission ask"
+        );
         assert_eq!(ApprovalMode::ALL.len(), 3);
 
         let mut p = PermissionSet {
