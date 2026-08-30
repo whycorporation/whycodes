@@ -77,7 +77,9 @@ impl MemoryService {
     }
 
     pub fn open_db(&self) -> anyhow::Result<Database> {
-        Database::open(self.db_path.to_str().unwrap_or("whycodes.db"))
+        Ok(Database::open(
+            self.db_path.to_str().unwrap_or("whycodes.db"),
+        )?)
     }
 
     pub fn memory_md_path(&self) -> PathBuf {
@@ -129,7 +131,7 @@ impl MemoryService {
 
     pub fn list(&self, limit: usize) -> anyhow::Result<Vec<MemoryRow>> {
         let db = self.open_db()?;
-        db.list_memories(&self.bank_key, limit)
+        Ok(db.list_memories(&self.bank_key, limit)?)
     }
 
     pub fn delete(&self, id_or_prefix: &str) -> anyhow::Result<bool> {

@@ -2,6 +2,7 @@
 name = "whycodes-llm"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
@@ -23,3 +24,6 @@ async-stream.workspace = true
 tokio-stream = "0.1"
 rustc-hash.workspace = true
 chrono.workspace = true
+
+[lints]
+workspace = true

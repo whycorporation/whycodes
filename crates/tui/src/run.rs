@@ -24,7 +24,7 @@ use whycodes_agent::agent::Agent;
 use whycodes_agent::permission::ChannelPermissionPrompter;
 use whycodes_agent::{
     CancelFlag, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
-    TurnEvent, new_cancel_flag, request_cancel,
+    TurnEvent, TurnOpts, new_cancel_flag, request_cancel,
 };
 use whycodes_config::Config;
 use whycodes_core::types::AgentMode;
@@ -1318,12 +1318,14 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     let result = agent
                         .run_turn_with_events(
                             &mut session,
-                            &provider2,
-                            &model2,
-                            &api_key2,
-                            max_turns,
-                            Some(event_tx2),
-                            cancel2,
+                            TurnOpts {
+                                provider_name: &provider2,
+                                model: &model2,
+                                api_key: &api_key2,
+                                max_turns,
+                                events: Some(event_tx2),
+                                cancel: cancel2,
+                            },
                         )
                         .await;
                     let work_ms = work_t0.elapsed().as_millis();

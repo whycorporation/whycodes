@@ -409,7 +409,10 @@ async fn streamable_transport_surfaces_http_rpc_parse_and_notification_errors() 
         .await
         .unwrap_err()
         .to_string();
-    assert_eq!(error, "failed to parse JSON-RPC response");
+    assert!(
+        error.contains("failed to parse JSON-RPC response"),
+        "{error}"
+    );
 
     let error = transport
         .send_notification("notify", Some(serde_json::json!({"ready": true})))

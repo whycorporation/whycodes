@@ -19,12 +19,12 @@ impl SkillRegistry {
     /// Load skills from the process cwd (`.skills/`) and the global user
     /// config directory. Prefer [`Self::load_for_project`] when a project
     /// root is known — this path exists for callers without a working dir.
-    pub fn load() -> anyhow::Result<Self> {
+    pub fn load() -> crate::error::Result<Self> {
         Self::load_for_project(Path::new("."))
     }
 
     /// Load all `*.skill.md` files from a directory.
-    pub fn load_from_dir(&mut self, dir: &Path) -> anyhow::Result<()> {
+    pub fn load_from_dir(&mut self, dir: &Path) -> crate::error::Result<()> {
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) => {
@@ -68,7 +68,7 @@ impl SkillRegistry {
 
     /// Project-local skills only (no user-global dir). Safe for tests and
     /// for the compact system-prompt catalog.
-    pub fn load_project(project: &Path) -> anyhow::Result<Self> {
+    pub fn load_project(project: &Path) -> crate::error::Result<Self> {
         let mut registry = Self::new();
         for dir in [
             project.join(".skills"),
@@ -85,7 +85,7 @@ impl SkillRegistry {
     }
 
     /// Project skills plus the user-global `$CONFIG/skills` tree.
-    pub fn load_for_project(project: &Path) -> anyhow::Result<Self> {
+    pub fn load_for_project(project: &Path) -> crate::error::Result<Self> {
         let mut registry = Self::load_project(project)?;
         let global = global_skills_dir();
         if global.is_dir() {
@@ -173,7 +173,7 @@ impl PluginRegistry {
     /// description = "Does something useful"
     /// parameters = { type = "object", properties = {} }
     /// ```
-    pub fn load_from_config() -> anyhow::Result<Self> {
+    pub fn load_from_config() -> crate::error::Result<Self> {
         let path = global_plugins_path();
 
         if !path.exists() {
@@ -189,7 +189,7 @@ impl PluginRegistry {
     }
 
     /// Merge project-level `.whycodes/plugins.toml` (later entries override by name).
-    pub fn load_layered(project_dir: &std::path::Path) -> anyhow::Result<Self> {
+    pub fn load_layered(project_dir: &std::path::Path) -> crate::error::Result<Self> {
         let mut reg = Self::load_from_config().unwrap_or_default();
         let path = whycodes_core::project_dir(project_dir).join("plugins.toml");
         if path.exists() {
@@ -207,14 +207,15 @@ impl PluginRegistry {
     }
 
     /// Parse plugins from a TOML string.
-    pub fn parse_toml(content: &str) -> anyhow::Result<Self> {
+    pub fn parse_toml(content: &str) -> crate::error::Result<Self> {
         #[derive(Deserialize)]
         struct PluginsFile {
             plugins: Option<Vec<PluginConfig>>,
         }
 
-        let file: PluginsFile = toml::from_str(content)
-            .map_err(|e| anyhow::anyhow!("Failed to parse plugins TOML: {}", e))?;
+        let file: PluginsFile = toml::from_str(content).map_err(|e| {
+            crate::error::SkillError::msg(format!("Failed to parse plugins TOML: {e}"))
+        })?;
 
         Ok(Self {
             plugins: file.plugins.unwrap_or_default(),

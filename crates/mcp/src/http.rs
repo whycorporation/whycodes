@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use crate::error::{McpError, Result};
 use futures::StreamExt;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
 use tokio::sync::mpsc;
@@ -22,16 +22,16 @@ fn http_client() -> Result<reqwest::Client> {
         .connect_timeout(Duration::from_secs(15))
         .user_agent(format!("whycodes-mcp/{}", env!("CARGO_PKG_VERSION")))
         .build()
-        .context("failed to build HTTP client")
+        .map_err(|e| McpError::msg(format!("failed to build HTTP client: {e}")))
 }
 
 fn header_map(extra: &HashMap<String, String>) -> Result<HeaderMap> {
     let mut map = HeaderMap::new();
     for (k, v) in extra {
         let name = HeaderName::from_bytes(k.as_bytes())
-            .with_context(|| format!("invalid header name: {k}"))?;
-        let value =
-            HeaderValue::from_str(v).with_context(|| format!("invalid header value for {k}"))?;
+            .map_err(|e| McpError::msg(format!("invalid header name: {k}: {e}")))?;
+        let value = HeaderValue::from_str(v)
+            .map_err(|e| McpError::msg(format!("invalid header value for {k}: {e}")))?;
         map.insert(name, value);
     }
     Ok(map)
@@ -55,9 +55,14 @@ fn unwrap_rpc(response: JsonRpcResponse, expected_id: u64) -> Result<serde_json:
         );
     }
     if let Some(error) = response.error {
-        bail!("MCP error [{}]: {}", error.code, error.message);
+        return Err(McpError::msg(format!(
+            "MCP error [{}]: {}",
+            error.code, error.message
+        )));
     }
-    response.result.context("MCP response has no result")
+    response
+        .result
+        .ok_or_else(|| McpError::msg("MCP response has no result"))
 }
 
 pub fn resolve_endpoint_url(sse_url: &str, endpoint: &str) -> Result<String> {
@@ -65,8 +70,8 @@ pub fn resolve_endpoint_url(sse_url: &str, endpoint: &str) -> Result<String> {
     if endpoint.starts_with("http://") || endpoint.starts_with("https://") {
         return Ok(endpoint.to_string());
     }
-    let base =
-        reqwest::Url::parse(sse_url).with_context(|| format!("invalid SSE URL: {sse_url}"))?;
+    let base = reqwest::Url::parse(sse_url)
+        .map_err(|e| McpError::msg(format!("invalid SSE URL: {sse_url}: {e}")))?;
     if endpoint.starts_with('/') {
         let mut abs = base;
         abs.set_path(endpoint.split('?').next().unwrap_or(endpoint));
@@ -79,7 +84,11 @@ pub fn resolve_endpoint_url(sse_url: &str, endpoint: &str) -> Result<String> {
     }
     Ok(base
         .join(endpoint)
-        .with_context(|| format!("failed to join endpoint '{endpoint}' onto {sse_url}"))?
+        .map_err(|e| {
+            McpError::msg(format!(
+                "failed to join endpoint '{endpoint}' onto {sse_url}: {e}"
+            ))
+        })?
         .to_string())
 }
 
@@ -113,10 +122,10 @@ fn extract_jsonrpc_result_from_sse(body: &str, expected_id: u64) -> Result<serde
             return unwrap_rpc(rpc, expected_id);
         }
     }
-    bail!(
+    Err(McpError::msg(format!(
         "no JSON-RPC response found in SSE body for id={expected_id}: {}",
         truncate(body, 300)
-    )
+    )))
 }
 
 // ── Streamable HTTP ─────────────────────────────────────────────────────────
@@ -183,16 +192,16 @@ impl StreamableHttpTransport {
         let response = builder
             .send()
             .await
-            .with_context(|| format!("HTTP POST to {} failed", self.url))?;
+            .map_err(|e| McpError::msg(format!("HTTP POST to {} failed: {e}", self.url)))?;
         self.capture_session(&response);
 
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            bail!(
+            return Err(McpError::msg(format!(
                 "MCP HTTP error {status} for method '{method}': {}",
                 truncate(&text, 500)
-            );
+            )));
         }
 
         let content_type = response
@@ -206,14 +215,14 @@ impl StreamableHttpTransport {
             let text = response
                 .text()
                 .await
-                .context("failed to read SSE response body")?;
+                .map_err(|e| McpError::msg(format!("failed to read SSE response body: {e}")))?;
             return extract_jsonrpc_result_from_sse(&text, id);
         }
 
         let response: JsonRpcResponse = response
             .json()
             .await
-            .context("failed to parse JSON-RPC response")?;
+            .map_err(|e| McpError::msg(format!("failed to parse JSON-RPC response: {e}")))?;
         unwrap_rpc(response, id)
     }
 
@@ -235,20 +244,22 @@ impl StreamableHttpTransport {
             .header(CONTENT_TYPE, "application/json")
             .json(&body);
         let builder = self.apply_common_headers(builder);
-        let response = builder
-            .send()
-            .await
-            .with_context(|| format!("HTTP POST notification to {} failed", self.url))?;
+        let response = builder.send().await.map_err(|e| {
+            McpError::msg(format!(
+                "HTTP POST notification to {} failed: {e}",
+                self.url
+            ))
+        })?;
         self.capture_session(&response);
         let status = response.status();
         if status.as_u16() == 202 || status.is_success() {
             return Ok(());
         }
         let text = response.text().await.unwrap_or_default();
-        bail!(
+        Err(McpError::msg(format!(
             "MCP notification '{method}' failed with {status}: {}",
             truncate(&text, 300)
-        )
+        )))
     }
 }
 
@@ -278,13 +289,13 @@ impl LegacySseTransport {
             .headers(headers.clone())
             .send()
             .await
-            .with_context(|| format!("SSE GET to {sse_url} failed"))?;
+            .map_err(|e| McpError::msg(format!("SSE GET to {sse_url} failed: {e}")))?;
 
         if !response.status().is_success() {
-            bail!(
+            return Err(McpError::msg(format!(
                 "SSE connect failed with status {} for {sse_url}",
                 response.status()
-            );
+            )));
         }
 
         let (tx, mut rx) = mpsc::unbounded_channel::<SseEvent>();
@@ -298,10 +309,10 @@ impl LegacySseTransport {
                 }
                 debug!(event = ?ev.event, "SSE event before endpoint (ignored)");
             }
-            bail!("SSE stream closed before endpoint event")
+            Err(McpError::msg("SSE stream closed before endpoint event"))
         })
         .await
-        .context("timed out waiting for SSE endpoint event")??;
+        .map_err(|e| McpError::msg(format!("timed out waiting for SSE endpoint event: {e}")))??;
 
         debug!(%post_url, "MCP legacy SSE endpoint resolved");
         Ok(Self {
@@ -334,7 +345,7 @@ impl LegacySseTransport {
             .body(body)
             .send()
             .await
-            .with_context(|| format!("HTTP POST to {} failed", self.post_url))?;
+            .map_err(|e| McpError::msg(format!("HTTP POST to {} failed: {e}", self.post_url)))?;
 
         let status = response.status();
         if status.as_u16() == 202 || status.as_u16() == 204 {
@@ -342,10 +353,10 @@ impl LegacySseTransport {
         }
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
-            bail!(
+            return Err(McpError::msg(format!(
                 "MCP SSE POST error {status} for '{method}': {}",
                 truncate(&text, 500)
-            );
+            )));
         }
 
         let content_type = response
@@ -358,8 +369,9 @@ impl LegacySseTransport {
         if content_type.contains("application/json") {
             let bytes = response.bytes().await?;
             if !bytes.is_empty() {
-                let rpc: JsonRpcResponse = serde_json::from_slice(&bytes)
-                    .context("failed to parse JSON-RPC from POST body")?;
+                let rpc: JsonRpcResponse = serde_json::from_slice(&bytes).map_err(|e| {
+                    McpError::msg(format!("failed to parse JSON-RPC from POST body: {e}"))
+                })?;
                 return unwrap_rpc(rpc, id);
             }
             return self.wait_for_response(id).await;
@@ -386,16 +398,21 @@ impl LegacySseTransport {
             .json(&body)
             .send()
             .await
-            .with_context(|| format!("HTTP POST notification to {} failed", self.post_url))?;
+            .map_err(|e| {
+                McpError::msg(format!(
+                    "HTTP POST notification to {} failed: {e}",
+                    self.post_url
+                ))
+            })?;
         let status = response.status();
         if status.as_u16() == 202 || status.is_success() {
             return Ok(());
         }
         let text = response.text().await.unwrap_or_default();
-        bail!(
+        Err(McpError::msg(format!(
             "MCP SSE notification '{method}' failed with {status}: {}",
             truncate(&text, 300)
-        )
+        )))
     }
 
     async fn wait_for_response(&mut self, expected_id: u64) -> Result<serde_json::Value> {
@@ -403,12 +420,14 @@ impl LegacySseTransport {
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             if remaining.is_zero() {
-                bail!("timed out waiting for MCP SSE response id={expected_id}");
+                return Err(McpError::msg(format!(
+                    "timed out waiting for MCP SSE response id={expected_id}"
+                )));
             }
             let ev = tokio::time::timeout(remaining, self.rx.recv())
                 .await
-                .context("timed out waiting for MCP SSE response")?
-                .context("SSE stream closed while waiting for response")?;
+                .map_err(|e| McpError::msg(format!("timed out waiting for MCP SSE response: {e}")))?
+                .ok_or_else(|| McpError::msg("SSE stream closed while waiting for response"))?;
 
             let name = ev.event.as_deref().unwrap_or("message");
             if name != "message" && !name.is_empty() {
@@ -429,8 +448,11 @@ impl LegacySseTransport {
                 debug!(method = ?value.get("method"), "server notification on SSE (ignored)");
                 continue;
             }
-            let rpc: JsonRpcResponse = serde_json::from_value(value)
-                .context("failed to parse JSON-RPC response from SSE message")?;
+            let rpc: JsonRpcResponse = serde_json::from_value(value).map_err(|e| {
+                McpError::msg(format!(
+                    "failed to parse JSON-RPC response from SSE message: {e}"
+                ))
+            })?;
             if rpc.id != expected_id {
                 warn!(
                     expected = expected_id,

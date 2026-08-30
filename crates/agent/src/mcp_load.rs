@@ -44,34 +44,34 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("stdio MCP server missing `command`"))?;
             let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
-            McpClient::connect_stdio_with(
+            Ok(McpClient::connect_stdio_with(
                 command,
                 &args,
                 server.env.as_ref(),
                 server.cwd.as_deref(),
             )
-            .await
+            .await?)
         }
         McpTransportKind::Http => {
             let url = server
                 .url
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("http MCP server missing `url`"))?;
-            McpClient::connect_http(url, headers).await
+            Ok(McpClient::connect_http(url, headers).await?)
         }
         McpTransportKind::Sse => {
             let url = server
                 .url
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("sse MCP server missing `url`"))?;
-            McpClient::connect_sse(url, headers).await
+            Ok(McpClient::connect_sse(url, headers).await?)
         }
         McpTransportKind::Auto => {
             let url = server
                 .url
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("auto MCP server missing `url`"))?;
-            McpClient::connect_auto(url, headers).await
+            Ok(McpClient::connect_auto(url, headers).await?)
         }
     }
 }

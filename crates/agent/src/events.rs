@@ -113,6 +113,29 @@ pub enum TurnEvent {
 /// Optional sink for turn events (TUI, logging, etc.).
 pub type EventSink = tokio::sync::mpsc::UnboundedSender<TurnEvent>;
 
+/// Provider, model, and streaming controls for one agent turn.
+pub struct TurnOpts<'a> {
+    pub provider_name: &'a str,
+    pub model: &'a str,
+    pub api_key: &'a str,
+    pub max_turns: Option<usize>,
+    pub events: Option<EventSink>,
+    pub cancel: Option<CancelFlag>,
+}
+
+impl<'a> TurnOpts<'a> {
+    pub fn new(provider_name: &'a str, model: &'a str, api_key: &'a str) -> Self {
+        Self {
+            provider_name,
+            model,
+            api_key,
+            max_turns: None,
+            events: None,
+            cancel: None,
+        }
+    }
+}
+
 /// Shared cancel flag — set `true` to abort the current agent turn (Esc / [stop]).
 pub type CancelFlag = Arc<AtomicBool>;
 
@@ -160,6 +183,17 @@ pub fn emit(sink: &Option<EventSink>, event: TurnEvent) {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    #[test]
+    fn turn_opts_new_defaults() {
+        let opts = TurnOpts::new("p", "m", "k");
+        assert_eq!(opts.provider_name, "p");
+        assert_eq!(opts.model, "m");
+        assert_eq!(opts.api_key, "k");
+        assert!(opts.max_turns.is_none());
+        assert!(opts.events.is_none());
+        assert!(opts.cancel.is_none());
+    }
 
     #[tokio::test]
     async fn wait_until_cancelled_resolves_when_flag_set() {

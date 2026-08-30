@@ -39,7 +39,7 @@ impl Skill {
     ///
     /// The rest of the file is the prompt / instruction text.
     /// ```
-    pub fn from_file(path: &Path) -> anyhow::Result<Self> {
+    pub fn from_file(path: &Path) -> crate::error::Result<Self> {
         let content = std::fs::read_to_string(path)?;
 
         let mut parts = content.splitn(3, "---");
@@ -51,10 +51,10 @@ impl Skill {
         let frontmatter = parts
             .next()
             .ok_or_else(|| {
-                anyhow::anyhow!(
+                crate::error::SkillError::msg(format!(
                     "Invalid skill file {:?}: missing frontmatter block between '---' markers",
                     path
-                )
+                ))
             })?
             .trim();
 
@@ -65,7 +65,10 @@ impl Skill {
         let parsed = parse_frontmatter(frontmatter)?;
 
         let name = parsed.get("name").cloned().ok_or_else(|| {
-            anyhow::anyhow!("Skill file {:?} missing required field 'name'", path)
+            crate::error::SkillError::msg(format!(
+                "Skill file {:?} missing required field 'name'",
+                path
+            ))
         })?;
 
         let description = parsed.get("description").cloned().unwrap_or_default();
@@ -89,7 +92,9 @@ impl Skill {
 ///
 /// This is deliberately not a full YAML parser — it covers the
 /// subset needed for skill frontmatter.
-fn parse_frontmatter(input: &str) -> anyhow::Result<std::collections::HashMap<String, String>> {
+fn parse_frontmatter(
+    input: &str,
+) -> crate::error::Result<std::collections::HashMap<String, String>> {
     let mut map = std::collections::HashMap::new();
     let mut current_key: Option<String> = None;
     let mut current_list = String::new();
@@ -204,7 +209,15 @@ mod tests {
     #[test]
     fn missing_frontmatter_markers_is_error() {
         let (_dir, path) = write_temp("just a body with no markers\n");
-        assert!(Skill::from_file(&path).is_err());
+        let err = Skill::from_file(&path).unwrap_err();
+        assert!(err.to_string().contains("frontmatter"), "{err}");
+    }
+
+    #[test]
+    fn missing_name_field_is_error() {
+        let (_dir, path) = write_temp("---\ndescription: no name\n---\nbody\n");
+        let err = Skill::from_file(&path).unwrap_err();
+        assert!(err.to_string().contains("name"), "{err}");
     }
 
     #[test]

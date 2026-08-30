@@ -2,6 +2,7 @@
 name = "whycodes-memory"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Cross-session semantic / auto memory for whycodes"
@@ -27,3 +28,6 @@ tokenizers = { version = "0.23", optional = true, default-features = false, feat
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

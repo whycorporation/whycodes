@@ -1,11 +1,11 @@
 {
-  "agent": 29,
+  "agent": 28,
   "auth": 3,
   "cli": 32,
   "command-risk": 0,
   "config": 1,
   "core": 7,
-  "format": 3,
+  "format": 0,
   "function": 0,
   "index": 6,
   "llm": 0,
@@ -22,5 +22,5 @@
   "skill": 0,
   "storage": 1,
   "tools": 9,
-  "tui": 49
+  "tui": 45
 }

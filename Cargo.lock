@@ -4863,7 +4863,6 @@ dependencies = [
 name = "whycodes-core"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "directories",
@@ -4882,7 +4881,6 @@ dependencies = [
 name = "whycodes-format"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "criterion",
  "mermaid-text",
  "regex",
@@ -4943,10 +4941,10 @@ dependencies = [
 name = "whycodes-lsp"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "whycodes-core",
@@ -4956,7 +4954,6 @@ dependencies = [
 name = "whycodes-mcp"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "async-stream",
  "axum",
  "futures",
@@ -4965,6 +4962,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "whycodes-core",
@@ -4994,7 +4992,6 @@ dependencies = [
 name = "whycodes-plugin"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "reqwest",
  "serde",
  "serde_json",
@@ -5101,10 +5098,10 @@ dependencies = [
 name = "whycodes-skill"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
  "tracing",
@@ -5115,14 +5112,12 @@ dependencies = [
 name = "whycodes-storage"
 version = "0.2.0"
 dependencies = [
- "anyhow",
  "chrono",
  "rusqlite",
  "serde",
  "serde_json",
  "tempfile",
- "tokio",
- "tracing",
+ "thiserror 2.0.20",
  "uuid",
  "whycodes-core",
 ]

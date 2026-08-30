@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use whycodes_agent::Agent;
-use whycodes_agent::events::TurnEvent;
+use whycodes_agent::events::{TurnEvent, TurnOpts};
 use whycodes_session::session::Session;
 
 use crate::AppState;
@@ -362,12 +362,14 @@ pub async fn chat(
                 agent
                     .run_turn_with_events(
                         &mut session,
-                        &provider,
-                        &model,
-                        &api_key,
-                        max_turns,
-                        Some(tx.clone()),
-                        None,
+                        TurnOpts {
+                            provider_name: &provider,
+                            model: &model,
+                            api_key: &api_key,
+                            max_turns,
+                            events: Some(tx.clone()),
+                            cancel: None,
+                        },
                     )
                     .await
             })

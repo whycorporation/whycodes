@@ -554,12 +554,14 @@ async fn scripted_cancel_before_llm() {
     let err = agent
         .run_turn_with_events(
             &mut session,
-            "script",
-            "m",
-            "k",
-            Some(4),
-            None,
-            Some(cancel),
+            crate::events::TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: Some(4),
+                events: None,
+                cancel: Some(cancel),
+            },
         )
         .await
         .expect_err("cancelled");
@@ -579,7 +581,17 @@ async fn scripted_thinking_and_text_emits_events() {
     let mut session = scripted_session("please summarize crates/agent");
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let out = agent
-        .run_turn_with_events(&mut session, "script", "m", "k", Some(4), Some(tx), None)
+        .run_turn_with_events(
+            &mut session,
+            crate::events::TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: Some(4),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
         .await
         .expect("turn");
     assert!(out.contains("answer"), "{out}");

@@ -2,6 +2,7 @@
 name = "whycodes-sdk"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Thin client for the whycodes local daemon (protocol v1)"
@@ -19,3 +20,6 @@ tempfile.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 axum = { version = "0.8", features = ["macros"] }
+
+[lints]
+workspace = true

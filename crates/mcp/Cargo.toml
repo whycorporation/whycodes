@@ -2,6 +2,7 @@
 name = "whycodes-mcp"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Model Context Protocol client for whycodes"
@@ -10,7 +11,7 @@ description = "Model Context Protocol client for whycodes"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-anyhow.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 reqwest.workspace = true
 futures.workspace = true
@@ -23,3 +24,6 @@ async-stream = "0.3"
 tokio = { workspace = true, features = ["full", "test-util", "macros", "rt-multi-thread"] }
 http-body-util = "0.1"
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

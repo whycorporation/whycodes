@@ -2,6 +2,7 @@
 name = "whycodes-command-risk"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
@@ -12,3 +13,6 @@ criterion.workspace = true
 [[bench]]
 name = "assess"
 harness = false
+
+[lints]
+workspace = true

@@ -2,6 +2,7 @@
 name = "whycodes-format"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
@@ -17,7 +18,6 @@ extended-syntax = ["dep:two-face"]
 [dependencies]
 whycodes-core = { path = "../core" }
 serde.workspace = true
-anyhow.workspace = true
 rustc-hash.workspace = true
 # TextMate highlighting; `default-fancy` matches two-face when that feature is on.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
@@ -32,3 +32,6 @@ criterion.workspace = true
 [[bench]]
 name = "render"
 harness = false
+
+[lints]
+workspace = true

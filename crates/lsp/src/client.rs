@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow, bail};
+use crate::error::{LspError, Result};
 use serde_json::json;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
@@ -44,10 +44,16 @@ impl LspClient {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .with_context(|| format!("Failed to spawn LSP server: {command}"))?;
+            .map_err(|e| LspError::msg(format!("Failed to spawn LSP server {command}: {e}")))?;
 
-        let stdin = child.stdin.take().context("no stdin on LSP child")?;
-        let stdout = child.stdout.take().context("no stdout on LSP child")?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| LspError::msg("no stdin on LSP child"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| LspError::msg("no stdout on LSP child"))?;
 
         let writer = Arc::new(Mutex::new(stdin));
         let reader = Arc::new(Mutex::new(BufReader::new(stdout)));
@@ -67,13 +73,13 @@ impl LspClient {
         let _init_resp = client
             .request("initialize", init_params.inner)
             .await
-            .context("initialize request failed")?;
+            .map_err(|e| LspError::msg(format!("initialize request failed: {e}")))?;
 
         // Send initialized notification
         client
             .notify("initialized", json!({}))
             .await
-            .context("initialized notification failed")?;
+            .map_err(|e| LspError::msg(format!("initialized notification failed: {e}")))?;
 
         info!("LSP server {command} initialized for {}", workspace_root);
 
@@ -185,7 +191,7 @@ impl LspClient {
         let resp = self
             .request("textDocument/diagnostic", params)
             .await
-            .context("textDocument/diagnostic request failed")?;
+            .map_err(|e| LspError::msg(format!("textDocument/diagnostic request failed: {e}")))?;
 
         if let Some(result) = resp.result {
             let diagnostics: Vec<Diagnostic> = serde_json::from_value(result).unwrap_or_default();
@@ -268,14 +274,16 @@ impl LspClient {
             header.clear();
             let n = reader.read_line(&mut header).await?;
             if n == 0 {
-                bail!("LSP server closed stdout while waiting for response to {method}");
+                return Err(LspError::msg(format!(
+                    "LSP server closed stdout while waiting for response to {method}"
+                )));
             }
             let trimmed = header.trim_end_matches('\n').trim_end_matches('\r');
             if let Some(len_str) = line_strip_prefix("Content-Length: ", trimmed) {
                 let len: usize = len_str
                     .trim()
                     .parse()
-                    .map_err(|_| anyhow!("bad Content-Length: {len_str}"))?;
+                    .map_err(|_| LspError::msg(format!("bad Content-Length: {len_str}")))?;
                 // Read the blank separator line after Content-Length
                 let mut sep = String::new();
                 reader.read_line(&mut sep).await?;

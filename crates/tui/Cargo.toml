@@ -2,6 +2,7 @@
 name = "whycodes-tui"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
@@ -41,3 +42,6 @@ screenshot = []
 # Forwarded from whycodes-cli so a single feature set controls the whole binary.
 mermaid = ["whycodes-format/mermaid"]
 extended-syntax = ["whycodes-format/extended-syntax"]
+
+[lints]
+workspace = true

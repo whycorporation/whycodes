@@ -27,7 +27,7 @@ pub type MessageInsert = (
 const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl Database {
-    pub fn open(path: &str) -> anyhow::Result<Self> {
+    pub fn open(path: &str) -> crate::error::Result<Self> {
         let conn = Connection::open(path)?;
         conn.busy_timeout(BUSY_TIMEOUT)?;
 
@@ -45,7 +45,7 @@ impl Database {
         Ok(Self { conn })
     }
 
-    pub fn open_in_memory() -> anyhow::Result<Self> {
+    pub fn open_in_memory() -> crate::error::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         run_migrations(&conn)?;
@@ -61,7 +61,7 @@ impl Database {
         created_at: &str,
         updated_at: &str,
         usage: &Usage,
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         self.conn.execute(
             "INSERT INTO sessions (
                 id, title, created_at, updated_at, project_path,
@@ -92,12 +92,17 @@ impl Database {
     }
 
     /// Convenience for tests / simple creates (zero usage, now timestamps).
-    pub fn create_session(&self, id: &str, title: &str, project_path: &str) -> anyhow::Result<()> {
+    pub fn create_session(
+        &self,
+        id: &str,
+        title: &str,
+        project_path: &str,
+    ) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.upsert_session(id, title, project_path, &now, &now, &Usage::default())
     }
 
-    pub fn get_session(&self, id: &str) -> anyhow::Result<Option<SessionRow>> {
+    pub fn get_session(&self, id: &str) -> crate::error::Result<Option<SessionRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, created_at, updated_at, project_path,
                     input_tokens, output_tokens,
@@ -108,7 +113,7 @@ impl Database {
         Ok(rows.next().transpose()?)
     }
 
-    pub fn list_sessions(&self) -> anyhow::Result<Vec<SessionRow>> {
+    pub fn list_sessions(&self) -> crate::error::Result<Vec<SessionRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, created_at, updated_at, project_path,
                     input_tokens, output_tokens,
@@ -124,7 +129,7 @@ impl Database {
     }
 
     /// Sum provider-reported usage and message counts across all sessions.
-    pub fn usage_totals(&self) -> anyhow::Result<UsageTotals> {
+    pub fn usage_totals(&self) -> crate::error::Result<UsageTotals> {
         let (session_count, input, output, cache_create, cache_read): (
             i64,
             i64,
@@ -170,7 +175,7 @@ impl Database {
         })
     }
 
-    pub fn update_title(&self, id: &str, title: &str) -> anyhow::Result<()> {
+    pub fn update_title(&self, id: &str, title: &str) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
@@ -179,7 +184,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn delete_session(&self, id: &str) -> anyhow::Result<()> {
+    pub fn delete_session(&self, id: &str) -> crate::error::Result<()> {
         self.conn.execute(
             "DELETE FROM messages WHERE session_id = ?1",
             rusqlite::params![id],
@@ -197,7 +202,7 @@ impl Database {
         content: &str,
         tool_call_id: Option<&str>,
         name: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO messages (id, session_id, role, content, tool_call_id, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -207,7 +212,7 @@ impl Database {
     }
 
     /// Drop all messages for a session (used before full re-persist).
-    pub fn delete_messages(&self, session_id: &str) -> anyhow::Result<()> {
+    pub fn delete_messages(&self, session_id: &str) -> crate::error::Result<()> {
         self.conn.execute(
             "DELETE FROM messages WHERE session_id = ?1",
             rusqlite::params![session_id],
@@ -223,7 +228,7 @@ impl Database {
         &self,
         session_id: &str,
         messages: &[MessageInsert],
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
             "DELETE FROM messages WHERE session_id = ?1",
@@ -251,7 +256,7 @@ impl Database {
     /// Message counts for every session in one query (session picker).
     pub fn message_counts_by_session(
         &self,
-    ) -> anyhow::Result<std::collections::HashMap<String, usize>> {
+    ) -> crate::error::Result<std::collections::HashMap<String, usize>> {
         let mut stmt = self
             .conn
             .prepare("SELECT session_id, COUNT(*) FROM messages GROUP BY session_id")?;
@@ -264,7 +269,7 @@ impl Database {
         Ok(map)
     }
 
-    pub fn get_messages(&self, session_id: &str) -> anyhow::Result<Vec<MessageRow>> {
+    pub fn get_messages(&self, session_id: &str) -> crate::error::Result<Vec<MessageRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, role, content, tool_call_id, name, created_at FROM messages WHERE session_id = ?1 ORDER BY created_at ASC"
         )?;
@@ -276,7 +281,7 @@ impl Database {
         Ok(result)
     }
 
-    pub fn message_count(&self, session_id: &str) -> anyhow::Result<usize> {
+    pub fn message_count(&self, session_id: &str) -> crate::error::Result<usize> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM messages WHERE session_id = ?1",
             rusqlite::params![session_id],
@@ -285,7 +290,7 @@ impl Database {
         Ok(count as usize)
     }
 
-    pub fn get_state(&self, key: &str) -> anyhow::Result<Option<String>> {
+    pub fn get_state(&self, key: &str) -> crate::error::Result<Option<String>> {
         let mut stmt = self
             .conn
             .prepare("SELECT value FROM state WHERE key = ?1")?;
@@ -293,7 +298,7 @@ impl Database {
         Ok(rows.next().transpose()?)
     }
 
-    pub fn set_state(&self, key: &str, value: &str) -> anyhow::Result<()> {
+    pub fn set_state(&self, key: &str, value: &str) -> crate::error::Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO state (key, value) VALUES (?1, ?2)",
             rusqlite::params![key, value],
@@ -301,7 +306,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn delete_state(&self, key: &str) -> anyhow::Result<()> {
+    pub fn delete_state(&self, key: &str) -> crate::error::Result<()> {
         self.conn
             .execute("DELETE FROM state WHERE key = ?1", rusqlite::params![key])?;
         Ok(())
@@ -316,7 +321,7 @@ impl Database {
         text: &str,
         embedding: &[u8],
         source_session: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO memories (
@@ -328,7 +333,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_memory(&self, id: &str) -> anyhow::Result<Option<MemoryRow>> {
+    pub fn get_memory(&self, id: &str) -> crate::error::Result<Option<MemoryRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_key, text, embedding, source_session,
                     created_at, last_recalled_at, recall_count
@@ -338,7 +343,11 @@ impl Database {
         Ok(rows.next().transpose()?)
     }
 
-    pub fn list_memories(&self, project_key: &str, limit: usize) -> anyhow::Result<Vec<MemoryRow>> {
+    pub fn list_memories(
+        &self,
+        project_key: &str,
+        limit: usize,
+    ) -> crate::error::Result<Vec<MemoryRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_key, text, embedding, source_session,
                     created_at, last_recalled_at, recall_count
@@ -354,14 +363,14 @@ impl Database {
         Ok(result)
     }
 
-    pub fn delete_memory(&self, id: &str) -> anyhow::Result<bool> {
+    pub fn delete_memory(&self, id: &str) -> crate::error::Result<bool> {
         let n = self
             .conn
             .execute("DELETE FROM memories WHERE id = ?1", rusqlite::params![id])?;
         Ok(n > 0)
     }
 
-    pub fn clear_memories(&self, project_key: &str) -> anyhow::Result<usize> {
+    pub fn clear_memories(&self, project_key: &str) -> crate::error::Result<usize> {
         let n = self.conn.execute(
             "DELETE FROM memories WHERE project_key = ?1",
             rusqlite::params![project_key],
@@ -369,7 +378,7 @@ impl Database {
         Ok(n)
     }
 
-    pub fn touch_memory_recall(&self, id: &str) -> anyhow::Result<()> {
+    pub fn touch_memory_recall(&self, id: &str) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "UPDATE memories SET last_recalled_at = ?1, recall_count = recall_count + 1
@@ -379,7 +388,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn count_memories(&self, project_key: &str) -> anyhow::Result<usize> {
+    pub fn count_memories(&self, project_key: &str) -> crate::error::Result<usize> {
         let n: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM memories WHERE project_key = ?1",
             rusqlite::params![project_key],
@@ -400,7 +409,7 @@ impl Database {
         end_line: i64,
         text: &str,
         embedding: &[u8],
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO code_chunks (
@@ -424,7 +433,7 @@ impl Database {
         &self,
         project_key: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<CodeChunkRow>> {
+    ) -> crate::error::Result<Vec<CodeChunkRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_key, path, start_line, end_line, text, embedding, updated_at
              FROM code_chunks WHERE project_key = ?1
@@ -439,7 +448,7 @@ impl Database {
         Ok(result)
     }
 
-    pub fn clear_code_chunks(&self, project_key: &str) -> anyhow::Result<usize> {
+    pub fn clear_code_chunks(&self, project_key: &str) -> crate::error::Result<usize> {
         let n = self.conn.execute(
             "DELETE FROM code_chunks WHERE project_key = ?1",
             rusqlite::params![project_key],
@@ -457,7 +466,7 @@ impl Database {
         turn_index: i64,
         text: &str,
         embedding: &[u8],
-    ) -> anyhow::Result<()> {
+    ) -> crate::error::Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn.execute(
             "INSERT INTO session_chunks (
@@ -480,7 +489,7 @@ impl Database {
         &self,
         project_key: &str,
         limit: usize,
-    ) -> anyhow::Result<Vec<SessionChunkRow>> {
+    ) -> crate::error::Result<Vec<SessionChunkRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT id, project_key, session_id, turn_index, text, embedding, created_at
              FROM session_chunks WHERE project_key = ?1

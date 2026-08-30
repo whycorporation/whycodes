@@ -2,6 +2,7 @@
 name = "whycodes-config"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Configuration load, merge, and validation for WhyCodes"
@@ -17,3 +18,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -20,8 +20,8 @@ Proje, katmanlı crate grafiği, `thiserror` başlangıcı, `spawn_blocking` yar
 
 1. **God-file / god-struct.** `run.rs` ~9k satır, `TuiApp` 112 `pub` alan, `cli/src/main.rs` ~4.6k satır.
 2. **Stringly-typed hata.** `whycodes_core::Error` neredeyse tamamen `String`. `Clone` Serde kolu artık mesajı korur (`Serde(String)`); domain varyantları hâlâ yok.
-3. **Kütüphane crate’lerinde `anyhow`.** `lsp`, `mcp`, `memory`, `storage`, `plugin` uygulama sınırında `anyhow::Result` döndürüyor.
-4. **`async_trait` + `tokio/full` leaf crate’lerde.** Edition 2024’te native `async fn` in traits var; `core` bile `tokio` + `anyhow` çekiyor.
+3. **Kütüphane crate’lerinde `anyhow`.** `memory`/`session`/`config` hâlâ `anyhow::Result`; `lsp`/`mcp`/`storage`/`skill` crate-yerel `thiserror`.
+4. **`async_trait` + `tokio/full` leaf crate’lerde.** Edition 2024’te native `async fn` in traits var; `core` hâlâ `tokio` çekiyor (`anyhow` düştü).
 5. ~~**22 adet `Number::from_f64(...).unwrap()`** LLM provider’larında~~ **ödendi (2026-08-30):** `openai_compat::{json_number, apply_sampling}` NaN/Inf’i atlar; panic bütçesi llm 22→0.
 6. **Yutulan hatalar** TUI 49 / CLI 32 / agent 29 — ratchet var, sıfırlama yok.
 
@@ -94,15 +94,14 @@ Burada:
 | Crate | `anyhow` | `thiserror` | Not |
 |-------|----------|-------------|-----|
 | `cli` | evet | hayır | Uygun (composition root) |
-| `lsp`, `mcp` | evet | hayır | `Result<T>` = `anyhow::Result` — downcast yok |
+| `server` | evet | hayır | Handler’lar `anyhow` (uygulama sınırı) |
 | `memory` | evet | hayır | ONNX indirme yolu dahil |
-| `storage`, `plugin`, `skill`, `format`, `server` | evet | hayır | |
-| `core`, `config`, `llm`, `agent`, `tools`, `session`, `tui` | **ikisi birden** | | Bağımlılık şişmesi; hangisinin kamu API olduğu belirsiz |
+| `session`, `config`, `llm`, `agent`, `tools`, `tui` | evet | evet | `session`/`config` kamu yüzey hâlâ `anyhow` |
+| `lsp`, `mcp`, `storage`, `skill` | hayır | evet | Crate-yerel `Result` (2026-08-30) |
+| `core`, `plugin`, `format` | hayır | `core` evet | Kullanılmayan `anyhow` düştü |
 | `auth`, `sdk`, `sandbox` | hayır | evet | Hedef model |
 
-`core` ve `config` `anyhow` çekiyor ama kamu yüzey `whycodes_core::Result`. Kullanılmayan (veya sadece `?` köprüsü) bağımlılık.
-
-**Yön:** `anyhow` yalnızca `whycodes-cli` (+ belki `server` handler’ları) için. Diğer crate’ler `thiserror`. `lsp`/`mcp` zaten `Context`/`bail!` kullanıyor — aynı metinler yerel enum’a taşınabilir.
+**Yön:** `anyhow` yalnızca `whycodes-cli` (+ belki `server` handler’ları) için. `memory`/`session`/`config` sonraki PR.
 
 ### 3. `serde_json::Number::from_f64(...).unwrap()` × 22
 
@@ -195,21 +194,7 @@ Serde DTO’ları (`Config`, `ProviderConfig`) için `pub` normal. **Runtime sta
 
 Agent, CLI, TUI, tools: onlarca allow. Clippy’nin önerisi **context struct / builder**.
 
-```1128:1138:crates/agent/src/agent.rs
-#[allow(clippy::too_many_arguments)]
-pub async fn run_turn_with_events(
-    &self,
-    session: &mut Session,
-    provider_name: &str,
-    model: &str,
-    api_key: &str,
-    max_turns: Option<usize>,
-    events: Option<EventSink>,
-    cancel: Option<CancelFlag>,
-) -> whycodes_core::Result<String>
-```
-
-`TurnOpts { provider, model, api_key, max_turns, events, cancel }` hem allow’u kaldırır hem çağrı yerlerini okunur kılar. Aynı şey `start_compact_task`, TUI render imzaları, `memory_retain`.
+`run_turn_with_events` artık `TurnOpts` alıyor (2026-08-30). TUI render / `memory_retain` / `force_stop_turn` allow’ları duruyor.
 
 ### 9. Edition 2024 hâlâ `async_trait`
 
@@ -279,23 +264,17 @@ Bir kısmı `Arc` paylaşımı (`Arc::clone`) — doğru. Bir kısmı `String` y
 
 Workspace’te `#[must_use]` yok. `Result` zaten must-use; `ClaimResult`, `PreHookDecision`, `Permission` kararları değil. Builder-benzeri `TuiApp` mutator’ları sessizce yok sayılabilir.
 
-### 16. `workspace.lints` / `rust-version` yok
+### 16. `workspace.lints` / `rust-version`
 
-`Cargo.toml` edition 2024, **`rust-version` yok**. Clippy `clippy.toml` yok. Önerilen:
+`rust-version = "1.91"` (kod `floor_char_boundary` / `payload_as_str` kullanıyor) ve `[workspace.lints]` her crate’te. `unwrap_used` henüz yok — panic bütçesi ratchet.
 
 ```toml
 [workspace.package]
-rust-version = "1.85" # edition 2024 tabanı neyse
+rust-version = "1.91"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "warn"
-
-[workspace.lints.clippy]
-unwrap_used = "warn"          # veya nursery, kademeli
-expect_used = "allow"         # gömülü asset
 ```
-
-`unwrap_used` şu anki 25 production site’ı görünür kılar.
 
 ### 17. Testlerde `unsafe { env::set_var }`
 
@@ -327,15 +306,15 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 | Crate | Asıl sapma |
 |-------|------------|
-| **core** | String `Error` (Serde clone mesajı korunuyor), `tokio`/`anyhow`, `ToolContext` String path, `index` bağımlılığı |
+| **core** | String `Error` (Serde clone mesajı korunuyor), `tokio`, `ToolContext` String path, `index` bağımlılığı |
 | **config** | 2580 satır tek `lib.rs`, her alan `pub`, `anyhow`+`thiserror` |
 | **llm** | `async_trait`, string `Error::Llm`, provider tekrarı (sampling unwrap’ları ödendi) |
-| **agent** | 4.4k satır, 6× too_many_arguments, 184 clone, sync Mutex + sync fs |
+| **agent** | 4.4k satır, kalan too_many_arguments, 184 clone, sync Mutex + sync fs |
 | **tui** | 9k `run.rs`, 112 alanlı `TuiApp`, yutulan hatalar, her modül `pub` |
 | **cli** | 4.6k `main.rs`, `anyhow` OK, blocking `Command`, yutulan hatalar |
-| **lsp/mcp** | Kamu `anyhow::Result`, `dead_code` Child tutma (yorumlu — `ManuallyDrop`/`AbortOnDrop` daha net) |
+| **lsp/mcp** | Crate-yerel `thiserror`; `dead_code` Child tutma (yorumlu — `ManuallyDrop`/`AbortOnDrop` daha net) |
 | **memory** | `anyhow`, senkron indirme, 28 alanlı settings |
-| **storage** | `anyhow`, `tokio` (SQLite senkron `rusqlite` — async sınır belirsiz) |
+| **storage** | Crate-yerel `StorageError` (SQLite senkron `rusqlite`) |
 | **session** | 3.3k satır, `anyhow`+`thiserror` |
 | **format** | Gömülü theme `expect` (düşük risk) |
 | **auth/sdk/sandbox/command-risk** | En yakın idiomatic küme |
@@ -347,15 +326,15 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 1. ~~**`json_number(f64)`**~~ **ödendi** — llm panic bütçesi 22→0.
 2. ~~**`Error::clone` Serde kolu**~~ **ödendi** — mesaj korunuyor; string varyantlarını daraltmak ayrı iş.
 3. ~~**`SocketAddr::from` + CLI `match status`**~~ **ödendi** — cli 2→0, tui 1→0.
-4. **`anyhow`’i leaf crate’lerden çıkar** — `lsp`/`mcp`/`storage`/`memory` yerel `thiserror`.
-5. **`TurnOpts` / render context struct** — `too_many_arguments` allow’ları sil.
+4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **kısmen ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill` crate-yerel `thiserror`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü. `memory`/`session`/`config` hâlâ `anyhow`.
+5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
 6. **`config/src/` modüllere böl**; `cli/src/cmd/`; `tui/src/run/` (loop, slash, persist, tests).
 7. **`TuiApp` alanlarını `pub(crate)`** + invariant metodları; diğer crate’ler zaten `run()` kullanıyor.
 8. **`async_trait` → native async** (önce `Tool`, sonra `LlmProvider`).
-9. **`tokio` feature kesimi**; `core`’dan `tokio`/`anyhow` düşür.
-10. **`workspace.lints` + `rust-version`**; `unwrap_used = warn`.
+9. **`tokio` feature kesimi**; `core`’dan `tokio` düşür (`anyhow` düştü).
+10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–3 ödendi (2026-08-30). 4–6 orta; 7–10 refaktör. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–3, 4 (kısmen), 5 (`TurnOpts`), 10 ödendi (2026-08-30). God-file / `TuiApp` / `async_trait` ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
@@ -364,7 +343,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 | Metrik | Değer |
 |--------|------:|
 | Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-08-30) |
-| Yutulan hata bütçesi | tui 49, cli 32, agent 29, tools 9, memory 8, core 7 |
+| Yutulan hata bütçesi | tui 45, cli 32, agent 28, tools 9, memory 8, core 7, format 0 |
 | `#[async_trait]` | 76 |
 | `HashMap` / `FxHashMap` hit | ~153 / ~13 |
 | `Cow<` | 1 |

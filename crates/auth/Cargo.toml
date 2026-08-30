@@ -2,6 +2,7 @@
 name = "whycodes-auth"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "OAuth login flows and token storage for WhyCodes subscription auth"
@@ -22,3 +23,6 @@ url = "2"
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[lints]
+workspace = true

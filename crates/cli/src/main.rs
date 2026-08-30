@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use whycodes_agent::agent::Agent;
-use whycodes_agent::events::{TurnEvent, new_cancel_flag};
+use whycodes_agent::events::{TurnEvent, TurnOpts, new_cancel_flag};
 use whycodes_agent::permission::AutoApprovePrompter;
 use whycodes_config::Config;
 use whycodes_core::types::{AgentInfo, AgentMode, ModelConfig, PermissionSet, ProviderConfig};
@@ -2739,12 +2739,14 @@ pub(crate) async fn run_one_parallel_turn(
     let turn_result = agent
         .run_turn_with_events(
             &mut session,
-            provider,
-            model,
-            api_key,
-            max_turns,
-            Some(event_tx),
-            Some(cancel),
+            TurnOpts {
+                provider_name: provider,
+                model,
+                api_key,
+                max_turns,
+                events: Some(event_tx),
+                cancel: Some(cancel),
+            },
         )
         .await;
     let _ = drain.await;
@@ -2878,12 +2880,14 @@ pub(crate) async fn run_headless_turn(
     let turn_result = agent
         .run_turn_with_events(
             session,
-            provider,
-            model,
-            api_key,
-            max_turns,
-            Some(event_tx),
-            Some(cancel),
+            TurnOpts {
+                provider_name: provider,
+                model,
+                api_key,
+                max_turns,
+                events: Some(event_tx),
+                cancel: Some(cancel),
+            },
         )
         .await;
 

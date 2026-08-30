@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
-use whycodes_agent::events::{TurnEvent, new_cancel_flag};
+use whycodes_agent::events::{TurnEvent, TurnOpts, new_cancel_flag};
 use whycodes_protocol::sdk::{
     CompactRequest, CreateSessionRequest, ErrorCode, Handshake, HistoryMessage, ModelInfo,
     ModelList, PROTOCOL_MAJOR, PermissionResponse, QuestionResponse, RenameRequest, RewindRequest,
@@ -209,12 +209,14 @@ pub async fn run(
                 agent
                     .run_turn_with_events(
                         &mut session,
-                        &provider,
-                        &model,
-                        &api_key,
-                        max_turns,
-                        Some(tx.clone()),
-                        Some(cancel_for_task),
+                        TurnOpts {
+                            provider_name: &provider,
+                            model: &model,
+                            api_key: &api_key,
+                            max_turns,
+                            events: Some(tx.clone()),
+                            cancel: Some(cancel_for_task),
+                        },
                     )
                     .await
             })

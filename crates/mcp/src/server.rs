@@ -25,7 +25,7 @@ pub async fn run_stdio_server(
     permissions: PermissionSet,
     profile: ToolProfile,
     working_dir: String,
-) -> anyhow::Result<()> {
+) -> crate::error::Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     let mut reader = stdin.lock();
@@ -66,7 +66,7 @@ pub(crate) async fn handle_rpc(
     permissions: &PermissionSet,
     profile: ToolProfile,
     working_dir: &str,
-) -> anyhow::Result<Option<Value>> {
+) -> crate::error::Result<Option<Value>> {
     // Notification (no id)
     if msg.get("id").is_none() {
         return Ok(None);

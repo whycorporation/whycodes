@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::process::Stdio;
 
-use anyhow::{Context, Result, bail};
+use crate::error::{McpError, Result};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tracing::{debug, info, warn};
@@ -63,11 +63,20 @@ impl McpClient {
         if let Some(cwd) = cwd {
             cmd.current_dir(cwd);
         }
-        let mut child = cmd
-            .spawn()
-            .with_context(|| format!("failed to spawn MCP server: {:?}", command.as_ref()))?;
-        let writer = child.stdin.take().context("child has no stdin")?;
-        let stdout = child.stdout.take().context("child has no stdout")?;
+        let mut child = cmd.spawn().map_err(|e| {
+            McpError::msg(format!(
+                "failed to spawn MCP server {:?}: {e}",
+                command.as_ref()
+            ))
+        })?;
+        let writer = child
+            .stdin
+            .take()
+            .ok_or_else(|| McpError::msg("child has no stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| McpError::msg("child has no stdout"))?;
         let reader = AsyncBufReader::new(stdout);
         let mut client = Self {
             transport: Transport::Stdio {
@@ -113,26 +122,28 @@ impl McpClient {
         match Self::connect_http(&url, headers).await {
             Ok(c) => Ok(c),
             Err(http_err) => {
-                // Flatten the anyhow chain — top-level message is often just
+                // Flatten the error chain — top-level message is often just
                 // "initialize request failed" without the HTTP status.
-                let msg = format!("{http_err:#}");
+                let msg = http_err.to_string();
                 let looks_like_wrong_transport = msg.contains("405")
                     || msg.contains("404")
                     || msg.contains("400")
                     || msg.contains("Method Not Allowed")
                     || msg.contains("Not Found");
                 if !looks_like_wrong_transport {
-                    return Err(http_err).context("Streamable HTTP connect failed");
+                    return Err(McpError::msg(format!(
+                        "Streamable HTTP connect failed: {http_err}"
+                    )));
                 }
                 warn!(
                     url = %url,
                     error = %msg,
                     "Streamable HTTP failed; falling back to legacy SSE"
                 );
-                Self::connect_sse(&url, headers).await.with_context(|| {
-                    format!(
-                        "both Streamable HTTP and legacy SSE failed for {url}; HTTP error: {msg}"
-                    )
+                Self::connect_sse(&url, headers).await.map_err(|sse_err| {
+                    McpError::msg(format!(
+                        "both Streamable HTTP and legacy SSE failed for {url}; HTTP error: {msg}; SSE error: {sse_err}"
+                    ))
                 })
             }
         }
@@ -150,9 +161,9 @@ impl McpClient {
         let result = self
             .send_request("initialize", Some(params))
             .await
-            .context("initialize request failed")?;
-        let init_result: InitializeResult =
-            serde_json::from_value(result).context("failed to parse initialize result")?;
+            .map_err(|e| McpError::msg(format!("initialize request failed: {e}")))?;
+        let init_result: InitializeResult = serde_json::from_value(result)
+            .map_err(|e| McpError::msg(format!("failed to parse initialize result: {e}")))?;
         debug!(
             server_name = %init_result.server_info.name,
             server_version = %init_result.server_info.version,
@@ -161,7 +172,7 @@ impl McpClient {
         );
         self.send_notification("notifications/initialized", None)
             .await
-            .context("failed to send initialized notification")?;
+            .map_err(|e| McpError::msg(format!("failed to send initialized notification: {e}")))?;
         Ok(init_result)
     }
 
@@ -222,9 +233,9 @@ impl McpClient {
         let result = self
             .send_request("tools/list", None)
             .await
-            .context("tools/list failed")?;
-        let list: ListToolsResult =
-            serde_json::from_value(result).context("failed to parse tools/list result")?;
+            .map_err(|e| McpError::msg(format!("tools/list failed: {e}")))?;
+        let list: ListToolsResult = serde_json::from_value(result)
+            .map_err(|e| McpError::msg(format!("failed to parse tools/list result: {e}")))?;
         info!(count = list.tools.len(), "MCP tools listed");
         Ok(list.tools)
     }
@@ -237,9 +248,9 @@ impl McpClient {
         let result = self
             .send_request("tools/call", Some(params))
             .await
-            .context("tools/call failed")?;
-        let call_result: CallToolResult =
-            serde_json::from_value(result).context("failed to parse tools/call result")?;
+            .map_err(|e| McpError::msg(format!("tools/call failed: {e}")))?;
+        let call_result: CallToolResult = serde_json::from_value(result)
+            .map_err(|e| McpError::msg(format!("failed to parse tools/call result: {e}")))?;
         if call_result.is_error.unwrap_or(false) {
             warn!(tool = %name, "MCP tool call returned an error");
         }
@@ -256,9 +267,9 @@ impl McpClient {
         let result = self
             .send_request("resources/list", None)
             .await
-            .context("resources/list failed")?;
-        let list: crate::types::ListResourcesResult =
-            serde_json::from_value(result).context("failed to parse resources/list result")?;
+            .map_err(|e| McpError::msg(format!("resources/list failed: {e}")))?;
+        let list: crate::types::ListResourcesResult = serde_json::from_value(result)
+            .map_err(|e| McpError::msg(format!("failed to parse resources/list result: {e}")))?;
         info!(count = list.resources.len(), "MCP resources listed");
         Ok(list.resources)
     }
@@ -267,9 +278,9 @@ impl McpClient {
         let result = self
             .send_request("prompts/list", None)
             .await
-            .context("prompts/list failed")?;
-        let list: crate::types::ListPromptsResult =
-            serde_json::from_value(result).context("failed to parse prompts/list result")?;
+            .map_err(|e| McpError::msg(format!("prompts/list failed: {e}")))?;
+        let list: crate::types::ListPromptsResult = serde_json::from_value(result)
+            .map_err(|e| McpError::msg(format!("failed to parse prompts/list result: {e}")))?;
         info!(count = list.prompts.len(), "MCP prompts listed");
         Ok(list.prompts)
     }
@@ -291,12 +302,12 @@ async fn read_stdio_response(
     reader
         .read_line(&mut line)
         .await
-        .context("failed to read response from MCP server")?;
+        .map_err(|e| McpError::msg(format!("failed to read response from MCP server: {e}")))?;
     if line.trim().is_empty() {
-        bail!("MCP server closed stdout (empty response)");
+        return Err(McpError::msg("MCP server closed stdout (empty response)"));
     }
     let response: JsonRpcResponse = serde_json::from_str(&line)
-        .with_context(|| format!("failed to parse MCP response: {}", line))?;
+        .map_err(|e| McpError::msg(format!("failed to parse MCP response: {line}: {e}")))?;
     if response.id != expected_id {
         warn!(
             expected = expected_id,
@@ -305,9 +316,14 @@ async fn read_stdio_response(
         );
     }
     if let Some(error) = response.error {
-        bail!("MCP error [{}]: {}", error.code, error.message);
+        return Err(McpError::msg(format!(
+            "MCP error [{}]: {}",
+            error.code, error.message
+        )));
     }
-    response.result.context("MCP response has no result")
+    response
+        .result
+        .ok_or_else(|| McpError::msg("MCP response has no result"))
 }
 
 impl Drop for McpClient {

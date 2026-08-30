@@ -14,7 +14,9 @@ use std::collections::VecDeque;
 use std::time::Instant;
 use whycodes_session::session::Session;
 
-use super::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
+use super::events::{
+    CancelFlag, EventSink, TurnEvent, TurnOpts, emit, is_cancelled, wait_until_cancelled,
+};
 use super::permission::{PermissionPrompter, default_prompter};
 use super::question::{QuestionPrompter, default_question_prompter, run_question_tool};
 use super::subagent::{SubagentRunner, SubagentTask};
@@ -1115,28 +1117,32 @@ impl Agent {
     ) -> whycodes_core::Result<String> {
         self.run_turn_with_events(
             session,
-            provider_name,
-            model,
-            api_key,
-            max_turns,
-            None,
-            None,
+            TurnOpts {
+                provider_name,
+                model,
+                api_key,
+                max_turns,
+                events: None,
+                cancel: None,
+            },
         )
         .await
     }
 
     /// Run a turn, optionally streaming `TurnEvent`s and honouring a cancel flag (Esc).
-    #[allow(clippy::too_many_arguments)]
     pub async fn run_turn_with_events(
         &self,
         session: &mut Session,
-        provider_name: &str,
-        model: &str,
-        api_key: &str,
-        max_turns: Option<usize>,
-        events: Option<EventSink>,
-        cancel: Option<CancelFlag>,
+        opts: TurnOpts<'_>,
     ) -> whycodes_core::Result<String> {
+        let TurnOpts {
+            provider_name,
+            model,
+            api_key,
+            max_turns,
+            events,
+            cancel,
+        } = opts;
         // Trivial chit-chat: omit tools entirely (huge prefill savings).
         // Only on short single-user sessions — once tools were used, keep them.
         let last_user = session
