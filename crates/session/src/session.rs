@@ -163,6 +163,7 @@ impl SessionTokenCache {
         *self = Self::from_parts(system_prompt, messages);
     }
 
+    #[cfg(test)]
     fn invalidate(&mut self) {
         self.valid = false;
         self.per_msg.clear();
@@ -933,9 +934,17 @@ impl Session {
     }
 
     /// Like [`token_count`] but refreshes the running cache when stale.
-    fn token_count_cached(&mut self) -> usize {
+    ///
+    /// Prefer this on mutating paths (agent loop) so a prune/shake that
+    /// rebuilt the cache stays O(1) for the rest of the step.
+    pub fn token_count_cached(&mut self) -> usize {
         self.token_cache.ensure(&self.system_prompt, &self.messages);
         self.token_cache.total
+    }
+
+    fn rebuild_token_cache(&mut self) {
+        self.token_cache
+            .rebuild(&self.system_prompt, &self.messages);
     }
 
     /// Cap oversized tool result bodies already in the transcript.
@@ -983,7 +992,7 @@ impl Session {
             }
         }
         if n > 0 {
-            self.token_cache.invalidate();
+            self.rebuild_token_cache();
             self.touch();
         }
         n
@@ -1045,7 +1054,7 @@ impl Session {
             }
         }
         if n > 0 {
-            self.token_cache.invalidate();
+            self.rebuild_token_cache();
             self.touch();
         }
         n
@@ -1096,7 +1105,7 @@ impl Session {
             }
         }
         if n > 0 {
-            self.token_cache.invalidate();
+            self.rebuild_token_cache();
             self.touch();
         }
         n
@@ -1119,7 +1128,7 @@ impl Session {
             && is_compact_summary_text(t)
         {
             first.content = MessageContent::Text(body);
-            self.token_cache.invalidate();
+            self.rebuild_token_cache();
             self.touch();
             return;
         }
@@ -1134,7 +1143,7 @@ impl Session {
             }
             .stamp(),
         );
-        self.token_cache.invalidate();
+        self.rebuild_token_cache();
         self.touch();
     }
 
@@ -2322,6 +2331,30 @@ mod tests {
             is_error: false,
         }]);
         assert_eq!(small.prune_old_tool_results(), 0);
+    }
+
+    #[test]
+    fn prune_rebuilds_token_cache_instead_of_leaving_it_stale() {
+        let mut session = Session::new(test_project_path(), test_system_prompt());
+        session.add_user_message("start");
+        for i in 0..6 {
+            session.add_tool_results(vec![whycodes_core::types::ToolResult {
+                tool_call_id: format!("t{i}"),
+                content: "z".repeat(10_000),
+                is_error: false,
+            }]);
+        }
+        assert!(session.prune_old_tool_results() > 0);
+        assert!(
+            session.token_cache.valid,
+            "prune must rebuild so later token_count stays O(1)"
+        );
+        assert_eq!(session.token_cache.per_msg.len(), session.messages.len());
+        let warm = session.token_count();
+        session.token_cache.invalidate();
+        assert_eq!(session.token_count(), warm);
+        assert_eq!(session.token_count_cached(), warm);
+        assert!(session.token_cache.valid);
     }
 
     #[test]

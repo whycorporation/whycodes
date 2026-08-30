@@ -1433,6 +1433,43 @@ fn load_messages_uses_transcript_estimate_not_session_usage() {
 }
 
 #[test]
+fn turn_end_meter_uses_transcript_not_last_step_usage() {
+    use whycodes_core::types::Usage;
+    use whycodes_session::session::Session;
+
+    let mut session = Session::new(std::path::PathBuf::from("/proj"), "sys".into());
+    session.add_user_message("hello world, this is a short prompt");
+    session.add_assistant_message(vec![whycodes_core::types::ContentBlock::Text {
+        text: "ok".into(),
+    }]);
+    session.add_tool_results(vec![whycodes_core::types::ToolResult {
+        tool_call_id: "t1".into(),
+        content: "tool dump that lands after the last billed prefill".into(),
+        is_error: false,
+    }]);
+
+    let mut app = TuiApp::new(test_config());
+    // Live-turn snapshot from the last LLM step (prompt only, before tools).
+    app.set_context_from_usage(&Usage {
+        input_tokens: 12_000,
+        output_tokens: 80,
+        cache_creation_input_tokens: None,
+        cache_read_input_tokens: None,
+    });
+    assert_eq!(app.context_used, 12_000);
+
+    // Turn end: meter must follow the stored transcript, not that snapshot.
+    app.sync_context_estimate(&session);
+    let estimate = session.token_count() as u64;
+    assert_eq!(app.context_used, estimate);
+    assert!(
+        app.context_used < 12_000,
+        "short transcript must not keep last-step billed fill, got {}",
+        app.context_used
+    );
+}
+
+#[test]
 fn context_tokens_from_usage_is_prompt_side_only() {
     use crate::app::context_tokens_from_usage;
     use whycodes_core::types::Usage;

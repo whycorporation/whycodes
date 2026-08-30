@@ -1258,7 +1258,7 @@ impl Agent {
             let _ = session.truncate_large_tool_results();
             let _ = session.prune_old_tool_results();
             if self.compaction_threshold > 0
-                && session.token_count() > self.compaction_threshold.saturating_mul(3) / 4
+                && session.token_count_cached() > self.compaction_threshold.saturating_mul(3) / 4
             {
                 let shaken = session.shake_old_tool_results();
                 if shaken > 0 {
@@ -1266,7 +1266,7 @@ impl Agent {
                 }
             }
             if self.compaction_threshold > 0 && !compact_paused {
-                let before = session.token_count();
+                let before = session.token_count_cached();
                 if before > self.compaction_threshold {
                     let outcome = self
                         .compact_session(session, provider_name, model, api_key, None)

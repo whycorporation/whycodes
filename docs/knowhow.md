@@ -144,6 +144,33 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Session token usage: Codex double-count, cold cache, stale meter
+
+**Symptom:** ChatGPT/Codex `/cost` and the context bar were high after cache hits.
+Long sessions re-walked the whole transcript before every LLM step. After a
+tool-using turn the meter stayed on the last billed *prompt*, not the next
+prefill.
+
+**Root cause:**
+1. Codex mapped OpenAI-style `input_tokens_details.cached_tokens` (a **subset**
+   of `input_tokens`) into additive `CacheUsage`. `Usage::total()` and
+   `context_tokens_from_usage` then counted cache twice. Chat-completions
+   already left those fields unset.
+2. `truncate` / `prune` / `shake` called `token_cache.invalidate()`.
+   `token_count()` is `&self` and does not rebuild; `push_msg` is a no-op
+   while invalid. The agent then called `token_count()` twice per step.
+3. Turn-end only `sync_context_estimate` when `turn_usage` was missing, so a
+   successful usage event froze the meter on that step's prompt.
+
+**Fix:** Codex emits `Usage` only (same as OpenAI-compat). Prune paths
+`rebuild` the cache; the agent uses `token_count_cached()`. Turn Ok/cancel
+always syncs the meter from the live transcript. Last-step usage still
+updates the meter *during* the stream.
+
+**Prevention:** OpenAI-family `cached_tokens` must never become Anthropic
+`cache_read_input_tokens`. Mutating compact/prune must leave `token_cache`
+valid. Do not skip transcript sync at turn end because billed usage exists.
+
 ### 2026-08-30 — Question popup Esc / `[✗]` left the agent hung (issue #41)
 
 **Symptom:** `question` tool panel stayed open on Esc, or closed on mouse/`[✗]`

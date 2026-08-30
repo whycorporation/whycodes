@@ -209,22 +209,18 @@ fn events_for_payload(data: &str) -> Vec<StreamEvent> {
         }
         Some("response.completed") => {
             let usage = &event["response"]["usage"];
-            let mut events = Vec::new();
-            let cached = usage["input_tokens_details"]["cached_tokens"]
-                .as_u64()
-                .unwrap_or(0);
-            if cached > 0 {
-                events.push(StreamEvent::CacheUsage {
-                    creation_input_tokens: 0,
-                    read_input_tokens: cached,
-                });
-            }
-            events.push(StreamEvent::Usage {
-                input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-                output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-            });
-            events.push(StreamEvent::MessageStop);
-            events
+            crate::usage_dump::dump_raw_usage("codex", usage);
+            // OpenAI-style `input_tokens_details.cached_tokens` is a **subset**
+            // of `input_tokens`, not Anthropic additive cache. Emitting
+            // CacheUsage here double-counted in `Usage::total()` and the
+            // context meter. Leave cache fields unset (same as chat.completions).
+            vec![
+                StreamEvent::Usage {
+                    input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
+                    output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
+                },
+                StreamEvent::MessageStop,
+            ]
         }
         Some("response.failed") | Some("error") => {
             let msg = event["response"]["error"]["message"]
@@ -271,11 +267,6 @@ pub async fn complete(
             } => {
                 usage.input_tokens = input_tokens;
                 usage.output_tokens = output_tokens;
-            }
-            StreamEvent::CacheUsage {
-                read_input_tokens, ..
-            } => {
-                usage.cache_read_input_tokens = Some(read_input_tokens);
             }
             StreamEvent::MessageStop => stop_reason = Some("stop".to_string()),
             _ => {}
@@ -479,24 +470,24 @@ mod tests {
     }
 
     #[test]
-    fn completed_maps_usage_cache_and_stop() {
+    fn completed_maps_usage_without_openai_subset_cache() {
         let payload = r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":4,"input_tokens_details":{"cached_tokens":6}}}}"#;
         let events = events_for_payload(payload);
+        assert_eq!(events.len(), 2);
         assert!(matches!(
             events[0],
-            StreamEvent::CacheUsage {
-                read_input_tokens: 6,
-                ..
-            }
-        ));
-        assert!(matches!(
-            events[1],
             StreamEvent::Usage {
                 input_tokens: 10,
                 output_tokens: 4
             }
         ));
-        assert!(matches!(events[2], StreamEvent::MessageStop));
+        assert!(matches!(events[1], StreamEvent::MessageStop));
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::CacheUsage { .. })),
+            "cached_tokens is inside input_tokens — must not become additive CacheUsage"
+        );
     }
 
     #[test]

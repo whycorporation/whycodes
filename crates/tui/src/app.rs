@@ -2266,16 +2266,17 @@ impl TuiApp {
 
     /// Update context fill from a provider usage event (per LLM step).
     ///
-    /// Prefer this over [`Self::sync_context_estimate`] when the provider
-    /// reported prompt-side tokens for the request that was just sent.
+    /// Live-turn snapshot of the request that was just sent. After the turn
+    /// finishes (tools + assistant stored), prefer [`Self::sync_context_estimate`]
+    /// so the meter tracks the next prefill, not the last billed prompt.
     pub fn set_context_from_usage(&mut self, usage: &whycodes_core::types::Usage) {
         self.context_used = context_tokens_from_usage(usage);
     }
 
     /// Estimate context fill from the live transcript (chars/4 heuristic).
     ///
-    /// Use when provider usage is missing or stale (resume, compact, undo,
-    /// silent stream). Never use cumulative `session.usage` here — that is
+    /// Use on resume, compact, undo, silent stream, and **turn end** (after
+    /// tools land). Never use cumulative `session.usage` here — that is
     /// billed tokens across all turns, not current window fill.
     pub fn sync_context_estimate(&mut self, session: &whycodes_session::session::Session) {
         self.context_used = session.token_count() as u64;

@@ -2687,9 +2687,9 @@ fn apply_turn_outcome(
             }
             app.finish_open_thinking();
             app.current_agent_state = AgentState::Idle;
-            if app.turn_usage.is_none() {
-                app.sync_context_estimate(&rt.session);
-            }
+            // Last-step prompt usage is billed fill for that request; after
+            // tools/assistant land, the meter should track the live transcript.
+            app.sync_context_estimate(&rt.session);
             app.refresh_git_branch();
             app.status_message = format_turn_done_status(
                 app,
@@ -2755,9 +2755,7 @@ fn apply_turn_outcome(
             }
             app.session_title = rt.session.title.clone();
             app.finish_open_thinking();
-            if app.turn_usage.is_none() {
-                app.sync_context_estimate(&rt.session);
-            }
+            app.sync_context_estimate(&rt.session);
             if cancelled {
                 app.current_agent_state = AgentState::Idle;
                 app.status_message = format_turn_done_status(
