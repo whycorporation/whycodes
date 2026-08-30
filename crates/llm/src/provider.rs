@@ -58,7 +58,15 @@ impl ProviderRegistry {
     /// This enables dynamically-added providers from config.toml.
     pub fn register_from_config(&mut self, config: &whycodes_config::Config) {
         for (name, pc) in &config.providers {
-            // Skip built-in providers that already exist
+            if name == "ollama" {
+                // Built-in native chat API, but honor `base_url` / `api_base`.
+                self.providers.insert(
+                    name.clone(),
+                    Box::new(super::providers::ollama::OllamaProvider::from_config(pc)),
+                );
+                continue;
+            }
+            // Skip other built-in providers that already exist
             if self.providers.contains_key(name) {
                 continue;
             }
@@ -170,6 +178,20 @@ mod tests {
 
         assert!(registry.get("acme").is_some(), "custom provider not added");
         assert_eq!(registry.get("anthropic").unwrap().name(), "anthropic");
+    }
+
+    #[test]
+    fn register_from_config_applies_ollama_base_url() {
+        let mut registry = ProviderRegistry::default();
+        let mut config = Config::default();
+        let mut pc = config_entry("ollama");
+        pc.base_url = Some("http://127.0.0.1:4554".into());
+        config.providers.insert("ollama".to_string(), pc);
+        registry.register_from_config(&config);
+        assert_eq!(
+            registry.get("ollama").unwrap().default_base_url(),
+            "http://127.0.0.1:4554/api/chat"
+        );
     }
 
     #[test]

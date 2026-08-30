@@ -835,6 +835,11 @@ pub(crate) fn key_from_env_and_config(
 }
 
 pub(crate) fn missing_api_key_message(provider: &str) -> String {
+    if !whycodes_llm::provider_requires_api_key(provider) {
+        return format!(
+            "Provider '{provider}' talks to a local Ollama host (default http://localhost:11434; set base_url or OLLAMA_HOST)."
+        );
+    }
     let oauth_hint = if whycodes_auth::providers::supports_oauth(provider) {
         format!(" Or log in with your subscription: `whycodes auth login {provider}`.")
     } else {
@@ -1131,7 +1136,7 @@ async fn cmd_run(
         "Project:".dimmed(),
         project_dir.display().to_string().dimmed()
     );
-    if api_key.is_empty() {
+    if api_key.is_empty() && whycodes_llm::provider_requires_api_key(&provider) {
         println!(
             "{} No API key for '{}'. Set {} or run /connect. UI is ready.",
             "ℹ".yellow(),
@@ -1146,7 +1151,7 @@ async fn cmd_run(
             eprintln!("{}", "Error: empty prompt".red());
             return Ok(());
         }
-        if api_key.is_empty() {
+        if api_key.is_empty() && whycodes_llm::provider_requires_api_key(&provider) {
             eprintln!(
                 "{} No API key for '{}'. Set {} then retry.",
                 "Error:".red().bold(),
@@ -1520,8 +1525,20 @@ async fn cmd_run(
                     println!("  provider: {provider}");
                     println!("  model:    {model}");
                     println!("  project:  {}", project_dir.display());
-                    let key_ok = !api_key.is_empty();
-                    println!("  api_key:  {}", if key_ok { "set" } else { "MISSING" });
+                    let key_ok =
+                        !api_key.is_empty() || !whycodes_llm::provider_requires_api_key(&provider);
+                    println!(
+                        "  api_key:  {}",
+                        if key_ok {
+                            if api_key.is_empty() {
+                                "not required"
+                            } else {
+                                "set"
+                            }
+                        } else {
+                            "MISSING"
+                        }
+                    );
                     println!(
                         "  sandbox:  {} network={}",
                         config.security.sandbox, config.security.sandbox_network
@@ -1923,6 +1940,9 @@ async fn ensure_api_key(api_key: &mut String, provider: &str, config: &Config) -
     }
     if let Some(k) = get_api_key(provider, config).await {
         *api_key = k;
+        return true;
+    }
+    if !whycodes_llm::provider_requires_api_key(provider) {
         return true;
     }
     let env = provider_env_var(provider);
@@ -2436,6 +2456,7 @@ pub(crate) async fn cmd_generate(
 
     let api_key = match get_api_key(&provider, &config).await {
         Some(k) => k,
+        None if !whycodes_llm::provider_requires_api_key(&provider) => String::new(),
         None => {
             return emit_headless_setup_error(format, &missing_api_key_message(&provider));
         }

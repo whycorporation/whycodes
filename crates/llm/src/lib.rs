@@ -38,6 +38,12 @@ pub use model_catalog::{
 };
 pub use openai_compat::{error_source_chain, stream_chunk_error};
 pub use provider::{LlmProvider, ProviderRegistry};
+pub use providers::ollama::{DEFAULT_OLLAMA_HOST, normalize_ollama_chat_url};
+
+/// Local Ollama needs no credential. Cloud providers still do.
+pub fn provider_requires_api_key(provider: &str) -> bool {
+    !provider.eq_ignore_ascii_case("ollama")
+}
 pub use race::{RaceOutcome, StreamTarget, stream_raced};
 pub use response_cache::{CachedText, ResponseCache, text_only_response};
 pub use retry::{RetryPolicy, execute_with_policy, retry_with_backoff};
@@ -48,3 +54,14 @@ pub use transport::{
     user_facing_error,
 };
 pub use types::*;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ollama_does_not_require_api_key() {
+        assert!(!super::provider_requires_api_key("ollama"));
+        assert!(!super::provider_requires_api_key("Ollama"));
+        assert!(super::provider_requires_api_key("openai"));
+        assert!(super::provider_requires_api_key("anthropic"));
+    }
+}

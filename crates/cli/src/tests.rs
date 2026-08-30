@@ -993,6 +993,13 @@ fn key_from_env_config_and_missing_message() {
     let hinted = missing_api_key_message("cli-oauth-hint-demo");
     assert!(hinted.contains("CLI-OAUTH-HINT-DEMO_API_KEY"), "{hinted}");
     assert!(hinted.contains("auth login"), "{hinted}");
+
+    let ollama = missing_api_key_message("ollama");
+    assert!(
+        ollama.contains("OLLAMA_HOST") || ollama.contains("localhost:11434"),
+        "{ollama}"
+    );
+    assert!(!ollama.contains("OLLAMA_API_KEY"), "{ollama}");
 }
 
 #[test]

@@ -411,6 +411,7 @@ impl ProviderConfig {
             "cohere" => "https://api.cohere.com/v1",
             "perplexity" => "https://api.perplexity.com",
             "xai" => "https://api.x.ai/v1",
+            "ollama" => "http://localhost:11434",
             _ => "https://api.openai.com/v1", // fallback to OpenAI-compatible
         }
     }

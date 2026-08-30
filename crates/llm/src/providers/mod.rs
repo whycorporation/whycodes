@@ -134,6 +134,11 @@ mod tests {
             .collect();
         assert!(roles.contains(&"system"), "{roles:?}");
         assert!(roles.contains(&"user"), "{roles:?}");
+        assert!(
+            p.default_base_url().ends_with("/api/chat"),
+            "{}",
+            p.default_base_url()
+        );
     }
 
     #[test]

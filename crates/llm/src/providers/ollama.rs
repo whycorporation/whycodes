@@ -1,6 +1,8 @@
 /// Ollama LLM provider.
-/// Uses the Ollama chat API at localhost:11434.
-/// Format differs from OpenAI — uses Ollama-specific request/response shapes.
+///
+/// Native chat API (`POST {host}/api/chat`), not OpenAI SSE. Default host is
+/// `http://localhost:11434`. Override with config `base_url` / `api_base` or
+/// `OLLAMA_HOST` (scheme optional, e.g. `127.0.0.1:4554`).
 use async_stream::stream;
 use futures::stream::Stream;
 use serde_json::Value;
@@ -10,14 +12,26 @@ use whycodes_core::types::{ContentBlock, LlmRequest, LlmResponse, StreamEvent, U
 use crate::provider::LlmProvider;
 use async_trait::async_trait;
 
+pub const DEFAULT_OLLAMA_HOST: &str = "http://localhost:11434";
+
 pub struct OllamaProvider {
     name: String,
+    chat_url: String,
 }
 
 impl OllamaProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_config(config: &whycodes_core::types::ProviderConfig) -> Self {
+        Self::from_base(config.base_url.as_deref().or(config.api_base.as_deref()))
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "ollama".to_string(),
+            chat_url: normalize_ollama_chat_url(base),
         }
     }
 
@@ -27,12 +41,8 @@ impl OllamaProvider {
             "model": model,
             "messages": messages,
             "stream": true,
+            "options": {},
         });
-
-        // Ensure options object exists
-        if !body.as_object().unwrap().contains_key("options") {
-            body["options"] = serde_json::json!({});
-        }
 
         if let Some(temp) = request.temperature {
             body["options"]["temperature"] = temp.into();
@@ -117,6 +127,118 @@ impl OllamaProvider {
             })
             .collect()
     }
+
+    fn post_chat(&self, body: &Value, api_key: &str) -> reqwest::RequestBuilder {
+        let mut req = crate::client_identity::post(&self.chat_url).json(body);
+        let key = api_key.trim();
+        if !key.is_empty() {
+            req = req.header("Authorization", format!("Bearer {key}"));
+        }
+        req
+    }
+}
+
+/// Turn a configured host into Ollama's native `POST /api/chat` URL.
+///
+/// Accepts a bare host (`127.0.0.1:4554`), `http://host:port`, `/api/chat`,
+/// or an OpenAI-compat `/v1` URL (stripped back to native chat).
+pub fn normalize_ollama_chat_url(base: Option<&str>) -> String {
+    let env_host = match std::env::var("OLLAMA_HOST") {
+        Ok(v) => Some(v),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(e) => {
+            tracing::debug!(error = %e, "OLLAMA_HOST unreadable");
+            None
+        }
+    };
+    normalize_ollama_chat_url_with_env(base, env_host.as_deref())
+}
+
+pub(crate) fn normalize_ollama_chat_url_with_env(
+    base: Option<&str>,
+    env_host: Option<&str>,
+) -> String {
+    let raw = base
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            env_host
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| DEFAULT_OLLAMA_HOST.to_string());
+
+    let mut url = raw.trim().to_string();
+    if !url.contains("://") {
+        url = format!("http://{url}");
+    }
+    let url = url.trim_end_matches('/');
+
+    if url.ends_with("/api/chat") {
+        return url.to_string();
+    }
+    // Configs often store the OpenAI-compat root; native chat is `/api/chat`.
+    let host = url
+        .trim_end_matches("/v1/chat/completions")
+        .trim_end_matches("/chat/completions")
+        .trim_end_matches("/v1");
+    let host = host.trim_end_matches('/');
+    format!("{host}/api/chat")
+}
+
+/// Parse one Ollama NDJSON object. `done` is the second return value.
+/// Callers check `event["error"]` before invoking this.
+fn events_from_ollama_object(event: &Value) -> (Vec<StreamEvent>, bool) {
+    let mut out = Vec::new();
+    let done = event["done"].as_bool().unwrap_or(false);
+
+    if let Some(message) = event.get("message") {
+        if let Some(text) = message["content"].as_str()
+            && !text.is_empty()
+        {
+            out.push(StreamEvent::TextDelta {
+                text: text.to_string(),
+            });
+        }
+
+        if let Some(tool_calls) = message["tool_calls"].as_array() {
+            for tc in tool_calls {
+                let func = &tc["function"];
+                let raw_args = &func["arguments"];
+                // Ollama may send object or JSON string.
+                let input = if raw_args.is_string() || raw_args.is_null() {
+                    crate::openai_compat::parse_tool_arguments(raw_args)
+                } else {
+                    raw_args.clone()
+                };
+                out.push(StreamEvent::ToolUse {
+                    id: tc
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    name: func["name"].as_str().unwrap_or("").to_string(),
+                    input,
+                });
+            }
+        }
+    }
+
+    if done
+        && let (Some(input), Some(output)) = (
+            event["prompt_eval_count"].as_u64(),
+            event["eval_count"].as_u64(),
+        )
+    {
+        out.push(StreamEvent::Usage {
+            input_tokens: input,
+            output_tokens: output,
+        });
+    }
+
+    (out, done)
 }
 
 #[async_trait]
@@ -126,20 +248,20 @@ impl LlmProvider for OllamaProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "http://localhost:11434/api/chat"
+        &self.chat_url
     }
 
     async fn complete(
         &self,
         request: &LlmRequest,
-        _api_key: &str,
+        api_key: &str,
         model: &str,
     ) -> whycodes_core::Result<LlmResponse> {
         let mut body = self.build_body(request, model);
         body["stream"] = serde_json::Value::Bool(false);
 
-        let resp = crate::client_identity::post(self.default_base_url())
-            .json(&body)
+        let resp = self
+            .post_chat(&body, api_key)
             .send()
             .await
             .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
@@ -203,14 +325,14 @@ impl LlmProvider for OllamaProvider {
     async fn stream(
         &self,
         request: &LlmRequest,
-        _api_key: &str,
+        api_key: &str,
         model: &str,
     ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
         let body = self.build_body(request, model);
 
-        let resp = crate::client_identity::post(self.default_base_url())
-            .json(&body)
+        let resp = self
+            .post_chat(&body, api_key)
             .send()
             .await
             .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
@@ -226,6 +348,7 @@ impl LlmProvider for OllamaProvider {
         let s = stream! {
             let mut stream = resp.bytes_stream();
             let mut buffer = String::new();
+            let mut stopped = false;
 
             while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
                 match chunk {
@@ -240,62 +363,26 @@ impl LlmProvider for OllamaProvider {
                                 continue;
                             }
 
-                            if let Ok(event) = serde_json::from_str::<Value>(&line) {
-                                // Check for errors
-                                if let Some(err) = event.get("error") {
-                                    yield Err(whycodes_core::Error::Llm(
-                                        err.as_str().unwrap_or("Unknown error").to_string(),
-                                    ));
-                                    return;
-                                }
-
-                                let done = event["done"].as_bool().unwrap_or(false);
-
-                                if let Some(message) = event.get("message") {
-                                    if let Some(text) = message["content"].as_str()
-                                        && !text.is_empty() {
-                                            yield Ok(StreamEvent::TextDelta {
-                                                text: text.to_string(),
-                                            });
-                                        }
-
-                                    // Tool calls in streaming may appear in message
-                                    if let Some(tool_calls) = message["tool_calls"].as_array() {
-                                        for tc in tool_calls {
-                                            let func = &tc["function"];
-                                            let raw_args = &func["arguments"];
-                                            // Ollama may send object or JSON string.
-                                            let input = if raw_args.is_string() || raw_args.is_null()
-                                            {
-                                                crate::openai_compat::parse_tool_arguments(raw_args)
-                                            } else {
-                                                raw_args.clone()
-                                            };
-                                            yield Ok(StreamEvent::ToolUse {
-                                                id: tc
-                                                    .get("id")
-                                                    .and_then(|v| v.as_str())
-                                                    .unwrap_or("")
-                                                    .to_string(),
-                                                name: func["name"].as_str().unwrap_or("").to_string(),
-                                                input,
-                                            });
-                                        }
+                            match serde_json::from_str::<Value>(&line) {
+                                Ok(event) => {
+                                    if let Some(err) = event.get("error") {
+                                        yield Err(whycodes_core::Error::Llm(
+                                            err.as_str().unwrap_or("Unknown error").to_string(),
+                                        ));
+                                        return;
+                                    }
+                                    let (events, done) = events_from_ollama_object(&event);
+                                    for ev in events {
+                                        yield Ok(ev);
+                                    }
+                                    if done {
+                                        yield Ok(StreamEvent::MessageStop);
+                                        return;
                                     }
                                 }
-
-                                if done {
-                                    if let (Some(input), Some(output)) = (
-                                        event["prompt_eval_count"].as_u64(),
-                                        event["eval_count"].as_u64(),
-                                    ) {
-                                        yield Ok(StreamEvent::Usage {
-                                            input_tokens: input,
-                                            output_tokens: output,
-                                        });
-                                    }
-                                    yield Ok(StreamEvent::MessageStop);
-                                    return;
+                                Err(e) => {
+                                    tracing::debug!(error = %e, "skipping non-json ollama stream line");
+                                    continue;
                                 }
                             }
                         }
@@ -304,6 +391,33 @@ impl LlmProvider for OllamaProvider {
                         yield Err(crate::openai_compat::stream_chunk_error("ollama", e));
                     }
                 }
+            }
+
+            // Last NDJSON object may omit the trailing newline.
+            let leftover = buffer.trim();
+            if !leftover.is_empty()
+                && let Ok(event) = serde_json::from_str::<Value>(leftover)
+            {
+                if let Some(err) = event.get("error") {
+                    yield Err(whycodes_core::Error::Llm(
+                        err.as_str().unwrap_or("Unknown error").to_string(),
+                    ));
+                    return;
+                }
+                let (events, done) = events_from_ollama_object(&event);
+                for ev in events {
+                    yield Ok(ev);
+                }
+                if done {
+                    yield Ok(StreamEvent::MessageStop);
+                    stopped = true;
+                }
+            }
+
+            // Agent loop waits for MessageStop. A closed body without `done`
+            // (or a last line without `\n`) used to hang the turn forever.
+            if !stopped {
+                yield Ok(StreamEvent::MessageStop);
             }
         };
 
@@ -314,5 +428,104 @@ impl LlmProvider for OllamaProvider {
 impl Default for OllamaProvider {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_host_port_and_v1_roots() {
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(None, None),
+            "http://localhost:11434/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(Some("http://127.0.0.1:4554"), None),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(Some("127.0.0.1:4554"), None),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(Some("http://127.0.0.1:4554/"), None),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(Some("http://127.0.0.1:4554/api/chat"), None),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(Some("http://127.0.0.1:4554/v1"), None),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(
+                Some("http://127.0.0.1:4554/v1/chat/completions"),
+                None
+            ),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(None, Some("127.0.0.1:4554")),
+            "http://127.0.0.1:4554/api/chat"
+        );
+        // Explicit config wins over OLLAMA_HOST.
+        assert_eq!(
+            normalize_ollama_chat_url_with_env(Some("http://127.0.0.1:4554"), Some("10.0.0.1:1")),
+            "http://127.0.0.1:4554/api/chat"
+        );
+    }
+
+    #[test]
+    fn from_config_uses_base_url() {
+        let pc = whycodes_core::types::ProviderConfig {
+            name: "ollama".into(),
+            api_key: None,
+            api_base: None,
+            base_url: Some("http://127.0.0.1:4554".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        };
+        let p = OllamaProvider::from_config(&pc);
+        assert_eq!(p.default_base_url(), "http://127.0.0.1:4554/api/chat");
+    }
+
+    #[test]
+    fn done_chunk_emits_usage() {
+        let event = serde_json::json!({
+            "message": {"content": ""},
+            "done": true,
+            "prompt_eval_count": 12,
+            "eval_count": 4,
+        });
+        let (events, done) = events_from_ollama_object(&event);
+        assert!(done);
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::Usage {
+                input_tokens: 12,
+                output_tokens: 4
+            }
+        )));
+    }
+
+    #[test]
+    fn text_delta_before_done() {
+        let event = serde_json::json!({
+            "message": {"content": "hi"},
+            "done": false,
+        });
+        let (events, done) = events_from_ollama_object(&event);
+        assert!(!done);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta { text } if text == "hi"))
+        );
     }
 }

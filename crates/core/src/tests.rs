@@ -1851,6 +1851,7 @@ mod types_tests {
             "cohere",
             "perplexity",
             "xai",
+            "ollama",
             "custom-x",
         ];
         for name in names {

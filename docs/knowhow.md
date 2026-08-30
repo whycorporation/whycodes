@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-30 — Ollama chat hangs if URL/key/stream-stop are wrong
+
+**Symptom:** Selecting Ollama (or posting to a host on a non-default port
+such as `:4554`) never produced a reply. The TUI/CLI sat on "generating".
+
+**Root cause:** Three stacked bugs:
+
+1. `OllamaProvider` always posted to `http://localhost:11434/api/chat`.
+   Config `base_url` / `api_base` and `OLLAMA_HOST` were ignored, so a
+   daemon on `:4554` never saw the request.
+2. TUI, CLI, and `whycodes serve` required an API key for every
+   provider. Local Ollama has none, so the turn never left the gate.
+3. The agent loop waits for `StreamEvent::MessageStop`. Ollama NDJSON
+   without a trailing newline (or without `done`) dropped the last
+   object and never emitted stop — the turn hung forever.
+
+**Fix:** Rebuild the Ollama client from config/`OLLAMA_HOST`, skip the
+API-key gate for `ollama`, flush leftover NDJSON, and emit
+`MessageStop` on EOF.
+
+**Prevention:** Do not hard-code `11434`. Do not treat Ollama as
+OpenAI SSE. Keep `provider_requires_api_key("ollama") == false`.
+
 ### 2026-08-30 — Sticky todo overflow must scroll, not `+N more`
 
 **Symptom:** Long session todo lists hid extra rows behind `… +N more`. Wheel

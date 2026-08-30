@@ -363,7 +363,8 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .position(|(p, m)| p == &opts.provider && m == &opts.model)
         .unwrap_or(0);
 
-    let missing_key = opts.api_key.is_empty();
+    let missing_key =
+        opts.api_key.is_empty() && whycodes_llm::provider_requires_api_key(&opts.provider);
     app.status_message = if missing_key {
         format!(
             "agent={}  {}/{}  — no API key · /connect  /help",
@@ -1265,7 +1266,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 if api_key.is_empty() {
                     fill_oauth_credential(&mut api_key, &provider).await;
                 }
-                if api_key.is_empty() {
+                if api_key.is_empty() && whycodes_llm::provider_requires_api_key(&provider) {
                     warn_missing_api_key(&mut app, &provider);
                     // Images already shown on the user bubble; don't re-queue.
                     let _ = submit_images;
@@ -4654,7 +4655,21 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 fill_oauth_credential(ctx.api_key, ctx.provider).await;
             }
             let env_name = format!("{}_API_KEY", ctx.provider.to_uppercase());
-            if ctx.api_key.is_empty() {
+            if ctx.api_key.is_empty() && !whycodes_llm::provider_requires_api_key(ctx.provider) {
+                ctx.app.status_message = format!("local · {}", ctx.provider);
+                ctx.app.add_message(
+                    ChatRole::System,
+                    format!(
+                        "✓ `{0}` needs no API key. Default host is http://localhost:11434.\n\
+                         Override with `base_url` / `OLLAMA_HOST` (e.g. 127.0.0.1:4554).",
+                        ctx.provider
+                    ),
+                );
+                ctx.app.toasts.push(
+                    crate::toast::ToastKind::Success,
+                    format!("Connected · {}", ctx.provider),
+                );
+            } else if ctx.api_key.is_empty() {
                 ctx.app.status_message = format!("no API key · set {env_name}");
                 let oauth_supported = whycodes_auth::providers::supports_oauth(ctx.provider);
                 ctx.app.add_message(
