@@ -1,0 +1,463 @@
+//! Command-line argument definitions for WhyCodes.
+
+use crate::{VERSION_LONG, parse_output_format};
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use whycodes_protocol::OutputFormat;
+
+/// WhyCodes — An AI coding agent built in Rust
+#[derive(Parser, Debug)]
+#[command(
+    name = "whycodes",
+    version = VERSION_LONG,
+    about = "AI-powered coding agent",
+    long_about = None
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+
+    /// Provider to use
+    #[arg(short = 'P', long, global = true)]
+    pub provider: Option<String>,
+
+    /// Model to use
+    #[arg(short = 'm', long, global = true)]
+    pub model: Option<String>,
+
+    /// Agent name to use
+    #[arg(short = 'a', long = "agent", global = true)]
+    pub agent_flag: Option<String>,
+
+    /// Project directory
+    #[arg(short = 'd', long, global = true)]
+    pub dir: Option<String>,
+
+    /// Use plain stdin REPL instead of the full-screen TUI
+    #[arg(long, global = true)]
+    pub plain: bool,
+
+    /// Continue the most recently updated saved session
+    #[arg(short = 'c', long = "continue", global = true)]
+    pub continue_session: bool,
+
+    /// Resume a saved session by id (full id or unique prefix)
+    #[arg(short = 'r', long = "resume", global = true, value_name = "SESSION_ID")]
+    pub resume: Option<String>,
+
+    /// Write debug logs under the data dir (`debug/whycodes-*.log` + `debug/latest.log`)
+    #[arg(long, global = true)]
+    pub debug: bool,
+
+    /// Disable cross-session semantic / auto memory for this process
+    #[arg(long = "no-memory", global = true)]
+    pub no_memory: bool,
+
+    /// Skip the home-screen "update available?" prompt for this process
+    #[arg(long = "no-auto-update", global = true)]
+    pub no_auto_update: bool,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum Commands {
+    /// Start an interactive session (default)
+    #[command(name = "run")]
+    Run {
+        /// Optional initial prompt (with --format json|stream-json this is one-shot CI mode)
+        prompt: Option<String>,
+
+        /// Maximum agentic turns (headless only; ignored in the TUI)
+        #[arg(short = 't', long)]
+        max_turns: Option<usize>,
+
+        /// Output format for headless / CI: text (default), json, or stream-json
+        #[arg(
+            long = "format",
+            visible_alias = "output-format",
+            value_parser = parse_output_format,
+            default_value = "text"
+        )]
+        format: OutputFormat,
+    },
+
+    /// Generate code from a prompt (non-interactive)
+    Generate {
+        /// The prompt(s) to generate code for; multiple prompts run with -j
+        #[arg(required = true)]
+        prompt: Vec<String>,
+
+        /// Maximum agentic turns before stopping (no default cap)
+        #[arg(short = 't', long)]
+        max_turns: Option<usize>,
+
+        /// Parallel workers when multiple prompts are given
+        #[arg(short = 'j', long, default_value = "1")]
+        jobs: usize,
+
+        /// Output format for headless / CI: text (default), json, or stream-json
+        #[arg(
+            long = "format",
+            visible_alias = "output-format",
+            value_parser = parse_output_format,
+            default_value = "text"
+        )]
+        format: OutputFormat,
+    },
+
+    /// Agent Client Protocol (not yet implemented)
+    Acp,
+
+    /// Create a pull request from current changes
+    Pr {
+        /// PR title
+        #[arg(short, long)]
+        title: Option<String>,
+
+        /// Base branch
+        #[arg(short, long)]
+        base: Option<String>,
+    },
+
+    /// GitHub operations
+    Github {
+        #[command(subcommand)]
+        cmd: GithubCmd,
+    },
+
+    /// Start API server
+    #[cfg(feature = "server")]
+    Serve {
+        /// Port to listen on
+        #[arg(default_value = "3030")]
+        port: u16,
+    },
+
+    /// Attach a TUI to a running `whycodes serve` (not `/connect` login)
+    Connect {
+        /// Host:port or URL (default 127.0.0.1:3030)
+        #[arg(default_value = "127.0.0.1:3030")]
+        addr: String,
+        /// Session id (creates a new one when omitted)
+        #[arg(long)]
+        session: Option<String>,
+    },
+
+    /// Open web UI
+    Web,
+
+    /// MCP server management
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpCmd,
+    },
+
+    /// Provider management (add, list, remove, default)
+    Provider {
+        #[command(subcommand)]
+        cmd: ProviderCmd,
+    },
+
+    /// Model management
+    Model {
+        #[command(subcommand)]
+        cmd: ModelCmd,
+    },
+
+    /// Agent configuration
+    Agent {
+        /// Agent name to show/edit
+        name: Option<String>,
+    },
+
+    /// List shell plugins from plugins.toml and plugin.json trees
+    Plugins {
+        #[command(subcommand)]
+        cmd: Option<PluginsCmd>,
+    },
+
+    /// Configuration management
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
+
+    /// Session management (list, view, delete, rename, share)
+    Session {
+        #[command(subcommand)]
+        cmd: SessionCmd,
+    },
+
+    /// Cross-session memory (list, search, add, delete, clear, path)
+    Memory {
+        #[command(subcommand)]
+        cmd: MemoryCmd,
+    },
+
+    /// Subscription login via OAuth (Claude Pro/Max, ChatGPT, Copilot, Gemini)
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthCmd,
+    },
+
+    /// Show usage statistics
+    Stats,
+
+    /// Show debug information
+    Debug,
+
+    /// Self-update
+    #[cfg(feature = "self-update")]
+    #[command(name = "upgrade")]
+    Upgrade,
+
+    /// Generate shell completion scripts (bash, zsh, fish, powershell, elvish)
+    Completions {
+        /// Target shell
+        shell: clap_complete::Shell,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum GithubCmd {
+    /// List open pull requests
+    Pr {
+        #[command(subcommand)]
+        action: Option<PrAction>,
+    },
+    /// Show issue details
+    Issue { number: Option<u64> },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PrAction {
+    /// List PRs
+    List,
+    /// View a PR
+    View { number: u64 },
+    /// Create a PR
+    Create {
+        #[arg(short, long)]
+        title: Option<String>,
+        #[arg(short, long)]
+        base: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum McpCmd {
+    /// List configured MCP servers
+    List,
+    /// Add an MCP server (stdio via command, or remote via --url)
+    Add {
+        /// Server name (tools bind as `{name}_{tool}`)
+        name: String,
+        /// Local command to spawn (stdio). Omit when using `--url`.
+        command: Option<String>,
+        /// Arguments for the local command
+        #[arg(long)]
+        args: Option<String>,
+        /// Remote MCP endpoint URL (Streamable HTTP or legacy SSE)
+        #[arg(long)]
+        url: Option<String>,
+        /// Transport: `stdio` | `http` | `sse` | `auto` (default: inferred)
+        #[arg(long = "type")]
+        transport: Option<String>,
+        /// Extra HTTP header for remote servers (`Key: Value`). Repeatable.
+        #[arg(long = "header")]
+        headers: Vec<String>,
+    },
+    /// Remove an MCP server
+    Remove { name: String },
+    /// Run whycodes as an MCP **server** on stdio (export core tools)
+    Serve {
+        /// Tool profile: `core` (default) or `full`
+        #[arg(long, default_value = "core")]
+        tools: String,
+        /// Working directory for tools (default: cwd)
+        #[arg(long)]
+        cwd: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ProviderCmd {
+    /// List all configured providers
+    List,
+    /// Add a new custom provider
+    Add {
+        /// Provider name
+        name: String,
+        /// API key for the provider
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Base URL for the provider API
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Custom headers (key=value, comma-separated)
+        #[arg(long)]
+        headers: Option<String>,
+    },
+    /// Remove a provider
+    Remove {
+        /// Provider name to remove
+        name: String,
+    },
+    /// Set the default provider
+    Default {
+        /// Provider name to set as default
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum AuthCmd {
+    /// Log in with a provider subscription (opens a browser)
+    Login {
+        /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
+        provider: String,
+        /// Print the sign-in URL instead of opening a browser
+        #[arg(long)]
+        no_browser: bool,
+    },
+    /// Remove stored OAuth credentials for a provider
+    Logout {
+        /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
+        provider: String,
+    },
+    /// Show which providers have stored OAuth credentials (never prints tokens)
+    Status,
+    /// Find credentials of other CLIs (Claude Code, Codex, Gemini, Copilot, Grok Build)
+    /// and import them after explicit per-path approval
+    Import,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ModelCmd {
+    /// List configured models
+    List,
+    /// Set the default model
+    Default {
+        /// Provider name
+        provider: String,
+        /// Model ID
+        model: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PluginsCmd {
+    /// List configured plugins
+    List,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ConfigCmd {
+    /// Show current configuration
+    Show,
+    /// Get a specific configuration value
+    Get {
+        /// Configuration key (dot-separated, e.g. "default_agent")
+        key: String,
+    },
+    /// Set a configuration value
+    Set {
+        /// Configuration key
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// Show the configuration file path
+    Path,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum MemoryCmd {
+    /// List memories for the current project
+    List {
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// Semantic search over stored memories
+    Search {
+        query: String,
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+    /// Add a durable fact
+    Add { text: Vec<String> },
+    /// Delete a memory by id or unique prefix
+    Delete { id: String },
+    /// Clear all memories for this project
+    Clear,
+    /// Print MEMORY.md path for this project
+    Path,
+    /// Export memories to a JSON file (cross-machine sync)
+    Export {
+        /// Output path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Import memories from a JSON export
+    Import {
+        /// Input JSON path
+        path: PathBuf,
+    },
+    /// Index the codebase for lightweight code RAG
+    Index {
+        #[arg(long, default_value = "2000")]
+        max_files: usize,
+        #[arg(long, default_value = "8000")]
+        max_chunks: usize,
+    },
+    /// Semantic search over the code index
+    CodeSearch {
+        query: String,
+        #[arg(long, default_value = "8")]
+        limit: usize,
+    },
+    /// Semantic search over prior session turns
+    SessionSearch {
+        query: String,
+        #[arg(long, default_value = "8")]
+        limit: usize,
+    },
+    /// Download MiniLM (if needed), verify checksums, run a probe embed
+    /// (requires binary built with `--features onnx`)
+    OnnxSmoke,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SessionCmd {
+    /// List all sessions
+    List,
+    /// View a session's details
+    View {
+        /// Session ID
+        id: String,
+    },
+    /// Delete a session
+    Delete {
+        /// Session ID
+        id: String,
+    },
+    /// Rename a session
+    Rename {
+        /// Session ID
+        id: String,
+        /// New name for the session
+        name: String,
+    },
+    /// Export a session to JSON (shareable)
+    Share {
+        /// Session ID
+        id: String,
+    },
+    /// Import a transcript (whycodes / Claude / Codex / OpenCode / Pi)
+    Import {
+        /// File to import
+        path: PathBuf,
+        /// Format (default: auto)
+        #[arg(long, default_value = "auto")]
+        from: String,
+    },
+}

@@ -212,6 +212,9 @@ impl Config {
         }
         // auto_update defaults true; only an explicit false in a higher layer wins.
         merged.general.auto_update &= other.general.auto_update;
+        if other.general.approval_mode.is_some() {
+            merged.general.approval_mode = other.general.approval_mode;
+        }
         if other.schema_version > merged.schema_version {
             merged.schema_version = other.schema_version;
         }

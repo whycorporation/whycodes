@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use whycodes_core::network::{self, NetworkPolicy};
 use whycodes_core::sandbox::SandboxSettings;
-use whycodes_core::types::{AgentInfo, ModelConfig, PermissionAction, ProviderConfig};
+use whycodes_core::types::{
+    AgentInfo, ApprovalMode, ModelConfig, PermissionAction, ProviderConfig,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CommandConfig {
@@ -1284,6 +1286,10 @@ pub struct GeneralConfig {
     /// (home-screen confirm; never a silent replace).
     #[serde(default = "default_true")]
     pub auto_update: bool,
+    /// Session-level overlay for when to interrupt (`auto` | `important` | `manual`).
+    /// Omitted = `auto`: auto-answer questions and auto-allow permission asks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_mode: Option<ApprovalMode>,
 }
 
 impl Default for GeneralConfig {
@@ -1293,6 +1299,7 @@ impl Default for GeneralConfig {
             log_level: None,
             default_gcp_project: None,
             auto_update: true,
+            approval_mode: None,
         }
     }
 }

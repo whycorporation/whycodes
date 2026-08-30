@@ -12,7 +12,6 @@ use crate::swarm_hub::*;
 use crate::todo::*;
 use crate::tool::*;
 use crate::types::*;
-use async_trait::async_trait;
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
@@ -1396,6 +1395,7 @@ mod swarm_hub_tests {
 
 mod tool_tests {
     use super::*;
+    use async_trait::async_trait;
 
     use crate::file_claims::FileClaimRegistry;
     use std::path::Path;
@@ -1893,6 +1893,18 @@ mod types_tests {
             Some(PermissionAction::Deny)
         );
         assert_eq!(PermissionAction::parse("???"), None);
+
+        assert_eq!(ApprovalMode::parse("auto"), Some(ApprovalMode::Auto));
+        assert_eq!(ApprovalMode::parse("dontask"), Some(ApprovalMode::Auto));
+        assert_eq!(ApprovalMode::parse("ask"), Some(ApprovalMode::Important));
+        assert_eq!(ApprovalMode::parse("manual"), Some(ApprovalMode::Manual));
+        assert_eq!(ApprovalMode::parse("???"), None);
+        assert_eq!(ApprovalMode::default(), ApprovalMode::Auto);
+        assert_eq!(ApprovalMode::Auto.as_str(), "auto");
+        assert_eq!(ApprovalMode::Important.label(), "important");
+        assert!(!ApprovalMode::Manual.description().is_empty());
+        assert_eq!(ApprovalMode::Auto.to_string(), "auto");
+        assert_eq!(ApprovalMode::ALL.len(), 3);
 
         let mut p = PermissionSet {
             allow_file_writes: false,

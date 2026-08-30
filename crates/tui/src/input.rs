@@ -1051,6 +1051,11 @@ fn handle_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                 app.mouse_sel = None;
                 return true;
             }
+            if app.approval_hit.contains(mouse.column, mouse.row) {
+                open_mode_dialog(app);
+                app.mouse_sel = None;
+                return true;
+            }
             if let Some(tab) = app.sidebar.tab_at(mouse.column, mouse.row) {
                 app.select_sidebar_tab(tab);
                 app.mouse_sel = None;
@@ -1497,6 +1502,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.effort_picker_selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::ApprovalMode => {
+                        app.approval_picker_selected = idx;
+                        confirm_dialog(app, active);
+                    }
                     DialogKind::Provider
                         if app.provider_dialog.mode == crate::app::ProviderDialogMode::Select =>
                     {
@@ -1819,6 +1828,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.effort_picker_selected = idx.min(len - 1);
             }
         }
+        DialogKind::ApprovalMode => {
+            let len = whycodes_core::types::ApprovalMode::ALL.len();
+            if len > 0 {
+                app.approval_picker_selected = idx.min(len - 1);
+            }
+        }
         DialogKind::Question(_) => {
             if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
                 st.set_cursor(idx);
@@ -2104,6 +2119,14 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_effort = Some(level.as_str().to_string());
             }
         }
+        DialogKind::ApprovalMode => {
+            if let Some(mode) = whycodes_core::types::ApprovalMode::ALL
+                .get(app.approval_picker_selected)
+                .copied()
+            {
+                app.pending_approval_mode = Some(mode);
+            }
+        }
         DialogKind::Question(_) => {
             // Keyboard confirm is owned by `handle_question_key` in the run
             // loop. If Enter still lands here, do not dismiss (that would
@@ -2236,6 +2259,14 @@ fn effort_levels(app: &TuiApp) -> &'static [whycodes_llm::ReasoningEffort] {
     whycodes_llm::ThinkingConfig::supported_efforts(&app.provider_name, &app.model_name)
 }
 
+pub fn open_mode_dialog(app: &mut TuiApp) {
+    app.approval_picker_selected = whycodes_core::types::ApprovalMode::ALL
+        .iter()
+        .position(|m| *m == app.approval_mode)
+        .unwrap_or(0);
+    open_dialog(app, DialogKind::ApprovalMode);
+}
+
 fn fill_model_catalog_from_disk(app: &mut TuiApp) {
     let Ok(config) = whycodes_config::Config::load() else {
         return;
@@ -2300,6 +2331,13 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
         DialogKind::Effort => {
             app.effort_picker_selected =
                 move_selection(app.effort_picker_selected, effort_levels(app).len(), delta);
+        }
+        DialogKind::ApprovalMode => {
+            app.approval_picker_selected = move_selection(
+                app.approval_picker_selected,
+                whycodes_core::types::ApprovalMode::ALL.len(),
+                delta,
+            );
         }
         DialogKind::Question(_) => {
             if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
@@ -3065,6 +3103,19 @@ mod event_tests {
             mouse(MouseEventKind::Down(MouseButton::Left), 65, 20),
         );
         assert!(matches!(a.dialogs.active(), Some(DialogKind::Effort)));
+
+        let mut a = app();
+        a.approval_hit.set_rect(Some(Rect {
+            x: 70,
+            y: 20,
+            width: 4,
+            height: 1,
+        }));
+        handle_event(
+            &mut a,
+            mouse(MouseEventKind::Down(MouseButton::Left), 71, 20),
+        );
+        assert!(matches!(a.dialogs.active(), Some(DialogKind::ApprovalMode)));
     }
 
     #[test]

@@ -9,6 +9,7 @@ use ratatui::layout::Rect;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
+use whycodes_core::types::ApprovalMode;
 use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
 
 // ── Application Modes ──────────────────────────────────────────────────
@@ -62,6 +63,8 @@ pub enum DialogKind {
     Login,
     /// OpenAI-compat / xAI reasoning effort (`low`/`medium`/`high`/`xhigh`).
     Effort,
+    /// Session approval overlay (`auto` / `important` / `manual`).
+    ApprovalMode,
 }
 
 /// One row in the `/login` provider picker.
@@ -1354,6 +1357,12 @@ pub struct TuiApp {
     pub(crate) effort_picker_selected: usize,
     /// Last chosen `reasoning_effort` (`None` = family default).
     pub(crate) reasoning_effort: Option<String>,
+    /// Approval mode from the picker / `/mode`.
+    pub(crate) pending_approval_mode: Option<ApprovalMode>,
+    /// Cursor in the approval-mode picker.
+    pub(crate) approval_picker_selected: usize,
+    /// Session approval overlay (default auto).
+    pub(crate) approval_mode: ApprovalMode,
     /// Agent switch from the picker dialog (prompt footer click / `/agent`).
     pub(crate) pending_agent: Option<String>,
     /// Cursor in the agent picker (list is `primary_agents`).
@@ -1412,6 +1421,8 @@ pub struct TuiApp {
     pub(crate) model_hit: crate::hit_area::HitArea,
     /// Prompt-footer reasoning effort (click → effort picker).
     pub(crate) effort_hit: crate::hit_area::HitArea,
+    /// Prompt-footer approval mode (click → mode picker).
+    pub(crate) approval_hit: crate::hit_area::HitArea,
     /// Last known mouse cell (for hover tooltips).
     pub(crate) mouse_pos: Option<(u16, u16)>,
 
@@ -1824,6 +1835,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "[low|medium|high|xhigh] Reasoning effort (picker if no arg)",
     },
     SlashCommand {
+        name: "/mode",
+        hint: "[auto|important|manual] Approval mode (picker if no arg)",
+    },
+    SlashCommand {
         name: "/connect",
         hint: "Provider / API key help",
     },
@@ -2062,6 +2077,9 @@ impl TuiApp {
             pending_effort: None,
             effort_picker_selected: 0,
             reasoning_effort: None,
+            pending_approval_mode: None,
+            approval_picker_selected: 0,
+            approval_mode: ApprovalMode::Auto,
             pending_agent: None,
             agent_picker_selected: 0,
             pending_login_provider: None,
@@ -2090,6 +2108,7 @@ impl TuiApp {
             agent_hit: crate::hit_area::HitArea::default(),
             model_hit: crate::hit_area::HitArea::default(),
             effort_hit: crate::hit_area::HitArea::default(),
+            approval_hit: crate::hit_area::HitArea::default(),
             mouse_pos: None,
             context_used: 0,
             max_context_tokens: 200_000,
@@ -2356,6 +2375,10 @@ impl TuiApp {
                 self.effort_hit.hovered = false;
                 changed = true;
             }
+            if self.approval_hit.hovered {
+                self.approval_hit.hovered = false;
+                changed = true;
+            }
             if self.tasks_hit.hovered {
                 self.tasks_hit.hovered = false;
                 changed = true;
@@ -2370,6 +2393,7 @@ impl TuiApp {
         changed |= self.agent_hit.update_hover(c, r);
         changed |= self.model_hit.update_hover(c, r);
         changed |= self.effort_hit.update_hover(c, r);
+        changed |= self.approval_hit.update_hover(c, r);
         changed |= self.todos_hit.update_hover(c, r);
         changed |= self.todos_body_hit.update_hover(c, r);
         changed |= self.todos_scrollbar_hit.update_hover(c, r);

@@ -6,9 +6,7 @@ rust-version.workspace = true
 
 [dependencies]
 whycodes-core = { path = "../core" }
-async-trait = "0.1"
 serde_json.workspace = true
-tokio.workspace = true
 
 [lints]
 workspace = true

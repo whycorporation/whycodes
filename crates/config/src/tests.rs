@@ -764,8 +764,13 @@ fn merge_with_general_security_memory_swarm() {
     );
     assert_eq!(merged.schema_version, CONFIG_SCHEMA_VERSION + 1);
     overlay.general.auto_update = false;
+    overlay.general.approval_mode = Some(whycodes_core::types::ApprovalMode::Manual);
     let merged = base.merge_with(&overlay);
     assert!(!merged.general.auto_update);
+    assert_eq!(
+        merged.general.approval_mode,
+        Some(whycodes_core::types::ApprovalMode::Manual)
+    );
     assert_eq!(merged.security.bash_risk_threshold, "caution");
     assert_eq!(merged.security.sandbox, "off");
     assert!(!merged.security.sandbox_network);
@@ -1099,6 +1104,7 @@ fn apply_env_overrides_sandbox_and_memory() {
         "WHYCODES_NO_MEMORY",
         "WHYCODES_NO_AUTO_UPDATE",
         "WHYCODES_AUTO_UPDATE",
+        "WHYCODES_APPROVAL_MODE",
         "WHYCODES_MEMORY",
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
@@ -1440,6 +1446,7 @@ fn apply_env_overrides_cover_every_knob() {
         "WHYCODES_NO_MEMORY",
         "WHYCODES_NO_AUTO_UPDATE",
         "WHYCODES_AUTO_UPDATE",
+        "WHYCODES_APPROVAL_MODE",
         "WHYCODES_MEMORY",
         "WHYCODES_SWARM",
         "WHYCODES_SWARM_MAX_AGENTS",
@@ -1521,6 +1528,25 @@ fn apply_env_overrides_cover_every_knob() {
     unsafe { std::env::set_var("WHYCODES_AUTO_UPDATE", "maybe") };
     cfg.apply_env_overrides();
     assert!(!cfg.general.auto_update);
+    assert_eq!(cfg.general.approval_mode, None);
+    unsafe { std::env::set_var("WHYCODES_APPROVAL_MODE", "manual") };
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.general.approval_mode,
+        Some(whycodes_core::types::ApprovalMode::Manual)
+    );
+    unsafe { std::env::set_var("WHYCODES_APPROVAL_MODE", "important") };
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.general.approval_mode,
+        Some(whycodes_core::types::ApprovalMode::Important)
+    );
+    unsafe { std::env::set_var("WHYCODES_APPROVAL_MODE", "nope") };
+    cfg.apply_env_overrides();
+    assert_eq!(
+        cfg.general.approval_mode,
+        Some(whycodes_core::types::ApprovalMode::Important)
+    );
     unsafe { std::env::set_var("WHYCODES_MEMORY", "maybe") };
     cfg.apply_env_overrides();
 

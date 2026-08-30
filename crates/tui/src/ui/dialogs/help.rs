@@ -187,6 +187,10 @@ fn catalog() -> Vec<HelpLine> {
             desc: "This screen",
         },
         HelpLine::Binding {
+            key: "/mode",
+            desc: "Approval mode (auto / important / manual)",
+        },
+        HelpLine::Binding {
             key: "/connect",
             desc: "Provider help",
         },

@@ -459,6 +459,66 @@ pub enum AgentMode {
     All,
 }
 
+/// Session-level overlay for when to interrupt the user (issue #45).
+///
+/// Distinct from [`AgentMode`] (primary vs subagent) and from the build/plan/ask
+/// *agent* (which tools exist). This is the authorization layer: when to prompt.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalMode {
+    /// Auto-answer `question` and auto-allow permission `ask`.
+    /// Never overrides `[permission]` deny, bash catastrophic, or sandbox/network.
+    #[default]
+    Auto,
+    /// Prompt on `question`. Auto-allow low-risk `ask`; still prompt high-risk.
+    Important,
+    /// Prompt on every `question` and permission `ask` (today's TUI).
+    Manual,
+}
+
+impl ApprovalMode {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Important, Self::Manual];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" | "dontask" | "don't-ask" | "dont-ask" => Some(Self::Auto),
+            "important" | "ask" | "default" => Some(Self::Important),
+            "manual" | "always" => Some(Self::Manual),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Important => "important",
+            Self::Manual => "manual",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Important => "important",
+            Self::Manual => "manual",
+        }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto-answer questions and auto-allow permission asks",
+            Self::Important => "Prompt on questions and high-risk tools only",
+            Self::Manual => "Prompt on every question and permission ask",
+        }
+    }
+}
+
+impl std::fmt::Display for ApprovalMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// OpenCode-style permission action for a tool or pattern.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]

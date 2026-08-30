@@ -473,7 +473,7 @@ fn paint_side_borders(frame: &mut Frame, text_area: Rect, full: Rect, style: Sty
     }
 }
 
-/// Right-aligned ` agent · provider/model · effort ` on the bottom border, with
+/// Right-aligned ` agent · provider/model · effort · mode ` on the bottom border, with
 /// leading/trailing spaces blanking adjacent `─` (Grok chrome caption).
 ///
 /// Agent and model pick up theme / `[tui.agent_colors]` so the caption is
@@ -483,6 +483,7 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     app.agent_hit.set_rect(None);
     app.model_hit.set_rect(None);
     app.effort_hit.set_rect(None);
+    app.approval_hit.set_rect(None);
     if row.width < 8 {
         return;
     }
@@ -520,6 +521,11 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     let mut effort_style = Style::default().fg(palette.dim);
     if app.effort_hit.hovered {
         effort_style = effort_style.add_modifier(Modifier::UNDERLINED);
+    }
+    let mode_shown = app.approval_mode.label().to_string();
+    let mut mode_style = Style::default().fg(palette.dim);
+    if app.approval_hit.hovered {
+        mode_style = mode_style.add_modifier(Modifier::UNDERLINED);
     }
     let badge_style = match app.intent_kind.as_deref() {
         Some("question") => Style::default()
@@ -569,6 +575,11 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
     if !effort_shown.is_empty() {
         spans.push(Span::styled(" · ", sep_style));
         spans.push(Span::styled(effort_shown, effort_style));
+    }
+    let mode_shown_w = UnicodeWidthStr::width(mode_shown.as_str()) as u16;
+    if !mode_shown.is_empty() {
+        spans.push(Span::styled(" · ", sep_style));
+        spans.push(Span::styled(mode_shown, mode_style));
     }
     spans.push(Span::styled(" ", sep_style));
 
@@ -647,6 +658,16 @@ fn paint_bottom_meta(frame: &mut Frame, row: Rect, app: &mut TuiApp, palette: &T
             x: col,
             y: row.y,
             width: effort_shown_w,
+            height: 1,
+        }));
+        col = col.saturating_add(effort_shown_w);
+    }
+    if mode_shown_w > 0 {
+        col = col.saturating_add(3); // ` · `
+        app.approval_hit.set_rect(Some(Rect {
+            x: col,
+            y: row.y,
+            width: mode_shown_w,
             height: 1,
         }));
     }

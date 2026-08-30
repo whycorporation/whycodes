@@ -4,7 +4,7 @@ use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{
-    AgentInfo, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
+    AgentInfo, ApprovalMode, ContentBlock, PermissionAction, StreamEvent, ToolCall, ToolResult,
 };
 use whycodes_llm::provider::ProviderRegistry;
 use whycodes_tools::executor::ToolExecutor;
@@ -103,6 +103,23 @@ fn is_safe_worktree_name(name: &str) -> bool {
 }
 
 /// Path argument for file mutators / readers (permission path globs).
+fn path_outside_workspace(path: &str, working_dir: &str) -> bool {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        let cwd = std::path::Path::new(working_dir);
+        return std::fs::canonicalize(p)
+            .ok()
+            .and_then(|abs| {
+                std::fs::canonicalize(cwd)
+                    .ok()
+                    .map(|root| !abs.starts_with(&root))
+            })
+            .unwrap_or(true);
+    }
+    let first = path.split(['/', '\\']).find(|s| !s.is_empty());
+    matches!(first, Some(".." | "~"))
+}
+
 fn file_tool_path(tc: &ToolCall) -> Option<String> {
     let key = match tc.name.as_str() {
         "read" | "write" | "edit" | "glob" | "list" => "path",
@@ -193,6 +210,8 @@ pub struct Agent {
     magic_keywords: whycodes_config::MagicKeywordsConfig,
     /// Session `reasoning_effort` (`low`/`medium`/`high`/`xhigh`). Empty = family default.
     reasoning_effort: Option<String>,
+    /// Session overlay for when to interrupt (`auto` / `important` / `manual`).
+    approval_mode: ApprovalMode,
     /// `/fresh`: skip provider prompt cache (and local response cache) once.
     skip_prompt_cache_once: std::sync::atomic::AtomicBool,
     /// Cheap model for task/swarm (`provider/model` or bare id).
@@ -478,6 +497,7 @@ impl Agent {
             intent_guidance: crate::intent::IntentGuidanceMode::default(),
             magic_keywords: whycodes_config::MagicKeywordsConfig::default(),
             reasoning_effort: None,
+            approval_mode: ApprovalMode::Auto,
             skip_prompt_cache_once: std::sync::atomic::AtomicBool::new(false),
             model_smol: None,
             model_plan: None,
@@ -546,6 +566,16 @@ impl Agent {
         self.reasoning_effort = effort;
     }
 
+    /// Session-level approval overlay (`auto` / `important` / `manual`).
+    pub fn set_approval_mode(&mut self, mode: ApprovalMode) {
+        self.approval_mode = mode;
+    }
+
+    /// Current approval overlay.
+    pub fn approval_mode(&self) -> ApprovalMode {
+        self.approval_mode
+    }
+
     /// Load custom providers from config and merge global permission rules.
     pub fn with_config(mut self, config: &whycodes_config::Config) -> Self {
         let mut registry = ProviderRegistry::default();
@@ -601,6 +631,7 @@ impl Agent {
             crate::intent::IntentGuidanceMode::parse(&config.session.intent_guidance);
         self.magic_keywords = config.session.magic_keywords.clone();
         self.reasoning_effort = config.session.reasoning_effort.clone();
+        self.approval_mode = config.general.approval_mode.unwrap_or_default();
         self.model_smol = config.session.model_smol.clone();
         self.model_plan = config.session.model_plan.clone();
         self.stream_rules = compile_stream_rules(&config.session.stream_rules);
@@ -2128,6 +2159,63 @@ impl Agent {
         Some(result)
     }
 
+    /// Whether this permission `ask` is high-risk under `important` mode.
+    ///
+    /// High-risk: `browser`; `bash`/`shell` at or above `bash_risk_threshold`;
+    /// file tools whose path is outside the workspace. Never used to skip
+    /// deny / catastrophic / sandbox — those gates run first.
+    fn approval_ask_is_high_risk(&self, tc: &ToolCall, working_dir: &str) -> bool {
+        match tc.name.as_str() {
+            "browser" => true,
+            "bash" | "shell" => {
+                let command = tc
+                    .arguments
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                !matches!(
+                    decide(
+                        &assess(command, std::path::Path::new(working_dir)),
+                        self.risk_threshold,
+                    ),
+                    Decision::Allow
+                )
+            }
+            "schedule" => tc
+                .arguments
+                .get("command")
+                .and_then(|v| v.as_str())
+                .filter(|c| !c.trim().is_empty())
+                .is_some_and(|command| {
+                    !matches!(
+                        decide(
+                            &assess(command, std::path::Path::new(working_dir)),
+                            self.risk_threshold,
+                        ),
+                        Decision::Allow
+                    )
+                }),
+            _ => file_tool_path(tc).is_some_and(|path| path_outside_workspace(&path, working_dir)),
+        }
+    }
+
+    /// Overlay: `auto` skips every ask; `important` skips low-risk asks;
+    /// `manual` never skips. Deny / catastrophic still refuse above this.
+    fn approval_skips_ask(&self, tc: &ToolCall, working_dir: &str) -> bool {
+        match self.approval_mode {
+            ApprovalMode::Auto => true,
+            ApprovalMode::Manual => false,
+            ApprovalMode::Important => !self.approval_ask_is_high_risk(tc, working_dir),
+        }
+    }
+
+    async fn ask_permission(&self, tc: &ToolCall, working_dir: &str, detail: &str) -> bool {
+        if self.approval_skips_ask(tc, working_dir) {
+            return true;
+        }
+        self.permission_prompter.ask(&tc.name, detail).await
+    }
+
     /// Apply the shell risk gate, then allow/ask/deny, then execute (or spawn
     /// a task subagent).
     ///
@@ -2151,7 +2239,11 @@ impl Agent {
         // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
         // the user *is* the interaction.
         if tc.name == "question" {
-            return run_question_tool(self.question_prompter.as_ref(), &tc.arguments, &tc.id).await;
+            let prompter: &dyn QuestionPrompter = match self.approval_mode {
+                ApprovalMode::Auto => &crate::question::AutoAnswerPrompter,
+                ApprovalMode::Important | ApprovalMode::Manual => self.question_prompter.as_ref(),
+            };
+            return run_question_tool(prompter, &tc.arguments, &tc.id).await;
         }
 
         // Shell commands (and `schedule` with a delayed shell payload) are gated
@@ -2193,7 +2285,10 @@ impl Agent {
                 Decision::Confirm { reason } => {
                     // Structured for the TUI permission dialog (see format_permission_detail).
                     let detail = format_shell_risk_detail(command, &reason);
-                    if !self.permission_prompter.ask(&tc.name, &detail).await {
+                    if !self
+                        .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                        .await
+                    {
                         return ToolResult {
                             tool_call_id: tc.id.clone(),
                             content: format!("User denied permission for tool '{}'.", tc.name),
@@ -2226,7 +2321,10 @@ impl Agent {
                     PermissionAction::Ask if !risk_confirmed => {
                         let detail =
                             format!("Shell rule requires confirmation\n\nCommand:\n{command}");
-                        if !self.permission_prompter.ask(&tc.name, &detail).await {
+                        if !self
+                            .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                            .await
+                        {
                             return ToolResult {
                                 tool_call_id: tc.id.clone(),
                                 content: format!("User denied permission for tool '{}'.", tc.name),
@@ -2268,7 +2366,7 @@ impl Agent {
                     if !risk_confirmed {
                         let detail = format_permission_detail(&tc.arguments);
                         let body = format!("{detail}\n\nIntent check:\n{reason}");
-                        if !self.permission_prompter.ask(&tc.name, &body).await {
+                        if !self.ask_permission(tc, &tool_ctx.working_dir, &body).await {
                             return ToolResult {
                                 tool_call_id: tc.id.clone(),
                                 content: format!(
@@ -2307,7 +2405,10 @@ impl Agent {
                         "Path rule requires confirmation\n\nTool: {}\nPath: {path}",
                         tc.name
                     );
-                    if !self.permission_prompter.ask(&tc.name, &detail).await {
+                    if !self
+                        .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                        .await
+                    {
                         return ToolResult {
                             tool_call_id: tc.id.clone(),
                             content: format!("User denied permission for tool '{}'.", tc.name),
@@ -2335,7 +2436,9 @@ impl Agent {
             PermissionAction::Ask if risk_confirmed => {}
             PermissionAction::Ask => {
                 let detail = format_permission_detail(&tc.arguments);
-                let allowed = self.permission_prompter.ask(&tc.name, &detail).await;
+                let allowed = self
+                    .ask_permission(tc, &tool_ctx.working_dir, &detail)
+                    .await;
                 if !allowed {
                     return ToolResult {
                         tool_call_id: tc.id.clone(),

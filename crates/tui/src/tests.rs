@@ -1520,6 +1520,7 @@ fn typing_narrows_the_match_list() {
         .map(|&i| crate::app::BUILTIN_SLASH_COMMANDS[i].name)
         .collect();
     assert!(names.contains(&"/models"));
+    assert!(names.contains(&"/mode"));
     assert!(!names.contains(&"/help"));
 }
 

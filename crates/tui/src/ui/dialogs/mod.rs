@@ -239,6 +239,43 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::ApprovalMode => {
+            let items: Vec<SelectItem> = whycodes_core::types::ApprovalMode::ALL
+                .iter()
+                .map(|m| {
+                    let mark = if *m == app.approval_mode {
+                        " · current"
+                    } else {
+                        ""
+                    };
+                    SelectItem::with_detail(
+                        format!("{}{mark}", m.label()),
+                        m.description().to_string(),
+                    )
+                })
+                .collect();
+            let selected = app
+                .approval_picker_selected
+                .min(items.len().saturating_sub(1));
+            let info = render_select(
+                frame,
+                " Approval mode  ·  Enter to apply ",
+                &items,
+                selected,
+                "No approval modes.",
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         crate::app::DialogKind::Login => {
             let items: Vec<SelectItem> = app
                 .login_dialog

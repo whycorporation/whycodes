@@ -27,7 +27,7 @@ use whycodes_agent::{
     TurnEvent, TurnOpts, new_cancel_flag, request_cancel,
 };
 use whycodes_config::Config;
-use whycodes_core::types::AgentMode;
+use whycodes_core::types::{AgentMode, ApprovalMode};
 use whycodes_session::SessionHistory;
 use whycodes_session::session::Session;
 
@@ -317,6 +317,7 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     app.provider_name = opts.provider.clone();
     app.model_name = opts.model.clone();
     app.reasoning_effort = opts.config.session.reasoning_effort.clone();
+    app.approval_mode = opts.config.general.approval_mode.unwrap_or_default();
     app.agent_name = opts.agent_name.clone();
     app.project_dir = opts
         .project_dir
@@ -1091,6 +1092,9 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
 
             if let Some(effort) = app.pending_effort.take() {
                 apply_reasoning_effort(&mut app, &mut rt.agent, &mut config, &effort);
+            }
+            if let Some(mode) = app.pending_approval_mode.take() {
+                apply_approval_mode(&mut app, &mut rt.agent, &mut config, mode);
             }
 
             // ── `/login` picker selection → start OAuth sign-in ──
@@ -3394,6 +3398,43 @@ fn persist_session_reasoning_effort(value: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn apply_approval_mode_raw(app: &mut TuiApp, agent: &mut Agent, config: &mut Config, raw: &str) {
+    let Some(mode) = ApprovalMode::parse(raw) else {
+        app.toasts.push(
+            crate::toast::ToastKind::Warning,
+            format!("Unknown mode '{raw}' (auto, important, manual)"),
+        );
+        return;
+    };
+    apply_approval_mode(app, agent, config, mode);
+}
+
+fn apply_approval_mode(
+    app: &mut TuiApp,
+    agent: &mut Agent,
+    config: &mut Config,
+    mode: ApprovalMode,
+) {
+    app.approval_mode = mode;
+    config.general.approval_mode = Some(mode);
+    agent.set_approval_mode(mode);
+    if let Err(e) = persist_general_approval_mode(mode) {
+        tracing::warn!(error = %e, "failed to persist general.approval_mode");
+    }
+    app.status_message = format!("Approval mode → {}", mode.label());
+    app.mark_dirty();
+}
+
+fn persist_general_approval_mode(mode: ApprovalMode) -> anyhow::Result<()> {
+    if cfg!(test) {
+        return Ok(());
+    }
+    let mut disk = Config::load()?;
+    disk.general.approval_mode = Some(mode);
+    disk.save()?;
+    Ok(())
+}
+
 fn tick_spinner(app: &mut TuiApp, spinner_frame: &mut usize) {
     const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     *spinner_frame = (*spinner_frame + 1) % FRAMES.len();
@@ -4836,6 +4877,10 @@ async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
             crate::input::open_effort_dialog(ctx.app);
         }
         "/effort" => apply_reasoning_effort(ctx.app, ctx.agent, ctx.config, rest),
+        "/mode" if rest.is_empty() => {
+            crate::input::open_mode_dialog(ctx.app);
+        }
+        "/mode" => apply_approval_mode_raw(ctx.app, ctx.agent, ctx.config, rest),
         "/models" => {
             if rest.is_empty() {
                 let src = if ctx
@@ -7130,6 +7175,20 @@ mod tests {
         assert_eq!(h.app.reasoning_effort.as_deref(), Some("high"));
         h.run("/effort xhigh").await;
         assert_eq!(h.app.reasoning_effort.as_deref(), Some("high"));
+
+        h.run("/mode").await;
+        assert!(matches!(
+            h.app.dialogs.active(),
+            Some(DialogKind::ApprovalMode)
+        ));
+        h.app.dialogs.clear();
+        h.app.mode = AppMode::Normal;
+        h.run("/mode manual").await;
+        assert_eq!(h.app.approval_mode, ApprovalMode::Manual);
+        h.run("/mode auto").await;
+        assert_eq!(h.app.approval_mode, ApprovalMode::Auto);
+        h.run("/mode nope").await;
+        assert_eq!(h.app.approval_mode, ApprovalMode::Auto);
 
         h.run("/tools").await;
         h.run("/info").await;

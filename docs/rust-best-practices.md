@@ -147,7 +147,7 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 | Dosya | Satır | Sorun |
 |-------|------:|--------|
 | `crates/tui/src/run.rs` | 9170 | Event loop + slash + session + compact + testler |
-| `crates/cli/src/main.rs` | 4651 | Tüm alt komutlar tek binary dosyasında |
+| `crates/cli/src/main.rs` | ~~4651~~ **4211** | Command bodies; argument schema moved to `args.rs` (2026-08-30) |
 | `crates/agent/src/agent.rs` | 4470 | Turn loop + tool gate + swarm + compact |
 | `crates/tui/src/ui/chat.rs` | 4112 | |
 | `crates/tui/src/input.rs` | 3949 | |
@@ -157,7 +157,7 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 
 Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `config` zaten “load / merge / validate” üç iş — `load.rs`, `merge.rs`, `schema.rs`, `types.rs` doğal kesit.
 
-`cli`: `Commands` enum kalsın, gövdeler `cli/src/cmd/{auth,session,github}.rs`.
+`cli`: `Commands` enum `cli/src/args.rs`'ye taşındı (2026-08-30); gövdeler için `cli/src/cmd/{auth,session,github}.rs` sonraki doğal kesit.
 
 `run.rs` içindeki `#[cfg(test)]` blokları `run/` alt modülüne veya `tui/tests/`’e çıkmalı; 9k satırlık dosyada review imkânsız.
 
@@ -219,7 +219,7 @@ tokio = { version = "1", features = ["full"] }
 
 `core`, `storage`, `skill`, `function` gibi leaf’ler de `full` alır (macros, process, net, time, rt-multi-thread, io-util, …). Derleme süresi, `target` boyutu, “bu crate neden runtime çekiyor?” belirsizliği.
 
-`core`’un `tokio` bağımlılığı muhtemelen `async_trait` Tool yüzünden — native async ile `core` senkron kalabilir (`Tool` future’su implementor’da).
+`core` artık production `tokio` bağımlılığı taşımıyor (2026-08-30); yalnız async unit test için dar `macros` + `rt-multi-thread` dev-dependency kaldı. `function` ve `session` kullanılmayan `tokio` bağımlılıklarından da arındırıldı.
 
 **Yön:** workspace `tokio` default-features kapat; crate bazında `rt`, `macros`, `sync`, `time`, `process`. `full` yalnız `cli` / `tui` / `server`.
 
@@ -308,7 +308,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 | Crate | Asıl sapma |
 |-------|------------|
-| **core** | String `Error` (Serde clone mesajı korunuyor), `tokio`, `ToolContext` String path, `index` bağımlılığı |
+| **core** | String `Error` (Serde clone mesajı korunuyor), `ToolContext` String path, `index` bağımlılığı; production `tokio` bağımlılığı ödendi |
 | **config** | Modül ayrıldı (`types`/`load`/`merge`/`validate`); her alan `pub`; kamu yüzey `core::Error` |
 | **llm** | `async_trait`, string `Error::Llm`, provider tekrarı (sampling unwrap’ları ödendi) |
 | **agent** | 4.4k satır, kalan too_many_arguments, 184 clone, sync Mutex + sync fs |
@@ -333,10 +333,10 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. `cli/src/cmd/` ve `tui/src/run/` ayrı follow-up.
 7. ~~**`TuiApp` alanlarını `pub(crate)`**~~ **ödendi (2026-08-30):** struct + 116 alan crate-içi; kök re-export düştü. Invariant metodları / `SessionRuntime` ayrı follow-up.
 8. **`async_trait` → native async** (önce `Tool`, sonra `LlmProvider`).
-9. **`tokio` feature kesimi**; `core`’dan `tokio` düşür (`anyhow` düştü).
+9. **`tokio` feature kesimi**; `core`/`function`/`session` bağımlılık temizliği ödendi, workspace `full` ve kalan crate feature audit'i follow-up.
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–7, 10 ödendi (2026-08-30). `cli`/`tui` god-file / `async_trait` / `tokio` feature kesimi ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–7, 10 ödendi (2026-08-30). `core`/`function`/`session` tokio dependency temizliği ve CLI argument-module ayrımı da ödendi; `cli`/`tui` command/event-loop kesitleri, `async_trait`, ve workspace feature audit'i ayrı follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 

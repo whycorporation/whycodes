@@ -272,6 +272,11 @@ impl Config {
                 _ => {}
             }
         }
+        if let Ok(val) = std::env::var("WHYCODES_APPROVAL_MODE")
+            && let Some(mode) = whycodes_core::types::ApprovalMode::parse(&val)
+        {
+            self.general.approval_mode = Some(mode);
+        }
         if let Ok(val) = std::env::var("WHYCODES_MEMORY") {
             match val.to_ascii_lowercase().as_str() {
                 "0" | "false" | "no" | "off" => self.memory.enabled = false,

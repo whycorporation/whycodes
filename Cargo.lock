@@ -4893,9 +4893,7 @@ dependencies = [
 name = "whycodes-function"
 version = "0.2.0"
 dependencies = [
- "async-trait",
  "serde_json",
- "tokio",
  "whycodes-core",
 ]
 
@@ -5084,7 +5082,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "uuid",
  "whycodes-core",

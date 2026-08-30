@@ -25,6 +25,7 @@ pub use todo::{
     apply_todowrite_args, load_todos, save_todos, terminal_count, todos_path,
 };
 pub use tool::{Tool, ToolContext};
+pub use types::ApprovalMode;
 
 #[cfg(test)]
 mod tests;
