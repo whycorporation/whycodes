@@ -68,7 +68,7 @@ pub fn render_tool_call(
                 };
                 lines.push(Line::from(Span::styled(
                     format!("   │ {shown}"),
-                    Style::default().fg(color).add_modifier(Modifier::DIM),
+                    Style::default().fg(color),
                 )));
             }
             if res.lines().count() > 10 {

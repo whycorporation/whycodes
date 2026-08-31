@@ -302,7 +302,9 @@ fn push_code_source_line(
         .map(|((r, g, b), text)| {
             Span::styled(
                 text.trim_end_matches('\n').to_string(),
-                Style::default().fg(Color::Rgb(*r, *g, *b)).bg(band),
+                Style::default()
+                    .fg(crate::color::paint_rgb(*r, *g, *b))
+                    .bg(band),
             )
         })
         .collect();
@@ -696,9 +698,17 @@ mod tests {
             for s in &line.spans {
                 let t = s.content.as_ref();
                 if (t.contains("fn") || t.contains("let") || t.contains("hi") || t.contains("main"))
-                    && let Some(Color::Rgb(r, g, b)) = s.style.fg
+                    && let Some(fg) = s.style.fg
                 {
-                    fgs.insert((r, g, b));
+                    match fg {
+                        Color::Rgb(r, g, b) => {
+                            fgs.insert((r, g, b));
+                        }
+                        Color::Indexed(i) => {
+                            fgs.insert((i, 0, 0));
+                        }
+                        _ => {}
+                    }
                 }
             }
         }

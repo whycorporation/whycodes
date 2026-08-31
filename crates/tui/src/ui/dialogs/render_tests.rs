@@ -51,6 +51,27 @@ fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
 // ── base: dialog_frame geometry ────────────────────────────────────────
 
 #[test]
+fn dialog_frame_fills_blank_cells_with_palette_bg() {
+    use ratatui::style::Color;
+    let palette = ThemeName::DefaultDark.palette();
+    let (buf, _) = paint(80, 24, |f| {
+        let _ = dialog_frame(f, "Help", &["Esc / [✗]"], &palette, None);
+    });
+    // Interior of the modal must be themed spaces, not Reset (Clear leftover).
+    let mut saw_fill = false;
+    for y in 0..buf.area.height {
+        for x in 0..buf.area.width {
+            let cell = buf.cell((x, y)).expect("cell");
+            if cell.bg == palette.bg {
+                saw_fill = true;
+                assert_ne!(cell.bg, Color::Reset, "modal cell must not be Reset");
+            }
+        }
+    }
+    assert!(saw_fill, "expected palette.bg fill inside the modal");
+}
+
+#[test]
 fn dialog_frame_centers_modal_and_reports_content() {
     let palette = ThemeName::DefaultDark.palette();
     let (_buf, _text) = paint(80, 40, |f| {

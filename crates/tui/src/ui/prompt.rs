@@ -292,7 +292,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
             // so they read as chips, not as typed prose.
             let paste_style = Style::default()
                 .fg(palette.accent)
-                .add_modifier(Modifier::DIM | Modifier::BOLD);
+                .add_modifier(Modifier::BOLD);
             let paste_ranges = crate::paste::style_ranges(buf);
 
             for (vis_i, row) in rows[view_start..view_end].iter().enumerate() {
@@ -433,9 +433,7 @@ fn paint_attach_row(
     frame.render_widget(
         Paragraph::new(Line::from(Span::styled(
             line,
-            Style::default()
-                .fg(palette.accent)
-                .add_modifier(Modifier::DIM),
+            Style::default().fg(palette.dim),
         ))),
         text_rect,
     );

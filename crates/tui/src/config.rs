@@ -1,5 +1,6 @@
 // ── config.rs: TUI-specific configuration ─────────────────────────────
 
+use crate::color::ColorMode;
 use crate::theme::{ExtraColors, ThemeName, ThemePalette};
 use crate::theme_file;
 use ratatui::style::Color;
@@ -32,6 +33,8 @@ pub struct TuiAppConfig {
     pub agent_color_specs: HashMap<String, String>,
     /// Optional prompt-chrome colors from the active theme file.
     pub extra: ExtraColors,
+    /// Host colour capability. Palettes are quantized on `palette()`.
+    pub color_mode: ColorMode,
 }
 
 impl Default for TuiAppConfig {
@@ -45,6 +48,7 @@ impl Default for TuiAppConfig {
             scrollback: 10_000,
             agent_color_specs: HashMap::new(),
             extra: ExtraColors::default(),
+            color_mode: ColorMode::TrueColor,
         }
     }
 }
@@ -52,9 +56,12 @@ impl Default for TuiAppConfig {
 impl TuiAppConfig {
     /// The palette to render with.
     pub fn palette(&self) -> ThemePalette {
-        self.theme_override
+        let mut p = self
+            .theme_override
             .clone()
-            .unwrap_or_else(|| self.theme.palette())
+            .unwrap_or_else(|| self.theme.palette());
+        p.quantize_for(self.color_mode);
+        p
     }
 
     /// Color for the named agent in prompt/header chrome.
@@ -62,10 +69,11 @@ impl TuiAppConfig {
     /// Precedence: `[tui.agent_colors]` spec → theme-file extra role →
     /// built-in name mapping (`build`/`plan`/`ask`) → cycle index.
     pub fn agent_color(&self, name: &str, idx: usize, palette: &ThemePalette) -> Color {
+        let q = |c: Color| crate::color::quantize_color(c, self.color_mode);
         if let Some(spec) = self.agent_color_specs.get(name)
             && let Some(c) = palette.parse_spec(spec)
         {
-            return c;
+            return q(c);
         }
         let themed = match name {
             "build" => self.extra.agent_build,
@@ -73,17 +81,18 @@ impl TuiAppConfig {
             "ask" => self.extra.agent_ask,
             _ => None,
         };
-        themed.unwrap_or_else(|| palette.color_for_agent_name(name, idx))
+        q(themed.unwrap_or_else(|| palette.color_for_agent_name(name, idx)))
     }
 
     /// Color for the provider/model caption on the prompt footer.
     pub fn model_color(&self, palette: &ThemePalette) -> Color {
+        let q = |c: Color| crate::color::quantize_color(c, self.color_mode);
         if let Some(spec) = self.agent_color_specs.get("model")
             && let Some(c) = palette.parse_spec(spec)
         {
-            return c;
+            return q(c);
         }
-        self.extra.model.unwrap_or(palette.info)
+        q(self.extra.model.unwrap_or(palette.info))
     }
 
     /// Build from the core `TuiConfig` loaded from config.toml.

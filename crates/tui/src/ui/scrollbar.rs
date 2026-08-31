@@ -228,7 +228,7 @@ pub fn scroll_center(selected: usize, total: usize, visible: usize) -> usize {
 
 pub(crate) fn elevate(c: Color, delta: u8) -> Color {
     let (r, g, b) = to_rgb(c);
-    Color::Rgb(
+    crate::color::paint_rgb(
         r.saturating_add(delta),
         g.saturating_add(delta),
         b.saturating_add(delta),

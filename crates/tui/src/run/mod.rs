@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::color::{QuantizingBackend, detect_color_mode, set_active_color_mode};
 use crossterm::cursor::SetCursorStyle;
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
@@ -709,7 +710,11 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     // reply. Dumb / 0×0 PTYs (the first-frame harness) never answer, so a
     // query there is a 2 s tax on time-to-first-frame. Skip it.
     let keyboard_enhanced = enable_keyboard_enhancement(&mut tui_out);
-    let backend = CrosstermBackend::new(tui_out);
+    let color_mode = detect_color_mode();
+    set_active_color_mode(color_mode);
+    app.config.color_mode = color_mode;
+    app.config.extra.quantize_for(color_mode);
+    let backend = QuantizingBackend::new(CrosstermBackend::new(tui_out), color_mode);
     let mut terminal = Terminal::new(backend).inspect_err(|e| {
         let _ = disable_raw_mode();
         whycodes_core::logging::emit(
@@ -739,7 +744,13 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
         "whycodes_tui",
         "info",
         "tui.ready",
-        Some(serde_json::json!({ "term_w": tw, "term_h": th })),
+        Some(serde_json::json!({
+            "term_w": tw,
+            "term_h": th,
+            "color_mode": color_mode.as_str(),
+            "term_program": std::env::var("TERM_PROGRAM").ok(),
+            "term": std::env::var("TERM").ok(),
+        })),
     );
 
     let (event_tx, event_rx) = mpsc::unbounded_channel::<TurnEvent>();

@@ -114,7 +114,7 @@ impl MessageWidget {
                     };
                     lines.push(Line::from(Span::styled(
                         format!("    ↳ {}", truncated),
-                        Style::default().fg(color).add_modifier(Modifier::DIM),
+                        Style::default().fg(color),
                     )));
                 }
             }
@@ -140,7 +140,7 @@ fn thinking_widget_lines(t: &ThinkingBlock, palette: &ThemePalette) -> Vec<Line<
         .fg(palette.dim)
         .add_modifier(Modifier::BOLD);
     let detail = Style::default().fg(palette.dim);
-    let body = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
+    let body = Style::default().fg(palette.dim);
     let show_rail = t.show_body();
 
     let rail_prefix = |spans: Vec<Span<'static>>| -> Line<'static> {
@@ -311,7 +311,10 @@ mod tests {
             Some(p.error),
             "error result colored"
         );
-        assert!(lines[1].spans[0].style.add_modifier.contains(Modifier::DIM));
+        assert!(
+            !lines[1].spans[0].style.add_modifier.contains(Modifier::DIM),
+            "SGR DIM leaks green on Apple Terminal.app"
+        );
     }
 
     #[test]
@@ -326,6 +329,21 @@ mod tests {
             Some(palette().error),
             "error line colored"
         );
+    }
+
+    #[test]
+    fn thinking_widget_body_is_palette_dim_not_sgr_dim() {
+        let p = palette();
+        let mut t = ThinkingBlock::new("widget body");
+        t.collapsed = false;
+        let lines = thinking_widget_lines(&t, &p);
+        let span = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.contains("widget body"))
+            .expect("body");
+        assert_eq!(span.style.fg, Some(p.dim));
+        assert!(!span.style.add_modifier.contains(Modifier::DIM));
     }
 
     #[test]

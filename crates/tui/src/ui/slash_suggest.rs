@@ -317,7 +317,7 @@ pub(crate) fn truncate_to(s: &str, max: usize) -> String {
 /// Lift an sRGB colour toward white by `delta` per channel (clamped).
 pub(crate) fn elevate(c: Color, delta: u8) -> Color {
     let (r, g, b) = to_rgb(c);
-    Color::Rgb(
+    crate::color::paint_rgb(
         r.saturating_add(delta),
         g.saturating_add(delta),
         b.saturating_add(delta),
@@ -426,12 +426,14 @@ mod tests {
 
     #[test]
     fn elevate_brightens_dark_bg() {
+        let _g = crate::color::push_color_mode(crate::color::ColorMode::TrueColor);
         let c = elevate(Color::Rgb(20, 20, 20), 26);
         assert_eq!(c, Color::Rgb(46, 46, 46));
     }
 
     #[test]
     fn elevate_saturates_near_white() {
+        let _g = crate::color::push_color_mode(crate::color::ColorMode::TrueColor);
         assert_eq!(
             elevate(Color::Rgb(250, 250, 250), 26),
             Color::Rgb(255, 255, 255)
@@ -440,6 +442,7 @@ mod tests {
 
     #[test]
     fn elevate_resolves_named_and_indexed_colors() {
+        let _g = crate::color::push_color_mode(crate::color::ColorMode::TrueColor);
         // Named ANSI → fixed sRGB, then +1 per channel.
         assert_eq!(elevate(Color::Black, 1), Color::Rgb(1, 1, 1));
         assert_eq!(elevate(Color::Red, 1), Color::Rgb(129, 1, 1));

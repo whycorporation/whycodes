@@ -4,6 +4,7 @@
 pub mod file;
 pub mod tokens;
 
+use crate::color::{ColorMode, paint_color, quantize_color};
 use ratatui::style::Color;
 use std::fmt;
 use std::str::FromStr;
@@ -283,14 +284,65 @@ pub struct ExtraColors {
     pub model: Option<Color>,
 }
 
+impl ExtraColors {
+    pub fn quantize_for(&mut self, mode: ColorMode) {
+        if mode.is_truecolor() {
+            return;
+        }
+        let q = |c: Option<Color>| c.map(|c| quantize_color(c, mode));
+        self.agent_build = q(self.agent_build);
+        self.agent_plan = q(self.agent_plan);
+        self.agent_ask = q(self.agent_ask);
+        self.model = q(self.model);
+    }
+}
+
 impl ThemePalette {
+    /// Rewrite every `Color::Rgb` role to Indexed for a non-truecolor host.
+    ///
+    /// Built-in palettes stay RGB at rest so tests can assert exact tokens.
+    /// The TUI calls this on the paint-time copy (`TuiAppConfig::palette`).
+    pub fn quantize_for(&mut self, mode: ColorMode) {
+        if mode.is_truecolor() {
+            return;
+        }
+        let q = |c: Color| quantize_color(c, mode);
+        self.bg = q(self.bg);
+        self.fg = q(self.fg);
+        self.border = q(self.border);
+        self.border_focused = q(self.border_focused);
+        self.accent = q(self.accent);
+        self.user_msg = q(self.user_msg);
+        self.assistant_msg = q(self.assistant_msg);
+        self.system_msg = q(self.system_msg);
+        self.tool_msg = q(self.tool_msg);
+        self.thinking = q(self.thinking);
+        self.error = q(self.error);
+        self.warning = q(self.warning);
+        self.success = q(self.success);
+        self.info = q(self.info);
+        self.dim = q(self.dim);
+        self.highlight = q(self.highlight);
+        self.status_bar_bg = q(self.status_bar_bg);
+        self.status_bar_fg = q(self.status_bar_fg);
+        self.input_bg = q(self.input_bg);
+        self.input_fg = q(self.input_fg);
+        self.sidebar_bg = q(self.sidebar_bg);
+        self.dialog_bg = q(self.dialog_bg);
+        self.dialog_border = q(self.dialog_border);
+        self.scrollbar = q(self.scrollbar);
+        self.diff_add = q(self.diff_add);
+        self.diff_remove = q(self.diff_remove);
+        self.diff_hunk = q(self.diff_hunk);
+    }
+
     /// Accent dimmed over bg — used for callout backgrounds so the panel reads
     /// as a tinted wash, not a block of solid accent color.
     pub fn callout_bg(&self, accent: Color) -> Color {
         let (ar, ag, ab) = to_rgb(accent);
         let (br, bgc, bb) = to_rgb(self.bg);
         let mix = |a: u8, b: u8| ((a as u16 * 2 + b as u16 * 8) / 10) as u8;
-        Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
+        paint_color(Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb)))
     }
 
     /// Elevated band behind a user prompt (Grok `bg_light` on the canvas).
@@ -308,9 +360,9 @@ impl ThemePalette {
         let lift = |c: u8| c.saturating_add(delta);
         let drop = |c: u8| c.saturating_sub(delta);
         if u16::from(r) + u16::from(g) + u16::from(b) > 480 {
-            Color::Rgb(drop(r), drop(g), drop(b))
+            paint_color(Color::Rgb(drop(r), drop(g), drop(b)))
         } else {
-            Color::Rgb(lift(r), lift(g), lift(b))
+            paint_color(Color::Rgb(lift(r), lift(g), lift(b)))
         }
     }
 
@@ -323,7 +375,7 @@ impl ThemePalette {
         let (ar, ag, ab) = to_rgb(accent);
         let (br, bgc, bb) = to_rgb(self.bg);
         let mix = |a: u8, b: u8| ((a as u16 * 55 + b as u16 * 45) / 100) as u8;
-        Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb))
+        paint_color(Color::Rgb(mix(ar, br), mix(ag, bgc), mix(ab, bb)))
     }
 
     /// Deterministic color for agent by cycle index.
@@ -1411,5 +1463,49 @@ fn palette_material_palenight() -> ThemePalette {
         diff_add: Color::Rgb(195, 232, 141),
         diff_remove: Color::Rgb(255, 83, 112),
         diff_hunk: Color::Rgb(199, 146, 234),
+    }
+}
+
+#[cfg(test)]
+mod color_mode_tests {
+    use super::*;
+    use crate::color::ColorMode;
+    use ratatui::style::Color;
+
+    #[test]
+    fn quantize_for_drops_rgb_on_256() {
+        let mut p = ThemeName::DefaultDark.palette();
+        assert!(matches!(p.accent, Color::Rgb(_, _, _)));
+        p.quantize_for(ColorMode::Ansi256);
+        for c in [
+            p.bg,
+            p.fg,
+            p.accent,
+            p.thinking,
+            p.success,
+            p.dim,
+            p.dialog_bg,
+        ] {
+            assert!(
+                !matches!(c, Color::Rgb(_, _, _)),
+                "role still Rgb after 256 quantize: {c:?}"
+            );
+        }
+        // Truecolor is a no-op.
+        let mut q = ThemeName::DefaultDark.palette();
+        let before = q.accent;
+        q.quantize_for(ColorMode::TrueColor);
+        assert_eq!(q.accent, before);
+    }
+
+    #[test]
+    fn thinking_is_not_success_after_quantize() {
+        let mut p = ThemeName::DefaultDark.palette();
+        p.quantize_for(ColorMode::Ansi256);
+        assert_ne!(
+            p.thinking, p.success,
+            "thinking must stay distinct from build-green"
+        );
+        assert_ne!(p.dim, p.success);
     }
 }

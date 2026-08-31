@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-01 — Apple Terminal.app RGB + DIM leak to white / build-green
+
+**Symptom:** On macOS Terminal.app, modal chrome (help, pickers, question)
+paints white instead of the theme RGB. Thinking rails / muted transcript
+pick up the build-agent green (`palette.success`) instead of
+`palette.thinking` / `palette.dim`. iTerm2 / Ghostty / Alacritty look fine.
+
+**Root cause:** Terminal.app does not honour `38;2` / `48;2`. A failed
+truecolor SGR leaves the cell on the profile default (white). `Clear` on
+the modal rect resets fg/bg, so the next RGB write is dropped. `Modifier::DIM`
+(`2m`) on a truecolor fg is mapped onto ANSI colour 2 (green) — the same
+slot as the build agent.
+
+**Fix:** Detect colour capability (`COLORTERM`, `TERM_PROGRAM=Apple_Terminal`,
+`TERM`, `WHYCODES_COLOR`). Quantize palette RGB to xterm-256 / 16 *before*
+paint and wrap `CrosstermBackend` so a stray `Color::Rgb` never reaches the
+wire. Replace modal `Clear` with `fill_blank(palette.bg)`. Paint thinking
+body with `palette.dim` and no SGR DIM.
+
+**Prevention:** `cargo test -p whycodes-tui` covers the quantizer, modal fill,
+and thinking styles. Manual: `docs/tui-term-matrix.md` Apple Terminal.app
+row. Override with `WHYCODES_COLOR=256`.
+
 ### 2026-08-31 — Prompt `:` must not steal into vim command mode
 
 **Symptom:** Typing `:` (or `::`, a URL, `std::io`) in the TUI prompt

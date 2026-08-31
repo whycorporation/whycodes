@@ -976,9 +976,9 @@ fn thinking_lines(
         .fg(palette.dim)
         .add_modifier(Modifier::BOLD);
     let detail_style = Style::default().fg(palette.dim);
-    // Body de-emphasis via dim on primary fg (Grok uses bg_blend; dim is the
-    // portable stand-in so reasoning still looks like monospaced stream text).
-    let body_style = Style::default().fg(palette.fg).add_modifier(Modifier::DIM);
+    // Explicit `palette.dim` — Modifier::DIM on Apple Terminal.app maps the
+    // cell onto ANSI green (the build-agent colour) instead of muting RGB.
+    let body_style = Style::default().fg(palette.dim);
     // Grok: ┃ on the left of Thinking / Thought. Live = thinking-color
     // vertical pulse; finished = dim static.
     let live_rail = t.is_running();
@@ -1263,10 +1263,7 @@ fn user_prompt_lines(
     let prefix_style = Style::default().fg(palette.user_msg).bg(band);
     let body_style = Style::default().fg(palette.fg).bg(band);
     let skill_style = Style::default().fg(palette.accent).bg(band);
-    let img_style = Style::default()
-        .fg(palette.accent)
-        .bg(band)
-        .add_modifier(Modifier::DIM);
+    let img_style = Style::default().fg(palette.dim).bg(band);
 
     let mut body_lines: Vec<Line<'static>> = Vec::new();
     let ts_style = Style::default().fg(palette.dim).bg(band);
@@ -2243,10 +2240,7 @@ fn tool_result_head_tail(
         meta_gutter(),
         Span::styled(ACCENT_RAIL.to_string(), rail.style(row)),
         Span::raw(" "),
-        Span::styled(
-            "…".to_string(),
-            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-        ),
+        Span::styled("…".to_string(), Style::default().fg(palette.dim)),
     ]));
     row += 1;
     for line in all.iter().skip(total - tail) {
@@ -2292,10 +2286,7 @@ fn tool_result_plain(
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), rail),
-            Span::styled(
-                "…".to_string(),
-                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-            ),
+            Span::styled("…".to_string(), Style::default().fg(palette.dim)),
         ]));
     } else if line_was_cut {
         lines.push(Line::from(vec![
@@ -2303,7 +2294,7 @@ fn tool_result_plain(
             Span::styled("┃ ".to_string(), rail),
             Span::styled(
                 "… long lines truncated".to_string(),
-                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                Style::default().fg(palette.dim),
             ),
         ]));
     }
@@ -2409,10 +2400,7 @@ fn tool_result_diff(
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), Style::default().fg(palette.dim)),
-            Span::styled(
-                "…".to_string(),
-                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-            ),
+            Span::styled("…".to_string(), Style::default().fg(palette.dim)),
         ]));
     }
     lines
@@ -2539,10 +2527,7 @@ fn tool_result_code(
                         meta_gutter(),
                         Span::styled("┃ ".to_string(), rail),
                         // Grok: dim right-aligned line no + `|` separator.
-                        Span::styled(
-                            left.clone(),
-                            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-                        ),
+                        Span::styled(left.clone(), Style::default().fg(palette.dim)),
                     ];
                     if let Some(row) = hl.get(code_idx) {
                         let mut used = 0usize;
@@ -2558,14 +2543,14 @@ fn tool_result_code(
                                 let shown = hard_truncate_line(t, take);
                                 spans.push(Span::styled(
                                     shown,
-                                    Style::default().fg(Color::Rgb(*r, *g, *b)),
+                                    Style::default().fg(crate::color::paint_rgb(*r, *g, *b)),
                                 ));
                                 line_was_cut = true;
                                 break;
                             }
                             spans.push(Span::styled(
                                 t.to_string(),
-                                Style::default().fg(Color::Rgb(*r, *g, *b)),
+                                Style::default().fg(crate::color::paint_rgb(*r, *g, *b)),
                             ));
                             used += n;
                         }
@@ -2578,10 +2563,7 @@ fn tool_result_code(
                     lines.push(Line::from(vec![
                         meta_gutter(),
                         Span::styled("┃ ".to_string(), rail),
-                        Span::styled(
-                            shown,
-                            Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-                        ),
+                        Span::styled(shown, Style::default().fg(palette.dim)),
                     ]));
                 }
             }
@@ -2600,14 +2582,14 @@ fn tool_result_code(
                     if used + n > text_w {
                         spans.push(Span::styled(
                             hard_truncate_line(t, text_w.saturating_sub(used)),
-                            Style::default().fg(Color::Rgb(*r, *g, *b)),
+                            Style::default().fg(crate::color::paint_rgb(*r, *g, *b)),
                         ));
                         line_was_cut = true;
                         break;
                     }
                     spans.push(Span::styled(
                         t.to_string(),
-                        Style::default().fg(Color::Rgb(*r, *g, *b)),
+                        Style::default().fg(crate::color::paint_rgb(*r, *g, *b)),
                     ));
                     used += n;
                 }
@@ -2626,10 +2608,7 @@ fn tool_result_code(
                         lines.push(Line::from(vec![
                             meta_gutter(),
                             Span::styled("┃ ".to_string(), rail),
-                            Span::styled(
-                                left.clone(),
-                                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-                            ),
+                            Span::styled(left.clone(), Style::default().fg(palette.dim)),
                             Span::styled(shown, Style::default().fg(palette.fg)),
                         ]));
                     } else {
@@ -2638,7 +2617,7 @@ fn tool_result_code(
                             Span::styled("┃ ".to_string(), rail),
                             Span::styled(
                                 hard_truncate_line(left, text_w.saturating_add(7)),
-                                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                                Style::default().fg(palette.dim),
                             ),
                         ]));
                     }
@@ -2653,10 +2632,7 @@ fn tool_result_code(
         lines.push(Line::from(vec![
             meta_gutter(),
             Span::styled("┃ ".to_string(), rail),
-            Span::styled(
-                "…".to_string(),
-                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
-            ),
+            Span::styled("…".to_string(), Style::default().fg(palette.dim)),
         ]));
     } else if line_was_cut {
         lines.push(Line::from(vec![
@@ -2664,7 +2640,7 @@ fn tool_result_code(
             Span::styled("┃ ".to_string(), rail),
             Span::styled(
                 "… long lines truncated".to_string(),
-                Style::default().fg(palette.dim).add_modifier(Modifier::DIM),
+                Style::default().fg(palette.dim),
             ),
         ]));
     }
@@ -2705,13 +2681,13 @@ fn tool_result_grep(
     let path_style = Style::default()
         .fg(palette.info)
         .add_modifier(Modifier::BOLD);
-    let line_no_style = Style::default().fg(palette.dim).add_modifier(Modifier::DIM);
+    let line_no_style = Style::default().fg(palette.dim);
     let body_style = Style::default().fg(palette.fg);
     let ctx_style = Style::default().fg(palette.dim);
     let hit_style = Style::default()
         .fg(palette.highlight)
         .add_modifier(Modifier::BOLD);
-    let meta_style = Style::default().fg(palette.dim).add_modifier(Modifier::DIM);
+    let meta_style = Style::default().fg(palette.dim);
     // Gutter + rail + "  123│ " ≈ 4 + 7
     let text_w = width.saturating_sub(12).max(8) as usize;
 
@@ -3528,6 +3504,54 @@ crates/tools/src/file/grep.rs:34:        \"grep\"
         assert_eq!(super::last_scrolled_past_user(&app, &starts, 12), Some(2));
         assert_eq!(super::last_scrolled_past_user(&app, &starts, 5), Some(0));
         assert_eq!(super::last_scrolled_past_user(&app, &starts, 0), None);
+    }
+
+    #[test]
+    fn thinking_body_uses_palette_dim_without_sgr_dim() {
+        use crate::app::ThinkingBlock;
+        use crate::theme::ThemeName;
+        use ratatui::style::Modifier;
+        let palette = ThemeName::DefaultDark.palette();
+        let mut t = ThinkingBlock::new("reason about the patch");
+        t.collapsed = false;
+        let lines = super::thinking_lines(&t, &palette, 40, 0);
+        let body = lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains("reason")))
+            .expect("body line");
+        let span = body
+            .spans
+            .iter()
+            .find(|s| s.content.contains("reason"))
+            .expect("body span");
+        assert_eq!(span.style.fg, Some(palette.dim));
+        assert!(
+            !span.style.add_modifier.contains(Modifier::DIM),
+            "SGR DIM leaks green on Apple Terminal.app"
+        );
+        let rail = lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains('┃') || s.content.contains("┃"))
+            .and_then(|s| s.style.fg);
+        assert_eq!(rail, Some(palette.thinking));
+        assert_ne!(rail, Some(palette.success));
+    }
+
+    #[test]
+    fn finished_thinking_rail_stays_dim_not_success() {
+        use crate::app::ThinkingBlock;
+        use crate::theme::ThemeName;
+        let palette = ThemeName::DefaultDark.palette();
+        let t = ThinkingBlock::finished("done thinking");
+        let lines = super::thinking_lines(&t, &palette, 40, 0);
+        let rail = lines
+            .iter()
+            .flat_map(|l| l.spans.iter())
+            .find(|s| s.content.contains('┃') || s.content.as_ref() == "┃")
+            .and_then(|s| s.style.fg);
+        assert_eq!(rail, Some(palette.dim));
+        assert_ne!(rail, Some(palette.success));
     }
 
     #[test]

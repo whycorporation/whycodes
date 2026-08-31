@@ -37,12 +37,14 @@ Look for `tui.starting` (`stdin_tty` / `stdout_tty`), `tui.ready`
 | foot | Wayland | `foot` | Lean; OSC 52 usually on |
 | GNOME Terminal / Ptyxis / Tilix | VTE | `xterm-256color` | OSC 52 often off; no kitty keyboard proto |
 | Konsole | Qt | `konsole-256color` | Mouse/clipboard quirks vs VTE |
+| Apple Terminal.app | macOS | `xterm-256color` | No `38;2`. `TERM_PROGRAM=Apple_Terminal` forces 256-colour quantize. `Clear` + SGR DIM leak to white / ANSI green. |
 
 Minimum useful set: **Alacritty + Kitty + WezTerm + one VTE**. Add **foot** on
-Wayland.
+Wayland. On macOS add **Terminal.app** (truecolor hosts are not enough).
 
-WhyCodes does not special-case `TERM` strings. Behaviour is whatever the
-emulator implements. Setup is in `crates/tui/src/run.rs`: `/dev/tty`,
+WhyCodes special-cases `TERM_PROGRAM=Apple_Terminal` (256-colour quantize) and
+honours `WHYCODES_COLOR=truecolor|256|16`. Other `TERM` strings still follow
+the emulator. Setup is in `crates/tui/src/run.rs`: `/dev/tty`,
 alt-screen, mouse capture, bracketed paste, and (when
 `supports_keyboard_enhancement`) `DISAMBIGUATE_ESCAPE_CODES`.
 
@@ -65,6 +67,7 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 | 10 | Resize the window; layout reflows. 0×0 must not happen (`tui.size_fallback`) | |
 | 11 | Hover chrome updates (message / button highlight) | |
 | 12 | `?` help modal: scroll, select-copy, `[✗]` close | |
+| 13 | Modal chrome uses theme colours (not white / profile default). Thinking rail is `palette.thinking`, not build-green | |
 
 ## Capability cuts (same emulator)
 
@@ -75,6 +78,9 @@ BIN="${BIN:-target/debug/whycodes}"
 
 # 256 colour, no COLORTERM
 env -u COLORTERM TERM=xterm-256color "$BIN" -d .
+
+# Force 256 even when COLORTERM=truecolor (Apple Terminal.app equivalent)
+WHYCODES_COLOR=256 "$BIN" -d .
 
 # More primitive
 TERM=xterm "$BIN" -d .

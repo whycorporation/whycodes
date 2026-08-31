@@ -11,7 +11,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear},
+    widgets::{Block, Borders},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -220,8 +220,9 @@ fn paint_dialog_chrome(
         return empty_chrome(dialog_area);
     }
 
-    // Clear cells under the modal so content behind doesn't bleed through.
-    frame.render_widget(Clear, dialog_area);
+    // Clear drops RGB on Apple Terminal.app (Reset + 38;2 leak). Fill the
+    // modal rect with themed spaces so every cell has an explicit bg/fg.
+    crate::ui::layout::fill_blank(frame, dialog_area, palette.bg);
 
     // Grok: border = gray_dim on bg_base; title bold primary on same fill.
     let border_style = Style::default().fg(palette.dim).bg(palette.bg);
