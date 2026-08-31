@@ -213,6 +213,44 @@ The harness PTY is also sized to **80×24** before exec (was 0×0).
 The ~18 ms in-proc figure is now a real TTFF (config + first paint), not a
 capability-query timeout. Spawn-to-exit at `--idle-ms 0` is **26.2 ms**.
 
+### Re-measure, 2026-08-31 (Linux x86_64, release, HEAD `4bbdf35`)
+
+Same machine (Intel Core i5-4200H @ 2.80 GHz, CachyOS). Release binary
+**16.0 MB**. Recorded JSON: [`bench-results.json`](bench-results.json).
+Taken immediately before the **v0.3.0** tag.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.5 ms** | 2.3 ms | **0.6 MB** |
+| `--help` | **2.0 ms** | 2.6 ms | — |
+| `config show` | **2.6 ms** | 3.5 ms | **5.1 MB** |
+| `session list` | — | — | **11.8 MB** |
+| binary size | **16.0 MB** | — | — |
+
+Startup is in the same 1–3 ms band as 2026-08-26. p95 is a little noisier
+on this laptop; still far under the loose CI ceiling (50 ms / 40 MB).
+
+**Multi-session PSS** (idle TUI, 1.5 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **8.4 MB** | was 11.6 MB on 2026-08-26 |
+| 10 | **34.5 MB** | was 30.7 MB |
+| per added session | **~2.9 MB** | was ~2.1 MB |
+
+One idle session is lighter; ten concurrent sessions cost more per extra
+process than the 08-26 row. Still a lower bound (idle, no agent turn).
+
+**First frame / idle** (`bench_first_frame.py`, empty project):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **22.6 ms** median | 0.0/s | was 18.4 ms |
+| Harness `--idle-ms 3000` (10 runs) | **27.8 ms** median | **0.0/s** | still zero idle paints |
+
+Spawn-to-exit at `--idle-ms 0` is **29.9 ms**. Idle redraws remain the
+product claim: **0.0 /s**.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -332,6 +370,55 @@ target: `cargo bench -p whycodes-index --bench scan`.
 | 20k query_settle | 15 µs |
 
 Walk time is for the bench fixture tree, not a multi-GB monorepo.
+
+### Re-measure, 2026-08-31 (Linux, criterion sample-size 15)
+
+Same machine as the process-level re-measure above. Warm highlight, parse,
+and index query stay in the same band; cold highlight and ANSI render are
+noisier (syntect + this laptop under load).
+
+**`highlight_code_spans`**
+
+| Case | cold | warm |
+|---|---|---|
+| Rust, 10 lines | ~2.3 ms | **106 ns** |
+| Rust, 100 lines | ~2.2 ms | **331 ns** |
+| Rust, 500 lines | (noisy) | **1.47 µs** |
+| untagged, 100 lines (warm) | — | 293 ns |
+
+**`parse_markdown`**
+
+| Case | time |
+|---|---|
+| typical response | 6.7 µs |
+| streaming prefix 200 / 1000 / 4000 chars | 3.2 / 12.3 / 56.1 µs |
+
+**`assess` (command-risk)**
+
+| Case | time |
+|---|---|
+| safe short (`ls -la` class) | 583 ns |
+| safe build (`cargo test …`) | 2.18 µs |
+| caution / destructive / catastrophic | 2.38 / 2.61 / 1.45 µs |
+| pipeline | 5.47 µs |
+
+**`render_markdown` (ANSI, uncached per call)**
+
+| Case | time |
+|---|---|
+| typical response | 1.74 ms |
+| 200-line Rust fence | 57.1 ms |
+
+**Index (`whycodes-index`)**
+
+| Case | time |
+|---|---|
+| walk root (1 / 4 / 8 threads) | ~8.3 / 5.4 / 5.4 ms |
+| query warm | **14 µs** |
+| browse top | 33 µs |
+| entries snapshot | 124 µs |
+| 20k query_now (non-blocking) | **14 µs** |
+| 20k query_settle | 14 µs |
 
 **The tokeniser allocated per character.** `match_operator` collected each of
 its fifteen candidate operators into a `Vec<char>` at every character position,

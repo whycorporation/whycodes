@@ -1,6 +1,6 @@
 {
-  "date": "2026-08-26",
-  "git": "3f6eaf1",
+  "date": "2026-08-31",
+  "git": "4bbdf35",
   "machine": {
     "platform": "Linux x86_64",
     "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
@@ -8,47 +8,47 @@
   },
   "binary": "target/release/whycodes",
   "profile": "release",
-  "binary_size_mb": 16.1,
-  "version_ms_p95": 1.71,
+  "binary_size_mb": 16.0,
+  "version_ms_p95": 2.32,
   "version_rss_mb": 0.55,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 1.54,
-      "p95_ms": 1.71,
-      "min_ms": 1.29,
-      "max_ms": 1.71
+      "median_ms": 1.47,
+      "p95_ms": 2.32,
+      "min_ms": 1.13,
+      "max_ms": 2.32
     },
     "help": {
       "runs": 20,
-      "median_ms": 1.89,
-      "p95_ms": 3.19,
-      "min_ms": 1.73,
-      "max_ms": 3.19
+      "median_ms": 1.95,
+      "p95_ms": 2.57,
+      "min_ms": 1.72,
+      "max_ms": 2.57
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 2.59,
-      "p95_ms": 3.01,
-      "min_ms": 2.44,
-      "max_ms": 3.01
+      "median_ms": 2.57,
+      "p95_ms": 3.49,
+      "min_ms": 2.23,
+      "max_ms": 3.49
     }
   },
   "memory": {
     "version": {
       "runs": 5,
       "median_mb": 0.55,
-      "max_mb": 0.55
+      "max_mb": 0.59
     },
     "config-show": {
       "runs": 5,
       "median_mb": 5.1,
-      "max_mb": 5.6
+      "max_mb": 8.0
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 10.3,
-      "max_mb": 10.5
+      "median_mb": 11.8,
+      "max_mb": 11.8
     }
   },
   "multi_session": {
@@ -57,88 +57,88 @@
       "1": {
         "runs": 5,
         "sessions": 1,
-        "median_pss_mb": 11.6,
-        "max_pss_mb": 11.7,
-        "min_pss_mb": 11.5,
+        "median_pss_mb": 8.4,
+        "max_pss_mb": 8.5,
+        "min_pss_mb": 8.2,
         "median_process_count": 1,
         "samples_mb": [
-          11.5,
-          11.6,
-          11.6,
-          11.7,
-          11.7
+          8.2,
+          8.4,
+          8.4,
+          8.5,
+          8.5
         ]
       },
       "10": {
         "runs": 5,
         "sessions": 10,
-        "median_pss_mb": 30.7,
-        "max_pss_mb": 30.7,
-        "min_pss_mb": 30.6,
+        "median_pss_mb": 34.5,
+        "max_pss_mb": 34.8,
+        "min_pss_mb": 34.3,
         "median_process_count": 10,
         "samples_mb": [
-          30.6,
-          30.6,
-          30.7,
-          30.7,
-          30.7
+          34.3,
+          34.4,
+          34.5,
+          34.8,
+          34.8
         ],
-        "extra_over_one_mb": 19.1,
-        "per_added_session_mb": 2.1
+        "extra_over_one_mb": 26.1,
+        "per_added_session_mb": 2.9
       }
     }
   },
-  "first_frame_note": "harness PTY now 80x24; keyboard-enhancement CSI skipped on 0x0/WHYCODES_BENCH; record_draw before MCP/index. Idle 0.0/s.",
+  "first_frame_note": "Same 80x24 harness PTY as 2026-08-26. Idle still 0.0/s. In-proc TTFF ~23 ms (was 18 ms); spawn-to-exit ~30 ms.",
   "first_frame_harness": {
-    "median_ms": 18.36,
-    "min_ms": 16.88,
-    "max_ms": 27.03,
+    "median_ms": 22.58,
+    "min_ms": 20.87,
+    "max_ms": 28.3,
     "runs": 12,
     "idle_ms": 0
   },
   "idle_draws_harness": {
     "median_per_s": 0.0,
     "window_ms": 3000,
-    "first_frame_median_ms": 18.05
+    "first_frame_median_ms": 27.76
   },
   "hot_paths": {
     "assess": {
-      "safe_short_ns": 575,
-      "safe_build_us": 2.06,
-      "caution_us": 2.32,
-      "destructive_us": 2.44,
-      "catastrophic_us": 1.33,
-      "pipeline_us": 5.08
+      "safe_short_ns": 583,
+      "safe_build_us": 2.18,
+      "caution_us": 2.38,
+      "destructive_us": 2.61,
+      "catastrophic_us": 1.45,
+      "pipeline_us": 5.47
     },
     "parse_markdown": {
-      "typical_us": 5.68,
-      "stream_200_us": 2.69,
-      "stream_1000_us": 10.0,
-      "stream_4000_us": 45.1
+      "typical_us": 6.66,
+      "stream_200_us": 3.15,
+      "stream_1000_us": 12.3,
+      "stream_4000_us": 56.1
     },
     "highlight_warm": {
-      "rust_10_ns": 50.2,
-      "rust_100_ns": 266,
-      "rust_500_us": 1.27,
-      "untagged_100_ns": 222
+      "rust_10_ns": 106,
+      "rust_100_ns": 331,
+      "rust_500_us": 1.47,
+      "untagged_100_ns": 293
     },
     "highlight_cold": {
-      "rust_10_ms": 1.78,
-      "rust_100_ms": 1.89
+      "rust_10_ms": 2.30,
+      "rust_100_ms": 2.21
     },
     "render_markdown_ansi": {
-      "typical_ms": 1.36,
-      "code_200_ms": 43.2
+      "typical_ms": 1.74,
+      "code_200_ms": 57.1
     }
   },
   "index": {
-    "walk_root_t1_ms": 4.95,
-    "walk_root_t4_ms": 5.08,
-    "walk_root_t8_ms": 4.84,
-    "query_warm_us": 14.2,
-    "browse_top_us": 29.2,
-    "entries_snapshot_us": 128,
-    "query_now_nonblocking_20k_us": 14.6,
-    "query_settle_20k_us": 14.7
+    "walk_root_t1_ms": 8.33,
+    "walk_root_t4_ms": 5.36,
+    "walk_root_t8_ms": 5.36,
+    "query_warm_us": 14.1,
+    "browse_top_us": 32.5,
+    "entries_snapshot_us": 124,
+    "query_now_nonblocking_20k_us": 14.0,
+    "query_settle_20k_us": 14.4
   }
 }
