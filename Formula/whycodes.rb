@@ -5,12 +5,16 @@
 # release.yml re-runs that script after each tagged release.
 # Do not hand-edit sha256 values.
 #
-# Install:
+# Install (Homebrew 6+ requires tap trust):
 #   brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
+#   brew install whycorporation/whycodes/whycodes
+#
+# If already tapped:
+#   brew trust --formula whycorporation/whycodes/whycodes
 #   brew install whycodes
 #
 # Source tip (needs a Rust toolchain):
-#   brew install --HEAD whycodes
+#   brew install --HEAD whycorporation/whycodes/whycodes
 
 class Whycodes < Formula
   desc "Terminal coding agent written in Rust"

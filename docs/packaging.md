@@ -14,16 +14,26 @@ x86_64 is also wired; Linux aarch64 still needs a prebuild.
 
 ```bash
 brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
-brew install whycodes
+brew install whycorporation/whycodes/whycodes
 brew upgrade whycodes
 
 # Tip of main (needs Rust via brew)
-brew install --HEAD whycodes
+brew install --HEAD whycorporation/whycodes/whycodes
 
-# One-shot without a persistent tap
+# Already tapped, but Homebrew 6+ refused the untrusted formula
+brew trust --formula whycorporation/whycodes/whycodes
+brew install whycodes
+
+# One-shot without a persistent tap (still evaluates the formula Ruby)
 brew install --formula \
   https://raw.githubusercontent.com/whycorporation/whycodes/main/Formula/whycodes.rb
 ```
+
+Homebrew 6.0+ [requires tap trust](https://docs.brew.sh/Tap-Trust) for
+non-official taps. Prefer the fully-qualified install (trusts only this
+formula) over `brew trust whycorporation/whycodes` (trusts every current
+and future formula in the tap). The custom tap URL is required because
+this repo is the tap; there is no separate `homebrew-whycodes` repository.
 
 `brew install` generates bash/zsh/fish completions from
 `whycodes completions`. Update with `brew upgrade whycodes` — `whycodes

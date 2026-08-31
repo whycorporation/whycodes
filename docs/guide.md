@@ -8,6 +8,15 @@ On macOS:
 
 ```bash
 brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
+brew install whycorporation/whycodes/whycodes
+```
+
+Homebrew 6+ requires trusting a third-party formula before it will load.
+The fully-qualified name trusts only `whycodes`. If the tap is already
+present:
+
+```bash
+brew trust --formula whycorporation/whycodes/whycodes
 brew install whycodes
 ```
 

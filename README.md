@@ -54,6 +54,14 @@ irm https://why.codes/install.ps1 | iex
 
 ```bash
 brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes
+brew install whycorporation/whycodes/whycodes
+```
+
+Homebrew 6+ refuses untrusted third-party taps. The fully-qualified install
+trusts only this formula. If you already tapped and saw that error:
+
+```bash
+brew trust --formula whycorporation/whycodes/whycodes
 brew install whycodes
 ```
 

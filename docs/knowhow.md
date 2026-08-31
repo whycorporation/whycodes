@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-31 — Homebrew 6 tap trust blocks `brew install whycodes`
+
+**Symptom:** `brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes`
+succeeds (clones the whole repo into
+`Taps/whycorporation/homebrew-whycodes`), then `brew install whycodes`
+fails with `Refusing to load formula … from untrusted tap`. Homebrew
+prints `brew trust --formula whycorporation/whycodes/whycodes`.
+
+**Root cause:** Homebrew 6.0.0 requires explicit trust for non-official
+taps before evaluating formula Ruby. Short-name `brew install whycodes`
+does not grant that trust. Fully-qualified
+`brew install user/repo/formula` trusts only that item.
+
+**Fix:** Document `brew install whycorporation/whycodes/whycodes` after
+the custom-URL tap (this repo *is* the tap; there is no
+`homebrew-whycodes` remote). Already-tapped machines:
+`brew trust --formula whycorporation/whycodes/whycodes && brew install whycodes`.
+
+**Prevention:** Keep README / guide / packaging / formula header /
+landing brew snippet on the fully-qualified name. Do not tell people to
+`brew trust whycorporation/whycodes` unless they accept every future
+formula in the tap.
+
 ### 2026-08-30 — Prompt Backspace/Delete must not `terminal.clear()`
 
 **Symptom:** Typing in the prompt is smooth; Backspace, Delete, Ctrl+U, and

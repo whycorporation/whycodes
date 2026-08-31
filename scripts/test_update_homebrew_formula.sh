@@ -38,6 +38,8 @@ assert_common() {
     need "$formula" 'livecheck do'
     need "$formula" 'strategy :github_latest'
     need "$formula" 'brew upgrade whycodes'
+    need "$formula" 'brew install whycorporation/whycodes/whycodes'
+    need "$formula" 'brew trust --formula whycorporation/whycodes/whycodes'
     need "$formula" 'assert_match "whycodes", shell_output("#{bin}/whycodes --version")'
     need "$formula" 'assert_match "whycodes", shell_output("#{bin}/whycodes completions bash")'
     forbid "$formula" 'windows-msvc' 'formula should not mention Windows artifacts'
