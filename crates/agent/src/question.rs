@@ -3,7 +3,8 @@
 //! The agent intercepts the `question` tool and blocks until the UI (or stdin)
 //! returns structured answers. Mirrors [`crate::permission`] channel pattern.
 
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -32,11 +33,13 @@ impl QuestionError {
     }
 }
 
+/// Boxed, sendable future returned by [`QuestionPrompter::ask`].
+pub type QuestionAskFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<QuestionAnswer>, QuestionError>> + Send + 'a>>;
+
 /// Asked when the model calls the `question` tool.
-#[async_trait]
 pub trait QuestionPrompter: Send + Sync {
-    async fn ask(&self, questions: Vec<QuestionSpec>)
-    -> Result<Vec<QuestionAnswer>, QuestionError>;
+    fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_>;
 }
 
 /// Pending request for the TUI (or other UI) to fulfill.
@@ -58,134 +61,128 @@ impl ChannelQuestionPrompter {
     }
 }
 
-#[async_trait]
 impl QuestionPrompter for ChannelQuestionPrompter {
-    async fn ask(
-        &self,
-        questions: Vec<QuestionSpec>,
-    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
-        let (reply_tx, reply_rx) = oneshot::channel();
-        if self
-            .tx
-            .send(QuestionRequest {
-                questions,
-                reply: reply_tx,
-            })
-            .is_err()
-        {
-            return Err(QuestionError::Disconnected);
-        }
-        match self.timeout {
-            Some(dur) => match tokio::time::timeout(dur, reply_rx).await {
-                Ok(Ok(r)) => r,
-                Ok(Err(_)) => Err(QuestionError::Disconnected),
-                Err(_) => Err(QuestionError::Timeout),
-            },
-            None => reply_rx.await.unwrap_or(Err(QuestionError::Disconnected)),
-        }
+    fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
+        Box::pin(async move {
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if self
+                .tx
+                .send(QuestionRequest {
+                    questions,
+                    reply: reply_tx,
+                })
+                .is_err()
+            {
+                return Err(QuestionError::Disconnected);
+            }
+            match self.timeout {
+                Some(dur) => match tokio::time::timeout(dur, reply_rx).await {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(_)) => Err(QuestionError::Disconnected),
+                    Err(_) => Err(QuestionError::Timeout),
+                },
+                None => reply_rx.await.unwrap_or(Err(QuestionError::Disconnected)),
+            }
+        })
     }
 }
 
 /// Auto-pick first option (or empty free-text) — CI / non-interactive.
 pub struct AutoAnswerPrompter;
 
-#[async_trait]
 impl QuestionPrompter for AutoAnswerPrompter {
-    async fn ask(
-        &self,
-        questions: Vec<QuestionSpec>,
-    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
-        Ok(questions
-            .iter()
-            .map(|q| {
-                if let Some(opt) = q.options.first() {
-                    QuestionAnswer {
-                        selected: vec![opt.label.clone()],
-                        free_text: None,
+    fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
+        Box::pin(async move {
+            Ok(questions
+                .iter()
+                .map(|q| {
+                    if let Some(opt) = q.options.first() {
+                        QuestionAnswer {
+                            selected: vec![opt.label.clone()],
+                            free_text: None,
+                        }
+                    } else {
+                        QuestionAnswer {
+                            selected: vec![],
+                            free_text: Some("auto".into()),
+                        }
                     }
-                } else {
-                    QuestionAnswer {
-                        selected: vec![],
-                        free_text: Some("auto".into()),
-                    }
-                }
-            })
-            .collect())
+                })
+                .collect())
+        })
     }
 }
 
 /// Stdin fallback for plain CLI (delegates to tool module helpers via execute path).
 pub struct StdinQuestionPrompter;
 
-#[async_trait]
 impl QuestionPrompter for StdinQuestionPrompter {
-    async fn ask(
-        &self,
-        questions: Vec<QuestionSpec>,
-    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
-        // Re-use tool stdin path by serializing back to args and calling parse-free logic.
-        // Inline minimal stdin to avoid tool execute needing ToolContext.
-        use std::io::{self, Write};
-        let mut answers = Vec::with_capacity(questions.len());
-        for (qi, q) in questions.iter().enumerate() {
-            eprintln!();
-            if questions.len() > 1 {
-                eprintln!("── Question {}/{} ──", qi + 1, questions.len());
-            }
-            eprintln!("❓ {}", q.prompt);
-            if q.options.is_empty() {
-                eprint!("   Your answer: ");
+    fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
+        Box::pin(async move {
+            // Re-use tool stdin path by serializing back to args and calling parse-free logic.
+            // Inline minimal stdin to avoid tool execute needing ToolContext.
+            use std::io::{self, Write};
+            let mut answers = Vec::with_capacity(questions.len());
+            for (qi, q) in questions.iter().enumerate() {
+                eprintln!();
+                if questions.len() > 1 {
+                    eprintln!("── Question {}/{} ──", qi + 1, questions.len());
+                }
+                eprintln!("❓ {}", q.prompt);
+                if q.options.is_empty() {
+                    eprint!("   Your answer: ");
+                    let _ = io::stderr().flush();
+                    let line = read_line().map_err(QuestionError::Invalid)?;
+                    if line.is_empty() {
+                        return Err(QuestionError::Cancelled);
+                    }
+                    answers.push(QuestionAnswer {
+                        selected: vec![],
+                        free_text: Some(line),
+                    });
+                    continue;
+                }
+                for (i, opt) in q.options.iter().enumerate() {
+                    if opt.description.is_empty() {
+                        eprintln!("  {}. {}", i + 1, opt.label);
+                    } else {
+                        eprintln!("  {}. {} — {}", i + 1, opt.label, opt.description);
+                    }
+                }
+                let other_n = q.options.len() + 1;
+                eprintln!("  {other_n}. Other (type your own)");
+                eprint!("   Choice: ");
                 let _ = io::stderr().flush();
                 let line = read_line().map_err(QuestionError::Invalid)?;
                 if line.is_empty() {
                     return Err(QuestionError::Cancelled);
                 }
+                if let Ok(n) = line.parse::<usize>() {
+                    if n >= 1 && n <= q.options.len() {
+                        answers.push(QuestionAnswer {
+                            selected: vec![q.options[n - 1].label.clone()],
+                            free_text: None,
+                        });
+                        continue;
+                    }
+                    if n == other_n {
+                        eprint!("   Other text: ");
+                        let _ = io::stderr().flush();
+                        let t = read_line().unwrap_or_default();
+                        answers.push(QuestionAnswer {
+                            selected: vec![],
+                            free_text: if t.is_empty() { None } else { Some(t) },
+                        });
+                        continue;
+                    }
+                }
                 answers.push(QuestionAnswer {
                     selected: vec![],
                     free_text: Some(line),
                 });
-                continue;
             }
-            for (i, opt) in q.options.iter().enumerate() {
-                if opt.description.is_empty() {
-                    eprintln!("  {}. {}", i + 1, opt.label);
-                } else {
-                    eprintln!("  {}. {} — {}", i + 1, opt.label, opt.description);
-                }
-            }
-            let other_n = q.options.len() + 1;
-            eprintln!("  {other_n}. Other (type your own)");
-            eprint!("   Choice: ");
-            let _ = io::stderr().flush();
-            let line = read_line().map_err(QuestionError::Invalid)?;
-            if line.is_empty() {
-                return Err(QuestionError::Cancelled);
-            }
-            if let Ok(n) = line.parse::<usize>() {
-                if n >= 1 && n <= q.options.len() {
-                    answers.push(QuestionAnswer {
-                        selected: vec![q.options[n - 1].label.clone()],
-                        free_text: None,
-                    });
-                    continue;
-                }
-                if n == other_n {
-                    eprint!("   Other text: ");
-                    let _ = io::stderr().flush();
-                    let t = read_line().unwrap_or_default();
-                    answers.push(QuestionAnswer {
-                        selected: vec![],
-                        free_text: if t.is_empty() { None } else { Some(t) },
-                    });
-                    continue;
-                }
-            }
-            answers.push(QuestionAnswer {
-                selected: vec![],
-                free_text: Some(line),
-            });
-        }
-        Ok(answers)
+            Ok(answers)
+        })
     }
 }
 

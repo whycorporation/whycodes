@@ -21,7 +21,7 @@ Proje, katmanlı crate grafiği, `thiserror` başlangıcı, `spawn_blocking` yar
 1. **God-file / god-struct.** `run.rs` ~9k satır, `TuiApp` 112 `pub` alan, `cli/src/main.rs` ~4.6k satır.
 2. **Stringly-typed hata.** `whycodes_core::Error` neredeyse tamamen `String`. `Clone` Serde kolu artık mesajı korur (`Serde(String)`); domain varyantları hâlâ yok.
 3. ~~**Kütüphane crate’lerinde `anyhow`.**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` kamu yüzeyi `whycodes_core::Error`. `anyhow` uygulama sınırında (`cli`/`tui`/`server`/`agent`/`tools`/`llm`).
-4. **`async_trait` + `tokio/full` leaf crate’lerde.** Edition 2024’te native `async fn` in traits var; `core` hâlâ `tokio` çekiyor (`anyhow` düştü).
+4. ~~**`async_trait` + `tokio/full` leaf crate’lerde.**~~ **ödendi (2026-08-31):** native boxed futures; workspace Tokio `default-features = false`.
 5. ~~**22 adet `Number::from_f64(...).unwrap()`** LLM provider’larında~~ **ödendi (2026-08-30):** `openai_compat::{json_number, apply_sampling}` NaN/Inf’i atlar; panic bütçesi llm 22→0.
 6. **Yutulan hatalar** TUI 49 / CLI 32 / agent 29 — ratchet var, sıfırlama yok.
 
@@ -200,7 +200,7 @@ Agent, CLI, TUI, tools: onlarca allow. Clippy’nin önerisi **context struct / 
 
 ### 9. Edition 2024 hâlâ `async_trait`
 
-76 `#[async_trait]` (Tool, LlmProvider, PermissionPrompter, …). Rust 1.75+ **native async fn in traits**; edition 2024’te bu varsayılan.
+0 `#[async_trait]` (Tool, LlmProvider, PermissionPrompter, QuestionPrompter, MCP — boxed futures, 2026-08-31). Rust 1.75+ **native async fn in traits**; edition 2024’te bu varsayılan.
 
 Maliyet: ekstra crate, box’lı future, daha kötü hata mesajı. `LlmProvider::stream` zaten `Pin<Box<dyn Stream...>>` dönüyor — native trait + type alias yeterli:
 
@@ -300,7 +300,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 `temperature`/`top_p` OpenAI-uyumlu gövdeler `apply_sampling` ile tek yerde. Google/Ollama/Code Assist hâlâ kendi anahtarlarını (`generationConfig`, `options`) yazıyor — aynı helper, farklı path.
 
-`#[async_trait] impl LlmProvider` her dosyada neredeyse aynı `complete`/`stream` iskeleti.
+`LlmProvider` her dosyada neredeyse aynı `complete`/`stream` iskeleti (boxed futures, `async_trait` yok).
 
 ---
 
@@ -310,9 +310,9 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 |-------|------------|
 | **core** | String `Error` (Serde clone mesajı korunuyor), `ToolContext` String path, `index` bağımlılığı; production `tokio` bağımlılığı ödendi |
 | **config** | Modül ayrıldı (`types`/`load`/`merge`/`validate`); her alan `pub`; kamu yüzey `core::Error` |
-| **llm** | `async_trait`, string `Error::Llm`, provider tekrarı (sampling unwrap’ları ödendi) |
-| **agent** | 4.4k satır, kalan too_many_arguments, 184 clone, sync Mutex + sync fs |
-| **tui** | 9k `run.rs`, 112 alanlı `TuiApp`, yutulan hatalar, her modül `pub` |
+| **llm** | string `Error::Llm`, provider tekrarı (sampling unwrap’ları ve `async_trait` ödendi) |
+| **agent** | 4.4k satır, kalan too_many_arguments, 184 clone, sync Mutex + sync fs; permission/question boxed futures |
+| **tui** | `run/` split (#46); `TuiApp`/`SessionRuntime` alanları `pub(crate)`; yutulan hatalar, her modül `pub` |
 | **cli** | 4.6k `main.rs`, `anyhow` OK, blocking `Command`, yutulan hatalar |
 | **lsp/mcp** | Crate-yerel `thiserror`; `dead_code` Child tutma (yorumlu — `ManuallyDrop`/`AbortOnDrop` daha net) |
 | **memory** | `MemoryError`; senkron indirme, 28 alanlı settings |
@@ -331,12 +331,12 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 4. ~~**`anyhow`’i leaf crate’lerden çıkar**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` `core::Error`; `plugin`/`format`/`core` kullanılmayan `anyhow` düştü.
 5. ~~**`TurnOpts`**~~ **ödendi** — `run_turn_with_events` tek `TurnOpts`. TUI `force_stop_turn` / render allow’ları duruyor.
 6. ~~**`config/src/` modüllere böl**~~ **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate`. ~~`cli/src/cmd/` ve `tui/src/run/`~~ **ödendi (#46).**
-7. ~~**`TuiApp` alanlarını `pub(crate)`**~~ **ödendi (2026-08-30):** struct + 116 alan crate-içi; kök re-export düştü. Invariant metodları / `SessionRuntime` ayrı follow-up.
-8. ~~**`async_trait` → explicit native futures**~~ **ödendi (2026-08-31):** `Tool`, `LlmProvider`, ve object-safe MCP çağrıları `BoxFuture`/`ToolFuture` ile dyn dispatch'i korurken `async-trait` bağımlılığını `core`/`tools`/`llm`/`lsp` üzerinden kaldırdı. Permission prompt traitleri ayrı follow-up.
+7. ~~**`TuiApp` alanlarını `pub(crate)`**~~ **ödendi (2026-08-30):** struct + 116 alan crate-içi; kök re-export düştü. `SessionRuntime` alanları da `pub(crate)` (#47, 2026-08-31) + `state()`/`preview()`/`persist()`/`age()`.
+8. ~~**`async_trait` → explicit native futures**~~ **ödendi (2026-08-31):** `Tool`, `LlmProvider`, ve object-safe MCP çağrıları `BoxFuture`/`ToolFuture` ile dyn dispatch'i korurken `async-trait` bağımlılığını `core`/`tools`/`llm`/`lsp` üzerinden kaldırdı. Permission/question prompt traitleri de boxed future (#47, 2026-08-31).
 9. ~~**`tokio` feature kesimi**~~ **ödendi (2026-08-31):** workspace Tokio `default-features = false`; her crate yalnız kullandığı runtime, macro, sync, time, process, io-util veya net feature'larını ister. `core`/`function`/`session` bağımlılık temizliği de önceki işte tamamlandı.
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–10 ödendi (2026-08-31); `cli/src/cmd/` ve `tui/src/run/` kesitleri #46. Kalan: permission-prompt traitler, `too_many_arguments`, `SessionRuntime` invariant metodları, `unwrap_used` (#47). Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–10 ödendi (2026-08-31); `cli/src/cmd/` ve `tui/src/run/` kesitleri #46. #47 (2026-08-31): permission/question prompt `async_trait` kaldırıldı (`agent`/`server` bağımlılığı düştü); TUI `force_stop_turn` `SessionRuntime` üzerinden sadeleşti; `SessionRuntime` alanları `pub(crate)` + `age()`/`state()`/`preview()`/`persist()`. Kalan: diğer `too_many_arguments` siteleri, `unwrap_used` (panic bütçesi ratchet). Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
@@ -346,7 +346,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 |--------|------:|
 | Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-08-30) |
 | Yutulan hata bütçesi | tui 45, cli 32, agent 28, tools 9, memory 8, core 7, format 0 |
-| `#[async_trait]` | 11 (permission-prompt follow-up; Tool/LlmProvider/MCP paid 2026-08-31) |
+| `#[async_trait]` | 0 (permission/question prompt paid #47, 2026-08-31) |
 | `HashMap` / `FxHashMap` hit | ~153 / ~13 |
 | `Cow<` | 1 |
 | `#[must_use]` | 0 |

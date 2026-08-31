@@ -1489,26 +1489,16 @@ fn force_stop_applies_outcome_or_rebuilds() {
     isolate_home();
     let (dir, idx) = temp_index();
     let config = Config::default();
-    let (perm, _prx) = ChannelPermissionPrompter::new();
-    let (question, _qrx) = ChannelQuestionPrompter::new(None);
-    let perm = Arc::new(perm);
-    let question = Arc::new(question);
-    let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let (done_tx, mut done_rx) = mpsc::unbounded_channel();
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    rt.agent_busy = true;
+    rt.cancel_flag = Some(new_cancel_flag());
+    let mut at = Some(Instant::now());
 
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.add_message(ChatRole::Assistant, "partial");
-    let mut agent = Agent::new(dummy_info("build"));
-    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
-    let mut busy = true;
-    let mut flag = Some(new_cancel_flag());
-    let mut at = Some(Instant::now());
-    let mut join = None;
-    let mut backup = None;
-    let mut q = std::collections::VecDeque::new();
-    let mut p = std::collections::VecDeque::new();
 
-    done_tx
+    rt.done_tx
         .send(TurnOutcome::Ok {
             text: "done".into(),
             agent: Agent::new(dummy_info("from-outcome")),
@@ -1516,30 +1506,12 @@ fn force_stop_applies_outcome_or_rebuilds() {
             work_ms: 3,
         })
         .unwrap();
-    force_stop_turn(
-        &mut app,
-        &mut agent,
-        &mut session,
-        &mut busy,
-        &mut flag,
-        &mut at,
-        &mut join,
-        &mut backup,
-        &mut q,
-        &mut p,
-        &mut done_rx,
-        &config,
-        dir.path(),
-        "acme",
-        "m",
-        event_tx.clone(),
-        Arc::clone(&perm),
-        Arc::clone(&question),
-        &idx,
-    );
-    assert!(!busy);
-    assert!(flag.is_none());
-    assert_eq!(agent.info.name, "from-outcome");
+    app.provider_name = "acme".into();
+    app.model_name = "m".into();
+    force_stop_turn(&mut app, &mut rt, &mut at, &config, dir.path(), &idx);
+    assert!(!rt.agent_busy);
+    assert!(rt.cancel_flag.is_none());
+    assert_eq!(rt.agent.info.name, "from-outcome");
     assert!(
         app.messages
             .iter()
@@ -1547,38 +1519,20 @@ fn force_stop_applies_outcome_or_rebuilds() {
     );
 
     // No outcome → restore backup and rebuild.
-    let mut agent = Agent::new(dummy_info("old"));
-    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
-    let mut busy = true;
-    let mut flag = Some(new_cancel_flag());
-    let mut at = Some(Instant::now());
-    let mut backup = Some(Session::new(dir.path().to_path_buf(), "backup-sys".into()));
+    rt.agent = Agent::new(dummy_info("old"));
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    rt.agent_busy = true;
+    rt.cancel_flag = Some(new_cancel_flag());
+    rt.session_backup = Some(Session::new(dir.path().to_path_buf(), "backup-sys".into()));
+    at = Some(Instant::now());
     app.agent_name = "plan".into();
     app.add_message(ChatRole::System, "already cancelled");
-    force_stop_turn(
-        &mut app,
-        &mut agent,
-        &mut session,
-        &mut busy,
-        &mut flag,
-        &mut at,
-        &mut join,
-        &mut backup,
-        &mut q,
-        &mut p,
-        &mut done_rx,
-        &config,
-        dir.path(),
-        "acme",
-        "m",
-        event_tx,
-        perm,
-        question,
-        &idx,
-    );
-    assert!(!busy);
-    assert!(backup.is_none());
-    assert_eq!(session.system_prompt, "backup-sys");
+    app.provider_name = "acme".into();
+    app.model_name = "m".into();
+    force_stop_turn(&mut app, &mut rt, &mut at, &config, dir.path(), &idx);
+    assert!(!rt.agent_busy);
+    assert!(rt.session_backup.is_none());
+    assert_eq!(rt.session.system_prompt, "backup-sys");
 }
 
 #[test]

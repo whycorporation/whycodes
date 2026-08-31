@@ -970,23 +970,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 app.pending_cancel = false;
                 force_stop_turn(
                     &mut app,
-                    &mut rt.agent,
-                    &mut rt.session,
-                    &mut rt.agent_busy,
-                    &mut rt.cancel_flag,
+                    &mut rt,
                     &mut cancel_requested_at,
-                    &mut rt.turn_join,
-                    &mut rt.session_backup,
-                    &mut rt.pending_question_queue,
-                    &mut rt.pending_perm_queue,
-                    &mut rt.done_rx,
                     &config,
                     &project_dir,
-                    &provider,
-                    &model,
-                    rt.event_tx.clone(),
-                    Arc::clone(&rt.perm_prompter),
-                    Arc::clone(&rt.question_prompter),
                     &file_index,
                 );
             }
@@ -1162,23 +1149,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 if cancel_requested_at.is_some() {
                     force_stop_turn(
                         &mut app,
-                        &mut rt.agent,
-                        &mut rt.session,
-                        &mut rt.agent_busy,
-                        &mut rt.cancel_flag,
+                        &mut rt,
                         &mut cancel_requested_at,
-                        &mut rt.turn_join,
-                        &mut rt.session_backup,
-                        &mut rt.pending_question_queue,
-                        &mut rt.pending_perm_queue,
-                        &mut rt.done_rx,
                         &config,
                         &project_dir,
-                        &provider,
-                        &model,
-                        rt.event_tx.clone(),
-                        Arc::clone(&rt.perm_prompter),
-                        Arc::clone(&rt.question_prompter),
                         &file_index,
                     );
                 } else {
@@ -1645,23 +1619,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                 if cancel_requested_at.is_some() {
                                     force_stop_turn(
                                         &mut app,
-                                        &mut rt.agent,
-                                        &mut rt.session,
-                                        &mut rt.agent_busy,
-                                        &mut rt.cancel_flag,
+                                        &mut rt,
                                         &mut cancel_requested_at,
-                                        &mut rt.turn_join,
-                                        &mut rt.session_backup,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                        &mut rt.done_rx,
                                         &config,
                                         &project_dir,
-                                        &provider,
-                                        &model,
-                                        rt.event_tx.clone(),
-                                        Arc::clone(&rt.perm_prompter),
-                                        Arc::clone(&rt.question_prompter),
                                         &file_index,
                                     );
                                 } else {
@@ -1685,23 +1646,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                 if rt.agent_busy {
                                     force_stop_turn(
                                         &mut app,
-                                        &mut rt.agent,
-                                        &mut rt.session,
-                                        &mut rt.agent_busy,
-                                        &mut rt.cancel_flag,
+                                        &mut rt,
                                         &mut cancel_requested_at,
-                                        &mut rt.turn_join,
-                                        &mut rt.session_backup,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                        &mut rt.done_rx,
                                         &config,
                                         &project_dir,
-                                        &provider,
-                                        &model,
-                                        rt.event_tx.clone(),
-                                        Arc::clone(&rt.perm_prompter),
-                                        Arc::clone(&rt.question_prompter),
                                         &file_index,
                                     );
                                 }
@@ -1724,23 +1672,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                                     ),
                                     BusyCtrlC::ForceStop => force_stop_turn(
                                         &mut app,
-                                        &mut rt.agent,
-                                        &mut rt.session,
-                                        &mut rt.agent_busy,
-                                        &mut rt.cancel_flag,
+                                        &mut rt,
                                         &mut cancel_requested_at,
-                                        &mut rt.turn_join,
-                                        &mut rt.session_backup,
-                                        &mut rt.pending_question_queue,
-                                        &mut rt.pending_perm_queue,
-                                        &mut rt.done_rx,
                                         &config,
                                         &project_dir,
-                                        &provider,
-                                        &model,
-                                        rt.event_tx.clone(),
-                                        Arc::clone(&rt.perm_prompter),
-                                        Arc::clone(&rt.question_prompter),
                                         &file_index,
                                     ),
                                 }
@@ -1958,46 +1893,32 @@ fn begin_cancel(
 ///
 /// Called after [`CANCEL_FORCE_AFTER`] or on a second Esc/[stop] while already
 /// cancelling. Guarantees `rt.agent_busy` becomes false.
-#[allow(clippy::too_many_arguments)]
 fn force_stop_turn(
     app: &mut TuiApp,
-    agent: &mut Agent,
-    session: &mut Session,
-    agent_busy: &mut bool,
-    cancel_flag: &mut Option<CancelFlag>,
+    rt: &mut SessionRuntime,
     cancel_requested_at: &mut Option<Instant>,
-    turn_join: &mut Option<tokio::task::JoinHandle<()>>,
-    session_backup: &mut Option<Session>,
-    pending_question_queue: &mut std::collections::VecDeque<QuestionRequest>,
-    pending_perm_queue: &mut std::collections::VecDeque<whycodes_agent::PermissionRequest>,
-    done_rx: &mut mpsc::UnboundedReceiver<TurnOutcome>,
     config: &Config,
     project_dir: &std::path::Path,
-    provider: &str,
-    model: &str,
-    event_tx: mpsc::UnboundedSender<TurnEvent>,
-    perm_prompter: Arc<ChannelPermissionPrompter>,
-    question_prompter: Arc<ChannelQuestionPrompter>,
     file_index: &Arc<whycodes_index::WorkspaceIndex>,
 ) {
     // Always re-signal cancel in case the task is still cooperative.
-    if let Some(flag) = cancel_flag.as_ref() {
+    if let Some(flag) = rt.cancel_flag.as_ref() {
         request_cancel(flag);
     }
-    while let Some(req) = pending_question_queue.pop_front() {
+    while let Some(req) = rt.pending_question_queue.pop_front() {
         let _ = req.reply.send(Err(QuestionError::Cancelled));
     }
-    while let Some(req) = pending_perm_queue.pop_front() {
+    while let Some(req) = rt.pending_perm_queue.pop_front() {
         let _ = req.reply.send(false);
     }
 
-    if let Some(h) = turn_join.take() {
+    if let Some(h) = rt.turn_join.take() {
         h.abort();
     }
 
     // If the task finished in the race window, prefer its restored agent/session.
     let mut got_outcome = false;
-    while let Ok(outcome) = done_rx.try_recv() {
+    while let Ok(outcome) = rt.done_rx.try_recv() {
         got_outcome = true;
         match outcome {
             TurnOutcome::Ok {
@@ -2015,8 +1936,8 @@ fn force_stop_turn(
                 session: s,
                 ..
             } => {
-                *agent = a;
-                *session = s;
+                rt.agent = a;
+                rt.session = s;
             }
             TurnOutcome::Remote { .. } => {}
         }
@@ -2024,40 +1945,40 @@ fn force_stop_turn(
 
     if !got_outcome {
         // Task dropped without returning — rebuild agent; restore session snapshot.
-        if let Some(backup) = session_backup.take() {
-            *session = backup;
+        if let Some(backup) = rt.session_backup.take() {
+            rt.session = backup;
         }
         let preferred = if app.agent_name.is_empty() {
-            agent.info.name.clone()
+            rt.agent.info.name.clone()
         } else {
             app.agent_name.clone()
         };
         rebuild_agent_after_force_stop(
-            agent,
-            session,
+            &mut rt.agent,
+            &mut rt.session,
             config,
             project_dir,
             &preferred,
-            event_tx,
-            perm_prompter,
-            question_prompter,
+            rt.event_tx.clone(),
+            Arc::clone(&rt.perm_prompter),
+            Arc::clone(&rt.question_prompter),
             file_index,
         );
     } else {
-        session_backup.take();
+        rt.session_backup.take();
     }
 
-    *agent_busy = false;
-    *cancel_flag = None;
+    rt.agent_busy = false;
+    rt.cancel_flag = None;
     *cancel_requested_at = None;
 
     app.finish_open_thinking();
     app.current_agent_state = AgentState::Idle;
     app.status_message = format_turn_done_status(
         app,
-        agent.info.name.as_str(),
-        provider,
-        model,
+        rt.agent.info.name.as_str(),
+        &app.provider_name,
+        &app.model_name,
         app.turn_elapsed_ms(),
         true,
     );
@@ -2070,7 +1991,7 @@ fn force_stop_turn(
     if !already {
         app.add_message(ChatRole::System, "⏹ Stopped.");
     }
-    persist_session_best_effort(session, "force_cancelled");
+    persist_session_best_effort(&rt.session, "force_cancelled");
     close_interactive_overlays(app);
     app.mark_dirty();
 }

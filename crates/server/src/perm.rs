@@ -8,7 +8,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
 use tokio::sync::oneshot;
 use whycodes_agent::events::{EventSink, TurnEvent};
 use whycodes_agent::permission::PermissionPrompter;
@@ -190,54 +189,59 @@ pub struct ServePrompter {
     pub hub: Arc<PermHub>,
 }
 
-#[async_trait]
 impl PermissionPrompter for ServePrompter {
-    async fn ask(&self, tool_name: &str, detail: &str) -> bool {
-        let scope = match RUN.try_with(Clone::clone) {
-            Ok(s) => s,
-            Err(_not_in_run) => {
-                // No `/v1` / wrapped `/api` context — refuse rather than
-                // silently approve.
+    fn ask<'a>(
+        &'a self,
+        tool_name: &'a str,
+        detail: &'a str,
+    ) -> whycodes_agent::permission::PermissionAskFuture<'a> {
+        Box::pin(async move {
+            let scope = match RUN.try_with(Clone::clone) {
+                Ok(s) => s,
+                Err(_not_in_run) => {
+                    // No `/v1` / wrapped `/api` context — refuse rather than
+                    // silently approve.
+                    return false;
+                }
+            };
+            if scope.auto_approve || scope.hub.is_always_allowed(&scope.session_id, tool_name) {
+                return true;
+            }
+
+            let request_id = format!("perm-{}", scope.hub.seq.fetch_add(1, Ordering::Relaxed));
+            let (tx, rx) = oneshot::channel();
+            if let Ok(mut map) = scope.hub.pending.lock() {
+                map.insert(
+                    (scope.session_id.clone(), request_id.clone()),
+                    Pending {
+                        tool_name: tool_name.to_string(),
+                        reply: tx,
+                    },
+                );
+            } else {
                 return false;
             }
-        };
-        if scope.auto_approve || scope.hub.is_always_allowed(&scope.session_id, tool_name) {
-            return true;
-        }
 
-        let request_id = format!("perm-{}", scope.hub.seq.fetch_add(1, Ordering::Relaxed));
-        let (tx, rx) = oneshot::channel();
-        if let Ok(mut map) = scope.hub.pending.lock() {
-            map.insert(
-                (scope.session_id.clone(), request_id.clone()),
-                Pending {
+            scope.hub.emit(
+                &scope.session_id,
+                TurnEvent::PermissionAsk {
+                    request_id: request_id.clone(),
                     tool_name: tool_name.to_string(),
-                    reply: tx,
+                    detail: detail.to_string(),
                 },
             );
-        } else {
-            return false;
-        }
 
-        scope.hub.emit(
-            &scope.session_id,
-            TurnEvent::PermissionAsk {
-                request_id: request_id.clone(),
-                tool_name: tool_name.to_string(),
-                detail: detail.to_string(),
-            },
-        );
-
-        match tokio::time::timeout(Duration::from_secs(300), rx).await {
-            Ok(Ok(allow)) => allow,
-            Ok(Err(_dropped)) => false,
-            Err(_timeout) => {
-                if let Ok(mut map) = scope.hub.pending.lock() {
-                    map.remove(&(scope.session_id.clone(), request_id));
+            match tokio::time::timeout(Duration::from_secs(300), rx).await {
+                Ok(Ok(allow)) => allow,
+                Ok(Err(_dropped)) => false,
+                Err(_timeout) => {
+                    if let Ok(mut map) = scope.hub.pending.lock() {
+                        map.remove(&(scope.session_id.clone(), request_id));
+                    }
+                    false
                 }
-                false
             }
-        }
+        })
     }
 }
 
@@ -246,60 +250,58 @@ pub struct ServeQuestionPrompter {
     pub hub: Arc<PermHub>,
 }
 
-#[async_trait]
 impl QuestionPrompter for ServeQuestionPrompter {
-    async fn ask(
-        &self,
-        questions: Vec<QuestionSpec>,
-    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
-        let scope = match RUN.try_with(Clone::clone) {
-            Ok(s) => s,
-            Err(_not_in_run) => return Err(QuestionError::Disconnected),
-        };
-        if scope.auto_approve {
-            return AutoAnswerPrompter.ask(questions).await;
-        }
-
-        let request_id = format!("q-{}", scope.hub.seq.fetch_add(1, Ordering::Relaxed));
-        let (tx, rx) = oneshot::channel();
-        if let Ok(mut map) = scope.hub.pending_q.lock() {
-            map.insert((scope.session_id.clone(), request_id.clone()), tx);
-        } else {
-            return Err(QuestionError::Disconnected);
-        }
-
-        let payload = serde_json::json!(
-            questions
-                .iter()
-                .map(|q| serde_json::json!({
-                    "prompt": q.prompt,
-                    "multi_select": q.multi_select,
-                    "options": q.options.iter().map(|o| serde_json::json!({
-                        "label": o.label,
-                        "description": o.description,
-                    })).collect::<Vec<_>>(),
-                }))
-                .collect::<Vec<_>>()
-        );
-
-        scope.hub.emit(
-            &scope.session_id,
-            TurnEvent::QuestionAsk {
-                request_id: request_id.clone(),
-                questions: payload,
-            },
-        );
-
-        match tokio::time::timeout(Duration::from_secs(300), rx).await {
-            Ok(Ok(r)) => r,
-            Ok(Err(_dropped)) => Err(QuestionError::Disconnected),
-            Err(_timeout) => {
-                if let Ok(mut map) = scope.hub.pending_q.lock() {
-                    map.remove(&(scope.session_id.clone(), request_id));
-                }
-                Err(QuestionError::Timeout)
+    fn ask(&self, questions: Vec<QuestionSpec>) -> whycodes_agent::question::QuestionAskFuture<'_> {
+        Box::pin(async move {
+            let scope = match RUN.try_with(Clone::clone) {
+                Ok(s) => s,
+                Err(_not_in_run) => return Err(QuestionError::Disconnected),
+            };
+            if scope.auto_approve {
+                return AutoAnswerPrompter.ask(questions).await;
             }
-        }
+
+            let request_id = format!("q-{}", scope.hub.seq.fetch_add(1, Ordering::Relaxed));
+            let (tx, rx) = oneshot::channel();
+            if let Ok(mut map) = scope.hub.pending_q.lock() {
+                map.insert((scope.session_id.clone(), request_id.clone()), tx);
+            } else {
+                return Err(QuestionError::Disconnected);
+            }
+
+            let payload = serde_json::json!(
+                questions
+                    .iter()
+                    .map(|q| serde_json::json!({
+                        "prompt": q.prompt,
+                        "multi_select": q.multi_select,
+                        "options": q.options.iter().map(|o| serde_json::json!({
+                            "label": o.label,
+                            "description": o.description,
+                        })).collect::<Vec<_>>(),
+                    }))
+                    .collect::<Vec<_>>()
+            );
+
+            scope.hub.emit(
+                &scope.session_id,
+                TurnEvent::QuestionAsk {
+                    request_id: request_id.clone(),
+                    questions: payload,
+                },
+            );
+
+            match tokio::time::timeout(Duration::from_secs(300), rx).await {
+                Ok(Ok(r)) => r,
+                Ok(Err(_dropped)) => Err(QuestionError::Disconnected),
+                Err(_timeout) => {
+                    if let Ok(mut map) = scope.hub.pending_q.lock() {
+                        map.remove(&(scope.session_id.clone(), request_id));
+                    }
+                    Err(QuestionError::Timeout)
+                }
+            }
+        })
     }
 }
 

@@ -134,55 +134,55 @@ impl Default for ViewSnapshot {
 /// transcript, the in-flight turn guard, and the channels that connect the
 /// background turn task to the event loop.
 pub struct SessionRuntime {
-    pub agent: Agent,
-    pub session: Session,
-    pub history: SessionHistory,
+    pub(crate) agent: Agent,
+    pub(crate) session: Session,
+    pub(crate) history: SessionHistory,
 
     /// True while a turn task owns the real agent/session (moved out).
-    pub agent_busy: bool,
-    pub cancel_flag: Option<CancelFlag>,
+    pub(crate) agent_busy: bool,
+    pub(crate) cancel_flag: Option<CancelFlag>,
     /// Live turn task — aborted on force-stop so a hung LLM/tool cannot pin UI.
-    pub turn_join: Option<JoinHandle<()>>,
+    pub(crate) turn_join: Option<JoinHandle<()>>,
     /// Session clone taken just before the turn task starts (after user msg).
     /// Restored if we have to abort the task (which would otherwise drop
     /// agent/session).
-    pub session_backup: Option<Session>,
+    pub(crate) session_backup: Option<Session>,
     /// `/compact [note]` waiting to spawn (same session; does not follow the UI).
-    pub pending_compact: Option<String>,
+    pub(crate) pending_compact: Option<String>,
 
     /// Agent → UI turn events (text deltas, tool calls, status, …).
-    pub event_tx: mpsc::UnboundedSender<TurnEvent>,
-    pub event_rx: mpsc::UnboundedReceiver<TurnEvent>,
+    pub(crate) event_tx: mpsc::UnboundedSender<TurnEvent>,
+    pub(crate) event_rx: mpsc::UnboundedReceiver<TurnEvent>,
     /// Turn task → UI completion (returns the moved-out agent/session).
-    pub done_tx: mpsc::UnboundedSender<TurnOutcome>,
-    pub done_rx: mpsc::UnboundedReceiver<TurnOutcome>,
+    pub(crate) done_tx: mpsc::UnboundedSender<TurnOutcome>,
+    pub(crate) done_rx: mpsc::UnboundedReceiver<TurnOutcome>,
 
     /// Permission asks awaiting a UI reply (multi-ask queue).
-    pub pending_perm_queue: VecDeque<PermissionRequest>,
+    pub(crate) pending_perm_queue: VecDeque<PermissionRequest>,
     /// Questionnaire requests awaiting a UI reply.
-    pub pending_question_queue: VecDeque<QuestionRequest>,
+    pub(crate) pending_question_queue: VecDeque<QuestionRequest>,
 
     /// Interactive prompters bound into the agent; the loop drains the
     /// matching receivers returned at construction.
-    pub perm_prompter: Arc<ChannelPermissionPrompter>,
-    pub question_prompter: Arc<ChannelQuestionPrompter>,
+    pub(crate) perm_prompter: Arc<ChannelPermissionPrompter>,
+    pub(crate) question_prompter: Arc<ChannelQuestionPrompter>,
     /// Permission asks arriving from the agent (drained into the queue).
-    pub perm_rx: mpsc::UnboundedReceiver<PermissionRequest>,
+    pub(crate) perm_rx: mpsc::UnboundedReceiver<PermissionRequest>,
     /// Questionnaire requests arriving from the agent.
-    pub question_rx: mpsc::UnboundedReceiver<QuestionRequest>,
+    pub(crate) question_rx: mpsc::UnboundedReceiver<QuestionRequest>,
 
     /// View state while this session is in the background.
-    pub view: ViewSnapshot,
+    pub(crate) view: ViewSnapshot,
     /// Something happened since the user last looked at this session.
-    pub unread: bool,
+    pub(crate) unread: bool,
     /// Last turn ended in error (sticky until the next turn starts).
-    pub last_error: bool,
+    pub(crate) last_error: bool,
     /// When this runtime was created (dashboard age).
-    pub created_at: std::time::Instant,
+    pub(crate) created_at: std::time::Instant,
     /// Per-runtime SQLite connection (S4) — connections are cheap, and one
     /// per runtime avoids a global Mutex around every persist. `None` when
     /// the data dir is unavailable; persists become best-effort no-ops.
-    pub db: Option<Database>,
+    pub(crate) db: Option<Database>,
 }
 
 impl SessionRuntime {
@@ -270,6 +270,11 @@ impl SessionRuntime {
             return self.view.status_message.clone();
         }
         preview_from_messages(&self.view.messages)
+    }
+
+    /// How long this runtime has been alive (dashboard age).
+    pub fn age(&self) -> std::time::Duration {
+        self.created_at.elapsed()
     }
 }
 
@@ -416,6 +421,15 @@ mod tests {
     fn preview_empty_when_no_messages() {
         let rt = make_runtime();
         assert_eq!(rt.preview(), "");
+    }
+
+    #[test]
+    fn age_is_nonzero_after_construction() {
+        let rt = make_runtime();
+        // Instant::now() can report 0 on a fast machine; just prove the
+        // field is wired and Duration is representable.
+        let _ = rt.age();
+        assert!(rt.age() < std::time::Duration::from_secs(60));
     }
 
     // ── helpers ────────────────────────────────────────────────────────

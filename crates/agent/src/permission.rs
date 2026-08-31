@@ -1,16 +1,19 @@
 //! Permission prompting for OpenCode-style allow/ask/deny.
 
-use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::notify::{NotifyHandle, spawn_need_input_wait};
 
+/// Boxed, sendable future returned by [`PermissionPrompter::ask`].
+pub type PermissionAskFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
+
 /// Asked before running a tool when permission action is `Ask`.
-#[async_trait]
 pub trait PermissionPrompter: Send + Sync {
     /// Return `true` to allow the tool call, `false` to deny.
-    async fn ask(&self, tool_name: &str, detail: &str) -> bool;
+    fn ask<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionAskFuture<'a>;
 }
 
 /// A pending permission request for the TUI (or other UI) to fulfill.
@@ -38,45 +41,44 @@ impl ChannelPermissionPrompter {
     }
 }
 
-#[async_trait]
 impl PermissionPrompter for ChannelPermissionPrompter {
-    async fn ask(&self, tool_name: &str, detail: &str) -> bool {
-        if let Some(cfg) = self.notify.as_deref() {
-            spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
-        }
-        let (reply_tx, reply_rx) = oneshot::channel();
-        if self
-            .tx
-            .send(PermissionRequest {
-                tool_name: tool_name.to_string(),
-                detail: detail.to_string(),
-                reply: reply_tx,
-            })
-            .is_err()
-        {
-            return false;
-        }
-        reply_rx.await.unwrap_or(false)
+    fn ask<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionAskFuture<'a> {
+        Box::pin(async move {
+            if let Some(cfg) = self.notify.as_deref() {
+                spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
+            }
+            let (reply_tx, reply_rx) = oneshot::channel();
+            if self
+                .tx
+                .send(PermissionRequest {
+                    tool_name: tool_name.to_string(),
+                    detail: detail.to_string(),
+                    reply: reply_tx,
+                })
+                .is_err()
+            {
+                return false;
+            }
+            reply_rx.await.unwrap_or(false)
+        })
     }
 }
 
 /// Auto-approve all asks (non-interactive / CI).
 pub struct AutoApprovePrompter;
 
-#[async_trait]
 impl PermissionPrompter for AutoApprovePrompter {
-    async fn ask(&self, _tool_name: &str, _detail: &str) -> bool {
-        true
+    fn ask<'a>(&'a self, _tool_name: &'a str, _detail: &'a str) -> PermissionAskFuture<'a> {
+        Box::pin(async move { true })
     }
 }
 
 /// Auto-deny all asks (strict non-interactive).
 pub struct AutoDenyPrompter;
 
-#[async_trait]
 impl PermissionPrompter for AutoDenyPrompter {
-    async fn ask(&self, _tool_name: &str, _detail: &str) -> bool {
-        false
+    fn ask<'a>(&'a self, _tool_name: &'a str, _detail: &'a str) -> PermissionAskFuture<'a> {
+        Box::pin(async move { false })
     }
 }
 
@@ -93,28 +95,29 @@ impl StdinPrompter {
     }
 }
 
-#[async_trait]
 impl PermissionPrompter for StdinPrompter {
-    async fn ask(&self, tool_name: &str, detail: &str) -> bool {
-        use std::io::{self, Write};
-        if let Some(cfg) = self.notify.as_deref() {
-            spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
-        }
-        eprintln!();
-        eprintln!("⚠ Permission required for tool `{}`", tool_name);
-        if !detail.is_empty() {
-            eprintln!("  {}", detail);
-        }
-        eprint!("  Allow? [y/N] ");
-        let _ = io::stderr().flush();
-        let mut line = String::new();
-        if io::stdin().read_line(&mut line).is_err() {
-            return false;
-        }
-        matches!(
-            line.trim().to_ascii_lowercase().as_str(),
-            "y" | "yes" | "a" | "allow"
-        )
+    fn ask<'a>(&'a self, tool_name: &'a str, detail: &'a str) -> PermissionAskFuture<'a> {
+        Box::pin(async move {
+            use std::io::{self, Write};
+            if let Some(cfg) = self.notify.as_deref() {
+                spawn_need_input_wait(cfg, &format!("Permission · `{tool_name}`"), detail);
+            }
+            eprintln!();
+            eprintln!("⚠ Permission required for tool `{tool_name}`");
+            if !detail.is_empty() {
+                eprintln!("  {detail}");
+            }
+            eprint!("  Allow? [y/N] ");
+            let _ = io::stderr().flush();
+            let mut line = String::new();
+            if io::stdin().read_line(&mut line).is_err() {
+                return false;
+            }
+            matches!(
+                line.trim().to_ascii_lowercase().as_str(),
+                "y" | "yes" | "a" | "allow"
+            )
+        })
     }
 }
 

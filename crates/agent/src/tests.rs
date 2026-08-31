@@ -2,13 +2,12 @@ use crate::agent::Agent;
 use crate::permission::PermissionPrompter;
 use crate::question::{QuestionError, QuestionPrompter};
 use crate::subagent::SubagentTask;
-use async_trait::async_trait;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use whycodes_core::types::{
     AgentInfo, AgentMode, ApprovalMode, PermissionAction, PermissionSet, ToolCall,
 };
-use whycodes_tools::question::{QuestionAnswer, QuestionSpec};
+use whycodes_tools::question::QuestionSpec;
 
 fn make_test_agent_info(name: &str) -> AgentInfo {
     AgentInfo {
@@ -198,11 +197,16 @@ struct CountingDenyPrompter {
     asks: AtomicUsize,
 }
 
-#[async_trait]
 impl PermissionPrompter for CountingDenyPrompter {
-    async fn ask(&self, _tool_name: &str, _detail: &str) -> bool {
-        self.asks.fetch_add(1, Ordering::SeqCst);
-        false
+    fn ask<'a>(
+        &'a self,
+        _tool_name: &'a str,
+        _detail: &'a str,
+    ) -> crate::permission::PermissionAskFuture<'a> {
+        Box::pin(async move {
+            self.asks.fetch_add(1, Ordering::SeqCst);
+            false
+        })
     }
 }
 
@@ -210,14 +214,12 @@ struct CountingCancelQuestionPrompter {
     asks: AtomicUsize,
 }
 
-#[async_trait]
 impl QuestionPrompter for CountingCancelQuestionPrompter {
-    async fn ask(
-        &self,
-        _questions: Vec<QuestionSpec>,
-    ) -> Result<Vec<QuestionAnswer>, QuestionError> {
-        self.asks.fetch_add(1, Ordering::SeqCst);
-        Err(QuestionError::Cancelled)
+    fn ask(&self, _questions: Vec<QuestionSpec>) -> crate::question::QuestionAskFuture<'_> {
+        Box::pin(async move {
+            self.asks.fetch_add(1, Ordering::SeqCst);
+            Err(QuestionError::Cancelled)
+        })
     }
 }
 
