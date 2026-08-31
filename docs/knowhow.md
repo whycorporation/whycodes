@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-08-31 — Prompt `:` must not steal into vim command mode
+
+**Symptom:** Typing `:` (or `::`, a URL, `std::io`) in the TUI prompt
+opens a separate command field (`: ` prefix). The chat draft is hidden;
+Esc is required to leave.
+
+**Root cause:** Prompt-focused `:` was bound to `Action::EnterCommand`,
+which switched `AppMode::Command` and seeded `command.buffer` with `":"`.
+The colon command set (`:q`, `:theme`, …) duplicated slash commands.
+
+**Fix:** `:` is unmapped printable text. Sessions dashboard uses
+`AppMode::Dialog` (it had borrowed `Command` as a stand-in). Help lists
+`/theme` / `/exit` instead of `:theme` / `:q`.
+
+**Prevention:** Do not bind a printable character as a global prompt
+action. Regression: `colon_types_into_the_prompt_instead_of_opening_command_mode`.
+
 ### 2026-08-31 — Homebrew 6 tap trust blocks `brew install whycodes`
 
 **Symptom:** `brew tap whycorporation/whycodes https://github.com/whycorporation/whycodes`

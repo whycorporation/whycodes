@@ -335,7 +335,7 @@ fn help_overlay_paints_sections_and_clamps_scroll() {
         "{text}"
     );
     // Scrolled to the max offset, so the tail bindings are visible.
-    assert!(text.contains(":q") || text.contains("Quit"), "{text}");
+    assert!(text.contains("/exit") || text.contains("Quit"), "{text}");
     assert!(text.contains("◆"), "{text}");
     // Clamped into range so the scroll window never exceeds content.
     assert!(app.help_scroll <= 100, "help_scroll={}", app.help_scroll);

@@ -189,14 +189,6 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
             }
             true
         }
-        Some(Action::EnterCommand) => {
-            if app.mode == AppMode::Normal {
-                app.mode = AppMode::Command;
-                app.key_context = KeymapContext::Command;
-                app.command.buffer = String::from(":");
-            }
-            true
-        }
         Some(Action::EscapeMode) => {
             handle_escape(app);
             true
@@ -2685,12 +2677,23 @@ mod event_tests {
         assert_eq!(a.mode, AppMode::Normal);
         assert_eq!(a.input_buffer, "?");
 
+        // `:` is a printable character — URLs / `::` stay in the chat draft.
         assert!(handle_event(&mut a, key(KeyCode::Char(':'))));
-        assert_eq!(a.mode, AppMode::Command);
-        assert_eq!(a.command.buffer, ":");
-        assert!(handle_event(&mut a, key(KeyCode::Esc)));
         assert_eq!(a.mode, AppMode::Normal);
+        assert_eq!(a.input_buffer, "?:");
         assert!(a.command.buffer.is_empty());
+    }
+
+    #[test]
+    fn colon_types_into_the_prompt_instead_of_opening_command_mode() {
+        let mut a = app();
+        assert!(handle_event(&mut a, key(KeyCode::Char(':'))));
+        assert!(handle_event(&mut a, key(KeyCode::Char(':'))));
+        assert_eq!(a.mode, AppMode::Normal);
+        assert_eq!(a.input_buffer, "::");
+        assert_eq!(a.input_cursor, 2);
+        assert!(a.command.buffer.is_empty());
+        assert_eq!(a.key_context, KeymapContext::Normal);
     }
 
     #[test]

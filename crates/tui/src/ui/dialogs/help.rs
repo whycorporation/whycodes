@@ -35,10 +35,6 @@ fn catalog() -> Vec<HelpLine> {
             desc: "Cycle primary agent",
         },
         HelpLine::Binding {
-            key: ":",
-            desc: "Enter command mode",
-        },
-        HelpLine::Binding {
             key: "Esc",
             desc: "Cancel turn · double-Esc clear draft",
         },
@@ -203,11 +199,11 @@ fn catalog() -> Vec<HelpLine> {
             desc: "Session history",
         },
         HelpLine::Binding {
-            key: ":theme",
+            key: "/theme",
             desc: "Change theme",
         },
         HelpLine::Binding {
-            key: ":q",
+            key: "/exit",
             desc: "Quit",
         },
     ]

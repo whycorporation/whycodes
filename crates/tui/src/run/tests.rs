@@ -1015,6 +1015,7 @@ fn refresh_sidebar_and_dashboard() {
     let rt = test_runtime();
     open_sessions_dashboard(&mut app, &rt, &[]);
     assert!(matches!(app.dialogs.active(), Some(DialogKind::Sessions)));
+    assert_eq!(app.mode, AppMode::Dialog);
     assert_eq!(app.key_context, KeymapContext::Dialog);
 
     let mut view = crate::session_runtime::ViewSnapshot::default();

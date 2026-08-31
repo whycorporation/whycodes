@@ -19,7 +19,6 @@ pub enum KeymapContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Quit,
-    EnterCommand,
     EscapeMode,
     SubmitInput,
     ScrollUp,
@@ -172,9 +171,6 @@ impl Keymap {
                 match (ctrl, key.code) {
                     (true, KeyCode::Char('c')) => return Some(Action::Quit),
                     (true, KeyCode::Char('q')) => return Some(Action::Quit),
-                    (false, KeyCode::Char(':')) if focus == FocusPane::Prompt => {
-                        return Some(Action::EnterCommand);
-                    }
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
                     (true, KeyCode::Char('g')) => return Some(Action::ToggleTasksPane),
@@ -372,7 +368,6 @@ fn normal_bindings() -> Vec<KeyBinding> {
             KeymapContext::Normal,
         ),
         KeyBinding::new("Ctrl+T", "Cycle primary agent", KeymapContext::Normal),
-        KeyBinding::new(":", "Enter command mode (prompt)", KeymapContext::Normal),
         KeyBinding::new(
             "Esc",
             "Cancel turn / double-Esc clear draft",
@@ -950,14 +945,14 @@ mod tests {
             ),
             Some(Action::ScrollToBottom)
         );
-        // `:` only enters command mode from prompt
+        // `:` is a printable character in the prompt (URLs, `::`, `std::io`).
         assert_eq!(
             k.resolve(
                 KeymapContext::Normal,
                 FocusPane::Prompt,
                 &key(KeyCode::Char(':'))
             ),
-            Some(Action::EnterCommand)
+            None
         );
         assert_eq!(
             k.resolve(

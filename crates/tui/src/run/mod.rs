@@ -2200,7 +2200,7 @@ fn open_sessions_dashboard(app: &mut TuiApp, rt: &SessionRuntime, runtimes: &[Se
     if !matches!(app.dialogs.active(), Some(DialogKind::Sessions)) {
         app.sessions_cursor = 0;
         app.dialogs.push(DialogKind::Sessions);
-        app.mode = AppMode::Command;
+        app.mode = AppMode::Dialog;
         app.key_context = KeymapContext::Dialog;
     }
     app.mark_dirty();
