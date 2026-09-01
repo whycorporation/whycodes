@@ -832,7 +832,7 @@ pub(crate) async fn cmd_run(
                     let tools =
                         whycodes_tools::ToolExecutor::new().get_definitions(&agent.info.permission);
                     println!("{} Available tools ({}):", "🔧".bold(), tools.len());
-                    for t in tools {
+                    for t in tools.iter() {
                         println!("  {} — {}", t.name.cyan(), t.description);
                     }
                     continue;

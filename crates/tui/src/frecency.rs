@@ -136,14 +136,18 @@ impl Frecency {
         let Some(path) = &self.inner.path else {
             return;
         };
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        if let Some(parent) = path.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            tracing::debug!(error = %e, path = %parent.display(), "frecency dir create skipped");
         }
         if let Ok(json) = serde_json::to_string(&self.inner) {
             // Write-then-rename so a crash mid-write never leaves a torn file.
             let tmp = path.with_extension("json.tmp");
-            if std::fs::write(&tmp, json).is_ok() {
-                let _ = std::fs::rename(&tmp, path);
+            if std::fs::write(&tmp, json).is_ok()
+                && let Err(e) = std::fs::rename(&tmp, path)
+            {
+                tracing::debug!(error = %e, path = %path.display(), "frecency rename skipped");
             }
         }
     }

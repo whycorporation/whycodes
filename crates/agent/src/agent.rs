@@ -26,148 +26,7 @@ use whycodes_config::{HookConfig, NotifyConfig};
 use whycodes_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
 
 /// Tool names that run an arbitrary shell command string.
-const SHELL_TOOLS: &[&str] = &["bash", "shell"];
-
-/// Soft cap for permission prompt detail (TUI wraps; avoid megabyte dumps).
-const PERMISSION_DETAIL_MAX: usize = 4_000;
-
-/// Human-readable tool arguments for the permission dialog (not compact JSON).
-fn format_permission_detail(args: &serde_json::Value) -> String {
-    let text = match args {
-        serde_json::Value::Object(map) if map.is_empty() => "(no arguments)".to_string(),
-        serde_json::Value::Object(map) => {
-            // Single `command` field → show the shell string alone (most common).
-            if map.len() == 1
-                && let Some(cmd) = map.get("command").and_then(|v| v.as_str())
-            {
-                return truncate_permission_detail(cmd);
-            }
-            let mut lines = Vec::with_capacity(map.len());
-            for (key, value) in map {
-                match value {
-                    serde_json::Value::String(s) => {
-                        if s.contains('\n') || s.chars().count() > 72 {
-                            lines.push(format!("{key}:"));
-                            for line in s.lines() {
-                                lines.push(format!("  {line}"));
-                            }
-                        } else {
-                            lines.push(format!("{key}: {s}"));
-                        }
-                    }
-                    serde_json::Value::Null => lines.push(format!("{key}: null")),
-                    serde_json::Value::Bool(b) => lines.push(format!("{key}: {b}")),
-                    serde_json::Value::Number(n) => lines.push(format!("{key}: {n}")),
-                    other => {
-                        let pretty = serde_json::to_string_pretty(other)
-                            .unwrap_or_else(|_| other.to_string());
-                        if pretty.contains('\n') {
-                            lines.push(format!("{key}:"));
-                            for line in pretty.lines() {
-                                lines.push(format!("  {line}"));
-                            }
-                        } else {
-                            lines.push(format!("{key}: {pretty}"));
-                        }
-                    }
-                }
-            }
-            lines.join("\n")
-        }
-        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
-    };
-    truncate_permission_detail(&text)
-}
-
-fn format_shell_risk_detail(command: &str, reason: &str) -> String {
-    let body = format!("Command:\n{command}\n\nRisk: {reason}");
-    truncate_permission_detail(&body)
-}
-
-fn truncate_permission_detail(s: &str) -> String {
-    if s.chars().count() <= PERMISSION_DETAIL_MAX {
-        return s.to_string();
-    }
-    let kept: String = s.chars().take(PERMISSION_DETAIL_MAX).collect();
-    format!("{kept}…")
-}
-
-/// Worktree names: short, no path separators / traversal.
-fn is_safe_worktree_name(name: &str) -> bool {
-    let name = name.trim();
-    if name.is_empty() || name.len() > 64 {
-        return false;
-    }
-    name.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-}
-
-/// Path argument for file mutators / readers (permission path globs).
-fn path_outside_workspace(path: &str, working_dir: &str) -> bool {
-    let p = std::path::Path::new(path);
-    if p.is_absolute() {
-        let cwd = std::path::Path::new(working_dir);
-        return std::fs::canonicalize(p)
-            .ok()
-            .and_then(|abs| {
-                std::fs::canonicalize(cwd)
-                    .ok()
-                    .map(|root| !abs.starts_with(&root))
-            })
-            .unwrap_or(true);
-    }
-    let first = path.split(['/', '\\']).find(|s| !s.is_empty());
-    matches!(first, Some(".." | "~"))
-}
-
-fn file_tool_path(tc: &ToolCall) -> Option<String> {
-    let key = match tc.name.as_str() {
-        "read" | "write" | "edit" | "glob" | "list" => "path",
-        "apply_patch" => "path", // may also use multi-file; path optional
-        "grep" => "path",
-        _ => return None,
-    };
-    tc.arguments
-        .get(key)
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().replace('\\', "/"))
-        .filter(|s| !s.is_empty())
-}
-
-/// Tools that must never fan out in parallel (side effects, races, or UI ask).
-const SERIAL_TOOLS: &[&str] = &[
-    "bash",
-    "shell",
-    "write",
-    "edit",
-    "apply_patch",
-    "git_commit",
-    "todowrite",
-    "todo",
-    "task",
-    "swarm",
-    "bg",
-    "schedule",
-    "tool_search",
-    "worktree",
-    "plan",
-    "browser",
-    "question",
-    "code_mode",
-    "skill",
-    "external_directory",
-    "memory",
-];
-
-/// Whether this tool can safely run beside other tools in the same step.
-///
-/// Industry pattern (OpenCode issue #24764, Codex parallel function calls):
-/// fan out independent reads; keep mutators and permission-gated tools serial.
-fn is_parallel_safe_tool(name: &str, _permission: &whycodes_core::types::PermissionSet) -> bool {
-    // Mutators/shell stay serial. Permission Ask is fine in parallel now that
-    // the TUI queues permission dialogs (VecDeque), not a single slot.
-    !SERIAL_TOOLS.contains(&name)
-}
+use crate::tool_policy::*;
 
 /// Default system prompt (loaded from prompts/build.txt at compile time)
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("../prompts/build.txt");
@@ -846,7 +705,7 @@ impl Agent {
                 name: None,
                 created_at: None,
             }]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: Some(4_096),
             temperature: Some(0.2),
             top_p: None,
@@ -1239,7 +1098,7 @@ impl Agent {
             .provider_registry
             .get(provider_name)
             .ok_or_else(|| {
-                whycodes_core::Error::Llm(format!(
+                whycodes_core::Error::llm(format!(
                     "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity, and configured custom providers",
                     provider_name
                 ))
@@ -1258,20 +1117,25 @@ impl Agent {
         let mut overflow_retries: u32 = 0;
 
         loop {
-            // Rebuild each step so tool_search activations and worktree cwd apply.
+            // Cached schemas; extra activations still apply per step.
             let tools = if tools_free_chat {
-                Vec::new()
+                std::sync::Arc::from([])
             } else {
                 let extra = self.activated_tools_snapshot();
-                let mut defs = self.tool_executor.get_definitions_profile_extra(
+                let defs = self.tool_executor.get_definitions_profile_extra(
                     &self.info.permission,
                     self.tool_profile,
                     &extra,
                 );
-                if !self.swarm_enabled {
-                    defs.retain(|d| d.name != "swarm");
+                if !self.swarm_enabled && defs.iter().any(|d| d.name == "swarm") {
+                    defs.iter()
+                        .filter(|d| d.name != "swarm")
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .into()
+                } else {
+                    defs
                 }
-                defs
             };
             let tool_ctx = self.tool_context(session);
             if is_cancelled(&cancel) {
@@ -1292,8 +1156,8 @@ impl Agent {
             // When still hot, shake older tool bodies harder so overflow is less likely.
             // Full-replace compact when over the configured token threshold —
             // and only while the circuit breaker has not tripped.
-            let _ = session.truncate_large_tool_results();
-            let _ = session.prune_old_tool_results();
+            let _truncated = session.truncate_large_tool_results();
+            let _pruned = session.prune_old_tool_results();
             if self.compaction_threshold > 0
                 && session.token_count_cached() > self.compaction_threshold.saturating_mul(3) / 4
             {
@@ -1356,8 +1220,7 @@ impl Agent {
                 TurnEvent::Status(format!("LLM request (step {turn_count})…")),
             );
 
-            let mut request =
-                session.build_request(&tools, None, self.info.temperature, Some(true));
+            let mut request = session.build_request(tools, None, self.info.temperature, Some(true));
             request.use_prompt_cache = self.use_prompt_cache && !skip_cache;
             crate::thinking_acc::attach_thinking_request(
                 &mut request,
@@ -1675,7 +1538,7 @@ impl Agent {
                             break;
                         }
                         crate::speculative_read::abort_all(&mut speculative_reads);
-                        return Err(whycodes_core::Error::Llm(message));
+                        return Err(whycodes_core::Error::llm(message));
                     }
                 }
             }
@@ -2887,7 +2750,7 @@ impl Agent {
                             }
                         }
                     }
-                    Err(_) => lines.push("(directory missing — create one first)".into()),
+                    Err(_read_dir) => lines.push("(directory missing — create one first)".into()),
                 }
                 ToolResult {
                     tool_call_id: call.id.clone(),
@@ -3303,7 +3166,7 @@ impl Agent {
             handles.push(tokio::spawn(async move {
                 let _guard = match permit.acquire().await {
                     Ok(g) => g,
-                    Err(_) => {
+                    Err(_closed) => {
                         return (
                             worker_id,
                             spec.subagent_type,

@@ -528,7 +528,7 @@ fn shell_head_readonly_ok(command: &str) -> bool {
     }
     if lower.starts_with("git ") {
         let mut parts = lower.split_whitespace();
-        let _ = parts.next();
+        let _git = parts.next();
         let sub = parts.next().unwrap_or("");
         return match sub {
             "status" | "log" | "diff" | "show" | "branch" | "tag" | "remote" | "rev-parse"
@@ -905,7 +905,7 @@ mod tests {
                 name: None,
                 created_at: None,
             }]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,
@@ -937,7 +937,7 @@ mod tests {
                 name: None,
                 created_at: None,
             }]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,

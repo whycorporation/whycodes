@@ -180,7 +180,7 @@ mod tests {
                 name: None,
                 created_at: None,
             }]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: Some(8),
             temperature: None,
             top_p: None,

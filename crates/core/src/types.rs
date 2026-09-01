@@ -268,7 +268,8 @@ pub struct LlmRequest {
     /// Shared transcript slice — clone of `LlmRequest` is O(1) on messages.
     /// Intent inject and other rare mutations COW via [`LlmRequest::messages_mut`].
     pub messages: std::sync::Arc<[Message]>,
-    pub tools: Vec<ToolDefinition>,
+    /// Shared tool schema slice — clone of `LlmRequest` is O(1) on tools.
+    pub tools: std::sync::Arc<[ToolDefinition]>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
@@ -520,7 +521,7 @@ impl std::fmt::Display for ApprovalMode {
 }
 
 /// OpenCode-style permission action for a tool or pattern.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum PermissionAction {
     /// Run without prompting
@@ -543,7 +544,7 @@ impl PermissionAction {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PermissionSet {
     /// Explicit allow list (if set, only these tools are candidates)
     pub allowed_tools: Option<Vec<String>>,

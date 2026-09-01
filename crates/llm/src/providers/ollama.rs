@@ -263,17 +263,17 @@ impl LlmProvider for OllamaProvider {
                 .post_chat(&body, api_key)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
 
             let status = resp.status();
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
 
             if !status.is_success() {
                 let err_msg = json["error"].as_str().unwrap_or("Unknown error");
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "Ollama API error ({}): {}",
                     status, err_msg
                 )));
@@ -335,11 +335,11 @@ impl LlmProvider for OllamaProvider {
                 .post_chat(&body, api_key)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
 
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "Ollama API error: {}",
                     text
                 )));
@@ -366,7 +366,7 @@ impl LlmProvider for OllamaProvider {
                                 match serde_json::from_str::<Value>(&line) {
                                     Ok(event) => {
                                         if let Some(err) = event.get("error") {
-                                            yield Err(whycodes_core::Error::Llm(
+                                            yield Err(whycodes_core::Error::llm(
                                                 err.as_str().unwrap_or("Unknown error").to_string(),
                                             ));
                                             return;
@@ -399,7 +399,7 @@ impl LlmProvider for OllamaProvider {
                     && let Ok(event) = serde_json::from_str::<Value>(leftover)
                 {
                     if let Some(err) = event.get("error") {
-                        yield Err(whycodes_core::Error::Llm(
+                        yield Err(whycodes_core::Error::llm(
                             err.as_str().unwrap_or("Unknown error").to_string(),
                         ));
                         return;

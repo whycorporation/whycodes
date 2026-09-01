@@ -92,10 +92,10 @@ impl LlmTransport {
         let resp = match timeout {
             Some(t) => match tokio::time::timeout(t, work).await {
                 Ok(r) => r,
-                Err(elapsed) => Err(whycodes_core::Error::Llm(format!(
-                    "complete timed out after {}s ({elapsed})",
-                    t.as_secs()
-                ))),
+                Err(elapsed) => Err(whycodes_core::Error::llm_kind(
+                    whycodes_core::ErrorKind::Timeout,
+                    format!("complete timed out after {}s ({elapsed})", t.as_secs()),
+                )),
             },
             None => work.await,
         }?;
@@ -191,8 +191,8 @@ mod tests {
 
     #[test]
     fn format_turn_error_cleans_server_json() {
-        let err = whycodes_core::Error::Llm(
-            r#"{"error":{"message":"[500]: An internal server error occurred","type":"server_error","code":"internal_server_error"}}"#.into(),
+        let err = whycodes_core::Error::llm(
+            r#"{"error":{"message":"[500]: An internal server error occurred","type":"server_error","code":"internal_server_error"}}"#,
         );
         let s = format_turn_error(&err);
         assert!(!s.contains('{'), "{s}");

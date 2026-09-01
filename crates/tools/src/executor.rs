@@ -1,5 +1,8 @@
-use rustc_hash::FxHashMap;
-use whycodes_core::types::{PermissionSet, ToolCall, ToolResult};
+use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
+
+use rustc_hash::{FxHashMap, FxHasher};
+use whycodes_core::types::{PermissionSet, ToolCall, ToolDefinition, ToolResult};
 
 use super::tool::{Tool, ToolContext};
 use crate::{
@@ -14,6 +17,34 @@ pub struct ToolExecutor {
     /// Tool name → implementation. FxHash: names are local/trusted, not
     /// adversarial map keys from the network.
     tools: FxHashMap<String, Box<dyn Tool>>,
+    /// Memoized [`Tool::definition`] JSON for (permissions, profile, extra).
+    /// Invalidated on [`Self::register`] / [`Self::register_as`].
+    defs_cache: Mutex<FxHashMap<DefsCacheKey, Arc<[ToolDefinition]>>>,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct DefsCacheKey {
+    perm: u64,
+    profile: crate::profile::ToolProfile,
+    extra: Box<[String]>,
+}
+
+fn permission_fingerprint(permissions: &PermissionSet) -> u64 {
+    let mut hasher = FxHasher::default();
+    permissions.allowed_tools.hash(&mut hasher);
+    permissions.denied_tools.hash(&mut hasher);
+    permissions.allow_file_writes.hash(&mut hasher);
+    permissions.allow_network.hash(&mut hasher);
+    permissions.allow_shell.hash(&mut hasher);
+    permissions.allowed_paths.hash(&mut hasher);
+    let mut rules: Vec<_> = permissions.rules.iter().collect();
+    rules.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    rules.len().hash(&mut hasher);
+    for (key, action) in rules {
+        key.hash(&mut hasher);
+        action.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 impl ToolExecutor {
@@ -21,6 +52,7 @@ impl ToolExecutor {
     pub fn new() -> Self {
         let mut executor = Self {
             tools: FxHashMap::default(),
+            defs_cache: Mutex::new(FxHashMap::default()),
         };
 
         executor.register(Box::new(read::ReadTool::new()));
@@ -74,11 +106,20 @@ impl ToolExecutor {
     pub fn register(&mut self, tool: Box<dyn Tool>) {
         let name = tool.name().to_string();
         self.tools.insert(name, tool);
+        self.invalidate_defs_cache();
     }
 
     /// Register a tool with a custom name (alias), ignoring the tool's own name
     pub fn register_as(&mut self, name: &str, tool: Box<dyn Tool>) {
         self.tools.insert(name.to_string(), tool);
+        self.invalidate_defs_cache();
+    }
+
+    fn invalidate_defs_cache(&self) {
+        self.defs_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// Get a tool by name
@@ -91,10 +132,7 @@ impl ToolExecutor {
     /// Sorted by tool name so the tools array is byte-stable across process
     /// restarts (FxHashMap order is not). Stable order helps provider prompt
     /// caches (prefix match) and makes multi-turn TTFT more predictable.
-    pub fn get_definitions(
-        &self,
-        permissions: &PermissionSet,
-    ) -> Vec<whycodes_core::types::ToolDefinition> {
+    pub fn get_definitions(&self, permissions: &PermissionSet) -> Arc<[ToolDefinition]> {
         self.get_definitions_profile(permissions, crate::profile::ToolProfile::Full)
     }
 
@@ -107,17 +145,34 @@ impl ToolExecutor {
         &self,
         permissions: &PermissionSet,
         profile: crate::profile::ToolProfile,
-    ) -> Vec<whycodes_core::types::ToolDefinition> {
+    ) -> Arc<[ToolDefinition]> {
         self.get_definitions_profile_extra(permissions, profile, &[])
     }
 
     /// Core/full profile plus extra activated deferred tool names (tool_search).
+    ///
+    /// Returns a shared slice so a turn does not rebuild JSON schema on every
+    /// LLM step when permissions/profile/extra are unchanged.
     pub fn get_definitions_profile_extra(
         &self,
         permissions: &PermissionSet,
         profile: crate::profile::ToolProfile,
         extra: &[String],
-    ) -> Vec<whycodes_core::types::ToolDefinition> {
+    ) -> Arc<[ToolDefinition]> {
+        let mut extra_key: Vec<String> = extra.to_vec();
+        extra_key.sort();
+        extra_key.dedup();
+        let key = DefsCacheKey {
+            perm: permission_fingerprint(permissions),
+            profile,
+            extra: extra_key.into_boxed_slice(),
+        };
+        {
+            let cache = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(hit) = cache.get(&key) {
+                return Arc::clone(hit);
+            }
+        }
         let mut defs: Vec<_> = self
             .tools
             .values()
@@ -128,7 +183,10 @@ impl ToolExecutor {
             .map(|t| t.definition())
             .collect();
         defs.sort_by(|a, b| a.name.cmp(&b.name));
-        defs
+        let arc: Arc<[ToolDefinition]> = defs.into();
+        let mut cache = self.defs_cache.lock().unwrap_or_else(|e| e.into_inner());
+        cache.insert(key, Arc::clone(&arc));
+        arc
     }
 
     /// Deferred catalogue: tools not in the core profile (for tool_search).
@@ -492,6 +550,37 @@ mod tests {
             &["worktree".to_string()],
         );
         assert!(extra.iter().any(|d| d.name == "worktree"));
+    }
+
+    #[test]
+    fn definitions_cache_reuses_arc_until_register() {
+        let mut ex = ToolExecutor::new();
+        let perms = PermissionSet::default();
+        let a = ex.get_definitions(&perms);
+        let b = ex.get_definitions(&perms);
+        assert!(
+            Arc::ptr_eq(&a, &b),
+            "same permissions should hit the schema cache"
+        );
+        let extra_a = ex.get_definitions_profile_extra(
+            &perms,
+            crate::profile::ToolProfile::Core,
+            &["worktree".to_string()],
+        );
+        let extra_b = ex.get_definitions_profile_extra(
+            &perms,
+            crate::profile::ToolProfile::Core,
+            &["worktree".to_string()],
+        );
+        assert!(Arc::ptr_eq(&extra_a, &extra_b));
+        assert!(!Arc::ptr_eq(&a, &extra_a));
+        ex.register(fake("ghost", true));
+        let c = ex.get_definitions(&perms);
+        assert!(
+            !Arc::ptr_eq(&a, &c),
+            "register must invalidate the schema cache"
+        );
+        assert!(c.iter().any(|d| d.name == "ghost"));
     }
 
     #[test]

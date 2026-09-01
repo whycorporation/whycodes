@@ -248,9 +248,7 @@ mod tests {
             async move {
                 let i = c.fetch_add(1, Ordering::SeqCst);
                 if i < 2 {
-                    Err(whycodes_core::Error::Llm(
-                        "API error (503): unavailable".into(),
-                    ))
+                    Err(whycodes_core::Error::llm("API error (503): unavailable"))
                 } else {
                     Ok(42)
                 }
@@ -271,9 +269,7 @@ mod tests {
             let c = c.clone();
             async move {
                 c.fetch_add(1, Ordering::SeqCst);
-                Err::<(), _>(whycodes_core::Error::Llm(
-                    "API error (400): bad request".into(),
-                ))
+                Err::<(), _>(whycodes_core::Error::llm("API error (400): bad request"))
             }
         })
         .await

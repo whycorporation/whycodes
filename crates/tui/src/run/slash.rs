@@ -79,7 +79,7 @@ pub(super) fn expand_at_files(input: &str, project_dir: &std::path::Path) -> Str
                     "\n\n--- file: {path_str} ---\n{body}\n--- end file ---\n\n"
                 ));
             }
-            Err(_) => {
+            Err(_missing) => {
                 result.push('@');
                 result.push_str(path_str);
             }
@@ -734,7 +734,7 @@ pub(super) fn maybe_spawn_prompt_suggestion(
                 name: None,
                 created_at: None,
             }]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: Some(40),
             temperature: Some(0.4),
             top_p: None,

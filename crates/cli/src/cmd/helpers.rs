@@ -444,7 +444,7 @@ pub(crate) fn expand_user_input(input: &str, project_dir: &std::path::Path) -> S
                     "\n\n--- file: {path_str} ---\n{body}\n--- end file ---\n\n"
                 ));
             }
-            Err(_) => {
+            Err(_missing) => {
                 // keep as plain text if file missing
                 result.push('@');
                 result.push_str(path_str);
@@ -547,8 +547,10 @@ pub(crate) async fn run_headless_turn(
             if !stream {
                 continue;
             }
-            if let Some(ci) = turn_event_to_ci(ev) {
-                let _ = ci.emit_stdout();
+            if let Some(ci) = turn_event_to_ci(ev)
+                && let Err(e) = ci.emit_stdout()
+            {
+                tracing::debug!(error = %e, "ci event emit skipped");
             }
         }
     });
@@ -568,7 +570,9 @@ pub(crate) async fn run_headless_turn(
         .await;
 
     // Drop the sender side (inside agent) already closed; wait for drain.
-    let _ = drain.await;
+    if let Err(e) = drain.await {
+        tracing::debug!(error = %e, "ci event drain skipped");
+    }
 
     let duration_ms = started.elapsed().as_millis() as u64;
     let meta = ResultMeta {

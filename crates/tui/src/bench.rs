@@ -31,7 +31,7 @@ static PROCESS_START: OnceLock<Instant> = OnceLock::new();
 /// Not `Instant::now()` inside the TUI: by then config loading and provider
 /// setup have already happened, and those are part of what a user waits for.
 pub fn mark_process_start() {
-    let _ = PROCESS_START.set(Instant::now());
+    let _started = PROCESS_START.set(Instant::now());
 }
 
 fn process_start() -> Instant {
@@ -78,7 +78,8 @@ pub fn record_draw() {
     // `compare_exchange` rather than a check-then-set: the first frame is the
     // one being timed, and it must not be overwritten by the second.
     let elapsed = process_start().elapsed().as_nanos() as u64;
-    let _ = FIRST_FRAME_NANOS.compare_exchange(0, elapsed, Ordering::Relaxed, Ordering::Relaxed);
+    let _first =
+        FIRST_FRAME_NANOS.compare_exchange(0, elapsed, Ordering::Relaxed, Ordering::Relaxed);
 }
 
 /// True once the run has drawn its first frame and outstayed its duration.

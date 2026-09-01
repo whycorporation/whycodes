@@ -189,7 +189,7 @@ fn ignore_sigpipe() {
     const SIGPIPE: i32 = 13;
     const SIG_IGN: usize = 1;
     unsafe {
-        let _ = signal(SIGPIPE, SIG_IGN);
+        let _sigpipe = signal(SIGPIPE, SIG_IGN);
     }
 }
 

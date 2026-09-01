@@ -48,6 +48,7 @@ pub fn count_message_tokens(
 /// Uses Unicode scalar count (not UTF-8 bytes) so CJK is not under-counted, then
 /// `div_ceil(4)` instead of truncating division so short strings never report 0.
 /// Kept for intra-crate tests; new code should call core directly.
+#[cfg(test)]
 fn chars_to_tokens_fallback(text: &str) -> usize {
     estimate_tokens_at_least_one(text)
 }

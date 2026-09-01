@@ -352,8 +352,12 @@ impl BackgroundRegistry {
                     if let Some(pid) = child.id() {
                         kill_pid_group(pid);
                     }
-                    let _ = child.start_kill();
-                    let _ = child.wait().await;
+                    if let Err(e) = child.start_kill() {
+                        tracing::debug!(error = %e, "background job kill skipped");
+                    }
+                    if let Err(e) = child.wait().await {
+                        tracing::debug!(error = %e, "background job wait after kill skipped");
+                    }
                     break None; // killed
                 }
                 match tokio::time::timeout(Duration::from_millis(200), child.wait()).await {
@@ -362,12 +366,16 @@ impl BackgroundRegistry {
                         append_output(&job_for_task, &format!("\nwait error: {e}\n"));
                         break None;
                     }
-                    Err(_) => continue, // timeout — recheck kill
+                    Err(_timeout) => continue, // timeout — recheck kill
                 }
             };
 
-            let _ = out_task.await;
-            let _ = err_task.await;
+            if let Err(e) = out_task.await {
+                tracing::debug!(error = %e, "background stdout task skipped");
+            }
+            if let Err(e) = err_task.await {
+                tracing::debug!(error = %e, "background stderr task skipped");
+            }
 
             if kill_flag.load(Ordering::SeqCst) {
                 finalize_job(
@@ -468,7 +476,7 @@ async fn pipe_to_job<R: tokio::io::AsyncRead + Unpin>(mut reader: R, job: &Arc<M
                 let s = String::from_utf8_lossy(&buf[..n]);
                 append_output(job, &s);
             }
-            Err(_) => break,
+            Err(_read) => break,
         }
     }
 }

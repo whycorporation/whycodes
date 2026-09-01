@@ -53,6 +53,10 @@ comfortably above it, raise `--fail-under-lines` in
 Linux x86_64, 2026-08-21 (`cargo llvm-cov --workspace`, flags above).
 Workspace line coverage **85.58%**.
 
+`core` 100% floor still covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
+(2026-09-01, #48). Swallow-budget numbers live in `scripts/swallowed_error_budget.json`,
+not in these line floors.
+
 Line coverage is the number CI gates on. Function and region rates are
 informational.
 

@@ -168,7 +168,7 @@ mod tests {
         let mut req = whycodes_core::types::LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(Vec::new()),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: Some(1024),
             temperature: None,
             top_p: None,
@@ -201,7 +201,7 @@ mod tests {
         let mut req = whycodes_core::types::LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(Vec::new()),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: Some(1024),
             temperature: None,
             top_p: None,

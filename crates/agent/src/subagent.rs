@@ -239,7 +239,7 @@ impl SubagentRunner {
         };
 
         let provider = self.provider_registry.get(provider_name).ok_or_else(|| {
-            whycodes_core::Error::Llm(format!(
+            whycodes_core::Error::llm(format!(
                 "Unknown provider: {}. Available: anthropic, openai, google, google-antigravity",
                 provider_name
             ))
@@ -273,7 +273,7 @@ impl SubagentRunner {
             }
 
             let request = session.build_request(
-                &tools,
+                std::sync::Arc::clone(&tools),
                 None, // max_tokens
                 self.info.temperature,
                 Some(true), // thinking
@@ -328,7 +328,7 @@ impl SubagentRunner {
                     StreamEvent::MessageStart { .. } => {}
                     StreamEvent::MessageDelta { .. } => {}
                     StreamEvent::Error { message } => {
-                        return Err(whycodes_core::Error::Llm(message));
+                        return Err(whycodes_core::Error::llm(message));
                     }
                 }
             }

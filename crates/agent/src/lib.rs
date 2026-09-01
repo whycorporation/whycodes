@@ -20,6 +20,7 @@ pub mod swarm_worktree;
 mod tests;
 pub mod thinking_acc;
 pub mod title;
+mod tool_policy;
 pub mod tool_stream;
 
 pub use agent::{Agent, memory_settings_from_config};

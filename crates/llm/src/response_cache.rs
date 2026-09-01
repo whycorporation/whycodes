@@ -238,7 +238,7 @@ fn exact_key(request: &LlmRequest, model: &str) -> u64 {
             id.hash(&mut h);
         }
     }
-    for t in &request.tools {
+    for t in request.tools.iter() {
         t.name.hash(&mut h);
     }
     h.finish()
@@ -363,7 +363,7 @@ mod tests {
                 name: None,
                 created_at: None,
             }]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: Some(64),
             temperature: Some(0.2),
             top_p: None,
@@ -421,11 +421,12 @@ mod tests {
     fn tools_in_request_never_cache() {
         let cache = ResponseCache::new();
         let mut r = req("sys", "read src/main.rs");
-        r.tools.push(ToolDefinition {
+        r.tools = vec![ToolDefinition {
             name: "read".into(),
             description: "read a file".into(),
             parameters: serde_json::json!({"type": "object"}),
-        });
+        }]
+        .into();
         cache.store(&r, "haiku", "fn main() {}");
         assert!(cache.lookup(&r, "haiku").is_none());
         assert_eq!(cache.len(), 0);

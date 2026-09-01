@@ -229,10 +229,10 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
     let json: Value = resp
         .json()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist loadCodeAssist: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("Code Assist loadCodeAssist: {e}")))?;
     if !status.is_success() {
         let msg = json["error"]["message"].as_str().unwrap_or("unknown error");
-        return Err(whycodes_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::llm(format!(
             "Code Assist loadCodeAssist ({status}): {msg}"
         )));
     }
@@ -260,10 +260,10 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
     let op: Value = resp
         .json()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist onboardUser: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("Code Assist onboardUser: {e}")))?;
     if !status.is_success() {
         let msg = op["error"]["message"].as_str().unwrap_or("unknown error");
-        return Err(whycodes_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::llm(format!(
             "Code Assist onboardUser ({status}): {msg}"
         )));
     }
@@ -281,14 +281,14 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
         operation = resp
             .json()
             .await
-            .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist operation poll: {e}")))?;
+            .map_err(|e| whycodes_core::Error::llm(format!("Code Assist operation poll: {e}")))?;
     }
 
     let project = operation["response"]["cloudaicompanionProject"]["id"]
         .as_str()
         .or(env_project.as_deref())
         .ok_or_else(|| {
-            whycodes_core::Error::Llm(
+            whycodes_core::Error::llm(
                 "Code Assist onboarding did not yield a project id; set GOOGLE_CLOUD_PROJECT"
                     .to_string(),
             )
@@ -628,9 +628,9 @@ async fn complete_with(
     let json: Value = resp
         .json()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("Code Assist parse: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("Code Assist parse: {e}")))?;
     if !status.is_success() {
-        return Err(whycodes_core::Error::Llm(code_assist_http_error(
+        return Err(whycodes_core::Error::llm(code_assist_http_error(
             status,
             model,
             &json,
@@ -724,7 +724,7 @@ async fn stream_with(
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
         let json: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-        return Err(whycodes_core::Error::Llm(code_assist_http_error(
+        return Err(whycodes_core::Error::llm(code_assist_http_error(
             status, model, &json, &text,
         )));
     }
@@ -785,7 +785,7 @@ mod tests {
         LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(messages),
-            tools: Vec::new(),
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,
@@ -916,7 +916,8 @@ mod tests {
                 name: "bash".to_string(),
                 description: "Run a command".to_string(),
                 parameters: json!({"type": "object", "properties": {}}),
-            }],
+            }]
+            .into(),
             max_tokens: Some(1024),
             temperature: Some(0.5),
             top_p: None,

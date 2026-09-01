@@ -20,7 +20,7 @@ fn make_basic_request() -> LlmRequest {
             name: None,
             created_at: None,
         }]),
-        tools: vec![],
+        tools: std::sync::Arc::from([]),
         max_tokens: Some(1024),
         temperature: Some(0.7),
         top_p: None,
@@ -76,7 +76,8 @@ fn make_canonical_tool_semantics_request() -> LlmRequest {
                 "required": ["city"],
                 "additionalProperties": false
             }),
-        }],
+        }]
+        .into(),
         max_tokens: None,
         temperature: None,
         top_p: None,
@@ -293,7 +294,8 @@ fn test_anthropic_tools_get_cache_breakpoint_on_last() {
             description: "search".into(),
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         },
-    ];
+    ]
+    .into();
     let body = provider.build_body(&request, "claude");
     let tools = body["tools"].as_array().unwrap();
     assert!(tools[0].get("cache_control").is_none());
@@ -337,7 +339,8 @@ fn test_openai_build_body_with_tools() {
         name: "search".to_string(),
         description: "Search the web".to_string(),
         parameters: serde_json::json!({"type": "object", "properties": {}}),
-    }];
+    }]
+    .into();
 
     let body = provider.build_body(&request, "gpt-4o");
     let tools = body["tools"].as_array().unwrap();
@@ -450,7 +453,7 @@ async fn test_retry_backoff_non_retryable_error() {
     // A 400 error is not retryable — should fail immediately
     let result = retry::retry_with_backoff(
         || async move {
-            Err::<String, _>(whycodes_core::Error::Llm(
+            Err::<String, _>(whycodes_core::Error::llm(
                 "Bad request (400): Invalid input".to_string(),
             ))
         },
@@ -476,7 +479,7 @@ async fn test_retry_backoff_retryable_error_retries() {
             async move {
                 let n = count.fetch_add(1, Ordering::SeqCst);
                 if n == 0 {
-                    Err(whycodes_core::Error::Llm(
+                    Err(whycodes_core::Error::llm(
                         "Rate limit (429): Too many requests".to_string(),
                     ))
                 } else {

@@ -1,5 +1,92 @@
 use thiserror::Error;
 
+/// Matchable LLM / HTTP transport failure class.
+///
+/// Retry and TUI copy should match this, not parse [`Error`] display strings.
+/// Wire bodies still go through `whycodes_llm::classify_message` when `kind`
+/// is [`ErrorKind::Unknown`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ErrorKind {
+    RateLimited,
+    Server,
+    Network,
+    Timeout,
+    Auth,
+    Client,
+    ContextOverflow,
+    Cancelled,
+    #[default]
+    Unknown,
+}
+
+impl ErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RateLimited => "rate_limited",
+            Self::Server => "server",
+            Self::Network => "network",
+            Self::Timeout => "timeout",
+            Self::Auth => "auth",
+            Self::Client => "client",
+            Self::ContextOverflow => "context_overflow",
+            Self::Cancelled => "cancelled",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Whether another attempt may succeed without changing the request.
+    pub fn retryable(self) -> bool {
+        matches!(
+            self,
+            Self::RateLimited | Self::Server | Self::Network | Self::Timeout
+        )
+    }
+}
+
+impl std::fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// LLM or HTTP payload with an optional structured kind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransportError {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl TransportError {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+
+    pub fn unknown(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Unknown, message)
+    }
+}
+
+impl std::fmt::Display for TransportError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl From<String> for TransportError {
+    fn from(message: String) -> Self {
+        Self::unknown(message)
+    }
+}
+
+impl From<&str> for TransportError {
+    fn from(message: &str) -> Self {
+        Self::unknown(message)
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Configuration error: {0}")]
@@ -12,7 +99,7 @@ pub enum Error {
     Serde(String),
 
     #[error("LLM error: {0}")]
-    Llm(String),
+    Llm(TransportError),
 
     #[error("Tool error: {0}")]
     Tool(String),
@@ -27,10 +114,36 @@ pub enum Error {
     Provider(String),
 
     #[error("HTTP error: {0}")]
-    Http(String),
+    Http(TransportError),
 
     #[error("{0}")]
     Other(String),
+}
+
+impl Error {
+    pub fn llm(message: impl Into<String>) -> Self {
+        Self::Llm(TransportError::unknown(message))
+    }
+
+    pub fn llm_kind(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self::Llm(TransportError::new(kind, message))
+    }
+
+    pub fn http(message: impl Into<String>) -> Self {
+        Self::Http(TransportError::unknown(message))
+    }
+
+    pub fn http_kind(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self::Http(TransportError::new(kind, message))
+    }
+
+    /// Structured kind when this is an LLM/HTTP transport error.
+    pub fn transport_kind(&self) -> Option<ErrorKind> {
+        match self {
+            Self::Llm(e) | Self::Http(e) => Some(e.kind),
+            _ => None,
+        }
+    }
 }
 
 impl From<serde_json::Error> for Error {
@@ -45,12 +158,12 @@ impl Clone for Error {
             Self::Config(s) => Self::Config(s.clone()),
             Self::Io(e) => Self::Io(std::io::Error::new(e.kind(), e.to_string())),
             Self::Serde(s) => Self::Serde(s.clone()),
-            Self::Llm(s) => Self::Llm(s.clone()),
+            Self::Llm(e) => Self::Llm(e.clone()),
             Self::Tool(s) => Self::Tool(s.clone()),
             Self::Session(s) => Self::Session(s.clone()),
             Self::Agent(s) => Self::Agent(s.clone()),
             Self::Provider(s) => Self::Provider(s.clone()),
-            Self::Http(s) => Self::Http(s.clone()),
+            Self::Http(e) => Self::Http(e.clone()),
             Self::Other(s) => Self::Other(s.clone()),
         }
     }

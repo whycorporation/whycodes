@@ -99,14 +99,24 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
         GithubCmd::Issue { number } => {
             if let Some(n) = number {
                 println!("{} Viewing issue #{}...", "📝".bold(), n);
-                let _ = std::process::Command::new("gh")
+                match std::process::Command::new("gh")
                     .args(["issue", "view", &n.to_string()])
-                    .status();
+                    .status()
+                {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => tracing::warn!(code = ?s.code(), "gh issue view failed"),
+                    Err(e) => tracing::warn!(error = %e, "gh issue view failed to start"),
+                }
             } else {
                 println!("{} Listing issues...", "📝".bold());
-                let _ = std::process::Command::new("gh")
+                match std::process::Command::new("gh")
                     .args(["issue", "list"])
-                    .status();
+                    .status()
+                {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => tracing::warn!(code = ?s.code(), "gh issue list failed"),
+                    Err(e) => tracing::warn!(error = %e, "gh issue list failed to start"),
+                }
             }
         }
     }

@@ -2432,7 +2432,7 @@ fn drain_background_runtime(rt: &mut SessionRuntime) {
                     if cancelled {
                         scratch.add_message(ChatRole::System, "⏹ Generation cancelled (Esc).");
                     } else {
-                        let display = whycodes_llm::format_turn_error(&whycodes_core::Error::Llm(
+                        let display = whycodes_llm::format_turn_error(&whycodes_core::Error::llm(
                             error.clone(),
                         ));
                         scratch.add_message(ChatRole::System, format!("Error: {display}"));
@@ -2651,7 +2651,7 @@ fn apply_turn_outcome(
                 rt.persist("cancelled");
             } else {
                 let display =
-                    whycodes_llm::format_turn_error(&whycodes_core::Error::Llm(error.clone()));
+                    whycodes_llm::format_turn_error(&whycodes_core::Error::llm(error.clone()));
                 app.current_agent_state = AgentState::Error(display.clone());
                 let dur = elapsed_ms
                     .map(|ms| format!("{} · ", format_elapsed_ms(ms)))

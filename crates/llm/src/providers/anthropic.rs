@@ -163,7 +163,7 @@ fn events_for_data(data: &str) -> Vec<whycodes_core::Result<StreamEvent>> {
             out.push(Ok(StreamEvent::MessageStop));
         }
         Some("error") => {
-            out.push(Err(whycodes_core::Error::Llm(
+            out.push(Err(whycodes_core::Error::llm(
                 event["error"]["message"]
                     .as_str()
                     .unwrap_or("Unknown error")
@@ -361,11 +361,11 @@ impl LlmProvider for AnthropicProvider {
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
 
             if !status.is_success() {
                 let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "Anthropic API error ({}): {}",
                     status, err_msg
                 )));
@@ -437,7 +437,7 @@ impl LlmProvider for AnthropicProvider {
 
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "Anthropic API error: {}",
                     text
                 )));
@@ -686,7 +686,7 @@ mod tests {
         LlmRequest {
             system: String::new(),
             messages: Arc::from(vec![]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,
@@ -721,7 +721,8 @@ mod tests {
             name: "read".into(),
             description: "Read a file".into(),
             parameters: json!({"type": "object"}),
-        }];
+        }]
+        .into();
 
         let body = provider.build_body(&req, "claude-sonnet-4");
         assert_eq!(body["model"], "claude-sonnet-4");

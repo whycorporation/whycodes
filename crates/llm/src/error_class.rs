@@ -11,44 +11,8 @@ use whycodes_core::Error;
 
 use crate::rate_limit::parse_retry_after;
 
-/// Coarse kind of an LLM failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ErrorKind {
-    /// HTTP 429 / explicit rate limit language.
-    RateLimited,
-    /// HTTP 5xx or proxy `server_error` / overloaded.
-    Server,
-    /// DNS, TCP, TLS, connection reset, "error sending request".
-    Network,
-    /// Client-side deadline exceeded.
-    Timeout,
-    /// HTTP 401 / 403 / missing key language.
-    Auth,
-    /// HTTP 400 / 404 / 422 — do not retry.
-    Client,
-    /// Prompt/context window exceeded — do not retry the same payload.
-    ContextOverflow,
-    /// User or agent cancelled the turn.
-    Cancelled,
-    /// Unclassified.
-    Unknown,
-}
-
-impl ErrorKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::RateLimited => "rate_limited",
-            Self::Server => "server",
-            Self::Network => "network",
-            Self::Timeout => "timeout",
-            Self::Auth => "auth",
-            Self::Client => "client",
-            Self::ContextOverflow => "context_overflow",
-            Self::Cancelled => "cancelled",
-            Self::Unknown => "unknown",
-        }
-    }
-}
+// Re-export so `whycodes_llm::ErrorKind` stays the public alias.
+pub use whycodes_core::ErrorKind;
 
 /// Classified error with retry policy hints.
 #[derive(Debug, Clone)]
@@ -159,7 +123,20 @@ impl ClassifiedError {
 }
 
 /// Classify any [`Error`] that may wrap an LLM transport failure.
+///
+/// When `err` already carries a structured [`ErrorKind`] other than
+/// [`ErrorKind::Unknown`], retry/TUI use that kind and do not parse the
+/// display string. Unknown kinds (and non-transport errors) still go through
+/// [`classify_message`] so provider wire bodies keep working.
 pub fn classify(err: &Error) -> ClassifiedError {
+    if let Some(kind) = err.transport_kind()
+        && kind != ErrorKind::Unknown
+    {
+        let mut classified = classify_message(&err.to_string());
+        classified.kind = kind;
+        classified.retryable = kind.retryable();
+        return classified;
+    }
     classify_message(&err.to_string())
 }
 
@@ -808,9 +785,21 @@ mod tests {
 
     #[test]
     fn classify_wraps_core_error_display() {
-        let err = whycodes_core::Error::Llm("Provider API error (500): internal".into());
+        let err = whycodes_core::Error::llm("Provider API error (500): internal");
         let c = classify(&err);
         assert_eq!(c.kind, ErrorKind::Server);
         assert_eq!(c.message, "LLM error: Provider API error (500): internal");
+    }
+
+    #[test]
+    fn classify_prefers_structured_kind_over_display_string() {
+        let err = whycodes_core::Error::llm_kind(
+            ErrorKind::Timeout,
+            "rate limit exceeded (looks like 429 but kind is timeout)",
+        );
+        let c = classify(&err);
+        assert_eq!(c.kind, ErrorKind::Timeout);
+        assert!(c.retryable);
+        assert!(c.message.contains("rate limit"));
     }
 }

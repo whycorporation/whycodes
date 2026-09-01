@@ -98,7 +98,7 @@ pub(crate) async fn cmd_debug() -> anyhow::Result<()> {
             Ok(val) => {
                 println!("    {} = {} (set)", var, mask_secret(&val).dimmed());
             }
-            Err(_) => {
+            Err(_unset) => {
                 println!("    {} = (not set)", var.dimmed());
             }
         }

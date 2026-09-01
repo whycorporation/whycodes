@@ -115,11 +115,11 @@ impl LlmProvider for XaiProvider {
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("JSON parse error: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("JSON parse error: {e}")))?;
 
             if !status.is_success() {
                 let err_msg = json["error"]["message"].as_str().unwrap_or("Unknown error");
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "xAI API error ({}): {}",
                     status, err_msg
                 )));
@@ -156,7 +156,7 @@ impl LlmProvider for XaiProvider {
 
             if !resp.status().is_success() {
                 let text = resp.text().await.unwrap_or_default();
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "xAI API error: {}",
                     text
                 )));

@@ -1,7 +1,7 @@
 {
-  "agent": 28,
+  "agent": 18,
   "auth": 3,
-  "cli": 32,
+  "cli": 26,
   "command-risk": 0,
   "config": 1,
   "core": 7,
@@ -22,5 +22,5 @@
   "skill": 0,
   "storage": 1,
   "tools": 9,
-  "tui": 45
+  "tui": 39
 }

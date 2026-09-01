@@ -67,7 +67,7 @@ fn pipe_to(cmd: &[&str], text: &str) -> bool {
         .spawn()
     {
         Ok(c) => c,
-        Err(_) => return false,
+        Err(_spawn) => return false,
     };
     let ok = child
         .stdin

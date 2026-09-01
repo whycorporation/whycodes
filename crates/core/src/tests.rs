@@ -1,7 +1,7 @@
 //! Unit tests. Sibling file so llvm-cov --ignore-filename-regex tests.rs
 //! cannot sink the crate's 100% production floor.
 
-use crate::error::Error;
+use crate::error::{Error, ErrorKind, TransportError};
 use crate::file_claims::*;
 use crate::logging::*;
 use crate::network::*;
@@ -46,7 +46,7 @@ mod error_tests {
 
     #[test]
     fn test_error_display_llm() {
-        let err = Error::Llm("rate limit".to_string());
+        let err = Error::llm("rate limit");
         assert_eq!(err.to_string(), "LLM error: rate limit");
     }
 
@@ -76,7 +76,7 @@ mod error_tests {
 
     #[test]
     fn test_error_display_http() {
-        let err = Error::Http("404".to_string());
+        let err = Error::http("404");
         assert_eq!(err.to_string(), "HTTP error: 404");
     }
 
@@ -108,12 +108,12 @@ mod error_tests {
             Error::Config("c".into()),
             Error::Io(std::io::Error::other("io")),
             Error::from(serde_json::from_str::<u8>("x").unwrap_err()),
-            Error::Llm("l".into()),
+            Error::llm("l"),
             Error::Tool("t".into()),
             Error::Session("s".into()),
             Error::Agent("a".into()),
             Error::Provider("p".into()),
-            Error::Http("h".into()),
+            Error::http("h"),
             Error::Other("o".into()),
         ];
         for err in cases {
@@ -134,6 +134,53 @@ mod error_tests {
         assert!(err.to_string().contains(&original));
         assert_eq!(err.to_string(), err.clone().to_string());
         assert!(matches!(err, Error::Serde(_)));
+    }
+
+    #[test]
+    fn error_kind_as_str_covers_every_variant() {
+        let cases = [
+            (ErrorKind::RateLimited, "rate_limited"),
+            (ErrorKind::Server, "server"),
+            (ErrorKind::Network, "network"),
+            (ErrorKind::Timeout, "timeout"),
+            (ErrorKind::Auth, "auth"),
+            (ErrorKind::Client, "client"),
+            (ErrorKind::ContextOverflow, "context_overflow"),
+            (ErrorKind::Cancelled, "cancelled"),
+            (ErrorKind::Unknown, "unknown"),
+        ];
+        for (kind, label) in cases {
+            assert_eq!(kind.as_str(), label);
+            assert_eq!(kind.to_string(), label);
+        }
+        assert!(ErrorKind::RateLimited.retryable());
+        assert!(ErrorKind::Server.retryable());
+        assert!(ErrorKind::Network.retryable());
+        assert!(ErrorKind::Timeout.retryable());
+        assert!(!ErrorKind::Auth.retryable());
+        assert!(!ErrorKind::Client.retryable());
+        assert!(!ErrorKind::ContextOverflow.retryable());
+        assert!(!ErrorKind::Cancelled.retryable());
+        assert!(!ErrorKind::Unknown.retryable());
+        assert_eq!(ErrorKind::default(), ErrorKind::Unknown);
+    }
+
+    #[test]
+    fn llm_and_http_carry_kind() {
+        let llm = Error::llm_kind(ErrorKind::Timeout, "complete timed out after 30s");
+        assert_eq!(llm.transport_kind(), Some(ErrorKind::Timeout));
+        assert_eq!(llm.to_string(), "LLM error: complete timed out after 30s");
+        let http = Error::http_kind(ErrorKind::RateLimited, "429");
+        assert_eq!(http.transport_kind(), Some(ErrorKind::RateLimited));
+        assert_eq!(http.to_string(), "HTTP error: 429");
+        assert_eq!(Error::Config("x".into()).transport_kind(), None);
+        let from_str: TransportError = "wire".into();
+        assert_eq!(from_str.kind, ErrorKind::Unknown);
+        let from_string: TransportError = String::from("wire2").into();
+        assert_eq!(from_string.message, "wire2");
+        let cloned = llm.clone();
+        assert_eq!(cloned.transport_kind(), Some(ErrorKind::Timeout));
+        assert_eq!(cloned.to_string(), llm.to_string());
     }
 }
 
@@ -1836,7 +1883,7 @@ mod types_tests {
         let mut req = LlmRequest {
             system: String::new(),
             messages: std::sync::Arc::from(vec![m]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,

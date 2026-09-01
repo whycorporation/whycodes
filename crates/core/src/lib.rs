@@ -11,7 +11,7 @@ pub mod tokens;
 pub mod tool;
 pub mod types;
 
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result, TransportError};
 pub use file_claims::{
     ClaimResult, ConflictListener, FileClaim, FileClaimRegistry, FileConflictEvent, FileStaleEvent,
     StaleListener,

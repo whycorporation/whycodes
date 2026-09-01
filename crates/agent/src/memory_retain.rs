@@ -263,7 +263,7 @@ async fn llm_extract_facts(
             name: None,
             created_at: None,
         }]),
-        tools: Vec::new(),
+        tools: std::sync::Arc::from([]),
         max_tokens: Some(200),
         temperature: Some(0.1),
         top_p: None,

@@ -830,7 +830,7 @@ impl Session {
     /// Build an LLM request from the current conversation
     pub fn build_request(
         &self,
-        tools: &[ToolDefinition],
+        tools: impl Into<std::sync::Arc<[ToolDefinition]>>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         _thinking: Option<bool>,
@@ -838,7 +838,7 @@ impl Session {
         LlmRequest {
             system: self.system_prompt.clone(),
             messages: std::sync::Arc::from(self.messages.as_slice()),
-            tools: tools.to_vec(),
+            tools: tools.into(),
             max_tokens,
             temperature,
             top_p: None,
@@ -1881,7 +1881,7 @@ mod tests {
             parameters: serde_json::json!({"type": "object", "properties": {}}),
         }];
 
-        let req = session.build_request(&tools, Some(1024), Some(0.7), None);
+        let req = session.build_request(tools, Some(1024), Some(0.7), None);
 
         assert_eq!(req.system, test_system_prompt());
         assert_eq!(req.messages.len(), 1);
@@ -1896,7 +1896,7 @@ mod tests {
     #[test]
     fn test_build_request_no_tools() {
         let session = Session::new(test_project_path(), test_system_prompt());
-        let req = session.build_request(&[], None, None, None);
+        let req = session.build_request(Vec::new(), None, None, None);
 
         assert!(req.tools.is_empty());
         assert_eq!(req.system, test_system_prompt());

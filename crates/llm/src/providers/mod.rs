@@ -36,7 +36,8 @@ mod tests {
                 name: "read".into(),
                 description: "read a file".into(),
                 parameters: serde_json::json!({"type": "object"}),
-            }],
+            }]
+            .into(),
             max_tokens: Some(32),
             temperature: Some(0.2),
             top_p: Some(0.9),

@@ -76,7 +76,7 @@ pub async fn send_with_refresh_retry(
     let resp = build(current_key)
         .send()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
     if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(resp);
     }
@@ -98,7 +98,7 @@ pub async fn send_with_refresh_retry(
     build(&fresh)
         .send()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))
+        .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))
 }
 
 #[cfg(test)]

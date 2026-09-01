@@ -71,7 +71,7 @@ pub fn stream_chunk_error(provider: &str, err: impl std::error::Error) -> whycod
         })),
     );
     tracing::warn!(provider, error = %chain, "llm.stream_chunk");
-    whycodes_core::Error::Llm(format!("Stream: {chain}"))
+    whycodes_core::Error::llm(format!("Stream: {chain}"))
 }
 
 /// Convert request messages into OpenAI chat-completions format.
@@ -655,7 +655,7 @@ mod tests {
         LlmRequest {
             system: "sys".into(),
             messages: std::sync::Arc::from(messages),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,
@@ -1254,7 +1254,7 @@ mod tests {
             &LlmRequest {
                 system: String::new(),
                 messages: std::sync::Arc::from(Vec::<Message>::new()),
-                tools: vec![],
+                tools: std::sync::Arc::from([]),
                 max_tokens: None,
                 temperature: Some(0.5),
                 top_p: Some(0.25),

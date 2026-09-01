@@ -100,11 +100,11 @@ pub(crate) async fn handle_rpc(
         "tools/list" => {
             let defs = executor.get_definitions_profile(permissions, profile);
             let tools: Vec<McpTool> = defs
-                .into_iter()
+                .iter()
                 .map(|d| McpTool {
-                    name: d.name,
-                    description: Some(d.description),
-                    input_schema: d.parameters,
+                    name: d.name.clone(),
+                    description: Some(d.description.clone()),
+                    input_schema: d.parameters.clone(),
                 })
                 .collect();
             let result = ListToolsResult {

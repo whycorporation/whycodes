@@ -19,11 +19,11 @@ Bu belge bir denetim raporu. Mevcut ratchet’ler (`panic_budget`, `swallowed_er
 Proje, katmanlı crate grafiği, `thiserror` başlangıcı, `spawn_blocking` yardımcısı ve `Arc<[Message]>` gibi birkaç **doğru** hamle yapmış. Asıl sapmalar:
 
 1. **God-file / god-struct.** `run.rs` ~9k satır, `TuiApp` 112 `pub` alan, `cli/src/main.rs` ~4.6k satır.
-2. **Stringly-typed hata.** `whycodes_core::Error` neredeyse tamamen `String`. `Clone` Serde kolu artık mesajı korur (`Serde(String)`); domain varyantları hâlâ yok.
+2. ~~**Stringly-typed hata (LLM/HTTP).**~~ **ödendi (2026-09-01, #48):** `Error::Llm` / `Error::Http` `TransportError { kind, message }` taşır; `classify()` structured `ErrorKind` kullanır. Diğer varyantlar hâlâ `String`.
 3. ~~**Kütüphane crate’lerinde `anyhow`.**~~ **ödendi (2026-08-30):** `lsp`/`mcp`/`storage`/`skill`/`memory`/`session` crate-yerel `thiserror`; `config` kamu yüzeyi `whycodes_core::Error`. `anyhow` uygulama sınırında (`cli`/`tui`/`server`/`agent`/`tools`/`llm`).
 4. ~~**`async_trait` + `tokio/full` leaf crate’lerde.**~~ **ödendi (2026-08-31):** native boxed futures; workspace Tokio `default-features = false`.
 5. ~~**22 adet `Number::from_f64(...).unwrap()`** LLM provider’larında~~ **ödendi (2026-08-30):** `openai_compat::{json_number, apply_sampling}` NaN/Inf’i atlar; panic bütçesi llm 22→0.
-6. **Yutulan hatalar** TUI 49 / CLI 32 / agent 29 — ratchet var, sıfırlama yok.
+6. **Yutulan hatalar** TUI 39 / CLI 26 / agent 18 — ratchet kilitli (`swallowed_error_budget.json`); sıfır değil.
 
 Aşağıdaki bölümler kanıt + önerilen yön.
 
@@ -49,43 +49,28 @@ Bunlar bilinçli ve korunmalı:
 
 ### 1. `whycodes_core::Error` string çantası
 
-```3:56:crates/core/src/error.rs
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("Configuration error: {0}")]
-    Config(String),
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("Serialization error: {0}")]
-    Serde(#[from] serde_json::Error),
-    #[error("LLM error: {0}")]
-    Llm(String),
-    // Tool / Session / Agent / Provider / Http / Other — hepsi String
-}
+```crates/core/src/error.rs
+pub enum ErrorKind { RateLimited, Server, Network, Timeout, Auth, Client, ContextOverflow, Cancelled, Unknown }
 
-impl Clone for Error {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Serde(s) => Self::Serde(s.clone()),
-            // ...
-        }
-    }
+pub struct TransportError { pub kind: ErrorKind, pub message: String }
+
+pub enum Error {
+    Config(String),
+    Io(std::io::Error),
+    Serde(String),
+    Llm(TransportError),
+    Http(TransportError),
+    // Tool / Session / Agent / Provider / Other — hâlâ String
 }
 ```
 
-**Ödendi (2026-08-30, madde 2):** `Serde` artık `String` tutuyor; `From<serde_json::Error>` mesajı kopyalıyor. Sahte `from_str("not json")` yok. Domain varyantları (`RateLimited`, `ProviderHttp`, …) hâlâ açık.
+**Ödendi (2026-08-30, madde 2):** `Serde` artık `String` tutuyor; `From<serde_json::Error>` mesajı kopyalıyor. Sahte `from_str("not json")` yok.
 
-Rust kitabı ve `thiserror` geleneği: **çağıranın eşleşebileceği** varyantlar, `#[source]` / `#[from]` ile zincir, `Display` kullanıcıya.
+**Ödendi (2026-09-01, #48 P0):** `Error::Llm` / `Error::Http` `TransportError` taşır. `Error::llm_kind` / `http_kind` / `transport_kind()`; `whycodes_llm::classify` structured kind’i display string’e tercih eder. Wire body hâlâ `classify_message` (kind `Unknown` iken). Retry / TUI `ErrorKind` eşler, `to_string()` parse etmez.
 
-Burada:
+Kalan: Tool / Session / Agent / Provider / Other string çantası; `reqwest::Error` hâlâ mesaja yassılaşır.
 
-- `Llm("rate limit")` ile `Llm("tls eof")` aynı tip. Retry / TUI / CI farklı davranamaz; `llm::error_class::classify` string parse etmek zorunda kalıyor.
-- ~~`Clone` Serde kolu sahte JSON hatası üretiyordu.~~ Mesaj korunuyor; string çantası duruyor.
-- `Http(String)` `reqwest::Error`’ı yutuyor; `auth::AuthError` ise `#[from] reqwest::Error` kullanıyor — tutarsız.
-
-**Yön:** `Error`’ı domain varyantlarına ayır (`RateLimited { retry_after }`, `ProviderHttp { status, body }`, …) veya crate-yerel hataları `#[from]` ile sar. `Clone` gerekiyorsa `Arc<Error>` / `thiserror` + `#[error(transparent)]` veya mesajı `Arc<str>` tut.
-
-`Error: Clone` ihtiyacı büyük ihtimalle event/TUI kopyasından geliyor — o zaman hata **değer** değil, **rapor** olmalı (`struct ErrorReport { kind, message }`).
+**Yön (kalan):** diğer varyantları domain’e ayır veya crate-yerel `#[from]`. `Clone` için event/TUI tarafında rapor tipi (`kind` + message) yeterli.
 
 ### 2. Kütüphane API’sinde `anyhow`
 
@@ -260,7 +245,7 @@ Workspace `rustc-hash` var ve yorumu doğru. Kullanım: **HashMap ~153, FxHashMa
 
 Bir kısmı `Arc` paylaşımı (`Arc::clone`) — doğru. Bir kısmı `String` yol / mesaj kopyası. `Cow<'_, str>` neredeyse yok (1 hit). `working_dir: impl AsRef<Path>` ve `&str` tutmak birçok clone’u keser.
 
-`Tool::definition()` her seferinde `name().to_string()` + `description().to_string()` — tool listesi turn başına bir kez cache’lenebilir.
+~~`Tool::definition()` her seferinde `name().to_string()` + `description().to_string()` — tool listesi turn başına bir kez cache’lenebilir.~~ **ödendi (2026-09-01, #48):** `ToolExecutor` `Arc<[ToolDefinition]>` cache’ler (izin parmak izi + profile + extra); `LlmRequest.tools` paylaşılır.
 
 ### 15. `#[must_use]` yok
 
@@ -345,7 +330,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 | Metrik | Değer |
 |--------|------:|
 | Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-08-30) |
-| Yutulan hata bütçesi | tui 45, cli 32, agent 28, tools 9, memory 8, core 7, format 0 |
+| Yutulan hata bütçesi | tui 39, cli 26, agent 18, tools 9, memory 8, core 7, format 0 (#48, 2026-09-01) |
 | `#[async_trait]` | 0 (permission/question prompt paid #47, 2026-08-31) |
 | `HashMap` / `FxHashMap` hit | ~153 / ~13 |
 | `Cow<` | 1 |

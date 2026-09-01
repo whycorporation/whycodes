@@ -291,7 +291,7 @@ pub async fn fetch_model_context_window(
         .timeout(Duration::from_secs(3))
         .send()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("models list HTTP: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("models list HTTP: {e}")))?;
 
     let status = resp.status();
     // Hard cap so a runaway gateway cannot OOM the agent (typical catalog ~1–2 MB).
@@ -299,22 +299,22 @@ pub async fn fetch_model_context_window(
     let bytes = resp
         .bytes()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("models list body: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("models list body: {e}")))?;
     if bytes.len() > MAX_BODY {
-        return Err(whycodes_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::llm(format!(
             "models list too large ({} bytes > {MAX_BODY})",
             bytes.len()
         )));
     }
     if !status.is_success() {
         let snippet: String = String::from_utf8_lossy(&bytes).chars().take(200).collect();
-        return Err(whycodes_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::llm(format!(
             "models list {status}: {snippet}"
         )));
     }
 
     let json: Value = serde_json::from_slice(&bytes)
-        .map_err(|e| whycodes_core::Error::Llm(format!("models list JSON: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("models list JSON: {e}")))?;
     Ok(context_window_for_model_id(&json, model))
 }
 
@@ -353,23 +353,23 @@ pub async fn fetch_model_catalog(
         .timeout(Duration::from_secs(20))
         .send()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("models list HTTP: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("models list HTTP: {e}")))?;
 
     let status = resp.status();
     let body = resp
         .text()
         .await
-        .map_err(|e| whycodes_core::Error::Llm(format!("models list body: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("models list body: {e}")))?;
 
     if !status.is_success() {
         let snippet: String = body.chars().take(200).collect();
-        return Err(whycodes_core::Error::Llm(format!(
+        return Err(whycodes_core::Error::llm(format!(
             "models list {status}: {snippet}"
         )));
     }
 
     let json: Value = serde_json::from_str(&body)
-        .map_err(|e| whycodes_core::Error::Llm(format!("models list JSON: {e}")))?;
+        .map_err(|e| whycodes_core::Error::llm(format!("models list JSON: {e}")))?;
 
     Ok(parse_models_json(&json, &url))
 }

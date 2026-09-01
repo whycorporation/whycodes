@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-01 — Tool schema cache + `ErrorKind` on `core::Error` (#48)
+
+**Symptom:** Each agent LLM step rebuilt every `Tool::definition()` JSON schema.
+Retry/TUI classified LLM failures by parsing `Error` display strings.
+
+**Root cause:** `ToolExecutor::get_definitions*` allocated a fresh `Vec<ToolDefinition>`
+with no memo. `Error::Llm` / `Error::Http` were `String`.
+
+**Fix:** Cache `Arc<[ToolDefinition]>` keyed by a stable permission fingerprint +
+profile + extra names; invalidate on `register`. `LlmRequest.tools` is `Arc<[ToolDefinition]>`.
+`TransportError { kind, message }` on LLM/HTTP; `classify()` trusts structured kind.
+
+**Prevention:** `cargo test -p whycodes-tools definitions_cache_reuses_arc_until_register`;
+`cargo test -p whycodes-llm classify_prefers_structured_kind_over_display_string`.
+Swallow ratchet: tui 39 / cli 26 / agent 18.
+
+---
+
 ### 2026-09-01 — Ctrl+V pastes a screenshot from the OS clipboard
 
 **Symptom:** Copying a screenshot (or a browser image) and pressing Ctrl+V in

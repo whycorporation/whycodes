@@ -164,17 +164,17 @@ impl LlmProvider for CustomProvider {
                 .build_request(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP error: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("HTTP error: {e}")))?;
 
             let status = resp.status();
             let json: Value = resp
                 .json()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("JSON: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("JSON: {e}")))?;
 
             if !status.is_success() {
                 let msg = json["error"]["message"].as_str().unwrap_or("unknown");
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "{} API error ({}): {}",
                     self.name, status, msg
                 )));
@@ -207,13 +207,13 @@ impl LlmProvider for CustomProvider {
                 .build_request(&body)
                 .send()
                 .await
-                .map_err(|e| whycodes_core::Error::Llm(format!("HTTP: {e}")))?;
+                .map_err(|e| whycodes_core::Error::llm(format!("HTTP: {e}")))?;
 
             if !resp.status().is_success() {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
                 // Include (NNN) so retry_with_backoff / is_retryable can see 5xx.
-                return Err(whycodes_core::Error::Llm(format!(
+                return Err(whycodes_core::Error::llm(format!(
                     "{} API error ({}): {}",
                     self.name,
                     status.as_u16(),
@@ -268,7 +268,7 @@ mod tests {
         LlmRequest {
             system: "You are helpful.".to_string(),
             messages: std::sync::Arc::from([]),
-            tools: vec![],
+            tools: std::sync::Arc::from([]),
             max_tokens: None,
             temperature: None,
             top_p: None,
@@ -388,7 +388,8 @@ mod tests {
             name: "read".to_string(),
             description: "read file".to_string(),
             parameters: serde_json::json!({"type": "object"}),
-        }];
+        }]
+        .into();
         let body = p.build_body(&req, "m");
         assert!(body["tools"].as_array().unwrap().len() == 1);
         assert_eq!(body["tool_choice"], "auto");

@@ -78,8 +78,8 @@ impl QuestionPrompter for ChannelQuestionPrompter {
             match self.timeout {
                 Some(dur) => match tokio::time::timeout(dur, reply_rx).await {
                     Ok(Ok(r)) => r,
-                    Ok(Err(_)) => Err(QuestionError::Disconnected),
-                    Err(_) => Err(QuestionError::Timeout),
+                    Ok(Err(_disconnected)) => Err(QuestionError::Disconnected),
+                    Err(_timeout) => Err(QuestionError::Timeout),
                 },
                 None => reply_rx.await.unwrap_or(Err(QuestionError::Disconnected)),
             }
