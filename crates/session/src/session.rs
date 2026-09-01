@@ -4,6 +4,8 @@ use whycodes_core::types::{
     ContentBlock, LlmRequest, Message, MessageContent, Role, SessionInfo, ToolDefinition,
 };
 
+use whycodes_core::tokens::estimate_tokens;
+
 use crate::error::Result;
 
 /// Soft cap on tool result bodies kept in the transcript (Unicode scalars).
@@ -72,18 +74,6 @@ impl CompactOutcome {
     pub fn dropped_messages(&self) -> bool {
         !self.dropped_transcript.is_empty()
     }
-}
-
-/// ~4 Unicode scalars per token (matches `whycodes_llm` fallback family).
-///
-/// ASCII uses byte length (same as scalar count); non-ASCII still walks chars.
-fn estimate_tokens(text: &str) -> usize {
-    let n = if text.is_ascii() {
-        text.len()
-    } else {
-        text.chars().count()
-    };
-    if n == 0 { 0 } else { n.div_ceil(4) }
 }
 
 fn message_tokens(msg: &Message) -> usize {

@@ -6,12 +6,15 @@
 //! behind a feature if offline BPE ever becomes a product requirement.
 
 use anyhow::Result;
+use whycodes_core::tokens::{estimate_tokens, estimate_tokens_at_least_one};
 
 /// Count tokens in the given text for the specified model.
 ///
 /// Model is accepted for API stability; the heuristic is model-agnostic.
+/// Single source via `whycodes_core::tokens` (issue #52 C2); llm keeps
+/// at-least-one semantics so empty prompts still cost 1 token.
 pub fn count_tokens(text: &str, _model: &str) -> Result<usize> {
-    Ok(chars_to_tokens_fallback(text))
+    Ok(estimate_tokens_at_least_one(text))
 }
 
 /// Count tokens across multiple messages.
@@ -41,11 +44,19 @@ pub fn count_message_tokens(
 
 /// Simple fallback: ~4 characters per token (common heuristic).
 ///
+/// Delegates to `whycodes_core::tokens` single source (issue #52 C2).
 /// Uses Unicode scalar count (not UTF-8 bytes) so CJK is not under-counted, then
 /// `div_ceil(4)` instead of truncating division so short strings never report 0.
+/// Kept for intra-crate tests; new code should call core directly.
 fn chars_to_tokens_fallback(text: &str) -> usize {
-    let chars = text.chars().count();
-    chars.div_ceil(4).max(1)
+    estimate_tokens_at_least_one(text)
+}
+
+/// Exposed for `count_message_tokens` reuse without extra `max(1)` layering
+/// when the caller already handles empty.
+#[allow(dead_code)]
+fn chars_to_tokens_raw(text: &str) -> usize {
+    estimate_tokens(text)
 }
 
 #[cfg(test)]

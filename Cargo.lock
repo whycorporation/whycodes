@@ -5141,6 +5141,7 @@ dependencies = [
  "ratatui",
  "regex",
  "reqwest",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",
