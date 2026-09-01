@@ -6,6 +6,7 @@ pub mod app;
 pub mod bench;
 pub mod cell_grid;
 pub mod clipboard;
+pub mod clipboard_image;
 pub mod color;
 pub mod config;
 pub mod frecency;

@@ -1,8 +1,11 @@
-//! Image attachments for the prompt (drag-drop / paste of file paths).
+//! Image attachments for the prompt (drag-drop / path paste / clipboard bitmap).
 //!
 //! Terminals convert file drag-and-drop into a paste of one or more paths.
 //! We detect image files, load + base64-encode them, and attach them to the
 //! next user turn as multimodal `ContentBlock::Image` payloads.
+//!
+//! Screenshots on the OS clipboard have no path: Ctrl+V is handled in
+//! [`crate::clipboard_image`] and lands here via a stashed file.
 
 use std::path::{Path, PathBuf};
 

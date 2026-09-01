@@ -89,6 +89,10 @@ pub enum Action {
     JumpNextTurn,
     /// Copy selected message (y in scrollback)
     CopySelection,
+    /// Ctrl+V — attach a bitmap from the OS clipboard (screenshot / browser copy).
+    /// Text paste stays on bracketed `Event::Paste` so hosts that intercept
+    /// Ctrl+V do not double-insert.
+    PasteClipboard,
 }
 
 /// A single keybinding description for the help overlay.
@@ -171,6 +175,7 @@ impl Keymap {
                 match (ctrl, key.code) {
                     (true, KeyCode::Char('c')) => return Some(Action::Quit),
                     (true, KeyCode::Char('q')) => return Some(Action::Quit),
+                    (true, KeyCode::Char('v')) => return Some(Action::PasteClipboard),
                     (false, KeyCode::Esc) => return Some(Action::EscapeMode),
                     (true, KeyCode::Char('b')) => return Some(Action::ToggleSidebar),
                     (true, KeyCode::Char('g')) => return Some(Action::ToggleTasksPane),
@@ -399,6 +404,11 @@ fn normal_bindings() -> Vec<KeyBinding> {
         ),
         KeyBinding::new("Ctrl+←/→", "Move by word (prompt)", KeymapContext::Normal),
         KeyBinding::new("y", "Copy selected message", KeymapContext::Normal),
+        KeyBinding::new(
+            "Ctrl+V",
+            "Paste image from clipboard (prompt)",
+            KeymapContext::Normal,
+        ),
         KeyBinding::new("e / h", "Toggle thinking fold", KeymapContext::Normal),
         KeyBinding::new(
             "t",
@@ -490,6 +500,10 @@ mod tests {
             assert_eq!(
                 k.resolve(KeymapContext::Normal, focus, &ctrl(KeyCode::Char('q'))),
                 Some(Action::Quit)
+            );
+            assert_eq!(
+                k.resolve(KeymapContext::Normal, focus, &ctrl(KeyCode::Char('v'))),
+                Some(Action::PasteClipboard)
             );
             assert_eq!(
                 k.resolve(KeymapContext::Normal, focus, &key(KeyCode::Char('?'))),
@@ -589,6 +603,10 @@ mod tests {
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &alt_f),
             Some(Action::InputWordRight)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &ctrl(KeyCode::Char('v'))),
+            Some(Action::PasteClipboard)
         );
         // Product chords must not be stolen by word-editing.
         assert_eq!(

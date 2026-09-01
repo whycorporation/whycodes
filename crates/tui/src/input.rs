@@ -35,22 +35,33 @@ pub fn handle_event(app: &mut TuiApp, event: Event) -> bool {
     }
 }
 
-/// Bracketed paste / drag-drop: image paths become attachments; other text
-/// inserts at the cursor. Dragging a file onto most terminals pastes its path.
-fn handle_paste(app: &mut TuiApp, data: &str) {
-    // Only while the prompt can accept input.
+/// Ctrl+V: OS clipboard bitmap (screenshot / browser copy). Text stays on
+/// bracketed `Event::Paste` so hosts that intercept Ctrl+V do not double-insert.
+fn paste_os_clipboard(app: &mut TuiApp) {
     if app.mode != AppMode::Normal && app.mode != AppMode::Session {
         return;
     }
-    if app.focus != FocusPane::Prompt && app.mode != AppMode::Normal {
-        // Still allow paste to land on the prompt (common when focus drifted).
+    match crate::clipboard_image::read_for_prompt() {
+        Ok(crate::clipboard_image::PromptClipboard::Empty) => {}
+        Ok(crate::clipboard_image::PromptClipboard::ImagePaths(paths)) => {
+            app.focus_prompt();
+            attach_image_paths(app, paths);
+        }
+        #[cfg(test)]
+        Ok(crate::clipboard_image::PromptClipboard::Text(text)) => {
+            app.focus_prompt();
+            handle_paste(app, &text);
+        }
+        Err(err) => {
+            app.toasts.push(crate::toast::ToastKind::Warning, err);
+        }
     }
-    app.focus_prompt();
+}
 
-    let classified = crate::images::classify_paste(data);
+fn attach_image_paths(app: &mut TuiApp, paths: impl IntoIterator<Item = std::path::PathBuf>) {
     let mut attached = 0usize;
     let mut last_err: Option<String> = None;
-    for path in classified.images {
+    for path in paths {
         match app.attach_image(&path) {
             Ok(()) => attached += 1,
             Err(e) => last_err = Some(e),
@@ -70,6 +81,22 @@ fn handle_paste(app: &mut TuiApp, data: &str) {
     if let Some(err) = last_err {
         app.toasts.push(crate::toast::ToastKind::Warning, err);
     }
+}
+
+/// Bracketed paste / drag-drop: image paths become attachments; other text
+/// inserts at the cursor. Dragging a file onto most terminals pastes its path.
+fn handle_paste(app: &mut TuiApp, data: &str) {
+    // Only while the prompt can accept input.
+    if app.mode != AppMode::Normal && app.mode != AppMode::Session {
+        return;
+    }
+    if app.focus != FocusPane::Prompt && app.mode != AppMode::Normal {
+        // Still allow paste to land on the prompt (common when focus drifted).
+    }
+    app.focus_prompt();
+
+    let classified = crate::images::classify_paste(data);
+    attach_image_paths(app, classified.images);
 
     let text = classified.text;
     if text.is_empty() {
@@ -299,6 +326,10 @@ fn handle_key(app: &mut TuiApp, key: KeyEvent) -> bool {
         }
         Some(Action::CopySelection) => {
             app.copy_selected_message();
+            true
+        }
+        Some(Action::PasteClipboard) => {
+            paste_os_clipboard(app);
             true
         }
         Some(Action::ToggleTodosPanel) => {
@@ -2484,6 +2515,104 @@ mod event_tests {
             "resize (OSK / rotate) must dirty so the next paint uses the new size"
         );
         assert!(handle_event(&mut a, Event::FocusGained));
+    }
+
+    #[test]
+    fn ctrl_v_attaches_stubbed_clipboard_image() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        std::fs::write(&path, b"\x89PNG\r\n\x1a\nhello").unwrap();
+
+        crate::clipboard_image::with_stub(
+            Ok(crate::clipboard_image::PromptClipboard::ImagePaths(vec![
+                path.clone(),
+            ])),
+            || {
+                let mut a = app();
+                a.focus = FocusPane::Scrollback;
+                assert!(handle_event(&mut a, ctrl('v')));
+                assert_eq!(a.focus, FocusPane::Prompt);
+                assert_eq!(a.pending_images.len(), 1);
+                assert!(
+                    a.toasts
+                        .visible()
+                        .iter()
+                        .any(|t| t.message.contains("Attached")),
+                    "expected attach toast, got {:?}",
+                    a.toasts
+                        .visible()
+                        .iter()
+                        .map(|t| t.message.as_str())
+                        .collect::<Vec<_>>()
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn ctrl_v_empty_clipboard_is_silent() {
+        crate::clipboard_image::with_stub(
+            Ok(crate::clipboard_image::PromptClipboard::Empty),
+            || {
+                let mut a = app();
+                a.input_buffer = "keep".into();
+                a.input_cursor = 4;
+                assert!(handle_event(&mut a, ctrl('v')));
+                assert_eq!(a.input_buffer, "keep");
+                assert!(a.pending_images.is_empty());
+                assert!(a.toasts.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn ctrl_v_text_stub_inserts_like_bracketed_paste() {
+        crate::clipboard_image::with_stub(
+            Ok(crate::clipboard_image::PromptClipboard::Text(
+                "hello from clip".into(),
+            )),
+            || {
+                let mut a = app();
+                assert!(handle_event(&mut a, ctrl('v')));
+                assert_eq!(a.input_buffer, "hello from clip");
+                assert!(a.pending_images.is_empty());
+            },
+        );
+    }
+
+    #[test]
+    fn ctrl_v_error_toasts_and_keeps_draft() {
+        crate::clipboard_image::with_stub(Err("clipboard image is too large".into()), || {
+            let mut a = app();
+            a.input_buffer = "draft".into();
+            assert!(handle_event(&mut a, ctrl('v')));
+            assert_eq!(a.input_buffer, "draft");
+            assert!(a.pending_images.is_empty());
+            assert!(
+                a.toasts
+                    .visible()
+                    .iter()
+                    .any(|t| t.kind == crate::toast::ToastKind::Warning
+                        && t.message.contains("too large")),
+                "expected warning toast"
+            );
+        });
+    }
+
+    #[test]
+    fn ctrl_v_ignored_in_dialog() {
+        crate::clipboard_image::with_stub(
+            Ok(crate::clipboard_image::PromptClipboard::Text("nope".into())),
+            || {
+                let mut a = app();
+                a.mode = AppMode::Dialog;
+                a.key_context = KeymapContext::Dialog;
+                a.dialogs.push(DialogKind::Theme);
+                assert!(handle_event(&mut a, ctrl('v')));
+                assert!(a.input_buffer.is_empty());
+                assert!(a.pending_images.is_empty());
+            },
+        );
     }
 
     #[test]

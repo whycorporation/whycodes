@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-01 — Ctrl+V pastes a screenshot from the OS clipboard
+
+**Symptom:** Copying a screenshot (or a browser image) and pressing Ctrl+V in
+the prompt did nothing. Drag-drop / path paste already attached files.
+
+**Root cause:** `Event::Paste` is text. Terminals never deliver PNG bytes.
+Clipboard I/O was write-only text (`OSC 52` / `wl-copy` / `xclip` / `pbcopy`).
+Ctrl+V was an unmapped chord (swallowed so it would not type `v`).
+
+**Fix:** Bind Ctrl+V → `Action::PasteClipboard`. `clipboard_image` reads a
+bitmap via `wl-paste` / `xclip` / macOS pasteboard / PowerShell, sniffs magic
+bytes, stashes under `<data_dir>/clipboard-images/`, then `attach_image`.
+Text stays on bracketed `Event::Paste` so hosts that intercept Ctrl+V do not
+double-insert. Empty clipboard is silent. Idle TUI stays 0 draws/s (read is
+on the key event).
+
+**Prevention:** `cargo test -p whycodes-tui` — sniff, stash, keymap Ctrl+V,
+input stub (no live compositor). Manual: `docs/tui-term-matrix.md` check 8b.
+
+---
+
 ### 2026-09-01 — Apple Terminal.app RGB + DIM leak to white / build-green
 
 **Symptom:** On macOS Terminal.app, modal chrome (help, pickers, question)
@@ -1307,7 +1328,7 @@ With `position = view_start = total - height` that never reaches the track end.
 
 **Limits:** 10 images/turn, 20 MB each; extensions png/jpg/gif/webp/bmp/tiff/svg/heic/avif/ico.
 
-**Not covered:** Raw clipboard bitmap paste (no path) — host-dependent; path drop is the portable path.
+**Not covered (then):** Raw clipboard bitmap paste. **Now covered (2026-09-01):** Ctrl+V via `clipboard_image` (OS tools, stashed file, same `pending_images` chips).
 
 ---
 
