@@ -1,6 +1,6 @@
 # Rust best-practice analizi
 
-Tarih: 2026-08-30. Kapsam: workspace kaynak kodu (`crates/`, 24 crate, edition **2024**). Test/bench `unwrap` siteleri bilinçli olarak dışarıda bırakıldı; panic bütçesi de aynı kuralı kullanıyor.
+Tarih: 2026-09-01. Kapsam: workspace kaynak kodu (`crates/`, 24 crate, edition **2024**). Test/bench `unwrap` siteleri bilinçli olarak dışarıda bırakıldı; panic bütçesi de aynı kuralı kullanıyor.
 
 Bu belge bir denetim raporu. Mevcut ratchet’ler (`panic_budget`, `swallowed_error_budget`, Clippy `-D warnings`, dependency boundaries) **iyi bir taban** kuruyor; sapmaların çoğu “CI yeşil olduğu için görünmeyen” dil/API alışkanlıkları.
 
@@ -133,10 +133,10 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 |-------|------:|--------|
 | `crates/tui/src/run.rs` | ~~9170~~ | **ödendi (#46):** `run/{mod,slash,persist,tests}.rs` |
 | `crates/cli/src/main.rs` | ~~4651~~ **~250** | **ödendi (#46):** command bodies in `cli/src/cmd/` |
-| `crates/agent/src/agent.rs` | ~~4470~~ **~1500** | **ödendi (#48):** `agent/{mod,turn,gate,dispatch,spawn,compact}.rs` |
-| `crates/tui/src/ui/chat.rs` | 4112 | |
-| `crates/tui/src/input.rs` | 3949 | |
-| `crates/tui/src/app.rs` | 3875 | Durum + diyalog + input + paint ipuçları |
+| `crates/agent/src/agent.rs` | ~~4470~~ **~1500** (`mod.rs` 1509 + `turn`/`gate`/`dispatch`/`spawn`/`compact`) | **ödendi (#48):** `agent/{mod,turn,gate,dispatch,spawn,compact}.rs` |
+| `crates/tui/src/ui/chat.rs` | 4136 | trench: layout_cache/line_cache korunuyor, idle 0 draws/s |
+| `crates/tui/src/input.rs` | 4356 | `handle_paste` + clipboard-image Ctrl+V (#53) |
+| `crates/tui/src/app.rs` | 4187 | Durum + diyalog + input + paint ipuçları (122 `pub(crate)` — #53 clipboard `pending_images` ekledi, P1 daraltma follow-up) |
 | `crates/session/src/session.rs` | 3386 | Persist + compact + prune |
 | `crates/config/src/lib.rs` | ~~2580~~ | **ödendi (2026-08-30):** `types` / `load` / `merge` / `validate` |
 
@@ -152,7 +152,7 @@ Rust API guidelines: **küçük, odaklı modüller**; `lib.rs` re-export. `confi
 
 | Struct | `pub` alan | private |
 |--------|----------:|--------:|
-| `TuiApp` | 0 | 116 (`pub(crate)`, 2026-08-30) |
+| `TuiApp` | 0 | 122 (`pub(crate)`, 2026-09-01; +6 clipboard #53, daraltma follow-up) |
 | `MemorySettings` | 28 | 0 |
 | `MemoryConfig` | 27 | 0 |
 | `Config` | 19 | 0 |
@@ -321,7 +321,7 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 9. ~~**`tokio` feature kesimi**~~ **ödendi (2026-08-31):** workspace Tokio `default-features = false`; her crate yalnız kullandığı runtime, macro, sync, time, process, io-util veya net feature'larını ister. `core`/`function`/`session` bağımlılık temizliği de önceki işte tamamlandı.
 10. ~~**`workspace.lints` + `rust-version`**~~ **ödendi:** her crate `rust-version.workspace` + `[lints] workspace = true`; `unsafe_op_in_unsafe_fn = warn`. `unwrap_used` henüz yok (panic bütçesi ratchet).
 
-1–10 ödendi (2026-08-31); `cli/src/cmd/` ve `tui/src/run/` kesitleri #46. #47 (2026-08-31): permission/question prompt `async_trait` kaldırıldı (`agent`/`server` bağımlılığı düştü); TUI `force_stop_turn` `SessionRuntime` üzerinden sadeleşti; `SessionRuntime` alanları `pub(crate)` + `age()`/`state()`/`preview()`/`persist()`. Kalan: diğer `too_many_arguments` siteleri, `unwrap_used` (panic bütçesi ratchet). Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
+1–10 ödendi (2026-08-31); `cli/src/cmd/` ve `tui/src/run/` kesitleri #46. #47 (2026-08-31): permission/question prompt `async_trait` kaldırıldı (`agent`/`server` bağımlılığı düştü); TUI `force_stop_turn` `SessionRuntime` üzerinden sadeleşti; `SessionRuntime` alanları `pub(crate)` + `age()`/`state()`/`preview()`/`persist()`. #48 (2026-09-01): `core::ErrorKind`/`TransportError` + `ToolExecutor` `Arc<[ToolDefinition]>` cache + swallow `tui 39/cli 26/agent 18` + `agent` facade split. Kalan P1: `TuiApp` 122→<120 daraltma (PromptState/DialogStack ayrımı) ve `too_many_arguments` context struct’ları — idle 0 draws/s korunarak follow-up. Ratchet dosyaları her düşüşte güncellenmeli (sayıyı yükseltmeden).
 
 ---
 
@@ -329,13 +329,13 @@ Rust’ta bu `Result<ToolOutput, ToolError>`. `is_error: true` + `"Error: …"` 
 
 | Metrik | Değer |
 |--------|------:|
-| Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-08-30) |
+| Panic-like (`unwrap`/`expect`) | format 1 (`expect` gömülü tmTheme); llm/cli/tui 0 (2026-09-01) |
 | Yutulan hata bütçesi | tui 39, cli 26, agent 18, tools 9, memory 8, core 7, format 0 (#48, 2026-09-01) |
 | `#[async_trait]` | 0 (permission/question prompt paid #47, 2026-08-31) |
 | `HashMap` / `FxHashMap` hit | ~153 / ~13 |
 | `Cow<` | 1 |
 | `#[must_use]` | 0 |
 | 800+ satır `.rs` | 30+ dosya |
-| `TuiApp` public alan | 0 (`pub(crate)`, 2026-08-30) |
+| `TuiApp` public alan | 0 (`pub(crate)`, 2026-09-01) |
 
 Ölçüm: `crates/**/*.rs`, `tests/` / `*_tests.rs` / `#[cfg(test)]` hariç; panic sayımı `scripts/check_panic_budget.py` ile aynı fikirde.
