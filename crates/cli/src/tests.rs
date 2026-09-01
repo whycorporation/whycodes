@@ -181,6 +181,33 @@ fn runtime_choice_per_command() {
 }
 
 #[test]
+fn interactive_tui_defers_auth_plugins() {
+    assert!(command_uses_interactive_tui(&cli(None)));
+    assert!(command_uses_interactive_tui(&cli(Some(Commands::Run {
+        prompt: None,
+        max_turns: None,
+        format: OutputFormat::Text,
+    }))));
+    assert!(command_uses_interactive_tui(&cli(Some(
+        Commands::Connect {
+            addr: "127.0.0.1:3030".into(),
+            session: None,
+        }
+    ))));
+    assert!(!command_uses_interactive_tui(&cli(Some(Commands::Run {
+        prompt: Some("hi".into()),
+        max_turns: None,
+        format: OutputFormat::Json,
+    }))));
+    let mut plain = cli(None);
+    plain.plain = true;
+    assert!(!command_uses_interactive_tui(&plain));
+    assert!(!command_uses_interactive_tui(&cli(Some(Commands::Auth {
+        cmd: AuthCmd::Status,
+    }))));
+}
+
+#[test]
 fn auto_update_only_interactive_text_sessions() {
     // Do not call `should_auto_update` for the "on" cases: GitHub Actions
     // sets `CI=true`, which is a real production opt-out.

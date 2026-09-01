@@ -44,14 +44,15 @@ pub(crate) async fn cmd_connect(
     println!("{} session {}", "•".bold(), session_id.cyan());
 
     let project_dir = resolve_dir(cli);
-    let mut config = Config::load_layered(&project_dir)
+    let config = Config::load_layered(&project_dir)
         .or_else(|_| Config::load())
         .unwrap_or_default();
-    config.load_command_files(&project_dir);
     let provider = resolve_provider(cli, &config);
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
-    let api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+    // Env/config only — OAuth store and slash-command files hydrate after paint.
+    let api_key =
+        key_from_env_and_config(&provider, &config, |k| std::env::var(k).ok()).unwrap_or_default();
 
     if !whycodes_tui::tui_available() {
         anyhow::bail!("connect needs a real TUI terminal (not --plain)");

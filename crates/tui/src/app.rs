@@ -1656,11 +1656,7 @@ impl ModelSelectionState {
 /// would never appear here: merge in the suggested models for any provider
 /// with a credential in the token store.
 pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = config
-        .providers
-        .values()
-        .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
-        .collect();
+    let mut out = catalog_models_from_config(config);
     if let Ok(dir) = whycodes_config::Config::data_dir() {
         let store = whycodes_auth::TokenStore::new(&dir);
         for name in whycodes_auth::oauth_providers() {
@@ -1673,6 +1669,18 @@ pub fn catalog_models(config: &whycodes_config::Config) -> Vec<(String, String)>
             }
         }
     }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Config-only catalog (no token-store I/O). First-frame chrome uses this.
+pub fn catalog_models_from_config(config: &whycodes_config::Config) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = config
+        .providers
+        .values()
+        .flat_map(|p| p.models.iter().map(move |m| (p.name.clone(), m.clone())))
+        .collect();
     out.sort();
     out.dedup();
     out
@@ -1996,8 +2004,14 @@ impl TuiApp {
     }
 
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
-        config.theme.apply_syntax_theme();
+        // Syntect `SyntaxSet` load is deferred until after the first frame
+        // (`apply_syntax_theme` in hydrate). Home chrome does not highlight.
         Self::from_config(config)
+    }
+
+    /// Load syntect for the active theme. Call after the first paint.
+    pub fn apply_syntax_theme(&self) {
+        self.theme.apply_syntax_theme();
     }
 
     /// Same as [`Self::new`] but does **not** touch the process-wide syntax
@@ -2323,6 +2337,11 @@ impl TuiApp {
     /// Refresh `git_branch` from the working tree (cheap; call on start / idle).
     pub fn refresh_git_branch(&mut self) {
         self.git_branch = resolve_git_branch(&self.project_dir);
+    }
+
+    /// First-frame path: `.git/HEAD` only, never spawn `git`.
+    pub fn refresh_git_branch_fast(&mut self) {
+        self.git_branch = read_git_head_ref(&self.project_dir);
     }
 
     /// True if terminal cell `(col, row)` is inside the clickable cwd path.
@@ -3814,7 +3833,68 @@ pub fn chat_messages_from_session(
 const GIT_BRANCH_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// Resolve the current branch name for `dir`, if it is a git work tree.
+///
+/// First-frame path reads `.git/HEAD` (no process). `git rev-parse` is the
+/// fallback when HEAD is missing or a linked worktree needs the real gitdir.
 fn resolve_git_branch(dir: &std::path::Path) -> Option<String> {
+    if let Some(name) = read_git_head_ref(dir) {
+        return Some(name);
+    }
+    resolve_git_branch_process(dir)
+}
+
+/// Walk `dir` and parents for `.git/HEAD` or a `.git` gitdir file.
+pub(crate) fn read_git_head_ref(dir: &std::path::Path) -> Option<String> {
+    let mut cur = dir;
+    loop {
+        let git = cur.join(".git");
+        if git.is_file() {
+            let contents = std::fs::read_to_string(&git).ok()?;
+            let gitdir = contents
+                .lines()
+                .find_map(|l| l.strip_prefix("gitdir:"))?
+                .trim();
+            if gitdir.is_empty() {
+                return None;
+            }
+            let git_dir = {
+                let p = std::path::Path::new(gitdir);
+                if p.is_absolute() {
+                    p.to_path_buf()
+                } else {
+                    cur.join(p)
+                }
+            };
+            return parse_git_head_file(&git_dir.join("HEAD"));
+        }
+        if git.is_dir() {
+            return parse_git_head_file(&git.join("HEAD"));
+        }
+        cur = cur.parent()?;
+    }
+}
+
+fn parse_git_head_file(head: &std::path::Path) -> Option<String> {
+    let s = std::fs::read_to_string(head).ok()?;
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    if let Some(r) = s.strip_prefix("ref: ") {
+        let name = r.strip_prefix("refs/heads/").unwrap_or(r);
+        if name.is_empty() {
+            return None;
+        }
+        return Some(name.to_string());
+    }
+    // Detached HEAD: object id. Short SHA matches `git rev-parse --short`.
+    if s.bytes().all(|b| b.is_ascii_hexdigit()) && s.len() >= 7 {
+        return Some(s[..7].to_string());
+    }
+    None
+}
+
+fn resolve_git_branch_process(dir: &std::path::Path) -> Option<String> {
     use std::process::Command;
 
     let out = git_output_timeout(
@@ -3887,6 +3967,41 @@ pub(crate) fn git_output_timeout(
                 return None;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod git_head_tests {
+    use super::*;
+
+    #[test]
+    fn read_git_head_ref_branch_and_detached() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = dir.path().join(".git");
+        std::fs::create_dir(&git).unwrap();
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert_eq!(read_git_head_ref(dir.path()).as_deref(), Some("main"));
+
+        std::fs::write(git.join("HEAD"), "abcdef1234567890\n").unwrap();
+        let got = read_git_head_ref(dir.path()).expect("detached");
+        assert_eq!(got, "abcdef1");
+
+        let nested = dir.path().join("src");
+        std::fs::create_dir(&nested).unwrap();
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/feat/ttff\n").unwrap();
+        assert_eq!(read_git_head_ref(&nested).as_deref(), Some("feat/ttff"));
+    }
+
+    #[test]
+    fn read_git_head_ref_gitdir_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.git");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("HEAD"), "ref: refs/heads/worktree\n").unwrap();
+        let work = dir.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        std::fs::write(work.join(".git"), format!("gitdir: {}\n", real.display())).unwrap();
+        assert_eq!(read_git_head_ref(&work).as_deref(), Some("worktree"));
     }
 }
 

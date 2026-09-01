@@ -48,11 +48,9 @@ pub(crate) async fn cmd_run(
     let model = resolve_model(cli, &config);
     let agent_name = resolve_agent(cli, &config);
     let project_dir = resolve_dir(cli);
-    config.load_command_files(&project_dir);
 
     // Interactive mode always starts (OpenCode-style). API key is optional until
     // the user actually sends a prompt that needs the LLM.
-    let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
     // Full-screen TUI unless --plain / WHYCODES_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
@@ -76,6 +74,10 @@ pub(crate) async fn cmd_run(
     let max_turns = crate::ignore_max_turns_interactive(max_turns);
 
     if use_tui {
+        // Env/config only — OAuth store, slash-command files, and auth plugins
+        // hydrate after the first frame (`hydrate_tui_boot`).
+        let api_key = key_from_env_and_config(&provider, &config, |k| std::env::var(k).ok())
+            .unwrap_or_default();
         let update_rx = super::debug::spawn_update_check(cli, &config);
         let exit = whycodes_tui::run(whycodes_tui::TuiRunOptions {
             project_dir,
@@ -109,6 +111,9 @@ pub(crate) async fn cmd_run(
         })?;
         return super::debug::after_tui_exit(exit).await;
     }
+
+    config.load_command_files(&project_dir);
+    let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
     let agent_info = {
         let mut info = agent_info_for(cli, &config);

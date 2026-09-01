@@ -245,7 +245,7 @@ process than the 08-26 row. Still a lower bound (idle, no agent turn).
 
 | Source | First frame | Idle draws/s | Notes |
 |---|---|---|---|
-| Harness `--idle-ms 0` (12 runs) | **22.6 ms** median | 0.0/s | was 18.4 ms |
+| Harness `--idle-ms 0` (12 runs) | **22.6 ms** median | 0.0/s | was 18.4 ms; #49 paints chrome before hydrate |
 | Harness `--idle-ms 3000` (10 runs) | **27.8 ms** median | **0.0/s** | still zero idle paints |
 
 Spawn-to-exit at `--idle-ms 0` is **29.9 ms**. Idle redraws remain the

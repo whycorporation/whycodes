@@ -144,6 +144,30 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-01 — First frame is chrome-only; hydrate after `record_draw` (#49)
+
+**Symptom:** In-proc TTFF (`mark_process_start` → first `record_draw`) sat at
+~23 ms. Home chrome waited on `Agent::new`, workspace index, plugins,
+project memory, slash-command files, OAuth `auth.json`, syntect, and
+`git rev-parse` (250 ms timeout).
+
+**Root cause:** `prepare_tui_boot` ran the full runtime before `run()`
+touched the terminal. `--idle-ms 0` still paid that cost on the way out.
+`just_first` MCP must not run on the chrome-only frame.
+
+**Fix:** `prepare_tui_chrome` + first `record_draw`, then `hydrate_tui_boot`.
+`--idle-ms 0` restores the terminal and writes bench JSON without hydrate.
+MCP / auto-index stay on the post-hydrate `just_first` paint. Branch on
+the first frame is `.git/HEAD` only (`refresh_git_branch_fast`). CLI TUI
+path skips `load_auth_plugins`, OAuth store, and `load_command_files`
+until hydrate.
+
+**Prevention:** Do not add I/O to `prepare_tui_chrome` / `TuiApp::new`.
+Keep syntect in `apply_syntax_theme` after the first paint. Bench
+`should_stop` after chrome paint must not call hydrate.
+
+---
+
 ### 2026-09-01 — Apple Terminal.app RGB + DIM leak to white / build-green
 
 **Symptom:** On macOS Terminal.app, modal chrome (help, pickers, question)

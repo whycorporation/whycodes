@@ -2991,6 +2991,45 @@ async fn prepare_tui_boot_sets_chrome_and_defaults() {
 }
 
 #[test]
+fn prepare_tui_chrome_skips_index_and_session_list() {
+    isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("README.md"), "hi").unwrap();
+    let git = dir.path().join(".git");
+    std::fs::create_dir(&git).unwrap();
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/ttff\n").unwrap();
+    let mut opts = boot_opts(dir.path(), "sk-test");
+    opts.agent_name = "plan".into();
+    let mut plan = dummy_info("plan");
+    plan.mode = AgentMode::All;
+    opts.config.agents.push(plan);
+
+    let (app, missing_key) = prepare_tui_chrome(&opts);
+    assert!(!missing_key);
+    assert_eq!(app.provider_name, "acme");
+    assert_eq!(app.model_name, "m1");
+    assert_eq!(app.agent_name, "plan");
+    assert_eq!(app.git_branch.as_deref(), Some("ttff"));
+    assert!(app.session_list.sessions.is_empty());
+    assert!(app.file_suggest.scan_status().is_none());
+    assert!(app.status_message.contains("Tab focus"));
+}
+
+#[tokio::test]
+async fn hydrate_tui_boot_loads_recents_after_chrome() {
+    isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("README.md"), "hi").unwrap();
+    let opts = boot_opts(dir.path(), "sk-test");
+    let (app, _missing) = prepare_tui_chrome(&opts);
+    assert!(app.session_list.sessions.is_empty());
+    let boot = hydrate_tui_boot(&opts, app).await;
+    assert!(!boot.missing_key);
+    assert_eq!(boot.api_key, "sk-test");
+    assert!(boot.app.file_suggest.scan_status().is_some());
+}
+
+#[test]
 fn apply_resume_found_missing_and_latest() {
     let (_home_lock, _home) = isolate_home_fresh();
     let dir = tempfile::tempdir().unwrap();

@@ -107,6 +107,20 @@ fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
     }
 }
 
+/// Interactive full-screen TUI: plugins / OAuth / slash files wait until
+/// after the first paint. `--plain` and structured `--format` stay eager.
+fn command_uses_interactive_tui(cli: &Cli) -> bool {
+    if cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some() {
+        return false;
+    }
+    match &cli.command {
+        None => true,
+        Some(Commands::Run { format, .. }) => !format.is_structured(),
+        Some(Commands::Connect { .. }) => true,
+        _ => false,
+    }
+}
+
 fn command_needs_multi_thread(cli: &Cli) -> bool {
     match &cli.command {
         // Default bare invoke → interactive TUI / agent.
@@ -147,7 +161,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
     init_logging(&cli);
-    load_auth_plugins(&cli);
+    // Auth plugins are OAuth client defs (disk + JSON). Interactive TUI
+    // loads them in `hydrate_tui_boot` after the first frame. Other commands
+    // still need them before dispatch (login, generate, connect health).
+    if !command_uses_interactive_tui(&cli) {
+        load_auth_plugins(&cli);
+    }
 
     // Determine which command to run; default to Run
     let result = match &cli.command {

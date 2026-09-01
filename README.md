@@ -132,7 +132,7 @@ Idle TUI, Linux x86_64, 2026-08-31 (method and machine in
 | 1 session PSS | **8.4 MB** |
 | 10 sessions PSS | **34.5 MB** (~2.9 MB each extra) |
 | `--version` | **1.5 ms** |
-| First frame (harness, in-proc) | **23 ms** |
+| First frame (harness, in-proc) | chrome-only paint, then hydrate ([#49](https://github.com/whycorporation/whycodes/issues/49)) |
 | Idle redraws (harness, 3 s) | **0.0 /s** |
 
 The TUI paints only when something changed: the idle target is **0
