@@ -389,10 +389,10 @@ fn list_item(trimmed: &str) -> Option<(Option<u32>, &str)> {
 /// Scans once rather than applying regexes in sequence, so `**bold**` cannot be
 /// re-matched as two italics and a marker inside inline code stays literal.
 pub fn parse_inline(line: &str) -> Vec<Inline> {
-    let chars: Vec<char> = line.chars().collect();
     let mut spans = Vec::new();
     let mut plain = String::new();
-    let mut i = 0;
+    let mut pos = 0usize;
+    let len = line.len();
 
     macro_rules! flush {
         () => {
@@ -402,49 +402,60 @@ pub fn parse_inline(line: &str) -> Vec<Inline> {
         };
     }
 
-    while i < chars.len() {
+    while pos < len {
+        let remaining = &line[pos..];
+        let Some(c) = remaining.chars().next() else {
+            break;
+        };
+        let c_len = c.len_utf8();
+
         // Inline code first: nothing inside a backtick pair is markup.
-        if chars[i] == '`'
-            && let Some(end) = find(&chars, i + 1, "`")
-        {
-            flush!();
-            spans.push(Inline::Code(chars[i + 1..end].iter().collect()));
-            i = end + 1;
-            continue;
+        if c == '`' {
+            if let Some(rel) = line[pos + c_len..].find('`') {
+                let end = pos + c_len + rel;
+                flush!();
+                spans.push(Inline::Code(line[pos + c_len..end].to_string()));
+                pos = end + 1;
+                continue;
+            }
         }
-        if chars[i] == '*'
-            && i + 1 < chars.len()
-            && chars[i + 1] == '*'
-            && let Some(end) = find(&chars, i + 2, "**")
-        {
-            flush!();
-            spans.push(Inline::Bold(chars[i + 2..end].iter().collect()));
-            i = end + 2;
-            continue;
+        if c == '*' && remaining.starts_with("**") {
+            if let Some(rel) = line[pos + 2..].find("**") {
+                let end = pos + 2 + rel;
+                flush!();
+                spans.push(Inline::Bold(line[pos + 2..end].to_string()));
+                pos = end + 2;
+                continue;
+            }
         }
-        if chars[i] == '*'
-            && let Some(end) = find(&chars, i + 1, "*")
-        {
-            flush!();
-            spans.push(Inline::Italic(chars[i + 1..end].iter().collect()));
-            i = end + 1;
-            continue;
+        if c == '*' {
+            if let Some(rel) = line[pos + c_len..].find('*') {
+                let end = pos + c_len + rel;
+                flush!();
+                spans.push(Inline::Italic(line[pos + c_len..end].to_string()));
+                pos = end + 1;
+                continue;
+            }
         }
-        if chars[i] == '['
-            && let Some(close) = find(&chars, i + 1, "]")
-            && chars.get(close + 1) == Some(&'(')
-            && let Some(paren) = find(&chars, close + 2, ")")
-        {
-            flush!();
-            spans.push(Inline::Link {
-                text: chars[i + 1..close].iter().collect(),
-                url: chars[close + 2..paren].iter().collect(),
-            });
-            i = paren + 1;
-            continue;
+        if c == '[' {
+            if let Some(rel_close) = line[pos + c_len..].find(']') {
+                let close = pos + c_len + rel_close;
+                if close + 1 < len && line[close + 1..].starts_with('(') {
+                    if let Some(rel_paren) = line[close + 2..].find(')') {
+                        let paren = close + 2 + rel_paren;
+                        flush!();
+                        spans.push(Inline::Link {
+                            text: line[pos + c_len..close].to_string(),
+                            url: line[close + 2..paren].to_string(),
+                        });
+                        pos = paren + 1;
+                        continue;
+                    }
+                }
+            }
         }
-        plain.push(chars[i]);
-        i += 1;
+        plain.push(c);
+        pos += c_len;
     }
 
     flush!();

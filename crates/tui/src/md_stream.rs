@@ -9,7 +9,10 @@
 //! every highlighted `Line` on every token. The open-fence painter keeps
 //! committed rows in `buf` and only wraps new source lines.
 
+use std::hash::{Hash, Hasher};
+
 use ratatui::text::Line;
+use rustc_hash::FxHasher;
 
 use crate::theme::ThemePalette;
 use crate::ui::markdown::{append_open_fence, code_gutter_nw, open_fence_tail, render_with_width};
@@ -72,7 +75,7 @@ impl IncrementalMarkdown {
             }
             self.frozen_len = self.buf.len();
             self.frozen_bytes = cp;
-            self.frozen_hash = fnv1a(&text[..cp]);
+            self.frozen_hash = hash_prefix(&text[..cp]);
         }
 
         if self.frozen_bytes < text.len() && text.is_char_boundary(self.frozen_bytes) {
@@ -119,7 +122,7 @@ impl IncrementalMarkdown {
         }
         text.len() >= self.frozen_bytes
             && text.is_char_boundary(self.frozen_bytes)
-            && fnv1a(&text[..self.frozen_bytes]) == self.frozen_hash
+            && hash_prefix(&text[..self.frozen_bytes]) == self.frozen_hash
     }
 
     fn clear(&mut self) {
@@ -133,13 +136,13 @@ impl IncrementalMarkdown {
     }
 }
 
-fn fnv1a(s: &str) -> u64 {
-    let mut h = 0xcbf2_9ce4_8422_2325;
-    for &b in s.as_bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x0100_0000_01b3);
-    }
-    h
+fn hash_prefix(s: &str) -> u64 {
+    let mut hasher = FxHasher::default();
+    s.hash(&mut hasher);
+    // Hash length as well so different-length prefixes with same content hash
+    // (theoretical Fx collision) cannot be confused; matches issue C1 spec.
+    s.len().hash(&mut hasher);
+    hasher.finish()
 }
 
 #[cfg(test)]

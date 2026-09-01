@@ -7,6 +7,7 @@ pub mod paths;
 pub mod sandbox;
 pub mod swarm_hub;
 pub mod todo;
+pub mod tokens;
 pub mod tool;
 pub mod types;
 

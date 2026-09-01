@@ -32,6 +32,7 @@ whycodes-index = { path = "../index" }
 unicode-width = "0.2"
 base64.workspace = true
 regex.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
