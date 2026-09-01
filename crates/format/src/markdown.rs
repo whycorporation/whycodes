@@ -410,48 +410,50 @@ pub fn parse_inline(line: &str) -> Vec<Inline> {
         let c_len = c.len_utf8();
 
         // Inline code first: nothing inside a backtick pair is markup.
-        if c == '`' {
-            if let Some(rel) = line[pos + c_len..].find('`') {
-                let end = pos + c_len + rel;
-                flush!();
-                spans.push(Inline::Code(line[pos + c_len..end].to_string()));
-                pos = end + 1;
-                continue;
-            }
+        if c == '`'
+            && let Some(rel) = line[pos + c_len..].find('`')
+        {
+            let end = pos + c_len + rel;
+            flush!();
+            spans.push(Inline::Code(line[pos + c_len..end].to_string()));
+            pos = end + 1;
+            continue;
         }
-        if c == '*' && remaining.starts_with("**") {
-            if let Some(rel) = line[pos + 2..].find("**") {
-                let end = pos + 2 + rel;
-                flush!();
-                spans.push(Inline::Bold(line[pos + 2..end].to_string()));
-                pos = end + 2;
-                continue;
-            }
+        if c == '*'
+            && remaining.starts_with("**")
+            && let Some(rel) = line[pos + 2..].find("**")
+        {
+            let end = pos + 2 + rel;
+            flush!();
+            spans.push(Inline::Bold(line[pos + 2..end].to_string()));
+            pos = end + 2;
+            continue;
         }
-        if c == '*' {
-            if let Some(rel) = line[pos + c_len..].find('*') {
-                let end = pos + c_len + rel;
-                flush!();
-                spans.push(Inline::Italic(line[pos + c_len..end].to_string()));
-                pos = end + 1;
-                continue;
-            }
+        if c == '*'
+            && let Some(rel) = line[pos + c_len..].find('*')
+        {
+            let end = pos + c_len + rel;
+            flush!();
+            spans.push(Inline::Italic(line[pos + c_len..end].to_string()));
+            pos = end + 1;
+            continue;
         }
-        if c == '[' {
-            if let Some(rel_close) = line[pos + c_len..].find(']') {
-                let close = pos + c_len + rel_close;
-                if close + 1 < len && line[close + 1..].starts_with('(') {
-                    if let Some(rel_paren) = line[close + 2..].find(')') {
-                        let paren = close + 2 + rel_paren;
-                        flush!();
-                        spans.push(Inline::Link {
-                            text: line[pos + c_len..close].to_string(),
-                            url: line[close + 2..paren].to_string(),
-                        });
-                        pos = paren + 1;
-                        continue;
-                    }
-                }
+        if c == '['
+            && let Some(rel_close) = line[pos + c_len..].find(']')
+        {
+            let close = pos + c_len + rel_close;
+            if close + 1 < len
+                && line[close + 1..].starts_with('(')
+                && let Some(rel_paren) = line[close + 2..].find(')')
+            {
+                let paren = close + 2 + rel_paren;
+                flush!();
+                spans.push(Inline::Link {
+                    text: line[pos + c_len..close].to_string(),
+                    url: line[close + 2..paren].to_string(),
+                });
+                pos = paren + 1;
+                continue;
             }
         }
         plain.push(c);
@@ -470,6 +472,7 @@ pub fn parse_inline(line: &str) -> Vec<Inline> {
 /// Hot needles from `parse_inline` are single- or double-ASCII (`\``, `*`,
 /// `**`, `]`, `)`). Those take a fixed-length path so we never re-walk the
 /// needle as an iterator on every character of every line.
+#[allow(dead_code)]
 pub(crate) fn find(chars: &[char], from: usize, needle: &str) -> Option<usize> {
     if needle.is_empty() || chars.len() < from {
         return None;
