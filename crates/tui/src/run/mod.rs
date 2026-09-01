@@ -928,10 +928,10 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // Auth plugin dir walk was deferred from `async_main`.
                     {
                         let mut dirs = Vec::new();
-                        if let Ok(p) = whycodes_config::Config::default_path() {
-                            if let Some(parent) = p.parent() {
-                                dirs.push(parent.join("plugins"));
-                            }
+                        if let Ok(p) = whycodes_config::Config::default_path()
+                            && let Some(parent) = p.parent()
+                        {
+                            dirs.push(parent.join("plugins"));
                         }
                         dirs.push(whycodes_core::project_dir(&project_dir).join("plugins"));
                         let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
@@ -978,19 +978,17 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     if api_key.is_empty() {
                         let env_var = format!("{}_API_KEY", provider.to_uppercase());
                         let mut fetched: Option<String> = None;
-                        if let Ok(v) = std::env::var(&env_var) {
-                            if !v.is_empty() {
-                                fetched = Some(v);
-                            }
+                        if let Ok(v) = std::env::var(&env_var)
+                            && !v.is_empty()
+                        {
+                            fetched = Some(v);
                         }
-                        if fetched.is_none() {
-                            if let Some(pc) = config.get_provider(&provider) {
-                                if let Some(k) = &pc.api_key {
-                                    if !k.is_empty() {
-                                        fetched = Some(k.clone());
-                                    }
-                                }
-                            }
+                        if fetched.is_none()
+                            && let Some(pc) = config.get_provider(&provider)
+                            && let Some(k) = &pc.api_key
+                            && !k.is_empty()
+                        {
+                            fetched = Some(k.clone());
                         }
                         if let Some(k) = fetched {
                             api_key = k;

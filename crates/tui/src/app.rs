@@ -3837,10 +3837,10 @@ fn resolve_git_branch_fast(dir: &std::path::Path) -> Option<String> {
     if let Some(rest) = trimmed.strip_prefix("ref:") {
         let r = rest.trim();
         // `refs/heads/main` → `main`, `refs/heads/feature/x` → `feature/x`
-        if let Some(branch) = r.strip_prefix("refs/heads/") {
-            if !branch.is_empty() {
-                return Some(branch.to_string());
-            }
+        if let Some(branch) = r.strip_prefix("refs/heads/")
+            && !branch.is_empty()
+        {
+            return Some(branch.to_string());
         }
         // Other refs (tags, etc) → last component
         return Some(r.rsplit('/').next().unwrap_or(r).to_string());
