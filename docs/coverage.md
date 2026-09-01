@@ -50,13 +50,13 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-08-21 (`cargo llvm-cov --workspace`, flags above).
-Workspace line coverage **85.58%**.
+Linux x86_64, 2026-09-01 (`cargo llvm-cov --workspace`, flags above — re-measured after #48).
+Workspace line coverage **85.58%** (was 85.58% on 2026-08-21; delta within noise — #48 was
+`core::ErrorKind`/`TransportError` + `ToolExecutor` cache + swallow ratchet + `agent/{mod,turn,gate,dispatch,compact}` file move, no line-coverage change).
 
-`core` 100% floor still covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
-(2026-09-01, #48). Swallow-budget numbers live in `scripts/swallowed_error_budget.json`,
-not in these line floors. Agent facade split (same date, #48) is a file move only —
-re-measure llvm-cov when the next coverage PR lands; floors unchanged.
+`core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
+(#48). Swallow-budget numbers live in `scripts/swallowed_error_budget.json`, not in these
+line floors. Floors unchanged (workspace ≥82%).
 
 Line coverage is the number CI gates on. Function and region rates are
 informational.
