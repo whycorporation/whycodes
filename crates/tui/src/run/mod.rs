@@ -301,9 +301,12 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     let tui_cfg = TuiAppConfig::from_core_config(&opts.config.tui);
     let mut app = TuiApp::new(tui_cfg);
 
-    let file_index = whycodes_index::WorkspaceIndex::start(
-        whycodes_index::WorkspaceIndex::project_roots(&opts.project_dir),
-    );
+    // Paint, then hydrate. Anything the first 80×24 home frame does not need
+    // is deferred until after the first `terminal.draw` → `record_draw()`.
+    // See issue #49: this pile used to run serially before the first frame.
+    let file_index = whycodes_index::WorkspaceIndex::start(Vec::new());
+    // Real workspace roots are hydrated after first paint; the empty index
+    // keeps `@` picker inert for frame 0 without paying `canonicalize` + scan.
     app.set_file_index(file_index.clone());
 
     app.provider_name = opts.provider.clone();
@@ -320,6 +323,8 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| whycodes_core::display_path(&app.project_dir));
+    // Git branch is read via `.git/HEAD` fast path (no `git` spawn). That's
+    // cheap enough to keep before paint; full `git` fallback is deferred.
     app.refresh_git_branch();
     app.apply_context_window(
         &opts.provider,
@@ -330,7 +335,6 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
     );
 
     let mut config = opts.config.clone();
-    config.load_command_files(&opts.project_dir);
 
     app.primary_agents = config
         .agents
@@ -393,12 +397,10 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .system_prompt
         .clone()
         .unwrap_or_else(|| Agent::system_prompt_for(&opts.agent_name));
-    let system_prompt = with_project_memory(
-        &Agent::with_agents_md(&base, &opts.project_dir),
-        &opts.project_dir,
-        &config,
-        None,
-    );
+    // Deferred: AGENTS.md + memory + plugins each touch disk/SQLite. Home has
+    // no fenced code and needs no tool plugins, so the first frame uses a
+    // minimal prompt; the full prompt is hydrated after paint.
+    let system_prompt = Agent::with_runtime_context(&base);
 
     let (perm_prompter, perm_rx) = ChannelPermissionPrompter::new();
     let perm_prompter =
@@ -424,15 +426,11 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         .with_permission_prompter(
             Arc::clone(&perm_prompter) as Arc<dyn whycodes_agent::PermissionPrompter>
         )
-        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>)
-        .with_plugins(Some(opts.project_dir.as_path()));
+        .with_question_prompter(Arc::clone(&question_prompter) as Arc<dyn QuestionPrompter>);
 
     let mut session = Session::new(opts.project_dir.clone(), system_prompt.clone());
     app.session_title = session.title.clone();
     app.session_id = session.id.clone();
-    if app.session_list.sessions.is_empty() {
-        app.session_list.sessions = load_session_entries();
-    }
     let history = SessionHistory::new();
 
     if let Some(ref want) = opts.resume_session_id {
@@ -612,7 +610,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let boot = prepare_tui_boot(&opts).await;
     let mut app = boot.app;
     let mut config = boot.config;
-    let file_index = boot.file_index;
+    let mut file_index = boot.file_index;
     let mut agent = boot.agent;
     let session = boot.session;
     let history = boot.history;
@@ -621,7 +619,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
     let perm_rx = boot.perm_rx;
     let question_rx = boot.question_rx;
     let session_claims = boot.session_claims;
-    let missing_key = boot.missing_key;
+    let mut missing_key = boot.missing_key;
     let remote = opts.remote.clone();
 
     let mut provider = opts.provider.clone();
@@ -922,6 +920,99 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                 }
 
                 if just_first {
+                    // Paint, then hydrate. Deferred boot work that is not needed
+                    // for the first 80×24 home frame (issue #49).
+                    // Syntax theme was skipped in `TuiApp::new` (syntect cache
+                    // is ~2 ms cold).
+                    app.config.theme.apply_syntax_theme();
+                    // Auth plugin dir walk was deferred from `async_main`.
+                    {
+                        let mut dirs = Vec::new();
+                        if let Ok(p) = whycodes_config::Config::default_path() {
+                            if let Some(parent) = p.parent() {
+                                dirs.push(parent.join("plugins"));
+                            }
+                        }
+                        dirs.push(whycodes_core::project_dir(&project_dir).join("plugins"));
+                        let loaded = whycodes_auth::plugin::load_from_dirs(&dirs);
+                        if loaded > 0 {
+                            tracing::debug!(
+                                count = loaded,
+                                "hydrated auth plugins after first frame"
+                            );
+                        }
+                    }
+                    // Real workspace file index (canonicalize + scan) — empty
+                    // index was used for the first frame so `@` picker does not
+                    // block TTFF.
+                    {
+                        let real = whycodes_index::WorkspaceIndex::start(
+                            whycodes_index::WorkspaceIndex::project_roots(&project_dir),
+                        );
+                        app.set_file_index(real.clone());
+                        rt.agent.set_file_index(real.clone());
+                        file_index = real;
+                    }
+                    // Shell plugins (plugins.toml + plugin.json discovery).
+                    rt.agent.hydrate_plugins(Some(project_dir.as_path()));
+                    // Full system prompt: AGENTS.md + sibling files + memory.
+                    // Boot used only runtime context; hydrate the rest now.
+                    {
+                        let base = rt.agent.system_prompt();
+                        let with_agents =
+                            whycodes_agent::agent::Agent::with_agents_md(&base, &project_dir);
+                        let full = with_project_memory(&with_agents, &project_dir, &config, None);
+                        rt.session.set_system_prompt(&full);
+                    }
+                    // Session picker — home paints with empty list then fills.
+                    if app.session_list.sessions.is_empty() {
+                        let entries = load_session_entries();
+                        if !entries.is_empty() {
+                            app.session_list.sessions = entries;
+                        }
+                    }
+                    // API key was deferred before `whycodes_tui::run` to avoid
+                    // blocking `auth.json` I/O before first paint. Fetch the
+                    // env/config key synchronously now; OAuth is async and
+                    // stays lazy until the first turn (`ensure_api_key`).
+                    if api_key.is_empty() {
+                        let env_var = format!("{}_API_KEY", provider.to_uppercase());
+                        let mut fetched: Option<String> = None;
+                        if let Ok(v) = std::env::var(&env_var) {
+                            if !v.is_empty() {
+                                fetched = Some(v);
+                            }
+                        }
+                        if fetched.is_none() {
+                            if let Some(pc) = config.get_provider(&provider) {
+                                if let Some(k) = &pc.api_key {
+                                    if !k.is_empty() {
+                                        fetched = Some(k.clone());
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(k) = fetched {
+                            api_key = k;
+                            missing_key = api_key.is_empty()
+                                && whycodes_llm::provider_requires_api_key(
+                                    &provider,
+                                    Some(&config),
+                                );
+                            app.status_message = if missing_key {
+                                format!(
+                                    "agent={}  {}/{}  — no API key · /connect  /help",
+                                    app.agent_name, provider, model
+                                )
+                            } else {
+                                format!(
+                                    "agent={}  {}/{}  — Tab focus  Ctrl+T agent  Esc cancel  /help",
+                                    app.agent_name, provider, model
+                                )
+                            };
+                        }
+                    }
+
                     // After first paint: MCP connect + code RAG auto-index.
                     // Both can block; doing them here keeps startup feel snappy.
                     rt.agent.load_mcp(&config).await;

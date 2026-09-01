@@ -109,11 +109,15 @@ fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
 
 fn command_needs_multi_thread(cli: &Cli) -> bool {
     match &cli.command {
-        // Default bare invoke → interactive TUI / agent.
-        None => true,
+        // Default bare invoke → interactive TUI. The boot path to first paint
+        // is latency-sensitive (TTFF); a multi-thread pool spawn before any
+        // paint costs several ms. Use a current-thread runtime for the TUI
+        // boot; the event loop does not need worker threads until the first
+        // turn's tools run (spawn_blocking still works on current_thread).
+        None => false,
         Some(cmd) => match cmd {
-            Commands::Run { .. }
-            | Commands::Generate { .. }
+            Commands::Run { .. } => false,
+            Commands::Generate { .. }
             | Commands::Acp
             | Commands::Pr { .. }
             | Commands::Github { .. }
@@ -147,7 +151,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // panic → data_dir/crash/. TUI keeps stderr quiet so the alternate screen
     // is not corrupted (use --debug or WHYCODES_LOG_FILE to capture human logs).
     init_logging(&cli);
-    load_auth_plugins(&cli);
+    if !is_tui_invoke(&cli) {
+        load_auth_plugins(&cli);
+    }
 
     // Determine which command to run; default to Run
     let result = match &cli.command {
@@ -201,7 +207,13 @@ fn init_logging(cli: &Cli) {
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     let log_file = std::env::var_os("WHYCODES_LOG_FILE").map(PathBuf::from);
     // Prefer env so we skip a full TOML/config walk on the common path.
+    // When WHYCODES_BENCH is set the first-frame clock is running; avoid any
+    // config file I/O before the first paint.
+    let bench = std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty());
     let log_level = std::env::var("WHYCODES_LOG_LEVEL").ok().or_else(|| {
+        if bench {
+            return None;
+        }
         // Only open config when no env override — light commands stay cheap.
         Config::load()
             .ok()

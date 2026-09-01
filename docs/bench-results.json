@@ -1,6 +1,6 @@
 {
-  "date": "2026-08-31",
-  "git": "4bbdf35",
+  "date": "2026-09-01",
+  "git": "6fe4b1d",
   "machine": {
     "platform": "Linux x86_64",
     "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
@@ -88,18 +88,18 @@
       }
     }
   },
-  "first_frame_note": "Same 80x24 harness PTY as 2026-08-26. Idle still 0.0/s. In-proc TTFF ~23 ms (was 18 ms); spawn-to-exit ~30 ms.",
+  "first_frame_note": "Paint, then hydrate (issue #49): deferred syntect, session DB, memory SQLite, plugins, index scan, and git spawn from before first paint. Same 80x24 harness PTY as 2026-08-26. Idle still 0.0/s. In-proc TTFF ~11 ms (was 23 ms); spawn-to-exit ~18 ms.",
   "first_frame_harness": {
-    "median_ms": 22.58,
-    "min_ms": 20.87,
-    "max_ms": 28.3,
+    "median_ms": 11.1,
+    "min_ms": 9.8,
+    "max_ms": 14.2,
     "runs": 12,
     "idle_ms": 0
   },
   "idle_draws_harness": {
     "median_per_s": 0.0,
     "window_ms": 3000,
-    "first_frame_median_ms": 27.76
+    "first_frame_median_ms": 12.4
   },
   "hot_paths": {
     "assess": {

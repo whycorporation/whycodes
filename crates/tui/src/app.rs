@@ -1996,7 +1996,6 @@ impl TuiApp {
     }
 
     pub fn new(config: crate::config::TuiAppConfig) -> Self {
-        config.theme.apply_syntax_theme();
         Self::from_config(config)
     }
 
@@ -2322,7 +2321,8 @@ impl TuiApp {
 
     /// Refresh `git_branch` from the working tree (cheap; call on start / idle).
     pub fn refresh_git_branch(&mut self) {
-        self.git_branch = resolve_git_branch(&self.project_dir);
+        self.git_branch = resolve_git_branch_fast(&self.project_dir)
+            .or_else(|| resolve_git_branch(&self.project_dir));
     }
 
     /// True if terminal cell `(col, row)` is inside the clickable cwd path.
@@ -3807,6 +3807,51 @@ pub fn chat_messages_from_session(
     }
 
     out
+}
+
+/// Fast path: read `.git/HEAD` directly instead of spawning `git`.
+///
+/// Handles both normal refs (`ref: refs/heads/main`) and detached SHA.
+/// For worktrees where `.git` is a file, follows the gitdir pointer.
+fn resolve_git_branch_fast(dir: &std::path::Path) -> Option<String> {
+    let git_path = dir.join(".git");
+    let head_path = if git_path.is_file() {
+        // Worktree: .git is a file containing `gitdir: <path>`
+        let content = std::fs::read_to_string(&git_path).ok()?;
+        let line = content.trim();
+        let gitdir = line.strip_prefix("gitdir:")?.trim();
+        let base = if std::path::Path::new(gitdir).is_absolute() {
+            std::path::PathBuf::from(gitdir)
+        } else {
+            dir.join(gitdir)
+        };
+        base.join("HEAD")
+    } else {
+        git_path.join("HEAD")
+    };
+    let raw = std::fs::read_to_string(&head_path).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix("ref:") {
+        let r = rest.trim();
+        // `refs/heads/main` → `main`, `refs/heads/feature/x` → `feature/x`
+        if let Some(branch) = r.strip_prefix("refs/heads/") {
+            if !branch.is_empty() {
+                return Some(branch.to_string());
+            }
+        }
+        // Other refs (tags, etc) → last component
+        return Some(r.rsplit('/').next().unwrap_or(r).to_string());
+    }
+    // Detached HEAD: raw SHA
+    let sha = trimmed.get(..7).unwrap_or(trimmed);
+    if sha.is_empty() {
+        None
+    } else {
+        Some(sha.to_string())
+    }
 }
 
 /// How long we will wait on `git` before giving up (Grok/jcode: a wedged

@@ -342,6 +342,20 @@ impl Agent {
         self
     }
 
+    /// Mutate the file index in place (used for paint-then-hydrate boot).
+    pub fn set_file_index(&mut self, index: Arc<whycodes_index::WorkspaceIndex>) {
+        self.file_index = Some(index);
+    }
+
+    /// Load shell plugins in place (paint-then-hydrate; avoids `with_plugins` move).
+    pub fn hydrate_plugins(&mut self, project_dir: Option<&std::path::Path>) {
+        let mut exec = whycodes_tools::executor::ToolExecutor::new();
+        let n = exec.register_config_plugins(project_dir);
+        if n > 0 {
+            self.tool_executor = Arc::new(exec);
+        }
+    }
+
     /// Share a process-wide claim registry (parallel TUI sessions).
     pub fn with_session_claims(mut self, claims: whycodes_core::FileClaimRegistry) -> Self {
         self.session_claims = Some(claims);

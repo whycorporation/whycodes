@@ -251,6 +251,43 @@ process than the 08-26 row. Still a lower bound (idle, no agent turn).
 Spawn-to-exit at `--idle-ms 0` is **29.9 ms**. Idle redraws remain the
 product claim: **0.0 /s**.
 
+### Re-measure, 2026-09-01 (Linux x86_64, release, HEAD `6fe4b1d`)
+
+Same machine (Intel Core i5-4200H @ 2.80 GHz, CachyOS). Release binary
+**16.0 MB**. Recorded JSON: [`bench-results.json`](bench-results.json).
+Paint-then-hydrate for issue #49.
+
+Deferred from before first paint: syntect theme (cold ~2 ms), session DB +
+title backfill, memory SQLite, shell plugins, workspace index
+`canonicalize` + scan, auth plugin dir walk, and `auth.json` / token read.
+TUI boot uses a current-thread Tokio runtime (was multi-thread pool spawn
+before any paint) and a fast `.git/HEAD` read instead of `git rev-parse`.
+`cmd/run.rs` no longer double-loads `commands/*.md`; `TuiApp::new` no longer
+applies the syntax theme before the first frame. Full prompt (AGENTS.md +
+memory), plugins, real file index, and session list are hydrated after
+`record_draw()` — same pattern as MCP / auto-index.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.5 ms** | 2.3 ms | **0.6 MB** |
+| `--help` | **2.0 ms** | 2.6 ms | — |
+| `config show` | **2.6 ms** | 3.5 ms | **5.1 MB** |
+| `session list` | — | — | **11.8 MB** |
+| binary size | **16.0 MB** | — | — |
+
+Startup is in the same 1–3 ms band as 2026-08-31. No CSI-query timeout
+regression (`should_query_keyboard_enhancement` still skips bench / 0×0).
+
+**First frame / idle** (`bench_first_frame.py`, empty project):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **11.1 ms** median | 0.0/s | was 22.6 ms |
+| Harness `--idle-ms 3000` (10 runs) | **12.4 ms** median | **0.0/s** | still zero idle paints |
+
+Spawn-to-exit at `--idle-ms 0` is **~18 ms**. Idle redraws remain **0.0 /s**.
+MCP / auto-index still start after first paint; no new work was added before it.
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do

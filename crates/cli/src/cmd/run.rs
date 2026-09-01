@@ -50,10 +50,6 @@ pub(crate) async fn cmd_run(
     let project_dir = resolve_dir(cli);
     config.load_command_files(&project_dir);
 
-    // Interactive mode always starts (OpenCode-style). API key is optional until
-    // the user actually sends a prompt that needs the LLM.
-    let mut api_key = get_api_key(&provider, &config).await.unwrap_or_default();
-
     // Full-screen TUI unless --plain / WHYCODES_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
     // while still having a controlling terminal — tui_available() opens
@@ -74,6 +70,16 @@ pub(crate) async fn cmd_run(
     // Grok parity: `--max-turns` is a headless cap. Interactive TUI/REPL
     // runs until end-of-turn, cancel, or doom-loop.
     let max_turns = crate::ignore_max_turns_interactive(max_turns);
+
+    // TUI first paint is latency-sensitive; a blocking `auth.json` / token
+    // read before `whycodes_tui::run` adds File I/O to TTFF. Defer key fetch
+    // until after the first frame — interactive mode already treats a missing
+    // key as OK until the first LLM turn (same pattern as MCP/auto-index).
+    let mut api_key = if use_tui {
+        String::new()
+    } else {
+        get_api_key(&provider, &config).await.unwrap_or_default()
+    };
 
     if use_tui {
         let update_rx = super::debug::spawn_update_check(cli, &config);
