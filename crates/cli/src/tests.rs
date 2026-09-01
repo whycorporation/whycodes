@@ -163,9 +163,10 @@ fn resume_flag_wins_over_continue() {
 
 #[test]
 fn runtime_choice_per_command() {
-    // #49: bare TUI and `run` use current_thread to avoid pool spawn before first paint.
-    assert!(!command_needs_multi_thread(&cli(None)));
-    assert!(!command_needs_multi_thread(&cli(Some(Commands::Run {
+    // Interactive TUI / `run` need the multi-thread pool: the loop blocks on
+    // `event::poll`, so current_thread starves `tokio::spawn` turns.
+    assert!(command_needs_multi_thread(&cli(None)));
+    assert!(command_needs_multi_thread(&cli(Some(Commands::Run {
         prompt: None,
         max_turns: None,
         format: OutputFormat::Text,
@@ -362,11 +363,11 @@ fn cli_parser_maps_mcp_add_without_interpreting_values() {
 fn runtime_for_builds_the_selected_runtime_flavor() {
     use tokio::runtime::RuntimeFlavor;
 
-    // #49: interactive TUI now uses CurrentThread (no pool spawn before first paint).
+    // Interactive TUI needs MultiThread so spawned turns run during poll.
     let interactive = runtime_for(&cli(None)).unwrap();
     assert_eq!(
         interactive.handle().runtime_flavor(),
-        RuntimeFlavor::CurrentThread
+        RuntimeFlavor::MultiThread
     );
 
     let local = runtime_for(&cli(Some(Commands::Config {

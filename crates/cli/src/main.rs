@@ -93,8 +93,13 @@ where
 }
 
 /// Light subcommands (config/session/stats/…) use a current-thread runtime so
-/// they do not pay for worker-thread spawn. Interactive / network / agent paths
-/// keep the multi-thread pool.
+/// they do not pay for worker-thread spawn. Interactive TUI / network / agent
+/// paths keep the multi-thread pool.
+///
+/// Do **not** put the TUI on `current_thread`. The event loop blocks on
+/// `crossterm::event::poll`; spawned turn / stream / catalog tasks never
+/// run until that poll returns, so a submitted prompt hangs until Esc
+/// force-cancels (2026-09-01).
 fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
     if command_needs_multi_thread(cli) {
         tokio::runtime::Builder::new_multi_thread()
@@ -109,14 +114,12 @@ fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
 
 fn command_needs_multi_thread(cli: &Cli) -> bool {
     match &cli.command {
-        // Default bare invoke → interactive TUI. The boot path to first paint
-        // is latency-sensitive (TTFF); a multi-thread pool spawn before any
-        // paint costs several ms. Use a current-thread runtime for the TUI
-        // boot; the event loop does not need worker threads until the first
-        // turn's tools run (spawn_blocking still works on current_thread).
-        None => false,
+        // Bare invoke → interactive TUI. Worker-pool spawn costs a few ms of
+        // TTFF (#49) but is required so `tokio::spawn` turns progress while
+        // the loop is inside blocking `event::poll`.
+        None => true,
         Some(cmd) => match cmd {
-            Commands::Run { .. } => false,
+            Commands::Run { .. } => true,
             Commands::Generate { .. }
             | Commands::Acp
             | Commands::Pr { .. }

@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — TUI `current_thread` starves spawned turns
+
+**Symptom:** Home paints. Typing `selam` + Enter shows the user bubble and
+"Working…" (or equivalent busy chrome) then nothing for minutes. No
+`turn.step` / `llm.stream_chunk` in `unified.jsonl`. Esc eventually writes
+`session.persist` with `reason: force_cancelled`.
+
+**Root cause:** #49 put bare TUI / `run` on `tokio` `current_thread` to skip
+worker-pool spawn before first paint. The event loop then blocks the only
+runtime thread in `crossterm::event::poll`. `tokio::spawn` turn / stream /
+catalog tasks are queued and never polled until the next input or timeout.
+A turn that needs HTTP therefore never starts.
+
+**Fix:** `command_needs_multi_thread` is true for `None` and `Commands::Run`.
+TTFF still uses paint-then-hydrate; do not "save" pool spawn by starving the
+turn.
+
+**Prevention:** Never put the TUI on `current_thread` while `event::poll` is
+synchronous. Regression: `runtime_choice_per_command` /
+`runtime_for_builds_the_selected_runtime_flavor`.
+
+---
+
 ### 2026-09-01 — Split `agent.rs` by responsibility (#48)
 
 **Symptom:** `crates/agent/src/agent.rs` was ~4.4k lines: turn loop, permission
