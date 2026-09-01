@@ -255,7 +255,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &mut TuiApp, palette: &ThemePa
                 AppMode::Command => Some("command…"),
                 _ if app.messages.is_empty() => Some("Ask anything…  (drop images)"),
                 // Scrollback owns focus — nudge how to get back.
-                _ => Some("Tab/i/Space → prompt · j/k select"),
+                _ => Some("Tab/Space → prompt · j/k select"),
             }
         };
 

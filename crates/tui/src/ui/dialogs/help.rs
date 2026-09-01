@@ -97,7 +97,7 @@ fn catalog() -> Vec<HelpLine> {
             desc: "Toggle tool results",
         },
         HelpLine::Binding {
-            key: "Space / i",
+            key: "Space / Enter",
             desc: "Focus prompt",
         },
         HelpLine::Header("Prompt"),

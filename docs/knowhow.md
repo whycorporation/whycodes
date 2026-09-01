@@ -144,6 +144,28 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — Prompt paste drops ASCII `i` (#56)
+
+**Symptom:** Pasting `iyi` / `istanbul` into the TUI prompt drops every `i`
+(`y`, `stanbul`). Dotless `ı` types and pastes. Prompt-focused typing of
+`hi` is fine.
+
+**Root cause:** Scrollback / todos bound bare `Char('i')` to
+`Action::FocusPrompt` (vim insert). Hosts without bracketed paste deliver
+a short paste as a key flood; `coalesce_unbracketed_paste` only folds 2+
+lines or ≥160 chars. Each `i` then focuses the prompt and is not inserted.
+Later letters auto-focus and type. `ı` is a different code point.
+
+**Fix:** Unbind printable `i`. Return to the prompt with Tab / Space /
+Enter / Esc / Backspace. Unmapped letters still auto-focus the prompt
+*and* insert.
+
+**Prevention:** Do not bind a letter that appears in real language as a
+focus chord. Regression: `turkish_i_and_dotless_i_type_and_paste`;
+keymap `Char('i')` is `None` in scrollback/todos.
+
+---
+
 ### 2026-09-02 — TUI `current_thread` starves spawned turns
 
 **Symptom:** Home paints. Typing `selam` + Enter shows the user bubble and

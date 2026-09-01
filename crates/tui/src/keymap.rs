@@ -278,7 +278,10 @@ impl Keymap {
                     FocusPane::Scrollback => match (ctrl, shift, key.code) {
                         (false, false, KeyCode::Enter) => Some(Action::FocusPrompt),
                         (false, false, KeyCode::Char(' ')) => Some(Action::FocusPrompt),
-                        (false, false, KeyCode::Char('i')) => Some(Action::FocusPrompt),
+                        // Do not bind printable `i`: unbracketed paste and
+                        // Grok-style "any letter returns to the prompt"
+                        // would swallow every ASCII i (Turkish `iyi` → `y`).
+                        // Tab / Space / Enter / Esc / Backspace still return.
                         (false, false, KeyCode::Up) | (false, false, KeyCode::Char('k')) => {
                             Some(Action::SelectPrev)
                         }
@@ -313,7 +316,6 @@ impl Keymap {
                     FocusPane::Todos => match (ctrl, shift, key.code) {
                         (false, false, KeyCode::Enter)
                         | (false, false, KeyCode::Char(' '))
-                        | (false, false, KeyCode::Char('i'))
                         | (false, false, KeyCode::Backspace) => Some(Action::FocusPrompt),
                         (false, false, KeyCode::Up) | (false, false, KeyCode::Char('k')) => {
                             Some(Action::ScrollDown)
@@ -417,7 +419,7 @@ fn normal_bindings() -> Vec<KeyBinding> {
         ),
         KeyBinding::new("l", "Toggle tool results", KeymapContext::Normal),
         KeyBinding::new(
-            "Space / i",
+            "Space / Enter",
             "Focus prompt (scrollback)",
             KeymapContext::Normal,
         ),
@@ -650,7 +652,8 @@ mod tests {
         );
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('i'))),
-            Some(Action::FocusPrompt)
+            None,
+            "printable i must type, not steal into FocusPrompt"
         );
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &key(KeyCode::Up)),
@@ -774,6 +777,11 @@ mod tests {
         assert_eq!(
             k.resolve(KeymapContext::Normal, f, &key(KeyCode::Enter)),
             Some(Action::FocusPrompt)
+        );
+        assert_eq!(
+            k.resolve(KeymapContext::Normal, f, &key(KeyCode::Char('i'))),
+            None,
+            "printable i must type, not steal into FocusPrompt"
         );
     }
 

@@ -3901,6 +3901,31 @@ mod event_tests {
     }
 
     #[test]
+    fn turkish_i_and_dotless_i_type_and_paste() {
+        let mut a = app();
+        assert!(handle_event(&mut a, key(KeyCode::Char('i'))));
+        assert!(handle_event(&mut a, key(KeyCode::Char('ı'))));
+        assert!(handle_event(&mut a, key(KeyCode::Char('İ'))));
+        assert!(handle_event(&mut a, key(KeyCode::Char('I'))));
+        assert_eq!(a.input_buffer, "iıİI");
+
+        let mut a = app();
+        handle_event(&mut a, Event::Paste("iyi ışık".into()));
+        assert_eq!(a.input_buffer, "iyi ışık");
+
+        // Unbracketed short paste: each char is a Key. Scrollback used to
+        // bind `i` to FocusPrompt and swallow every ASCII i.
+        let mut a = app();
+        a.add_message(ChatRole::User, "one");
+        a.focus = FocusPane::Scrollback;
+        for c in "iyi istanbul".chars() {
+            handle_event(&mut a, key(KeyCode::Char(c)));
+        }
+        assert_eq!(a.focus, FocusPane::Prompt);
+        assert_eq!(a.input_buffer, "iyi istanbul");
+    }
+
+    #[test]
     fn provider_form_fields_and_command_aliases() {
         let mut a = app();
         open_provider_dialog(&mut a);

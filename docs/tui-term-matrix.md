@@ -62,6 +62,7 @@ Do these in the window that just opened. Mark fail + host in the PR / issue.
 | 5 | **Shift+drag** still uses the host’s native selection | |
 | 6 | Copy lands in the system clipboard (OSC 52 and/or `wl-copy` / `xclip`) | |
 | 7 | Paste 5 lines at once → one block, not key-spam (bracketed paste) | |
+| 7b | Paste `iyi ışık istanbul` → every `i` and `ı` stays (no vim `i` steal) | |
 | 8 | Drag a `.png` onto the window → image chip on the prompt | |
 | 8b | Copy a screenshot (or browser image) → **Ctrl+V** attaches a chip. Empty clipboard is silent. Needs `wl-clipboard` / `xclip` on Linux | |
 | 9 | **Shift+Enter** inserts a newline (GPU hosts). VTE: often unsupported | |
