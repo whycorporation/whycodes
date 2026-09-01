@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-01 — Split `agent.rs` by responsibility (#48)
+
+**Symptom:** `crates/agent/src/agent.rs` was ~4.4k lines: turn loop, permission
+gates, compaction, and swarm/task dispatch in one file.
+
+**Root cause:** Incremental features landed in the facade instead of sibling
+modules (`tool_policy` already existed for formatting).
+
+**Fix:** `agent.rs` → `agent/{mod,turn,gate,dispatch,spawn,compact}.rs`.
+`Agent` remains the public facade; `impl Agent` is split across modules.
+No behaviour change. `TuiApp` still ~120 fields (P1 remainder).
+
+**Prevention:** New turn-loop / gate / swarm code goes in the matching file.
+Do not grow `agent/mod.rs` with execution paths.
+
+---
+
 ### 2026-09-01 — Tool schema cache + `ErrorKind` on `core::Error` (#48)
 
 **Symptom:** Each agent LLM step rebuilt every `Tool::definition()` JSON schema.

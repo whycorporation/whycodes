@@ -133,7 +133,7 @@ std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 |-------|------:|--------|
 | `crates/tui/src/run.rs` | ~~9170~~ | **ödendi (#46):** `run/{mod,slash,persist,tests}.rs` |
 | `crates/cli/src/main.rs` | ~~4651~~ **~250** | **ödendi (#46):** command bodies in `cli/src/cmd/` |
-| `crates/agent/src/agent.rs` | 4470 | Turn loop + tool gate + swarm + compact |
+| `crates/agent/src/agent.rs` | ~~4470~~ **~1500** | **ödendi (#48):** `agent/{mod,turn,gate,dispatch,spawn,compact}.rs` |
 | `crates/tui/src/ui/chat.rs` | 4112 | |
 | `crates/tui/src/input.rs` | 3949 | |
 | `crates/tui/src/app.rs` | 3875 | Durum + diyalog + input + paint ipuçları |
@@ -220,7 +220,7 @@ Rust API guidelines: **küçük kamu yüzey**; gerisi `pub(crate) mod`. `agent/s
 
 `tools/blocking.rs` doğru. Hâlâ:
 
-- `agent.rs`: `std::fs::create_dir_all` / `write` / `read_dir` / `remove_dir_all` async turn içinde.
+- `agent/dispatch.rs` (was `agent.rs`): `std::fs::create_dir_all` / `write` / `read_dir` / `remove_dir_all` async turn içinde.
 - `cli cmd_github`: `std::process::Command` async `main` yolunda.
 - `tui share_server_up`: event loop’tan `TcpStream::connect_timeout` (80 ms bound — kabul edilebilir ama `try_nonblocking` / ayrı task daha temiz).
 - `memory/onnx.rs`: senkron HTTP indirme (`ensure_model`) — çağrı yeri async ise `spawn_blocking` şart.
@@ -241,7 +241,7 @@ Workspace `rustc-hash` var ve yorumu doğru. Kullanım: **HashMap ~153, FxHashMa
 
 ### 14. Clone / `to_string` sıcak noktaları
 
-Üretim `.clone()` (kabaca): `agent.rs` 184, `tui/run.rs` 115, `tui/app.rs` 75, `config/lib.rs` 70, `cli/main.rs` 57, `server/v1.rs` 48.
+Üretim `.clone()` (kabaca): `agent/` 184, `tui/run.rs` 115, `tui/app.rs` 75, `config/lib.rs` 70, `cli/main.rs` 57, `server/v1.rs` 48.
 
 Bir kısmı `Arc` paylaşımı (`Arc::clone`) — doğru. Bir kısmı `String` yol / mesaj kopyası. `Cow<'_, str>` neredeyse yok (1 hit). `working_dir: impl AsRef<Path>` ve `&str` tutmak birçok clone’u keser.
 

@@ -95,7 +95,7 @@ Keep leaf types, traits, shared errors, logging, and path concepts in `core`. Us
 
 1. `crates/cli/src/main.rs` parses commands, chooses a Tokio runtime, loads layered configuration, resolves provider/model/project credentials, opens storage, starts indexing, and constructs the agent/session.
 2. Interactive execution enters either the ratatui TUI or plain REPL; one-shot commands use the same lower-level services.
-3. `crates/agent/src/agent.rs` owns each turn: build context and visible tools, stream the LLM response, assemble tool calls, execute them through risk/intent/path/permission/sandbox/hook gates, append results, and repeat until no tool calls remain.
+3. `crates/agent/src/agent/` owns each turn (`turn.rs`): build context and visible tools, stream the LLM response, assemble tool calls, execute them through risk/intent/path/permission/sandbox/hook gates (`gate.rs` / `dispatch.rs`), append results, and repeat until no tool calls remain. `Agent` in `mod.rs` is the facade.
 4. Read-only tool calls may run concurrently. Mutating, shell, and interactive calls are serialized.
 5. Session and message persistence is best-effort around the turn loop; storage behavior and SQLite migrations remain inside `whycodes-storage`.
 

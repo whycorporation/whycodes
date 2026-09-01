@@ -55,7 +55,8 @@ Workspace line coverage **85.58%**.
 
 `core` 100% floor still covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (2026-09-01, #48). Swallow-budget numbers live in `scripts/swallowed_error_budget.json`,
-not in these line floors.
+not in these line floors. Agent facade split (same date, #48) is a file move only —
+re-measure llvm-cov when the next coverage PR lands; floors unchanged.
 
 Line coverage is the number CI gates on. Function and region rates are
 informational.
