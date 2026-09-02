@@ -65,8 +65,13 @@ fn main() -> anyhow::Result<()> {
         return cmd_completions(*shell);
     }
 
+    let short = crate::cmd::hang::is_short_command(&cli);
     let rt = runtime_for(&cli)?;
-    rt.block_on(async_main(cli))
+    let result = rt.block_on(async_main(cli));
+    if short {
+        crate::cmd::hang::shutdown_runtime(rt);
+    }
+    result
 }
 
 /// `whycodes --version` / `whycodes -V` only — same format clap would print.
@@ -156,7 +161,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Memory { .. }
             | Commands::Import { .. }
             | Commands::Stats
-            | Commands::Debug
+            | Commands::Debug { .. }
             | Commands::Completions { .. } => false,
         },
     }

@@ -144,6 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-03 — Serve lock lives under `$CWD/.whycodes/`, not data_dir
+
+**Symptom:** A second `whycodes serve` printed `Address already in use` with no
+pid or URL. Tests that bound a port also wrote `.whycodes/serve.lock` into the
+repo working tree.
+
+**Cause:** The lock is project-local (so `connect` in that tree can name the
+holder). `cmd_serve` uses `current_dir()`. Completions and `--version` must not
+create that directory.
+
+**Fix:** atomic JSON lock (`pid`, `port`, `started_at`); stale = dead PID /
+24h / clock skew; `--no-takeover` and CI skip the TTY prompt. Tests `chdir`
+into a temp dir under `CWD_LOCK`.
+
+**Prevention:** Do not bind `serve` from unit tests without `IsolatedCwd`. Do
+not treat `EPERM` on `kill(pid, 0)` as stale.
+
 ### 2026-09-03 — Auto mode must not ask while todos/tasks are open
 
 **Symptom:** In `auto` approval, the model still called `question` (or the

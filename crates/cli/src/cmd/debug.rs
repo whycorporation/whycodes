@@ -2,11 +2,145 @@
 use super::helpers::*;
 use crate::{Cli, Commands, PKG_VERSION, VERSION_LONG};
 use colored::*;
+use serde::Serialize;
 use whycodes_config::Config;
 use whycodes_protocol::OutputFormat;
 
-pub(crate) async fn cmd_debug() -> anyhow::Result<()> {
-    println!("{} Debug Information:", "🔧".bold());
+const DEBUG_ENV_VARS: &[&str] = &[
+    "WHYCODES_PROVIDER",
+    "WHYCODES_MODEL",
+    "WHYCODES_LOG_LEVEL",
+    "WHYCODES_LOG_FILE",
+    "RUST_LOG",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GOOGLE_API_KEY",
+    "XAI_API_KEY",
+];
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugDump {
+    version: String,
+    git_hash: String,
+    config_path: Option<String>,
+    config_exists: bool,
+    data_dir: Option<String>,
+    jsonl_log: Option<String>,
+    crash_dir: Option<String>,
+    debug_log: Option<String>,
+    cwd: Option<String>,
+    home: Option<String>,
+    rustc: Option<String>,
+    git: Option<String>,
+    env: Vec<DebugEnv>,
+    oauth: Vec<DebugOauth>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugEnv {
+    name: String,
+    set: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DebugOauth {
+    provider: String,
+    method: String,
+    expiry: String,
+}
+
+fn collect_debug() -> DebugDump {
+    let config_path = match Config::default_path() {
+        Ok(p) => Some(p),
+        Err(err) => {
+            tracing::debug!(error = %err, "debug dump: config path unavailable");
+            None
+        }
+    };
+    let config_exists = config_path.as_ref().is_some_and(|p| p.exists());
+    let data_dir = match Config::data_dir() {
+        Ok(p) => Some(p),
+        Err(err) => {
+            tracing::debug!(error = %err, "debug dump: data dir unavailable");
+            None
+        }
+    };
+    let (jsonl_log, crash_dir, debug_log) = match &data_dir {
+        Some(p) => {
+            let dirs = whycodes_core::logging::LogDirs::from_data_dir(p);
+            (
+                Some(dirs.unified_jsonl().display().to_string()),
+                Some(dirs.crash.display().to_string()),
+                Some(dirs.debug.join("latest.log").display().to_string()),
+            )
+        }
+        None => (None, None, None),
+    };
+    let env = DEBUG_ENV_VARS
+        .iter()
+        .map(|name| DebugEnv {
+            name: (*name).to_string(),
+            set: std::env::var(name).is_ok(),
+        })
+        .collect();
+    let oauth = match &data_dir {
+        Some(dir) => match whycodes_auth::TokenStore::new(dir).list() {
+            Ok(entries) => entries
+                .into_iter()
+                .map(|(provider, auth)| DebugOauth {
+                    provider,
+                    method: auth.method.clone(),
+                    expiry: super::auth::auth_expiry_label(&auth),
+                })
+                .collect(),
+            Err(err) => {
+                tracing::debug!(error = %err, "debug dump: oauth store unread");
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+    DebugDump {
+        version: PKG_VERSION.to_string(),
+        git_hash: env!("WHYCODES_GIT_HASH").to_string(),
+        config_path: config_path.map(|p| p.display().to_string()),
+        config_exists,
+        data_dir: data_dir.map(|p| p.display().to_string()),
+        jsonl_log,
+        crash_dir,
+        debug_log,
+        cwd: std::env::current_dir()
+            .ok()
+            .map(|p| p.display().to_string()),
+        home: std::env::var("HOME").ok(),
+        rustc: cmd_version("rustc"),
+        git: cmd_version("git"),
+        env,
+        oauth,
+    }
+}
+
+fn cmd_version(bin: &str) -> Option<String> {
+    std::process::Command::new(bin)
+        .arg("--version")
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+pub(crate) async fn cmd_debug(json: bool) -> anyhow::Result<()> {
+    if json {
+        let dump = collect_debug();
+        println!("{}", serde_json::to_string_pretty(&dump)?);
+        return Ok(());
+    }
+
+    println!("{} Debug Information:", "🔍".bold());
     println!("  Version:     {}", VERSION_LONG.cyan());
 
     // Config path
@@ -80,20 +214,10 @@ pub(crate) async fn cmd_debug() -> anyhow::Result<()> {
         println!("  Git:         {}", ver);
     }
 
-    // Relevant environment variables
+    // Relevant environment variables. Secrets are masked; `--json` only
+    // reports whether the name is set (never the value).
     println!("  Environment:");
-    for var in &[
-        "WHYCODES_PROVIDER",
-        "WHYCODES_MODEL",
-        "WHYCODES_LOG_LEVEL",
-        "WHYCODES_LOG_FILE",
-        "RUST_LOG",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "GOOGLE_API_KEY",
-        "XAI_API_KEY",
-    ] {
+    for var in DEBUG_ENV_VARS {
         match std::env::var(var) {
             Ok(val) => {
                 println!("    {} = {} (set)", var, mask_secret(&val).dimmed());
@@ -247,5 +371,34 @@ mod tests {
         assert!(!should_auto_update_with_env(
             &cli, true, false, false, false
         ));
+    }
+
+    #[test]
+    fn debug_dump_keys_are_camel_case() {
+        let dump = collect_debug();
+        let v = serde_json::to_value(&dump).unwrap();
+        for key in [
+            "version",
+            "gitHash",
+            "configPath",
+            "configExists",
+            "dataDir",
+            "jsonlLog",
+            "crashDir",
+            "debugLog",
+            "cwd",
+            "env",
+            "oauth",
+        ] {
+            assert!(v.get(key).is_some(), "missing {key} in {v}");
+        }
+        assert!(v.get("git_hash").is_none());
+        let env = v["env"].as_array().expect("env array");
+        assert!(!env.is_empty());
+        for entry in env {
+            assert!(entry.get("name").is_some());
+            assert!(entry.get("set").and_then(|s| s.as_bool()).is_some());
+            assert!(entry.get("value").is_none(), "env must not leak values");
+        }
     }
 }

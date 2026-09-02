@@ -39,6 +39,37 @@ struct IsolatedHome {
     prev_ci: Option<std::ffi::OsString>,
 }
 
+/// Serializes tests that `chdir` (serve lock lives under `$CWD/.whycodes/`).
+static CWD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+struct IsolatedCwd {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    _dir: tempfile::TempDir,
+    prev: PathBuf,
+}
+
+impl IsolatedCwd {
+    fn new() -> Self {
+        let guard = CWD_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(dir.path()).expect("chdir");
+        Self {
+            _guard: guard,
+            _dir: dir,
+            prev,
+        }
+    }
+}
+
+impl Drop for IsolatedCwd {
+    fn drop(&mut self) {
+        if let Err(err) = std::env::set_current_dir(&self.prev) {
+            tracing::debug!(error = %err, "restore cwd after IsolatedCwd");
+        }
+    }
+}
+
 impl IsolatedHome {
     fn new() -> Self {
         let guard = lock_env();
@@ -457,6 +488,31 @@ fn cli_parser_maps_global_flags_and_nested_commands() {
             }
         })
     ));
+}
+
+#[test]
+fn cli_parser_accepts_unique_subcommand_prefixes() {
+    // clap `infer_subcommands` matches unique prefixes (`lis` → `list`),
+    // not aliases (`ls` is not a prefix of `list`).
+    let sess = Cli::try_parse_from(["whycodes", "sess", "lis"]).unwrap();
+    assert!(matches!(
+        sess.command,
+        Some(Commands::Session {
+            cmd: SessionCmd::List
+        })
+    ));
+    let dbg = Cli::try_parse_from(["whycodes", "deb"]).unwrap();
+    assert!(matches!(dbg.command, Some(Commands::Debug { json: false })));
+}
+
+#[test]
+fn cli_parser_rejects_ambiguous_prefixes() {
+    use clap::error::ErrorKind;
+    // `s` matches session, serve, stats, …
+    let err = Cli::try_parse_from(["whycodes", "s"]).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
+    let err = Cli::try_parse_from(["whycodes", "auth", "log"]).unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
 }
 
 #[test]
@@ -924,11 +980,15 @@ fn runtime_choice_covers_remaining_commands() {
     }))));
     #[cfg(feature = "server")]
     assert!(command_needs_multi_thread(&cli(Some(Commands::Serve {
-        port: 1
+        port: 1,
+        no_takeover: true,
     }))));
     #[cfg(feature = "server")]
     assert!(command_needs_full_worker_pool(&cli(Some(
-        Commands::Serve { port: 1 }
+        Commands::Serve {
+            port: 1,
+            no_takeover: true
+        }
     ))));
     #[cfg(feature = "self-update")]
     assert!(command_needs_multi_thread(&cli(Some(Commands::Upgrade))));
@@ -958,7 +1018,9 @@ fn runtime_choice_covers_remaining_commands() {
         },
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Stats))));
-    assert!(!command_needs_multi_thread(&cli(Some(Commands::Debug))));
+    assert!(!command_needs_multi_thread(&cli(Some(Commands::Debug {
+        json: false
+    }))));
     assert!(!command_needs_multi_thread(&cli(Some(
         Commands::Completions {
             shell: clap_complete::Shell::Bash,
@@ -1882,7 +1944,8 @@ fn should_auto_update_reads_process_env() {
 #[tokio::test]
 async fn cmd_debug_and_stats_on_isolated_home() {
     let _home = IsolatedHome::new();
-    cmd_debug().await.unwrap();
+    cmd_debug(false).await.unwrap();
+    cmd_debug(true).await.unwrap();
     cmd_stats().await.unwrap();
 }
 
@@ -1914,7 +1977,9 @@ async fn dispatch_offline_commands() {
     )
     .await
     .unwrap();
-    dispatch_command(&Commands::Debug, &c).await.unwrap();
+    dispatch_command(&Commands::Debug { json: false }, &c)
+        .await
+        .unwrap();
     dispatch_command(&Commands::Stats, &c).await.unwrap();
     dispatch_command(
         &Commands::Config {
@@ -2379,7 +2444,8 @@ async fn session_missing_ids_and_import_share() {
 #[tokio::test]
 async fn cmd_serve_bind_privileged_port_fails() {
     let _home = IsolatedHome::new();
-    let err = cmd_serve(1).await;
+    let _cwd = IsolatedCwd::new();
+    let err = cmd_serve(1, true).await;
     assert!(err.is_err(), "{err:?}");
 }
 
@@ -2429,10 +2495,11 @@ async fn cmd_generate_ollama_reaches_llm_and_fails() {
 #[tokio::test]
 async fn cmd_serve_binds_then_abort() {
     let _home = IsolatedHome::new();
+    let _cwd = IsolatedCwd::new();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     drop(listener);
-    let handle = tokio::spawn(async move { cmd_serve(port).await });
+    let handle = tokio::spawn(async move { cmd_serve(port, true).await });
     let url = format!("http://127.0.0.1:{port}/api/health");
     let mut ok = false;
     for _ in 0..80 {
@@ -2450,10 +2517,18 @@ async fn cmd_serve_binds_then_abort() {
 #[tokio::test]
 async fn dispatch_serve_and_connect_error_arms() {
     let _home = IsolatedHome::new();
+    let _cwd = IsolatedCwd::new();
     let mut c = cli(None);
     c.plain = true;
     c.no_memory = true;
-    let err = dispatch_command(&Commands::Serve { port: 1 }, &c).await;
+    let err = dispatch_command(
+        &Commands::Serve {
+            port: 1,
+            no_takeover: true,
+        },
+        &c,
+    )
+    .await;
     assert!(err.is_err(), "{err:?}");
     let err = dispatch_command(
         &Commands::Connect {

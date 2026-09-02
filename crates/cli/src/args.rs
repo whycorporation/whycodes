@@ -1,5 +1,8 @@
 //! Command-line argument definitions for WhyCodes.
 
+use crate::cmd::complete::{
+    AuthProviderValueParser, ModelValueParser, ProviderValueParser, SessionIdValueParser,
+};
 use crate::{VERSION_LONG, parse_output_format};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -11,18 +14,19 @@ use whycodes_protocol::OutputFormat;
     name = "whycodes",
     version = VERSION_LONG,
     about = "AI-powered coding agent",
-    long_about = None
+    long_about = None,
+    infer_subcommands = true
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Commands>,
 
     /// Provider to use
-    #[arg(short = 'P', long, global = true)]
+    #[arg(short = 'P', long, global = true, value_parser = ProviderValueParser)]
     pub provider: Option<String>,
 
     /// Model to use
-    #[arg(short = 'm', long, global = true)]
+    #[arg(short = 'm', long, global = true, value_parser = ModelValueParser)]
     pub model: Option<String>,
 
     /// Agent name to use
@@ -42,7 +46,13 @@ pub struct Cli {
     pub continue_session: bool,
 
     /// Resume a saved session by id (full id or unique prefix)
-    #[arg(short = 'r', long = "resume", global = true, value_name = "SESSION_ID")]
+    #[arg(
+        short = 'r',
+        long = "resume",
+        global = true,
+        value_name = "SESSION_ID",
+        value_parser = SessionIdValueParser
+    )]
     pub resume: Option<String>,
 
     /// Write debug logs under the data dir (`debug/whycodes-*.log` + `debug/latest.log`)
@@ -59,6 +69,7 @@ pub struct Cli {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum Commands {
     /// Start an interactive session (default)
     #[command(name = "run")]
@@ -130,6 +141,9 @@ pub enum Commands {
         /// Port to listen on
         #[arg(default_value = "3030")]
         port: u16,
+        /// Do not prompt to take over an existing `serve` (CI / scripts)
+        #[arg(long = "no-takeover")]
+        no_takeover: bool,
     },
 
     /// Attach a TUI to a running `whycodes serve` (not `/connect` login)
@@ -209,7 +223,11 @@ pub enum Commands {
     Stats,
 
     /// Show debug information
-    Debug,
+    Debug {
+        /// Machine-readable dump (stable camelCase keys; never token material)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Self-update
     #[cfg(feature = "self-update")]
@@ -224,6 +242,7 @@ pub enum Commands {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum GithubCmd {
     /// List open pull requests
     Pr {
@@ -235,6 +254,7 @@ pub enum GithubCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum PrAction {
     /// List PRs
     List,
@@ -250,6 +270,7 @@ pub enum PrAction {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum McpCmd {
     /// List configured MCP servers
     List,
@@ -286,6 +307,7 @@ pub enum McpCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum ProviderCmd {
     /// List all configured providers
     List,
@@ -316,10 +338,12 @@ pub enum ProviderCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum AuthCmd {
     /// Log in with a provider subscription (opens a browser)
     Login {
         /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
+        #[arg(value_parser = AuthProviderValueParser)]
         provider: String,
         /// Print the sign-in URL instead of opening a browser
         #[arg(long)]
@@ -328,6 +352,7 @@ pub enum AuthCmd {
     /// Remove stored OAuth credentials for a provider
     Logout {
         /// Provider: anthropic | openai | github-copilot | google | google-antigravity | xai
+        #[arg(value_parser = AuthProviderValueParser)]
         provider: String,
     },
     /// Show which providers have stored OAuth credentials (never prints tokens)
@@ -355,6 +380,7 @@ pub struct ImportArgs {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum ModelCmd {
     /// List configured models
     List,
@@ -368,12 +394,14 @@ pub enum ModelCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum PluginsCmd {
     /// List configured plugins
     List,
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum ConfigCmd {
     /// Show current configuration
     Show,
@@ -394,6 +422,7 @@ pub enum ConfigCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum MemoryCmd {
     /// List memories for the current project
     List {
@@ -450,22 +479,26 @@ pub enum MemoryCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(infer_subcommands = true)]
 pub enum SessionCmd {
     /// List all sessions
     List,
     /// View a session's details
     View {
         /// Session ID
+        #[arg(value_parser = SessionIdValueParser)]
         id: String,
     },
     /// Delete a session
     Delete {
         /// Session ID
+        #[arg(value_parser = SessionIdValueParser)]
         id: String,
     },
     /// Rename a session
     Rename {
         /// Session ID
+        #[arg(value_parser = SessionIdValueParser)]
         id: String,
         /// New name for the session
         name: String,
@@ -473,6 +506,7 @@ pub enum SessionCmd {
     /// Export a session to JSON (shareable)
     Share {
         /// Session ID
+        #[arg(value_parser = SessionIdValueParser)]
         id: String,
     },
     /// Import a transcript (whycodes / Claude / Codex / OpenCode / Pi)

@@ -154,6 +154,42 @@ fn test_debug_subcommand() {
 }
 
 #[test]
+fn test_debug_json_subcommand() {
+    let o = run(&["debug", "--json"]);
+    assert_ok(&["debug", "--json"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    let v: serde_json::Value = serde_json::from_str(&s).expect("debug --json");
+    assert!(v.get("version").is_some(), "{s}");
+    assert!(v.get("gitHash").is_some(), "{s}");
+    assert!(v.get("configPath").is_some(), "{s}");
+    assert!(v.get("git_hash").is_none(), "{s}");
+    let env = v["env"].as_array().expect("env");
+    for entry in env {
+        assert!(
+            entry.get("value").is_none(),
+            "must not leak env values: {s}"
+        );
+    }
+}
+
+#[test]
+fn test_unique_subcommand_prefix() {
+    let o = run(&["sess", "--help"]);
+    assert_ok(&["sess", "--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        s.contains("List all sessions") || s.contains("session"),
+        "{s}"
+    );
+}
+
+#[test]
+fn test_ambiguous_subcommand_prefix_fails() {
+    let o = run(&["s"]);
+    assert!(!o.status.success());
+}
+
+#[test]
 fn test_global_debug_flag_in_help() {
     let o = run(&["--help"]);
     assert_ok(&["--help"], &o);

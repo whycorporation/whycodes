@@ -2,11 +2,14 @@
 use crate::{Cli, Commands};
 
 pub(crate) mod auth;
+pub(crate) mod complete;
 pub(crate) mod config;
 pub(crate) mod debug;
 mod github;
+pub(crate) mod hang;
 mod helpers;
 mod import;
+pub(crate) mod lockfile;
 mod mcp;
 mod memory;
 mod provider;
@@ -62,7 +65,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         }
         Commands::Github { cmd: gh_cmd } => github::cmd_github(cli, gh_cmd).await,
         #[cfg(feature = "server")]
-        Commands::Serve { port } => serve::cmd_serve(*port).await,
+        Commands::Serve { port, no_takeover } => serve::cmd_serve(*port, *no_takeover).await,
         Commands::Connect { addr, session } => {
             serve::cmd_connect(cli, addr, session.as_deref()).await
         }
@@ -78,7 +81,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Auth { cmd } => auth::cmd_auth(cmd).await,
         Commands::Import { args } => import::cmd_import(args).await,
         Commands::Stats => session::cmd_stats().await,
-        Commands::Debug => debug::cmd_debug().await,
+        Commands::Debug { json } => debug::cmd_debug(*json).await,
         #[cfg(feature = "self-update")]
         Commands::Upgrade => upgrade::cmd_upgrade().await,
         Commands::Completions { shell } => cmd_completions(*shell),

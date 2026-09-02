@@ -25,9 +25,15 @@ pub(crate) async fn cmd_connect(
             );
         }
         Err(e) => {
-            anyhow::bail!(
+            let mut msg = format!(
                 "cannot reach {base}: {e}\n\nStart the daemon first:\n  whycodes serve\nthen:\n  whycodes connect {addr}"
             );
+            let project_dir = resolve_dir(cli);
+            if let Some(hint) = super::lockfile::connect_hint(&project_dir) {
+                msg.push_str("\n\n");
+                msg.push_str(&hint);
+            }
+            anyhow::bail!(msg);
         }
     }
 
@@ -81,12 +87,16 @@ pub(crate) async fn cmd_connect(
 /// Loads config, MCP, plugins, and a workspace file index once so clients
 /// reconnect without cold startup cost (jcode/OpenCode daemon spirit).
 #[cfg(feature = "server")]
-pub(crate) async fn cmd_serve(port: u16) -> anyhow::Result<()> {
+pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use std::sync::Arc;
     use whycodes_agent::{PermissionPrompter, QuestionPrompter};
 
     let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (lock_guard, takeover) = super::lockfile::acquire_lock(&project_dir, port, no_takeover)?;
+    if let Some(holder) = takeover {
+        takeover_holder(&holder).await?;
+    }
     println!(
         "{} Starting WhyCodes warm server on http://localhost:{}",
         "•".bold(),
@@ -185,7 +195,55 @@ pub(crate) async fn cmd_serve(port: u16) -> anyhow::Result<()> {
     println!();
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
+    if let Err(err) = super::lockfile::commit_lock(&lock_guard, port) {
+        tracing::debug!(error = %err, "serve lock write after bind failed");
+    }
     axum::serve(listener, router).await?;
+    drop(lock_guard);
+    Ok(())
+}
+
+#[cfg(feature = "server")]
+async fn takeover_holder(holder: &super::lockfile::ServeLock) -> anyhow::Result<()> {
+    use std::time::Duration;
+    println!(
+        "{} Taking over pid {} on port {}",
+        "•".bold(),
+        holder.pid,
+        holder.port
+    );
+    if let Err(err) = super::lockfile::signal_term(holder.pid) {
+        anyhow::bail!(
+            "cannot signal pid {} ({err}). Treat as alive; not taking over.",
+            holder.pid
+        );
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    loop {
+        if !matches!(
+            super::lockfile::pid_alive(holder.pid),
+            super::lockfile::PidProbe::Alive | super::lockfile::PidProbe::Denied
+        ) {
+            break;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            if let Err(err) = super::lockfile::signal_kill(holder.pid) {
+                anyhow::bail!("takeover timed out signalling pid {}: {err}", holder.pid);
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            if matches!(
+                super::lockfile::pid_alive(holder.pid),
+                super::lockfile::PidProbe::Alive | super::lockfile::PidProbe::Denied
+            ) {
+                anyhow::bail!(
+                    "takeover timed out: pid {} still running after SIGKILL",
+                    holder.pid
+                );
+            }
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
     Ok(())
 }
 

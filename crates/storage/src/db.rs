@@ -45,6 +45,19 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// Open an existing database read-only. Returns `Ok(None)` when the file
+    /// is missing so completion / debug paths never create `whycodes.db`.
+    pub fn open_existing_readonly(path: &str) -> crate::error::Result<Option<Self>> {
+        if !std::path::Path::new(path).is_file() {
+            return Ok(None);
+        }
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(path, flags)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
+        Ok(Some(Self { conn }))
+    }
+
     pub fn open_in_memory() -> crate::error::Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA foreign_keys=ON;")?;
@@ -1020,5 +1033,32 @@ mod tests {
                 .is_err()
         );
         assert!(db.list_session_chunks("pk", 10).is_err());
+    }
+
+    #[test]
+    fn open_existing_readonly_none_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("no-such.db");
+        assert!(
+            Database::open_existing_readonly(&path.to_string_lossy())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn open_existing_readonly_lists_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("whycodes.db");
+        {
+            let db = Database::open(path.to_str().unwrap()).unwrap();
+            db.create_session("abc123456789", "t", "/p").unwrap();
+        }
+        let ro = Database::open_existing_readonly(path.to_str().unwrap())
+            .unwrap()
+            .expect("existing db");
+        let sessions = ro.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, "abc123456789");
     }
 }
