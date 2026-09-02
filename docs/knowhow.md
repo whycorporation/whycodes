@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — First-frame hydrate must not idle-repaint empty home
+
+**Symptom:** 3s first-frame harness idle 0.3/s after multi-thread restore
+(was 0.0/s on `current_thread` because hydrate work never ran during
+`event::poll`).
+
+**Root cause:** After first paint, hydrate filled session recents / status /
+sidebar / toasts. Unconditional `mark_dirty` if toasts nonempty; session
+list fill had no dirty. Empty home still often painted twice because
+status rewrite or toast.
+
+**Fix (4155fc6):** `first_frame_hydrate_needs_paint` — dirty only if
+sessions len, `status_message`, visible sidebar lists, or toasts changed.
+MCP / index / plugins still run.
+
+**Prevention:** Never `current_thread` for TUI. Regression tests
+`first_frame_hydrate_*` in `crates/tui/src/run/tests.rs`.
+
+---
+
 ### 2026-09-02 — TUI multi-thread pool capped at 2
 
 **Symptom:** After `de15f1a` restored multi-thread for TUI (poll blocks;
