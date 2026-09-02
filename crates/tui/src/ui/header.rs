@@ -27,6 +27,10 @@ pub fn render(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalett
         ),
         Span::styled("codes ", Style::default().fg(palette.dim)),
         Span::styled(
+            format!("v{} ", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(palette.dim),
+        ),
+        Span::styled(
             format!(" {} ", app.agent_name),
             Style::default()
                 .fg(agent_color)
