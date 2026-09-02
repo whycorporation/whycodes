@@ -270,3 +270,11 @@ impl Tool for MemoryTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn memory_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

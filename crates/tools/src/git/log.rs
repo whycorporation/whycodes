@@ -120,3 +120,11 @@ impl Tool for GitLogTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn log_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

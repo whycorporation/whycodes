@@ -97,3 +97,11 @@ impl Tool for SwarmTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn swarm_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

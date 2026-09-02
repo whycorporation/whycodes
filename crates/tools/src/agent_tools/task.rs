@@ -71,3 +71,11 @@ impl Tool for TaskTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn task_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

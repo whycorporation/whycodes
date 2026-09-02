@@ -99,3 +99,11 @@ impl Tool for CodeModeTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn code_mode_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

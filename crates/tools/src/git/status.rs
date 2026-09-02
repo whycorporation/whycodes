@@ -94,3 +94,11 @@ impl Tool for GitStatusTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn status_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

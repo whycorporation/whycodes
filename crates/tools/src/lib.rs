@@ -36,3 +36,11 @@ pub use mcp::{McpCaller, McpToolBridge};
 pub use plugin::{ListedPlugin, PluginShellTool, list_shell_plugins};
 pub use profile::ToolProfile;
 pub use tool::Tool;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lib_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

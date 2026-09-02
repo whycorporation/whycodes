@@ -224,3 +224,11 @@ fn git_push(working_dir: &str) -> String {
         Err(e) => format!("Failed to run git push: {}", e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn commit_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

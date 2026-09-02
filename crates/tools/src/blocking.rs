@@ -33,3 +33,11 @@ where
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn blocking_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

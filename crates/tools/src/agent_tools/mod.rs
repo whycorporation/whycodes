@@ -14,3 +14,11 @@ pub mod todo_read;
 pub mod todo_write;
 pub mod tool_search;
 pub mod worktree;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mod_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

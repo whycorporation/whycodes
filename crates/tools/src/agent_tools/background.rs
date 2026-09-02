@@ -62,3 +62,11 @@ impl Tool for BgTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn background_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

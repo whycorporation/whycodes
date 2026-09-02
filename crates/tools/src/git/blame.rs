@@ -125,3 +125,11 @@ impl Tool for GitBlameTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn blame_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

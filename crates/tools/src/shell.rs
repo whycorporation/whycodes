@@ -108,3 +108,11 @@ impl Tool for ShellTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn shell_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

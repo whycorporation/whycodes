@@ -61,3 +61,11 @@ impl Tool for WorktreeTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn worktree_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

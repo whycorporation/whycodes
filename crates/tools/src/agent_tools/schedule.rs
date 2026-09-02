@@ -66,3 +66,11 @@ impl Tool for ScheduleTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn schedule_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

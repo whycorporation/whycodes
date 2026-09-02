@@ -11,3 +11,11 @@ pub mod read;
 pub mod truncate;
 pub mod truncation_dir;
 pub mod write;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mod_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

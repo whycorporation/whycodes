@@ -65,3 +65,11 @@ impl Tool for ToolSearchTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tool_search_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

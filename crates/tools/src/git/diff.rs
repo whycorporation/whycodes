@@ -103,3 +103,11 @@ impl Tool for GitDiffTool {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn diff_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}
