@@ -331,6 +331,11 @@ impl Agent {
         self
     }
 
+    /// Replace the provider registry in place (tests / CLI scripted LLM).
+    pub fn set_provider_registry(&mut self, registry: ProviderRegistry) {
+        self.provider_registry = Arc::new(registry);
+    }
+
     pub fn with_tool_executor(mut self, executor: ToolExecutor) -> Self {
         self.tool_executor = Arc::new(executor);
         self
@@ -1214,6 +1219,16 @@ mod permission_detail_tests {
             whycodes_memory::MemoryScope::parse(&config.memory.scope)
         );
         assert_eq!(m.agent_bank, None);
+    }
+
+    #[test]
+    fn set_provider_registry_replaces_lookup() {
+        let mut a = test_agent();
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::text("hi")));
+        a.set_provider_registry(registry);
+        assert!(a.provider_registry.get("script").is_some());
+        assert!(a.provider_registry.get("anthropic").is_none());
     }
 
     #[test]

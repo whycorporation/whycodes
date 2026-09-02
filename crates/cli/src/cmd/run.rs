@@ -155,6 +155,7 @@ pub(crate) async fn cmd_run(
         .with_file_index(file_index)
         .with_mcp(&config)
         .await;
+    maybe_inject_test_llm(&mut agent, &provider);
     let mut session = whycodes_session::session::Session::new(project_dir.clone(), system_prompt);
     maybe_session_auto_index(&project_dir, &config);
     let mut history = whycodes_session::SessionHistory::new();
@@ -294,8 +295,10 @@ pub(crate) async fn cmd_run(
         let _ = std::io::stdout().flush();
 
         let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_err() {
-            break;
+        match read_repl_line(&mut input) {
+            Ok(0) => break,
+            Err(_eof_or_closed) => break,
+            Ok(_) => {}
         }
         let input = input.trim().to_string();
         if input.is_empty() {
@@ -666,6 +669,7 @@ pub(crate) async fn cmd_run(
                                 provider.cyan(),
                                 model.cyan()
                             );
+                            maybe_inject_test_llm(&mut agent, &provider);
                         } else {
                             model = rest.to_string();
                             println!("{} Model set to {}", "✓".green(), model.cyan());
@@ -727,6 +731,7 @@ pub(crate) async fn cmd_run(
                             Ok((name, new_agent, prompt)) => {
                                 agent_name = name;
                                 agent = new_agent;
+                                maybe_inject_test_llm(&mut agent, &provider);
                                 session.set_system_prompt(&prompt);
                                 println!(
                                     "{} Switched to agent '{}'",
@@ -1149,6 +1154,7 @@ pub(crate) async fn cmd_generate(
         .with_file_index(file_index)
         .with_mcp(&config)
         .await;
+    maybe_inject_test_llm(&mut agent, &provider);
     if format.is_structured() {
         agent = agent
             .with_permission_prompter(Arc::new(AutoApprovePrompter))
@@ -1322,6 +1328,7 @@ pub(crate) async fn run_one_parallel_turn(
         .with_file_index(file_index)
         .with_mcp(config)
         .await;
+    maybe_inject_test_llm(&mut agent, provider);
     if structured {
         agent = agent
             .with_permission_prompter(Arc::new(AutoApprovePrompter))

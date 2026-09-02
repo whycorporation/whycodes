@@ -36,6 +36,9 @@ pub enum ScriptedStep {
 pub struct ScriptedProvider {
     name: String,
     steps: Mutex<VecDeque<ScriptedStep>>,
+    /// When non-empty, [`Self::take_steps`] refills from this after a drain
+    /// so multi-turn tests do not get an empty stream on the second call.
+    repeat: Vec<ScriptedStep>,
 }
 
 impl ScriptedProvider {
@@ -43,6 +46,7 @@ impl ScriptedProvider {
         Self {
             name: "script".into(),
             steps: Mutex::new(steps.into_iter().collect()),
+            repeat: Vec::new(),
         }
     }
 
@@ -50,6 +54,20 @@ impl ScriptedProvider {
         Self {
             name: name.into(),
             steps: Mutex::new(steps.into_iter().collect()),
+            repeat: Vec::new(),
+        }
+    }
+
+    /// Like [`Self::named`], but each `stream`/`complete` replay the same steps.
+    pub fn repeating(
+        name: impl Into<String>,
+        steps: impl IntoIterator<Item = ScriptedStep>,
+    ) -> Self {
+        let steps: Vec<ScriptedStep> = steps.into_iter().collect();
+        Self {
+            name: name.into(),
+            steps: Mutex::new(steps.clone().into()),
+            repeat: steps,
         }
     }
 
@@ -58,11 +76,11 @@ impl ScriptedProvider {
     }
 
     fn take_steps(&self) -> Vec<ScriptedStep> {
-        self.steps
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .drain(..)
-            .collect()
+        let mut guard = self.steps.lock().unwrap_or_else(|e| e.into_inner());
+        if guard.is_empty() && !self.repeat.is_empty() {
+            *guard = self.repeat.iter().cloned().collect();
+        }
+        guard.drain(..).collect()
     }
 }
 
@@ -259,6 +277,21 @@ mod tests {
         let out = empty.complete(&req(), "", "m").await.unwrap();
         assert!(out.content.is_empty());
         assert_eq!(out.usage.input_tokens, 3);
+    }
+
+    #[tokio::test]
+    async fn repeating_replays_after_drain() {
+        let p = ScriptedProvider::repeating("ollama", [ScriptedStep::Text("ok".into())]);
+        let a = p.complete(&req(), "", "m").await.unwrap();
+        match &a.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "ok"),
+            other => panic!("{other:?}"),
+        }
+        let b = p.complete(&req(), "", "m").await.unwrap();
+        match &b.content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "ok"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

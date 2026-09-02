@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — Plain REPL treated stdin EOF as an empty line
+
+**Symptom:** `cmd_run --plain` with piped/scripted stdin never exits: after the
+last line, `read_line` returns `Ok(0)` (EOF), `trim()` is empty, the loop
+`continue`s and spins. Unit tests that needed slash-command coverage could not
+drive the REPL without hanging.
+
+**Root cause:** Only `read_line` `Err` broke the loop. POSIX EOF is `Ok(0)`
+with an empty buffer.
+
+**Fix:** `read_repl_line` (stdin, or a test queue via `WHYCODES_TEST_LLM` +
+`install_test_repl_lines`) treats `Ok(0)` and `Err` as exit. Tests inject a
+repeating `ScriptedProvider` so turns never hit the network.
+
+**Prevention:** Any new interactive `read_line` loop must treat `Ok(0)` as
+EOF. Drive `--plain` slash commands through `install_test_repl_lines`, not
+by hoping stdin is a TTY.
+
 ### 2026-09-02 — Coverage skips watcher test, index floor drops 2 lines
 
 **Symptom:** `Coverage (line floor)` fails `whycodes-index: 796/798 lines 99.7%`

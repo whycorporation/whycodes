@@ -1,7 +1,11 @@
 //! Shared CLI helpers used by command bodies and tests.
 use crate::Cli;
 use colored::*;
+#[cfg(test)]
+use std::collections::VecDeque;
 use std::path::PathBuf;
+#[cfg(test)]
+use std::sync::Mutex;
 use whycodes_agent::agent::Agent;
 use whycodes_agent::events::{TurnEvent, TurnOpts, new_cancel_flag};
 use whycodes_config::Config;
@@ -399,6 +403,63 @@ pub(crate) fn switch_agent(
     );
     let agent = Agent::new(info);
     Ok((name.to_string(), agent, prompt))
+}
+
+/// When `WHYCODES_TEST_LLM` is set (unit tests only), replace the agent's
+/// provider registry with a repeating [`whycodes_llm::ScriptedProvider`]
+/// registered under `provider` so REPL / generate turns never hit the network.
+pub(crate) fn maybe_inject_test_llm(_agent: &mut Agent, _provider: &str) {
+    #[cfg(test)]
+    {
+        let Ok(text) = std::env::var("WHYCODES_TEST_LLM") else {
+            return;
+        };
+        if text.is_empty() {
+            return;
+        }
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+            _provider.to_string(),
+            [whycodes_llm::ScriptedStep::Text(text)],
+        )));
+        _agent.set_provider_registry(registry);
+    }
+}
+
+#[cfg(test)]
+pub(crate) static TEST_REPL_LINES: Mutex<Option<VecDeque<String>>> = Mutex::new(None);
+
+/// One REPL line. Tests can queue lines via [`install_test_repl_lines`];
+/// otherwise this is `stdin.read_line`. `Ok(0)` is EOF.
+pub(crate) fn read_repl_line(buf: &mut String) -> std::io::Result<usize> {
+    #[cfg(test)]
+    {
+        let mut guard = TEST_REPL_LINES.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(q) = guard.as_mut() {
+            match q.pop_front() {
+                Some(line) => {
+                    buf.push_str(&line);
+                    if !buf.ends_with('\n') {
+                        buf.push('\n');
+                    }
+                    return Ok(buf.len());
+                }
+                None => return Ok(0),
+            }
+        }
+    }
+    std::io::stdin().read_line(buf)
+}
+
+#[cfg(test)]
+pub(crate) fn install_test_repl_lines(lines: impl IntoIterator<Item = impl Into<String>>) {
+    let q: VecDeque<String> = lines.into_iter().map(Into::into).collect();
+    *TEST_REPL_LINES.lock().unwrap_or_else(|e| e.into_inner()) = Some(q);
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_repl_lines() {
+    *TEST_REPL_LINES.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
 /// Max chars inlined per `@file` (matches TUI; keeps prefill bounded).

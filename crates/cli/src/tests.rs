@@ -15,6 +15,20 @@ fn lock_env() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Clear test-only env vars and REPL queue even if a test panics.
+struct TestLlmEnv;
+
+impl Drop for TestLlmEnv {
+    fn drop(&mut self) {
+        unsafe {
+            std::env::remove_var("WHYCODES_TEST_LLM");
+            std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+        }
+        clear_test_repl_lines();
+    }
+}
+
 /// Point `WHYCODES_HOME` at a temp dir until dropped. Safe inside `#[tokio::test]`.
 struct IsolatedHome {
     _guard: std::sync::MutexGuard<'static, ()>,
@@ -2645,4 +2659,202 @@ async fn spawn_update_check_skips_when_flagged() {
     let rx = crate::cmd::debug::spawn_update_check(&c, &cfg);
     unsafe { std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE") };
     drop(rx);
+}
+
+#[tokio::test]
+async fn cmd_run_plain_repl_slash_commands() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "scripted-ok");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-repl");
+    }
+    let proj = home.path().join("proj");
+    std::fs::create_dir_all(proj.join(".whycodes").join("commands")).unwrap();
+    std::fs::write(proj.join("note.txt"), "hello file").unwrap();
+    std::fs::write(
+        proj.join(".whycodes").join("commands").join("hello.md"),
+        "Say hello $ARGUMENTS",
+    )
+    .unwrap();
+
+    install_test_repl_lines([
+        "",
+        "   ",
+        "!",
+        "!echo hello-shell",
+        "/help",
+        "/h",
+        "/rename",
+        "/rename coverage-session",
+        "/info",
+        "/details",
+        "/new",
+        "/clear",
+        "/undo",
+        "/redo",
+        "/share",
+        "/export",
+        "/fresh",
+        "/compact",
+        "/summarize",
+        "/diff",
+        "/cost",
+        "/usage",
+        "/context",
+        "/doctor",
+        "/sessions",
+        "/resume",
+        "/continue",
+        "/models",
+        "/models ollama/tiny",
+        "/models tiny-only",
+        "/effort",
+        "/effort high",
+        "/effort nope",
+        "/agent",
+        "/agent plan",
+        "/agent nope",
+        "/connect",
+        "/login",
+        "/login nope",
+        "/thinking",
+        "/thinking",
+        "/themes",
+        "/tools",
+        "/remember",
+        "/remember keep this",
+        "/memory",
+        "/not-a-command",
+        "/hello coverage",
+        "read @note.txt please",
+        "/compact extra note",
+        "/review",
+        "/security-review",
+        "/commit",
+        "/quit",
+    ]);
+
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = false;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    c.model = Some("claude-test".into());
+    c.resume = Some("missing-session".into());
+    let result = cmd_run(&c, None, Some(3), OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_plain_repl_eof_without_exit() {
+    let _home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-eof");
+    }
+    install_test_repl_lines(["/help"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_one_shot_with_scripted_llm() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "one-shot-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-oneshot");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, Some("hello world"), Some(2), OutputFormat::Text).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_generate_with_scripted_llm() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "gen-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-gen");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_generate(&c, &["one".into()], Some(1), 1, OutputFormat::Text)
+        .await
+        .unwrap();
+    cmd_generate(
+        &c,
+        &["a".into(), "b".into()],
+        Some(1),
+        2,
+        OutputFormat::Json,
+    )
+    .await
+    .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_plain_continue_empty_and_init_login() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "init-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-init");
+    }
+    let proj = home.path().join("p2");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("Cargo.toml"), "[package]\nname=\"x\"\n").unwrap();
+    install_test_repl_lines(["/init", "/login nope", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.continue_session = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
 }
