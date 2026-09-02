@@ -211,8 +211,15 @@ pub(crate) async fn download_bytes(
 }
 
 /// Ask GitHub for the latest release (metadata + asset list).
+pub(crate) fn latest_release_url() -> String {
+    std::env::var("WHYCODES_UPGRADE_LATEST_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("https://api.github.com/repos/{REPO}/releases/latest"))
+}
+
 async fn latest_release_json(client: &reqwest::Client) -> Result<serde_json::Value> {
-    let url = format!("https://api.github.com/repos/{REPO}/releases/latest");
+    let url = latest_release_url();
     get(client, &url)
         .await?
         .json()
@@ -423,5 +430,19 @@ pub(crate) fn format_upgrade_outcome(
         Ok(Some(version)) => format!("Upgraded {current} → {version}"),
         Ok(None) => "Already on the latest release.".into(),
         Err(e) => e,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_url_reads_current_env() {
+        let url = latest_release_url();
+        assert!(url.starts_with("http"));
+        assert!(
+            url.contains("github.com") || url.contains("127.0.0.1") || url.contains("localhost")
+        );
     }
 }

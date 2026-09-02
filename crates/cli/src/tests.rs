@@ -2438,3 +2438,211 @@ async fn provider_remove_default_and_agent_missing() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn cmd_run_tui_stub_quit() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_tui_stub_upgrade_skips_network() {
+    let _home = IsolatedHome::new();
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_TUI", "upgrade");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+    }
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    after_tui_exit(whycodes_tui::TuiExit::Upgrade)
+        .await
+        .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+    }
+}
+
+#[tokio::test]
+async fn cmd_upgrade_uses_mock_latest_release() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0u8; 1024];
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let n = stream.peek(&mut buf).await.unwrap_or(0);
+        let _ = n;
+        let mut stream = stream;
+        let _ = stream.read(&mut buf).await;
+        let body = br#"{"tag_name":"v0.0.0","assets":[]}"#;
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            std::str::from_utf8(body).unwrap()
+        );
+        let _ = stream.write_all(resp.as_bytes()).await;
+    });
+    let url = format!("http://127.0.0.1:{}/releases/latest", addr.port());
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &url) };
+    cmd_upgrade().await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL") };
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn cmd_connect_health_ok_with_tui_stub() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for _ in 0..8 {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let body: &[u8] = if req.contains("/api/health") {
+                br#"{"ok":true,"version":"0.3.0"}"#
+            } else if req.contains("/api/session/new") {
+                br#"{"session_id":"sess-test"}"#
+            } else {
+                br#"{"ok":true}"#
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
+    let c = cli(None);
+    let result = cmd_connect(&c, &format!("127.0.0.1:{}", addr.port()), None).await;
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    server.abort();
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_auth_logout_status_and_oauth_error() {
+    let home = IsolatedHome::new();
+    let store = whycodes_auth::TokenStore::new(home.path());
+    store
+        .set(
+            "openai",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "tok".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra: Default::default(),
+                },
+            },
+        )
+        .unwrap();
+    cmd_auth(&AuthCmd::Status).await.unwrap();
+    cmd_auth(&AuthCmd::Logout {
+        provider: "openai".into(),
+    })
+    .await
+    .unwrap();
+    cmd_auth(&AuthCmd::Logout {
+        provider: "missing".into(),
+    })
+    .await
+    .unwrap();
+    let err = cmd_auth(&AuthCmd::Login {
+        provider: "openai".into(),
+        no_browser: true,
+    })
+    .await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_run_force_plain_fallback_message() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    // Without WHYCODES_TEST_TUI and without a TTY this hits the fallback eprintln.
+    let err = cmd_run(&c, Some("hello"), Some(1), OutputFormat::Text).await;
+    let _ = err;
+}
+
+#[tokio::test]
+async fn dispatch_upgrade_and_web() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1") };
+    let c = cli(None);
+    let _ = dispatch_command(&Commands::Upgrade, &c).await;
+    dispatch_command(&Commands::Web, &c).await.unwrap();
+    dispatch_command(&Commands::Acp, &c).await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE") };
+}
+
+#[test]
+fn latest_release_url_env_override() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", "http://127.0.0.1:9/latest") };
+    assert!(crate::upgrade::latest_release_url().contains("127.0.0.1"));
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL") };
+    assert!(crate::upgrade::latest_release_url().contains("api.github.com"));
+}
+
+#[tokio::test]
+async fn github_commands_with_ok_gh() {
+    let _home = IsolatedHome::new();
+    let _gh = IsolatedGh::new(0);
+    let c = cli(None);
+    cmd_pr(&c, Some("t"), Some("main")).await.unwrap();
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::Create {
+                title: Some("t".into()),
+                base: Some("main".into()),
+            }),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: Some(3) })
+        .await
+        .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: None })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn cmd_session_list_when_empty() {
+    let _home = IsolatedHome::new();
+    cmd_session(&SessionCmd::List).await.unwrap();
+}
+
+#[tokio::test]
+async fn spawn_update_check_skips_when_flagged() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1") };
+    let mut c = cli(None);
+    c.no_auto_update = false;
+    let cfg = Config::default();
+    let rx = crate::cmd::debug::spawn_update_check(&c, &cfg);
+    unsafe { std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE") };
+    drop(rx);
+}

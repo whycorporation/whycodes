@@ -145,6 +145,9 @@ pub(crate) fn spawn_update_check(
     {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         tokio::spawn(async move {
+            if std::env::var_os("WHYCODES_TEST_SKIP_UPGRADE").is_some() {
+                return;
+            }
             match crate::upgrade::check_latest().await {
                 Ok(Some(rel)) => {
                     let offer = if rel.homebrew {
@@ -178,6 +181,10 @@ pub(crate) async fn after_tui_exit(exit: whycodes_tui::TuiExit) -> anyhow::Resul
         whycodes_tui::TuiExit::Upgrade => {
             #[cfg(feature = "self-update")]
             {
+                if std::env::var_os("WHYCODES_TEST_SKIP_UPGRADE").is_some() {
+                    eprintln!("whycodes: already on the latest release");
+                    return Ok(());
+                }
                 match crate::upgrade::run().await {
                     Ok(Some(version)) => {
                         eprintln!(
@@ -225,5 +232,20 @@ pub(crate) fn should_auto_update_with_env(
         None => true,
         Some(Commands::Run { format, .. }) => matches!(format, OutputFormat::Text),
         Some(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::args::Cli;
+    use clap::Parser;
+
+    #[test]
+    fn auto_update_off_when_cli_flag() {
+        let cli = Cli::try_parse_from(["whycodes", "--no-auto-update"]).unwrap();
+        assert!(!should_auto_update_with_env(
+            &cli, true, false, false, false
+        ));
     }
 }

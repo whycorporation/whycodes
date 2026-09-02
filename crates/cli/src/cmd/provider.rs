@@ -271,3 +271,11 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn provider_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

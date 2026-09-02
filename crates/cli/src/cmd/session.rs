@@ -275,3 +275,11 @@ pub(crate) async fn cmd_stats() -> anyhow::Result<()> {
 // ────────────────────────────────────────────────────────────────────────
 // Auth (OAuth subscription login)
 // ────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn session_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

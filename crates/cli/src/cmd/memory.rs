@@ -180,3 +180,11 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn memory_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

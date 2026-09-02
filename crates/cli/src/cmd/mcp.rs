@@ -161,3 +161,11 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mcp_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

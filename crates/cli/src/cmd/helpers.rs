@@ -822,3 +822,22 @@ pub(crate) fn mask_secret(val: &str) -> String {
     let end = val.ceil_char_boundary(val.len().saturating_sub(4));
     format!("{}...{}", &val[..start], &val[end..])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::args::Cli;
+    use clap::Parser;
+    use whycodes_config::Config;
+
+    #[test]
+    fn resolve_dir_falls_back_to_cwd() {
+        let cli = Cli::try_parse_from(["whycodes"]).unwrap();
+        let dir = resolve_dir(&cli);
+        assert!(dir.is_absolute() || dir.as_os_str() == ".");
+        let cfg = Config::default();
+        assert!(!resolve_provider(&cli, &cfg).is_empty());
+        assert!(!resolve_model(&cli, &cfg).is_empty());
+        assert!(!resolve_agent(&cli, &cfg).is_empty());
+    }
+}

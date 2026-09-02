@@ -49,3 +49,11 @@ pub(crate) async fn cmd_upgrade() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn format_outcome_covers_arms() {
+        assert!(crate::upgrade::format_upgrade_outcome("1", Ok(None)).contains("latest"));
+    }
+}

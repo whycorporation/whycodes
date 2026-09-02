@@ -787,6 +787,11 @@ fn test_plain_repl_slash_commands_without_api_key() {
          /usage\n\
          /agents\n\
          /init\n\
+         /clear\n\
+         /quit\n\
+         hello world this is a prompt without a key\n\
+         !echo hi\n\
+         /unknowncmd\n\
          /q\n",
     );
     assert_ok(&["--plain"], &o);

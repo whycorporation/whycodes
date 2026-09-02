@@ -55,7 +55,8 @@ pub(crate) async fn cmd_run(
     // while still having a controlling terminal — tui_available() opens
     // /dev/tty in that case so the TUI still works.
     let force_plain = cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some();
-    let use_tui = !force_plain && whycodes_tui::tui_available();
+    let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
+    let use_tui = !force_plain && (stub_tui || whycodes_tui::tui_available());
     if !use_tui && !force_plain {
         use std::io::IsTerminal;
         eprintln!(
@@ -82,6 +83,15 @@ pub(crate) async fn cmd_run(
     };
 
     if use_tui {
+        if stub_tui {
+            let kind = std::env::var("WHYCODES_TEST_TUI").unwrap_or_default();
+            let exit = if kind == "upgrade" {
+                whycodes_tui::TuiExit::Upgrade
+            } else {
+                whycodes_tui::TuiExit::Quit
+            };
+            return super::debug::after_tui_exit(exit).await;
+        }
         let update_rx = super::debug::spawn_update_check(cli, &config);
         let exit = whycodes_tui::run(whycodes_tui::TuiRunOptions {
             project_dir,
@@ -1431,5 +1441,18 @@ pub(crate) fn emit_parallel_outcome(
             }
             true
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_parallel_joins_ok_and_fail() {
+        fold_parallel_joins([Ok(false)], false).unwrap();
+        assert!(fold_parallel_joins([Ok(true)], false).is_err());
+        assert!(fold_parallel_joins([Err("x".into())], true).is_err());
+        assert!(fold_parallel_joins([Err("x".into())], false).is_err());
     }
 }

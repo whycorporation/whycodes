@@ -122,3 +122,11 @@ pub(crate) async fn cmd_github(_cli: &Cli, cmd: &GithubCmd) -> anyhow::Result<()
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn github_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

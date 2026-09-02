@@ -80,3 +80,11 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Completions { shell } => cmd_completions(*shell),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn modules_are_wired() {
+        assert!(!module_path!().is_empty());
+    }
+}

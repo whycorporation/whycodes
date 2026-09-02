@@ -461,3 +461,24 @@ pub enum SessionCmd {
         from: String,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn clap_parses_run_and_generate() {
+        let cli = Cli::try_parse_from(["whycodes", "run", "--plain", "hi"]).unwrap();
+        assert!(cli.plain);
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Run { prompt: Some(ref p), .. }) if p == "hi"
+        ));
+        let parsed = Cli::try_parse_from(["whycodes", "generate", "a", "b", "-j", "2"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Commands::Generate { ref prompt, jobs, .. }) if prompt.as_slice() == ["a", "b"] && jobs == 2
+        ));
+    }
+}
