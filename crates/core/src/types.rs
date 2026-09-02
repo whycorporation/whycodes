@@ -467,7 +467,8 @@ pub enum AgentMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ApprovalMode {
-    /// Auto-answer `question` and auto-allow permission `ask`.
+    /// Auto-allow permission `ask`. Never prompt `question` while session todos
+    /// or background jobs are still open; otherwise auto-pick the first option.
     /// Never overrides `[permission]` deny, bash catastrophic, or sandbox/network.
     #[default]
     Auto,
@@ -507,7 +508,7 @@ impl ApprovalMode {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::Auto => "Auto-answer questions and auto-allow permission asks",
+            Self::Auto => "Keep going until todos/tasks finish; auto-allow asks; retry failures",
             Self::Important => "Prompt on questions and high-risk tools only",
             Self::Manual => "Prompt on every question and permission ask",
         }

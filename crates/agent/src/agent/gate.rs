@@ -1,6 +1,7 @@
 //! Tool-call scheduling and permission / risk / hook / sandbox gates.
 
 use whycodes_command_risk::{Decision, assess, decide};
+use whycodes_core::todo::{has_open, load_todos};
 use whycodes_core::tool::ToolContext;
 use whycodes_core::types::{ApprovalMode, PermissionAction, ToolCall, ToolResult};
 use whycodes_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_pre_hooks};
@@ -11,6 +12,46 @@ use crate::question::{QuestionPrompter, run_question_tool};
 use crate::tool_policy::*;
 
 use super::Agent;
+
+/// Extra tool attempts in auto mode after the first failure (total tries = 1 + this).
+pub(crate) const AUTO_TOOL_RETRY_LIMIT: u32 = 2;
+
+fn session_has_open_todos(session: &Session) -> bool {
+    let sid = session.id.trim();
+    let sid = if sid.is_empty() { None } else { Some(sid) };
+    has_open(&load_todos(&session.project_path, sid))
+}
+
+fn refuse_question_open_work(tool_call_id: &str, detail: &str) -> ToolResult {
+    ToolResult {
+        tool_call_id: tool_call_id.to_string(),
+        content: format!(
+            "Auto mode: do not ask the user while {detail} remain open. \
+             Keep working: retry the failed step, mark todos completed, \
+             or cancel items that no longer apply. Ask only after the list is done."
+        ),
+        is_error: true,
+    }
+}
+
+fn tool_error_is_retryable(name: &str, result: &ToolResult) -> bool {
+    if !result.is_error {
+        return false;
+    }
+    match name {
+        "question" | "task" | "swarm" | "bg" | "schedule" | "worktree" | "todowrite" | "todo"
+        | "todoread" | "checkpoint" | "rewind" => false,
+        _ => {
+            let c = result.content.to_ascii_lowercase();
+            !(c.contains("permission denied")
+                || c.contains("user denied")
+                || c.contains("refused")
+                || c.contains("doom loop")
+                || c.contains("cannot be approved")
+                || c.contains("catastrophic"))
+        }
+    }
+}
 
 impl Agent {
     /// Run a batch of tool calls, parallelizing independent read-only tools.
@@ -269,11 +310,62 @@ impl Agent {
         }
     }
 
+    /// Open session todos or live background jobs — auto mode must not interrupt.
+    fn auto_has_open_work(&self, session: &Session) -> Option<&'static str> {
+        if session_has_open_todos(session) {
+            return Some("todos");
+        }
+        if self.background.running_count() > 0 {
+            return Some("background tasks");
+        }
+        None
+    }
+
     async fn ask_permission(&self, tc: &ToolCall, working_dir: &str, detail: &str) -> bool {
         if self.approval_skips_ask(tc, working_dir) {
             return true;
         }
         self.permission_prompter.ask(&tc.name, detail).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch_tool(
+        &self,
+        tc: &ToolCall,
+        session: &Session,
+        tool_ctx: &ToolContext,
+        provider_name: &str,
+        model: &str,
+        api_key: &str,
+        events: Option<&EventSink>,
+    ) -> ToolResult {
+        if tc.name == "task" {
+            self.execute_task_tool(tc, session, provider_name, model, api_key, events)
+                .await
+        } else if tc.name == "swarm" {
+            self.execute_swarm_tool(tc, session, provider_name, model, api_key, events)
+                .await
+        } else if tc.name == "bg" {
+            self.execute_bg_tool(tc)
+        } else if tc.name == "schedule" {
+            self.execute_schedule_tool(tc, tool_ctx, events).await
+        } else if tc.name == "tool_search" {
+            self.execute_tool_search(tc)
+        } else if tc.name == "worktree" {
+            self.execute_worktree_tool(tc, session)
+        } else if (tc.name == "bash" || tc.name == "shell")
+            && tc
+                .arguments
+                .get("background")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        {
+            self.execute_background_shell(tc, tool_ctx, events)
+        } else {
+            self.tool_executor
+                .execute(tc, tool_ctx, &self.info.permission)
+                .await
+        }
     }
 
     /// Apply the shell risk gate, then allow/ask/deny, then execute (or spawn
@@ -299,6 +391,11 @@ impl Agent {
         // parallel with other tools (SERIAL_TOOLS). Skip permission map; asking
         // the user *is* the interaction.
         if tc.name == "question" {
+            if self.approval_mode == ApprovalMode::Auto
+                && let Some(kind) = self.auto_has_open_work(session)
+            {
+                return refuse_question_open_work(&tc.id, kind);
+            }
             let prompter: &dyn QuestionPrompter = match self.approval_mode {
                 ApprovalMode::Auto => &crate::question::AutoAnswerPrompter,
                 ApprovalMode::Important | ApprovalMode::Manual => self.question_prompter.as_ref(),
@@ -530,33 +627,33 @@ impl Agent {
             }
         }
 
-        let result = if tc.name == "task" {
-            self.execute_task_tool(tc, session, provider_name, model, api_key, events)
-                .await
-        } else if tc.name == "swarm" {
-            self.execute_swarm_tool(tc, session, provider_name, model, api_key, events)
-                .await
-        } else if tc.name == "bg" {
-            self.execute_bg_tool(tc)
-        } else if tc.name == "schedule" {
-            self.execute_schedule_tool(tc, tool_ctx, events).await
-        } else if tc.name == "tool_search" {
-            self.execute_tool_search(tc)
-        } else if tc.name == "worktree" {
-            self.execute_worktree_tool(tc, session)
-        } else if (tc.name == "bash" || tc.name == "shell")
-            && tc
-                .arguments
-                .get("background")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        {
-            self.execute_background_shell(tc, tool_ctx, events)
-        } else {
-            self.tool_executor
-                .execute(tc, tool_ctx, &self.info.permission)
-                .await
-        };
+        let mut result = self
+            .dispatch_tool(tc, session, tool_ctx, provider_name, model, api_key, events)
+            .await;
+
+        if self.approval_mode == ApprovalMode::Auto {
+            let mut attempt = 0;
+            while attempt < AUTO_TOOL_RETRY_LIMIT && tool_error_is_retryable(&tc.name, &result) {
+                attempt += 1;
+                tracing::info!(
+                    tool = %tc.name,
+                    attempt,
+                    "auto mode retrying failed tool"
+                );
+                if let Some(sink) = events {
+                    emit(
+                        &Some(sink.clone()),
+                        TurnEvent::Status(format!(
+                            "Auto: retrying `{}` ({attempt}/{AUTO_TOOL_RETRY_LIMIT})…",
+                            tc.name
+                        )),
+                    );
+                }
+                result = self
+                    .dispatch_tool(tc, session, tool_ctx, provider_name, model, api_key, events)
+                    .await;
+            }
+        }
 
         // Post-tool hooks never block; failures are logged inside the runner.
         let post_ctx = HookContext::post(
@@ -576,8 +673,39 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn gate_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[test]
+    fn retryable_skips_policy_and_question() {
+        let err = |c: &str| ToolResult {
+            tool_call_id: "t".into(),
+            content: c.into(),
+            is_error: true,
+        };
+        assert!(!tool_error_is_retryable(
+            "read",
+            &ToolResult {
+                tool_call_id: "t".into(),
+                content: "ok".into(),
+                is_error: false,
+            }
+        ));
+        assert!(tool_error_is_retryable("read", &err("transient fail 1")));
+        assert!(!tool_error_is_retryable("question", &err("do not ask")));
+        assert!(!tool_error_is_retryable("task", &err("subagent failed")));
+        assert!(!tool_error_is_retryable(
+            "read",
+            &err("Permission denied for tool 'read'.")
+        ));
+        assert!(!tool_error_is_retryable(
+            "bash",
+            &err("Refused: catastrophic")
+        ));
+        assert_eq!(AUTO_TOOL_RETRY_LIMIT, 2);
     }
 }

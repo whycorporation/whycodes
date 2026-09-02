@@ -1091,6 +1091,10 @@ mod permission_detail_tests {
             "build prompt must instruct todo use"
         );
         assert!(
+            Agent::system_prompt_for("build").contains("Do **not** call `question`"),
+            "build prompt must keep auto mode from asking mid-todo"
+        );
+        assert!(
             Agent::system_prompt_for("plan").contains("todowrite"),
             "plan prompt must instruct todo use"
         );

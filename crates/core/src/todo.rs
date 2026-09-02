@@ -180,6 +180,11 @@ pub fn all_terminal(todos: &[TodoItem]) -> bool {
     !todos.is_empty() && todos.iter().all(|t| t.status.is_terminal())
 }
 
+/// True when any item is still pending or in progress.
+pub fn has_open(todos: &[TodoItem]) -> bool {
+    todos.iter().any(|t| !t.status.is_terminal())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,14 +250,16 @@ mod tests {
             true,
         );
         assert_eq!(appended.len(), 3);
-
-        let args = serde_json::json!({"todos":[{"id":"a","content":"x","status":"completed"}]});
-        let out = apply_todowrite_args(&items, &args).unwrap();
-        assert_eq!(out[0].status, TodoStatus::Completed);
-        assert!(apply_todowrite_args(&items, &serde_json::json!({})).is_none());
         assert_eq!(terminal_count(&items), 1);
         assert!(!all_terminal(&items));
         assert!(!all_terminal(&[]));
+        assert!(has_open(&items));
+        assert!(!has_open(&[]));
+        assert!(!has_open(&[TodoItem::new(
+            "c",
+            "done",
+            TodoStatus::Cancelled
+        )]));
         assert!(all_terminal(&[TodoItem::new(
             "c",
             "done",

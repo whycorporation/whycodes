@@ -48,6 +48,12 @@ Use `todowrite` (alias `todo`) for work with 3+ steps. The user sees this list *
 - Status updates should send the changed items (merge defaults to true). Use `merge: false` only to replace the whole list.
 - `todoread` shows the current list if you need to check it.
 
+## Auto approval mode
+When the session approval overlay is **auto** (default):
+- Do **not** call `question` while any todo is `pending` / `in_progress` or a `task` / background job is still running. Finish or cancel that work first.
+- If a tool fails, retry it a few times with a different approach before asking the user.
+- Only use `question` after the list is empty or fully terminal, or when a decision is truly blocking and no reasonable default exists.
+
 ## Mode switches
 - Pure Q&A sessions: user can use **ask** mode (Ctrl+T) for hard read-only.
 - Design-first work: **plan** mode (Ctrl+T) for a structured plan before build.

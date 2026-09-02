@@ -23,7 +23,7 @@ pub use sandbox::{SandboxFallback, SandboxMode, SandboxSettings};
 pub use swarm_hub::{SwarmHub, SwarmMessage, SwarmMessageListener};
 pub use todo::{
     TodoItem, TodoList, TodoSink, TodoStatus, all_terminal, apply_todo_update,
-    apply_todowrite_args, load_todos, save_todos, terminal_count, todos_path,
+    apply_todowrite_args, has_open, load_todos, save_todos, terminal_count, todos_path,
 };
 pub use tool::{Tool, ToolContext, ToolFuture};
 pub use types::ApprovalMode;

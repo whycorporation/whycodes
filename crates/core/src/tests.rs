@@ -1161,6 +1161,9 @@ mod todo_tests {
         assert!(all_terminal(&next));
         assert!(!all_terminal(&[]));
         assert!(!all_terminal(&existing));
+        assert!(!has_open(&next));
+        assert!(has_open(&existing));
+        assert!(!has_open(&[]));
         let sink: TodoSink = Arc::new(|_| {});
         sink(next);
     }
@@ -1974,7 +1977,7 @@ mod types_tests {
         assert_eq!(ApprovalMode::Manual.label(), "manual");
         assert_eq!(
             ApprovalMode::Auto.description(),
-            "Auto-answer questions and auto-allow permission asks"
+            "Keep going until todos/tasks finish; auto-allow asks; retry failures"
         );
         assert_eq!(
             ApprovalMode::Important.description(),

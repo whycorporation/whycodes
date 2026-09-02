@@ -144,6 +144,26 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-03 — Auto mode must not ask while todos/tasks are open
+
+**Symptom:** In `auto` approval, the model still called `question` (or the
+first option was auto-picked) while the sticky todo list / background jobs
+were unfinished, so the user was interrupted mid-work. Failures also stopped
+after one attempt.
+
+**Root cause:** `execute_with_permission` auto-answered every `question` and
+did not retry transient tool errors.
+
+**Fix:** While session todos `has_open` or `background.running_count() > 0`,
+auto mode refuses `question` with a keep-working hint. Transient tool errors
+retry up to `AUTO_TOOL_RETRY_LIMIT` (2 extra) times. Policy denials, doom
+loop, task/swarm/question are not retried.
+
+**Prevention:** Tests `auto_refuses_question_while_todos_open` /
+`auto_retries_transient_tool_failure`. Do not auto-answer `question` as a
+substitute for finishing the list.
+
+
 ### 2026-09-02 — Plain REPL treated stdin EOF as an empty line
 
 **Symptom:** `cmd_run --plain` with piped/scripted stdin never exits: after the

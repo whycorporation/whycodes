@@ -424,6 +424,195 @@ async fn important_and_manual_prompt_on_question() {
     }
 }
 
+#[tokio::test]
+async fn auto_refuses_question_while_todos_open() {
+    let prompter = Arc::new(CountingCancelQuestionPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent =
+        Agent::new(make_test_agent_info("build")).with_question_prompter(prompter.clone());
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let dir = tempfile::tempdir().unwrap();
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".to_string());
+    session.id = "sid-open".into();
+    whycodes_core::todo::save_todos(
+        dir.path(),
+        Some("sid-open"),
+        &[whycodes_core::TodoItem::new(
+            "1",
+            "still working",
+            whycodes_core::TodoStatus::InProgress,
+        )],
+    )
+    .unwrap();
+    let ctx = whycodes_core::ToolContext {
+        working_dir: dir.path().to_string_lossy().to_string(),
+        session_id: Some("sid-open".into()),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
+        file_index: None,
+        panel: None,
+        todo_sink: None,
+        swarm_hub: None,
+    };
+    let result = agent
+        .execute_with_permission(
+            &tool_call(
+                "question",
+                serde_json::json!({"question": "Pick", "choices": ["A", "B"]}),
+            ),
+            &session,
+            &ctx,
+            "anthropic",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(prompter.asks.load(Ordering::SeqCst), 0);
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result.content.contains("do not ask the user"),
+        "{}",
+        result.content
+    );
+}
+
+#[tokio::test]
+async fn auto_answers_question_when_todos_done() {
+    let prompter = Arc::new(CountingCancelQuestionPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent =
+        Agent::new(make_test_agent_info("build")).with_question_prompter(prompter.clone());
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let dir = tempfile::tempdir().unwrap();
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".to_string());
+    session.id = "sid-done".into();
+    whycodes_core::todo::save_todos(
+        dir.path(),
+        Some("sid-done"),
+        &[whycodes_core::TodoItem::new(
+            "1",
+            "done",
+            whycodes_core::TodoStatus::Completed,
+        )],
+    )
+    .unwrap();
+    let ctx = whycodes_core::ToolContext {
+        working_dir: dir.path().to_string_lossy().to_string(),
+        session_id: Some("sid-done".into()),
+        sandbox: whycodes_core::SandboxSettings::off(),
+        network: whycodes_core::NetworkPolicy::unrestricted(),
+        file_claims: None,
+        agent_id: None,
+        agent_label: None,
+        file_index: None,
+        panel: None,
+        todo_sink: None,
+        swarm_hub: None,
+    };
+    let result = agent
+        .execute_with_permission(
+            &tool_call(
+                "question",
+                serde_json::json!({"question": "Pick", "choices": ["A", "B"]}),
+            ),
+            &session,
+            &ctx,
+            "anthropic",
+            "m",
+            "k",
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(prompter.asks.load(Ordering::SeqCst), 0);
+    assert!(!result.is_error, "{}", result.content);
+    assert!(result.content.contains('A'), "{}", result.content);
+}
+
+struct FlakyRead {
+    hits: Arc<AtomicUsize>,
+}
+
+impl whycodes_core::Tool for FlakyRead {
+    fn name(&self) -> &str {
+        "read"
+    }
+    fn description(&self) -> &str {
+        "flaky"
+    }
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn execute<'a>(
+        &'a self,
+        _args: serde_json::Value,
+        _ctx: &'a whycodes_core::ToolContext,
+    ) -> whycodes_core::ToolFuture<'a> {
+        let hits = Arc::clone(&self.hits);
+        Box::pin(async move {
+            let n = hits.fetch_add(1, Ordering::SeqCst) + 1;
+            if n < 3 {
+                whycodes_core::types::ToolResult {
+                    tool_call_id: String::new(),
+                    content: format!("transient fail {n}"),
+                    is_error: true,
+                }
+            } else {
+                whycodes_core::types::ToolResult {
+                    tool_call_id: String::new(),
+                    content: "ok".into(),
+                    is_error: false,
+                }
+            }
+        })
+    }
+}
+
+#[tokio::test]
+async fn auto_retries_transient_tool_failure() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let mut exec = whycodes_tools::executor::ToolExecutor::new();
+    exec.register(Box::new(FlakyRead {
+        hits: Arc::clone(&hits),
+    }));
+    let mut agent = Agent::new(make_test_agent_info("build")).with_tool_executor(exec);
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let result = run_named(&agent, tool_call("read", serde_json::json!({"path": "x"}))).await;
+    assert!(!result.is_error, "{}", result.content);
+    assert_eq!(result.content, "ok");
+    assert_eq!(hits.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn auto_does_not_retry_permission_denied() {
+    let mut info = make_test_agent_info("build");
+    info.permission
+        .denied_tools
+        .get_or_insert_with(Vec::new)
+        .push("read".into());
+    let mut agent = Agent::new(info);
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let result = run_named(&agent, tool_call("read", serde_json::json!({"path": "x"}))).await;
+    assert!(result.is_error, "{}", result.content);
+    assert!(
+        result
+            .content
+            .to_ascii_lowercase()
+            .contains("permission denied"),
+        "{}",
+        result.content
+    );
+}
+
 #[test]
 fn test_agent_new() {
     let info = make_test_agent_info("test");
