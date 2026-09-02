@@ -59,8 +59,11 @@ Things to know about CI:
   change legitimately needs a new panic site or swallowed error, the budget
   file change is reviewed as part of the PR.
 - Coverage is enforced with `cargo llvm-cov`: the workspace fails below 82%
-  line coverage, and twelve foundational crates are locked at 100%. See
-  [docs/coverage.md](docs/coverage.md).
+  line coverage, eleven foundational crates are locked at 100%, and
+  `whycodes-format` at 95%. Locally: `scripts/coverage.sh` (needs
+  `cargo-llvm-cov` + `llvm-tools-preview`, or `LLVM_COV` / `LLVM_PROFDATA`
+  on a distro toolchain). See [docs/coverage.md](docs/coverage.md).
+  The 100% workspace raise is #57.
 - Internal crate edges are allowlisted in
   `scripts/dependency_boundaries.json`. Adding an edge is a deliberate
   architectural decision — see [docs/architecture.md](docs/architecture.md).

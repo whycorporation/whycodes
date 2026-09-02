@@ -90,10 +90,13 @@ jobs:
           sh -n scripts/update_homebrew_formula.sh
           test -x scripts/update_homebrew_formula.sh
           sh -n scripts/tui_term_matrix.sh
+          sh -n scripts/coverage.sh
+          test -x scripts/coverage.sh
           sh -n scripts/pre-push
           sh -n scripts/install_git_hooks.sh
           sh scripts/test_update_homebrew_formula.sh
           sh scripts/test_tui_term_matrix.sh
+          sh scripts/test_coverage.sh
           sh scripts/test_pre_push.sh
           python scripts/test_tracked_secrets.py
           python scripts/test_release_downloads.py
@@ -167,15 +170,11 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      # Single workspace instrumentation + single JSON report; per-crate floors checked
-      # by Python instead of 12 separate `cargo llvm-cov -p` re-runs (~150s saved).
+      # Single workspace instrumentation + single JSON report; per-crate floors
+      # checked by Python instead of 12 separate `cargo llvm-cov -p` re-runs.
+      # Wrapper flags live in scripts/coverage.sh (same as local `scripts/coverage.sh`).
       - name: Measure coverage
-        run: |
-          IGNORE='/usr/src/|/rustc-'
-          CRATE_IGNORE="$IGNORE|tests\\.rs$"
-          cargo llvm-cov --workspace --features whycodes-storage/bundled --ignore-filename-regex "$IGNORE" --fail-under-lines 82 --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index
-          cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only > /tmp/cov.json
-          python3 scripts/check_coverage_floors.py /tmp/cov.json
+        run: COVERAGE_FEATURES=whycodes-storage/bundled scripts/coverage.sh
 
   build:
     name: Build (linux)

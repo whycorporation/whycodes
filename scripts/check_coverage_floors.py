@@ -6,6 +6,8 @@ Single workspace instrumentation run (~90s) + this script (<1s) instead of
 12× re-instrumentation (~240s) on the single self-hosted runner.
 
 Usage:
+  scripts/coverage.sh
+  # or, same steps by hand:
   cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --summary-only -- --skip ...
   cargo llvm-cov report --json --ignore-filename-regex "$CRATE_IGNORE" --summary-only > /tmp/cov.json
   python3 scripts/check_coverage_floors.py /tmp/cov.json

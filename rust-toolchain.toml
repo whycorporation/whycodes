@@ -1,0 +1,6 @@
+# rustup: match CI (`dtolnay/rust-toolchain@stable`) and pull llvm-tools so
+# `scripts/coverage.sh` / `cargo llvm-cov` work on a vanilla clone.
+# Distro toolchains ignore this file; set LLVM_COV / LLVM_PROFDATA instead.
+[toolchain]
+channel = "stable"
+components = ["llvm-tools-preview", "clippy", "rustfmt"]
