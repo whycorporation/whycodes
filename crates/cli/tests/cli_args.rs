@@ -777,6 +777,16 @@ fn test_plain_repl_slash_commands_without_api_key() {
          /tools\n\
          /remember\n\
          /remember keep this\n\
+         /memory\n\
+         /effort\n\
+         /effort high\n\
+         /h\n\
+         /details\n\
+         /export\n\
+         /summarize\n\
+         /usage\n\
+         /agents\n\
+         /init\n\
          /q\n",
     );
     assert_ok(&["--plain"], &o);
@@ -830,4 +840,27 @@ fn test_plain_repl_shell_bang_and_exit_aliases() {
     assert_ok(&["--plain bang"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(s.contains("Usage: !") || s.contains("hi"), "{s}");
+}
+
+#[test]
+fn test_plain_repl_ollama_prompt_without_server() {
+    let home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_whycodes"))
+        .args(["--plain", "--no-memory", "-P", "ollama", "-m", "tiny"])
+        .env("WHYCODES_HOME", home.path())
+        .env("HOME", home.path())
+        .env("WHYCODES_PLAIN", "1")
+        .current_dir(home.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("stdin");
+        stdin.write_all(b"hello from ollama path\n/q\n").unwrap();
+    }
+    let o = child.wait_with_output().expect("wait");
+    assert_ok(&["--plain ollama"], &o);
 }

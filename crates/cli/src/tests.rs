@@ -8,6 +8,91 @@ use whycodes_agent::agent::Agent;
 use whycodes_core::types::{ModelConfig, ProviderConfig};
 use whycodes_protocol::{CiEvent, ResultMeta};
 
+/// Serializes tests that mutate process-global env (`WHYCODES_HOME`, …).
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Point `WHYCODES_HOME` at a temp dir until dropped. Safe inside `#[tokio::test]`.
+struct IsolatedHome {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    dir: tempfile::TempDir,
+    prev: Option<std::ffi::OsString>,
+}
+
+impl IsolatedHome {
+    fn new() -> Self {
+        let guard = lock_env();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        Self {
+            _guard: guard,
+            dir,
+            prev,
+        }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+    }
+}
+
+/// Prepend a stub `gh` that prints its argv and exits `exit`. Restores `PATH` on drop.
+/// Does not take `ENV_LOCK` — compose with [`IsolatedHome`] which already serializes env.
+struct IsolatedGh {
+    _bin: tempfile::TempDir,
+    prev_path: Option<std::ffi::OsString>,
+}
+
+impl IsolatedGh {
+    fn new(exit: i32) -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let gh = dir.path().join("gh");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(
+                &gh,
+                format!("#!/bin/sh\necho fake-gh \"$@\"\nexit {exit}\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let prev_path = std::env::var_os("PATH");
+        let mut path = dir.path().display().to_string();
+        if let Some(rest) = &prev_path {
+            path.push(':');
+            path.push_str(&rest.to_string_lossy());
+        }
+        unsafe { std::env::set_var("PATH", &path) };
+        Self {
+            _bin: dir,
+            prev_path,
+        }
+    }
+}
+
+impl Drop for IsolatedGh {
+    fn drop(&mut self) {
+        match &self.prev_path {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+    }
+}
+
 fn cli(command: Option<Commands>) -> Cli {
     Cli {
         command,
@@ -1663,4 +1748,693 @@ mod upgrade_helpers {
         let err = get(&client, &url).await.unwrap_err().to_string();
         assert!(err.contains("404"), "{err}");
     }
+}
+
+#[tokio::test]
+async fn stub_commands_web_acp_pr_github() {
+    let _home = IsolatedHome::new();
+    let _gh = IsolatedGh::new(0);
+    let c = cli(None);
+    cmd_web().await.unwrap();
+    cmd_acp(&c).await.unwrap();
+    cmd_pr(&c, None, None).await.unwrap();
+    cmd_pr(&c, Some("feat"), Some("dev")).await.unwrap();
+    cmd_github(&c, &GithubCmd::Pr { action: None })
+        .await
+        .unwrap();
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::List),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::View { number: 1 }),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::Create {
+                title: None,
+                base: None,
+            }),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::Create {
+                title: Some("t".into()),
+                base: Some("main".into()),
+            }),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: None })
+        .await
+        .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: Some(7) })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn after_tui_exit_quit() {
+    after_tui_exit(whycodes_tui::TuiExit::Quit).await.unwrap();
+}
+
+#[test]
+fn spawn_update_check_disabled_returns_none() {
+    let mut c = cli(None);
+    c.no_auto_update = true;
+    let config = Config::default();
+    assert!(spawn_update_check(&c, &config).is_none());
+}
+
+#[test]
+fn should_auto_update_reads_process_env() {
+    let c = cli(None);
+    let _ = should_auto_update(&c, true);
+    let _ = should_auto_update(&c, false);
+}
+
+#[tokio::test]
+async fn cmd_debug_and_stats_on_isolated_home() {
+    let _home = IsolatedHome::new();
+    cmd_debug().await.unwrap();
+    cmd_stats().await.unwrap();
+}
+
+#[tokio::test]
+async fn dispatch_offline_commands() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_auto_update = true;
+    c.no_memory = true;
+
+    dispatch_command(&Commands::Web, &c).await.unwrap();
+    dispatch_command(&Commands::Acp, &c).await.unwrap();
+    dispatch_command(
+        &Commands::Pr {
+            title: None,
+            base: None,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    let _gh = IsolatedGh::new(1);
+    dispatch_command(
+        &Commands::Github {
+            cmd: GithubCmd::Issue { number: None },
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(&Commands::Debug, &c).await.unwrap();
+    dispatch_command(&Commands::Stats, &c).await.unwrap();
+    dispatch_command(
+        &Commands::Config {
+            cmd: ConfigCmd::Path,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Config {
+            cmd: ConfigCmd::Get {
+                key: "default_agent".into(),
+            },
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Config {
+            cmd: ConfigCmd::Show,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(&Commands::Mcp { cmd: McpCmd::List }, &c)
+        .await
+        .unwrap();
+    dispatch_command(
+        &Commands::Provider {
+            cmd: ProviderCmd::List,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Model {
+            cmd: ModelCmd::List,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(&Commands::Agent { name: None }, &c)
+        .await
+        .unwrap();
+    dispatch_command(&Commands::Plugins { cmd: None }, &c)
+        .await
+        .unwrap();
+    dispatch_command(
+        &Commands::Session {
+            cmd: SessionCmd::List,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Memory {
+            cmd: MemoryCmd::List { limit: 5 },
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Auth {
+            cmd: AuthCmd::Status,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Auth {
+            cmd: AuthCmd::Logout {
+                provider: "nope".into(),
+            },
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Auth {
+            cmd: AuthCmd::Import,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Completions {
+            shell: clap_complete::Shell::Bash,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_empty_prompt_and_missing_key() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_auto_update = true;
+    c.no_memory = true;
+    cmd_run(&c, Some(""), None, OutputFormat::Text)
+        .await
+        .unwrap();
+    cmd_run(&c, Some("hello"), Some(1), OutputFormat::Text)
+        .await
+        .unwrap();
+    let err = cmd_run(&c, None, None, OutputFormat::Json).await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_connect_unreachable_host() {
+    let c = cli(None);
+    let err = cmd_connect(&c, "127.0.0.1:1", None).await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_generate_empty_prompt_errors() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    let err = cmd_generate(&c, &[String::new()], Some(1), 1, OutputFormat::Text).await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn ensure_api_key_false_without_credentials() {
+    let _home = IsolatedHome::new();
+    let config = Config::default();
+    let mut key = String::new();
+    assert!(!ensure_api_key(&mut key, "anthropic", &config).await);
+    key = "sk-test".into();
+    assert!(ensure_api_key(&mut key, "anthropic", &config).await);
+    print_slash_help();
+}
+
+#[test]
+fn refresh_session_memory_and_open_memory_service() {
+    let home = IsolatedHome::new();
+    let dir = home.path();
+    let config = Config::default();
+    let mut session = whycodes_session::session::Session::new(dir.to_path_buf(), "sys".into());
+    let agent = Agent::new(agent_info_for(&cli(None), &config));
+    refresh_session_memory(&mut session, &agent, dir, &config, Some("query"));
+    let mut c = cli(None);
+    c.dir = Some(dir.to_string_lossy().into_owned());
+    open_memory_service(&c, &config).unwrap();
+    maybe_session_auto_index(dir, &config);
+    load_auth_plugins(&c);
+    let _ = oauth_provider_list();
+    resume_session_into(&mut session, "no-such-session").unwrap();
+}
+
+#[tokio::test]
+async fn get_api_key_env_wins() {
+    let _home = IsolatedHome::new();
+    let prev = std::env::var_os("ANTHROPIC_API_KEY");
+    unsafe { std::env::set_var("ANTHROPIC_API_KEY", "sk-from-env") };
+    let config = Config::default();
+    let key = get_api_key("anthropic", &config).await;
+    match prev {
+        Some(v) => unsafe { std::env::set_var("ANTHROPIC_API_KEY", v) },
+        None => unsafe { std::env::remove_var("ANTHROPIC_API_KEY") },
+    }
+    assert_eq!(key.as_deref(), Some("sk-from-env"));
+}
+
+#[tokio::test]
+async fn memory_index_and_empty_add_on_isolated_home() {
+    let home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    cmd_memory(
+        &c,
+        &MemoryCmd::Index {
+            max_files: 2,
+            max_chunks: 4,
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::SessionSearch {
+            query: "nope".into(),
+            limit: 3,
+        },
+    )
+    .await
+    .unwrap();
+    let empty = cmd_memory(&c, &MemoryCmd::Add { text: vec![] }).await;
+    assert!(empty.is_err());
+    cmd_memory(
+        &c,
+        &MemoryCmd::Delete {
+            id: "missing".into(),
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn provider_add_headers_and_model_default() {
+    let _home = IsolatedHome::new();
+    cmd_provider(&ProviderCmd::Add {
+        name: "local".into(),
+        api_key: Some("k".into()),
+        base_url: Some("http://127.0.0.1:9".into()),
+        headers: Some("X-A=1,X-B=2".into()),
+    })
+    .await
+    .unwrap();
+    cmd_provider(&ProviderCmd::Add {
+        name: "local".into(),
+        api_key: Some("k2".into()),
+        base_url: Some("http://127.0.0.1:9".into()),
+        headers: None,
+    })
+    .await
+    .unwrap();
+    cmd_provider(&ProviderCmd::List).await.unwrap();
+    cmd_model(&ModelCmd::Default {
+        provider: "local".into(),
+        model: "m".into(),
+    })
+    .await
+    .unwrap();
+}
+
+#[test]
+fn init_logging_from_cli_debug() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.debug = true;
+    init_logging(&c);
+    ignore_sigpipe();
+}
+
+#[tokio::test]
+async fn cmd_auth_unknown_provider_and_status() {
+    let _home = IsolatedHome::new();
+    let err = cmd_auth(&AuthCmd::Login {
+        provider: "not-a-provider".into(),
+        no_browser: true,
+    })
+    .await;
+    assert!(err.is_err(), "{err:?}");
+    cmd_auth(&AuthCmd::Status).await.unwrap();
+    cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_add_list_remove_transports() {
+    let _home = IsolatedHome::new();
+    cmd_mcp(&McpCmd::Add {
+        name: "local".into(),
+        command: Some("npx".into()),
+        args: Some("-y demo".into()),
+        url: None,
+        transport: Some("stdio".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Add {
+        name: "remote".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com/mcp".into()),
+        transport: Some("http".into()),
+        headers: vec!["Authorization: Bearer x".into()],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::List).await.unwrap();
+    let bad = cmd_mcp(&McpCmd::Add {
+        name: "bad".into(),
+        command: None,
+        args: None,
+        url: None,
+        transport: Some("ftp".into()),
+        headers: vec![],
+    })
+    .await;
+    assert!(bad.is_err());
+    cmd_mcp(&McpCmd::Remove {
+        name: "local".into(),
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Remove {
+        name: "missing".into(),
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn session_missing_ids_and_import_share() {
+    let home = IsolatedHome::new();
+    cmd_session(&SessionCmd::Delete { id: "nope".into() })
+        .await
+        .unwrap();
+    cmd_session(&SessionCmd::Rename {
+        id: "nope".into(),
+        name: "x".into(),
+    })
+    .await
+    .unwrap();
+    cmd_session(&SessionCmd::Share { id: "nope".into() })
+        .await
+        .unwrap();
+    cmd_session(&SessionCmd::View { id: "nope".into() })
+        .await
+        .unwrap();
+
+    let import_path = home.path().join("chat.json");
+    std::fs::write(
+        &import_path,
+        r#"[{"role":"user","content":"hi"},{"role":"assistant","content":"yo"}]"#,
+    )
+    .unwrap();
+    cmd_session(&SessionCmd::Import {
+        path: import_path.clone(),
+        from: "json".into(),
+    })
+    .await
+    .unwrap();
+    cmd_session(&SessionCmd::List).await.unwrap();
+    let db = open_db().unwrap();
+    let sessions = db.list_sessions().unwrap();
+    assert!(!sessions.is_empty());
+    let id = sessions[0].id.clone();
+    cmd_session(&SessionCmd::View { id: id.clone() })
+        .await
+        .unwrap();
+    cmd_session(&SessionCmd::Rename {
+        id: id.clone(),
+        name: "imported".into(),
+    })
+    .await
+    .unwrap();
+    cmd_session(&SessionCmd::Share { id: id.clone() })
+        .await
+        .unwrap();
+    cmd_session(&SessionCmd::Delete { id }).await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_serve_bind_privileged_port_fails() {
+    let _home = IsolatedHome::new();
+    let err = cmd_serve(1).await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn dispatch_generate_empty_prompt() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    let err = dispatch_command(
+        &Commands::Generate {
+            prompt: vec![String::new()],
+            max_turns: Some(1),
+            jobs: 1,
+            format: OutputFormat::Text,
+        },
+        &c,
+    )
+    .await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_generate_ollama_reaches_llm_and_fails() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.provider = Some("ollama".into());
+    c.model = Some("tiny".into());
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    let err = cmd_generate(&c, &["say hi".into()], Some(1), 1, OutputFormat::Json).await;
+    assert!(err.is_err(), "{err:?}");
+    let err = cmd_generate(
+        &c,
+        &["one".into(), "two".into()],
+        Some(1),
+        2,
+        OutputFormat::Text,
+    )
+    .await;
+    assert!(err.is_err(), "{err:?}");
+    let err = cmd_run(&c, Some("say hi"), Some(1), OutputFormat::Json).await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_serve_binds_then_abort() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let handle = tokio::spawn(async move { cmd_serve(port).await });
+    let url = format!("http://127.0.0.1:{port}/api/health");
+    let mut ok = false;
+    for _ in 0..80 {
+        if reqwest::get(&url).await.is_ok() {
+            ok = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    handle.abort();
+    let _ = handle.await;
+    assert!(ok, "serve never became healthy on {url}");
+}
+
+#[tokio::test]
+async fn dispatch_serve_and_connect_error_arms() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    let err = dispatch_command(&Commands::Serve { port: 1 }, &c).await;
+    assert!(err.is_err(), "{err:?}");
+    let err = dispatch_command(
+        &Commands::Connect {
+            addr: "127.0.0.1:1".into(),
+            session: Some("s1".into()),
+        },
+        &c,
+    )
+    .await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn github_commands_with_failing_gh() {
+    let _home = IsolatedHome::new();
+    let _gh = IsolatedGh::new(1);
+    let c = cli(None);
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::Create {
+                title: Some("t".into()),
+                base: Some("main".into()),
+            }),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: Some(3) })
+        .await
+        .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: None })
+        .await
+        .unwrap();
+}
+
+#[test]
+fn init_logging_skips_config_under_bench() {
+    let _home = IsolatedHome::new();
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    init_logging(&cli(None));
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
+}
+
+#[tokio::test]
+async fn memory_add_path_export_import_clear() {
+    let home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    cmd_memory(
+        &c,
+        &MemoryCmd::Add {
+            text: vec!["remember this fact".into()],
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(&c, &MemoryCmd::Path).await.unwrap();
+    cmd_memory(&c, &MemoryCmd::List { limit: 10 })
+        .await
+        .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::Search {
+            query: "fact".into(),
+            limit: 5,
+        },
+    )
+    .await
+    .unwrap();
+    let out = home.path().join("mem.json");
+    cmd_memory(
+        &c,
+        &MemoryCmd::Export {
+            output: Some(out.clone()),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(&c, &MemoryCmd::Export { output: None })
+        .await
+        .unwrap();
+    cmd_memory(&c, &MemoryCmd::Import { path: out })
+        .await
+        .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::CodeSearch {
+            query: "fn".into(),
+            limit: 3,
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(&c, &MemoryCmd::Clear).await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_remove_default_and_agent_missing() {
+    let _home = IsolatedHome::new();
+    cmd_provider(&ProviderCmd::Add {
+        name: "tmp".into(),
+        api_key: None,
+        base_url: Some("http://127.0.0.1:9".into()),
+        headers: Some("badpair".into()),
+    })
+    .await
+    .unwrap();
+    cmd_provider(&ProviderCmd::Default { name: "tmp".into() })
+        .await
+        .unwrap();
+    cmd_provider(&ProviderCmd::Default {
+        name: "nope".into(),
+    })
+    .await
+    .unwrap();
+    cmd_provider(&ProviderCmd::Remove { name: "tmp".into() })
+        .await
+        .unwrap();
+    cmd_provider(&ProviderCmd::Remove {
+        name: "nope".into(),
+    })
+    .await
+    .unwrap();
+    cmd_agent(Some("no-such-agent")).await.unwrap();
+    cmd_agent(None).await.unwrap();
+    cmd_plugins(&cli(None), Some(&PluginsCmd::List))
+        .await
+        .unwrap();
 }
