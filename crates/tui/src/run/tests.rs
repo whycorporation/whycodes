@@ -3517,3 +3517,268 @@ async fn run_returns_upgrade_when_test_tui_env_upgrade() {
     unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
     assert_eq!(exit, TuiExit::Upgrade);
 }
+
+#[test]
+fn apply_compact_view_sets_status_and_idle() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.current_agent_state = AgentState::Generating;
+    let session = Session::new(PathBuf::from("/work/proj"), "sys".into());
+    let outcome = whycodes_session::CompactOutcome {
+        tokens_before: 400,
+        tokens_after: 80,
+        messages_before: 12,
+        messages_after: 3,
+        dropped_transcript: "ok".into(),
+    };
+    apply_compact_view(&mut app, &session, &outcome);
+    assert_eq!(app.current_agent_state, AgentState::Idle);
+    assert!(app.status_message.contains("12"));
+    assert!(app.status_message.contains("3"));
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("compacted"))
+    );
+}
+
+#[test]
+fn apply_reasoning_effort_unknown_and_unsupported_and_ok() {
+    isolate_home();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.provider_name = "anthropic".into();
+    app.model_name = "claude-3".into();
+    let mut agent = Agent::new(dummy_info("build"));
+    let mut config = Config::default();
+
+    apply_reasoning_effort(&mut app, &mut agent, &mut config, "nope");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Unknown effort"))
+    );
+
+    apply_reasoning_effort(&mut app, &mut agent, &mut config, "high");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("no reasoning-effort"))
+    );
+
+    app.provider_name = "openai".into();
+    app.model_name = "gpt-5".into();
+    apply_reasoning_effort(&mut app, &mut agent, &mut config, "xhigh");
+    assert_eq!(app.reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(config.session.reasoning_effort.as_deref(), Some("high"));
+    assert!(app.status_message.contains("clamped") || app.status_message.contains("high"));
+}
+
+#[test]
+fn persist_session_reasoning_effort_is_noop_in_tests() {
+    persist_session_reasoning_effort("high").unwrap();
+}
+
+#[test]
+fn apply_approval_mode_raw_unknown_and_ok() {
+    isolate_home();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut agent = Agent::new(dummy_info("build"));
+    let mut config = Config::default();
+
+    apply_approval_mode_raw(&mut app, &mut agent, &mut config, "nope");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Unknown mode"))
+    );
+
+    apply_approval_mode_raw(&mut app, &mut agent, &mut config, "manual");
+    assert_eq!(app.approval_mode, ApprovalMode::Manual);
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Manual));
+    assert!(app.status_message.contains("manual") || app.status_message.contains("Manual"));
+}
+
+#[test]
+fn persist_general_approval_mode_is_noop_in_tests() {
+    persist_general_approval_mode(ApprovalMode::Auto).unwrap();
+}
+
+#[test]
+fn close_interactive_overlays_clears_permission_dialog() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    close_interactive_overlays(&mut app);
+    assert!(app.dialogs.active().is_none());
+
+    app.ask_permission("bash", "ls");
+    app.pending_question_answers = Some(Default::default());
+    app.question_dismissed = true;
+    close_interactive_overlays(&mut app);
+    assert!(app.dialogs.active().is_none());
+    assert!(app.pending_question_answers.is_none());
+    assert!(!app.question_dismissed);
+    assert_eq!(app.mode, AppMode::Normal);
+}
+
+#[test]
+fn explicit_provider_key_from_config_and_env() {
+    isolate_home();
+    let mut config = Config::default();
+    config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk-from-config".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    assert_eq!(
+        explicit_provider_key(&config, "acme").as_deref(),
+        Some("sk-from-config")
+    );
+
+    config.providers.insert(
+        "envp".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "envp".into(),
+            api_key: Some(String::new()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    unsafe { std::env::set_var("ENVP_API_KEY", "sk-from-env") };
+    assert_eq!(
+        explicit_provider_key(&config, "envp").as_deref(),
+        Some("sk-from-env")
+    );
+    unsafe { std::env::remove_var("ENVP_API_KEY") };
+    assert!(explicit_provider_key(&config, "missing").is_none());
+}
+
+#[test]
+fn try_fill_api_key_fills_empty_and_skips_set() {
+    isolate_home();
+    let mut config = Config::default();
+    config.providers.insert(
+        "fillme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "fillme".into(),
+            api_key: Some("sk-fill".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let path = Config::data_dir().unwrap().join("config.toml");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    config.save().unwrap();
+
+    let mut key = String::new();
+    try_fill_api_key(&mut key, "fillme");
+    assert_eq!(key, "sk-fill");
+    try_fill_api_key(&mut key, "fillme");
+    assert_eq!(key, "sk-fill");
+}
+
+#[test]
+fn record_user_turn_appends_message_and_title() {
+    isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let mut config = Config::default();
+    config.session.auto_title = true;
+    let expanded = record_user_turn(
+        &mut app,
+        &mut rt,
+        "please look at @note.txt",
+        dir.path(),
+        &config,
+        &[],
+    );
+    assert!(
+        expanded.contains("hello") || expanded.contains("note.txt"),
+        "{expanded}"
+    );
+    assert!(!rt.session.messages.is_empty());
+}
+
+#[test]
+fn maybe_offer_update_self_install_and_homebrew() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_update(&mut app);
+    assert!(!app.update_prompted);
+
+    app.available_update = Some(UpdateOffer::SelfInstall("9.9.9".into()));
+    maybe_offer_update(&mut app);
+    assert!(app.update_prompted);
+    assert!(app.dialogs.is_open());
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.available_update = Some(UpdateOffer::Homebrew("9.9.9".into()));
+    maybe_offer_update(&mut app);
+    assert!(app.update_prompted);
+    assert!(app.dialogs.is_open());
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "already chatting");
+    app.available_update = Some(UpdateOffer::SelfInstall("9.9.9".into()));
+    maybe_offer_update(&mut app);
+    assert!(app.update_prompted);
+    assert!(!app.dialogs.is_open());
+}
+
+#[tokio::test]
+async fn start_compact_task_marks_generating() {
+    isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    rt.session = Session::new(dir.path().to_path_buf(), "sys".into());
+    rt.session.add_user_message("hello compact");
+    let mut cancel_at = None;
+    start_compact_task(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        "keep recent".into(),
+        "anthropic",
+        "m",
+        "sk",
+        dir.path(),
+    );
+    assert!(rt.agent_busy);
+    assert_eq!(app.current_agent_state, AgentState::Generating);
+    assert!(app.status_message.contains("Compact"));
+    if let Some(join) = rt.turn_join.take() {
+        join.abort();
+    }
+}
+
+#[test]
+fn cycle_live_session_noop_when_empty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut rt = test_runtime();
+    let mut runtimes: Vec<SessionRuntime> = Vec::new();
+    let mut mru = Vec::new();
+    cycle_live_session(&mut app, &mut rt, &mut runtimes, &mut mru, true);
+    assert!(mru.is_empty());
+}
