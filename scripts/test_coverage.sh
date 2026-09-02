@@ -50,6 +50,12 @@ need "--fail-under-lines 100" "$dry100"
 dryjson="$(REPORT_JSON=/tmp/custom-cov.json "$SCRIPT" --dry-run)"
 need "/tmp/custom-cov.json" "$dryjson"
 
+# rustup llvm-cov is under rustlib/bin, not PATH. The wrapper must prepend
+# that dir so CI (and rustup clones) do not fail with `llvm-cov not found`.
+src="$(cat "$SCRIPT")"
+need "lib/rustlib/" "$src"
+need 'rustc --print sysroot' "$src"
+
 if "$SCRIPT" --nope >/dev/null 2>&1; then
     printf 'error: unknown argument should fail\n' >&2
     exit 1

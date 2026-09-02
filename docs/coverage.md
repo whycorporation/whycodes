@@ -36,7 +36,9 @@ Needs `cargo-llvm-cov` and `llvm-tools` (`llvm-cov`, `llvm-profdata`):
 
 - rustup clone: `rust-toolchain.toml` lists `llvm-tools-preview`. After
   `rustup show`, `rustup component list --installed` should include it.
-  Then `cargo install cargo-llvm-cov --locked`.
+  Then `cargo install cargo-llvm-cov --locked`. rustup's `llvm-cov` is
+  **not** on `PATH` (it lives under the sysroot `lib/rustlib/<host>/bin`);
+  `scripts/coverage.sh` prepends that directory.
 - Distro toolchain (no rustup): point at the system binaries:
 
   ```bash

@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — Coverage wrapper: rustup llvm-cov is not on PATH
+
+**Symptom:** CI `Coverage (line floor)` fails immediately with
+`error: llvm-cov not found` after `scripts/coverage.sh` replaced the
+inline `cargo llvm-cov` step. `taiki-e/install-action` had just installed
+`cargo-llvm-cov`.
+
+**Root cause:** rustup's `llvm-tools-preview` puts `llvm-cov` /
+`llvm-profdata` under `$(rustc --print sysroot)/lib/rustlib/<host>/bin`,
+not on `PATH`. `cargo llvm-cov` locates them; the wrapper's
+`command -v llvm-cov` does not.
+
+**Fix:** Prepend the rustlib bin dir to `PATH` when `llvm-cov` is
+executable there. Distro toolchains still use `LLVM_COV` / PATH.
+
+**Prevention:** Do not treat `command -v llvm-cov` as the rustup check.
+`scripts/test_coverage.sh` asserts the sysroot prepend stays in the
+wrapper.
+
+---
+
 ### 2026-09-02 — CI Build (linux) fails without bundled SQLite
 
 **Symptom:** `Build (linux)` (and Coverage) fail ~5m in with

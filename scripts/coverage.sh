@@ -75,8 +75,20 @@ need_cmd() {
     fi
 }
 
-# cargo-llvm-cov looks up rustup's llvm-tools first. Distro rustc has no
-# rustup; point at system binaries when the user has not already set them.
+# rustup's llvm-tools live under the sysroot (`lib/rustlib/<host>/bin`), not
+# on PATH. cargo-llvm-cov finds them; a naive `command -v llvm-cov` does not
+# (CI Coverage failed with `llvm-cov not found` after the wrapper landed).
+# Distro rustc has no rustup; point at system binaries via PATH / LLVM_COV.
+if command -v rustc >/dev/null 2>&1; then
+    _sysroot="$(rustc --print sysroot 2>/dev/null || true)"
+    _host="$(rustc -vV 2>/dev/null | awk '/^host: / { print $2; exit }')"
+    _rustlib_bin="${_sysroot:+${_host:+$_sysroot/lib/rustlib/$_host/bin}}"
+    if [ -n "${_rustlib_bin:-}" ] && [ -x "$_rustlib_bin/llvm-cov" ]; then
+        PATH="$_rustlib_bin:$PATH"
+        export PATH
+    fi
+    unset _sysroot _host _rustlib_bin
+fi
 if [ -z "${LLVM_COV:-}" ] && command -v llvm-cov >/dev/null 2>&1; then
     LLVM_COV="$(command -v llvm-cov)"
     export LLVM_COV
