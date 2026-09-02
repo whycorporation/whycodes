@@ -1,6 +1,6 @@
 {
   "date": "2026-09-02",
-  "git": "5f6849e",
+  "git": "50e05d8",
   "machine": {
     "platform": "Linux x86_64",
     "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
@@ -9,46 +9,46 @@
   "binary": "target/release/whycodes",
   "profile": "release",
   "binary_size_mb": 16.1,
-  "version_ms_p95": 2.88,
-  "version_rss_mb": 0.45,
+  "version_ms_p95": 2.4,
+  "version_rss_mb": 0.51,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 1.77,
-      "p95_ms": 2.88,
-      "min_ms": 1.34,
-      "max_ms": 2.88
+      "median_ms": 1.72,
+      "p95_ms": 2.4,
+      "min_ms": 1.32,
+      "max_ms": 2.4
     },
     "help": {
       "runs": 20,
-      "median_ms": 2.19,
-      "p95_ms": 3.24,
-      "min_ms": 1.87,
-      "max_ms": 3.24
+      "median_ms": 3.84,
+      "p95_ms": 10.17,
+      "min_ms": 2.63,
+      "max_ms": 10.17
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 3.17,
-      "p95_ms": 3.94,
-      "min_ms": 2.49,
-      "max_ms": 3.94
+      "median_ms": 3.62,
+      "p95_ms": 5.96,
+      "min_ms": 2.75,
+      "max_ms": 5.96
     }
   },
   "memory": {
     "version": {
       "runs": 5,
-      "median_mb": 0.45,
-      "max_mb": 0.55
+      "median_mb": 0.51,
+      "max_mb": 0.58
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 8.17,
-      "max_mb": 8.71
+      "median_mb": 7.75,
+      "max_mb": 8.47
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 12.24,
-      "max_mb": 12.4
+      "median_mb": 12.26,
+      "max_mb": 12.62
     }
   },
   "multi_session": {
@@ -58,48 +58,48 @@
         "runs": 5,
         "sessions": 1,
         "median_pss_mb": 11.8,
-        "max_pss_mb": 12.1,
-        "min_pss_mb": 11.7,
+        "max_pss_mb": 11.8,
+        "min_pss_mb": 11.6,
         "median_process_count": 1,
         "samples_mb": [
-          11.7,
-          11.7,
+          11.6,
+          11.6,
           11.8,
-          12.0,
-          12.1
+          11.8,
+          11.8
         ]
       },
       "10": {
         "runs": 5,
         "sessions": 10,
-        "median_pss_mb": 30.2,
-        "max_pss_mb": 30.3,
-        "min_pss_mb": 30.0,
+        "median_pss_mb": 30.5,
+        "max_pss_mb": 31.0,
+        "min_pss_mb": 30.3,
         "median_process_count": 10,
         "samples_mb": [
-          30.0,
-          30.1,
-          30.2,
-          30.2,
-          30.3
+          30.3,
+          30.4,
+          30.5,
+          30.6,
+          31.0
         ],
-        "extra_over_one_mb": 18.4,
-        "per_added_session_mb": 2.0
+        "extra_over_one_mb": 18.7,
+        "per_added_session_mb": 2.1
       }
     }
   },
-  "first_frame_note": "TUI `run` is multi-thread Tokio again (de15f1a; #49 had used current_thread, which starved turns on event::poll). Paint-then-hydrate from #49 is still in place. Same 80x24 harness PTY as 2026-08-26. In-proc TTFF 12.5 ms median (was 11.1 ms on 2026-09-01) — a small regression vs paint-then-hydrate, still well under the 08-31 22.6 ms current-thread-era figure. Spawn-to-exit at --idle-ms 0 is 53.7 ms (noisy; min 20.3, max 109.7). Idle draws 0.3/s over 3 s (was 0.0/s) — one extra paint after hydrate is plausible with the worker pool.",
+  "first_frame_note": "TUI `run` is still multi-thread Tokio (never current_thread; turns must not starve on event::poll), now capped at TUI_WORKER_THREADS=2 (`2e31576`; Generate/Serve keep nproc). Empty-home hydrate is gated so a no-op first-frame hydrate must not second-paint (`4155fc6`). Same 80x24 harness PTY as 2026-08-26. In-proc TTFF 13.0 ms median vs 12.5 ms on 5f6849e same day and 11.1 ms on 2026-09-01 (current_thread) \u2014 still well under the 08-31 22.6 ms figure. Spawn-to-exit at --idle-ms 0 is 19.9 ms (min 16.5, max 23.8), recovering from 5f6849e's noisy 53.7 ms toward the 09-01 ~18 ms band. Idle draws 0.3/s over 3 s (same as 5f6849e; was 0.0/s on 09-01) \u2014 the hydrate dirty gate did not bring the 3 s window back to a hard zero on this machine.",
   "first_frame_harness": {
-    "median_ms": 12.5,
-    "min_ms": 11.6,
-    "max_ms": 27.0,
+    "median_ms": 13.0,
+    "min_ms": 10.6,
+    "max_ms": 15.4,
     "runs": 12,
     "idle_ms": 0
   },
   "idle_draws_harness": {
     "median_per_s": 0.32,
     "window_ms": 3000,
-    "first_frame_median_ms": 14.4
+    "first_frame_median_ms": 12.1
   },
   "hot_paths": {
     "assess": {
@@ -123,7 +123,7 @@
       "untagged_100_ns": 293
     },
     "highlight_cold": {
-      "rust_10_ms": 2.30,
+      "rust_10_ms": 2.3,
       "rust_100_ms": 2.21
     },
     "render_markdown_ansi": {

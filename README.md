@@ -130,8 +130,8 @@ Idle TUI, Linux x86_64, 2026-09-02 (method and machine in
 | Metric | Result |
 |---|---|
 | 1 session PSS | **11.8 MB** |
-| 10 sessions PSS | **30.2 MB** (~2.0 MB each extra) |
-| `--version` | **1.8 ms** |
+| 10 sessions PSS | **30.5 MB** (~2.1 MB each extra) |
+| `--version` | **1.7 ms** |
 | First frame (harness, in-proc) | **13 ms** |
 | Idle redraws (harness, 3 s) | **0.3 /s** |
 
