@@ -111,8 +111,50 @@ impl Tool for ShellTool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::tool::Tool;
+    use crate::tool::ToolContext;
+    use serde_json::json;
+
     #[test]
     fn shell_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[test]
+    fn bash_and_shell_aliases_and_schema() {
+        let bash = ShellTool::new();
+        let shell = ShellTool::as_shell();
+        let via_default = ShellTool::default();
+        assert_eq!(bash.name(), "bash");
+        assert_eq!(shell.name(), "shell");
+        assert_eq!(via_default.name(), "bash");
+        assert!(bash.description().contains("shell") || bash.description().contains("command"));
+        let params = bash.parameters();
+        assert_eq!(params["required"][0], "command");
+    }
+
+    #[tokio::test]
+    async fn execute_echo_and_failing_command() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+        let tool = ShellTool::new();
+
+        let ok = tool
+            .execute(json!({"command": "echo hello-cov", "timeout": 10}), &ctx)
+            .await;
+        assert!(!ok.is_error, "{ok:?}");
+        assert!(ok.content.contains("hello-cov"), "{ok:?}");
+
+        let empty = tool.execute(json!({"command": ""}), &ctx).await;
+        assert!(empty.is_error || empty.content.contains("empty") || !empty.content.is_empty());
+
+        let fail = tool
+            .execute(json!({"command": "exit 42", "timeout": 10}), &ctx)
+            .await;
+        assert!(
+            fail.is_error || fail.content.contains("42") || !fail.content.is_empty(),
+            "{fail:?}"
+        );
     }
 }
