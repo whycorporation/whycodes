@@ -12,6 +12,22 @@ use whycodes_config::Config;
 use whycodes_core::types::AgentInfo;
 use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 
+pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
+    let msg = e.to_string();
+    if msg.contains("No such device")
+        || msg.contains("os error 6")
+        || msg.contains("not a terminal")
+    {
+        anyhow::anyhow!(
+            "{msg}\n\n\
+             TUI needs a real terminal. Run in a terminal emulator, or:\n\
+               whycodes --plain"
+        )
+    } else {
+        e
+    }
+}
+
 pub(crate) async fn cmd_run(
     cli: &Cli,
     prompt: Option<&str>,
@@ -83,15 +99,6 @@ pub(crate) async fn cmd_run(
     };
 
     if use_tui {
-        if stub_tui {
-            let kind = std::env::var("WHYCODES_TEST_TUI").unwrap_or_default();
-            let exit = if kind == "upgrade" {
-                whycodes_tui::TuiExit::Upgrade
-            } else {
-                whycodes_tui::TuiExit::Quit
-            };
-            return super::debug::after_tui_exit(exit).await;
-        }
         let update_rx = super::debug::spawn_update_check(cli, &config);
         let exit = whycodes_tui::run(whycodes_tui::TuiRunOptions {
             project_dir,
@@ -107,22 +114,7 @@ pub(crate) async fn cmd_run(
             update_rx,
         })
         .await
-        .map_err(|e| {
-            // Crossterm ENXIO / similar — make the message actionable.
-            let msg = e.to_string();
-            if msg.contains("No such device")
-                || msg.contains("os error 6")
-                || msg.contains("not a terminal")
-            {
-                anyhow::anyhow!(
-                    "{msg}\n\n\
-                     TUI needs a real terminal. Run in a terminal emulator, or:\n\
-                       whycodes --plain"
-                )
-            } else {
-                e
-            }
-        })?;
+        .map_err(map_tui_run_error)?;
         return super::debug::after_tui_exit(exit).await;
     }
 

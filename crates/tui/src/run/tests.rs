@@ -3473,3 +3473,47 @@ fn first_frame_hydrate_settle_keeps_clears_when_animating() {
     assert!(app.needs_redraw);
     assert_eq!(app.pending_full_clears, 1);
 }
+
+#[tokio::test]
+async fn run_returns_quit_when_test_tui_env_set() {
+    let dir = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
+    let opts = TuiRunOptions {
+        project_dir: dir.path().to_path_buf(),
+        provider: "anthropic".into(),
+        model: "m".into(),
+        api_key: String::new(),
+        agent_name: "build".into(),
+        max_turns: None,
+        initial_prompt: None,
+        config: Config::default(),
+        resume_session_id: None,
+        remote: None,
+        update_rx: None,
+    };
+    let exit = super::run(opts).await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    assert_eq!(exit, TuiExit::Quit);
+}
+
+#[tokio::test]
+async fn run_returns_upgrade_when_test_tui_env_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "upgrade") };
+    let opts = TuiRunOptions {
+        project_dir: dir.path().to_path_buf(),
+        provider: "anthropic".into(),
+        model: "m".into(),
+        api_key: String::new(),
+        agent_name: "build".into(),
+        max_turns: None,
+        initial_prompt: None,
+        config: Config::default(),
+        resume_session_id: None,
+        remote: None,
+        update_rx: None,
+    };
+    let exit = super::run(opts).await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    assert_eq!(exit, TuiExit::Upgrade);
+}

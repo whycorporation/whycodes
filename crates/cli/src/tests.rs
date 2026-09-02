@@ -34,6 +34,7 @@ struct IsolatedHome {
     _guard: std::sync::MutexGuard<'static, ()>,
     dir: tempfile::TempDir,
     prev: Option<std::ffi::OsString>,
+    prev_home: Option<std::ffi::OsString>,
 }
 
 impl IsolatedHome {
@@ -41,11 +42,14 @@ impl IsolatedHome {
         let guard = lock_env();
         let dir = tempfile::tempdir().expect("tempdir");
         let prev = std::env::var_os("WHYCODES_HOME");
+        let prev_home = std::env::var_os("HOME");
         unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        unsafe { std::env::set_var("HOME", dir.path()) };
         Self {
             _guard: guard,
             dir,
             prev,
+            prev_home,
         }
     }
 
@@ -59,6 +63,10 @@ impl Drop for IsolatedHome {
         match &self.prev {
             Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
             None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+        match &self.prev_home {
+            Some(v) => unsafe { std::env::set_var("HOME", v) },
+            None => unsafe { std::env::remove_var("HOME") },
         }
     }
 }
@@ -2857,4 +2865,147 @@ async fn cmd_run_plain_continue_empty_and_init_login() {
         std::env::remove_var("ANTHROPIC_API_KEY");
     }
     result.unwrap();
+}
+
+#[test]
+fn map_tui_run_error_rewrites_enxio() {
+    let mapped = map_tui_run_error(anyhow::anyhow!("No such device (os error 6)"));
+    let msg = mapped.to_string();
+    assert!(msg.contains("TUI needs a real terminal"), "{msg}");
+    let mapped = map_tui_run_error(anyhow::anyhow!("not a terminal"));
+    assert!(mapped.to_string().contains("TUI needs a real terminal"));
+    let other = map_tui_run_error(anyhow::anyhow!("boom"));
+    assert_eq!(other.to_string(), "boom");
+}
+
+#[tokio::test]
+async fn cmd_auth_import_approves_claude_code_from_home() {
+    let home = IsolatedHome::new();
+    let creds = home.path().join(".claude");
+    std::fs::create_dir_all(&creds).unwrap();
+    std::fs::write(
+        creds.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat-test","refreshToken":"r","expiresAt":4102444800000}}"#,
+    )
+    .unwrap();
+    install_test_repl_lines(["y"]);
+    cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
+    clear_test_repl_lines();
+    // Denied path
+    let gemini = home.path().join(".gemini");
+    std::fs::create_dir_all(&gemini).unwrap();
+    std::fs::write(gemini.join("oauth_creds.json"), r#"{"token":"x"}"#).unwrap();
+    install_test_repl_lines(["n"]);
+    cmd_auth_import(&Config::data_dir().unwrap()).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_run_tui_path_hits_whycodes_tui_run() {
+    let _home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_TUI", "quit");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-tui");
+    }
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_upgrade_downloads_and_replaces_target() {
+    let home = IsolatedHome::new();
+    let target = home.path().join("whycodes-bin");
+    std::fs::write(&target, b"old-binary").unwrap();
+
+    let tar_bytes = {
+        let mut raw = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut raw);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(3);
+            h.set_cksum();
+            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = Vec::new();
+        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+        use std::io::Write;
+        enc.write_all(&raw).unwrap();
+        enc.finish().unwrap();
+        gz
+    };
+    let digest = crate::upgrade::digest_of(&tar_bytes);
+    let archive_name = crate::upgrade::target_archive().unwrap();
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let latest_url = format!("http://{addr}/latest");
+    let asset_url = format!("http://{addr}/asset");
+    let sums_url = format!("http://{addr}/sums");
+    let tar_clone = tar_bytes.clone();
+    let sums_body = format!("{digest}  {archive_name}\n");
+    let latest_body = serde_json::json!({
+        "tag_name": "v99.0.0",
+        "assets": [
+            {"name": archive_name, "id": 1, "browser_download_url": asset_url},
+            {"name": "SHA256SUMS", "id": 2, "browser_download_url": sums_url},
+        ]
+    })
+    .to_string();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let (status, body, ctype): (&str, Vec<u8>, &str) = if req.contains("GET /latest") {
+                (
+                    "200 OK",
+                    latest_body.as_bytes().to_vec(),
+                    "application/json",
+                )
+            } else if req.contains("GET /sums") {
+                ("200 OK", sums_body.as_bytes().to_vec(), "text/plain")
+            } else if req.contains("GET /asset") {
+                ("200 OK", tar_clone.clone(), "application/octet-stream")
+            } else {
+                ("404 Not Found", b"nope".to_vec(), "text/plain")
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+            let _ = stream.shutdown().await;
+        }
+    });
+
+    unsafe {
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &latest_url);
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", &target);
+    }
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(8), crate::upgrade::run()).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+    let result = result.expect("upgrade::run timed out").unwrap();
+    assert_eq!(result.as_deref(), Some("99.0.0"));
+    assert_eq!(std::fs::read(&target).unwrap(), b"new");
 }

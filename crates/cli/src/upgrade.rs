@@ -174,6 +174,23 @@ async fn download_asset(
     release: &serde_json::Value,
     name: &str,
 ) -> Result<Vec<u8>> {
+    if let Ok(url) = std::env::var("WHYCODES_UPGRADE_ASSET_URL")
+        && !url.is_empty()
+    {
+        return download_bytes(client, &url, name).await;
+    }
+    // Prefer the public `browser_download_url` (tests / GitHub CDN) when present.
+    if let Some(url) = release["assets"].as_array().and_then(|assets| {
+        assets.iter().find_map(|a| {
+            (a["name"].as_str() == Some(name))
+                .then(|| a["browser_download_url"].as_str())
+                .flatten()
+                .filter(|u| !u.is_empty())
+                .map(str::to_string)
+        })
+    }) {
+        return download_bytes(client, &url, name).await;
+    }
     let id = find_asset_id(release, name)?;
     download_bytes(client, &release_asset_url(id), name).await
 }
@@ -300,6 +317,12 @@ pub fn replace_binary(target: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Where the running executable lives.
 pub(crate) fn current_binary() -> Result<PathBuf> {
+    if let Ok(p) = std::env::var("WHYCODES_UPGRADE_TARGET") {
+        let path = PathBuf::from(p);
+        if !path.as_os_str().is_empty() {
+            return Ok(path);
+        }
+    }
     std::env::current_exe().context("could not determine the path of the running binary")
 }
 

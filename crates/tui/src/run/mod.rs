@@ -604,6 +604,20 @@ pub enum TurnOutcome {
 
 /// Run the full-screen TUI until the user quits.
 pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
+    // Unit tests drive CLI `cmd_run` / `cmd_connect` through this entry
+    // without opening a terminal. `WHYCODES_TEST_TUI=upgrade` asks the CLI
+    // to install after restore; anything else is a clean quit.
+    // CLI unit tests set this so `cmd_run` / `cmd_connect` can call `run`
+    // without opening a terminal. Never set in production.
+    if let Ok(kind) = std::env::var("WHYCODES_TEST_TUI") {
+        let _opts = opts;
+        return Ok(if kind == "upgrade" {
+            TuiExit::Upgrade
+        } else {
+            TuiExit::Quit
+        });
+    }
+
     // Wall clock for the Cline-style exit summary (process open → quit).
     let session_started = Instant::now();
 

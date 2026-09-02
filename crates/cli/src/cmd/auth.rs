@@ -129,11 +129,9 @@ pub(crate) async fn cmd_auth_import(data_dir: &std::path::Path) -> anyhow::Resul
                 if let Err(e) = std::io::stdout().flush() {
                     eprintln!("warning: could not flush prompt: {e}");
                 }
-                let answer = tokio::task::spawn_blocking(|| {
-                    let mut line = String::new();
-                    std::io::stdin().read_line(&mut line).map(|_| line)
-                })
-                .await??;
+                let mut line = String::new();
+                super::helpers::read_repl_line(&mut line)?;
+                let answer = line;
                 let yes = matches!(answer.trim().to_lowercase().as_str(), "y" | "yes");
                 consent.record(&f.path, yes)?;
                 if yes {

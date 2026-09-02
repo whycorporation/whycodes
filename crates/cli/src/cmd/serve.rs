@@ -53,12 +53,9 @@ pub(crate) async fn cmd_connect(
     let agent_name = resolve_agent(cli, &config);
     let api_key = get_api_key(&provider, &config).await.unwrap_or_default();
 
-    if cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some() {
-        println!("connected (test stub) session {session_id}");
-        return Ok(());
-    }
-
-    if !whycodes_tui::tui_available() {
+    if !whycodes_tui::tui_available()
+        && !(cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some())
+    {
         anyhow::bail!("connect needs a real TUI terminal (not --plain)");
     }
 
