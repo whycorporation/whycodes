@@ -6,8 +6,18 @@ permissions:
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'landing/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.github/ISSUE_TEMPLATE/**'
+      - 'landing/**'
 
 env:
   CARGO_TERM_COLOR: always
@@ -27,9 +37,10 @@ concurrency:
 # `github.event.pull_request.head.repo.full_name` is empty on push, so the
 # first clause keeps those jobs.
 jobs:
-  check:
-    name: Check & Lint
+  lint:
+    name: Lint & Budgets
     runs-on: self-hosted
+    timeout-minutes: 10
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -37,20 +48,18 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdk/typescript/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
       - name: Rustfmt
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
-
-  budgets:
-    name: Budgets
-    runs-on: self-hosted
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
       - name: Panic budget
         run: python scripts/check_panic_budget.py
       - name: Swallowed error budget
@@ -63,16 +72,12 @@ jobs:
         run: python scripts/check_sdk_protocol.py
       - name: Tracked secrets / scratch
         run: python scripts/check_tracked_secrets.py
-
-      # The installers are the first thing a new user runs and are not covered
-      # by cargo. A syntax error in them is invisible until someone pipes one
-      # into a shell.
+      # Installers are not covered by cargo — syntax errors are invisible until piped into a shell.
       - name: Installer syntax (sh)
         run: |
           sh -n scripts/install.sh
           sh -n scripts/uninstall.sh
           sh -n scripts/update_homebrew_formula.sh
-          # release.yml used to exec this without `sh`; a 100644 mode 126'd v0.2.0.
           test -x scripts/update_homebrew_formula.sh
           sh -n scripts/tui_term_matrix.sh
           sh -n scripts/pre-push
@@ -83,7 +88,6 @@ jobs:
           python scripts/test_tracked_secrets.py
           python scripts/test_release_downloads.py
       - name: Installer syntax (PowerShell)
-        # Self-hosted Linux often has no pwsh; skip rather than fail CI.
         run: |
           set -euo pipefail
           if ! command -v pwsh >/dev/null 2>&1; then
@@ -104,32 +108,12 @@ jobs:
             if ($failed) { exit 1 }
             Write-Host "installer syntax: ok"
           '
-
-  audit:
-    name: Dependency audit (RustSec)
-    runs-on: self-hosted
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
       - name: cargo audit
         run: cargo audit --deny warnings
-
-  sdk-ts:
-    name: TypeScript SDK
-    runs-on: self-hosted
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: sdk/typescript/package-lock.json
-      - name: Build and test
+      - name: TypeScript SDK — build and test (merged from sdk-ts to save checkout/cache on single runner)
         working-directory: sdk/typescript
         run: |
           npm ci
@@ -138,6 +122,7 @@ jobs:
   test:
     name: Test (linux)
     runs-on: self-hosted
+    timeout-minutes: 12
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -149,6 +134,7 @@ jobs:
   coverage:
     name: Coverage (line floor)
     runs-on: self-hosted
+    timeout-minutes: 15
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -159,29 +145,22 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-llvm-cov
-      # Ratchet: workspace line coverage must stay above the floor.
-      # `--ignore-filename-regex`: rustc sysroot (e.g. thread_local) leaks into
-      # llvm-cov totals on Arch/system toolchains and is not our code.
-      # `--skip tests::watcher_picks_up_changes`: notify-timing flake under
-      # instrumentation (see crates/index) — it still runs in the `test` job.
-      # `--skip picker_flow_over_real_index`: nucleo tick/notify miss under
-      # llvm-cov load (see docs/knowhow.md) — Test job still runs it.
+      # Ratchet: workspace floor 82; per-crate 100% (--ignore-filename-regex skips rustc sysroot).
+      # --skip: notify flake under instrumentation (see crates/index) — still runs in `test` job.
       - name: Measure coverage
         run: |
           IGNORE='/usr/src/|/rustc-'
-          # 100% crates: ignore *tests.rs (llvm-cov prints the basename)
-          # so host-only test branches cannot sink the floor.
           CRATE_IGNORE="$IGNORE|tests\\.rs$"
           cargo llvm-cov --workspace --ignore-filename-regex "$IGNORE" --fail-under-lines 82 --summary-only -- --skip tests::watcher_picks_up_changes --skip picker_flow_over_real_index
           for crate in whycodes-function whycodes-schema whycodes-skill whycodes-sandbox whycodes-protocol whycodes-plugin whycodes-command-risk whycodes-storage whycodes-core whycodes-config whycodes-index; do
             cargo llvm-cov -p "$crate" --ignore-filename-regex "$CRATE_IGNORE" --fail-under-lines 100 --show-missing-lines --summary-only
           done
-          # whycodes-format: 99.6% lines (find helper + a few inline edge branches not hit by the deterministic corpus; see markdown.rs:408,457,494). Floor is 95 to keep the ratchet while the corpus grows — keep workspace floor 82 as the hard gate.
           cargo llvm-cov -p whycodes-format --ignore-filename-regex "$CRATE_IGNORE" --fail-under-lines 95 --show-missing-lines --summary-only
 
   build:
     name: Build (linux)
     runs-on: self-hosted
+    timeout-minutes: 15
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
@@ -203,6 +182,7 @@ jobs:
     name: Fork PRs skip self-hosted CI
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
       - name: Explain
         run: |
@@ -214,6 +194,7 @@ jobs:
     name: Test (${{ matrix.os }})
     if: vars.CI_MULTI_OS == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -229,6 +210,7 @@ jobs:
     name: Build (${{ matrix.os }})
     if: vars.CI_MULTI_OS == 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       matrix:
         os: [windows-latest, macos-latest]

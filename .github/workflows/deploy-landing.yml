@@ -26,6 +26,7 @@ jobs:
     name: Cloudflare Workers
     if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: landing

@@ -21,6 +21,7 @@ jobs:
     name: ${{ matrix.target }}
     if: github.repository == 'whycorporation/whycodes'
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -88,6 +89,7 @@ jobs:
     needs: build
     if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
@@ -128,6 +130,7 @@ jobs:
     needs: publish
     if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -160,6 +163,7 @@ jobs:
     needs: publish
     if: github.repository == 'whycorporation/whycodes'
     runs-on: self-hosted
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: write
