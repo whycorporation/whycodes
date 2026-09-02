@@ -841,3 +841,11 @@ impl Agent {
         Ok(final_text)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn turn_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

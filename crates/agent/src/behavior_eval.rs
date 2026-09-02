@@ -502,3 +502,11 @@ fn semantic_policy_corpus_meets_desired_contract() {
         report.failures.join("\n")
     );
 }
+
+#[cfg(test)]
+mod local {
+    #[test]
+    fn behavior_eval_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

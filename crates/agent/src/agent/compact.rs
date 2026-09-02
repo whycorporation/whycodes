@@ -162,3 +162,20 @@ impl Agent {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_prompt_includes_transcript_and_optional_context() {
+        let bare = build_compact_summary_prompt("hello transcript", None);
+        assert!(bare.contains("hello transcript"));
+        assert!(!bare.contains("User-provided context"));
+        let with = build_compact_summary_prompt("hello transcript", Some(" keep auth.rs "));
+        assert!(with.contains("keep auth.rs"));
+        assert!(with.contains("<summary>"));
+        let empty_ctx = build_compact_summary_prompt("t", Some("   "));
+        assert!(!empty_ctx.contains("User-provided context"));
+    }
+}

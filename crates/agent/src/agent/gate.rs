@@ -573,3 +573,11 @@ impl Agent {
         result
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn gate_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

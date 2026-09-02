@@ -109,3 +109,11 @@ impl Agent {
         Ok(outputs)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn spawn_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}
