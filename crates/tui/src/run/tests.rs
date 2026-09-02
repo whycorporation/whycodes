@@ -3356,3 +3356,71 @@ fn queued_dialogs_wait_for_idle_and_prioritize_permissions() {
             if tool_name == "bash" && detail == "cargo test"
     ));
 }
+
+fn sample_session_entry() -> crate::app::SessionEntry {
+    crate::app::SessionEntry {
+        id: "sess-1".into(),
+        title: "recent".into(),
+        messages: 1,
+        updated_at: None,
+        live: None,
+    }
+}
+
+#[test]
+fn first_frame_hydrate_empty_home_is_not_dirty() {
+    let app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    assert!(
+        !first_frame_hydrate_needs_paint(&before, &app),
+        "empty sessions, unchanged status, hidden sidebar, no toasts"
+    );
+}
+
+#[test]
+fn first_frame_hydrate_sessions_zero_to_n_is_dirty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.session_list.sessions = vec![sample_session_entry()];
+    assert!(first_frame_hydrate_needs_paint(&before, &app));
+}
+
+#[test]
+fn first_frame_hydrate_status_change_is_dirty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.status_message =
+        "agent=why  xai/grok-4 — Tab focus  Ctrl+T agent  Esc cancel  /help".into();
+    assert!(first_frame_hydrate_needs_paint(&before, &app));
+}
+
+#[test]
+fn first_frame_hydrate_toast_is_dirty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.toasts
+        .push(crate::toast::ToastKind::Info, "Indexed 3 code chunks");
+    assert!(first_frame_hydrate_needs_paint(&before, &app));
+}
+
+#[test]
+fn first_frame_hydrate_visible_sidebar_file_tree_change_is_dirty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.sidebar.visible = true;
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.sidebar.file_tree = vec!["src/main.rs".into()];
+    assert!(first_frame_hydrate_needs_paint(&before, &app));
+}
+
+#[test]
+fn first_frame_hydrate_hidden_sidebar_file_tree_change_is_not_dirty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    assert!(!app.sidebar.visible, "home sidebar starts hidden");
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.sidebar.file_tree = vec!["src/main.rs".into()];
+    app.sidebar.mcp_status = vec![" demo".into()];
+    assert!(
+        !first_frame_hydrate_needs_paint(&before, &app),
+        "hidden sidebar mutations must not schedule a second paint"
+    );
+}

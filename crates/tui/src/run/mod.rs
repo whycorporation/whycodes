@@ -924,6 +924,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     // for the first 80×24 home frame (issue #49).
                     // Syntax theme was skipped in `TuiApp::new` (syntect cache
                     // is ~2 ms cold).
+                    let hydrate_before = capture_first_frame_hydrate_chrome(&app);
                     app.config.theme.apply_syntax_theme();
                     // Auth plugin dir walk was deferred from `async_main`.
                     {
@@ -1017,7 +1018,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     maybe_session_auto_index(&project_dir, &config, &mut app);
                     refresh_sidebar(&mut app, &config, &file_index);
                     load_app_todos(&mut app);
-                    if !app.toasts.is_empty() {
+                    if first_frame_hydrate_needs_paint(&hydrate_before, &app) {
                         app.mark_dirty();
                     }
                 }
@@ -3995,6 +3996,47 @@ pub(crate) fn apply_panel_update(app: &mut TuiApp, update: whycodes_core::PanelU
         truncate_toast(&format!("panel · {label}"), 48),
     );
     app.mark_dirty();
+}
+
+/// Chrome captured just after the first paint, before deferred hydrate.
+pub(super) struct FirstFrameHydrateChrome {
+    sessions: usize,
+    status: String,
+    file_tree: Vec<String>,
+    mcp_status: Vec<String>,
+}
+
+pub(super) fn capture_first_frame_hydrate_chrome(app: &TuiApp) -> FirstFrameHydrateChrome {
+    FirstFrameHydrateChrome {
+        sessions: app.session_list.sessions.len(),
+        status: app.status_message.clone(),
+        file_tree: app.sidebar.file_tree.clone(),
+        mcp_status: app.sidebar.mcp_status.clone(),
+    }
+}
+
+/// True when first-frame hydrate changed chrome the user can already see.
+///
+/// Empty-project idle home (no recents, same status, hidden sidebar, no
+/// toasts) must not schedule a second paint. MCP / index / plugins still run;
+/// only the unconditional follow-up draw is gated.
+pub(super) fn first_frame_hydrate_needs_paint(
+    before: &FirstFrameHydrateChrome,
+    app: &TuiApp,
+) -> bool {
+    if app.session_list.sessions.len() != before.sessions {
+        return true;
+    }
+    if app.status_message != before.status {
+        return true;
+    }
+    if app.sidebar.visible
+        && (app.sidebar.file_tree != before.file_tree
+            || app.sidebar.mcp_status != before.mcp_status)
+    {
+        return true;
+    }
+    !app.toasts.is_empty()
 }
 
 /// Refresh sidebar lists from the workspace index, config, and session todos.
