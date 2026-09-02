@@ -288,6 +288,60 @@ regression (`should_query_keyboard_enhancement` still skips bench / 0×0).
 Spawn-to-exit at `--idle-ms 0` is **~18 ms**. Idle redraws remain **0.0 /s**.
 MCP / auto-index still start after first paint; no new work was added before it.
 
+### Re-measure, 2026-09-02 (Linux x86_64, release, HEAD `5f6849e`)
+
+Same machine (Intel Core i5-4200H @ 2.80 GHz, CachyOS, kernel 7.2.2-1-cachyos).
+Release binary **16.1 MB** (unstripped size on disk). Recorded JSON:
+[`bench-results.json`](bench-results.json). Process-level only — criterion
+hot paths / index were not re-run; the 2026-08-31 block is still the last
+function-level snapshot.
+
+TUI `run` is **multi-thread Tokio again** (`de15f1a`). Issue #49 had switched
+boot to `current_thread`, which starved agent turns on `event::poll`.
+Paint-then-hydrate from #49 is still in place (deferred syntect, session DB,
+memory SQLite, plugins, index scan, git spawn). First-frame may regress vs
+the 2026-09-01 ~11 ms paint-then-hydrate number; these are the honest
+numbers from this HEAD.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.8 ms** | 2.9 ms | **0.5 MB** |
+| `--help` | **2.2 ms** | 3.2 ms | — |
+| `config show` | **3.2 ms** | 3.9 ms | **8.2 MB** |
+| `session list` | — | — | **12.2 MB** |
+| binary size | **16.1 MB** | — | — |
+
+Startup stays in the 1–3 ms band. Version p95 (2.9 ms) is still far under
+the loose CI ceiling (50 ms / 40 MB).
+
+**Multi-session PSS** (idle TUI, 1.5 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **11.8 MB** | was 8.4 MB on 2026-09-01 |
+| 10 | **30.2 MB** | was 34.5 MB |
+| per added session | **~2.0 MB** | was ~2.9 MB |
+
+One idle session is heavier than the 09-01 row (back toward the 08-17 /
+08-26 band). Ten concurrent sessions are **lighter** than 09-01, so the
+incremental cost per extra process dropped (~2.0 MB vs ~2.9 MB). Still a
+lower bound (idle, no agent turn).
+
+**First frame / idle** (`bench_first_frame.py`, empty project):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **12.5 ms** median | 0.0/s | was 11.1 ms |
+| Harness `--idle-ms 3000` (10 runs) | **14.4 ms** median | **0.3/s** | was 0.0/s |
+
+Spawn-to-exit at `--idle-ms 0` is **53.7 ms** (noisy: min 20.3, max 109.7).
+In-proc TTFF is a small regression vs 09-01 (12.5 vs 11.1 ms), still well
+under the 08-31 **22.6 ms** figure. Idle is no longer a hard zero over the
+3 s window (~one extra paint after hydrate with the worker pool); the
+product claim remains “paint only when something changed,” not a
+frames-per-second race.
+
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do

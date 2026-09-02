@@ -1,54 +1,54 @@
 {
-  "date": "2026-09-01",
-  "git": "6fe4b1d",
+  "date": "2026-09-02",
+  "git": "5f6849e",
   "machine": {
     "platform": "Linux x86_64",
     "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
-    "kernel": "7.1.8-1-cachyos"
+    "kernel": "7.2.2-1-cachyos"
   },
   "binary": "target/release/whycodes",
   "profile": "release",
-  "binary_size_mb": 16.0,
-  "version_ms_p95": 2.32,
-  "version_rss_mb": 0.55,
+  "binary_size_mb": 16.1,
+  "version_ms_p95": 2.88,
+  "version_rss_mb": 0.45,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 1.47,
-      "p95_ms": 2.32,
-      "min_ms": 1.13,
-      "max_ms": 2.32
+      "median_ms": 1.77,
+      "p95_ms": 2.88,
+      "min_ms": 1.34,
+      "max_ms": 2.88
     },
     "help": {
       "runs": 20,
-      "median_ms": 1.95,
-      "p95_ms": 2.57,
-      "min_ms": 1.72,
-      "max_ms": 2.57
+      "median_ms": 2.19,
+      "p95_ms": 3.24,
+      "min_ms": 1.87,
+      "max_ms": 3.24
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 2.57,
-      "p95_ms": 3.49,
-      "min_ms": 2.23,
-      "max_ms": 3.49
+      "median_ms": 3.17,
+      "p95_ms": 3.94,
+      "min_ms": 2.49,
+      "max_ms": 3.94
     }
   },
   "memory": {
     "version": {
       "runs": 5,
-      "median_mb": 0.55,
-      "max_mb": 0.59
+      "median_mb": 0.45,
+      "max_mb": 0.55
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 5.1,
-      "max_mb": 8.0
+      "median_mb": 8.17,
+      "max_mb": 8.71
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 11.8,
-      "max_mb": 11.8
+      "median_mb": 12.24,
+      "max_mb": 12.4
     }
   },
   "multi_session": {
@@ -57,49 +57,49 @@
       "1": {
         "runs": 5,
         "sessions": 1,
-        "median_pss_mb": 8.4,
-        "max_pss_mb": 8.5,
-        "min_pss_mb": 8.2,
+        "median_pss_mb": 11.8,
+        "max_pss_mb": 12.1,
+        "min_pss_mb": 11.7,
         "median_process_count": 1,
         "samples_mb": [
-          8.2,
-          8.4,
-          8.4,
-          8.5,
-          8.5
+          11.7,
+          11.7,
+          11.8,
+          12.0,
+          12.1
         ]
       },
       "10": {
         "runs": 5,
         "sessions": 10,
-        "median_pss_mb": 34.5,
-        "max_pss_mb": 34.8,
-        "min_pss_mb": 34.3,
+        "median_pss_mb": 30.2,
+        "max_pss_mb": 30.3,
+        "min_pss_mb": 30.0,
         "median_process_count": 10,
         "samples_mb": [
-          34.3,
-          34.4,
-          34.5,
-          34.8,
-          34.8
+          30.0,
+          30.1,
+          30.2,
+          30.2,
+          30.3
         ],
-        "extra_over_one_mb": 26.1,
-        "per_added_session_mb": 2.9
+        "extra_over_one_mb": 18.4,
+        "per_added_session_mb": 2.0
       }
     }
   },
-  "first_frame_note": "Paint, then hydrate (issue #49): deferred syntect, session DB, memory SQLite, plugins, index scan, and git spawn from before first paint. Same 80x24 harness PTY as 2026-08-26. Idle still 0.0/s. In-proc TTFF ~11 ms (was 23 ms); spawn-to-exit ~18 ms.",
+  "first_frame_note": "TUI `run` is multi-thread Tokio again (de15f1a; #49 had used current_thread, which starved turns on event::poll). Paint-then-hydrate from #49 is still in place. Same 80x24 harness PTY as 2026-08-26. In-proc TTFF 12.5 ms median (was 11.1 ms on 2026-09-01) — a small regression vs paint-then-hydrate, still well under the 08-31 22.6 ms current-thread-era figure. Spawn-to-exit at --idle-ms 0 is 53.7 ms (noisy; min 20.3, max 109.7). Idle draws 0.3/s over 3 s (was 0.0/s) — one extra paint after hydrate is plausible with the worker pool.",
   "first_frame_harness": {
-    "median_ms": 11.1,
-    "min_ms": 9.8,
-    "max_ms": 14.2,
+    "median_ms": 12.5,
+    "min_ms": 11.6,
+    "max_ms": 27.0,
     "runs": 12,
     "idle_ms": 0
   },
   "idle_draws_harness": {
-    "median_per_s": 0.0,
+    "median_per_s": 0.32,
     "window_ms": 3000,
-    "first_frame_median_ms": 12.4
+    "first_frame_median_ms": 14.4
   },
   "hot_paths": {
     "assess": {

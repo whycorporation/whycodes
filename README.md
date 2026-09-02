@@ -124,16 +124,16 @@ configuration — is in **[docs/guide.md](docs/guide.md)**.
 
 ## Performance
 
-Idle TUI, Linux x86_64, 2026-09-01 (method and machine in
+Idle TUI, Linux x86_64, 2026-09-02 (method and machine in
 [docs/benchmarks.md](docs/benchmarks.md)):
 
 | Metric | Result |
 |---|---|
-| 1 session PSS | **8.4 MB** |
-| 10 sessions PSS | **34.5 MB** (~2.9 MB each extra) |
-| `--version` | **1.5 ms** |
-| First frame (harness, in-proc) | **11 ms** |
-| Idle redraws (harness, 3 s) | **0.0 /s** |
+| 1 session PSS | **11.8 MB** |
+| 10 sessions PSS | **30.2 MB** (~2.0 MB each extra) |
+| `--version` | **1.8 ms** |
+| First frame (harness, in-proc) | **13 ms** |
+| Idle redraws (harness, 3 s) | **0.3 /s** |
 
 The TUI paints only when something changed: the idle target is **0
 redraws/s**, not a frames-per-second race.
