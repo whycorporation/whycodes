@@ -1596,4 +1596,326 @@ mod permission_detail_tests {
             empty.content
         );
     }
+
+    fn init_git_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        use std::process::Command;
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().to_path_buf();
+        assert!(
+            Command::new("git")
+                .args(["init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let _ = Command::new("git")
+            .args(["config", "user.email", "test@whycodes.local"])
+            .current_dir(&root)
+            .status();
+        let _ = Command::new("git")
+            .args(["config", "user.name", "whycodes-test"])
+            .current_dir(&root)
+            .status();
+        std::fs::write(root.join("a.txt"), b"base-a\n").unwrap();
+        assert!(
+            Command::new("git")
+                .args(["add", "."])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(
+            Command::new("git")
+                .args(["commit", "-m", "init"])
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success()
+        );
+        (dir, root)
+    }
+
+    fn scripted_test_agent(steps: impl IntoIterator<Item = whycodes_llm::ScriptedStep>) -> Agent {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+            "script", steps,
+        )));
+        test_agent().with_provider_registry(registry)
+    }
+
+    #[tokio::test]
+    async fn execute_background_shell_starts_lists_reads_and_kills() {
+        let a = test_agent();
+        let dir = tempfile::tempdir().unwrap();
+        let session =
+            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        let ctx = a.tool_context(&session);
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let started = a.execute_background_shell(
+            &tc(
+                "bash",
+                json!({"command": "sleep 30", "description": "bg-sleep"}),
+            ),
+            &ctx,
+            Some(&tx),
+        );
+        assert!(!started.is_error, "{started:?}");
+        assert!(started.content.contains("Background job"), "{started:?}");
+
+        let listed = a.execute_bg_tool(&tc("bg", json!({"action": "list"})));
+        assert!(!listed.is_error, "{listed:?}");
+        assert!(listed.content.contains("bg-"), "{listed:?}");
+
+        let id = listed
+            .content
+            .split_whitespace()
+            .find(|w| w.starts_with("bg-"))
+            .unwrap_or("bg-1")
+            .trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+            .to_string();
+
+        let read = a.execute_bg_tool(&tc(
+            "bg",
+            json!({"action": "read", "id": id, "max_chars": 32}),
+        ));
+        assert!(!read.is_error, "{read:?}");
+
+        let killed = a.execute_bg_tool(&tc("bg", json!({"action": "kill", "id": id})));
+        assert!(!killed.is_error, "{killed:?}");
+        a.background.kill_all();
+    }
+
+    #[tokio::test]
+    async fn execute_background_shell_errors_when_job_cap_hit() {
+        let a = test_agent();
+        a.background.set_max_jobs(1);
+        let dir = tempfile::tempdir().unwrap();
+        let session =
+            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        let ctx = a.tool_context(&session);
+        let first =
+            a.execute_background_shell(&tc("bash", json!({"command": "sleep 30"})), &ctx, None);
+        assert!(!first.is_error, "{first:?}");
+        let full =
+            a.execute_background_shell(&tc("bash", json!({"command": "echo hi"})), &ctx, None);
+        assert!(full.is_error, "{full:?}");
+        assert!(
+            full.content.to_lowercase().contains("too many")
+                || full.content.to_lowercase().contains("max"),
+            "{}",
+            full.content
+        );
+        a.background.kill_all();
+    }
+
+    #[test]
+    fn execute_worktree_tool_create_enter_exit_remove_on_git_repo() {
+        let a = test_agent();
+        let (_keep, root) = init_git_repo();
+        let session = whycodes_session::session::Session::new(root.clone(), "sys".into());
+
+        let created = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "create", "name": "feat-cov"})),
+            &session,
+        );
+        assert!(!created.is_error, "{created:?}");
+        assert!(created.content.contains("Created worktree"), "{created:?}");
+
+        let dup = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "create", "name": "feat-cov"})),
+            &session,
+        );
+        assert!(dup.is_error, "{dup:?}");
+
+        let enter = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "enter", "name": "feat-cov"})),
+            &session,
+        );
+        assert!(!enter.is_error, "{enter:?}");
+        assert!(enter.content.contains("Tool cwd"), "{enter:?}");
+
+        let listed = a.execute_worktree_tool(&tc("worktree", json!({"action": "list"})), &session);
+        assert!(!listed.is_error, "{listed:?}");
+        assert!(listed.content.contains("feat-cov"), "{listed:?}");
+        assert!(listed.content.contains("Active cwd"), "{listed:?}");
+
+        let exit = a.execute_worktree_tool(&tc("worktree", json!({"action": "exit"})), &session);
+        assert!(!exit.is_error, "{exit:?}");
+        assert!(exit.content.contains("Restored tool cwd"), "{exit:?}");
+
+        let removed = a.execute_worktree_tool(
+            &tc("worktree", json!({"action": "remove", "name": "feat-cov"})),
+            &session,
+        );
+        assert!(!removed.is_error, "{removed:?}");
+        assert!(removed.content.contains("Removed worktree"), "{removed:?}");
+    }
+
+    #[tokio::test]
+    async fn execute_schedule_tool_command_and_goal() {
+        let a = test_agent();
+        let dir = tempfile::tempdir().unwrap();
+        let session =
+            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        let ctx = a.tool_context(&session);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let scheduled = a
+            .execute_schedule_tool(
+                &tc(
+                    "schedule",
+                    json!({
+                        "command": "echo scheduled",
+                        "goal": "follow up",
+                        "description": "cov",
+                        "after_secs": 0
+                    }),
+                ),
+                &ctx,
+                Some(&tx),
+            )
+            .await;
+        assert!(!scheduled.is_error, "{scheduled:?}");
+        assert!(scheduled.content.contains("Scheduled"), "{scheduled:?}");
+
+        let mut saw_prompt = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(400);
+        while std::time::Instant::now() < deadline {
+            match rx.try_recv() {
+                Ok(TurnEvent::EnqueuePrompt { text }) => {
+                    assert_eq!(text, "follow up");
+                    saw_prompt = true;
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+            }
+        }
+        assert!(saw_prompt, "expected EnqueuePrompt from schedule goal");
+        a.background.kill_all();
+    }
+
+    #[tokio::test]
+    async fn execute_swarm_tool_runs_scripted_workers() {
+        let mut a = scripted_test_agent([whycodes_llm::ScriptedStep::Text("worker-ok".into())]);
+        a.swarm_enabled = true;
+        a.swarm_worktrees = false;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("note.txt"), "n").unwrap();
+        let session =
+            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let out = a
+            .execute_swarm_tool(
+                &tc(
+                    "swarm",
+                    json!({
+                        "max_concurrent": 2,
+                        "tasks": [
+                            {
+                                "goal": "summarize note.txt",
+                                "subagent_type": "explore",
+                                "paths": ["note.txt"],
+                                "max_turns": 1
+                            },
+                            {
+                                "goal": "list files",
+                                "subagent_type": "general",
+                                "max_turns": 1
+                            }
+                        ]
+                    }),
+                ),
+                &session,
+                "script",
+                "m",
+                "k",
+                Some(&tx),
+            )
+            .await;
+        assert!(!out.is_error, "{out:?}");
+        assert!(
+            out.content.to_lowercase().contains("swarm")
+                || out.content.to_lowercase().contains("worker"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_swarm_tool_disabled_branch() {
+        let mut a = test_agent();
+        a.swarm_enabled = false;
+        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let off = a
+            .execute_swarm_tool(
+                &tc("swarm", json!({"tasks": [{"goal": "x"}]})),
+                &session,
+                "script",
+                "m",
+                "k",
+                None,
+            )
+            .await;
+        assert!(off.is_error, "{off:?}");
+        assert!(
+            off.content.to_lowercase().contains("disabled"),
+            "{}",
+            off.content
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_task_tool_explore_and_general() {
+        let a = scripted_test_agent([whycodes_llm::ScriptedStep::Text("task-ok".into())]);
+        let dir = tempfile::tempdir().unwrap();
+        let session =
+            whycodes_session::session::Session::new(dir.path().to_path_buf(), "sys".into());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let explore = a
+            .execute_task_tool(
+                &tc(
+                    "task",
+                    json!({
+                        "goal": "inspect the tree",
+                        "context": "unit test",
+                        "subagent_type": "explore",
+                        "max_turns": 1
+                    }),
+                ),
+                &session,
+                "script",
+                "m",
+                "k",
+                Some(&tx),
+            )
+            .await;
+        assert!(!explore.is_error, "{explore:?}");
+        assert!(explore.content.contains("task-ok"), "{explore:?}");
+
+        let general = a
+            .execute_task_tool(
+                &tc(
+                    "task",
+                    json!({
+                        "goal": "do the work",
+                        "subagent_type": "general",
+                        "max_turns": 1
+                    }),
+                ),
+                &session,
+                "script",
+                "m",
+                "k",
+                None,
+            )
+            .await;
+        assert!(!general.is_error, "{general:?}");
+        assert!(general.content.contains("task-ok"), "{general:?}");
+    }
 }

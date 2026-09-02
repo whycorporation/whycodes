@@ -3029,3 +3029,102 @@ async fn cmd_auth_login_stub_stores_credential() {
     .unwrap();
     unsafe { std::env::remove_var("WHYCODES_TEST_AUTH_LOGIN") };
 }
+
+#[tokio::test]
+async fn cmd_generate_stream_json_and_run_init_agents_md() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "init-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-stream");
+    }
+    let proj = home.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("README.md"), "# demo\n").unwrap();
+    std::fs::write(proj.join("Cargo.toml"), "[package]\nname=\"demo\"\n").unwrap();
+
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    c.model = Some("claude-test".into());
+
+    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::StreamJson)
+        .await
+        .unwrap();
+    cmd_generate(
+        &c,
+        &["a".into(), "b".into(), "".into()],
+        Some(1),
+        2,
+        OutputFormat::StreamJson,
+    )
+    .await
+    .unwrap();
+
+    let mut agent = Agent::new(agent_info_for(&c, &whycodes_config::Config::default()));
+    maybe_inject_test_llm(&mut agent, "anthropic");
+    let path = run_init_agents_md(&proj, &agent, "anthropic", "claude-test", "sk-test-stream")
+        .await
+        .unwrap();
+    assert!(path.contains("AGENTS.md"), "{path}");
+    assert!(proj.join("AGENTS.md").exists());
+
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_plain_resume_existing_session() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "resume-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-resume");
+    }
+    let proj = home.path().join("proj");
+    std::fs::create_dir_all(&proj).unwrap();
+
+    let import_path = home.path().join("chat.json");
+    std::fs::write(
+        &import_path,
+        r#"[{"role":"user","content":"hello resume"},{"role":"assistant","content":"hi"}]"#,
+    )
+    .unwrap();
+    cmd_session(&SessionCmd::Import {
+        path: import_path,
+        from: "json".into(),
+    })
+    .await
+    .unwrap();
+    let db = open_db().unwrap();
+    let sessions = db.list_sessions().unwrap();
+    assert!(!sessions.is_empty());
+    let id = sessions[0].id.clone();
+
+    install_test_repl_lines([
+        format!("/resume {id}"),
+        "/resume missing-id".into(),
+        "/continue".into(),
+        "/connect".into(),
+        "/q".into(),
+    ]);
+
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
+}
