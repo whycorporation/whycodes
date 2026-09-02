@@ -3009,3 +3009,23 @@ async fn cmd_upgrade_downloads_and_replaces_target() {
     assert_eq!(result.as_deref(), Some("99.0.0"));
     assert_eq!(std::fs::read(&target).unwrap(), b"new");
 }
+
+#[tokio::test]
+async fn cmd_auth_login_stub_stores_credential() {
+    let _home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe { std::env::set_var("WHYCODES_TEST_AUTH_LOGIN", "1") };
+    cmd_auth(&AuthCmd::Login {
+        provider: "anthropic".into(),
+        no_browser: true,
+    })
+    .await
+    .unwrap();
+    cmd_auth(&AuthCmd::Status).await.unwrap();
+    cmd_auth(&AuthCmd::Logout {
+        provider: "anthropic".into(),
+    })
+    .await
+    .unwrap();
+    unsafe { std::env::remove_var("WHYCODES_TEST_AUTH_LOGIN") };
+}

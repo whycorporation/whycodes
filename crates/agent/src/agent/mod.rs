@@ -1521,4 +1521,79 @@ mod permission_detail_tests {
         assert_eq!(key, "sk-test");
         assert!(user.contains("retry"));
     }
+
+    #[tokio::test]
+    async fn execute_schedule_tool_requires_command_or_prompt() {
+        let a = test_agent();
+        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let ctx = a.tool_context(&session);
+        let empty = a
+            .execute_schedule_tool(&tc("schedule", json!({})), &ctx, None)
+            .await;
+        assert!(empty.is_error, "{empty:?}");
+        assert!(
+            empty.content.contains("command") || empty.content.contains("prompt"),
+            "{}",
+            empty.content
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_swarm_tool_disabled_and_empty_tasks() {
+        let a = test_agent();
+        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let off = a
+            .execute_swarm_tool(&tc("swarm", json!({})), &session, "script", "m", "k", None)
+            .await;
+        assert!(off.is_error, "{off:?}");
+        assert!(
+            off.content.to_lowercase().contains("disabled")
+                || off.content.to_lowercase().contains("swarm"),
+            "{}",
+            off.content
+        );
+
+        let mut on = test_agent();
+        on.swarm_enabled = true;
+        let empty = on
+            .execute_swarm_tool(
+                &tc("swarm", json!({"tasks": []})),
+                &session,
+                "script",
+                "m",
+                "k",
+                None,
+            )
+            .await;
+        assert!(empty.is_error, "{empty:?}");
+    }
+
+    #[tokio::test]
+    async fn execute_task_tool_requires_goal() {
+        let a = test_agent();
+        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let empty = a
+            .execute_task_tool(&tc("task", json!({})), &session, "script", "m", "k", None)
+            .await;
+        assert!(empty.is_error, "{empty:?}");
+        assert!(
+            empty.content.to_lowercase().contains("goal"),
+            "{}",
+            empty.content
+        );
+    }
+
+    #[test]
+    fn execute_background_shell_requires_command() {
+        let a = test_agent();
+        let session = whycodes_session::session::Session::new("/tmp/proj".into(), "sys".into());
+        let ctx = a.tool_context(&session);
+        let empty = a.execute_background_shell(&tc("bash", json!({})), &ctx, None);
+        assert!(empty.is_error, "{empty:?}");
+        assert!(
+            empty.content.to_lowercase().contains("command"),
+            "{}",
+            empty.content
+        );
+    }
 }

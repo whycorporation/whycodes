@@ -12,13 +12,31 @@ pub(crate) async fn cmd_auth(cmd: &AuthCmd) -> anyhow::Result<()> {
             provider,
             no_browser,
         } => {
-            if !whycodes_auth::providers::supports_oauth(provider) {
+            let test_login = std::env::var_os("WHYCODES_TEST_AUTH_LOGIN").is_some();
+            if !test_login && !whycodes_auth::providers::supports_oauth(provider) {
                 anyhow::bail!(
                     "provider `{provider}` does not support OAuth login (supported: {})",
                     oauth_provider_list()
                 );
             }
-            whycodes_auth::providers::login(provider, &store, !no_browser).await?;
+            // Unit tests skip the browser/PKCE loop; production always hits
+            // `providers::login`.
+            if test_login {
+                store.set(
+                    provider,
+                    whycodes_auth::ProviderAuth {
+                        method: "oauth".into(),
+                        token: whycodes_auth::OAuthToken {
+                            access_token: "test-access".into(),
+                            refresh_token: None,
+                            expires_at: None,
+                            extra: Default::default(),
+                        },
+                    },
+                )?;
+            } else {
+                whycodes_auth::providers::login(provider, &store, !no_browser).await?;
+            }
             println!(
                 "{} Logged in to {} — credential stored in {}",
                 "✓".green(),
