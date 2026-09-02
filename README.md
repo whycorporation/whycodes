@@ -135,8 +135,7 @@ Idle TUI, Linux x86_64, 2026-09-02 (method and machine in
 | First frame (harness, in-proc) | **13 ms** |
 | Idle redraws (harness, 3 s) | **0.3 /s** |
 
-The TUI paints only when something changed: the idle target is **0
-redraws/s**, not a frames-per-second race.
+The TUI paints only when something changed. This run’s 3 s harness idle is **0.3 redraws/s** (one extra paint after hydrate); the product target is still **0 redraws/s**, not a frames-per-second race.
 
 Workspace line coverage is **85.58%** (Linux x86_64, 2026-08-21). CI fails
 below 82%, with twelve foundational crates held at 100% production-code line
