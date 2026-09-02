@@ -9,6 +9,10 @@ impl WorkspaceIndex {
     fn cancel_only(&self) {
         self.shared.cancel.store(true, Ordering::Relaxed);
     }
+
+    fn send_batch(&self, changes: Vec<Change>) {
+        let _ = self.shared.cmd_tx.send(Command::Batch(changes));
+    }
 }
 
 fn fixture() -> tempfile::TempDir {
@@ -532,6 +536,43 @@ fn apply_changes_upsert_and_remove() {
         rel: "nope.rs".into(),
         kind: ChangeKind::Remove,
     }]);
+}
+
+/// Drive `scanner_main`'s `RecvAct::Batch` arm through the command channel.
+/// Coverage skips `watcher_picks_up_changes` (notify flake under llvm-cov),
+/// so this is the deterministic path that keeps those two `lib.rs` lines
+/// at the 100% floor.
+#[test]
+fn scanner_applies_batched_command() {
+    let dir = fixture();
+    let idx = WorkspaceIndex::start_with(
+        vec![dir.path().to_path_buf()],
+        IndexOptions {
+            watch: false,
+            threads: 1,
+            ..Default::default()
+        },
+    );
+    assert!(idx.wait_ready(Duration::from_secs(10)));
+    fs::write(dir.path().join("src/batch.rs"), "// batch").unwrap();
+    idx.send_batch(vec![Change {
+        root: 0,
+        rel: "src/batch.rs".into(),
+        kind: ChangeKind::Upsert,
+    }]);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let appeared = loop {
+        let mut found = false;
+        idx.visit(&mut |e| {
+            found |= &*e.rel == "src/batch.rs";
+            true
+        });
+        if found || Instant::now() >= deadline {
+            break found;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(appeared, "scanner_main must apply Command::Batch");
 }
 
 #[test]

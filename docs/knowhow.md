@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — Coverage skips watcher test, index floor drops 2 lines
+
+**Symptom:** `Coverage (line floor)` fails `whycodes-index: 796/798 lines 99.7%`
+after llvm-cov is found. `lib.rs` 590/10 missed, 367/2 regions.
+
+**Root cause:** The coverage job `--skip tests::watcher_picks_up_changes`
+(notify flake). That was the only path hitting `scanner_main`'s
+`RecvAct::Batch` + `pending.extend` / `apply_changes` apply. Direct
+`apply_changes` tests do not execute the loop arms.
+
+**Fix:** `scanner_applies_batched_command` sends `Command::Batch` on the
+channel with `watch: false` (no notify). Same 100% floor, no flake.
+
+**Prevention:** Do not rely on skipped flake tests for a 100% crate floor.
+Channel-inject the command instead of waiting on inotify.
+
+---
+
 ### 2026-09-02 — Coverage wrapper: rustup llvm-cov is not on PATH
 
 **Symptom:** CI `Coverage (line floor)` fails immediately with
