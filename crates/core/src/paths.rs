@@ -86,3 +86,34 @@ pub(crate) fn strip_windows_verbatim_prefix(s: &str) -> Cow<'_, str> {
     }
     Cow::Borrowed(s)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_strip_project_dir_and_or_dot() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\C:\foo").as_ref(),
+            r"C:\foo"
+        );
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\d:\bar").as_ref(),
+            r"d:\bar"
+        );
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\srv\share").as_ref(),
+            r"\\srv\share"
+        );
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\pipe\name").as_ref(),
+            r"\\?\pipe\name"
+        );
+        assert_eq!(strip_windows_verbatim_prefix("/tmp/a").as_ref(), "/tmp/a");
+        assert_eq!(display_path(Path::new("/tmp/a")), "/tmp/a");
+        assert_eq!(project_dir(Path::new("/w")), PathBuf::from("/w/.whycodes"));
+        assert_eq!(or_dot(None), PathBuf::from("."));
+        assert_eq!(or_dot(Some(PathBuf::from("/x"))), PathBuf::from("/x"));
+        assert_eq!(config_file().file_name().unwrap(), "config.toml");
+    }
+}

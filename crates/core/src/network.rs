@@ -209,3 +209,51 @@ pub fn parse_domain_list(raw: &str) -> Vec<String> {
         .map(|s| s.to_string())
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_url_and_pattern_helpers() {
+        let open = NetworkPolicy::unrestricted();
+        assert!(!open.is_restricted());
+        assert!(open.ensure_url_allowed("https://example.com").is_ok());
+        assert!(!open.is_host_allowed(""));
+        assert!(open.is_host_allowed("example.com"));
+
+        let deny = NetworkPolicy {
+            allowlist: vec!["example.com".into()],
+            denylist: vec!["blocked.example.com".into()],
+        };
+        assert!(deny.is_restricted());
+        assert!(deny.ensure_url_allowed("https://api.example.com/x").is_ok());
+        assert!(deny.check_url("https://api.example.com/x").is_ok());
+        let blocked = deny.check_url("https://blocked.example.com/x").unwrap_err();
+        assert!(blocked.contains("Denied patterns"));
+        assert!(blocked.contains("Allowed patterns"));
+        assert!(deny.ensure_url_allowed("https://evil.test").is_err());
+
+        assert_eq!(
+            host_from_url("https://USER:pw@Example.COM.:443/a?q=1#h").unwrap(),
+            "example.com"
+        );
+        assert_eq!(host_from_url("http://[::1]/x").unwrap(), "::1");
+        assert!(host_from_url("").is_err());
+        assert!(host_from_url("ftp://x").is_err());
+        assert!(host_from_url("example.com").is_err());
+        assert!(host_from_url("https://").is_err());
+        assert!(host_from_url("https:///nohost").is_err());
+        assert!(host_from_url("https://[::1").is_err());
+        assert_eq!(normalize_host("[::1]"), "::1");
+        assert!(host_matches_pattern("a.example.com", "*.example.com"));
+        assert!(!host_matches_pattern("example.com", "*.example.com"));
+        assert!(host_matches_pattern("a.example.com", "example.com"));
+        assert!(host_matches_pattern("x", "*"));
+        assert!(!host_matches_pattern("", "example.com"));
+        assert_eq!(
+            parse_domain_list("a.com, b.com\nc.com"),
+            vec!["a.com", "b.com", "c.com"]
+        );
+    }
+}

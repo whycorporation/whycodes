@@ -875,3 +875,192 @@ pub struct SessionInfo {
     pub message_count: usize,
     pub project_path: PathBuf,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn empty_perms() -> PermissionSet {
+        PermissionSet {
+            allowed_tools: None,
+            denied_tools: None,
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            allowed_paths: None,
+            rules: HashMap::new(),
+        }
+    }
+
+    fn provider(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn messages_usage_permissions_and_providers() {
+        let stamped = Message {
+            role: Role::User,
+            content: MessageContent::text("hi"),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }
+        .stamp();
+        assert!(stamped.created_at.is_some());
+        let already = stamped.clone().stamp();
+        assert_eq!(already.created_at, stamped.created_at);
+
+        assert_eq!(MessageContent::text("a").as_text(), Some("a"));
+        let blocks = MessageContent::Blocks(vec![ContentBlock::Text { text: "b".into() }]);
+        assert_eq!(blocks.as_text(), Some("b"));
+        let thinking = ContentBlock::Thinking {
+            text: "t".into(),
+            signature: None,
+        };
+        assert!(thinking.is_thinking());
+        assert!(ContentBlock::RedactedThinking { data: "d".into() }.is_thinking());
+        assert!(!ContentBlock::Text { text: "x".into() }.is_thinking());
+        let stripped = strip_trailing_thinking(&[
+            ContentBlock::Text {
+                text: "keep".into(),
+            },
+            thinking,
+        ]);
+        assert_eq!(stripped.len(), 1);
+
+        let mut usage = Usage {
+            input_tokens: 1,
+            output_tokens: 2,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        };
+        usage.add(&Usage {
+            input_tokens: 3,
+            output_tokens: 4,
+            cache_creation_input_tokens: Some(5),
+            cache_read_input_tokens: Some(6),
+        });
+        usage.absorb_stream(10, 1);
+        usage.absorb_stream_cache(9, 8);
+        assert!(usage.total() > 0);
+        assert!(!usage.is_empty());
+        assert!(
+            Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+            }
+            .is_empty()
+        );
+
+        for mode in ApprovalMode::ALL {
+            assert_eq!(ApprovalMode::parse(mode.as_str()), Some(mode));
+            assert!(!mode.label().is_empty());
+            assert!(!mode.description().is_empty());
+            assert_eq!(mode.to_string(), mode.as_str());
+        }
+        assert_eq!(ApprovalMode::parse("dontask"), Some(ApprovalMode::Auto));
+        assert_eq!(ApprovalMode::parse("ask"), Some(ApprovalMode::Important));
+        assert_eq!(ApprovalMode::parse("always"), Some(ApprovalMode::Manual));
+        assert_eq!(ApprovalMode::parse("nope"), None);
+
+        assert_eq!(
+            PermissionAction::parse("yes"),
+            Some(PermissionAction::Allow)
+        );
+        assert_eq!(
+            PermissionAction::parse("prompt"),
+            Some(PermissionAction::Ask)
+        );
+        assert_eq!(
+            PermissionAction::parse("block"),
+            Some(PermissionAction::Deny)
+        );
+        assert_eq!(PermissionAction::parse("???"), None);
+
+        let mut perms = empty_perms();
+        perms.rules.insert("bash".into(), PermissionAction::Deny);
+        assert_eq!(perms.action_for("bash"), PermissionAction::Deny);
+        perms.rules.clear();
+        perms.rules.insert("web*".into(), PermissionAction::Ask);
+        assert_eq!(perms.action_for("webfetch"), PermissionAction::Ask);
+        perms.rules.clear();
+        perms.rules.insert("*".into(), PermissionAction::Allow);
+        assert_eq!(perms.action_for("unknown"), PermissionAction::Allow);
+        perms.rules.clear();
+        perms.denied_tools = Some(vec!["secret".into()]);
+        assert_eq!(perms.action_for("secret"), PermissionAction::Deny);
+        perms.denied_tools = None;
+        perms.allowed_tools = Some(vec!["read".into()]);
+        assert_eq!(perms.action_for("write"), PermissionAction::Deny);
+        perms.allowed_tools = None;
+        perms.allow_file_writes = false;
+        assert_eq!(perms.action_for("edit"), PermissionAction::Deny);
+        perms.allow_file_writes = true;
+        perms.allow_shell = false;
+        assert_eq!(perms.action_for("shell"), PermissionAction::Deny);
+        perms.allow_shell = true;
+        perms.allow_network = false;
+        assert_eq!(perms.action_for("webfetch"), PermissionAction::Deny);
+        perms.allow_network = true;
+        assert_eq!(perms.action_for("browser"), PermissionAction::Ask);
+        assert!(perms.is_tool_allowed("read"));
+
+        let names = [
+            "openai",
+            "anthropic",
+            "groq",
+            "deepseek",
+            "google",
+            "gemini",
+            "google-antigravity",
+            "azure",
+            "azure_openai",
+            "openrouter",
+            "together",
+            "together_ai",
+            "fireworks",
+            "fireworks_ai",
+            "mistral",
+            "cohere",
+            "perplexity",
+            "xai",
+            "ollama",
+            "unknown-provider",
+        ];
+        for name in names {
+            let url = provider(name).resolve_url("m");
+            assert!(url.contains("/chat/completions"), "{name}: {url}");
+        }
+        let custom = ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: Some("https://api.example/v1/".into()),
+            base_url: Some("https://override/v1/".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: Some(ToolArgumentsFormat::Object),
+            extra: HashMap::new(),
+        };
+        assert_eq!(
+            custom.resolve_url("m"),
+            "https://override/v1/chat/completions"
+        );
+        assert_eq!(custom.tool_arguments_format(), ToolArgumentsFormat::Object);
+        assert_eq!(
+            provider("x").tool_arguments_format(),
+            ToolArgumentsFormat::JsonString
+        );
+    }
+}

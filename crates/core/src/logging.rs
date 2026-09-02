@@ -688,3 +688,31 @@ impl tracing::field::Visit for JsonVisitor {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_event_dirs_and_jsonl() {
+        let ev = LogEvent::new("src", "info", "hello")
+            .with_sid("sid-1")
+            .with_ctx(serde_json::json!({"k": 1}));
+        assert_eq!(ev.src, "src");
+        assert_eq!(ev.sid.as_deref(), Some("sid-1"));
+        assert!(ev.ctx.is_some());
+
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = LogDirs::from_data_dir(dir.path());
+        dirs.ensure().unwrap();
+        assert!(dirs.unified_jsonl().ends_with("unified.jsonl"));
+        assert!(
+            dirs.crash_report_path("stamp")
+                .to_string_lossy()
+                .contains("stamp")
+        );
+        append_jsonl(&dirs.unified_jsonl(), &ev).unwrap();
+        let written = std::fs::read_to_string(dirs.unified_jsonl()).unwrap();
+        assert!(written.contains("hello"));
+    }
+}

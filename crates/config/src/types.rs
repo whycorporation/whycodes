@@ -1351,3 +1351,116 @@ fn run_inline_shell(cmd: &str) -> String {
         Err(e) => format!("(command failed: {})", e),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mcp(
+        command: Option<&str>,
+        url: Option<&str>,
+        transport: Option<McpTransportKind>,
+    ) -> McpServerConfig {
+        McpServerConfig {
+            transport,
+            command: command.map(str::to_string),
+            args: vec![],
+            env: None,
+            cwd: None,
+            url: url.map(str::to_string),
+            headers: None,
+        }
+    }
+
+    #[test]
+    fn mcp_notify_hooks_and_discord() {
+        assert_eq!(
+            mcp(Some("npx"), None, None).resolved_transport().unwrap(),
+            McpTransportKind::Stdio
+        );
+        assert_eq!(
+            mcp(None, Some("https://mcp.example"), None)
+                .resolved_transport()
+                .unwrap(),
+            McpTransportKind::Auto
+        );
+        assert!(mcp(None, None, None).resolved_transport().is_err());
+        assert!(
+            mcp(None, None, Some(McpTransportKind::Stdio))
+                .resolved_transport()
+                .is_err()
+        );
+        assert!(
+            mcp(None, None, Some(McpTransportKind::Http))
+                .resolved_transport()
+                .is_err()
+        );
+        assert!(
+            mcp(None, None, Some(McpTransportKind::Sse))
+                .resolved_transport()
+                .is_err()
+        );
+        assert!(
+            mcp(None, None, Some(McpTransportKind::Auto))
+                .resolved_transport()
+                .is_err()
+        );
+        let remote = mcp(None, Some("https://x"), Some(McpTransportKind::Http));
+        assert!(remote.is_remote());
+        assert!(!mcp(Some("npx"), None, Some(McpTransportKind::Stdio)).is_remote());
+
+        let mut notify = NotifyConfig::default();
+        assert!(!notify.wants(NotifyEvent::TurnDone));
+        assert!(!notify.has_channel());
+        notify.on = vec!["turn_done".into(), "need-input".into()];
+        notify.discord_webhook = Some(" https://discord.com/api/webhooks/1/t ".into());
+        assert!(notify.wants(NotifyEvent::TurnDone));
+        assert!(notify.wants(NotifyEvent::NeedInput));
+        assert!(notify.has_channel());
+        assert!(notify.enabled_for(NotifyEvent::TurnDone));
+        assert_eq!(
+            notify.discord_webhook_url(),
+            Some("https://discord.com/api/webhooks/1/t")
+        );
+        notify.telegram_bot_token = Some(" tok ".into());
+        notify.telegram_chat_id = Some(" chat ".into());
+        assert_eq!(notify.telegram_token(), Some("tok"));
+        assert_eq!(notify.telegram_chat(), Some("chat"));
+        let overlay = NotifyConfig {
+            on: vec!["turn_done".into()],
+            discord_webhook: Some("https://other".into()),
+            telegram_bot_token: Some("b".into()),
+            telegram_chat_id: Some("c".into()),
+            timeout_secs: 12,
+        };
+        let merged = notify.merge_with(&overlay);
+        assert_eq!(merged.timeout_secs, 12);
+
+        assert_eq!(NotifyEvent::TurnDone.as_str(), "turn_done");
+        assert_eq!(NotifyEvent::NeedInput.as_str(), "need_input");
+        assert_eq!(NotifyEvent::parse("done"), Some(NotifyEvent::TurnDone));
+        assert_eq!(NotifyEvent::parse("input"), Some(NotifyEvent::NeedInput));
+        assert_eq!(NotifyEvent::parse("nope"), None);
+        assert_eq!(
+            parse_notify_on_csv("turn_done, need_input"),
+            vec!["turn_done", "need_input"]
+        );
+
+        assert_eq!(HookEvent::default(), HookEvent::PreTool);
+        let hook_json = serde_json::to_string(&HookEvent::PostTool).unwrap();
+        assert!(hook_json.contains("post_tool"));
+
+        assert!(is_discord_webhook_url(
+            "https://discord.com/api/webhooks/123456789012345678/abcdefghijklmnopqrstuvwxyz"
+        ));
+        assert!(is_discord_webhook_url(
+            "https://discordapp.com/api/webhooks/1/token"
+        ));
+        assert!(!is_discord_webhook_url(
+            "https://example.com/api/webhooks/1/t"
+        ));
+        assert!(!is_discord_webhook_url("not-a-url"));
+        assert!(!is_discord_webhook_url("https://discord.com/api/webhooks/"));
+        assert_eq!(CONFIG_SCHEMA_VERSION, 1);
+    }
+}

@@ -179,3 +179,84 @@ pub fn terminal_count(todos: &[TodoItem]) -> usize {
 pub fn all_terminal(todos: &[TodoItem]) -> bool {
     !todos.is_empty() && todos.iter().all(|t| t.status.is_terminal())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_item_persist_and_merge() {
+        for (s, mark) in [
+            (TodoStatus::Pending, "☐"),
+            (TodoStatus::InProgress, "▶"),
+            (TodoStatus::Completed, "☑"),
+            (TodoStatus::Cancelled, "✗"),
+        ] {
+            assert!(!s.as_str().is_empty());
+            assert_eq!(s.mark(), mark);
+        }
+        assert!(!TodoStatus::Pending.is_terminal());
+        assert!(TodoStatus::Completed.is_terminal());
+        assert_eq!(TodoStatus::parse("in_progress"), TodoStatus::InProgress);
+        assert_eq!(TodoStatus::parse("completed"), TodoStatus::Completed);
+        assert_eq!(TodoStatus::parse("cancelled"), TodoStatus::Cancelled);
+        assert_eq!(TodoStatus::parse("nope"), TodoStatus::Pending);
+        assert_eq!(TodoStatus::default(), TodoStatus::Pending);
+
+        let json = r#"["pending","in_progress","completed","cancelled","x"]"#;
+        let parsed: Vec<TodoStatus> = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed[0], TodoStatus::Pending);
+        assert_eq!(parsed[4], TodoStatus::Pending);
+
+        let item = TodoItem::new("1", "do it", TodoStatus::InProgress);
+        assert!(item.line().contains("do it"));
+
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_todos(dir.path(), None).is_empty());
+        assert!(todos_path(dir.path(), None).ends_with("todos.json"));
+        assert!(todos_path(dir.path(), Some("  ")).ends_with("todos.json"));
+        assert!(todos_path(dir.path(), Some("sid")).ends_with("sid.json"));
+
+        let items = vec![
+            TodoItem::new("a", "one", TodoStatus::Pending),
+            TodoItem::new("b", "two", TodoStatus::Completed),
+        ];
+        save_todos(dir.path(), Some("sid"), &items).unwrap();
+        let loaded = load_todos(dir.path(), Some("sid"));
+        assert_eq!(loaded.len(), 2);
+        std::fs::write(todos_path(dir.path(), Some("bad")), "not-json").unwrap();
+        assert!(load_todos(dir.path(), Some("bad")).is_empty());
+
+        let merged = apply_todo_update(
+            items.clone(),
+            vec![TodoItem::new("a", "one-upd", TodoStatus::Completed)],
+            true,
+        );
+        assert_eq!(merged[0].content, "one-upd");
+        let replaced = apply_todo_update(
+            items.clone(),
+            vec![TodoItem::new("z", "z", TodoStatus::Pending)],
+            false,
+        );
+        assert_eq!(replaced.len(), 1);
+        let appended = apply_todo_update(
+            items.clone(),
+            vec![TodoItem::new("", "no-id", TodoStatus::Pending)],
+            true,
+        );
+        assert_eq!(appended.len(), 3);
+
+        let args = serde_json::json!({"todos":[{"id":"a","content":"x","status":"completed"}]});
+        let out = apply_todowrite_args(&items, &args).unwrap();
+        assert_eq!(out[0].status, TodoStatus::Completed);
+        assert!(apply_todowrite_args(&items, &serde_json::json!({})).is_none());
+        assert_eq!(terminal_count(&items), 1);
+        assert!(!all_terminal(&items));
+        assert!(!all_terminal(&[]));
+        assert!(all_terminal(&[TodoItem::new(
+            "c",
+            "done",
+            TodoStatus::Cancelled
+        )]));
+    }
+}

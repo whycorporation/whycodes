@@ -130,3 +130,33 @@ fn poison_mutex<T>(m: &Mutex<T>) {
         panic!("poison");
     }));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn send_broadcast_drain_and_listener() {
+        let hub = SwarmHub::new();
+        hub.ensure("parent");
+        hub.ensure("w0");
+        hub.send("w0", "parent", "   ");
+        hub.send("w0", "parent", "hello");
+        let got = hub.drain("parent");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].text, "hello");
+        assert!(hub.drain("parent").is_empty());
+
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = Arc::clone(&seen);
+        hub.set_listener(Some(Arc::new(move |msg: SwarmMessage| {
+            seen2.lock().unwrap().push(msg.text);
+        })));
+        hub.send("parent", "all", "broadcast");
+        assert!(!hub.drain("w0").is_empty());
+        assert!(!seen.lock().unwrap().is_empty());
+        hub.set_listener(None);
+        assert!(format!("{hub:?}").contains("SwarmHub"));
+    }
+}

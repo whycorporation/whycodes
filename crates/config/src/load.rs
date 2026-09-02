@@ -633,3 +633,49 @@ impl Config {
         self.get_agent(&self.default_agent)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Config;
+    use std::path::Path;
+
+    #[test]
+    fn helpers_markdown_and_parent_dir() {
+        assert!(toml_err("x".into()).to_string().contains("x"));
+        let cfg = Config::default();
+        let encoded = encode_toml(&cfg).unwrap();
+        assert!(!encoded.is_empty());
+        assert!(map_toml_ser(Ok("ok".into())).unwrap() == "ok");
+
+        let dir = tempfile::tempdir().unwrap();
+        let nested = dir.path().join("a").join("b.toml");
+        ensure_parent_dir(&nested).unwrap();
+        assert!(nested.parent().unwrap().is_dir());
+        ensure_parent_dir(Path::new("no-parent")).unwrap();
+
+        let plain = parse_command_markdown("echo hi").unwrap();
+        assert_eq!(plain.template, "echo hi");
+        assert!(plain.description.is_none());
+
+        let with_front = parse_command_markdown(
+            "---\ndescription: d\nagent: build\nmodel: gpt\nsubtask: true\nunknown: x\n---\nbody",
+        )
+        .unwrap();
+        assert_eq!(with_front.template, "body");
+        assert_eq!(with_front.description.as_deref(), Some("d"));
+        assert_eq!(with_front.agent.as_deref(), Some("build"));
+        assert_eq!(with_front.model.as_deref(), Some("gpt"));
+        assert_eq!(with_front.subtask, Some(true));
+
+        let yes = parse_command_markdown("---\nsubtask: yes\n---\nx").unwrap();
+        assert_eq!(yes.subtask, Some(true));
+        let one = parse_command_markdown("---\nsubtask: 1\n---\nx").unwrap();
+        assert_eq!(one.subtask, Some(true));
+        let no = parse_command_markdown("---\nsubtask: false\n---\nx").unwrap();
+        assert_eq!(no.subtask, Some(false));
+        assert!(parse_command_markdown("---\nno-end").is_none());
+
+        assert!(cfg.get_command_config("missing").is_none());
+    }
+}

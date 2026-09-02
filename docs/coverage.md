@@ -71,7 +71,11 @@ Workspace line coverage **85.58%** (was 85.58% on 2026-08-21; delta within noise
 `core::ErrorKind`/`TransportError` + `ToolExecutor` cache + swallow ratchet + `agent/{mod,turn,gate,dispatch,compact}` file move, no line-coverage change).
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
-(#48). Swallow-budget numbers live in `scripts/swallowed_error_budget.json`, not in these
+(#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
+`network`, `paths`, `sandbox`, `todo`, `tool`, `types`, `panel`, `file_claims`,
+`swarm_hub`, `logging`, `tokens`) so a new branch is reviewable without opening the
+sibling file (#60). `config` mirrors that in `load` / `merge` / `types` / `validate`.
+Swallow-budget numbers live in `scripts/swallowed_error_budget.json`, not in these
 line floors. Floors unchanged (workspace ≥82%).
 
 Line coverage is the number CI gates on. Function and region rates are

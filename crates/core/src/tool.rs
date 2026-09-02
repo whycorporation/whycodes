@@ -159,3 +159,81 @@ pub trait Tool: Send + Sync {
         permissions.is_tool_allowed(self.name())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file_claims::FileClaimRegistry;
+    use crate::types::PermissionSet;
+    use std::path::Path;
+
+    struct DummyTool;
+
+    impl Tool for DummyTool {
+        fn name(&self) -> &str {
+            "dummy"
+        }
+        fn description(&self) -> &str {
+            "d"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        fn execute<'a>(
+            &'a self,
+            _args: serde_json::Value,
+            _ctx: &'a ToolContext,
+        ) -> ToolFuture<'a> {
+            Box::pin(async {
+                crate::types::ToolResult {
+                    tool_call_id: "1".into(),
+                    content: "ok".into(),
+                    is_error: false,
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn context_debug_claims_and_tool_trait() {
+        let ctx = ToolContext::new("/w");
+        assert_eq!(ctx.working_dir, "/w");
+        assert!(format!("{ctx:?}").contains("working_dir"));
+        let unsandboxed = ToolContext::unsandboxed("/u");
+        assert_eq!(unsandboxed.sandbox.mode, crate::sandbox::SandboxMode::Off);
+        assert!(ctx.check_file_write(Path::new("a.rs")).is_ok());
+        assert!(ctx.check_file_read(Path::new("a.rs")).is_none());
+
+        let mut claimed = ToolContext::new("/w");
+        claimed.file_claims = Some(FileClaimRegistry::new());
+        assert!(claimed.check_file_write(Path::new("a.rs")).is_ok());
+        claimed.agent_id = Some("w0".into());
+        claimed.agent_label = Some("worker".into());
+        assert!(claimed.check_file_write(Path::new("a.rs")).is_ok());
+        assert!(claimed.check_file_read(Path::new("a.rs")).is_none());
+
+        let mut other = ToolContext::new("/w");
+        other.file_claims = claimed.file_claims.clone();
+        other.agent_id = Some("w1".into());
+        other.agent_label = Some("other".into());
+        let err = other.check_file_write(Path::new("a.rs")).unwrap_err();
+        assert!(err.contains("File conflict"));
+
+        let tool = DummyTool;
+        let def = tool.definition();
+        assert_eq!(def.name, "dummy");
+        let result = tool.execute(serde_json::json!({}), &ctx).await;
+        assert!(!result.is_error);
+        assert_eq!(result.content, "ok");
+        let perms = PermissionSet {
+            allowed_tools: None,
+            denied_tools: None,
+            allow_file_writes: true,
+            allow_network: true,
+            allow_shell: true,
+            allowed_paths: None,
+            rules: Default::default(),
+        };
+        assert!(tool.is_allowed(&perms));
+    }
+}

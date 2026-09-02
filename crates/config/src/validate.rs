@@ -182,3 +182,67 @@ impl Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::types::Config;
+    use std::collections::HashMap;
+    use whycodes_core::types::{ModelConfig, ProviderConfig};
+
+    fn provider(name: &str) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            api_key: None,
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn validate_reports_missing_provider_and_model_fields() {
+        let empty = Config::default();
+        let err = empty.validate().unwrap_err().to_string();
+        assert!(err.contains("No providers configured"));
+
+        let mut cfg = Config {
+            default_model: Some(ModelConfig {
+                model_id: String::new(),
+                provider_id: String::new(),
+                max_tokens: None,
+                context_window: None,
+                temperature: None,
+                top_p: None,
+                thinking: None,
+                supports_tools: None,
+                supports_images: None,
+            }),
+            ..Config::default()
+        };
+        cfg.providers.insert("openai".into(), provider("openai"));
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("empty model_id"));
+
+        let mut p = provider("openai");
+        p.api_key = Some("k".into());
+        let mut ok = Config {
+            default_model: Some(ModelConfig {
+                model_id: "gpt".into(),
+                provider_id: "openai".into(),
+                max_tokens: Some(16),
+                context_window: None,
+                temperature: None,
+                top_p: None,
+                thinking: None,
+                supports_tools: None,
+                supports_images: None,
+            }),
+            ..Config::default()
+        };
+        ok.providers.insert("openai".into(), p);
+        ok.validate().unwrap();
+    }
+}

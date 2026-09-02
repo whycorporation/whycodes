@@ -439,3 +439,31 @@ impl ToolsConfig {
         merged
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::types::Config;
+
+    #[test]
+    fn merge_overrides_default_agent_and_model() {
+        let base = Config::default();
+        let other = Config {
+            default_agent: "review".into(),
+            default_model: Some(whycodes_core::types::ModelConfig {
+                model_id: "m".into(),
+                provider_id: "p".into(),
+                max_tokens: Some(1),
+                context_window: None,
+                temperature: None,
+                top_p: None,
+                thinking: None,
+                supports_tools: None,
+                supports_images: None,
+            }),
+            ..Config::default()
+        };
+        let merged = base.merge_with(&other);
+        assert_eq!(merged.default_agent, "review");
+        assert_eq!(merged.default_model.as_ref().unwrap().model_id, "m");
+    }
+}

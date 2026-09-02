@@ -170,3 +170,68 @@ impl Clone for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_kind_transport_constructors_and_clone() {
+        let kinds = [
+            ErrorKind::RateLimited,
+            ErrorKind::Server,
+            ErrorKind::Network,
+            ErrorKind::Timeout,
+            ErrorKind::Auth,
+            ErrorKind::Client,
+            ErrorKind::ContextOverflow,
+            ErrorKind::Cancelled,
+            ErrorKind::Unknown,
+        ];
+        for k in kinds {
+            assert!(!k.as_str().is_empty());
+            assert_eq!(k.to_string(), k.as_str());
+            let _ = k.retryable();
+        }
+        assert_eq!(ErrorKind::default(), ErrorKind::Unknown);
+        assert!(ErrorKind::Timeout.retryable());
+        assert!(!ErrorKind::Auth.retryable());
+
+        let te = TransportError::new(ErrorKind::Server, "s");
+        assert_eq!(te.to_string(), "s");
+        assert_eq!(TransportError::unknown("u").kind, ErrorKind::Unknown);
+        let from_string: TransportError = String::from("x").into();
+        assert_eq!(from_string.message, "x");
+        let from_str: TransportError = "y".into();
+        assert_eq!(from_str.message, "y");
+
+        let errs = vec![
+            Error::Config("c".into()),
+            Error::Io(std::io::Error::other("i")),
+            Error::Serde("s".into()),
+            Error::llm("l"),
+            Error::llm_kind(ErrorKind::RateLimited, "r"),
+            Error::Tool("t".into()),
+            Error::Session("se".into()),
+            Error::Agent("a".into()),
+            Error::Provider("p".into()),
+            Error::http("h"),
+            Error::http_kind(ErrorKind::Timeout, "ht"),
+            Error::Other("o".into()),
+        ];
+        for e in &errs {
+            let cloned = e.clone();
+            assert!(!cloned.to_string().is_empty());
+            let _ = format!("{e:?}");
+        }
+        assert_eq!(Error::llm("l").transport_kind(), Some(ErrorKind::Unknown));
+        assert_eq!(
+            Error::http_kind(ErrorKind::Timeout, "ht").transport_kind(),
+            Some(ErrorKind::Timeout)
+        );
+        assert_eq!(Error::Config("c".into()).transport_kind(), None);
+        let json_err = serde_json::from_str::<u8>("not-json").unwrap_err();
+        let e = Error::from(json_err);
+        assert!(matches!(e, Error::Serde(_)));
+    }
+}

@@ -108,3 +108,51 @@ impl SandboxSettings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_fallback_parse_and_from_raw() {
+        for (raw, mode) in [
+            ("off", SandboxMode::Off),
+            ("none", SandboxMode::Off),
+            ("false", SandboxMode::Off),
+            ("0", SandboxMode::Off),
+            ("workspace", SandboxMode::Workspace),
+            ("on", SandboxMode::Workspace),
+            ("true", SandboxMode::Workspace),
+            ("1", SandboxMode::Workspace),
+        ] {
+            assert_eq!(raw.parse::<SandboxMode>().unwrap(), mode);
+        }
+        assert!("nope".parse::<SandboxMode>().is_err());
+        assert_eq!(SandboxMode::Off.as_str(), "off");
+        assert_eq!(SandboxMode::Workspace.as_str(), "workspace");
+        assert_eq!(SandboxMode::default(), SandboxMode::Workspace);
+
+        for (raw, fb) in [
+            ("allow", SandboxFallback::Allow),
+            ("warn", SandboxFallback::Allow),
+            ("host", SandboxFallback::Allow),
+            ("deny", SandboxFallback::Deny),
+            ("error", SandboxFallback::Deny),
+            ("strict", SandboxFallback::Deny),
+        ] {
+            assert_eq!(raw.parse::<SandboxFallback>().unwrap(), fb);
+        }
+        assert!("nope".parse::<SandboxFallback>().is_err());
+
+        let off = SandboxSettings::off();
+        assert_eq!(off.mode, SandboxMode::Off);
+        assert!(SandboxSettings::default().network);
+        let parsed = SandboxSettings::from_raw("off", false, "deny");
+        assert_eq!(parsed.mode, SandboxMode::Off);
+        assert!(!parsed.network);
+        assert_eq!(parsed.fallback, SandboxFallback::Deny);
+        let fallback = SandboxSettings::from_raw("???", true, "???");
+        assert_eq!(fallback.mode, SandboxMode::Workspace);
+        assert_eq!(fallback.fallback, SandboxFallback::Allow);
+    }
+}

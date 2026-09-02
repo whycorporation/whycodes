@@ -309,3 +309,51 @@ fn poison_mutex<T>(m: &Mutex<T>) {
         panic!("poison");
     }));
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn claim_hold_conflict_stale_and_snapshot() {
+        let reg = FileClaimRegistry::new();
+        assert!(reg.is_empty());
+        assert_eq!(reg.len(), 0);
+        let a = Path::new("src/a.rs");
+        assert_eq!(reg.try_claim("w0", "worker-0", a), ClaimResult::Acquired);
+        assert_eq!(reg.try_claim("w0", "worker-0", a), ClaimResult::Held);
+        assert_eq!(
+            reg.try_claim("w1", "worker-1", a),
+            ClaimResult::Conflict {
+                owner_id: "w0".into(),
+                owner_label: "worker-0".into(),
+            }
+        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let seen2 = Arc::clone(&seen);
+        reg.set_listener(Some(Arc::new(move |ev: FileConflictEvent| {
+            seen2.lock().unwrap().push(ev.owner_id);
+        })));
+        let _ = reg.try_claim("w1", "worker-1", a);
+        assert!(!seen.lock().unwrap().is_empty());
+
+        let stale = Arc::new(Mutex::new(0usize));
+        let stale2 = Arc::clone(&stale);
+        reg.set_stale_listener(Some(Arc::new(move |_ev: FileStaleEvent| {
+            *stale2.lock().unwrap() += 1;
+        })));
+        assert!(reg.note_read("w0", a).is_none());
+        assert!(reg.note_read("w1", a).is_some());
+        assert_eq!(*stale.lock().unwrap(), 1);
+        assert!(reg.note_read("w1", a).is_none());
+        assert_eq!(*stale.lock().unwrap(), 1);
+        assert!(format!("{reg:?}").contains("FileClaimRegistry"));
+        assert!(!reg.snapshot().is_empty());
+        assert!(!FileClaimRegistry::claim_key(a).is_empty());
+        reg.release_agent("w0");
+        reg.clear();
+        assert!(reg.is_empty());
+    }
+}
