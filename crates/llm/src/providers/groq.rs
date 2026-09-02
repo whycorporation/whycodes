@@ -11,12 +11,21 @@ use crate::provider::{
 
 pub struct GroqProvider {
     name: String,
+    chat_url: String,
 }
 
 impl GroqProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "groq".to_string(),
+            chat_url: match base.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(raw) => super::custom::normalize_chat_completions_url(raw),
+                None => "https://api.groq.com/openai/v1/chat/completions".to_string(),
+            },
         }
     }
 
@@ -59,7 +68,7 @@ impl LlmProvider for GroqProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.groq.com/openai/v1/chat/completions"
+        &self.chat_url
     }
 
     fn complete<'a>(

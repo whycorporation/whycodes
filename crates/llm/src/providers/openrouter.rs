@@ -10,6 +10,7 @@ use crate::provider::{
 
 pub struct OpenRouterProvider {
     name: String,
+    chat_url: String,
     /// Optional site URL for the HTTP-Referer header
     pub site_url: Option<String>,
     /// Optional site name for the X-Title header
@@ -18,8 +19,16 @@ pub struct OpenRouterProvider {
 
 impl OpenRouterProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "openrouter".to_string(),
+            chat_url: match base.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(raw) => super::custom::normalize_chat_completions_url(raw),
+                None => "https://openrouter.ai/api/v1/chat/completions".to_string(),
+            },
             // Default to whycodes identity; override via `with_site`.
             site_url: Some(crate::client_identity::HTTP_REFERER.to_string()),
             site_name: Some(crate::client_identity::X_TITLE.to_string()),
@@ -71,7 +80,7 @@ impl LlmProvider for OpenRouterProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://openrouter.ai/api/v1/chat/completions"
+        &self.chat_url
     }
 
     fn complete<'a>(

@@ -10,12 +10,21 @@ use crate::provider::{
 
 pub struct TogetherProvider {
     name: String,
+    chat_url: String,
 }
 
 impl TogetherProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "together".to_string(),
+            chat_url: match base.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(raw) => super::custom::normalize_chat_completions_url(raw),
+                None => "https://api.together.xyz/v1/chat/completions".to_string(),
+            },
         }
     }
 
@@ -58,7 +67,7 @@ impl LlmProvider for TogetherProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.together.xyz/v1/chat/completions"
+        &self.chat_url
     }
 
     fn complete<'a>(
