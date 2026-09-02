@@ -76,6 +76,14 @@ rayon = "1"
 # TUI file picker in whycodes-index.
 nucleo = "0.5"
 
+# Dev: fast incremental builds. Explicit so `cargo check` defaults do not
+# inherit release's lto/codegen-units=1 via environment or mis-merge.
+[profile.dev]
+incremental = true
+codegen-units = 256
+# Keep debuginfo line-tables for backtraces without full DWARF cost.
+debug = 1
+
 # Release: smallest ship binary + hot-path inlining (format, risk, TUI).
 # full LTO (was thin) + panic=abort cuts page-in for Boot/TTFF (`--version`).
 # Link is slower; use `cargo build -p whycodes-cli` for day-to-day, not full release.

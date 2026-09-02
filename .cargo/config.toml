@@ -1,3 +1,13 @@
+# Build speed: sccache caches the C/C++ part of `rusqlite/bundled` and `ring`
+# (~43s cold). If installed, export RUSTC_WRAPPER=sccache (or set
+# `build.rustc-wrapper = "sccache"` below). Install: `paru -S sccache`
+# or `cargo install sccache`. `mold` speeds up linking of the final
+# `whycodes` binary (~30%); install `mold` and add `-fuse-ld=mold` to
+# RUSTFLAGS if you want it.
+# Uncomment to force sccache when it exists (fails if not installed):
+# [build]
+# rustc-wrapper = "sccache"
+
 # Boot/TTFF: full RELRO (BIND_NOW) resolves every dynamic relocation before
 # `main`, paging in large chunks of a 10+ MB binary for `whycodes --version`.
 # Partial RELRO keeps the GOT hardened without BIND_NOW so the floor path only
