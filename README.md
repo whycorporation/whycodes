@@ -68,6 +68,8 @@ brew install whycodes
 ### From source
 
 ```bash
+# Needs libsqlite3 (pkg-config). For a fully static binary:
+# cargo build --release -p whycodes-cli --features bundled-sqlite
 cargo build --release -p whycodes-cli
 ```
 

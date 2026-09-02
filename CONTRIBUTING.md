@@ -30,14 +30,19 @@ CI runs exactly these commands and fails on any of them:
 
 ```bash
 cargo fmt --all --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --workspace --all-targets --features whycodes-storage/bundled -- -D warnings
+cargo test --workspace --features whycodes-storage/bundled
 python scripts/check_panic_budget.py
 python scripts/check_swallowed_error_budget.py
 python scripts/check_dependency_boundaries.py
 python scripts/check_sdk_protocol.py   # Rust ↔ TypeScript protocol v1 tags
 python scripts/check_tracked_secrets.py
 ```
+
+Dev builds use system SQLite (`pkg-config sqlite3`). CI and release enable
+`whycodes-storage/bundled` / `whycodes-cli/bundled-sqlite` so the self-hosted
+runner and shipped binaries do not need `libsqlite3-dev`. Locally, omit the
+feature if `sqlite3` is already installed.
 
 If you changed `crates/protocol/src/sdk.rs` or the TypeScript client, also
 run the SDK tests:

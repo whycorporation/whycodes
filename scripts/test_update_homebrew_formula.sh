@@ -33,7 +33,7 @@ assert_common() {
     need "$formula" 'homepage "https://why.codes"'
     need "$formula" 'depends_on "rust" => :build'
     need "$formula" 'if build.head?'
-    need "$formula" 'system "cargo", "install", "--locked"'
+    need "$formula" 'system "cargo", "install", "--locked", "--features", "bundled-sqlite"'
     need "$formula" 'generate_completions_from_executable(bin/"whycodes", "completions")'
     need "$formula" 'livecheck do'
     need "$formula" 'strategy :github_latest'

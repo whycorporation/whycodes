@@ -53,7 +53,7 @@ class Whycodes < Formula
 
   def install
     if build.head?
-      system "cargo", "install", "--locked", *std_cargo_args(path: "crates/cli")
+      system "cargo", "install", "--locked", "--features", "bundled-sqlite", *std_cargo_args(path: "crates/cli")
     elsif File.exist?("whycodes")
       bin.install "whycodes"
     elsif File.exist?("whycode")

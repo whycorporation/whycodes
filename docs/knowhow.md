@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — CI Build (linux) fails without bundled SQLite
+
+**Symptom:** `Build (linux)` (and Coverage) fail ~5m in with
+`rust-lld: error: unable to find library -lsqlite3` after
+`perf(build): make rusqlite bundled opt-in`.
+
+**Root cause:** Workspace `rusqlite` no longer enables `bundled` by default
+(dev builds use system sqlite via pkg-config). The self-hosted runner has no
+`libsqlite3-dev`, and CI/release still ran `cargo build --release -p
+whycodes-cli` / `cargo test --workspace` without `--features`.
+
+**Fix:** CI clippy/test/coverage/build and `release.yml` pass
+`whycodes-storage/bundled` or `whycodes-cli/bundled-sqlite`. Homebrew `--HEAD`
+does the same.
+
+**Prevention:** Machines without system sqlite must pass the feature. Do not
+re-enable `bundled` on the workspace dep — that brings back the 43s C compile
+on every cold check.
+
+---
+
 ### 2026-09-02 — Leftover idle 0.3/s after first-frame hydrate
 
 **Symptom:** Empty-project harness `WHYCODES_BENCH_DURATION_MS=3000` still

@@ -53,7 +53,7 @@ jobs:
         env:
           # Homebrew bottles/prebuilts should not require the latest macOS SDK.
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macosx_deployment_target }}
-        run: cargo build --release --locked -p whycodes-cli --target ${{ matrix.target }}
+        run: cargo build --release --locked -p whycodes-cli --features bundled-sqlite --target ${{ matrix.target }}
 
       # One archive per target, named so the installers can construct the URL
       # from `uname`/`$PROCESSOR_ARCHITECTURE` without consulting an index.
