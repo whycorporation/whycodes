@@ -35,6 +35,8 @@ struct IsolatedHome {
     dir: tempfile::TempDir,
     prev: Option<std::ffi::OsString>,
     prev_home: Option<std::ffi::OsString>,
+    prev_skip_import: Option<std::ffi::OsString>,
+    prev_ci: Option<std::ffi::OsString>,
 }
 
 impl IsolatedHome {
@@ -43,18 +45,29 @@ impl IsolatedHome {
         let dir = tempfile::tempdir().expect("tempdir");
         let prev = std::env::var_os("WHYCODES_HOME");
         let prev_home = std::env::var_os("HOME");
+        let prev_skip_import = std::env::var_os("WHYCODES_SKIP_IMPORT");
+        let prev_ci = std::env::var_os("CI");
         unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
         unsafe { std::env::set_var("HOME", dir.path()) };
+        unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", "1") };
+        unsafe { std::env::remove_var("CI") };
         Self {
             _guard: guard,
             dir,
             prev,
             prev_home,
+            prev_skip_import,
+            prev_ci,
         }
     }
 
     fn path(&self) -> &std::path::Path {
         self.dir.path()
+    }
+
+    /// Allow first-run import prompts in this isolated home.
+    fn allow_import_prompt(&self) {
+        unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") };
     }
 }
 
@@ -67,6 +80,14 @@ impl Drop for IsolatedHome {
         match &self.prev_home {
             Some(v) => unsafe { std::env::set_var("HOME", v) },
             None => unsafe { std::env::remove_var("HOME") },
+        }
+        match &self.prev_skip_import {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+        }
+        match &self.prev_ci {
+            Some(v) => unsafe { std::env::set_var("CI", v) },
+            None => unsafe { std::env::remove_var("CI") },
         }
     }
 }
@@ -927,6 +948,14 @@ fn runtime_choice_covers_remaining_commands() {
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Memory {
         cmd: MemoryCmd::Path,
+    }))));
+    assert!(!command_needs_multi_thread(&cli(Some(Commands::Import {
+        args: ImportArgs {
+            from: None,
+            dry_run: true,
+            yes: true,
+            force: false,
+        },
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Stats))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Debug))));
@@ -1981,6 +2010,32 @@ async fn dispatch_offline_commands() {
     .await
     .unwrap();
     dispatch_command(
+        &Commands::Import {
+            args: ImportArgs {
+                from: None,
+                dry_run: true,
+                yes: true,
+                force: false,
+            },
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    let err = dispatch_command(
+        &Commands::Import {
+            args: ImportArgs {
+                from: Some("cursor".into()),
+                dry_run: true,
+                yes: true,
+                force: false,
+            },
+        },
+        &c,
+    )
+    .await;
+    assert!(err.is_err(), "{err:?}");
+    dispatch_command(
         &Commands::Completions {
             shell: clap_complete::Shell::Bash,
         },
@@ -1988,6 +2043,79 @@ async fn dispatch_offline_commands() {
     )
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn import_writes_mcp_from_claude_json() {
+    let home = IsolatedHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx","args":["-y","pkg"]}}}"#,
+    )
+    .unwrap();
+    dispatch_command(
+        &Commands::Import {
+            args: ImportArgs {
+                from: Some("claude".into()),
+                dry_run: false,
+                yes: true,
+                force: false,
+            },
+        },
+        &cli(None),
+    )
+    .await
+    .unwrap();
+    let cfg = Config::load().unwrap();
+    assert!(cfg.mcp_servers.contains_key("fs"));
+
+    dispatch_command(
+        &Commands::Import {
+            args: ImportArgs {
+                from: Some("claude".into()),
+                dry_run: true,
+                yes: true,
+                force: false,
+            },
+        },
+        &cli(None),
+    )
+    .await
+    .unwrap();
+}
+
+#[test]
+fn first_run_import_skip_and_empty() {
+    let _home = IsolatedHome::new();
+    _home.allow_import_prompt();
+    assert!(!maybe_first_run_import(true).unwrap());
+}
+
+#[test]
+fn first_run_import_decline() {
+    let home = IsolatedHome::new();
+    home.allow_import_prompt();
+    std::fs::write(home.path().join(".claude.json"), "{}").unwrap();
+    install_test_repl_lines(["n"]);
+    assert!(!maybe_first_run_import(true).unwrap());
+    clear_test_repl_lines();
+    assert!(!maybe_first_run_import(true).unwrap());
+}
+
+#[test]
+fn first_run_import_yes_writes() {
+    let home = IsolatedHome::new();
+    home.allow_import_prompt();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    install_test_repl_lines(["y"]);
+    assert!(maybe_first_run_import(true).unwrap());
+    clear_test_repl_lines();
+    let cfg = Config::load().unwrap();
+    assert!(cfg.mcp_servers.contains_key("fs"));
 }
 
 #[tokio::test]

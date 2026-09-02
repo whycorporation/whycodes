@@ -61,7 +61,7 @@ Exceptions (skip commit/push unless asked): pure Q&A with no file edits; the use
 
 ## Workspace map
 
-24 crates, one-way layering. Full map and allowed edges:
+25 crates, one-way layering. Full map and allowed edges:
 [`docs/architecture.md`](docs/architecture.md).
 
 Package names use the `whycodes-` prefix even when the directory is shorter

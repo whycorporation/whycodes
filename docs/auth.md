@@ -115,6 +115,27 @@ The consent model (mirroring jcode's `OAUTH.md`):
 
 To reset a decision, delete `auth-consent.json` (or edit out the path).
 
+## Settings import (MCP, permissions, hooks)
+
+`whycodes import` copies **user-level** MCP servers, permission rules, and
+hooks from Claude Code, OpenCode, Grok Build, and Codex CLI into
+`config.toml`. Project files (`AGENTS.md`, `.mcp.json`, `.claude/skills/`)
+are not copied — they stay live in the repo.
+
+```bash
+whycodes import              # prompt per new source
+whycodes import --dry-run    # plan only
+whycodes import --from claude --yes
+```
+
+Same consent model as credential import: a path is read only after approval,
+the source is never modified, and symlinks are refused. Existing WhyCodes
+keys win unless `--force`. Credentials stay on `whycodes auth import`.
+
+On first interactive run, if `config.toml` is missing and another agent is
+found, WhyCodes asks once. `WHYCODES_SKIP_IMPORT=1` or `CI=1` skips the
+prompt. Piped stdin is also skipped so CI is never blocked.
+
 ## Adding a new OAuth provider
 
 The design goal: adding a provider is **installing a `kind: "auth"`

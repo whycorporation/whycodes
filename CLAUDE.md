@@ -78,13 +78,13 @@ Changes to `crates/protocol/src/sdk.rs` or the TypeScript client must keep `sdk/
 
 ## Architecture
 
-The 24 Rust crates follow a checked, one-way dependency graph:
+The 25 Rust crates follow a checked, one-way dependency graph:
 
 **foundations → services → orchestration → applications**
 
 The complete crate map and rationale are in `docs/architecture.md`; allowed internal edges are machine-checked from `scripts/dependency_boundaries.json`.
 
-- **Foundations** own narrow infrastructure and leaf concepts: `core`, `auth`, `config`, `storage`, `protocol`, `format`, `schema`, `sandbox`, `lsp`, `skill`, `function`, `command-risk`, and `index`.
+- **Foundations** own narrow infrastructure and leaf concepts: `core`, `auth`, `config`, `storage`, `protocol`, `format`, `schema`, `sandbox`, `lsp`, `skill`, `function`, `command-risk`, `index`, and `import`.
 - **Services** add domain behavior: `llm`, `session`, `memory`, `plugin`, `tools`, and `mcp`.
 - **Orchestration** lives in `agent`: the model/tool loop, context compaction, permission and sandbox gates, subagents, and tool execution scheduling.
 - **Applications** are `cli`, `tui`, `server`, and the Rust `sdk`. `whycodes-cli` is the composition root and produces the repository's only executable, `whycodes`; the server and self-update features are enabled by default.

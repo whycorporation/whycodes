@@ -7,6 +7,7 @@
   "core": 0,
   "format": 1,
   "function": 0,
+  "import": 0,
   "index": 0,
   "llm": 0,
   "lsp": 0,

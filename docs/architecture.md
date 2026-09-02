@@ -1,6 +1,6 @@
 # Architecture
 
-The workspace is 24 crates with one-way layering:
+The workspace is 25 crates with one-way layering:
 **foundations → services → orchestration → applications**.
 
 Allowed internal edges are allowlisted in
@@ -30,6 +30,7 @@ Two rules keep the graph acyclic:
 | | `skill` | Skill registry |
 | | `function` | Function-tool helpers |
 | | `index` | Workspace file index (`ignore` walk, fuzzy, `notify`) |
+| | `import` | Consented copy of MCP / permission / hook settings from other agents |
 | Services | `llm` | LLM providers |
 | | `session` | Conversation state, compaction, undo/redo |
 | | `memory` | `MEMORY.md`, semantic recall, code index |
@@ -49,7 +50,7 @@ Package names use the `whycodes-` prefix even when the directory is shorter
 
 | Path | What |
 |---|---|
-| `crates/` | Rust workspace (24 crates above) |
+| `crates/` | Rust workspace (25 crates above) |
 | `sdk/typescript/` | TypeScript SDK — protocol twin of `crates/sdk` |
 | `docs/` | User and contributor docs (this file, guide, know-how) |
 | `scripts/` | Installers, CI budget checks, benches |

@@ -4796,6 +4796,7 @@ dependencies = [
  "whycodes-config",
  "whycodes-core",
  "whycodes-format",
+ "whycodes-import",
  "whycodes-index",
  "whycodes-llm",
  "whycodes-mcp",
@@ -4867,6 +4868,19 @@ name = "whycodes-function"
 version = "0.4.0"
 dependencies = [
  "serde_json",
+ "whycodes-core",
+]
+
+[[package]]
+name = "whycodes-import"
+version = "0.4.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "toml",
+ "whycodes-config",
  "whycodes-core",
 ]
 

@@ -73,6 +73,25 @@ pub(crate) async fn cmd_run(
     let force_plain = cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some();
     let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
     let use_tui = !force_plain && (stub_tui || whycodes_tui::tui_available());
+    let interactive = prompt.is_none_or(str::is_empty) && !format.is_structured();
+    match super::import::maybe_first_run_import(interactive) {
+        Ok(true) => match Config::load_layered(&project_dir_early) {
+            Ok(reloaded) => {
+                config = reloaded;
+                if cli.no_memory {
+                    config.memory.enabled = false;
+                }
+                config.load_command_files(&project_dir_early);
+            }
+            Err(e) => {
+                eprintln!("{} reloading config after import: {e}", "warning:".yellow());
+            }
+        },
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("{} first-run import: {e}", "warning:".yellow());
+        }
+    }
     if !use_tui && !force_plain {
         use std::io::IsTerminal;
         eprintln!(

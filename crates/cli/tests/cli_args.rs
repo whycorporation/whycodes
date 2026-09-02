@@ -27,6 +27,7 @@ fn test_cli_help() {
     assert_ok(&["--help"], &o);
     let s = String::from_utf8_lossy(&o.stdout);
     assert!(s.contains("run") && s.contains("generate"), "help: {}", s);
+    assert!(s.contains("import"), "help should list import: {s}");
     assert!(s.contains("connect"), "help should list connect: {s}");
     assert!(
         s.contains("completions"),
@@ -541,6 +542,32 @@ fn test_pr_and_github_degrade_without_gh() {
         .output()
         .expect("github issue");
     assert_ok(&["github", "issue"], &issue);
+}
+
+#[test]
+fn test_import_help_and_dry_run() {
+    let o = run(&["import", "--help"]);
+    assert_ok(&["import", "--help"], &o);
+    let s = String::from_utf8_lossy(&o.stdout);
+    assert!(s.contains("--from"), "import help: {s}");
+    assert!(s.contains("--dry-run"), "import help: {s}");
+
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let dry = run_home(
+        home.path(),
+        &["import", "--yes", "--dry-run", "--from", "claude"],
+    );
+    assert_ok(&["import", "--yes", "--dry-run", "--from", "claude"], &dry);
+    let out = String::from_utf8_lossy(&dry.stdout);
+    assert!(
+        out.contains("Dry run") || out.contains("MCP"),
+        "import dry-run stdout: {out}"
+    );
 }
 
 #[test]

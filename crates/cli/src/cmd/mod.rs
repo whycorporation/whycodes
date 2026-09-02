@@ -6,6 +6,7 @@ pub(crate) mod config;
 pub(crate) mod debug;
 mod github;
 mod helpers;
+mod import;
 mod mcp;
 mod memory;
 mod provider;
@@ -24,6 +25,8 @@ pub(crate) use debug::*;
 #[allow(unused_imports)]
 pub(crate) use github::*;
 pub(crate) use helpers::*;
+#[allow(unused_imports)]
+pub(crate) use import::*;
 #[allow(unused_imports)]
 pub(crate) use mcp::*;
 #[allow(unused_imports)]
@@ -73,6 +76,7 @@ pub(crate) async fn dispatch_command(cmd: &Commands, cli: &Cli) -> anyhow::Resul
         Commands::Session { cmd: session_cmd } => session::cmd_session(session_cmd).await,
         Commands::Memory { cmd: memory_cmd } => memory::cmd_memory(cli, memory_cmd).await,
         Commands::Auth { cmd } => auth::cmd_auth(cmd).await,
+        Commands::Import { args } => import::cmd_import(args).await,
         Commands::Stats => session::cmd_stats().await,
         Commands::Debug => debug::cmd_debug().await,
         #[cfg(feature = "self-update")]

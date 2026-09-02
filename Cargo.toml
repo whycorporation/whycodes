@@ -24,6 +24,7 @@ members = [
     "crates/sandbox",
     "crates/memory",
     "crates/index",
+    "crates/import",
 ]
 resolver = "2"
 

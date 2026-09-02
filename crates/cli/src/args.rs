@@ -199,6 +199,12 @@ pub enum Commands {
         cmd: AuthCmd,
     },
 
+    /// Import MCP, permissions, and hooks from Claude Code, OpenCode, Grok, or Codex
+    Import {
+        #[command(flatten)]
+        args: ImportArgs,
+    },
+
     /// Show usage statistics
     Stats,
 
@@ -329,6 +335,23 @@ pub enum AuthCmd {
     /// Find credentials of other CLIs (Claude Code, Codex, Gemini, Copilot, Grok Build)
     /// and import them after explicit per-path approval
     Import,
+}
+
+/// `whycodes import` — copy user-level settings from other coding agents.
+#[derive(clap::Args, Debug)]
+pub struct ImportArgs {
+    /// Product: claude | opencode | grok | codex
+    #[arg(long)]
+    pub from: Option<String>,
+    /// Show the plan without writing config.toml
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Approve every new source without prompting
+    #[arg(short = 'y', long)]
+    pub yes: bool,
+    /// Overwrite WhyCodes keys that already exist
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Subcommand, Debug)]

@@ -47,6 +47,7 @@ Commands:
   session   Session management (list, view, delete, rename, share)
   memory    Cross-session memory (list, search, add, delete, clear, path, …)
   auth      Subscription login via OAuth
+  import    Import MCP, permissions, and hooks from other agents
   stats     Show usage statistics
   debug     Show debug information
   upgrade   Self-update

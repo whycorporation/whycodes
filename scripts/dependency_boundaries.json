@@ -20,6 +20,7 @@
     "config",
     "core",
     "format",
+    "import",
     "index",
     "llm",
     "mcp",
@@ -45,6 +46,10 @@
     "core"
   ],
   "function": [
+    "core"
+  ],
+  "import": [
+    "config",
     "core"
   ],
   "index": [],

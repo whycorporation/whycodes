@@ -34,6 +34,7 @@ bundled-sqlite = ["whycodes-storage/bundled"]
 whycodes-core = { path = "../core" }
 whycodes-index = { path = "../index" }
 whycodes-auth = { path = "../auth" }
+whycodes-import = { path = "../import" }
 whycodes-config = { path = "../config" }
 whycodes-llm = { path = "../llm" }
 whycodes-tools = { path = "../tools" }

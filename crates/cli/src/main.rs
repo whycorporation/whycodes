@@ -154,6 +154,7 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Config { .. }
             | Commands::Session { .. }
             | Commands::Memory { .. }
+            | Commands::Import { .. }
             | Commands::Stats
             | Commands::Debug
             | Commands::Completions { .. } => false,
