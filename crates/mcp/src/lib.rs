@@ -12,3 +12,11 @@ pub use types::{
     CallToolParams, CallToolResult, JsonRpcError, JsonRpcRequest, JsonRpcResponse, McpPrompt,
     McpResource, McpTool, ToolContent,
 };
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lib_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

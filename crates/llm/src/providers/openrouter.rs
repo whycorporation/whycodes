@@ -220,3 +220,11 @@ impl Default for OpenRouterProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn openrouter_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

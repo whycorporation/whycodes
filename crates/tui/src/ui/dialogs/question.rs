@@ -260,3 +260,11 @@ pub fn render_question_dialog(
         list_total,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn question_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

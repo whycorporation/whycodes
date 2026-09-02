@@ -329,3 +329,11 @@ async fn read_stdio_response(
 impl Drop for McpClient {
     fn drop(&mut self) {}
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn client_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

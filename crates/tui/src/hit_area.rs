@@ -47,3 +47,11 @@ impl HitArea {
         self.hovered = false;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn hit_area_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

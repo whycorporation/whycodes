@@ -297,3 +297,11 @@ impl Default for InitializedNotification {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn types_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

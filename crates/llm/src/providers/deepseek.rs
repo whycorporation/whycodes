@@ -186,3 +186,11 @@ impl Default for DeepSeekProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn deepseek_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

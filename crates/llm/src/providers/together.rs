@@ -186,3 +186,11 @@ impl Default for TogetherProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn together_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

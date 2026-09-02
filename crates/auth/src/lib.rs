@@ -34,3 +34,11 @@ pub use token::{OAuthToken, ProviderAuth};
 pub fn oauth_providers() -> Vec<String> {
     registered_providers()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lib_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

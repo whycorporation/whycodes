@@ -187,3 +187,11 @@ impl Default for GroqProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn groq_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

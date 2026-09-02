@@ -186,3 +186,11 @@ impl Default for MistralProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mistral_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

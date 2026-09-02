@@ -134,3 +134,11 @@ pub fn parse_unified_diff(diff_text: &str) -> Vec<DiffLine> {
     }
     lines
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn diff_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

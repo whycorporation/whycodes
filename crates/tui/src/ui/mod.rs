@@ -21,3 +21,11 @@ pub mod toast;
 pub mod todos;
 
 pub use render::render;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn mod_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

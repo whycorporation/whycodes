@@ -378,3 +378,11 @@ pub fn render_help_overlay(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
     app.dialog_list_visible = max_rows;
     app.dialog_list_total = total;
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn help_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

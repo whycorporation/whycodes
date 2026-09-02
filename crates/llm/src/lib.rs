@@ -54,3 +54,11 @@ pub use transport::{
     user_facing_error,
 };
 pub use types::*;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lib_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

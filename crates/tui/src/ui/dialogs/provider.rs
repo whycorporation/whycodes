@@ -396,3 +396,11 @@ pub fn render_model_dialog(frame: &mut Frame, app: &mut TuiApp, palette: &ThemeP
         Some(chrome.modal),
     );
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn provider_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

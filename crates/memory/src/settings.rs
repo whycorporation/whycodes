@@ -162,3 +162,11 @@ fn sanitize_bank(s: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn settings_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

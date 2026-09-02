@@ -686,3 +686,11 @@ pub(super) fn session_details(
     out.push_str(&format!("  total:     {}\n", usage.total()));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn persist_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

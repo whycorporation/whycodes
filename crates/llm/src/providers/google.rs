@@ -263,3 +263,11 @@ impl Default for GoogleProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn google_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

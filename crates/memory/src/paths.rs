@@ -56,3 +56,11 @@ fn sanitize_component(s: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn paths_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

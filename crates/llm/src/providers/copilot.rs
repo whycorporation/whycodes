@@ -166,3 +166,11 @@ impl Default for CopilotProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn copilot_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

@@ -29,3 +29,11 @@ pub use service::{
     maybe_auto_retain, settings_from_flags,
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lib_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

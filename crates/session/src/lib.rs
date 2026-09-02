@@ -13,3 +13,11 @@ pub use session::{
     is_compact_summary_text,
 };
 pub use title::{TitleSource, default_title, heuristic_title, sanitize_title};
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn lib_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

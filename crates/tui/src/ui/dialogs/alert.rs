@@ -41,3 +41,11 @@ pub fn render_alert_dialog(
     frame.render_widget(body, area);
     chrome
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn alert_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

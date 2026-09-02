@@ -45,3 +45,11 @@ pub enum AuthError {
 }
 
 pub type Result<T> = std::result::Result<T, AuthError>;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn error_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

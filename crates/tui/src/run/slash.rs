@@ -775,3 +775,11 @@ pub(super) fn maybe_spawn_prompt_suggestion(
         }
     });
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn slash_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

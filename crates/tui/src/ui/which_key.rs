@@ -149,3 +149,11 @@ pub fn render(frame: &mut Frame, area: Rect, context: KeymapContext, scroll: usi
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn which_key_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

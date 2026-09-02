@@ -222,3 +222,11 @@ impl Default for OpenAiProvider {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn openai_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}

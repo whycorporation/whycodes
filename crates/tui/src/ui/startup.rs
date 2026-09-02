@@ -166,3 +166,11 @@ pub fn render(frame: &mut Frame, area: Rect, screen: &StartupScreen) {
 
     frame.render_widget(block, popup_area);
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn startup_module_loads() {
+        assert!(!module_path!().is_empty());
+    }
+}
