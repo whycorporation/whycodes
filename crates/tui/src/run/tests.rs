@@ -1440,6 +1440,19 @@ fn memory_and_index_helpers() {
     let _ = memory_service(dir.path(), &config);
 }
 
+#[test]
+fn auto_index_zero_chunks_does_not_toast() {
+    let _home = isolate_home_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config::default();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_session_auto_index(dir.path(), &config, &mut app);
+    assert!(
+        app.toasts.is_empty(),
+        "empty project must not toast Indexed 0 code chunks"
+    );
+}
+
 fn dummy_info(name: &str) -> whycodes_core::types::AgentInfo {
     whycodes_core::types::AgentInfo {
         name: name.into(),
@@ -3423,4 +3436,40 @@ fn first_frame_hydrate_hidden_sidebar_file_tree_change_is_not_dirty() {
         !first_frame_hydrate_needs_paint(&before, &app),
         "hidden sidebar mutations must not schedule a second paint"
     );
+}
+
+#[test]
+fn first_frame_hydrate_settle_clears_leftover_dirty() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.needs_redraw = true;
+    app.pending_full_clears = 2;
+    settle_first_frame_hydrate(&mut app, &before, false);
+    assert!(
+        !app.needs_redraw,
+        "unchanged empty home must drop leftover dirty"
+    );
+    assert_eq!(app.pending_full_clears, 0);
+}
+
+#[test]
+fn first_frame_hydrate_settle_keeps_dirty_when_chrome_changed() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.toasts
+        .push(crate::toast::ToastKind::Info, "Indexed 3 code chunks");
+    app.needs_redraw = false;
+    settle_first_frame_hydrate(&mut app, &before, false);
+    assert!(app.needs_redraw);
+}
+
+#[test]
+fn first_frame_hydrate_settle_keeps_clears_when_animating() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let before = capture_first_frame_hydrate_chrome(&app);
+    app.needs_redraw = true;
+    app.pending_full_clears = 1;
+    settle_first_frame_hydrate(&mut app, &before, true);
+    assert!(app.needs_redraw);
+    assert_eq!(app.pending_full_clears, 1);
 }

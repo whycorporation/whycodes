@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — Leftover idle 0.3/s after first-frame hydrate
+
+**Symptom:** Empty-project harness `WHYCODES_BENCH_DURATION_MS=3000` still
+**0.32 draws/s** (DRAWS=2: first paint + exactly one more in 3s).
+
+**Root cause:** After first paint, hydrate still scheduled a second frame:
+`maybe_session_auto_index` toasts on `Some(0)` (empty tempdir indexes 0
+chunks) so `first_frame_hydrate_needs_paint` is true; `replace_todos` /
+other hydrate work can leave `needs_redraw` even when the helper is
+false; `spawn_update_check` can deliver `update_rx` within 3s.
+
+**Fix:** Skip GitHub update when `WHYCODES_BENCH` is set. Do not toast
+on 0 chunks. `settle_first_frame_hydrate` forces `needs_redraw=false`
+and `pending_full_clears=0` when chrome is unchanged and not animating.
+
+**Prevention:** Never `current_thread` for TUI. Tests:
+`auto_update_only_interactive_text_sessions` (bench gate),
+`auto_index_zero_chunks_does_not_toast`, `first_frame_hydrate_settle_*`.
+
+---
+
 ### 2026-09-02 — First-frame hydrate must not idle-repaint empty home
 
 **Symptom:** 3s first-frame harness idle 0.3/s after multi-thread restore

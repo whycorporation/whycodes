@@ -204,18 +204,21 @@ pub(crate) fn should_auto_update(cli: &Cli, config_enabled: bool) -> bool {
         config_enabled,
         std::env::var_os("WHYCODES_NO_AUTO_UPDATE").is_some(),
         std::env::var_os("CI").is_some(),
+        std::env::var_os("WHYCODES_BENCH").is_some_and(|v| !v.is_empty()),
     )
 }
 
 /// Same gates as [`should_auto_update`], with env flags passed in so unit
-/// tests stay deterministic under GitHub Actions (`CI=true`).
+/// tests stay deterministic under GitHub Actions (`CI=true`) and first-frame
+/// harness runs (`WHYCODES_BENCH`).
 pub(crate) fn should_auto_update_with_env(
     cli: &Cli,
     config_enabled: bool,
     no_auto_update_env: bool,
     ci_env: bool,
+    bench_env: bool,
 ) -> bool {
-    if cli.no_auto_update || !config_enabled || no_auto_update_env || ci_env {
+    if cli.no_auto_update || !config_enabled || no_auto_update_env || ci_env || bench_env {
         return false;
     }
     match &cli.command {

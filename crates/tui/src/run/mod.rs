@@ -1018,9 +1018,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     maybe_session_auto_index(&project_dir, &config, &mut app);
                     refresh_sidebar(&mut app, &config, &file_index);
                     load_app_todos(&mut app);
-                    if first_frame_hydrate_needs_paint(&hydrate_before, &app) {
-                        app.mark_dirty();
-                    }
+                    settle_first_frame_hydrate(&mut app, &hydrate_before, animate);
                 }
             }
 
@@ -4037,6 +4035,27 @@ pub(super) fn first_frame_hydrate_needs_paint(
         return true;
     }
     !app.toasts.is_empty()
+}
+
+/// After first-frame hydrate: dirty only if visible chrome changed.
+///
+/// `replace_todos` / similar can `mark_dirty` even when the helper is false
+/// (empty == empty is a no-op, but other hydrate work may have set the flag).
+/// Empty-project idle must not keep that leftover paint, or the harness
+/// counts one extra draw over 3s (~0.3/s). Animation still stays live.
+pub(super) fn settle_first_frame_hydrate(
+    app: &mut TuiApp,
+    before: &FirstFrameHydrateChrome,
+    animate: bool,
+) {
+    if first_frame_hydrate_needs_paint(before, app) {
+        app.mark_dirty();
+        return;
+    }
+    if !animate {
+        app.needs_redraw = false;
+        app.pending_full_clears = 0;
+    }
 }
 
 /// Refresh sidebar lists from the workspace index, config, and session todos.

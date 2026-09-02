@@ -168,6 +168,7 @@ pub(super) fn memory_settings_for(
 }
 
 /// Best-effort code index when the TUI session starts (skips if already indexed).
+/// Empty projects return `Some(0)` — do not toast or dirty the idle home.
 pub(super) fn maybe_session_auto_index(
     project_dir: &std::path::Path,
     config: &Config,
@@ -176,6 +177,7 @@ pub(super) fn maybe_session_auto_index(
     let data_dir = Config::data_dir().unwrap_or_else(|_| PathBuf::from("."));
     if let Some(n) =
         whycodes_memory::maybe_auto_index(project_dir, &data_dir, &memory_settings(config))
+        && n > 0
     {
         app.toasts.push(
             crate::toast::ToastKind::Info,

@@ -195,7 +195,13 @@ fn runtime_choice_per_command() {
 fn auto_update_only_interactive_text_sessions() {
     // Do not call `should_auto_update` for the "on" cases: GitHub Actions
     // sets `CI=true`, which is a real production opt-out.
-    assert!(should_auto_update_with_env(&cli(None), true, false, false));
+    assert!(should_auto_update_with_env(
+        &cli(None),
+        true,
+        false,
+        false,
+        false
+    ));
     assert!(should_auto_update_with_env(
         &cli(Some(Commands::Run {
             prompt: None,
@@ -203,6 +209,7 @@ fn auto_update_only_interactive_text_sessions() {
             format: OutputFormat::Text,
         })),
         true,
+        false,
         false,
         false
     ));
@@ -213,6 +220,7 @@ fn auto_update_only_interactive_text_sessions() {
             format: OutputFormat::Json,
         })),
         true,
+        false,
         false,
         false
     ));
@@ -225,19 +233,43 @@ fn auto_update_only_interactive_text_sessions() {
         })),
         true,
         false,
+        false,
         false
     ));
     let mut off = cli(None);
     off.no_auto_update = true;
-    assert!(!should_auto_update_with_env(&off, true, false, false));
+    assert!(!should_auto_update_with_env(
+        &off, true, false, false, false
+    ));
     assert!(!should_auto_update_with_env(
         &cli(None),
         false,
         false,
+        false,
         false
     ));
-    assert!(!should_auto_update_with_env(&cli(None), true, true, false));
-    assert!(!should_auto_update_with_env(&cli(None), true, false, true));
+    assert!(!should_auto_update_with_env(
+        &cli(None),
+        true,
+        true,
+        false,
+        false
+    ));
+    assert!(!should_auto_update_with_env(
+        &cli(None),
+        true,
+        false,
+        true,
+        false
+    ));
+    // First-frame / idle harness: no GitHub, no home update dialog.
+    assert!(!should_auto_update_with_env(
+        &cli(None),
+        true,
+        false,
+        false,
+        true
+    ));
 }
 
 #[test]
