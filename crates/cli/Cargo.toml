@@ -26,6 +26,9 @@ self-update = ["dep:sha2", "dep:flate2", "dep:tar", "dep:zip"]
 server = ["dep:whycodes-server", "dep:axum"]
 # MiniLM ONNX embedder (downloads model on first use; larger binary / RSS).
 onnx = ["whycodes-memory/onnx", "whycodes-tools/onnx", "whycodes-agent/onnx"]
+# Statically bundled SQLite (compile 200k LOC C). Off by default for fast dev
+# builds (system sqlite via pkg-config); enable for fully static release artifacts.
+bundled-sqlite = ["whycodes-storage/bundled"]
 
 [dependencies]
 whycodes-core = { path = "../core" }

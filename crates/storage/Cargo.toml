@@ -6,6 +6,13 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# System sqlite (pkg-config) is used by default for fast dev builds.
+# CI/release that needs a fully static binary can enable `bundled` to compile
+# SQLite from source (43s cold build, cached afterwards).
+default = []
+bundled = ["rusqlite/bundled"]
+
 [dependencies]
 whycodes-core = { path = "../core" }
 rusqlite.workspace = true
