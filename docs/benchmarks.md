@@ -459,6 +459,66 @@ this machine. The product claim remains “paint only when something
 changed,” not a frames-per-second race.
 
 
+### Re-measure, 2026-09-02 (Linux x86_64, release, HEAD `56f2e43`)
+
+Same machine (Intel Core i5-4200H @ 2.80 GHz, CachyOS, kernel 7.2.2-1-cachyos).
+Release binary **14.8 MB** (`ls` 15M; `st_size / 1e6`). Recorded JSON:
+[`bench-results.json`](bench-results.json). Process-level **and** criterion
+hot paths / index (sample-size 15) — first function-level snapshot since
+2026-08-31.
+
+HEAD is test-coverage local-mod work (`#63`–`#66`) on top of the `ea098af`
+idle gates. TUI `run` is still **multi-thread Tokio** (never
+`current_thread`; turns must not starve on `event::poll`), **2 workers**
+(`2e31576`; Generate/Serve keep nproc). Production TUI/boot path is
+unchanged vs the earlier same-day `ea098af` row.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **1.4 ms** | 2.0 ms | **0.5 MB** |
+| `--help` | **1.9 ms** | 2.1 ms | — |
+| `config show` | **2.5 ms** | 3.2 ms | **5.3 MB** |
+| `session list` | — | — | **11.5 MB** |
+| binary size | **14.8 MB** | — | — |
+
+`--version` stays in the 1–3 ms band (1.4 vs 2.0 ms on `ea098af`, 1.7 ms
+on `50e05d8`, 1.5 ms on 09-01). Version p95 (2.0 ms) is still far under
+the loose CI ceiling (50 ms / 40 MB). `--help` / `config show` are
+quieter than the `ea098af` row (p95 2.1 / 3.2 vs 6.3 / 6.0). Short-lived
+`--version` RSS sampling is noisy (isolated 10-run median 0.54 MB; most
+samples 0.44–0.64 MB, one 15.6 MB miss) — report the median, not the
+miss.
+
+**Multi-session PSS** (idle TUI, 1.5 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **10.5 MB** | was 12.1 MB on `ea098af`; 11.8 MB on `50e05d8` / `5f6849e`; 8.4 MB on 2026-09-01 |
+| 10 | **32.0 MB** | was 30.4 MB on `ea098af`, 30.5 MB on `50e05d8`, 34.5 MB on 09-01 |
+| per added session | **~2.4 MB** | was ~2.0 MB on `ea098af`, ~2.1 MB on `50e05d8`, ~2.9 MB on 09-01 |
+
+One idle session is **1.6 MB lighter** than the same-day `ea098af` row
+(still heavier than 09-01). Ten concurrent sessions are ~1.6 MB heavier
+than `ea098af`, so the incremental cost per extra process is ~2.4 MB
+(was ~2.0). Still a lower bound (idle, no agent turn).
+
+**First frame / idle** (`bench_first_frame.py`, empty project):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **12.0 ms** median | 0.0/s | was 13.1 ms on `ea098af`, 13.0 ms on `50e05d8`, 12.5 ms on `5f6849e`, 11.1 ms on 09-01 |
+| Harness `--idle-ms 3000` (10 runs) | **11.7 ms** median | **0.3/s** | same 0.3/s as `ea098af` / `50e05d8` / `5f6849e`; was 0.0/s on 09-01 |
+
+Spawn-to-exit at `--idle-ms 0` is **16.0 ms** (min 15.2, max 17.8) —
+quieter than `ea098af`'s **20.6 ms** and `50e05d8`'s **19.9 ms**, toward
+the 09-01 **~18 ms** band. In-proc TTFF is 12.0 ms vs 13.1 (`ea098af`) /
+13.0 (`50e05d8`) / 12.5 (`5f6849e`) / 11.1 (09-01), still well under the
+08-31 **22.6 ms** figure. The 3 s idle window is still **0.3 /s** — the
+`ea098af` idle-zero hydrate gates did not restore a hard zero on this
+machine. The product claim remains “paint only when something changed,”
+not a frames-per-second race.
+
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
@@ -627,6 +687,56 @@ noisier (syntect + this laptop under load).
 | entries snapshot | 124 µs |
 | 20k query_now (non-blocking) | **14 µs** |
 | 20k query_settle | 14 µs |
+
+### Re-measure, 2026-09-02 (Linux, criterion sample-size 15)
+
+Same machine as the process-level re-measure above (`56f2e43`). Warm
+highlight, parse, assess, and index query stay in the same band as
+2026-08-31; cold highlight is still noisy (syntect + this laptop). ANSI
+render of a 200-line fence is cheaper this run (43 ms vs 57 ms).
+
+**`highlight_code_spans`**
+
+| Case | cold | warm |
+|---|---|---|
+| Rust, 10 lines | ~2.0 ms | **87 ns** |
+| Rust, 100 lines | ~1.9 ms | **309 ns** |
+| Rust, 500 lines | (noisy) | **1.32 µs** |
+| untagged, 100 lines (warm) | — | 272 ns |
+
+**`parse_markdown`**
+
+| Case | time |
+|---|---|
+| typical response | 4.4 µs |
+| streaming prefix 200 / 1000 / 4000 chars | 2.3 / 7.9 / 35.2 µs |
+
+**`assess` (command-risk)**
+
+| Case | time |
+|---|---|
+| safe short (`ls -la` class) | 544 ns |
+| safe build (`cargo test …`) | 2.09 µs |
+| caution / destructive / catastrophic | 2.23 / 2.49 / 1.42 µs |
+| pipeline | 5.29 µs |
+
+**`render_markdown` (ANSI, uncached per call)**
+
+| Case | time |
+|---|---|
+| typical response | 1.31 ms |
+| 200-line Rust fence | 43.3 ms |
+
+**Index (`whycodes-index`)**
+
+| Case | time |
+|---|---|
+| walk root (1 / 4 / 8 threads) | ~5.2 / 5.1 / 5.0 ms |
+| query warm | **13 µs** |
+| browse top | 25 µs |
+| entries snapshot | 116 µs |
+| 20k query_now (non-blocking) | **13 µs** |
+| 20k query_settle | 13 µs |
 
 **The tokeniser allocated per character.** `match_operator` collected each of
 its fifteen candidate operators into a `Vec<char>` at every character position,

@@ -1,6 +1,6 @@
 {
   "date": "2026-09-02",
-  "git": "ea098af",
+  "git": "56f2e43",
   "machine": {
     "platform": "Linux x86_64",
     "cpu": "Intel(R) Core(TM) i5-4200H CPU @ 2.80GHz",
@@ -8,47 +8,48 @@
   },
   "binary": "target/release/whycodes",
   "profile": "release",
-  "binary_size_mb": 16.1,
-  "version_ms_p95": 3.59,
-  "version_rss_mb": 0.52,
+  "binary_size_mb": 14.8,
+  "version_ms_p95": 1.95,
+  "version_rss_mb": 0.54,
   "startup": {
     "version": {
       "runs": 20,
-      "median_ms": 2.01,
-      "p95_ms": 3.59,
-      "min_ms": 1.34,
-      "max_ms": 3.59
+      "median_ms": 1.43,
+      "p95_ms": 1.95,
+      "min_ms": 1.3,
+      "max_ms": 1.95
     },
     "help": {
       "runs": 20,
-      "median_ms": 2.78,
-      "p95_ms": 6.3,
-      "min_ms": 1.88,
-      "max_ms": 6.3
+      "median_ms": 1.91,
+      "p95_ms": 2.14,
+      "min_ms": 1.79,
+      "max_ms": 2.14
     },
     "config-show": {
       "runs": 20,
-      "median_ms": 4.17,
-      "p95_ms": 6.02,
-      "min_ms": 2.84,
-      "max_ms": 6.02
+      "median_ms": 2.53,
+      "p95_ms": 3.2,
+      "min_ms": 2.45,
+      "max_ms": 3.2
     }
   },
   "memory": {
     "version": {
-      "runs": 5,
-      "median_mb": 0.52,
-      "max_mb": 0.54
+      "runs": 10,
+      "median_mb": 0.54,
+      "max_mb": 15.58,
+      "note": "Short-lived --version RSS sampling is noisy (most samples 0.44–0.64 MB; one 15.58 MB miss). Median from an isolated 10-run remeasure."
     },
     "config-show": {
       "runs": 5,
-      "median_mb": 5.72,
-      "max_mb": 7.54
+      "median_mb": 5.32,
+      "max_mb": 5.97
     },
     "session-list": {
       "runs": 5,
-      "median_mb": 12.3,
-      "max_mb": 12.64
+      "median_mb": 11.47,
+      "max_mb": 11.66
     }
   },
   "multi_session": {
@@ -57,88 +58,91 @@
       "1": {
         "runs": 5,
         "sessions": 1,
-        "median_pss_mb": 12.1,
-        "max_pss_mb": 12.1,
-        "min_pss_mb": 12.0,
+        "median_pss_mb": 10.5,
+        "max_pss_mb": 10.8,
+        "min_pss_mb": 10.5,
         "median_process_count": 1,
         "samples_mb": [
-          12.0,
-          12.1,
-          12.1,
-          12.1,
-          12.1
+          10.5,
+          10.5,
+          10.5,
+          10.6,
+          10.8
         ]
       },
       "10": {
         "runs": 5,
         "sessions": 10,
-        "median_pss_mb": 30.4,
-        "max_pss_mb": 31.0,
-        "min_pss_mb": 30.3,
+        "median_pss_mb": 32.0,
+        "max_pss_mb": 32.2,
+        "min_pss_mb": 32.0,
         "median_process_count": 10,
         "samples_mb": [
-          30.3,
-          30.3,
-          30.4,
-          30.5,
-          31.0
+          32.0,
+          32.0,
+          32.0,
+          32.1,
+          32.2
         ],
-        "extra_over_one_mb": 18.3,
-        "per_added_session_mb": 2.0
+        "extra_over_one_mb": 21.5,
+        "per_added_session_mb": 2.4
       }
     }
   },
-  "first_frame_note": "TUI `run` is still multi-thread Tokio (never current_thread; turns must not starve on event::poll), capped at TUI_WORKER_THREADS=2 (`2e31576`; Generate/Serve keep nproc). ea098af idle gates: skip GitHub auto-update when WHYCODES_BENCH is set, maybe_session_auto_index toasts only if n>0, settle_first_frame_hydrate clears leftover dirty on empty home. Same 80x24 harness PTY as 2026-08-26. In-proc TTFF 13.1 ms median vs 13.0 ms on 50e05d8 same day, 12.5 ms on 5f6849e, and 11.1 ms on 2026-09-01 (current_thread) — still well under the 08-31 22.6 ms figure. Spawn-to-exit at --idle-ms 0 is 20.6 ms (min 19.5, max 21.8), in the same band as 50e05d8's 19.9 ms and the 09-01 ~18 ms figure. Idle draws 0.3/s over 3 s (same as 50e05d8 / 5f6849e; was 0.0/s on 09-01) — the ea098af idle-zero hydrate gates did not restore a hard zero on this machine.",
+  "first_frame_note": "TUI `run` is still multi-thread Tokio (never current_thread; turns must not starve on event::poll), capped at TUI_WORKER_THREADS=2. HEAD `56f2e43` is test-coverage local-mod work on top of `ea098af` idle gates; production TUI/boot path is unchanged vs the earlier 2026-09-02 process-level row. Same 80x24 harness PTY. In-proc TTFF 12.0 ms median vs 13.1 ms on ea098af, 13.0 ms on 50e05d8, 12.5 ms on 5f6849e, and 11.1 ms on 2026-09-01 (current_thread). Spawn-to-exit at --idle-ms 0 is 16.0 ms (min 15.2, max 17.8), quieter than ea098af's 20.6 ms. Idle draws 0.3/s over 3 s (same as ea098af / 50e05d8 / 5f6849e; was 0.0/s on 09-01).",
   "first_frame_harness": {
-    "median_ms": 13.1,
-    "min_ms": 11.6,
-    "max_ms": 13.8,
+    "median_ms": 12.0,
+    "min_ms": 11.57,
+    "max_ms": 13.14,
     "runs": 12,
-    "idle_ms": 0
+    "idle_ms": 0,
+    "spawn_to_exit_median_ms": 16.01,
+    "spawn_to_exit_min_ms": 15.18,
+    "spawn_to_exit_max_ms": 17.75
   },
   "idle_draws_harness": {
     "median_per_s": 0.33,
     "window_ms": 3000,
-    "first_frame_median_ms": 12.6
+    "first_frame_median_ms": 11.72
   },
   "hot_paths": {
     "assess": {
-      "safe_short_ns": 583,
-      "safe_build_us": 2.18,
-      "caution_us": 2.38,
-      "destructive_us": 2.61,
-      "catastrophic_us": 1.45,
-      "pipeline_us": 5.47
+      "safe_short_ns": 544,
+      "safe_build_us": 2.09,
+      "caution_us": 2.23,
+      "destructive_us": 2.49,
+      "catastrophic_us": 1.42,
+      "pipeline_us": 5.29
     },
     "parse_markdown": {
-      "typical_us": 6.66,
-      "stream_200_us": 3.15,
-      "stream_1000_us": 12.3,
-      "stream_4000_us": 56.1
+      "typical_us": 4.37,
+      "stream_200_us": 2.28,
+      "stream_1000_us": 7.94,
+      "stream_4000_us": 35.2
     },
     "highlight_warm": {
-      "rust_10_ns": 106,
-      "rust_100_ns": 331,
-      "rust_500_us": 1.47,
-      "untagged_100_ns": 293
+      "rust_10_ns": 87,
+      "rust_100_ns": 309,
+      "rust_500_us": 1.32,
+      "untagged_100_ns": 272
     },
     "highlight_cold": {
-      "rust_10_ms": 2.3,
-      "rust_100_ms": 2.21
+      "rust_10_ms": 1.96,
+      "rust_100_ms": 1.89
     },
     "render_markdown_ansi": {
-      "typical_ms": 1.74,
-      "code_200_ms": 57.1
+      "typical_ms": 1.31,
+      "code_200_ms": 43.3
     }
   },
   "index": {
-    "walk_root_t1_ms": 8.33,
-    "walk_root_t4_ms": 5.36,
-    "walk_root_t8_ms": 5.36,
-    "query_warm_us": 14.1,
-    "browse_top_us": 32.5,
-    "entries_snapshot_us": 124,
-    "query_now_nonblocking_20k_us": 14.0,
-    "query_settle_20k_us": 14.4
+    "walk_root_t1_ms": 5.16,
+    "walk_root_t4_ms": 5.12,
+    "walk_root_t8_ms": 5.02,
+    "query_warm_us": 12.8,
+    "browse_top_us": 25.0,
+    "entries_snapshot_us": 116,
+    "query_now_nonblocking_20k_us": 12.8,
+    "query_settle_20k_us": 13.4
   }
 }
