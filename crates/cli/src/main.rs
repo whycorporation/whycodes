@@ -10,7 +10,7 @@ use whycodes_protocol::OutputFormat;
 /// Crate version only (semver from Cargo.toml).
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Full version string: `0.3.0 (abc1234 2026-08-31)`.
+/// Full version string: `0.4.0 (abc1234 2026-09-02)`.
 ///
 /// Git hash and build date come from `build.rs` so release binaries and
 /// `whycodes --version` / install smoke checks identify an exact build.

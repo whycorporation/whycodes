@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 use reqwest::RequestBuilder;
 
-/// `User-Agent` value, e.g. `whycodes/0.3.0`.
+/// `User-Agent` value, e.g. `whycodes/0.4.0`.
 pub const USER_AGENT: &str = concat!("whycodes/", env!("CARGO_PKG_VERSION"));
 
 /// OpenRouter-style app title (`X-Title`).
