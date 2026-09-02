@@ -166,12 +166,21 @@ fn runtime_choice_per_command() {
     // Interactive TUI / `run` need the multi-thread pool: the loop blocks on
     // `event::poll`, so current_thread starves `tokio::spawn` turns.
     assert!(command_needs_multi_thread(&cli(None)));
+    assert!(!command_needs_full_worker_pool(&cli(None)));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Run {
         prompt: None,
         max_turns: None,
         format: OutputFormat::Text,
     }))));
+    assert!(!command_needs_full_worker_pool(&cli(Some(Commands::Run {
+        prompt: None,
+        max_turns: None,
+        format: OutputFormat::Text,
+    }))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Mcp {
+        cmd: McpCmd::List
+    }))));
+    assert!(!command_needs_full_worker_pool(&cli(Some(Commands::Mcp {
         cmd: McpCmd::List
     }))));
     assert!(!command_needs_multi_thread(&cli(Some(Commands::Session {
@@ -364,6 +373,8 @@ fn runtime_for_builds_the_selected_runtime_flavor() {
     use tokio::runtime::RuntimeFlavor;
 
     // Interactive TUI needs MultiThread so spawned turns run during poll.
+    // Worker count is `TUI_WORKER_THREADS` (2); tokio's public handle
+    // does not expose `metrics_num_workers`, so flavor is the contract.
     let interactive = runtime_for(&cli(None)).unwrap();
     assert_eq!(
         interactive.handle().runtime_flavor(),
@@ -727,6 +738,14 @@ fn runtime_choice_covers_remaining_commands() {
         jobs: 1,
         format: OutputFormat::Text,
     }))));
+    assert!(command_needs_full_worker_pool(&cli(Some(
+        Commands::Generate {
+            prompt: vec!["x".into()],
+            max_turns: Some(1),
+            jobs: 1,
+            format: OutputFormat::Text,
+        }
+    ))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Acp))));
     assert!(command_needs_multi_thread(&cli(Some(Commands::Pr {
         title: None,
@@ -747,6 +766,10 @@ fn runtime_choice_covers_remaining_commands() {
     assert!(command_needs_multi_thread(&cli(Some(Commands::Serve {
         port: 1
     }))));
+    #[cfg(feature = "server")]
+    assert!(command_needs_full_worker_pool(&cli(Some(
+        Commands::Serve { port: 1 }
+    ))));
     #[cfg(feature = "self-update")]
     assert!(command_needs_multi_thread(&cli(Some(Commands::Upgrade))));
     assert!(!command_needs_multi_thread(&cli(Some(

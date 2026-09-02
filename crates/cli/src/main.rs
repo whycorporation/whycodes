@@ -23,6 +23,13 @@ const VERSION_LONG: &str = concat!(
     ")"
 );
 
+/// Worker threads for interactive TUI / `run`.
+///
+/// `crossterm::event::poll` blocks one runtime thread; 2 workers let
+/// turn HTTP + hydrate run while poll is blocked. Do not use
+/// `current_thread` — spawned turns starve until the next poll return.
+const TUI_WORKER_THREADS: usize = 2;
+
 mod args;
 pub use args::*;
 
@@ -102,9 +109,14 @@ where
 /// force-cancels (2026-09-01).
 fn runtime_for(cli: &Cli) -> std::io::Result<tokio::runtime::Runtime> {
     if command_needs_multi_thread(cli) {
-        tokio::runtime::Builder::new_multi_thread()
-            .enable_all()
-            .build()
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder.enable_all();
+        // Generate / Serve keep the default nproc pool; interactive TUI
+        // and other multi-thread commands cap at two workers.
+        if !command_needs_full_worker_pool(cli) {
+            builder.worker_threads(TUI_WORKER_THREADS);
+        }
+        builder.build()
     } else {
         tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -146,6 +158,18 @@ fn command_needs_multi_thread(cli: &Cli) -> bool {
             | Commands::Debug
             | Commands::Completions { .. } => false,
         },
+    }
+}
+
+/// `generate -j` and `serve` benefit from the default nproc pool.
+/// Everything else that needs multi-thread (TUI / `run` / mcp / auth / …)
+/// is capped at [`TUI_WORKER_THREADS`].
+fn command_needs_full_worker_pool(cli: &Cli) -> bool {
+    match &cli.command {
+        Some(Commands::Generate { .. }) => true,
+        #[cfg(feature = "server")]
+        Some(Commands::Serve { .. }) => true,
+        _ => false,
     }
 }
 

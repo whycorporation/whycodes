@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-02 — TUI multi-thread pool capped at 2
+
+**Symptom:** After `de15f1a` restored multi-thread for TUI (poll blocks;
+`current_thread` starves spawned turns), TTFF 11.1→12.5 ms and 1-session
+PSS 8.4→11.8 MB. `runtime_for` used `Builder::new_multi_thread()` with
+no `worker_threads()` — default ≈ nproc.
+
+**Root cause:** Interactive TUI only needs a couple of workers (turn HTTP
++ hydrate) while `event::poll` occupies one thread. Spawning nproc
+workers is extra TTFF/RSS.
+
+**Fix:** `TUI_WORKER_THREADS = 2` on the multi-thread path for TUI / `run`
+and other non-generate/serve commands. Generate / Serve keep the default
+nproc pool. Never `current_thread` for TUI.
+
+**Prevention:** Keep `command_needs_multi_thread` true for `None` and
+`Commands::Run`. Regression: `runtime_choice_per_command` /
+`runtime_for_builds_the_selected_runtime_flavor`.
+
+---
+
 ### 2026-09-02 — Prompt paste drops ASCII `i` (#56)
 
 **Symptom:** Pasting `iyi` / `istanbul` into the TUI prompt drops every `i`
