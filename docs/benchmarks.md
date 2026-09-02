@@ -399,6 +399,66 @@ machine); the product claim remains “paint only when something changed,”
 not a frames-per-second race.
 
 
+### Re-measure, 2026-09-02 (Linux x86_64, release, HEAD `ea098af`)
+
+Same machine (Intel Core i5-4200H @ 2.80 GHz, CachyOS, kernel 7.2.2-1-cachyos).
+Release binary **16.1 MB** (unstripped size on disk). Recorded JSON:
+[`bench-results.json`](bench-results.json). Process-level only — criterion
+hot paths / index were not re-run; the 2026-08-31 block is still the last
+function-level snapshot.
+
+TUI `run` is still **multi-thread Tokio** (never `current_thread`; turns must
+not starve on `event::poll`), **2 workers** (`2e31576`; Generate/Serve keep
+nproc). `ea098af` idle gates on top of the earlier hydrate dirty gate
+(`4155fc6`): skip GitHub auto-update when `WHYCODES_BENCH` is set, Indexed-0
+toasts only if `n>0`, and `settle_first_frame_hydrate` clears leftover dirty
+on empty home. Compared with the same-day `50e05d8` row (2-worker pool +
+hydrate dirty gate, before these idle-zero patches) and the 2026-09-01
+`current_thread` row.
+
+| Case | Startup median | Startup p95 | Peak RSS median |
+|---|---|---|---|
+| `--version` | **2.0 ms** | 3.6 ms | **0.5 MB** |
+| `--help` | **2.8 ms** | 6.3 ms | — |
+| `config show` | **4.2 ms** | 6.0 ms | **5.7 MB** |
+| `session list` | — | — | **12.3 MB** |
+| binary size | **16.1 MB** | — | — |
+
+`--version` stays in the 1–3 ms band (2.0 vs 1.7 ms on `50e05d8`, 1.8 ms on
+`5f6849e`, 1.5 ms on 09-01). Version p95 (3.6 ms) is still far under the
+loose CI ceiling (50 ms / 40 MB). `--help` is quieter than `50e05d8`'s
+noisy 10.2 ms p95 (now 6.3 ms).
+
+**Multi-session PSS** (idle TUI, 1.5 s settle, 5 runs, median):
+
+| Sessions | Median PSS | Notes |
+|---|---|---|
+| 1 | **12.1 MB** | was 11.8 MB on `50e05d8` / `5f6849e`; 8.4 MB on 2026-09-01 |
+| 10 | **30.4 MB** | was 30.5 MB on `50e05d8`, 30.2 MB on `5f6849e`, 34.5 MB on 09-01 |
+| per added session | **~2.0 MB** | was ~2.1 MB on `50e05d8`, ~2.0 MB on `5f6849e`, ~2.9 MB on 09-01 |
+
+One idle session is 0.3 MB heavier than the same-day `50e05d8` row (still
+heavier than 09-01). Ten concurrent sessions stay in the same ~30 MB band.
+Incremental cost per extra process is ~2.0 MB. Still a lower bound (idle,
+no agent turn).
+
+**First frame / idle** (`bench_first_frame.py`, empty project):
+
+| Source | First frame | Idle draws/s | Notes |
+|---|---|---|---|
+| Harness `--idle-ms 0` (12 runs) | **13.1 ms** median | 0.0/s | was 13.0 ms on `50e05d8`, 12.5 ms on `5f6849e`, 11.1 ms on 09-01 |
+| Harness `--idle-ms 3000` (10 runs) | **12.6 ms** median | **0.3/s** | same 0.3/s as `50e05d8` / `5f6849e`; was 0.0/s on 09-01 |
+
+Spawn-to-exit at `--idle-ms 0` is **20.6 ms** (min 19.5, max 21.8) — same
+band as `50e05d8`'s **19.9 ms** and the 09-01 **~18 ms** figure. In-proc
+TTFF is 13.1 ms vs 13.0 (`50e05d8`) / 12.5 (`5f6849e`) / 11.1 (09-01),
+still well under the 08-31 **22.6 ms** figure. The 3 s idle window is still
+**0.3 /s** — the `ea098af` idle-zero hydrate gates (no 0-chunk toast, no
+bench GitHub update, settle leftover dirty) did not restore a hard zero on
+this machine. The product claim remains “paint only when something
+changed,” not a frames-per-second race.
+
+
 ## Hot paths
 
 Added 2026-07-31 after the process-level numbers, for the two functions that do
