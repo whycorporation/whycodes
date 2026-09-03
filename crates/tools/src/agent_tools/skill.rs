@@ -173,5 +173,15 @@ mod tests {
             .execute(json!({"action": "load", "name": "nope"}), &ctx)
             .await;
         assert!(missing.is_error);
+
+        let empty_dir = tempfile::tempdir().unwrap();
+        let empty_ctx = ToolContext::new(empty_dir.path().to_string_lossy());
+        let none = tool.execute(json!({"action": "list"}), &empty_ctx).await;
+        assert!(!none.is_error, "{}", none.content);
+        assert!(none.content.contains("No skills found"), "{}", none.content);
+
+        let bad = tool.execute(json!({"action": "nope"}), &ctx).await;
+        assert!(bad.is_error, "{}", bad.content);
+        assert!(bad.content.contains("Unknown action"), "{}", bad.content);
     }
 }

@@ -273,8 +273,126 @@ impl Tool for MemoryTool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::tool::ToolContext;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct IsolatedHome {
+        _guard: std::sync::MutexGuard<'static, ()>,
+        dir: tempfile::TempDir,
+        prev: Option<std::ffi::OsString>,
+        prev_no_memory: Option<std::ffi::OsString>,
+    }
+
+    impl IsolatedHome {
+        fn new() -> Self {
+            let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let dir = tempfile::tempdir().expect("tempdir");
+            let prev = std::env::var_os("WHYCODES_HOME");
+            let prev_no_memory = std::env::var_os("WHYCODES_NO_MEMORY");
+            unsafe {
+                std::env::set_var("WHYCODES_HOME", dir.path());
+                std::env::remove_var("WHYCODES_NO_MEMORY");
+            }
+            Self {
+                _guard: guard,
+                dir,
+                prev,
+                prev_no_memory,
+            }
+        }
+    }
+
+    impl Drop for IsolatedHome {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prev {
+                    Some(v) => std::env::set_var("WHYCODES_HOME", v),
+                    None => std::env::remove_var("WHYCODES_HOME"),
+                }
+                match &self.prev_no_memory {
+                    Some(v) => std::env::set_var("WHYCODES_NO_MEMORY", v),
+                    None => std::env::remove_var("WHYCODES_NO_MEMORY"),
+                }
+            }
+        }
+    }
+
     #[test]
     fn memory_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_write_list_search_delete_and_unknown() {
+        let home = IsolatedHome::new();
+        let ctx = ToolContext::new(home.dir.path().to_string_lossy());
+        let tool = MemoryTool::new();
+
+        let empty = tool
+            .execute(serde_json::json!({"action": "list"}), &ctx)
+            .await;
+        assert!(!empty.is_error, "{}", empty.content);
+        assert!(empty.content.contains("No memories"), "{}", empty.content);
+
+        let missing_text = tool
+            .execute(serde_json::json!({"action": "write"}), &ctx)
+            .await;
+        assert!(missing_text.is_error, "{}", missing_text.content);
+
+        let written = tool
+            .execute(
+                serde_json::json!({"action": "write", "text": "prefer cargo test -p"}),
+                &ctx,
+            )
+            .await;
+        assert!(!written.is_error, "{}", written.content);
+        assert!(
+            written.content.contains("Saved memory"),
+            "{}",
+            written.content
+        );
+
+        let listed = tool
+            .execute(serde_json::json!({"action": "list"}), &ctx)
+            .await;
+        assert!(!listed.is_error, "{}", listed.content);
+        assert!(
+            listed.content.contains("prefer cargo test -p"),
+            "{}",
+            listed.content
+        );
+
+        let found = tool
+            .execute(
+                serde_json::json!({"action": "search", "text": "cargo test"}),
+                &ctx,
+            )
+            .await;
+        assert!(!found.is_error, "{}", found.content);
+        assert!(found.content.contains("cargo test"), "{}", found.content);
+
+        let unknown = tool
+            .execute(serde_json::json!({"action": "nope"}), &ctx)
+            .await;
+        assert!(unknown.is_error, "{}", unknown.content);
+        assert!(
+            unknown.content.contains("unknown action"),
+            "{}",
+            unknown.content
+        );
+
+        let disabled = {
+            unsafe { std::env::set_var("WHYCODES_NO_MEMORY", "1") };
+            tool.execute(serde_json::json!({"action": "list"}), &ctx)
+                .await
+        };
+        assert!(disabled.is_error, "{}", disabled.content);
+        assert!(
+            disabled.content.contains("disabled"),
+            "{}",
+            disabled.content
+        );
     }
 }

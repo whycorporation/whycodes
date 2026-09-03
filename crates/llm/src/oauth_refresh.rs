@@ -125,4 +125,49 @@ mod tests {
         assert!(!has_source("prov-b"));
         unregister("prov-a");
     }
+
+    fn serve_status(status: &str, body: &str) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let header = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let payload = format!("{header}{body}");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(payload.as_bytes());
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn send_returns_success_and_401_without_refresh_source() {
+        let ok_url = serve_status("200 OK", "ok");
+        let ok = send_with_refresh_retry("no-such-provider", "token", |key| {
+            crate::client_identity::http_client()
+                .post(&ok_url)
+                .bearer_auth(key)
+        })
+        .await
+        .unwrap();
+        assert_eq!(ok.status().as_u16(), 200);
+
+        let err_url = serve_status("401 Unauthorized", "nope");
+        let err = send_with_refresh_retry("no-such-provider", "token", |key| {
+            crate::client_identity::http_client()
+                .post(&err_url)
+                .bearer_auth(key)
+        })
+        .await
+        .unwrap();
+        assert_eq!(err.status().as_u16(), 401);
+        assert_eq!(err.text().await.unwrap(), "nope");
+    }
 }
