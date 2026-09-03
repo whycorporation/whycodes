@@ -223,3 +223,54 @@ fn origin_from_header_parses_origin_and_skips_other_lines() {
     assert_eq!(origin_from_header("Host: localhost\r\n"), None);
     assert_eq!(origin_from_header("NotAHeader\r\n"), None);
 }
+
+#[test]
+fn authorize_url_includes_pkce_and_extra_params() {
+    let pkce = crate::pkce::Pkce::new();
+    let url = authorize_url(
+        "https://example.com/oauth/authorize",
+        "client-1",
+        "http://127.0.0.1:9/callback",
+        "openid profile",
+        &pkce,
+        &[("audience".into(), "api".into())],
+    );
+    assert!(
+        url.starts_with("https://example.com/oauth/authorize?"),
+        "{url}"
+    );
+    assert!(url.contains("response_type=code"), "{url}");
+    assert!(url.contains("client_id=client-1"), "{url}");
+    assert!(url.contains("code_challenge_method=S256"), "{url}");
+    assert!(url.contains("audience=api"), "{url}");
+    assert!(url.contains(&format!("state={}", pkce.state)), "{url}");
+    assert!(
+        url.contains(&format!("code_challenge={}", pkce.challenge)),
+        "{url}"
+    );
+}
+
+#[test]
+fn cors_headers_allow_known_origin_and_fallback() {
+    let known = cors_headers(Some("https://accounts.x.ai"));
+    assert!(
+        known.contains("Access-Control-Allow-Origin: https://accounts.x.ai"),
+        "{known}"
+    );
+    assert!(
+        known.contains("Access-Control-Allow-Private-Network: true"),
+        "{known}"
+    );
+
+    let unknown = cors_headers(Some("https://evil.example"));
+    assert!(
+        unknown.contains("Access-Control-Allow-Origin: https://accounts.x.ai"),
+        "{unknown}"
+    );
+
+    let none = cors_headers(None);
+    assert!(
+        none.contains("Access-Control-Allow-Origin: https://accounts.x.ai"),
+        "{none}"
+    );
+}

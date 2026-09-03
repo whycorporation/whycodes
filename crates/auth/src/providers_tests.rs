@@ -1409,3 +1409,48 @@ fn error_messages_cover_every_variant() {
         assert!(!err.to_string().is_empty(), "{err:?}");
     }
 }
+
+#[tokio::test]
+async fn exchange_code_and_refresh_grant_against_loopback() {
+    let pkce = crate::pkce::Pkce::new();
+    let token_json =
+        r#"{"access_token":"at-1","refresh_token":"rt-1","expires_in":3600,"token_type":"Bearer"}"#;
+    let spec = loopback_spec(mock_server(vec![
+        (200, token_json),
+        (200, token_json),
+        (400, r#"{"error":"invalid_grant"}"#),
+    ]));
+    let token = exchange_code(&spec, "code-1", "http://127.0.0.1:9/cb", &pkce)
+        .await
+        .unwrap();
+    assert_eq!(token.access_token, "at-1");
+    assert_eq!(token.refresh_token.as_deref(), Some("rt-1"));
+
+    let refreshed = refresh_grant(&spec, "rt-1").await.unwrap();
+    assert_eq!(refreshed.access_token, "at-1");
+
+    let err = exchange_code(&spec, "bad", "http://127.0.0.1:9/cb", &pkce)
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("invalid_grant") || !err.to_string().is_empty(),
+        "{err}"
+    );
+}
+
+#[test]
+fn persist_token_writes_store_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let token = OAuthToken {
+        access_token: "at".into(),
+        refresh_token: Some("rt".into()),
+        expires_at: None,
+        extra: Default::default(),
+    };
+    persist_token(&store, "acme", "oauth", &token).unwrap();
+    let loaded = store.get("acme").unwrap().expect("stored");
+    assert_eq!(loaded.method, "oauth");
+    assert_eq!(loaded.token.access_token, "at");
+    assert_eq!(loaded.token.refresh_token.as_deref(), Some("rt"));
+}

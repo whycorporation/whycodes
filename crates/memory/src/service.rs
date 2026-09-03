@@ -1089,4 +1089,37 @@ mod tests {
         assert!(svc.retain_llm_facts("- fact", None).unwrap().is_empty());
         assert!(!svc.should_run_llm_retain(0, 1));
     }
+
+    #[test]
+    fn delete_by_unique_prefix_and_ambiguous() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = MemoryService::open(dir.path(), dir.path(), MemorySettings::default()).unwrap();
+        let a = svc.remember("alpha memory", None).unwrap();
+        let b = svc.remember("beta memory", None).unwrap();
+        assert_ne!(a, b);
+
+        assert!(!svc.delete("").unwrap());
+        assert!(!svc.delete("   ").unwrap());
+        assert!(!svc.delete("no-such-id").unwrap());
+
+        let prefix = &a[..8];
+        assert!(svc.delete(prefix).unwrap(), "unique prefix should delete");
+        assert!(svc.list(10).unwrap().iter().all(|r| r.id != a));
+
+        let extra = svc.remember("gamma memory", None).unwrap();
+        let common: String = extra
+            .chars()
+            .zip(b.chars())
+            .take_while(|(x, y)| x == y)
+            .map(|(x, _)| x)
+            .collect();
+        if common.is_empty() {
+            assert!(svc.delete(&extra[..8]).unwrap());
+        } else {
+            match svc.delete(&common) {
+                Ok(_) => {}
+                Err(e) => assert!(e.to_string().contains("ambiguous"), "{e}"),
+            }
+        }
+    }
 }

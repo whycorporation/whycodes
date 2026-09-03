@@ -332,8 +332,59 @@ impl Drop for McpClient {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use tokio::io::BufReader as AsyncBufReader;
+    use tokio::process::Command;
+
     #[test]
     fn client_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    async fn stdout_of(script: &str) -> AsyncBufReader<tokio::process::ChildStdout> {
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let stdout = child.stdout.take().unwrap();
+        tokio::spawn(async move {
+            let _ = child.wait().await;
+        });
+        AsyncBufReader::new(stdout)
+    }
+
+    #[tokio::test]
+    async fn read_stdio_response_ok_error_empty_and_mismatch() {
+        let mut ok =
+            stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"ok":true}}'"#).await;
+        let value = read_stdio_response(&mut ok, 1).await.unwrap();
+        assert_eq!(value["ok"], true);
+
+        let mut mismatch =
+            stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":9,"result":{"ok":true}}'"#).await;
+        let value = read_stdio_response(&mut mismatch, 1).await.unwrap();
+        assert_eq!(value["ok"], true);
+
+        let mut err = stdout_of(
+            r#"printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"nope"}}'"#,
+        )
+        .await;
+        let e = read_stdio_response(&mut err, 1).await.unwrap_err();
+        assert!(e.to_string().contains("nope"), "{e}");
+
+        let mut empty = stdout_of("printf ''").await;
+        let e = read_stdio_response(&mut empty, 1).await.unwrap_err();
+        assert!(e.to_string().to_lowercase().contains("empty"), "{e}");
+
+        let mut bad = stdout_of(r#"printf '%s\n' 'not-json'"#).await;
+        let e = read_stdio_response(&mut bad, 1).await.unwrap_err();
+        assert!(e.to_string().contains("parse"), "{e}");
+
+        let mut no_result = stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":1}'"#).await;
+        let e = read_stdio_response(&mut no_result, 1).await.unwrap_err();
+        assert!(e.to_string().contains("no result"), "{e}");
     }
 }
