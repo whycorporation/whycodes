@@ -65,6 +65,8 @@ pub enum DialogKind {
     Effort,
     /// Session approval overlay (`auto` / `important` / `manual`).
     ApprovalMode,
+    /// Checkbox picker: which MCP / permission / hook rows to copy.
+    Import,
 }
 
 /// One row in the `/login` provider picker.
@@ -393,6 +395,60 @@ pub enum ConfirmAction {
     /// User accepted the home-screen / `/import` settings confirm. The run
     /// loop copies MCP, permissions, and hooks from other agents.
     ImportSettings,
+}
+
+/// One checkbox row in the import picker (MCP / permission / hook).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportPickerItem {
+    pub label: String,
+    pub detail: String,
+}
+
+/// Live state for the import checkbox picker.
+#[derive(Debug, Clone, Default)]
+pub struct ImportPickerState {
+    pub items: Vec<ImportPickerItem>,
+    /// Parallel to `items`; true = copy this row.
+    pub checked: Vec<bool>,
+    pub cursor: usize,
+}
+
+impl ImportPickerState {
+    pub fn from_plan(plan: &whycodes_import::ImportPlan) -> Self {
+        let items: Vec<ImportPickerItem> = plan
+            .selectable_items()
+            .into_iter()
+            .map(|item| ImportPickerItem {
+                label: item.label,
+                detail: item.detail,
+            })
+            .collect();
+        let n = items.len();
+        Self {
+            items,
+            checked: vec![true; n],
+            cursor: 0,
+        }
+    }
+
+    pub fn toggle_at_cursor(&mut self) {
+        if let Some(flag) = self.checked.get_mut(self.cursor) {
+            *flag = !*flag;
+        }
+    }
+
+    pub fn select_all(&mut self, checked: bool) {
+        self.checked.fill(checked);
+    }
+
+    pub fn checked_count(&self) -> usize {
+        self.checked.iter().filter(|c| **c).count()
+    }
+
+    /// True when at least one row is checked (Enter should apply).
+    pub fn any_checked(&self) -> bool {
+        self.checked.iter().any(|c| *c)
+    }
 }
 
 /// A newer GitHub release the home screen can offer.
@@ -1395,6 +1451,8 @@ pub struct TuiApp {
     pub(crate) import_prompted: bool,
     /// User accepted Import settings — run loop merges MCP / permission / hooks.
     pub(crate) pending_import: bool,
+    /// Checkbox picker for which MCP / permission / hook rows to copy.
+    pub(crate) import_picker: ImportPickerState,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
     pub(crate) primary_agents: Vec<String>,
@@ -1851,7 +1909,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
     },
     SlashCommand {
         name: "/import",
-        hint: "[claude|opencode|grok|codex] Copy MCP / permissions / hooks",
+        hint: "[claude|opencode|grok|codex] Pick MCP / permissions / hooks to copy",
     },
     SlashCommand {
         name: "/login",
@@ -2103,6 +2161,7 @@ impl TuiApp {
             pending_upgrade: false,
             import_prompted: false,
             pending_import: false,
+            import_picker: ImportPickerState::default(),
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),
@@ -3273,6 +3332,14 @@ impl TuiApp {
         });
     }
 
+    /// Open the import checkbox picker (MCP / permission / hook rows).
+    pub fn open_import_picker(&mut self, plan: &whycodes_import::ImportPlan) {
+        self.import_picker = ImportPickerState::from_plan(plan);
+        self.mode = AppMode::Dialog;
+        self.key_context = KeymapContext::Dialog;
+        self.dialogs.push(DialogKind::Import);
+    }
+
     /// Replace the chat view with a reconstructed transcript from a stored session.
     ///
     /// Used when resuming via the session picker, `/resume`, or `--continue`.
@@ -4196,5 +4263,34 @@ mod state_tests {
         app.submit_input();
         assert_eq!(app.pending_full_clears, 2);
         assert!(app.messages.iter().any(|m| m.content == "hello"));
+    }
+
+    #[test]
+    fn import_picker_toggle_and_select_all() {
+        let mut plan = whycodes_import::ImportPlan::default();
+        plan.mcp_add.push((
+            "fs".into(),
+            whycodes_config::McpServerConfig {
+                transport: None,
+                command: Some("npx".into()),
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        ));
+        plan.permission_add
+            .push(("bash".into(), whycodes_core::types::PermissionAction::Ask));
+        let mut state = ImportPickerState::from_plan(&plan);
+        assert_eq!(state.items.len(), 2);
+        assert!(state.any_checked());
+        assert_eq!(state.checked_count(), 2);
+        state.toggle_at_cursor();
+        assert_eq!(state.checked_count(), 1);
+        state.select_all(false);
+        assert!(!state.any_checked());
+        state.select_all(true);
+        assert_eq!(state.checked_count(), 2);
     }
 }

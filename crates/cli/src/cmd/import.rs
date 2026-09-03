@@ -67,7 +67,7 @@ pub(crate) fn maybe_first_run_import(interactive: bool) -> anyhow::Result<bool> 
     println!("{} Found setups from other agents:", "import".bold());
     print_found(&found);
     println!();
-    print!("Import into WhyCodes? [y/N] ");
+    print!("Import into WhyCodes? You'll pick MCP / permissions / hooks next. [y/N] ");
     if let Err(e) = std::io::stdout().flush() {
         eprintln!("warning: could not flush prompt: {e}");
     }
@@ -82,7 +82,7 @@ pub(crate) fn maybe_first_run_import(interactive: bool) -> anyhow::Result<bool> 
         );
         return Ok(false);
     }
-    run_import(&consent, &home, None, false, true, false, true)?;
+    run_import(&consent, &home, None, false, false, false, true)?;
     Ok(true)
 }
 
@@ -195,6 +195,14 @@ fn run_import(
         println!("Nothing new to write (WhyCodes already has these keys).");
         return Ok(());
     }
+    let mut plan = plan;
+    if !yes {
+        prompt_item_selection(&mut plan)?;
+        if plan.is_empty() {
+            println!("Nothing selected.");
+            return Ok(());
+        }
+    }
     let path = apply_and_save(&plan)?;
     println!(
         "{} Wrote {}",
@@ -264,6 +272,28 @@ fn print_plan(plan: &ImportPlan) {
         println!("  {} {w}", "!".yellow());
     }
     println!();
+}
+
+/// Prompt Y/n for each addable MCP / permission / hook. Default keep.
+fn prompt_item_selection(plan: &mut ImportPlan) -> anyhow::Result<()> {
+    let items = plan.selectable_items();
+    if items.is_empty() {
+        return Ok(());
+    }
+    println!("Select what to copy (Enter/y keep, n skip):");
+    let mut selected = Vec::with_capacity(items.len());
+    for item in &items {
+        print!("  {}? [Y/n] ", item.label);
+        if let Err(e) = std::io::stdout().flush() {
+            eprintln!("warning: could not flush prompt: {e}");
+        }
+        let mut line = String::new();
+        read_repl_line(&mut line)?;
+        let t = line.trim().to_ascii_lowercase();
+        selected.push(t.is_empty() || matches!(t.as_str(), "y" | "yes"));
+    }
+    plan.retain_selected(&selected);
+    Ok(())
 }
 
 #[cfg(test)]

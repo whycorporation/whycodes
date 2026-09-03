@@ -16,7 +16,9 @@ pub use consent::ConsentStore;
 pub use discover::{KNOWN_SOURCES, scan, scan_with_home, why_config_missing};
 pub use error::{ImportError, Result};
 pub use extract::extract;
-pub use types::{Extracted, FoundSource, ImportPlan, Product, SourceState};
+pub use types::{
+    Extracted, FoundSource, ImportItem, ImportItemKind, ImportPlan, Product, SourceState,
+};
 
 /// Read approved sources and build a merge plan against `config`.
 pub fn preview(

@@ -123,9 +123,9 @@ hooks from Claude Code, OpenCode, Grok Build, and Codex CLI into
 are not copied — they stay live in the repo.
 
 ```bash
-whycodes import              # prompt per new source
+whycodes import              # prompt per new source, then per MCP/permission/hook
 whycodes import --dry-run    # plan only
-whycodes import --from claude --yes
+whycodes import --from claude --yes   # copy everything without prompts
 ```
 
 Same consent model as credential import: a path is read only after approval,
@@ -133,8 +133,8 @@ the source is never modified, and symlinks are refused. Existing WhyCodes
 keys win unless `--force`. Credentials stay on `whycodes auth import`.
 
 On first interactive run, if `config.toml` is missing and another agent is
-found, WhyCodes asks once: the full-screen TUI uses a home-screen confirm
-(same chrome as the update offer); `--plain` asks on stdin before the REPL.
+found, WhyCodes asks once: the full-screen TUI opens a checkbox picker
+(Space toggle, Enter apply); `--plain` asks y/N then Y/n per item.
 `/import` (or `whycodes import`) runs the same copy later. `WHYCODES_SKIP_IMPORT=1`
 or `CI=1` skips the prompt. Piped stdin is also skipped so CI is never blocked.
 

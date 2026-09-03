@@ -1535,6 +1535,10 @@ fn handle_modal_mouse(app: &mut TuiApp, mouse: MouseEvent) -> bool {
                         app.provider_dialog.selected = idx;
                         confirm_dialog(app, active);
                     }
+                    DialogKind::Import => {
+                        app.import_picker.cursor = idx;
+                        app.import_picker.toggle_at_cursor();
+                    }
                     DialogKind::Question(_) => {
                         // Bottom questionnaire: click option row.
                         if let Some(DialogKind::Question(mut st)) = app.dialogs.pop() {
@@ -1790,7 +1794,7 @@ fn dismiss_dialog(app: &mut TuiApp) {
         Some(DialogKind::Confirm {
             on_confirm: ConfirmAction::ImportSettings,
             ..
-        })
+        }) | Some(DialogKind::Import)
     ) {
         crate::run::mark_import_declined();
     }
@@ -1872,6 +1876,12 @@ fn move_in_dialog_to(app: &mut TuiApp, active: &DialogKind, idx: usize) {
                 app.dialogs.push(DialogKind::Question(st));
             }
         }
+        DialogKind::Import => {
+            let len = app.import_picker.items.len();
+            if len > 0 {
+                app.import_picker.cursor = idx.min(len - 1);
+            }
+        }
         _ => {}
     }
 }
@@ -1920,6 +1930,32 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             _ => {}
         }
     }
+    // Checkbox picker: Space toggles the row. `a`/`n` would otherwise map to
+    // dialog confirm/cancel (permission allow/deny), so steal them here.
+    if matches!(active, DialogKind::Import)
+        && !key
+            .modifiers
+            .contains(crossterm::event::KeyModifiers::CONTROL)
+    {
+        match key.code {
+            KeyCode::Char(' ') => {
+                app.import_picker.toggle_at_cursor();
+                app.mark_dirty();
+                return true;
+            }
+            KeyCode::Char('a') => {
+                app.import_picker.select_all(true);
+                app.mark_dirty();
+                return true;
+            }
+            KeyCode::Char('n') => {
+                app.import_picker.select_all(false);
+                app.mark_dirty();
+                return true;
+            }
+            _ => {}
+        }
+    }
 
     match action {
         Some(Action::DialogCancel) => {
@@ -1942,6 +1978,14 @@ fn handle_dialog_key(app: &mut TuiApp, key: &KeyEvent) -> bool {
             dismiss_dialog(app);
         }
         Some(Action::DialogConfirm) => {
+            if matches!(active, DialogKind::Import) && !app.import_picker.any_checked() {
+                app.toasts.push(
+                    crate::toast::ToastKind::Info,
+                    "Select at least one item (Space), or Esc to skip",
+                );
+                app.mark_dirty();
+                return true;
+            }
             confirm_dialog(app, &active);
         }
         // Up/Down are bound to next/prev field. In a form that means the next
@@ -2087,6 +2131,11 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
                 app.pending_import = true;
             }
         },
+        DialogKind::Import => {
+            if app.import_picker.any_checked() {
+                app.pending_import = true;
+            }
+        }
         DialogKind::Alert { .. } => {
             // Close alert on confirm.
         }
@@ -2381,6 +2430,13 @@ fn move_in_dialog(app: &mut TuiApp, active: &DialogKind, delta: isize) {
                 }
                 app.dialogs.push(DialogKind::Question(st));
             }
+        }
+        DialogKind::Import => {
+            app.import_picker.cursor = move_selection(
+                app.import_picker.cursor,
+                app.import_picker.items.len(),
+                delta,
+            );
         }
         _ => {}
     }
@@ -3612,6 +3668,43 @@ mod event_tests {
         handle_event(&mut a, key(KeyCode::Char('y')));
         assert!(a.pending_import);
         assert!(a.running);
+        assert_eq!(a.mode, AppMode::Normal);
+    }
+
+    #[test]
+    fn import_picker_space_toggles_and_enter_applies() {
+        let mut a = app();
+        let mut plan = whycodes_import::ImportPlan::default();
+        plan.mcp_add.push((
+            "fs".into(),
+            whycodes_config::McpServerConfig {
+                transport: None,
+                command: Some("npx".into()),
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        ));
+        plan.permission_add
+            .push(("bash".into(), whycodes_core::types::PermissionAction::Ask));
+        a.open_import_picker(&plan);
+        assert_eq!(a.import_picker.checked, vec![true, true]);
+        handle_event(&mut a, key(KeyCode::Char(' ')));
+        assert_eq!(a.import_picker.checked, vec![false, true]);
+        handle_event(&mut a, key(KeyCode::Down));
+        handle_event(&mut a, key(KeyCode::Char(' ')));
+        assert_eq!(a.import_picker.checked, vec![false, false]);
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert!(!a.pending_import, "empty selection must not apply");
+        handle_event(&mut a, key(KeyCode::Char('a')));
+        assert_eq!(a.import_picker.checked, vec![true, true]);
+        handle_event(&mut a, key(KeyCode::Char('n')));
+        assert_eq!(a.import_picker.checked, vec![false, false]);
+        handle_event(&mut a, key(KeyCode::Char('a')));
+        handle_event(&mut a, key(KeyCode::Enter));
+        assert!(a.pending_import);
         assert_eq!(a.mode, AppMode::Normal);
     }
 

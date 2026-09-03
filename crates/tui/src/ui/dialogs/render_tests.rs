@@ -7,8 +7,8 @@
 
 use super::*;
 use crate::app::{
-    AppMode, AuthMethod, ConfirmAction, DialogKind, ProviderDialogMode, QuestionDialogState,
-    SessionEntry, TuiApp,
+    AppMode, AuthMethod, ConfirmAction, DialogKind, ImportPickerItem, ImportPickerState,
+    ProviderDialogMode, QuestionDialogState, SessionEntry, TuiApp,
 };
 use crate::config::TuiAppConfig;
 use crate::theme::ThemeName;
@@ -705,6 +705,29 @@ fn render_dispatches_all_dialog_kinds() {
     app.dialogs.push(DialogKind::Effort);
     let (_buf, _text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
     assert!(app.dialog_list_hit.is_some());
+
+    // Import checkbox picker
+    app.dialogs.clear();
+    app.import_picker = ImportPickerState {
+        items: vec![
+            ImportPickerItem {
+                label: "MCP `fs`".into(),
+                detail: "npx".into(),
+            },
+            ImportPickerItem {
+                label: "permission `bash` = ask".into(),
+                detail: String::new(),
+            },
+        ],
+        checked: vec![true, false],
+        cursor: 0,
+    };
+    app.dialogs.push(DialogKind::Import);
+    let (_buf, text) = paint(80, 24, |f| super::render(f, &mut app, &palette));
+    assert!(app.dialog_list_hit.is_some());
+    assert!(text.contains("MCP `fs`"), "{text}");
+    assert!(text.contains("[x]"), "{text}");
+    assert!(text.contains("[ ]"), "{text}");
 
     // Close all — renders as no-op without panic.
     app.dialogs.clear();

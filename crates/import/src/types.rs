@@ -128,9 +128,82 @@ pub struct ImportPlan {
     pub warnings: Vec<String>,
 }
 
+/// Kind of a user-selectable import row (MCP / permission / hook).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportItemKind {
+    Mcp,
+    Permission,
+    Hook,
+}
+
+/// One addable row shown in the TUI picker or CLI item prompt.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportItem {
+    pub kind: ImportItemKind,
+    pub label: String,
+    pub detail: String,
+}
+
 impl ImportPlan {
     pub fn is_empty(&self) -> bool {
         self.mcp_add.is_empty() && self.permission_add.is_empty() && self.hooks_add.is_empty()
+    }
+
+    /// Rows the user can check/uncheck, in apply order (MCP, permission, hooks).
+    pub fn selectable_items(&self) -> Vec<ImportItem> {
+        let mut items = Vec::with_capacity(
+            self.mcp_add.len() + self.permission_add.len() + self.hooks_add.len(),
+        );
+        for (name, server) in &self.mcp_add {
+            let detail = server
+                .command
+                .clone()
+                .or_else(|| server.url.clone())
+                .unwrap_or_default();
+            items.push(ImportItem {
+                kind: ImportItemKind::Mcp,
+                label: format!("MCP `{name}`"),
+                detail,
+            });
+        }
+        for (tool, action) in &self.permission_add {
+            let action = match action {
+                PermissionAction::Allow => "allow",
+                PermissionAction::Ask => "ask",
+                PermissionAction::Deny => "deny",
+            };
+            items.push(ImportItem {
+                kind: ImportItemKind::Permission,
+                label: format!("permission `{tool}` = {action}"),
+                detail: String::new(),
+            });
+        }
+        for hook in &self.hooks_add {
+            let event = match hook.event {
+                whycodes_config::HookEvent::PreTool => "pre_tool",
+                whycodes_config::HookEvent::PostTool => "post_tool",
+            };
+            items.push(ImportItem {
+                kind: ImportItemKind::Hook,
+                label: format!("hook {event} `{}`", hook.command),
+                detail: hook.tool_match.clone(),
+            });
+        }
+        items
+    }
+
+    /// Keep add-lists in lockstep with [`selectable_items`] booleans.
+    /// A short `selected` slice drops the remaining rows.
+    pub fn retain_selected(&mut self, selected: &[bool]) {
+        let mut i = 0;
+        let mut next = || {
+            let keep = selected.get(i).copied().unwrap_or(false);
+            i += 1;
+            keep
+        };
+        self.mcp_add.retain(|_| next());
+        self.permission_add.retain(|_| next());
+        self.hooks_add.retain(|_| next());
     }
 
     pub fn summary(&self) -> String {
@@ -193,5 +266,89 @@ mod tests {
         let plan = ImportPlan::default();
         assert!(plan.is_empty());
         assert!(plan.summary().contains("MCP +0"));
+        assert!(plan.selectable_items().is_empty());
+    }
+
+    fn sample_plan() -> ImportPlan {
+        let mut plan = ImportPlan::default();
+        plan.mcp_add.push((
+            "fs".into(),
+            McpServerConfig {
+                transport: None,
+                command: Some("npx".into()),
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        ));
+        plan.mcp_add.push((
+            "remote".into(),
+            McpServerConfig {
+                transport: None,
+                command: None,
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: Some("https://example".into()),
+                headers: None,
+            },
+        ));
+        plan.permission_add
+            .push(("bash".into(), PermissionAction::Ask));
+        plan.permission_add
+            .push(("read".into(), PermissionAction::Allow));
+        plan.hooks_add.push(HookConfig {
+            event: whycodes_config::HookEvent::PreTool,
+            tool_match: "bash".into(),
+            command: "echo hi".into(),
+            block_on_failure: true,
+            timeout_secs: 30,
+        });
+        plan
+    }
+
+    #[test]
+    fn selectable_items_cover_mcp_permission_hook() {
+        let plan = sample_plan();
+        let items = plan.selectable_items();
+        assert_eq!(items.len(), 5);
+        assert_eq!(items[0].kind, ImportItemKind::Mcp);
+        assert_eq!(items[0].label, "MCP `fs`");
+        assert_eq!(items[0].detail, "npx");
+        assert_eq!(items[1].kind, ImportItemKind::Mcp);
+        assert_eq!(items[1].detail, "https://example");
+        assert_eq!(items[2].kind, ImportItemKind::Permission);
+        assert!(items[2].label.contains("ask"));
+        assert_eq!(items[3].kind, ImportItemKind::Permission);
+        assert!(items[3].label.contains("allow"));
+        assert_eq!(items[4].kind, ImportItemKind::Hook);
+        assert!(items[4].label.contains("pre_tool"));
+        assert_eq!(items[4].detail, "bash");
+    }
+
+    #[test]
+    fn retain_selected_keeps_checked_rows_in_order() {
+        let mut plan = sample_plan();
+        plan.retain_selected(&[true, false, false, true, true]);
+        assert_eq!(plan.mcp_add.len(), 1);
+        assert_eq!(plan.mcp_add[0].0, "fs");
+        assert_eq!(plan.permission_add.len(), 1);
+        assert_eq!(plan.permission_add[0].0, "read");
+        assert_eq!(plan.hooks_add.len(), 1);
+        let mut empty = sample_plan();
+        empty.retain_selected(&[]);
+        assert!(empty.is_empty());
+        let mut deny = sample_plan();
+        deny.permission_add[0].1 = PermissionAction::Deny;
+        assert!(
+            deny.selectable_items()[2]
+                .label
+                .contains("permission `bash` = deny")
+        );
+        let mut post = sample_plan();
+        post.hooks_add[0].event = whycodes_config::HookEvent::PostTool;
+        assert!(post.selectable_items()[4].label.contains("post_tool"));
     }
 }

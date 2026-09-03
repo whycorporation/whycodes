@@ -63,6 +63,22 @@ pub(super) fn maybe_offer_import(app: &mut TuiApp) {
     }
     app.import_prompted = true;
     let products = unique_product_labels(&found);
+    match prepare_import_preview(None) {
+        Ok(PreviewOutcome::Ready { plan }) => {
+            app.open_import_picker(&plan);
+        }
+        Ok(_) => {
+            // Nothing mapped — still offer a yes/no so the user can skip once.
+            offer_import_confirm(app, &products);
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "import first-run preview failed");
+            offer_import_confirm(app, &products);
+        }
+    }
+}
+
+fn offer_import_confirm(app: &mut TuiApp, products: &str) {
     app.confirm(
         "Import settings",
         format!(
@@ -74,7 +90,7 @@ pub(super) fn maybe_offer_import(app: &mut TuiApp) {
     );
 }
 
-/// `/import [product]` — preview + confirm. Bare `/import` uses every source.
+/// `/import [product]` — preview + checkbox picker. Bare `/import` uses every source.
 pub(super) fn handle_import_slash(app: &mut TuiApp, rest: &str) {
     if import_env_skipped() {
         app.toasts.push(
@@ -106,8 +122,8 @@ pub(super) fn handle_import_slash(app: &mut TuiApp, rest: &str) {
                 format!("{summary}\nNothing new to write (WhyCodes already has these keys)."),
             );
         }
-        Ok(PreviewOutcome::Ready { message }) => {
-            app.confirm("Import settings", message, ConfirmAction::ImportSettings);
+        Ok(PreviewOutcome::Ready { plan }) => {
+            app.open_import_picker(&plan);
         }
         Err(e) => {
             app.toasts.push(
@@ -123,7 +139,7 @@ pub(super) enum PreviewOutcome {
     NoneFound { looked: String },
     NothingApproved,
     EmptyPlan { summary: String },
-    Ready { message: String },
+    Ready { plan: ImportPlan },
 }
 
 pub(super) fn parse_product_filter(rest: &str) -> Result<Option<Product>, String> {
@@ -211,37 +227,7 @@ pub(super) fn prepare_import_preview(filter: Option<&Product>) -> anyhow::Result
             summary: plan.summary(),
         });
     }
-    Ok(PreviewOutcome::Ready {
-        message: preview_message(&found, &extracted, &plan),
-    })
-}
-
-fn preview_message(
-    found: &[FoundSource],
-    extracted: &[whycodes_import::Extracted],
-    plan: &ImportPlan,
-) -> String {
-    let mut lines = vec![
-        format!("Found: {}", unique_product_labels(found)),
-        String::new(),
-    ];
-    for item in extracted {
-        lines.push(format!("{}  {}", item.product.label(), item.counts_label()));
-    }
-    lines.push(String::new());
-    lines.push(plan.summary());
-    for (name, _) in plan.mcp_add.iter().take(8) {
-        lines.push(format!("+ MCP `{name}`"));
-    }
-    if plan.mcp_add.len() > 8 {
-        lines.push(format!("  … {} more MCP", plan.mcp_add.len() - 8));
-    }
-    for (tool, action) in plan.permission_add.iter().take(6) {
-        lines.push(format!("+ permission `{tool}` = {action:?}"));
-    }
-    lines.push(String::new());
-    lines.push("Copy into WhyCodes? Sources are never modified.".into());
-    lines.join("\n")
+    Ok(PreviewOutcome::Ready { plan })
 }
 
 /// Apply the pending import: approve New sources, merge, save, reload live config.
@@ -252,7 +238,9 @@ pub(super) async fn apply_pending_import(
     project_dir: &Path,
     file_index: &std::sync::Arc<whycodes_index::WorkspaceIndex>,
 ) {
-    match apply_import_now(config, project_dir) {
+    let selected =
+        (!app.import_picker.items.is_empty()).then_some(app.import_picker.checked.as_slice());
+    match apply_import_now(config, project_dir, selected) {
         Ok(ApplyOutcome::Wrote { path, summary }) => {
             agent.apply_config(config);
             agent.load_mcp(config).await;
@@ -289,6 +277,7 @@ pub(super) enum ApplyOutcome {
 pub(super) fn apply_import_now(
     live: &mut Config,
     project_dir: &Path,
+    selected: Option<&[bool]>,
 ) -> anyhow::Result<ApplyOutcome> {
     let data_dir = Config::data_dir()?;
     let consent = ConsentStore::new(&data_dir);
@@ -301,11 +290,14 @@ pub(super) fn apply_import_now(
     approve_new_sources(&consent, &found)?;
     let found = rescan_approved(&home, &consent, None);
     let disk = Config::load().unwrap_or_default();
-    let (extracted, plan) = preview(&found, &disk, false)?;
+    let (extracted, mut plan) = preview(&found, &disk, false)?;
     if extracted.is_empty() {
         return Ok(ApplyOutcome::Nothing {
             message: "Nothing approved to import.".into(),
         });
+    }
+    if let Some(sel) = selected {
+        plan.retain_selected(sel);
     }
     if plan.is_empty() {
         return Ok(ApplyOutcome::Nothing {

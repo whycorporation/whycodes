@@ -80,6 +80,33 @@ pub fn render_select(
         palette,
         mouse_pos,
     );
+    render_select_body(frame, chrome, items, selected, empty, palette)
+}
+
+/// Same as [`render_select`] with a custom footer (checkbox pickers).
+#[allow(clippy::too_many_arguments)]
+pub fn render_select_with_footer(
+    frame: &mut Frame,
+    title: &str,
+    items: &[SelectItem],
+    selected: usize,
+    empty: &str,
+    footer: &[&str],
+    palette: &ThemePalette,
+    mouse_pos: Option<(u16, u16)>,
+) -> SelectPaintInfo {
+    let chrome = dialog_frame(frame, title, footer, palette, mouse_pos);
+    render_select_body(frame, chrome, items, selected, empty, palette)
+}
+
+fn render_select_body(
+    frame: &mut Frame,
+    chrome: super::base::DialogChrome,
+    items: &[SelectItem],
+    selected: usize,
+    empty: &str,
+    palette: &ThemePalette,
+) -> SelectPaintInfo {
     let area = chrome.content;
     if area.width == 0 || area.height == 0 {
         return SelectPaintInfo {

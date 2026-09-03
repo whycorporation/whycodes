@@ -3831,13 +3831,9 @@ fn maybe_offer_import_confirms_on_empty_home() {
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     maybe_offer_import(&mut app);
     assert!(app.import_prompted);
-    assert!(matches!(
-        app.dialogs.active(),
-        Some(DialogKind::Confirm {
-            on_confirm: ConfirmAction::ImportSettings,
-            ..
-        })
-    ));
+    assert!(matches!(app.dialogs.active(), Some(DialogKind::Import)));
+    assert!(!app.import_picker.items.is_empty());
+    assert!(app.import_picker.any_checked());
 
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.add_message(ChatRole::User, "already chatting");
@@ -3865,7 +3861,7 @@ fn apply_import_now_copies_mcp() {
     )
     .unwrap();
     let mut config = Config::default();
-    let out = apply_import_now(&mut config, home.path()).unwrap();
+    let out = apply_import_now(&mut config, home.path(), None).unwrap();
     match out {
         ApplyOutcome::Wrote { summary, .. } => {
             assert!(summary.contains("MCP"), "{summary}");
@@ -3900,13 +3896,55 @@ fn handle_import_slash_unknown_and_preview() {
     .unwrap();
     app.dialogs.clear();
     handle_import_slash(&mut app, "claude");
-    assert!(matches!(
-        app.dialogs.active(),
-        Some(DialogKind::Confirm {
-            on_confirm: ConfirmAction::ImportSettings,
-            ..
-        })
-    ));
+    assert!(matches!(app.dialogs.active(), Some(DialogKind::Import)));
+    assert!(
+        app.import_picker
+            .items
+            .iter()
+            .any(|i| i.label.contains("MCP")),
+        "{:?}",
+        app.import_picker.items
+    );
+}
+
+#[test]
+fn apply_import_now_respects_selection() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}},"permissions":{"allow":["Bash"]}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    // selectable_items is MCP then permission — keep MCP, skip permission.
+    let out = apply_import_now(&mut config, home.path(), Some(&[true, false])).unwrap();
+    match out {
+        ApplyOutcome::Wrote { summary, .. } => {
+            assert!(summary.contains("MCP"), "{summary}");
+        }
+        other => panic!("expected write, got {other:?}"),
+    }
+    assert!(config.mcp_servers.contains_key("fs"));
+    assert!(config.permission.is_empty());
+}
+
+#[test]
+fn apply_import_now_empty_selection_writes_nothing() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    let out = apply_import_now(&mut config, home.path(), Some(&[false])).unwrap();
+    match out {
+        ApplyOutcome::Nothing { message } => {
+            assert!(message.contains("Nothing new"), "{message}");
+        }
+        other => panic!("expected nothing, got {other:?}"),
+    }
+    assert!(!config.mcp_servers.contains_key("fs"));
 }
 
 #[test]

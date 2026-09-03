@@ -310,6 +310,56 @@ pub fn render(frame: &mut Frame, app: &mut TuiApp, palette: &ThemePalette) {
                 info.modal,
             );
         }
+        crate::app::DialogKind::Import => {
+            let n = app.import_picker.items.len();
+            let checked = app.import_picker.checked_count();
+            let items: Vec<SelectItem> = app
+                .import_picker
+                .items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| {
+                    let mark = if app.import_picker.checked.get(i).copied().unwrap_or(false) {
+                        "[x]"
+                    } else {
+                        "[ ]"
+                    };
+                    let label = format!("{mark} {}", item.label);
+                    if item.detail.is_empty() {
+                        SelectItem::new(label)
+                    } else {
+                        SelectItem::with_detail(label, item.detail.clone())
+                    }
+                })
+                .collect();
+            let selected = app.import_picker.cursor.min(items.len().saturating_sub(1));
+            let title = format!(" Import  ·  {checked}/{n} selected ");
+            let info = render_select_with_footer(
+                frame,
+                &title,
+                &items,
+                selected,
+                "Nothing new to import.",
+                &[
+                    "↑/↓ nav",
+                    "Space toggle",
+                    "a all",
+                    "Enter apply",
+                    "Esc skip",
+                ],
+                palette,
+                mouse,
+            );
+            app.apply_select_paint(
+                info.close_hit,
+                info.list_area,
+                info.scrollbar_hit,
+                info.scroll_start,
+                info.visible,
+                info.total,
+                info.modal,
+            );
+        }
         _ => {}
     }
 }
