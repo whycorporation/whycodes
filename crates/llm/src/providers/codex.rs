@@ -165,13 +165,21 @@ fn convert_tools(tools: &[ToolDefinition]) -> Vec<Value> {
 
 /// POST to the Codex backend with one OAuth-aware retry: a 401 force-renews
 /// the stored credential via `oauth_refresh` and resends once.
-async fn post(api_key: &str, body: &Value) -> whycodes_core::Result<reqwest::Response> {
+async fn post_at(
+    url: &str,
+    api_key: &str,
+    body: &Value,
+) -> whycodes_core::Result<reqwest::Response> {
     let account_id = crate::oauth_refresh::stored_extra("openai", "openai_account_id").await;
     crate::oauth_refresh::send_with_refresh_retry("openai", api_key, |key| {
-        let req = crate::client_identity::post_for_provider(CODEX_RESPONSES_URL, "openai")
-            .header("Authorization", format!("Bearer {key}"))
-            .header("OpenAI-Beta", "responses=experimental")
-            .header("Accept", "text/event-stream");
+        let req = if url == CODEX_RESPONSES_URL {
+            crate::client_identity::post_for_provider(url, "openai")
+        } else {
+            crate::client_identity::post(url)
+        }
+        .header("Authorization", format!("Bearer {key}"))
+        .header("OpenAI-Beta", "responses=experimental")
+        .header("Accept", "text/event-stream");
         let req = match &account_id {
             Some(id) => req.header("chatgpt-account-id", id),
             None => req,
@@ -241,7 +249,16 @@ pub async fn complete(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<LlmResponse> {
-    let mut events = stream(request, api_key, model).await?;
+    complete_at(CODEX_RESPONSES_URL, request, api_key, model).await
+}
+
+pub(crate) async fn complete_at(
+    url: &str,
+    request: &LlmRequest,
+    api_key: &str,
+    model: &str,
+) -> whycodes_core::Result<LlmResponse> {
+    let mut events = stream_at(url, request, api_key, model).await?;
     let mut content: Vec<ContentBlock> = Vec::new();
     let mut text = String::new();
     let mut stop_reason = None;
@@ -289,8 +306,17 @@ pub async fn stream(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
+    stream_at(CODEX_RESPONSES_URL, request, api_key, model).await
+}
+
+pub(crate) async fn stream_at(
+    url: &str,
+    request: &LlmRequest,
+    api_key: &str,
+    model: &str,
+) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
     let body = build_body(request, model);
-    let resp = post(api_key, &body).await?;
+    let resp = post_at(url, api_key, &body).await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -503,5 +529,103 @@ mod tests {
     fn unknown_events_are_ignored() {
         assert!(events_for_payload(r#"{"type":"response.created"}"#).is_empty());
         assert!(events_for_payload("not json").is_empty());
+    }
+
+    fn serve_sse(status: &str, body: &str) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let header = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let payload = format!("{header}{body}");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(payload.as_bytes());
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        format!("http://{addr}/codex/responses")
+    }
+
+    fn simple_request() -> LlmRequest {
+        LlmRequest {
+            system: String::new(),
+            messages: std::sync::Arc::from(vec![Message {
+                role: Role::User,
+                content: MessageContent::Text("hi".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            }]),
+            tools: vec![].into(),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        }
+    }
+
+    fn sse_hello() -> String {
+        format!(
+            "data: {}\n\ndata: {}\n\ndata: [DONE]\n\n",
+            serde_json::json!({"type":"response.output_text.delta","delta":"hello"}),
+            serde_json::json!({
+                "type":"response.completed",
+                "response":{"usage":{"input_tokens":1,"output_tokens":2}}
+            })
+        )
+    }
+
+    #[tokio::test]
+    async fn complete_and_stream_against_loopback() {
+        let url = serve_sse("200 OK", &sse_hello());
+        let req = simple_request();
+        let resp = complete_at(&url, &req, "eyJhbGciOiJ.eyJzdWIiOiJx.sig", "gpt-test")
+            .await
+            .unwrap();
+        assert!(
+            resp.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("hello"))),
+            "{resp:?}"
+        );
+        assert_eq!(resp.usage.input_tokens, 1);
+        assert_eq!(resp.usage.output_tokens, 2);
+
+        let err_url = serve_sse("401 Unauthorized", "nope");
+        let err = complete_at(&err_url, &req, "eyJhbGciOiJ.eyJzdWIiOiJx.sig", "gpt-test")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("401") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let stream_url = serve_sse("200 OK", &sse_hello());
+        let mut stream = stream_at(
+            &stream_url,
+            &req,
+            "eyJhbGciOiJ.eyJzdWIiOiJx.sig",
+            "gpt-test",
+        )
+        .await
+        .unwrap();
+        let mut text = String::new();
+        while let Some(ev) = stream.next().await {
+            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+                text.push_str(&d);
+            }
+        }
+        assert_eq!(text, "hello");
     }
 }

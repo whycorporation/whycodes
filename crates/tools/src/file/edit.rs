@@ -379,4 +379,58 @@ mod tests {
             _ => panic!("expected fuzzy hit"),
         }
     }
+
+    fn ctx(dir: &std::path::Path) -> crate::tool::ToolContext {
+        crate::tool::ToolContext::new(dir.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn execute_replaces_text_and_reports_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "fn run() { let x = 1; }\n").unwrap();
+        let tool = EditTool::new();
+        let ok = tool
+            .execute(
+                serde_json::json!({
+                    "path": "a.rs",
+                    "old_string": "let x = 1;",
+                    "new_string": "let x = 2;"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(!ok.is_error, "{}", ok.content);
+        assert!(
+            ok.content.contains("a.rs") || !ok.content.is_empty(),
+            "{}",
+            ok.content
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "fn run() { let x = 2; }\n"
+        );
+
+        let miss = tool
+            .execute(
+                serde_json::json!({
+                    "path": "a.rs",
+                    "old_string": "definitely-not-here",
+                    "new_string": "x"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(miss.is_error, "{}", miss.content);
+        assert!(miss.content.contains("Could not find"), "{}", miss.content);
+    }
+
+    #[tokio::test]
+    async fn execute_missing_required_params_is_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = EditTool::new()
+            .execute(serde_json::json!({"path": "nope.rs"}), &ctx(dir.path()))
+            .await;
+        assert!(out.is_error, "{}", out.content);
+    }
 }

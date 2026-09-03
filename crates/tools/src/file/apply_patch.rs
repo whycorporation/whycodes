@@ -545,4 +545,45 @@ diff --git a/two.rs b/two.rs
         assert_eq!(files[0].header_path.as_deref(), Some("one.rs"));
         assert_eq!(files[1].header_path.as_deref(), Some("two.rs"));
     }
+
+    fn ctx(dir: &std::path::Path) -> crate::tool::ToolContext {
+        crate::tool::ToolContext::new(dir.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn execute_applies_single_file_patch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("x.txt"), "alpha\nbeta\ngamma\n").unwrap();
+        let patch = "\
+--- a/x.txt
++++ b/x.txt
+@@ -1,3 +1,3 @@
+ alpha
+-beta
++BETA
+ gamma
+";
+        let out = ApplyPatchTool::new()
+            .execute(
+                serde_json::json!({ "path": "x.txt", "patch_content": patch }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("Patch applied"), "{}", out.content);
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("x.txt")).unwrap(),
+            "alpha\nBETA\ngamma\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_empty_patch_content_is_error() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let out = ApplyPatchTool::new()
+            .execute(serde_json::json!({ "path": "x.txt" }), &ctx(dir.path()))
+            .await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("patch_content"), "{}", out.content);
+    }
 }
