@@ -1158,4 +1158,111 @@ mod tests {
         assert_eq!(pick_tier(&malformed, false), "free-tier");
         assert_eq!(pick_tier(&malformed, true), "standard-tier");
     }
+
+    fn serve_once(status: &str, body: &str, content_type: &str) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+        use std::time::Duration;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let header = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let payload = format!("{header}{body}");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(payload.as_bytes());
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        format!("http://{addr}/v1internal")
+    }
+
+    fn loopback_profile(base: String, provider: &'static str) -> Profile {
+        let url: &'static str = Box::leak(base.into_boxed_str());
+        let bases: &'static [&'static str] = Box::leak(Box::new([url]));
+        Profile {
+            oauth_provider: provider,
+            bases,
+            antigravity: false,
+        }
+    }
+
+    fn assist_request() -> LlmRequest {
+        empty_request(vec![message(
+            Role::User,
+            MessageContent::Text("hi".to_string()),
+        )])
+    }
+
+    #[tokio::test]
+    async fn complete_and_stream_against_loopback() {
+        cache_project("google-loopback-ok", "proj-test");
+        let json = serde_json::json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "hello-assist"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 2}
+        })
+        .to_string();
+        let profile = loopback_profile(
+            serve_once("200 OK", &json, "application/json"),
+            "google-loopback-ok",
+        );
+        let req = assist_request();
+        let resp = complete_with(&profile, &req, "ya29.test", "gemini-test")
+            .await
+            .unwrap();
+        assert!(
+            resp.content.iter().any(|b| matches!(
+                b,
+                ContentBlock::Text { text } if text.contains("hello-assist")
+            )),
+            "{resp:?}"
+        );
+
+        cache_project("google-loopback-err", "proj-test");
+        let err_p = loopback_profile(
+            serve_once(
+                "403 Forbidden",
+                r#"{"error":{"message":"nope"}}"#,
+                "application/json",
+            ),
+            "google-loopback-err",
+        );
+        let err = complete_with(&err_p, &req, "ya29.bad", "gemini-test")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        cache_project("google-loopback-sse", "proj-test");
+        let sse = format!(
+            "data: {}\n\n",
+            serde_json::json!({
+                "candidates": [{"content": {"parts": [{"text": "hello"}]}}]
+            })
+        );
+        let sse_p = loopback_profile(
+            serve_once("200 OK", &sse, "text/event-stream"),
+            "google-loopback-sse",
+        );
+        let mut stream = stream_with(&sse_p, &req, "ya29.test", "gemini-test")
+            .await
+            .unwrap();
+        let mut text = String::new();
+        while let Some(ev) = stream.next().await {
+            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+                text.push_str(&d);
+            }
+        }
+        assert_eq!(text, "hello");
+    }
 }

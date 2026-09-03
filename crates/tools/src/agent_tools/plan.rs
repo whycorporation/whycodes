@@ -112,8 +112,52 @@ impl Tool for PlanTool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::tool::ToolContext;
+
     #[test]
     fn plan_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_enter_exit_and_invalid_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy());
+        let tool = PlanTool::new();
+
+        let entered = tool
+            .execute(serde_json::json!({"action": "enter"}), &ctx)
+            .await;
+        assert!(!entered.is_error, "{}", entered.content);
+        assert!(
+            entered.content.contains("Planning mode entered"),
+            "{}",
+            entered.content
+        );
+        let marker = whycodes_core::project_dir(dir.path()).join("plan_mode");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "1");
+
+        let exited = tool
+            .execute(serde_json::json!({"action": "exit"}), &ctx)
+            .await;
+        assert!(!exited.is_error, "{}", exited.content);
+        assert!(
+            exited.content.contains("Planning mode exited"),
+            "{}",
+            exited.content
+        );
+        assert!(!marker.exists());
+
+        let again = tool
+            .execute(serde_json::json!({"action": "exit"}), &ctx)
+            .await;
+        assert!(!again.is_error, "{}", again.content);
+
+        let bad = tool
+            .execute(serde_json::json!({"action": "nope"}), &ctx)
+            .await;
+        assert!(bad.is_error, "{}", bad.content);
+        assert!(bad.content.contains("Invalid action"), "{}", bad.content);
     }
 }

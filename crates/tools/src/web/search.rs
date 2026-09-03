@@ -225,4 +225,14 @@ mod tests {
         assert!(out.contains("Nuxt"));
         assert!(out.contains("5"));
     }
+
+    #[tokio::test]
+    async fn execute_requires_query() {
+        let ctx = crate::tool::ToolContext::new("/");
+        let out = WebSearchTool::new()
+            .execute(serde_json::json!({}), &ctx)
+            .await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(out.content.contains("Query is required"), "{}", out.content);
+    }
 }

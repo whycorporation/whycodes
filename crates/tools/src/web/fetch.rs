@@ -291,6 +291,45 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn execute_requires_url_and_fetches_loopback() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let ctx = ToolContext::unsandboxed("/");
+        let missing = WebFetchTool::new().execute(json!({}), &ctx).await;
+        assert!(missing.is_error, "{}", missing.content);
+        assert!(
+            missing.content.contains("URL is required"),
+            "{}",
+            missing.content
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let body = "hello-fetch";
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let payload = format!("{header}{body}");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(payload.as_bytes());
+            }
+        });
+        let url = format!("http://{addr}/page");
+        let out = WebFetchTool::new()
+            .execute(json!({ "url": url }), &ctx)
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("hello-fetch"), "{}", out.content);
+        assert!(out.content.contains("200"), "{}", out.content);
+    }
+
     #[test]
     fn json_pretty_printed() {
         let out = format_body("application/json", r#"{"version":"4.5.1","name":"nuxt"}"#);
