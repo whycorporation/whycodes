@@ -133,8 +133,10 @@ the source is never modified, and symlinks are refused. Existing WhyCodes
 keys win unless `--force`. Credentials stay on `whycodes auth import`.
 
 On first interactive run, if `config.toml` is missing and another agent is
-found, WhyCodes asks once. `WHYCODES_SKIP_IMPORT=1` or `CI=1` skips the
-prompt. Piped stdin is also skipped so CI is never blocked.
+found, WhyCodes asks once: the full-screen TUI uses a home-screen confirm
+(same chrome as the update offer); `--plain` asks on stdin before the REPL.
+`/import` (or `whycodes import`) runs the same copy later. `WHYCODES_SKIP_IMPORT=1`
+or `CI=1` skips the prompt. Piped stdin is also skipped so CI is never blocked.
 
 ## Adding a new OAuth provider
 

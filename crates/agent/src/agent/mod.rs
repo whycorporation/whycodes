@@ -404,6 +404,12 @@ impl Agent {
 
     /// Load custom providers from config and merge global permission rules.
     pub fn with_config(mut self, config: &whycodes_config::Config) -> Self {
+        self.apply_config(config);
+        self
+    }
+
+    /// Re-apply config on a live agent (TUI `/import` / first-run confirm).
+    pub fn apply_config(&mut self, config: &whycodes_config::Config) {
         let mut registry = ProviderRegistry::default();
         registry.register_from_config(config);
         self.provider_registry = Arc::new(registry);
@@ -494,7 +500,6 @@ impl Agent {
             max_background_jobs = self.max_background_jobs,
             "shell sandbox, network policy, and hooks"
         );
-        self
     }
 
     /// Forward `panel` tool updates onto the turn event channel.
@@ -1501,6 +1506,10 @@ mod permission_detail_tests {
         assert!(a.activated_tools_snapshot().is_empty());
         assert!(a.cwd_override_path().is_none());
         assert!(a.session_claims().is_none());
+
+        let mut live = test_agent();
+        live.apply_config(&config);
+        assert_eq!(live.model_fast(), Some("haiku"));
     }
 
     #[test]

@@ -1785,6 +1785,15 @@ fn dismiss_dialog(app: &mut TuiApp) {
     if matches!(app.dialogs.active(), Some(DialogKind::Question(_))) {
         app.question_dismissed = true;
     }
+    if matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ImportSettings,
+            ..
+        })
+    ) {
+        crate::run::mark_import_declined();
+    }
     app.dialogs.pop();
     app.mouse_sel = None;
     app.dialog_scrollbar_grab = None;
@@ -2073,6 +2082,9 @@ fn confirm_dialog(app: &mut TuiApp, dialog: &DialogKind) {
             ConfirmAction::Upgrade => {
                 app.pending_upgrade = true;
                 app.running = false;
+            }
+            ConfirmAction::ImportSettings => {
+                app.pending_import = true;
             }
         },
         DialogKind::Alert { .. } => {
@@ -3591,6 +3603,16 @@ mod event_tests {
         handle_event(&mut a, key(KeyCode::Char('y')));
         assert!(a.pending_upgrade);
         assert!(!a.running);
+    }
+
+    #[test]
+    fn confirm_import_settings_marks_pending() {
+        let mut a = app();
+        a.confirm("Import settings", "Copy?", ConfirmAction::ImportSettings);
+        handle_event(&mut a, key(KeyCode::Char('y')));
+        assert!(a.pending_import);
+        assert!(a.running);
+        assert_eq!(a.mode, AppMode::Normal);
     }
 
     #[test]

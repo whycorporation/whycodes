@@ -228,7 +228,7 @@ fn render_home(frame: &mut Frame, area: Rect, app: &TuiApp, palette: &ThemePalet
     ));
     lines.push(Line::from(""));
     if recents.is_empty() {
-        let gs = "Get started  /connect".to_string();
+        let gs = "Get started  /connect  ·  /import".to_string();
         lines.push(center_line(&gs, area.width, palette.fg, false));
     } else {
         lines.push(center_line("recent", area.width, palette.dim, false));

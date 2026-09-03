@@ -49,11 +49,14 @@ const CANCEL_FORCE_AFTER: Duration = Duration::from_millis(1200);
 /// Cap on concurrently live sessions (each holds a full transcript + agent).
 const MAX_LIVE_SESSIONS: usize = 8;
 
+mod import;
 mod persist;
 mod slash;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use import::mark_import_declined;
+use import::*;
 pub use persist::resolve_and_load_session;
 use persist::*;
 pub use slash::SlashContext;
@@ -855,6 +858,7 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
                     }
                 }
             }
+            maybe_offer_import(&mut app);
             maybe_offer_update(&mut app);
 
             // Expire toasts before drawing, so one never lingers a frame past
@@ -1186,6 +1190,18 @@ pub async fn run(opts: TuiRunOptions) -> anyhow::Result<TuiExit> {
             }
             if let Some(mode) = app.pending_approval_mode.take() {
                 apply_approval_mode(&mut app, &mut rt.agent, &mut config, mode);
+            }
+
+            if app.pending_import && !rt.agent_busy {
+                app.pending_import = false;
+                apply_pending_import(
+                    &mut app,
+                    &mut rt.agent,
+                    &mut config,
+                    &project_dir,
+                    &file_index,
+                )
+                .await;
             }
 
             // ── `/login` picker selection → start OAuth sign-in ──

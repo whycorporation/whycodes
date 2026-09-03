@@ -29,6 +29,7 @@ whycodes-format = { path = "../format" }
 whycodes-storage = { path = "../storage" }
 whycodes-memory = { path = "../memory" }
 whycodes-index = { path = "../index" }
+whycodes-import = { path = "../import" }
 unicode-width = "0.2"
 base64.workspace = true
 regex.workspace = true

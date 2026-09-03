@@ -191,6 +191,10 @@ fn catalog() -> Vec<HelpLine> {
             desc: "Provider help",
         },
         HelpLine::Binding {
+            key: "/import",
+            desc: "Copy MCP / permissions / hooks from other agents",
+        },
+        HelpLine::Binding {
             key: "/login",
             desc: "Sign in (OAuth)",
         },

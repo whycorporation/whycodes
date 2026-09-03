@@ -605,18 +605,27 @@ fn test_runtime() -> SessionRuntime {
 }
 
 fn isolate_home() {
+    let _g = isolate_home_lock();
+    unsafe { std::env::set_var("WHYCODES_HOME", shared_test_home()) };
+}
+
+fn shared_test_home() -> &'static std::path::Path {
     use std::sync::OnceLock;
     static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
-    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+    HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"))
+        .path()
 }
 
 /// Exclusive empty `WHYCODES_HOME` for tests that assert on an empty session
 /// store. The shared [`isolate_home`] OnceLock is process-wide, so a
 /// sibling persist can make `RESUME_LATEST` look populated.
-fn isolate_home_fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+fn isolate_home_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn isolate_home_fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+    let lock = isolate_home_lock();
     let dir = tempfile::tempdir().expect("tempdir");
     unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     (lock, dir)
@@ -1378,6 +1387,17 @@ async fn handle_slash_covers_local_commands() {
     h.run("/cost").await;
     h.run("/init").await;
     assert!(h.app.pending_prompt.is_some());
+
+    h.run("/import nope").await;
+    assert!(
+        h.app
+            .toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Unknown product")),
+        "{:?}",
+        h.app.toasts.visible()
+    );
 
     h.run("/unshare").await;
     h.run("/share").await;
@@ -3668,32 +3688,18 @@ fn explicit_provider_key_from_config_and_env() {
 
 #[test]
 fn try_fill_api_key_fills_empty_and_skips_set() {
-    isolate_home();
-    let mut config = Config::default();
-    config.providers.insert(
-        "fillme".into(),
-        whycodes_core::types::ProviderConfig {
-            name: "fillme".into(),
-            api_key: Some("sk-fill".into()),
-            api_base: None,
-            base_url: None,
-            headers: None,
-            models: vec![],
-            tool_arguments: None,
-            extra: Default::default(),
-        },
-    );
-    let path = Config::data_dir().unwrap().join("config.toml");
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).unwrap();
-    }
-    config.save().unwrap();
-
+    // Env key, not config.toml — sibling tests race on WHYCODES_HOME.
+    let prev = std::env::var_os("FILLME_API_KEY");
+    unsafe { std::env::set_var("FILLME_API_KEY", "sk-fill") };
     let mut key = String::new();
     try_fill_api_key(&mut key, "fillme");
     assert_eq!(key, "sk-fill");
     try_fill_api_key(&mut key, "fillme");
     assert_eq!(key, "sk-fill");
+    match prev {
+        Some(v) => unsafe { std::env::set_var("FILLME_API_KEY", v) },
+        None => unsafe { std::env::remove_var("FILLME_API_KEY") },
+    }
 }
 
 #[test]
@@ -3744,6 +3750,171 @@ fn maybe_offer_update_self_install_and_homebrew() {
     maybe_offer_update(&mut app);
     assert!(app.update_prompted);
     assert!(!app.dialogs.is_open());
+}
+
+/// Exclusive `WHYCODES_HOME` + `$HOME` so import discovery cannot see the
+/// developer's real Claude/OpenCode files, and `config.toml` is missing.
+struct IsolatedImportHome {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    dir: tempfile::TempDir,
+    prev_home: Option<std::ffi::OsString>,
+    prev_skip: Option<std::ffi::OsString>,
+    prev_ci: Option<std::ffi::OsString>,
+}
+
+impl IsolatedImportHome {
+    fn new() -> Self {
+        let (lock, dir) = isolate_home_fresh();
+        let prev_home = std::env::var_os("HOME");
+        let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
+        let prev_ci = std::env::var_os("CI");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+            std::env::remove_var("WHYCODES_SKIP_IMPORT");
+            std::env::remove_var("CI");
+        }
+        Self {
+            _lock: lock,
+            dir,
+            prev_home,
+            prev_skip,
+            prev_ci,
+        }
+    }
+
+    fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+}
+
+impl Drop for IsolatedImportHome {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match &self.prev_skip {
+                Some(v) => std::env::set_var("WHYCODES_SKIP_IMPORT", v),
+                None => std::env::remove_var("WHYCODES_SKIP_IMPORT"),
+            }
+            match &self.prev_ci {
+                Some(v) => std::env::set_var("CI", v),
+                None => std::env::remove_var("CI"),
+            }
+            // Restore the shared test home without re-locking (we still hold
+            // `_lock`; `isolate_home()` would deadlock).
+            std::env::set_var("WHYCODES_HOME", shared_test_home());
+        }
+    }
+}
+
+#[test]
+fn parse_product_filter_accepts_known_and_rejects_unknown() {
+    assert!(parse_product_filter("").unwrap().is_none());
+    assert_eq!(
+        parse_product_filter("claude").unwrap(),
+        Some(whycodes_import::Product::Claude)
+    );
+    assert!(parse_product_filter("nope").is_err());
+}
+
+#[test]
+fn maybe_offer_import_confirms_on_empty_home() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_import(&mut app);
+    assert!(app.import_prompted);
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ImportSettings,
+            ..
+        })
+    ));
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.add_message(ChatRole::User, "already chatting");
+    maybe_offer_import(&mut app);
+    assert!(app.import_prompted);
+    assert!(!app.dialogs.is_open());
+}
+
+#[test]
+fn maybe_offer_import_skips_when_env_set() {
+    let _home = IsolatedImportHome::new();
+    unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", "1") };
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    maybe_offer_import(&mut app);
+    assert!(!app.import_prompted);
+    assert!(!app.dialogs.is_open());
+}
+
+#[test]
+fn apply_import_now_copies_mcp() {
+    let home = IsolatedImportHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let mut config = Config::default();
+    let out = apply_import_now(&mut config, home.path()).unwrap();
+    match out {
+        ApplyOutcome::Wrote { summary, .. } => {
+            assert!(summary.contains("MCP"), "{summary}");
+        }
+        other => panic!("expected write, got {other:?}"),
+    }
+    assert!(config.mcp_servers.contains_key("fs"));
+}
+
+#[test]
+fn handle_import_slash_unknown_and_preview() {
+    let home = IsolatedImportHome::new();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    handle_import_slash(&mut app, "nope");
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Unknown product"))
+    );
+
+    handle_import_slash(&mut app, "");
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Alert { .. })
+    ));
+
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    app.dialogs.clear();
+    handle_import_slash(&mut app, "claude");
+    assert!(matches!(
+        app.dialogs.active(),
+        Some(DialogKind::Confirm {
+            on_confirm: ConfirmAction::ImportSettings,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn mark_import_declined_sets_first_run_asked() {
+    let home = IsolatedImportHome::new();
+    mark_import_declined();
+    let consent = whycodes_import::ConsentStore::new(home.path());
+    assert!(consent.first_run_asked().unwrap());
 }
 
 #[tokio::test]

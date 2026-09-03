@@ -390,6 +390,9 @@ pub enum ConfirmAction {
     /// quits with [`crate::TuiExit::Upgrade`] so the CLI can replace the
     /// binary after the terminal is restored.
     Upgrade,
+    /// User accepted the home-screen / `/import` settings confirm. The run
+    /// loop copies MCP, permissions, and hooks from other agents.
+    ImportSettings,
 }
 
 /// A newer GitHub release the home screen can offer.
@@ -1388,6 +1391,10 @@ pub struct TuiApp {
     pub(crate) update_prompted: bool,
     /// User accepted the update confirm — run loop returns [`crate::TuiExit::Upgrade`].
     pub(crate) pending_upgrade: bool,
+    /// True after the first-run import confirm has been shown (or skipped).
+    pub(crate) import_prompted: bool,
+    /// User accepted Import settings — run loop merges MCP / permission / hooks.
+    pub(crate) pending_import: bool,
 
     /// Primary agent names for Ctrl+T cycling (build/plan).
     pub(crate) primary_agents: Vec<String>,
@@ -1843,6 +1850,10 @@ pub const BUILTIN_SLASH_COMMANDS: &[SlashCommand] = &[
         hint: "Provider / API key help",
     },
     SlashCommand {
+        name: "/import",
+        hint: "[claude|opencode|grok|codex] Copy MCP / permissions / hooks",
+    },
+    SlashCommand {
         name: "/login",
         hint: "[provider] OAuth subscription sign-in (picker if none)",
     },
@@ -2090,6 +2101,8 @@ impl TuiApp {
             available_update: None,
             update_prompted: false,
             pending_upgrade: false,
+            import_prompted: false,
+            pending_import: false,
             primary_agents: vec!["build".into(), "plan".into(), "ask".into()],
             agent_cycle_idx: 0,
             provider_name: String::new(),

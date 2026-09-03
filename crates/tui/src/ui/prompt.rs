@@ -726,6 +726,7 @@ const HINTS: &[&str] = &[
     "j/k select messages in scrollback",
     "y copies the selected message",
     "/init to create AGENTS.md",
+    "/import to copy MCP from other agents",
 ];
 
 fn pick_hint() -> &'static str {

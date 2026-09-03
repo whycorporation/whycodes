@@ -662,6 +662,9 @@ pub(super) async fn handle_slash(text: &str, ctx: &mut SlashContext<'_>) {
                 "Analyze this project and write a complete AGENTS.md at the project root with build/test commands, conventions, and architecture. Use the write tool.".into(),
             );
         }
+        "/import" => {
+            handle_import_slash(ctx.app, rest);
+        }
         other => {
             ctx.app.toasts.push(
                 crate::toast::ToastKind::Warning,

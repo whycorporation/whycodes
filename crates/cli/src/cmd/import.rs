@@ -28,6 +28,9 @@ pub(crate) async fn cmd_import(cmd: &ImportArgs) -> anyhow::Result<()> {
 
 /// First-run: TTY interactive session, no user config yet, foreign settings exist.
 /// Returns true when `config.toml` was written (caller should reload).
+///
+/// Callers skip this when the full-screen TUI will run — that path offers
+/// the same question as a home-screen confirm (see `whycodes_tui`).
 pub(crate) fn maybe_first_run_import(interactive: bool) -> anyhow::Result<bool> {
     if !interactive {
         return Ok(false);

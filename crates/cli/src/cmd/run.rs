@@ -74,7 +74,9 @@ pub(crate) async fn cmd_run(
     let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
     let use_tui = !force_plain && (stub_tui || whycodes_tui::tui_available());
     let interactive = prompt.is_none_or(str::is_empty) && !format.is_structured();
-    match super::import::maybe_first_run_import(interactive) {
+    // TUI owns first-run import as a home-screen confirm (same chrome as
+    // the update offer). `--plain` REPL still asks on stdin before the loop.
+    match super::import::maybe_first_run_import(interactive && !use_tui) {
         Ok(true) => match Config::load_layered(&project_dir_early) {
             Ok(reloaded) => {
                 config = reloaded;
