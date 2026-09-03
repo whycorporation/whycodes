@@ -613,4 +613,32 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("Missing required parameter"));
     }
+
+    #[tokio::test]
+    async fn execute_finds_match_and_reports_no_matches() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "hit.rs", "fn coverage_marker() {}\n");
+        write(&dir, "miss.rs", "fn other() {}\n");
+        let ctx = ToolContext::new(dir.path().to_str().unwrap());
+        let hit = GrepTool::new()
+            .execute(
+                serde_json::json!({
+                    "pattern": "coverage_marker",
+                    "include": "*.rs"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!hit.is_error, "{hit:?}");
+        assert!(hit.content.contains("coverage_marker"), "{hit:?}");
+
+        let miss = GrepTool::new()
+            .execute(
+                serde_json::json!({"pattern": "definitely-not-here-xyz"}),
+                &ctx,
+            )
+            .await;
+        assert!(!miss.is_error, "{miss:?}");
+        assert!(miss.content.contains("No matches found"), "{miss:?}");
+    }
 }

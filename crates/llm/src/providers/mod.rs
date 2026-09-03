@@ -511,4 +511,187 @@ mod tests {
                 .contains("generativelanguage")
         );
     }
+
+    fn anthropic_ok_json() -> String {
+        serde_json::json!({
+            "content": [{"type": "text", "text": "hello-anthropic"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 2}
+        })
+        .to_string()
+    }
+
+    fn anthropic_sse() -> String {
+        format!(
+            "data: {}\n\ndata: [DONE]\n\n",
+            serde_json::json!({
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "hello"}
+            })
+        )
+    }
+
+    fn ollama_ok_json() -> String {
+        serde_json::json!({
+            "message": {"role": "assistant", "content": "hello-ollama"}
+        })
+        .to_string()
+    }
+
+    fn ollama_ndjson() -> String {
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({"message": {"content": "he"}}),
+            serde_json::json!({
+                "message": {"content": "llo"},
+                "done": true,
+                "prompt_eval_count": 1,
+                "eval_count": 2
+            })
+        )
+    }
+
+    #[tokio::test]
+    async fn anthropic_complete_and_stream_against_loopback() {
+        use tokio_stream::StreamExt;
+        use whycodes_core::types::{ContentBlock, StreamEvent};
+
+        let json = anthropic_ok_json();
+        let provider = anthropic::AnthropicProvider::from_base(Some(&serve_once(
+            "200 OK",
+            &json,
+            "application/json",
+        )));
+        let req = req();
+        let resp = provider
+            .complete(&req, "sk-test", "claude-test")
+            .await
+            .unwrap();
+        assert!(
+            resp.content.iter().any(
+                |b| matches!(b, ContentBlock::Text { text } if text.contains("hello-anthropic"))
+            ),
+            "{resp:?}"
+        );
+
+        let err_p = anthropic::AnthropicProvider::from_base(Some(&serve_once(
+            "401 Unauthorized",
+            r#"{"error":{"message":"nope"}}"#,
+            "application/json",
+        )));
+        let err = err_p
+            .complete(&req, "sk-bad", "claude-test")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let sse_p = anthropic::AnthropicProvider::from_base(Some(&serve_sse(&anthropic_sse())));
+        let mut stream = sse_p.stream(&req, "sk-test", "claude-test").await.unwrap();
+        let mut text = String::new();
+        while let Some(ev) = stream.next().await {
+            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+                text.push_str(&d);
+            }
+        }
+        assert_eq!(text, "hello");
+        assert!(
+            anthropic::AnthropicProvider::default()
+                .default_base_url()
+                .contains("anthropic")
+        );
+    }
+
+    #[tokio::test]
+    async fn ollama_complete_and_stream_against_loopback() {
+        use tokio_stream::StreamExt;
+        use whycodes_core::types::{ContentBlock, StreamEvent};
+
+        let json = ollama_ok_json();
+        let provider = ollama::OllamaProvider::from_base(Some(&serve_once(
+            "200 OK",
+            &json,
+            "application/json",
+        )));
+        let req = req();
+        let resp = provider.complete(&req, "", "llama-test").await.unwrap();
+        assert!(
+            resp.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("hello-ollama"))),
+            "{resp:?}"
+        );
+
+        let err_p = ollama::OllamaProvider::from_base(Some(&serve_once(
+            "500 Internal Server Error",
+            r#"{"error":"nope"}"#,
+            "application/json",
+        )));
+        let err = err_p.complete(&req, "", "llama-test").await.unwrap_err();
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let sse_p = ollama::OllamaProvider::from_base(Some(&serve_sse(&ollama_ndjson())));
+        let mut stream = sse_p.stream(&req, "", "llama-test").await.unwrap();
+        let mut text = String::new();
+        while let Some(ev) = stream.next().await {
+            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+                text.push_str(&d);
+            }
+        }
+        assert_eq!(text, "hello");
+        assert!(
+            ollama::OllamaProvider::default()
+                .default_base_url()
+                .contains("11434")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_complete_and_stream_against_loopback() {
+        use std::collections::HashMap;
+
+        let json = ok_json();
+        let sse = sse_hello();
+        let ok_url = serve_once("200 OK", &json, "application/json");
+        let custom_ok = custom::CustomProvider::new(
+            "custom",
+            custom::normalize_chat_completions_url(&ok_url),
+            Some("sk-test".into()),
+            HashMap::new(),
+        );
+        assert_complete_ok(&custom_ok).await;
+
+        let err_url = serve_once("502 Bad Gateway", "{}", "application/json");
+        let custom_err = custom::CustomProvider::new(
+            "custom",
+            custom::normalize_chat_completions_url(&err_url),
+            Some("sk-bad".into()),
+            HashMap::new(),
+        );
+        assert_complete_err(&custom_err).await;
+
+        let sse_url = serve_sse(&sse);
+        let custom_stream = custom::CustomProvider::new(
+            "custom",
+            custom::normalize_chat_completions_url(&sse_url),
+            Some("sk-test".into()),
+            HashMap::new(),
+        );
+        assert_stream_hello(&custom_stream).await;
+        assert!(
+            custom::CustomProvider::new(
+                "custom",
+                "https://api.example.com/v1/chat/completions",
+                None,
+                HashMap::new(),
+            )
+            .default_base_url()
+            .contains("example.com")
+        );
+    }
 }
