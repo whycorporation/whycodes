@@ -10,16 +10,33 @@ use crate::provider::{
 
 pub struct GoogleProvider {
     name: String,
+    /// Optional override for tests (`from_base`). Production stays on
+    /// `generativelanguage.googleapis.com`.
+    base_url: Option<String>,
 }
 
 impl GoogleProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "google".to_string(),
+            base_url: base
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string),
         }
     }
 
     pub(crate) fn build_url(&self, model: &str, api_key: &str) -> String {
+        if let Some(base) = self.base_url.as_deref() {
+            let base = base.trim_end_matches('/');
+            return format!(
+                "{base}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}"
+            );
+        }
         format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:{}?key={}",
             model, "streamGenerateContent?alt=sse", api_key
@@ -27,6 +44,10 @@ impl GoogleProvider {
     }
 
     pub(crate) fn build_complete_url(&self, model: &str, api_key: &str) -> String {
+        if let Some(base) = self.base_url.as_deref() {
+            let base = base.trim_end_matches('/');
+            return format!("{base}/v1beta/models/{model}:generateContent?key={api_key}");
+        }
         format!(
             "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
             model, api_key

@@ -16,6 +16,7 @@ use crate::provider::{
 
 pub struct CopilotProvider {
     name: String,
+    chat_url: String,
 }
 
 /// POST with bearer auth. Extra editor-identity headers come from a loaded
@@ -27,8 +28,16 @@ fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
 
 impl CopilotProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "github-copilot".to_string(),
+            chat_url: match base.map(str::trim).filter(|s| !s.is_empty()) {
+                Some(raw) => super::custom::normalize_chat_completions_url(raw),
+                None => "https://api.githubcopilot.com/chat/completions".to_string(),
+            },
         }
     }
 }
@@ -39,7 +48,7 @@ impl LlmProvider for CopilotProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        "https://api.githubcopilot.com/chat/completions"
+        &self.chat_url
     }
 
     fn complete<'a>(

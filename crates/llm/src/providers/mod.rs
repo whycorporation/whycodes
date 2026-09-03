@@ -401,5 +401,114 @@ mod tests {
                 .default_base_url()
                 .contains("openrouter")
         );
+
+        let copilot_ok = copilot::CopilotProvider::from_base(Some(&serve_once(
+            "200 OK",
+            &json,
+            "application/json",
+        )));
+        assert_complete_ok(&copilot_ok).await;
+        let copilot_err = copilot::CopilotProvider::from_base(Some(&serve_once(
+            "401 Unauthorized",
+            "{}",
+            "application/json",
+        )));
+        assert_complete_err(&copilot_err).await;
+        let copilot_stream = copilot::CopilotProvider::from_base(Some(&serve_sse(&sse)));
+        assert_stream_hello(&copilot_stream).await;
+        assert!(
+            copilot::CopilotProvider::default()
+                .default_base_url()
+                .contains("githubcopilot")
+        );
+
+        let xai_ok =
+            xai::XaiProvider::from_base(Some(&serve_once("200 OK", &json, "application/json")));
+        assert_complete_ok(&xai_ok).await;
+        let xai_err = xai::XaiProvider::from_base(Some(&serve_once(
+            "429 Too Many Requests",
+            "{}",
+            "application/json",
+        )));
+        assert_complete_err(&xai_err).await;
+        let xai_stream = xai::XaiProvider::from_base(Some(&serve_sse(&sse)));
+        assert_stream_hello(&xai_stream).await;
+        assert!(
+            xai::XaiProvider::default()
+                .default_base_url()
+                .contains("x.ai")
+        );
+    }
+
+    fn google_ok_json() -> String {
+        serde_json::json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "hello-google"}]}
+            }]
+        })
+        .to_string()
+    }
+
+    fn google_sse() -> String {
+        // Gemini stream is a JSON array of chunks, not OpenAI `data:` SSE.
+        "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}".to_string()
+    }
+
+    #[tokio::test]
+    async fn google_complete_and_stream_against_loopback() {
+        use tokio_stream::StreamExt;
+        use whycodes_core::types::{ContentBlock, StreamEvent};
+
+        let json = google_ok_json();
+        let provider = google::GoogleProvider::from_base(Some(&serve_once(
+            "200 OK",
+            &json,
+            "application/json",
+        )));
+        let req = req();
+        let resp = provider
+            .complete(&req, "sk-test", "gemini-test")
+            .await
+            .unwrap();
+        assert!(
+            resp.content
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Text { text } if text.contains("hello-google"))),
+            "{resp:?}"
+        );
+
+        let err_p = google::GoogleProvider::from_base(Some(&serve_once(
+            "403 Forbidden",
+            r#"{"error":{"message":"nope"}}"#,
+            "application/json",
+        )));
+        let err = err_p
+            .complete(&req, "sk-bad", "gemini-test")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let sse_p = google::GoogleProvider::from_base(Some(&serve_sse(&google_sse())));
+        let mut stream = sse_p.stream(&req, "sk-test", "gemini-test").await.unwrap();
+        let mut text = String::new();
+        while let Some(ev) = stream.next().await {
+            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+                text.push_str(&d);
+            }
+        }
+        assert_eq!(text, "hello");
+        assert!(
+            google::GoogleProvider::default()
+                .default_base_url()
+                .contains("generativelanguage")
+        );
+        assert!(
+            google::GoogleProvider::new()
+                .build_complete_url("m", "k")
+                .contains("generativelanguage")
+        );
     }
 }

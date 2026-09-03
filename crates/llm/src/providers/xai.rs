@@ -15,6 +15,9 @@ use crate::provider::{
 
 pub struct XaiProvider {
     name: String,
+    /// Optional override for tests (`from_base`). Production stays on the
+    /// console or subscription URL chosen from the token.
+    chat_url: Option<String>,
 }
 
 /// Console chat-completions endpoint (`XAI_API_KEY`).
@@ -37,21 +40,34 @@ pub fn inference_url(api_key: &str) -> &'static str {
     }
 }
 
-fn authed_post(api_key: &str) -> reqwest::RequestBuilder {
-    if is_xai_oauth_token(api_key) {
-        crate::client_identity::post_for_provider(SUBSCRIPTION_CHAT_URL, "xai")
+fn authed_post(url: &str, api_key: &str) -> reqwest::RequestBuilder {
+    if is_xai_oauth_token(api_key) && url == SUBSCRIPTION_CHAT_URL {
+        crate::client_identity::post_for_provider(url, "xai")
             .header("Authorization", format!("Bearer {api_key}"))
     } else {
-        crate::client_identity::post(CONSOLE_CHAT_URL)
-            .header("Authorization", format!("Bearer {api_key}"))
+        crate::client_identity::post(url).header("Authorization", format!("Bearer {api_key}"))
     }
 }
 
 impl XaiProvider {
     pub fn new() -> Self {
+        Self::from_base(None)
+    }
+
+    pub fn from_base(base: Option<&str>) -> Self {
         Self {
             name: "xai".to_string(),
+            chat_url: base
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(super::custom::normalize_chat_completions_url),
         }
+    }
+
+    fn request_url(&self, api_key: &str) -> String {
+        self.chat_url
+            .clone()
+            .unwrap_or_else(|| inference_url(api_key).to_string())
     }
 
     pub fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
@@ -93,7 +109,7 @@ impl LlmProvider for XaiProvider {
     }
 
     fn default_base_url(&self) -> &str {
-        CONSOLE_CHAT_URL
+        self.chat_url.as_deref().unwrap_or(CONSOLE_CHAT_URL)
     }
 
     fn complete<'a>(
@@ -107,7 +123,7 @@ impl LlmProvider for XaiProvider {
             body["stream"] = serde_json::Value::Bool(false);
 
             let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-                authed_post(key).json(&body)
+                authed_post(&self.request_url(key), key).json(&body)
             })
             .await?;
 
@@ -150,7 +166,7 @@ impl LlmProvider for XaiProvider {
             crate::openai_compat::attach_stream_usage_option(&mut body);
 
             let resp = crate::oauth_refresh::send_with_refresh_retry(self.name(), api_key, |key| {
-                authed_post(key).json(&body)
+                authed_post(&self.request_url(key), key).json(&body)
             })
             .await?;
 
