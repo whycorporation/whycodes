@@ -144,6 +144,27 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-03 — Windows TUI painted grayscale after RGB quantize
+
+**Symptom:** On Windows PowerShell / Windows Terminal the whole TUI went
+black-and-white. Agent-tinted prompt borders (build green, plan purple, …)
+collapsed onto gray.
+
+**JSONL / crash:** none (`tui.ready` `color_mode` is `"16"`).
+
+**Root cause:** `#50` quantized RGB when the host is not truecolor. Windows
+Terminal and classic conhost leave `TERM` / `COLORTERM` empty, so detection
+fell through to Ansi16. Pastel theme tokens are Euclidean-closer to silver
+(index 7) than to green/cyan, so every accent became gray.
+
+**Fix:** Treat `WT_SESSION`, `ConEmuANSI=ON`, and `cfg!(windows)` as
+truecolor (Win10+ VT). `WHYCODES_COLOR` still overrides. 16-colour quantize
+skips gray slots for chromatic RGB so a forced `16` mode keeps agent hues.
+
+**Prevention:** `cargo test -p whycodes-tui windows_empty_term_is_truecolor
+ansi16_keeps_chroma_off_gray`. Manual: Windows Terminal + PowerShell in
+`docs/tui-term-matrix.md`.
+
 ### 2026-09-03 — Serve lock lives under `$CWD/.whycodes/`, not data_dir
 
 **Symptom:** A second `whycodes serve` printed `Address already in use` with no

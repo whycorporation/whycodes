@@ -38,14 +38,18 @@ Look for `tui.starting` (`stdin_tty` / `stdout_tty`), `tui.ready`
 | GNOME Terminal / Ptyxis / Tilix | VTE | `xterm-256color` | OSC 52 often off; no kitty keyboard proto |
 | Konsole | Qt | `konsole-256color` | Mouse/clipboard quirks vs VTE |
 | Apple Terminal.app | macOS | `xterm-256color` | No `38;2`. `TERM_PROGRAM=Apple_Terminal` forces 256-colour quantize. `Clear` + SGR DIM leak to white / ANSI green. |
+| Windows Terminal | Win | *(empty)* | `TERM`/`COLORTERM` usually unset. `WT_SESSION` (and Win10+ conhost) is treated as truecolor so agent borders stay tinted. |
+| Windows PowerShell / cmd | Win | *(empty)* | Same empty-`TERM` path. Override with `WHYCODES_COLOR=16` only on real 16-colour hosts. |
 
 Minimum useful set: **Alacritty + Kitty + WezTerm + one VTE**. Add **foot** on
 Wayland. On macOS add **Terminal.app** (truecolor hosts are not enough).
+On Windows add **Windows Terminal**.
 
-WhyCodes special-cases `TERM_PROGRAM=Apple_Terminal` (256-colour quantize) and
-honours `WHYCODES_COLOR=truecolor|256|16`. Other `TERM` strings still follow
-the emulator. Setup is in `crates/tui/src/run.rs`: `/dev/tty`,
-alt-screen, mouse capture, bracketed paste, and (when
+WhyCodes special-cases `TERM_PROGRAM=Apple_Terminal` (256-colour quantize),
+treats Windows (`WT_SESSION` / `ConEmuANSI` / Win10+ conhost) as truecolor
+when `TERM` is empty, and honours `WHYCODES_COLOR=truecolor|256|16`. Other
+`TERM` strings still follow the emulator. Setup is in `crates/tui/src/run.rs`:
+`/dev/tty`, alt-screen, mouse capture, bracketed paste, and (when
 `supports_keyboard_enhancement`) `DISAMBIGUATE_ESCAPE_CODES`.
 
 ## Checklist (every host)

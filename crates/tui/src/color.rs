@@ -4,6 +4,10 @@
 //! `38;2` / `48;2`. Detect the host, quantize palette RGB to xterm-256 or
 //! 16-colour *before* paint, and wrap the crossterm backend so a stray
 //! `Color::Rgb` never reaches the wire.
+//!
+//! Windows is the other trap: Windows Terminal / PowerShell often leave
+//! `TERM` and `COLORTERM` unset. Treating that as 16-colour collapses the
+//! theme (and agent-tinted prompt borders) onto gray.
 
 use std::cell::Cell;
 use std::io::{self, Write};
@@ -82,14 +86,40 @@ pub fn paint_rgb(r: u8, g: u8, b: u8) -> Color {
 ///
 /// Precedence: `WHYCODES_COLOR` override, then `TERM_PROGRAM=Apple_Terminal`
 /// (always 256 — Terminal.app maps `38;2` to the profile default / ANSI green),
-/// then `COLORTERM=truecolor|24bit`, then `TERM`.
+/// then `COLORTERM=truecolor|24bit`, then Windows-host hints (`WT_SESSION`,
+/// ConEmu, Win10+ conhost — they honour `38;2` with empty `TERM`), then `TERM`.
 pub fn detect_color_mode() -> ColorMode {
     color_mode_from_env(
         std::env::var("WHYCODES_COLOR").ok().as_deref(),
         std::env::var("COLORTERM").ok().as_deref(),
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var("TERM").ok().as_deref(),
+        windows_truecolor_host(),
     )
+}
+
+/// Windows Terminal / ConEmu / Win10+ conhost honour `38;2` even when
+/// `TERM` and `COLORTERM` are unset (the usual PowerShell profile).
+fn windows_truecolor_host() -> bool {
+    windows_truecolor_from_env(
+        std::env::var_os("WT_SESSION").is_some(),
+        std::env::var("ConEmuANSI").ok().as_deref(),
+        cfg!(windows),
+    )
+}
+
+fn windows_truecolor_from_env(
+    wt_session: bool,
+    conemu_ansi: Option<&str>,
+    is_windows: bool,
+) -> bool {
+    if wt_session {
+        return true;
+    }
+    if conemu_ansi.is_some_and(|v| v.trim().eq_ignore_ascii_case("ON")) {
+        return true;
+    }
+    is_windows
 }
 
 pub fn color_mode_from_env(
@@ -97,6 +127,7 @@ pub fn color_mode_from_env(
     colorterm: Option<&str>,
     term_program: Option<&str>,
     term: Option<&str>,
+    windows_truecolor: bool,
 ) -> ColorMode {
     if let Some(raw) = override_var {
         let v = raw.trim();
@@ -121,6 +152,12 @@ pub fn color_mode_from_env(
         if ct == "truecolor" || ct == "24bit" {
             return ColorMode::TrueColor;
         }
+    }
+
+    // Windows Terminal leaves TERM/COLORTERM empty; classic conhost on Win10+
+    // still speaks 24-bit VT. Do not fall through to Ansi16.
+    if windows_truecolor {
+        return ColorMode::TrueColor;
     }
 
     let term = term.unwrap_or("").trim();
@@ -186,10 +223,20 @@ pub fn rgb_to_indexed256(r: u8, g: u8, b: u8) -> u8 {
 }
 
 /// Nearest of the 16 system colours, returned as `0..=15`.
+///
+/// Chromatic RGB (agent greens, peach accent, …) must not collapse onto the
+/// gray slots (0/7/8/15). Those pastels are closer in Euclidean distance to
+/// silver than to green/cyan, which is why Windows 16-colour mode painted
+/// the whole TUI black-and-white.
 pub fn rgb_to_ansi16(r: u8, g: u8, b: u8) -> u8 {
+    let chroma = r.max(g).max(b).saturating_sub(r.min(g).min(b));
+    let skip_gray = chroma >= 32;
     let mut best_i = 0u8;
     let mut best_d = u32::MAX;
     for i in 0..=15u8 {
+        if skip_gray && matches!(i, 0 | 7 | 8 | 15) {
+            continue;
+        }
         let (cr, cg, cb) = indexed_rgb(i);
         let d = dist2(r, g, b, cr, cg, cb);
         if d < best_d {
@@ -400,7 +447,8 @@ mod tests {
                 None,
                 Some("truecolor"),
                 Some("Apple_Terminal"),
-                Some("xterm-256color")
+                Some("xterm-256color"),
+                false
             ),
             ColorMode::Ansi256
         );
@@ -409,20 +457,27 @@ mod tests {
                 None,
                 Some("truecolor"),
                 Some("iTerm.app"),
-                Some("xterm-256color")
+                Some("xterm-256color"),
+                false
             ),
             ColorMode::TrueColor
         );
         assert_eq!(
-            color_mode_from_env(None, None, None, Some("xterm-256color")),
+            color_mode_from_env(None, None, None, Some("xterm-256color"), false),
             ColorMode::Ansi256
         );
         assert_eq!(
-            color_mode_from_env(None, None, None, Some("xterm")),
+            color_mode_from_env(None, None, None, Some("xterm"), false),
             ColorMode::Ansi16
         );
         assert_eq!(
-            color_mode_from_env(Some("16"), Some("truecolor"), None, Some("alacritty")),
+            color_mode_from_env(
+                Some("16"),
+                Some("truecolor"),
+                None,
+                Some("alacritty"),
+                false
+            ),
             ColorMode::Ansi16
         );
         assert_eq!(
@@ -430,10 +485,59 @@ mod tests {
                 Some("truecolor"),
                 None,
                 Some("Apple_Terminal"),
-                Some("xterm-256color")
+                Some("xterm-256color"),
+                false
             ),
             ColorMode::TrueColor
         );
+    }
+
+    #[test]
+    fn windows_empty_term_is_truecolor() {
+        // Windows Terminal / PowerShell: no TERM, no COLORTERM.
+        assert_eq!(
+            color_mode_from_env(None, None, None, None, true),
+            ColorMode::TrueColor
+        );
+        assert_eq!(
+            color_mode_from_env(None, None, None, Some(""), true),
+            ColorMode::TrueColor
+        );
+        // Unix with empty TERM stays 16-colour (real dumb / unknown host).
+        assert_eq!(
+            color_mode_from_env(None, None, None, None, false),
+            ColorMode::Ansi16
+        );
+        // WHYCODES_COLOR still wins on Windows.
+        assert_eq!(
+            color_mode_from_env(Some("16"), None, None, None, true),
+            ColorMode::Ansi16
+        );
+        assert!(windows_truecolor_from_env(true, None, false));
+        assert!(windows_truecolor_from_env(false, Some("ON"), false));
+        assert!(windows_truecolor_from_env(false, None, true));
+        assert!(!windows_truecolor_from_env(false, Some("OFF"), false));
+    }
+
+    #[test]
+    fn ansi16_keeps_chroma_off_gray() {
+        // Default-dark success / peach / info — the agent border + accent
+        // tokens. Euclidean-nearest of the 16 used to be silver (7).
+        for (r, g, b) in [
+            (0x7f, 0xd8, 0x8f), // success / build
+            (0xfa, 0xb2, 0x83), // peach primary
+            (0x5c, 0x9c, 0xf5), // secondary / ask
+            (0x9d, 0x7c, 0xd8), // accent / plan
+        ] {
+            let i = rgb_to_ansi16(r, g, b);
+            assert!(
+                !matches!(i, 0 | 7 | 8 | 15),
+                "chromatic rgb({r},{g},{b}) mapped to gray index {i}"
+            );
+        }
+        // Real greys may still land on the gray slots.
+        assert!(matches!(rgb_to_ansi16(0x80, 0x80, 0x80), 0 | 7 | 8 | 15));
+        assert!(matches!(rgb_to_ansi16(0x48, 0x48, 0x48), 0 | 7 | 8 | 15));
     }
 
     #[test]
