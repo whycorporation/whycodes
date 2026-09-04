@@ -259,6 +259,19 @@ mod tests {
     }
 
     #[test]
+    fn infer_source_from_title_classifies_default_vs_named() {
+        let p = PathBuf::from("/tmp/my-app");
+        assert_eq!(
+            infer_source_from_title("my-app-3f", &p),
+            TitleSource::Default
+        );
+        assert_eq!(
+            infer_source_from_title("Fix webhook timeout", &p),
+            TitleSource::Generated
+        );
+    }
+
+    #[test]
     fn source_gates() {
         assert!(TitleSource::Default.allows_heuristic());
         assert!(TitleSource::Default.allows_llm());

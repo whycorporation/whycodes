@@ -36,6 +36,7 @@ FULL_COVER_CRATES = [
     "whycodes-core",
     "whycodes-config",
     "whycodes-index",
+    "whycodes-session",
 ]
 
 # Floors as (crate, min_percent)
