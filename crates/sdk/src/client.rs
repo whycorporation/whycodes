@@ -1243,7 +1243,6 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         assert_eq!(err.code, ErrorCode::ServeNotFound);
     }
 
-    #[cfg_attr(coverage, ignore)]
     #[tokio::test]
     async fn launch_isolated_home_and_tempdir_connect() {
         let dir = tempfile::tempdir().unwrap();
@@ -1290,7 +1289,6 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         client.close().await.unwrap();
     }
 
-    #[cfg_attr(coverage, ignore)]
     #[tokio::test]
     async fn launch_inherited_logins_retries_until_healthy() {
         let dir = tempfile::tempdir().unwrap();
@@ -1308,7 +1306,6 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         client.close().await.unwrap();
     }
 
-    #[cfg_attr(coverage, ignore)]
     #[tokio::test]
     async fn launch_unsupported_version_does_not_retry() {
         let dir = tempfile::tempdir().unwrap();
@@ -1329,7 +1326,6 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         assert_eq!(err.code, ErrorCode::UnsupportedVersion);
     }
 
-    #[cfg_attr(coverage, ignore)]
     #[tokio::test]
     async fn launch_child_exit_is_startup_failed() {
         let dir = tempfile::tempdir().unwrap();
@@ -1354,7 +1350,6 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         assert!(err.message.contains("nope") || err.message.contains("exited"));
     }
 
-    #[cfg_attr(coverage, ignore)]
     #[tokio::test]
     async fn launch_timeout_closes_stderr_then_hangs() {
         let dir = tempfile::tempdir().unwrap();

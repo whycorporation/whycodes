@@ -362,7 +362,6 @@ mod tests {
         home.set_prev(None);
     }
 
-    #[cfg_attr(coverage, ignore)]
     #[test]
     fn isolated_cwd_points_at_home_and_restores() {
         let before = std::env::current_dir()
