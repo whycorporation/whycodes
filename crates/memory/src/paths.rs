@@ -64,11 +64,6 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn paths_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[test]
     fn user_and_project_dirs_sanitize_agent_bank() {
         let data = Path::new("/tmp/data");
         let project = Path::new("/tmp/proj");

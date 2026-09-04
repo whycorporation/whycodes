@@ -1496,6 +1496,25 @@ mod tests {
     }
 
     #[test]
+    fn search_skips_embedding_dim_mismatch() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        db.insert_memory(
+            "wrong-dim",
+            &svc.bank_key,
+            "fact with a mismatched embedding vector",
+            &[1, 2, 3],
+            None,
+        )
+        .unwrap();
+        assert!(
+            svc.search("mismatched embedding vector", 5, 0.0)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn search_code_skips_empty_vectors_and_low_scores() {
         let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
         let db = svc.open_db().unwrap();
@@ -1537,6 +1556,18 @@ mod tests {
                 1
             )
             .is_empty()
+        );
+        assert!(
+            maybe_auto_index(
+                &project,
+                dir.path(),
+                &MemorySettings {
+                    enabled: true,
+                    auto_index: false,
+                    ..Default::default()
+                }
+            )
+            .is_none()
         );
     }
 }

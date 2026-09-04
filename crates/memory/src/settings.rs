@@ -168,11 +168,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[test]
     fn scope_and_backend_parse_and_display() {
         assert_eq!(MemoryScope::parse("project"), MemoryScope::Project);
         assert_eq!(MemoryScope::parse("REPO"), MemoryScope::Project);
