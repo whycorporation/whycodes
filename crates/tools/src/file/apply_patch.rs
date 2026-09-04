@@ -766,6 +766,12 @@ diff --git a/two.rs b/two.rs
             "{}",
             mismatch.content
         );
+
+        let empty = ApplyPatchTool
+            .execute(serde_json::json!({ "patch_content": "" }), &ctx(dir.path()))
+            .await;
+        assert!(empty.is_error, "{}", empty.content);
+        assert!(empty.content.contains("patch_content"), "{}", empty.content);
     }
 
     #[tokio::test]

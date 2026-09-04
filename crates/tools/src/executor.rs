@@ -550,6 +550,19 @@ mod tests {
             &["worktree".to_string()],
         );
         assert!(extra.iter().any(|d| d.name == "worktree"));
+        let dup = ex.get_definitions_profile_extra(
+            &PermissionSet::default(),
+            crate::profile::ToolProfile::Core,
+            &["worktree".into(), "lsp".into(), "worktree".into()],
+        );
+        assert!(dup.iter().any(|d| d.name == "worktree"));
+        assert!(dup.iter().any(|d| d.name == "lsp"));
+        let again = ex.get_definitions_profile_extra(
+            &PermissionSet::default(),
+            crate::profile::ToolProfile::Core,
+            &["lsp".into(), "worktree".into()],
+        );
+        assert!(Arc::ptr_eq(&dup, &again));
     }
 
     #[test]

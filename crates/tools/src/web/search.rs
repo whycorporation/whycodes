@@ -318,6 +318,7 @@ mod tests {
         assert_eq!(strip_markup(" plain "), "plain");
         let t = WebSearchTool;
         assert_eq!(t.name(), "websearch");
+        assert_eq!(WebSearchTool.name(), "websearch");
         assert!(!t.description().is_empty());
         assert_eq!(t.parameters()["required"][0], "query");
     }

@@ -641,4 +641,26 @@ mod tests {
             out.content
         );
     }
+
+    #[tokio::test]
+    async fn execute_skill_url_loads_project_skill() {
+        let dir = TempDir::new().unwrap();
+        let skills = dir.path().join(".skills");
+        fs::create_dir(&skills).unwrap();
+        fs::write(
+            skills.join("demo.skill.md"),
+            "---\nname: demo\ndescription: d\n---\n\nTHE BODY\n",
+        )
+        .unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+        let out = ReadTool::new()
+            .execute(serde_json::json!({"path": "skill://demo"}), &ctx)
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("THE BODY"), "{}", out.content);
+        let agent = ReadTool::new()
+            .execute(serde_json::json!({"path": "agent://"}), &ctx)
+            .await;
+        assert!(!agent.is_error, "{}", agent.content);
+    }
 }

@@ -195,4 +195,13 @@ mod tests {
     async fn default_constructs() {
         assert_eq!(DisplayTool.name(), "display");
     }
+
+    #[tokio::test]
+    async fn text_format_passes_through() {
+        let out = DisplayTool
+            .execute(json!({ "content": "plain", "format": "text" }), &ctx())
+            .await;
+        assert!(!out.is_error);
+        assert_eq!(out.content, "plain");
+    }
 }

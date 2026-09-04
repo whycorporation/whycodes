@@ -184,6 +184,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn background_flag_still_runs_command() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+        let out = ShellTool::as_shell()
+            .execute(
+                json!({"command": "echo bg-flag", "background": true, "timeout": 10}),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("bg-flag"), "{}", out.content);
+    }
+
+    #[tokio::test]
     async fn sandbox_error_from_file_as_working_dir() {
         let dir = tempfile::TempDir::new().unwrap();
         let file = dir.path().join("not-a-dir");

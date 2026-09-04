@@ -610,4 +610,26 @@ mod tests {
             bad_token.content
         );
     }
+
+    #[tokio::test]
+    async fn execute_surfaces_connect_error() {
+        let _g = ApiBaseGuard::set("http://127.0.0.1:1");
+        let err = GithubIssueTool
+            .execute(
+                json!({
+                    "action": "list",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t"
+                }),
+                &ToolContext::new("."),
+            )
+            .await;
+        assert!(err.is_error, "{}", err.content);
+        assert!(
+            err.content.contains("GitHub API request failed") || err.content.contains("error"),
+            "{}",
+            err.content
+        );
+    }
 }
