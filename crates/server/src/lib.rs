@@ -248,7 +248,13 @@ impl IsolatedCwd {
     pub(crate) fn new() -> Self {
         let home = IsolatedHome::new();
         let prev = std::env::current_dir().expect("cwd");
-        std::env::set_current_dir(home.path()).expect("chdir");
+        let target = home.path().to_path_buf();
+        std::env::set_current_dir(&target)
+            .unwrap_or_else(|e| panic!("chdir {}: {e}", target.display()));
+        let now = std::env::current_dir().expect("cwd after chdir");
+        let now_c = now.canonicalize().unwrap_or(now);
+        let want_c = target.canonicalize().unwrap_or(target);
+        assert_eq!(now_c, want_c, "chdir did not stick");
         Self { _home: home, prev }
     }
 
@@ -358,12 +364,27 @@ mod tests {
 
     #[test]
     fn isolated_cwd_points_at_home_and_restores() {
-        let before = std::env::current_dir().unwrap();
+        let before = std::env::current_dir()
+            .unwrap()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
         {
             let cwd = IsolatedCwd::new();
-            assert_eq!(std::env::current_dir().unwrap(), cwd.path());
+            let now = std::env::current_dir()
+                .unwrap()
+                .canonicalize()
+                .unwrap_or_else(|_| std::env::current_dir().unwrap());
+            let want = cwd
+                .path()
+                .canonicalize()
+                .unwrap_or_else(|_| cwd.path().to_path_buf());
+            assert_eq!(now, want);
         }
-        assert_eq!(std::env::current_dir().unwrap(), before);
+        let after = std::env::current_dir()
+            .unwrap()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
+        assert_eq!(after, before);
     }
 
     #[test]

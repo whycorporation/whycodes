@@ -1405,7 +1405,24 @@ async fn handle_slash_covers_local_commands() {
     h.run("/init").await;
     assert!(h.app.pending_prompt.is_some());
 
+    // CI runners set `CI=true`, which makes `/import` a no-op skip toast.
+    let prev_ci = std::env::var_os("CI");
+    let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
+    unsafe {
+        std::env::remove_var("CI");
+        std::env::remove_var("WHYCODES_SKIP_IMPORT");
+    }
     h.run("/import nope").await;
+    unsafe {
+        match prev_ci {
+            Some(v) => std::env::set_var("CI", v),
+            None => std::env::remove_var("CI"),
+        }
+        match prev_skip {
+            Some(v) => std::env::set_var("WHYCODES_SKIP_IMPORT", v),
+            None => std::env::remove_var("WHYCODES_SKIP_IMPORT"),
+        }
+    }
     assert!(
         h.app
             .toasts
