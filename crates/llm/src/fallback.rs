@@ -218,4 +218,16 @@ mod tests {
         assert_eq!(p.name(), "script");
         assert_eq!(p.default_base_url(), "http://script.invalid");
     }
+
+    #[tokio::test]
+    async fn missing_api_key_still_invokes_provider() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(ScriptedProvider::named(
+            "solo",
+            [ScriptedStep::Text("ok".into())],
+        )));
+        let chain = FallbackChain::new(vec![("solo".into(), "m".into())], HashMap::new());
+        let resp = chain.complete(&req(), &registry).await.unwrap();
+        assert_eq!(resp.model, "m");
+    }
 }

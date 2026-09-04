@@ -7,8 +7,25 @@ pub use whycodes_core::types::{
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn types_module_loads() {
-        assert!(!module_path!().is_empty());
+    fn reexports_core_llm_types() {
+        let _ = Role::User;
+        let _ = Role::Assistant;
+        let req = LlmRequest {
+            system: "s".into(),
+            messages: std::sync::Arc::from([]),
+            tools: std::sync::Arc::from([]),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        };
+        assert!(req.system == "s");
+        let _ = StreamEvent::MessageStop;
     }
 }

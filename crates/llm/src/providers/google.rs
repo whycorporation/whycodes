@@ -287,8 +287,165 @@ impl Default for GoogleProvider {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::provider::LlmProvider;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+    use tokio_stream::StreamExt;
+    use whycodes_core::types::{LlmRequest, Message, MessageContent, Role, ToolDefinition};
+
+    fn req() -> LlmRequest {
+        LlmRequest {
+            system: "sys".into(),
+            messages: std::sync::Arc::from(vec![Message {
+                role: Role::User,
+                content: MessageContent::Text("hi".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            }]),
+            tools: std::sync::Arc::from([]),
+            max_tokens: Some(16),
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            thinking: None,
+            use_prompt_cache: false,
+        }
+    }
+
+    fn serve_once(status: &str, body: &str, content_type: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let header = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let payload = format!("{header}{body}");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(payload.as_bytes());
+            }
+        });
+        format!("http://{addr}")
+    }
+
     #[test]
-    fn google_module_loads() {
-        assert!(!module_path!().is_empty());
+    fn from_base_blank_keeps_cloud_urls() {
+        let cloud = GoogleProvider::from_base(Some("   "));
+        assert!(
+            cloud
+                .build_url("gemini-test", "k")
+                .contains("generativelanguage")
+        );
+        let local = GoogleProvider::from_base(Some("http://127.0.0.1:9/"));
+        let stream = local.build_url("m", "k");
+        assert!(stream.contains("127.0.0.1:9"), "{stream}");
+        assert!(stream.contains("streamGenerateContent"), "{stream}");
+        let complete = local.build_complete_url("m", "k");
+        assert!(complete.contains("generateContent"), "{complete}");
+        assert!(!complete.contains("streamGenerateContent"), "{complete}");
+        assert_eq!(GoogleProvider::default().name(), "google");
+    }
+
+    #[test]
+    fn build_body_covers_roles_empty_system_temp_and_tools() {
+        let mut r = req();
+        r.system.clear();
+        r.max_tokens = None;
+        r.temperature = Some(0.25);
+        r.messages = std::sync::Arc::from(vec![
+            Message {
+                role: Role::Assistant,
+                content: MessageContent::Text("prev".into()),
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            },
+            Message {
+                role: Role::Tool,
+                content: MessageContent::Text("tool-out".into()),
+                tool_call_id: Some("t1".into()),
+                name: Some("read".into()),
+                created_at: None,
+            },
+        ]);
+        r.tools = vec![ToolDefinition {
+            name: "read".into(),
+            description: "read a file".into(),
+            parameters: serde_json::json!({"type": "object"}),
+        }]
+        .into();
+        let body = GoogleProvider::new().build_body(&r);
+        assert!(body.get("systemInstruction").is_none(), "{body}");
+        assert_eq!(body["contents"][0]["role"], "model");
+        assert_eq!(body["contents"][1]["role"], "user");
+        assert!(body["generationConfig"]["temperature"].is_number());
+        assert!(body["tools"].is_array(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn complete_json_parse_error_and_unknown_api_error() {
+        let p = GoogleProvider::from_base(Some(&serve_once("200 OK", "not-json", "text/plain")));
+        let err = p.complete(&req(), "k", "gemini-test").await.unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("json") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let p = GoogleProvider::from_base(Some(&serve_once(
+            "400 Bad Request",
+            "{}",
+            "application/json",
+        )));
+        let err = p.complete(&req(), "k", "gemini-test").await.unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown") || err.to_string().contains("400"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_http_error_and_usage_stop() {
+        let p =
+            GoogleProvider::from_base(Some(&serve_once("403 Forbidden", "denied", "text/plain")));
+        let err = match p.stream(&req(), "k", "gemini-test").await {
+            Ok(_) => panic!("expected stream http error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("denied") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {"parts": [{"text": "hello"}]},
+                "finishReason": "STOP"
+            }],
+            "usageMetadata": {"promptTokenCount": 2, "candidatesTokenCount": 3}
+        })
+        .to_string();
+        let p = GoogleProvider::from_base(Some(&serve_once("200 OK", &body, "application/json")));
+        let mut stream = p.stream(&req(), "k", "gemini-test").await.unwrap();
+        let mut text = String::new();
+        let mut saw_usage = false;
+        let mut saw_stop = false;
+        while let Some(ev) = stream.next().await {
+            match ev.unwrap() {
+                StreamEvent::TextDelta { text: d } => text.push_str(&d),
+                StreamEvent::Usage { .. } => saw_usage = true,
+                StreamEvent::MessageStop => saw_stop = true,
+                StreamEvent::MessageDelta { .. } => {}
+                _ => {}
+            }
+        }
+        assert_eq!(text, "hello");
+        assert!(saw_usage);
+        assert!(saw_stop);
     }
 }

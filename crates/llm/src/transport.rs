@@ -267,7 +267,7 @@ mod tests {
         let provider =
             ScriptedProvider::new([ScriptedStep::Hang(std::time::Duration::from_secs(2))]);
         let err = transport
-            .complete(&provider, &req(), "k", "m")
+            .complete(&provider, &req(), "k", "hang-timeout")
             .await
             .unwrap_err();
         assert!(

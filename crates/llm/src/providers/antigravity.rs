@@ -66,5 +66,8 @@ mod tests {
             p.default_base_url(),
             "https://daily-cloudcode-pa.googleapis.com/v1internal"
         );
+        let via_default = AntigravityProvider::default();
+        assert_eq!(via_default.name(), p.name());
+        assert_eq!(via_default.default_base_url(), p.default_base_url());
     }
 }

@@ -398,4 +398,33 @@ mod tests {
         );
         assert!(ThinkingConfig::supported_efforts("anthropic", "claude-sonnet-4").is_empty());
     }
+
+    #[test]
+    fn apply_openai_effort_skips_none_and_disabled() {
+        let mut body = serde_json::json!({});
+        ThinkingConfig::apply_openai_effort(&mut body, None);
+        assert!(body.get("reasoning_effort").is_none());
+        let v = serde_json::json!({"type": "disabled", "reasoning_effort": "high"});
+        ThinkingConfig::apply_openai_effort(&mut body, Some(&v));
+        assert!(body.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn reasoning_effort_parse_labels_and_unknown() {
+        assert_eq!(
+            ReasoningEffort::parse("minimal"),
+            Some(ReasoningEffort::Low)
+        );
+        assert_eq!(ReasoningEffort::parse("MED"), Some(ReasoningEffort::Medium));
+        assert_eq!(
+            ReasoningEffort::parse("ultra"),
+            Some(ReasoningEffort::XHigh)
+        );
+        assert!(ReasoningEffort::parse("nope").is_none());
+        assert_eq!(ReasoningEffort::Low.as_str(), "low");
+        assert_eq!(ReasoningEffort::Medium.label(), "Med");
+        assert!(!ReasoningEffort::High.description().is_empty());
+        assert_eq!(ReasoningEffort::ALL.len(), 4);
+        assert!(!ReasoningEffort::model_allows_xhigh("openai", "gpt-5"));
+    }
 }

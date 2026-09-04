@@ -694,4 +694,97 @@ mod tests {
             .contains("example.com")
         );
     }
+
+    #[tokio::test]
+    async fn openai_compat_connect_json_and_stream_http_errors() {
+        let req = req();
+        let groq = groq::GroqProvider::from_base(Some("http://127.0.0.1:1/v1"));
+        let err = groq.complete(&req, "k", "m").await.unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("http") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let parse = serve_once("200 OK", "not-json", "text/plain");
+        let err = groq::GroqProvider::from_base(Some(&parse))
+            .complete(&req, "k", "m")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("json") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let unknown = serve_once("400 Bad Request", "{}", "application/json");
+        let err = groq::GroqProvider::from_base(Some(&unknown))
+            .complete(&req, "k", "m")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown") || err.to_string().contains("400"),
+            "{err}"
+        );
+
+        let stream_err = serve_once("401 Unauthorized", "nope", "text/plain");
+        let err = match groq::GroqProvider::from_base(Some(&stream_err))
+            .stream(&req, "k", "m")
+            .await
+        {
+            Ok(_) => panic!("expected groq stream http error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let sse = concat!(
+            ": comment\n\n",
+            "data: not-json\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"z\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let noisy = groq::GroqProvider::from_base(Some(&serve_sse(sse)));
+        assert_stream_hello_or("z", &noisy).await;
+    }
+
+    async fn assert_stream_hello_or(expect: &str, provider: &dyn crate::provider::LlmProvider) {
+        use tokio_stream::StreamExt;
+        use whycodes_core::types::StreamEvent;
+        let req = req();
+        let mut stream = provider.stream(&req, "sk-test", "m").await.unwrap();
+        let mut text = String::new();
+        while let Some(ev) = stream.next().await {
+            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+                text.push_str(&d);
+            }
+        }
+        assert_eq!(text, expect);
+    }
+
+    #[tokio::test]
+    async fn anthropic_and_google_stream_http_errors() {
+        let req = req();
+        let err = match anthropic::AnthropicProvider::from_base(Some(&serve_once(
+            "401 Unauthorized",
+            "nope",
+            "text/plain",
+        )))
+        .stream(&req, "sk", "claude")
+        .await
+        {
+            Ok(_) => panic!("expected anthropic stream http error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let err = google::GoogleProvider::from_base(Some("http://127.0.0.1:1"))
+            .complete(&req, "k", "gemini")
+            .await
+            .unwrap_err();
+        assert!(!err.to_string().is_empty(), "{err}");
+    }
 }

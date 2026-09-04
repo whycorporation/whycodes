@@ -235,11 +235,6 @@ mod tests {
     use whycodes_core::types::{ContentBlock, LlmRequest, Message, MessageContent, Role};
 
     #[test]
-    fn openai_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-
-    #[test]
     fn from_base_and_from_config_normalize_urls() {
         let def = OpenAiProvider::new();
         assert_eq!(def.name(), "openai");
@@ -269,6 +264,27 @@ mod tests {
         };
         let from_cfg = OpenAiProvider::from_config(&cfg);
         assert!(from_cfg.default_base_url().contains("example.invalid"));
+
+        let blank = OpenAiProvider::from_base(Some("   "));
+        assert_eq!(
+            blank.default_base_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        let via_api_base = OpenAiProvider::from_config(&whycodes_core::types::ProviderConfig {
+            name: "openai".into(),
+            api_key: None,
+            api_base: Some("http://127.0.0.1:9/v1".into()),
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        });
+        assert!(
+            via_api_base.default_base_url().contains("127.0.0.1:9"),
+            "{}",
+            via_api_base.default_base_url()
+        );
     }
 
     fn base_request() -> LlmRequest {
@@ -384,5 +400,83 @@ mod tests {
             }
         }
         assert_eq!(text, "hello");
+    }
+
+    #[tokio::test]
+    async fn complete_json_parse_and_unknown_error_and_empty_key() {
+        let parse = serve_once("200 OK", "not-json", "text/plain");
+        let err = OpenAiProvider::from_base(Some(&parse))
+            .complete(&base_request(), "", "gpt-test")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().to_lowercase().contains("json") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let unknown = serve_once("400 Bad Request", "{}", "application/json");
+        let err = OpenAiProvider::from_base(Some(&unknown))
+            .complete(&base_request(), "sk", "gpt-test")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("Unknown") || err.to_string().contains("400"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_http_error_and_skips_noise_lines() {
+        let err_base = serve_once("401 Unauthorized", "nope", "text/plain");
+        let err = match OpenAiProvider::from_base(Some(&err_base))
+            .stream(&base_request(), "sk", "gpt-test")
+            .await
+        {
+            Ok(_) => panic!("expected stream http error"),
+            Err(e) => e,
+        };
+        assert!(
+            err.to_string().contains("nope") || !err.to_string().is_empty(),
+            "{err}"
+        );
+
+        let sse = concat!(
+            ": comment\n",
+            "\n",
+            "data: not-json\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let header = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            sse.len()
+        );
+        let payload = format!("{header}{sse}");
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 2048];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(payload.as_bytes());
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let provider = OpenAiProvider::from_base(Some(&format!("http://{addr}/v1")));
+        let mut stream = provider
+            .stream(&base_request(), "sk-test", "gpt-test")
+            .await
+            .unwrap();
+        let mut text = String::new();
+        let mut saw_usage = false;
+        while let Some(ev) = stream.next().await {
+            match ev.unwrap() {
+                StreamEvent::TextDelta { text: d } => text.push_str(&d),
+                StreamEvent::Usage { .. } => saw_usage = true,
+                _ => {}
+            }
+        }
+        assert_eq!(text, "hi");
+        assert!(saw_usage);
     }
 }

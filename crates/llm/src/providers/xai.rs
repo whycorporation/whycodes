@@ -250,4 +250,17 @@ mod tests {
         );
         assert_eq!(inference_url("xai-abc123"), CONSOLE_CHAT_URL);
     }
+
+    #[test]
+    fn from_base_blank_falls_back_to_console() {
+        let blank = XaiProvider::from_base(Some("   "));
+        assert_eq!(blank.default_base_url(), CONSOLE_CHAT_URL);
+        let local = XaiProvider::from_base(Some("http://127.0.0.1:9/v1"));
+        assert!(
+            local.default_base_url().ends_with("/chat/completions"),
+            "{}",
+            local.default_base_url()
+        );
+        assert_eq!(XaiProvider::default().name(), "xai");
+    }
 }

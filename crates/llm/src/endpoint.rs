@@ -176,6 +176,13 @@ mod tests {
         assert!(!is_local_llm_endpoint("https://api.anthropic.com"));
         assert!(!is_local_llm_endpoint("https://api.openai.com/v1"));
         assert!(!is_local_llm_endpoint(""));
+        assert!(is_local_llm_endpoint("http://foo.localhost/v1"));
+        assert!(is_local_llm_endpoint("http://printer.local"));
+        assert!(is_local_llm_endpoint("http://0.0.0.0:9"));
+        assert!(is_local_llm_endpoint("172.16.0.2"));
+        assert!(!is_local_llm_endpoint("172.15.0.2"));
+        assert!(!is_local_llm_endpoint("172.32.0.2"));
+        assert!(!is_local_llm_endpoint("http://["));
     }
 
     #[test]
@@ -211,5 +218,23 @@ mod tests {
         let mut pc = pc(None);
         pc.api_base = Some("http://127.0.0.1:9".into());
         assert!(provider_config_skips_api_key(&pc));
+    }
+
+    #[test]
+    fn missing_provider_in_config_still_requires_key() {
+        let cfg = Config::default();
+        assert!(provider_requires_api_key("anthropic", Some(&cfg)));
+    }
+
+    #[test]
+    fn blank_anthropic_base_uses_default() {
+        assert_eq!(
+            normalize_anthropic_messages_url(Some("   ")),
+            DEFAULT_ANTHROPIC_MESSAGES_URL
+        );
+        assert_eq!(
+            normalize_anthropic_messages_url(Some("http://127.0.0.1:9/messages")),
+            "http://127.0.0.1:9/messages"
+        );
     }
 }

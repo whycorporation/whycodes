@@ -243,4 +243,35 @@ mod tests {
         registry.register_from_config(&Config::default());
         assert!(registry.get("anything").is_none());
     }
+
+    #[test]
+    fn register_from_config_applies_openai_base_url() {
+        let mut registry = ProviderRegistry::default();
+        let mut config = Config::default();
+        let mut pc = config_entry("openai");
+        pc.base_url = Some("http://127.0.0.1:4554/v1".into());
+        config.providers.insert("openai".to_string(), pc);
+        registry.register_from_config(&config);
+        assert!(
+            registry
+                .get("openai")
+                .unwrap()
+                .default_base_url()
+                .contains("127.0.0.1:4554"),
+            "{}",
+            registry.get("openai").unwrap().default_base_url()
+        );
+    }
+
+    #[test]
+    fn register_from_config_skips_existing_builtin_wrappers() {
+        let mut registry = ProviderRegistry::default();
+        let before = registry.get("groq").unwrap().default_base_url().to_string();
+        let mut config = Config::default();
+        let mut pc = config_entry("groq");
+        pc.base_url = Some("http://127.0.0.1:9/v1".into());
+        config.providers.insert("groq".to_string(), pc);
+        registry.register_from_config(&config);
+        assert_eq!(registry.get("groq").unwrap().default_base_url(), before);
+    }
 }
