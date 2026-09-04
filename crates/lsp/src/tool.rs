@@ -50,6 +50,11 @@ impl LspTool {
         clients.insert(ext.to_string(), Arc::clone(&client));
         Ok(client)
     }
+
+    #[cfg(test)]
+    async fn insert_client(&self, ext: &str, client: Arc<LspClient>) {
+        self.clients.lock().await.insert(ext.to_string(), client);
+    }
 }
 
 impl Tool for LspTool {
@@ -286,7 +291,7 @@ mod tests {
 
     #[test]
     fn describes_itself() {
-        let tool = LspTool::new();
+        let tool = LspTool::default();
         assert_eq!(tool.name(), "lsp");
         assert!(tool.description().contains("diagnostics"));
         let p = tool.parameters();
@@ -339,5 +344,144 @@ mod tests {
                 .content
                 .contains("No language server configured for '.zzz'")
         );
+    }
+
+    async fn run(action: &str, path: &str) -> ToolResult {
+        let tool = LspTool::new();
+        let ctx = ToolContext::new("/tmp");
+        tool.execute(
+            json!({
+                "action": action,
+                "file_path": path,
+                "line": 1,
+                "character": 1
+            }),
+            &ctx,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn unknown_action_is_an_error() {
+        let result = run("nope", "/tmp/x.whycodes_lsp_fake").await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Unknown action"));
+    }
+
+    #[tokio::test]
+    async fn start_failure_is_reported() {
+        let result = run("diagnostics", "/tmp/x.whycodes_lsp_missing").await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Failed to start"));
+    }
+
+    #[tokio::test]
+    async fn open_document_failure_is_reported() {
+        let tool = LspTool::new();
+        let client = crate::client::start_test_client("ok", false).await.unwrap();
+        client.kill_for_test().await;
+        tool.insert_client("whycodes_lsp_failopen", Arc::new(client))
+            .await;
+        let ctx = ToolContext::new("/tmp");
+        let result = tool
+            .execute(
+                json!({ "action": "hover", "file_path": "/tmp/x.whycodes_lsp_failopen" }),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Error opening document"));
+    }
+
+    #[tokio::test]
+    async fn diagnostics_hover_definition_and_references() {
+        let tool = LspTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let path = "/tmp/x.whycodes_lsp_fake";
+        let diags = tool
+            .execute(json!({ "action": "diagnostics", "file_path": path }), &ctx)
+            .await;
+        assert!(!diags.is_error, "{}", diags.content);
+        assert!(diags.content.contains("boom"));
+        let cached = tool
+            .execute(json!({ "action": "diagnostics", "file_path": path }), &ctx)
+            .await;
+        assert!(!cached.is_error);
+        let hover = tool
+            .execute(
+                json!({ "action": "hover", "file_path": path, "line": 2, "character": 3 }),
+                &ctx,
+            )
+            .await;
+        assert_eq!(hover.content, "hello");
+        let defn = tool
+            .execute(
+                json!({ "action": "definition", "file_path": path, "line": 1, "character": 1 }),
+                &ctx,
+            )
+            .await;
+        assert!(defn.content.contains("file:///tmp/a.rs"));
+        let refs = tool
+            .execute(
+                json!({ "action": "references", "file_path": path, "line": 1, "character": 1 }),
+                &ctx,
+            )
+            .await;
+        assert!(refs.content.contains("file:///tmp/a.rs:1:1"));
+    }
+
+    #[tokio::test]
+    async fn empty_lsp_results_are_described() {
+        let path = "/tmp/x.whycodes_lsp_empty";
+        let diags = run("diagnostics", path).await;
+        assert_eq!(diags.content, "No diagnostics found.");
+        let hover = run("hover", path).await;
+        assert!(hover.content.contains("No hover information"));
+        let defn = run("definition", path).await;
+        assert_eq!(defn.content, "No definition found.");
+        let refs = run("references", path).await;
+        assert_eq!(refs.content, "No references found.");
+    }
+
+    #[tokio::test]
+    async fn action_errors_are_reported() {
+        let path = "/tmp/x.whycodes_lsp_err";
+        for action in ["diagnostics", "hover", "definition", "references"] {
+            let result = run(action, path).await;
+            assert!(result.is_error, "{action}: {}", result.content);
+            assert!(result.content.contains("Error"), "{action}");
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_line_defaults_to_zero() {
+        let tool = LspTool::new();
+        let ctx = ToolContext::new("/tmp");
+        let result = tool
+            .execute(
+                json!({ "action": "hover", "file_path": "/tmp/x.whycodes_lsp_fake" }),
+                &ctx,
+            )
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        assert_eq!(result.content, "hello");
+    }
+
+    #[tokio::test]
+    async fn opening_a_dead_client_is_an_error() {
+        let tool = LspTool::new();
+        let client = crate::client::start_test_client("ok", false).await.unwrap();
+        client.kill_for_test().await;
+        tool.insert_client("whycodes_lsp_fake", Arc::new(client))
+            .await;
+        let ctx = ToolContext::new("/tmp");
+        let result = tool
+            .execute(
+                json!({ "action": "hover", "file_path": "/tmp/x.whycodes_lsp_fake" }),
+                &ctx,
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(result.content.contains("Error opening document"));
     }
 }

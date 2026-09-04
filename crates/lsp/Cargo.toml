@@ -10,7 +10,7 @@ repository.workspace = true
 whycodes-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["io-util", "process", "rt", "sync"] }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 thiserror.workspace = true
 tracing.workspace = true
 

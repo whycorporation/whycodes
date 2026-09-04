@@ -450,4 +450,138 @@ mod tests {
 
         assert!(IncomingMessage::from_line("not json").is_err());
     }
+
+    #[test]
+    fn remaining_severity_and_completion_kinds_roundtrip() {
+        for sev in [
+            DiagnosticSeverity::Error,
+            DiagnosticSeverity::Warning,
+            DiagnosticSeverity::Information,
+            DiagnosticSeverity::Hint,
+        ] {
+            let v = serde_json::to_value(&sev).unwrap();
+            let back: DiagnosticSeverity = serde_json::from_value(v).unwrap();
+            assert_eq!(back, sev);
+        }
+        let kinds = [
+            CompletionItemKind::Text,
+            CompletionItemKind::Method,
+            CompletionItemKind::Function,
+            CompletionItemKind::Constructor,
+            CompletionItemKind::Field,
+            CompletionItemKind::Variable,
+            CompletionItemKind::Class,
+            CompletionItemKind::Interface,
+            CompletionItemKind::Module,
+            CompletionItemKind::Property,
+            CompletionItemKind::Unit,
+            CompletionItemKind::Value,
+            CompletionItemKind::Enum,
+            CompletionItemKind::Keyword,
+            CompletionItemKind::Snippet,
+            CompletionItemKind::Color,
+            CompletionItemKind::File,
+            CompletionItemKind::Reference,
+            CompletionItemKind::Folder,
+            CompletionItemKind::EnumMember,
+            CompletionItemKind::Constant,
+            CompletionItemKind::Struct,
+            CompletionItemKind::Event,
+            CompletionItemKind::Operator,
+            CompletionItemKind::TypeParameter,
+        ];
+        for kind in kinds {
+            let item = CompletionItem {
+                label: "x".into(),
+                detail: Some("d".into()),
+                insert_text: Some("i".into()),
+                kind: Some(kind),
+                documentation: Some("docs".into()),
+            };
+            let v = serde_json::to_value(&item).unwrap();
+            let back: CompletionItem = serde_json::from_value(v).unwrap();
+            assert_eq!(back.label, "x");
+            assert!(back.kind.is_some());
+        }
+        let init = InitializeResult {
+            capabilities: serde_json::json!({"hoverProvider": true}),
+            server_info: Some(ServerInfo {
+                name: "fake".into(),
+                version: Some("1".into()),
+            }),
+        };
+        let v = serde_json::to_value(&init).unwrap();
+        let back: InitializeResult = serde_json::from_value(v).unwrap();
+        assert_eq!(back.server_info.unwrap().name, "fake");
+        let loc = Location {
+            uri: "file:///a.rs".into(),
+            range: Range {
+                start: Position {
+                    line: 1,
+                    character: 2,
+                },
+                end: Position {
+                    line: 1,
+                    character: 3,
+                },
+            },
+        };
+        let v = serde_json::to_value(&loc).unwrap();
+        let back: Location = serde_json::from_value(v).unwrap();
+        assert_eq!(back.uri, "file:///a.rs");
+        let hover = HoverResult {
+            contents: HoverContents::String("x".into()),
+            range: Some(loc.range.clone()),
+        };
+        let v = serde_json::to_value(&hover).unwrap();
+        let back: HoverResult = serde_json::from_value(v).unwrap();
+        assert!(back.range.is_some());
+        let err = JsonRpcError {
+            code: -32601,
+            message: "nope".into(),
+            data: Some(serde_json::json!({"hint": 1})),
+        };
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: Some(1),
+            result: None,
+            error: Some(err),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        let back: JsonRpcResponse = serde_json::from_value(v).unwrap();
+        assert_eq!(back.error.unwrap().code, -32601);
+        let params = PublishDiagnosticsParams {
+            uri: "file:///a.rs".into(),
+            diagnostics: vec![],
+        };
+        let v = serde_json::to_value(&params).unwrap();
+        let back: PublishDiagnosticsParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back.uri, "file:///a.rs");
+        let ident = TextDocumentIdentifier {
+            uri: "file:///a.rs".into(),
+        };
+        let pos = TextDocumentPositionParams {
+            text_document: ident,
+            position: Position {
+                line: 0,
+                character: 0,
+            },
+        };
+        let v = serde_json::to_value(&pos).unwrap();
+        let back: TextDocumentPositionParams = serde_json::from_value(v).unwrap();
+        assert_eq!(back.text_document.uri, "file:///a.rs");
+        let doc = TextDocumentItem {
+            uri: "file:///a.rs".into(),
+            language_id: "rust".into(),
+            version: 1,
+            text: "fn main() {}".into(),
+        };
+        let v = serde_json::to_value(&doc).unwrap();
+        let back: TextDocumentItem = serde_json::from_value(v).unwrap();
+        assert_eq!(back.language_id, "rust");
+        let req = JsonRpcRequest::new(3, "textDocument/hover", serde_json::json!({"uri": "x"}));
+        let v = serde_json::to_value(&req).unwrap();
+        let back: JsonRpcRequest = serde_json::from_value(v).unwrap();
+        assert_eq!(back.method, "textDocument/hover");
+    }
 }
