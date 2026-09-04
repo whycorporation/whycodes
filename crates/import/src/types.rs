@@ -231,6 +231,11 @@ mod tests {
         assert_eq!(Product::parse("codex"), Some(Product::Codex));
         assert_eq!(Product::parse("cursor"), None);
         assert_eq!(Product::Claude.as_str(), "claude");
+        assert_eq!(Product::OpenCode.as_str(), "opencode");
+        assert_eq!(Product::Grok.as_str(), "grok");
+        assert_eq!(Product::Codex.as_str(), "codex");
+        assert_eq!(Product::parse("claude"), Some(Product::Claude));
+        assert_eq!(Product::parse("grok"), Some(Product::Grok));
         assert_eq!(Product::OpenCode.label(), "OpenCode");
         assert_eq!(Product::Grok.label(), "Grok Build");
         assert_eq!(Product::Codex.label(), "Codex CLI");
@@ -267,6 +272,18 @@ mod tests {
         assert!(plan.is_empty());
         assert!(plan.summary().contains("MCP +0"));
         assert!(plan.selectable_items().is_empty());
+    }
+
+    #[test]
+    fn counts_label_permission_or_hooks_only() {
+        let mut only_perm = Extracted::default();
+        only_perm
+            .permission
+            .insert("bash".into(), PermissionAction::Ask);
+        assert_eq!(only_perm.counts_label(), "permission×1");
+        let mut only_hooks = Extracted::default();
+        only_hooks.hooks.push(HookConfig::default());
+        assert_eq!(only_hooks.counts_label(), "hooks×1");
     }
 
     fn sample_plan() -> ImportPlan {
@@ -350,5 +367,26 @@ mod tests {
         let mut post = sample_plan();
         post.hooks_add[0].event = whycodes_config::HookEvent::PostTool;
         assert!(post.selectable_items()[4].label.contains("post_tool"));
+    }
+
+    #[test]
+    fn selectable_item_falls_back_to_empty_detail() {
+        let mut plan = ImportPlan::default();
+        plan.mcp_add.push((
+            "bare".into(),
+            McpServerConfig {
+                transport: None,
+                command: None,
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        ));
+        let items = plan.selectable_items();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].detail, "");
+        assert_eq!(items[0].kind, ImportItemKind::Mcp);
     }
 }

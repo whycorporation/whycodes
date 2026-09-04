@@ -321,4 +321,239 @@ fs = { command = "npx" }
         std::fs::write(&path, "[[[").unwrap();
         assert!(extract(&approved(Product::Codex, path)).is_err());
     }
+
+    #[test]
+    fn claude_mcp_servers_alias_and_permission_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "mcp_servers": {"fs": {"command": "npx"}},
+              "permission": {"ask": ["Bash"], "allow": "Read"},
+              "hooks": {}
+            }"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Claude, path)).unwrap();
+        assert_eq!(got.mcp.len(), 1);
+        assert_eq!(
+            got.permission.get("bash"),
+            Some(&whycodes_core::types::PermissionAction::Ask)
+        );
+        assert_eq!(
+            got.permission.get("read"),
+            Some(&whycodes_core::types::PermissionAction::Allow)
+        );
+    }
+
+    #[test]
+    fn claude_skips_bare_map_when_permissions_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        std::fs::write(
+            &path,
+            r#"{"permissions": {"allow": ["Read"]}, "github": {"command": "npx"}}"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Claude, path)).unwrap();
+        assert!(got.mcp.is_empty());
+        assert_eq!(got.permission.len(), 1);
+    }
+
+    #[test]
+    fn extract_io_error_and_denied_consent() {
+        let src = FoundSource {
+            product: Product::Claude,
+            rel_path: "x",
+            path: PathBuf::from("/nope-missing-import-file.json"),
+            state: SourceState::Approved,
+        };
+        assert!(extract(&src).is_err());
+        let src = FoundSource {
+            product: Product::Claude,
+            rel_path: "x",
+            path: PathBuf::from("/nope"),
+            state: SourceState::Denied,
+        };
+        assert!(matches!(
+            extract(&src),
+            Err(ImportError::ConsentRequired(_))
+        ));
+    }
+
+    #[test]
+    fn opencode_mcp_servers_permissions_and_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("opencode.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "mcpServers": {"fs": {"command": "npx"}},
+              "permissions": {"bash": "ask"},
+              "hooks": {"PostToolUse": [{"command": "echo after"}]}
+            }"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::OpenCode, path)).unwrap();
+        assert_eq!(got.mcp.len(), 1);
+        assert_eq!(
+            got.permission.get("bash"),
+            Some(&whycodes_core::types::PermissionAction::Ask)
+        );
+        assert_eq!(got.hooks.len(), 1);
+    }
+
+    #[test]
+    fn grok_permissions_table_and_claude_shaped_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp_servers.fs]
+command = "npx"
+
+[permissions]
+allow = ["Read"]
+ask = ["Bash"]
+
+[hooks.PreToolUse]
+matcher = "bash"
+command = "echo pre"
+"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Grok, path)).unwrap();
+        assert_eq!(got.mcp.len(), 1);
+        assert_eq!(got.permission.len(), 2);
+        assert_eq!(got.hooks.len(), 1);
+    }
+
+    #[test]
+    fn grok_empty_hooks_falls_back_to_grok_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[hooks.post_tool]
+command = "echo post"
+timeout_secs = 5
+"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Grok, path)).unwrap();
+        assert_eq!(got.hooks.len(), 1);
+        assert_eq!(got.hooks[0].timeout_secs, 5);
+    }
+
+    #[test]
+    fn toml_product_without_optional_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, "default_agent = \"build\"\n").unwrap();
+        let got = extract(&approved(Product::Codex, path)).unwrap();
+        assert!(got.mcp.is_empty());
+        assert!(got.permission.is_empty());
+        assert!(got.hooks.is_empty());
+    }
+
+    #[test]
+    fn cursor_style_mcp_and_empty_opencode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "github": {
+                "command": ["npx", "-y", "@modelcontextprotocol/server-github"],
+                "env": {"GITHUB_TOKEN": "x"},
+                "cwd": "/tmp"
+              },
+              "remote": {"url": "https://mcp.example/mcp", "headers": {"A": "1"}}
+            }"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Claude, path)).unwrap();
+        assert_eq!(got.mcp.len(), 2);
+
+        let oc = dir.path().join("opencode.jsonc");
+        std::fs::write(&oc, "{}\n").unwrap();
+        let empty = extract(&approved(Product::OpenCode, oc)).unwrap();
+        assert!(empty.mcp.is_empty());
+        assert!(empty.permission.is_empty());
+        assert!(empty.hooks.is_empty());
+
+        let cursor_settings = dir.path().join("settings.json");
+        std::fs::write(
+            &cursor_settings,
+            r#"{"mcp_servers": {"fs": {"command": "npx", "enabled": true}}, "permission": {"bash": "prompt"}}"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Claude, cursor_settings)).unwrap();
+        assert_eq!(got.mcp.len(), 1);
+        assert_eq!(
+            got.permission.get("bash"),
+            Some(&whycodes_core::types::PermissionAction::Ask)
+        );
+    }
+
+    #[test]
+    fn codex_toml_permissions_map_and_mcp_servers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[mcp_servers.fs]
+command = "npx"
+args = ["-y", "pkg"]
+
+[permissions]
+bash = "ask"
+read = "allow"
+"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Codex, path)).unwrap();
+        assert_eq!(got.mcp.len(), 1);
+        assert_eq!(got.permission.len(), 2);
+    }
+
+    #[test]
+    fn grok_deny_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[permissions]
+deny = ["Bash"]
+"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Grok, path)).unwrap();
+        assert_eq!(
+            got.permission.get("bash"),
+            Some(&whycodes_core::types::PermissionAction::Deny)
+        );
+    }
+
+    #[test]
+    fn grok_unknown_hook_event_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            r#"
+[hooks.SessionStart]
+command = "echo no"
+"#,
+        )
+        .unwrap();
+        let got = extract(&approved(Product::Grok, path)).unwrap();
+        assert!(got.hooks.is_empty());
+        assert!(!got.skipped.is_empty());
+    }
 }

@@ -159,4 +159,26 @@ mod tests {
             SourceState::New
         );
     }
+
+    #[test]
+    fn invalid_json_and_missing_canonical_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = ConsentStore::new(dir.path());
+        std::fs::write(store.path(), b"{not json").unwrap();
+        assert!(store.first_run_asked().is_err());
+        std::fs::remove_file(store.path()).unwrap();
+        let missing = dir.path().join("no-such.json");
+        assert_eq!(store.state_for(&missing), SourceState::New);
+        store.approve(&missing).unwrap();
+        assert_eq!(store.state_for(&missing), SourceState::Approved);
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn set_owner_only_is_noop_off_unix() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("x");
+        std::fs::write(&p, b"x").unwrap();
+        set_owner_only(&p).unwrap();
+    }
 }

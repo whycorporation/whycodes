@@ -61,5 +61,11 @@ mod tests {
             .contains("a.json")
         );
         assert!(ImportError::Msg("x".into()).to_string().contains('x'));
+        let io = ImportError::from(std::io::Error::other("io"));
+        assert!(io.to_string().contains("I/O"));
+        let json = ImportError::from(serde_json::from_str::<u8>("x").unwrap_err());
+        assert!(json.to_string().contains("JSON"));
+        let toml = ImportError::from(toml::from_str::<toml::Value>("[[[").unwrap_err());
+        assert!(toml.to_string().contains("TOML"));
     }
 }

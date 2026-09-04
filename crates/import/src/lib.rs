@@ -76,6 +76,36 @@ mod tests {
     }
 
     #[test]
+    fn preview_skips_denied_and_symlink_and_surfaces_extract_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".claude.json");
+        std::fs::write(&path, r#"{"mcpServers":{"fs":{"command":"npx"}}}"#).unwrap();
+        let denied = FoundSource {
+            product: Product::Claude,
+            rel_path: ".claude.json",
+            path: path.clone(),
+            state: SourceState::Denied,
+        };
+        let link = FoundSource {
+            product: Product::Claude,
+            rel_path: ".claude.json",
+            path: path.clone(),
+            state: SourceState::Symlink,
+        };
+        let cfg = whycodes_config::Config::default();
+        let (ex, plan) = preview(&[denied, link], &cfg, false).unwrap();
+        assert!(ex.is_empty());
+        assert!(plan.is_empty());
+        let missing = FoundSource {
+            product: Product::Claude,
+            rel_path: ".claude.json",
+            path: dir.path().join("missing.json"),
+            state: SourceState::Approved,
+        };
+        assert!(preview(&[missing], &cfg, false).is_err());
+    }
+
+    #[test]
     fn has_discoverable_sources_true() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".claude.json"), "{}").unwrap();

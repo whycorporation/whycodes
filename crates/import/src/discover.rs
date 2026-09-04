@@ -141,6 +141,21 @@ pub fn why_config_missing() -> bool {
 mod tests {
     use super::*;
 
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn lock_env_recovers_from_poison() {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = ENV_LOCK.lock().unwrap();
+            panic!("poison");
+        }));
+        let _g = lock_env();
+    }
+
     #[test]
     fn scan_finds_files_skips_missing() {
         let dir = tempfile::tempdir().unwrap();
@@ -179,7 +194,11 @@ mod tests {
         }
         #[cfg(not(unix))]
         {
-            let _ = (real, link);
+            std::fs::write(&link, "{}").unwrap();
+            let consent = ConsentStore::new(home.join("data"));
+            let found = scan_with_home(home, &consent);
+            assert!(found.iter().any(|f| f.rel_path == ".claude.json"));
+            let _ = real;
         }
     }
 
@@ -214,6 +233,26 @@ mod tests {
         let extra = extra_opencode_paths_with(std::path::Path::new("/tmp"), None);
         assert!(extra.iter().any(|p| p.ends_with("opencode.json")));
         let _ = extra_opencode_paths(std::path::Path::new("/tmp"));
+        let _guard = lock_env();
+        let prev_xdg = std::env::var_os("XDG_CONFIG_HOME");
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", "/tmp/whycodes-xdg") };
+        let extra = extra_opencode_paths(std::path::Path::new("/tmp"));
+        assert!(extra.iter().any(|p| p.ends_with("opencode.jsonc")));
+        restore_os("XDG_CONFIG_HOME", Some("/tmp/whycodes-xdg-restore".into()));
+        restore_os("XDG_CONFIG_HOME", None);
+        restore_os("XDG_CONFIG_HOME", prev_xdg);
+    }
+
+    #[test]
+    fn why_config_missing_true_and_false() {
+        let _guard = lock_env();
+        let dir = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        assert!(why_config_missing());
+        std::fs::write(dir.path().join("config.toml"), "").unwrap();
+        assert!(!why_config_missing());
+        restore_os("WHYCODES_HOME", prev);
     }
 
     #[test]
@@ -221,5 +260,127 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let consent = ConsentStore::new(dir.path().join("data"));
         assert!(scan_with_home(dir.path(), &consent).is_empty());
+    }
+
+    #[test]
+    fn scan_fake_claude_cursor_codex_trees_and_consent() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::write(home.join(".claude.json"), r#"{"mcpServers":{}}"#).unwrap();
+        std::fs::write(home.join(".claude/settings.json"), r#"{"permissions":{}}"#).unwrap();
+        std::fs::write(home.join(".claude/mcp.json"), r#"{"fs":{"command":"npx"}}"#).unwrap();
+        std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+        std::fs::write(
+            home.join(".config/opencode/opencode.jsonc"),
+            r#"{ "mcp": {} }"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::write(home.join(".codex/config.toml"), "[mcp_servers]\n").unwrap();
+        std::fs::create_dir_all(home.join(".grok")).unwrap();
+        std::fs::write(home.join(".grok/config.toml"), "[permission]\n").unwrap();
+        let consent = ConsentStore::new(home.join("data"));
+        consent.approve(&home.join(".claude.json")).unwrap();
+        consent.deny(&home.join(".codex/config.toml")).unwrap();
+        let found = scan_with_home(home, &consent);
+        assert!(
+            found
+                .iter()
+                .any(|f| f.rel_path == ".claude.json" && f.state == SourceState::Approved)
+        );
+        assert!(
+            found
+                .iter()
+                .any(|f| f.product == Product::Codex && f.state == SourceState::Denied)
+        );
+        assert!(found.iter().any(|f| f.product == Product::OpenCode));
+        assert!(found.iter().any(|f| f.rel_path == ".claude/settings.json"));
+    }
+
+    #[test]
+    fn extra_opencode_empty_xdg_and_seen_dedup() {
+        let extra = extra_opencode_paths_with(std::path::Path::new("/tmp"), Some("".into()));
+        assert_eq!(extra.len(), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        std::fs::create_dir_all(home.join(".config/opencode")).unwrap();
+        std::fs::write(home.join(".config/opencode/opencode.json"), "{}").unwrap();
+        std::fs::create_dir_all(home.join("AppData/Roaming/opencode")).unwrap();
+        std::fs::write(home.join("AppData/Roaming/opencode/opencode.json"), "{}").unwrap();
+        let consent = ConsentStore::new(home.join("data"));
+        let found = scan_with_home(home, &consent);
+        let oc: Vec<_> = found
+            .iter()
+            .filter(|f| f.product == Product::OpenCode)
+            .collect();
+        assert!(!oc.is_empty());
+        assert_eq!(
+            oc.iter()
+                .filter(|f| f.path.ends_with("opencode.json"))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn is_symlink_false_for_regular_and_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("a.json");
+        std::fs::write(&file, "{}").unwrap();
+        assert!(!is_symlink(&file));
+        assert!(!is_symlink(&dir.path().join("missing")));
+    }
+
+    fn restore_os(key: &str, prev: Option<std::ffi::OsString>) {
+        match prev {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+
+    #[test]
+    fn home_dir_prefers_home_then_userprofile() {
+        let _guard = lock_env();
+        let real_home = std::env::var_os("HOME");
+        let real_profile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+        }
+        restore_os("HOME", None);
+        restore_os("USERPROFILE", None);
+        unsafe {
+            std::env::set_var("HOME", "");
+            std::env::set_var("USERPROFILE", "/tmp/profile-home");
+        }
+        assert_eq!(
+            home_dir().as_deref(),
+            Some(std::path::Path::new("/tmp/profile-home"))
+        );
+        restore_os("HOME", Some("/tmp/kept-home".into()));
+        restore_os("USERPROFILE", Some("/tmp/kept-profile".into()));
+        assert_eq!(
+            std::env::var_os("HOME").as_deref(),
+            Some(std::ffi::OsStr::new("/tmp/kept-home"))
+        );
+        restore_os("HOME", real_home);
+        restore_os("USERPROFILE", real_profile);
+    }
+
+    #[test]
+    fn scan_returns_empty_without_home() {
+        let _guard = lock_env();
+        let real_home = std::env::var_os("HOME");
+        let real_profile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::remove_var("HOME");
+            std::env::remove_var("USERPROFILE");
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let found = scan(&ConsentStore::new(dir.path()));
+        assert!(found.is_empty());
+        restore_os("HOME", real_home);
+        restore_os("USERPROFILE", real_profile);
     }
 }

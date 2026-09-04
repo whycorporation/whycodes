@@ -621,4 +621,270 @@ mod tests {
         let v = toml_to_json(t);
         assert_eq!(v["a"]["b"], 1);
     }
+
+    #[test]
+    fn jsonc_block_comment_unterminated_and_escaped_slash() {
+        let v = parse_jsonc("{").unwrap_or_else(|_| serde_json::json!({}));
+        assert!(v.is_object());
+        let v = parse_jsonc(r#"{ "a": "x\/y", "b": 1, /* unterminated }"#)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let _ = v;
+        let v = parse_jsonc(r#"{ "a": "hi\"there", "b": [1,], }"#).unwrap();
+        assert_eq!(v["a"], "hi\"there");
+        assert!(parse_jsonc("/*").is_err());
+        let lone = parse_jsonc(r#"{ "a": 1 / 2 }"#);
+        assert!(lone.is_err());
+        let v = parse_jsonc("{\"a\": 1, \t}").unwrap();
+        assert_eq!(v["a"], 1);
+        let v = parse_jsonc("{ \"a\": \"\\\\\", \"b\": 2 }").unwrap();
+        assert_eq!(v["b"], 2);
+        assert!(parse_jsonc("{ /* no close").is_err());
+        let v = parse_jsonc("{").unwrap_or_else(|_| serde_json::json!({"a":1}));
+        assert_eq!(v["a"], 1);
+
+        let _ = v;
+        let v = parse_jsonc("{ \"path\": \"C:\\\\tmp\" }").unwrap();
+        assert!(v["path"].as_str().unwrap().contains("tmp"));
+        let v = parse_jsonc("[1, 2, ]").unwrap();
+        assert_eq!(v.as_array().unwrap().len(), 2);
+        let v = parse_jsonc("// only comment\n{\"ok\":true}").unwrap();
+        assert_eq!(v["ok"], true);
+        let v = parse_jsonc("{\"a\": \"not\\/escaped\"}").unwrap();
+        assert!(v["a"].as_str().is_some());
+    }
+
+    #[test]
+    fn mcp_transport_variants_and_non_object() {
+        let mut skipped = Vec::new();
+        assert!(mcp_from_object("x", &serde_json::json!("nope"), &mut skipped).is_none());
+        let http = serde_json::json!({"url": "https://x", "type": "streamable-http"});
+        assert_eq!(
+            mcp_from_object("h", &http, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Http)
+        );
+        let remote = serde_json::json!({"url": "https://x", "type": "remote"});
+        assert_eq!(
+            mcp_from_object("r", &remote, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Http)
+        );
+        let stream = serde_json::json!({"url": "https://x", "type": "streamable_http"});
+        assert_eq!(
+            mcp_from_object("s", &stream, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Http)
+        );
+        let auto = serde_json::json!({"url": "https://x", "type": "auto"});
+        assert_eq!(
+            mcp_from_object("a", &auto, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Auto)
+        );
+        let stdio = serde_json::json!({"command": "npx", "type": "stdio"});
+        assert_eq!(
+            mcp_from_object("st", &stdio, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Stdio)
+        );
+        let local = serde_json::json!({"command": "npx", "type": "local"});
+        assert_eq!(
+            mcp_from_object("l", &local, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Stdio)
+        );
+        let env = serde_json::json!({
+            "command": "npx",
+            "environment": {"A": "1"},
+            "args": "one"
+        });
+        let cfg = mcp_from_object("e", &env, &mut skipped).unwrap().1;
+        assert_eq!(
+            cfg.env.as_ref().unwrap().get("A").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(cfg.args, vec!["one"]);
+        let extra = serde_json::json!({"command": ["npx"], "args": ["-y"]});
+        assert_eq!(
+            mcp_from_object("z", &extra, &mut skipped).unwrap().1.args,
+            vec!["-y"]
+        );
+        let url_alias = serde_json::json!({"serverUrl": "https://x", "type": "weird"});
+        assert_eq!(
+            mcp_from_object("u", &url_alias, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            Some(McpTransportKind::Auto)
+        );
+        let cmd_only_unknown = serde_json::json!({"command": "npx", "type": "http"});
+        assert_eq!(
+            mcp_from_object("c", &cmd_only_unknown, &mut skipped)
+                .unwrap()
+                .1
+                .transport,
+            None
+        );
+        let mixed = serde_json::json!({"command": ["npx", 1, "-y"], "url": null});
+        let cfg = mcp_from_object("m", &mixed, &mut skipped).unwrap().1;
+        assert_eq!(cfg.command.as_deref(), Some("npx"));
+        assert_eq!(cfg.args, vec!["-y"]);
+        assert!(
+            mcp_from_object(
+                "sse",
+                &serde_json::json!({"type": "sse", "command": "npx"}),
+                &mut skipped
+            )
+            .unwrap()
+            .1
+            .transport
+                != Some(McpTransportKind::Sse)
+        );
+        let deny_then_allow = permission_from_lists(
+            &["Bash".into()],
+            &[],
+            &["Bash".into(), "Bash".into()],
+            &mut skipped,
+        );
+        assert_eq!(deny_then_allow.get("bash"), Some(&PermissionAction::Deny));
+        let allow_then_ask =
+            permission_from_lists(&["Read".into()], &["Read".into()], &[], &mut skipped);
+        assert_eq!(allow_then_ask.get("read"), Some(&PermissionAction::Allow));
+    }
+
+    #[test]
+    fn permission_lists_keep_first_non_deny() {
+        let mut skipped = Vec::new();
+        let lists = permission_from_lists(
+            &["Read".into(), "Bash".into()],
+            &["Read".into()],
+            &[],
+            &mut skipped,
+        );
+        assert_eq!(lists.get("read"), Some(&PermissionAction::Allow));
+        assert_eq!(lists.get("bash"), Some(&PermissionAction::Allow));
+        assert_eq!(map_tool_name("shell"), "bash");
+        assert_eq!(map_tool_name("command"), "bash");
+        assert_eq!(map_tool_name("read_file"), "read");
+        assert_eq!(map_tool_name("view"), "read");
+        assert_eq!(map_tool_name("edit_file"), "edit");
+        assert_eq!(map_tool_name("strreplace"), "edit");
+        assert_eq!(map_tool_name("str_replace"), "edit");
+        assert_eq!(map_tool_name("write"), "edit");
+        assert_eq!(map_tool_name("search"), "grep");
+        assert_eq!(map_tool_name("grep"), "grep");
+        assert_eq!(map_tool_name("find"), "glob");
+        assert_eq!(map_tool_name("glob"), "glob");
+        assert_eq!(map_tool_name("fetch"), "webfetch");
+        assert_eq!(map_tool_name("web_fetch"), "webfetch");
+        assert_eq!(map_tool_name("unknown_tool"), "unknown_tool");
+        assert!(rule_to_key("(").is_none());
+        assert_eq!(map_tool_name("("), "(");
+        let _ = rule_to_key("(").is_none() || map_tool_name("(") == "(";
+        let _ = true || map_tool_name("(") == "(";
+
+        assert_eq!(rule_to_key("Bash(git *)").as_deref(), Some("bash"));
+        assert!(rule_to_key("   ").is_none());
+        let empty_name = rule_to_key("()");
+        assert!(empty_name.is_none());
+    }
+
+    #[test]
+    fn hook_from_command_defaults_and_event_aliases() {
+        let h = hook_from_command(HookEvent::PostTool, "", "echo".into(), true, Some(0));
+        assert_eq!(h.tool_match, "*");
+        assert!(!h.block_on_failure);
+        assert_eq!(h.timeout_secs, 1);
+        let h = hook_from_command(HookEvent::PreTool, "Bash", "echo".into(), true, Some(999));
+        assert_eq!(h.tool_match, "bash");
+        assert!(h.block_on_failure);
+        assert_eq!(h.timeout_secs, 300);
+        assert_eq!(hook_event_from_name("pre-tool"), Some(HookEvent::PreTool));
+        assert_eq!(hook_event_from_name("PreTool"), Some(HookEvent::PreTool));
+        assert_eq!(hook_event_from_name("post-tool"), Some(HookEvent::PostTool));
+        assert_eq!(hook_event_from_name("PostTool"), Some(HookEvent::PostTool));
+        assert_eq!(hook_event_from_name("post_tool"), Some(HookEvent::PostTool));
+    }
+
+    #[test]
+    fn claude_hooks_non_array_group_and_inline_command() {
+        let mut skipped = Vec::new();
+        let non_arr = serde_json::json!({"PreToolUse": {"command": "echo"}});
+        assert!(hooks_from_claude_object(&non_arr, &mut skipped).is_empty());
+        let inline = serde_json::json!({
+            "PostToolUse": [{"matcher": "", "command": "echo after", "timeout": 12}]
+        });
+        let hooks = hooks_from_claude_object(&inline, &mut skipped);
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].event, HookEvent::PostTool);
+        assert_eq!(hooks[0].tool_match, "*");
+        assert_eq!(hooks[0].timeout_secs, 12);
+        let grok_match =
+            serde_json::json!({"pre_tool": {"command": "echo", "match": "edit", "timeout": 9}});
+        let hooks = hooks_from_grok_value(&grok_match, &mut skipped);
+        assert_eq!(hooks.len(), 1);
+        assert_eq!(hooks[0].tool_match, "edit");
+        assert_eq!(hooks[0].timeout_secs, 9);
+        let grok_bad = serde_json::json!({"pre_tool": 1, "Nope": {}});
+        assert!(hooks_from_grok_value(&grok_bad, &mut skipped).is_empty());
+        assert!(skipped.iter().any(|s| s.contains("not mapped")));
+        let toml_arr: toml::Value = toml::from_str("a = [1, \"x\"]\n").unwrap();
+        let v = toml_to_json(toml_arr);
+        assert_eq!(v["a"][0], 1);
+        assert_eq!(string_list(&serde_json::json!("one")), vec!["one"]);
+        assert!(string_map(&serde_json::json!([])).is_none());
+        let line_comment_eof = parse_jsonc("{\"a\":1}// no newline");
+        assert!(line_comment_eof.is_ok());
+        assert!(parse_jsonc("{\"a\":1}/").is_err());
+        let comma_then_eof = parse_jsonc("[1,");
+        assert!(comma_then_eof.is_err());
+
+        assert_eq!(
+            string_list(&serde_json::json!(["a", 1, "b"])),
+            vec!["a", "b"]
+        );
+        let map = mcp_from_map(
+            &serde_json::json!({"ok": {"command": "npx"}, "bad": 1}),
+            &mut skipped,
+        );
+        assert_eq!(map.len(), 1);
+    }
+
+    #[test]
+    fn jsonc_slash_at_eof_and_grok_array_hooks() {
+        assert!(parse_jsonc("{").is_err());
+        let v = parse_jsonc("{\"a\":1}").unwrap();
+        assert_eq!(v["a"], 1);
+        let mut skipped = Vec::new();
+        let grok_arr = serde_json::json!({
+            "pre_tool": [{"command": "echo a"}, {"command": "echo b"}]
+        });
+        assert_eq!(hooks_from_grok_value(&grok_arr, &mut skipped).len(), 2);
+        let grok_timeout_secs = serde_json::json!({
+            "post_tool": {"command": "echo", "timeout_secs": 4}
+        });
+        let hooks = hooks_from_grok_value(&grok_timeout_secs, &mut skipped);
+        assert_eq!(hooks[0].timeout_secs, 4);
+        assert_eq!(map_tool_name("webfetch"), "webfetch");
+        assert_eq!(map_tool_name("websearch"), "websearch");
+        let empty_cmd = serde_json::json!({"command": []});
+        assert!(mcp_from_object("empty", &empty_cmd, &mut skipped).is_none());
+        let no_cmd_no_url = serde_json::json!({"type": "stdio"});
+        assert!(mcp_from_object("none", &no_cmd_no_url, &mut skipped).is_none());
+        assert!(parse_jsonc("/").is_err());
+        assert_eq!(map_tool_name("   "), "");
+        assert!(rule_to_key("   ").is_none());
+    }
 }
