@@ -34,13 +34,14 @@ fn test_base() -> &'static std::sync::Mutex<Option<String>> {
     &BASE
 }
 
+#[cfg(test)]
+fn lock_poison<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn control_plane_url(suffix: &str) -> String {
     #[cfg(test)]
-    if let Some(base) = test_base()
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
-    {
+    if let Some(base) = lock_poison(test_base()).clone() {
         return format!("{base}{suffix}");
     }
     format!("{BASE}{suffix}")
@@ -205,16 +206,17 @@ pub async fn perform_antigravity_onboarding(mut token: OAuthToken) -> Result<OAu
 /// paid-tier binding, repeat the call WITH that project handle (native
 /// Antigravity behavior) so the service binds it before reporting state.
 async fn load_code_assist(token: &str) -> Result<Value> {
-    let mut load = post(
+    let first = post(
         ":loadCodeAssist",
         token,
         &json!({ "metadata": client_metadata() }),
     )
-    .await?;
+    .await;
+    let mut load = first?;
     if let Some(project) = load_project(&load)
         && load.get("paidTier").is_none_or(Value::is_null)
     {
-        load = post(
+        let again = post(
             ":loadCodeAssist",
             token,
             &json!({
@@ -222,7 +224,8 @@ async fn load_code_assist(token: &str) -> Result<Value> {
                 "metadata": client_metadata(),
             }),
         )
-        .await?;
+        .await;
+        load = again?;
     }
     Ok(load)
 }
@@ -444,7 +447,7 @@ pub(crate) mod tests {
 
     pub(crate) fn cca_test_lock() -> MutexGuard<'static, ()> {
         static LOCK: Mutex<()> = Mutex::new(());
-        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+        lock_poison(&LOCK)
     }
 
     fn env_lock() -> MutexGuard<'static, ()> {
@@ -476,12 +479,12 @@ pub(crate) mod tests {
 
     impl Drop for TestBaseGuard {
         fn drop(&mut self) {
-            *test_base().lock().unwrap_or_else(|e| e.into_inner()) = None;
+            *lock_poison(test_base()) = None;
         }
     }
 
     fn set_test_base(base: String) -> TestBaseGuard {
-        *test_base().lock().unwrap_or_else(|e| e.into_inner()) = Some(base);
+        *lock_poison(test_base()) = Some(base);
         TestBaseGuard
     }
 
@@ -798,7 +801,7 @@ pub(crate) mod tests {
     #[test]
     fn control_plane_url_uses_production_base_without_override() {
         let _lock = env_lock();
-        *test_base().lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *lock_poison(test_base()) = None;
         assert_eq!(
             control_plane_url(":loadCodeAssist"),
             format!("{BASE}:loadCodeAssist")
@@ -832,7 +835,7 @@ pub(crate) mod tests {
             panic!("poison the cca test base");
         });
         let _ = handle.join();
-        *test_base().lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *lock_poison(test_base()) = None;
         assert!(control_plane_url(":loadCodeAssist").ends_with(":loadCodeAssist"));
     }
 

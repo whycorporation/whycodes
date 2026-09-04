@@ -10,14 +10,18 @@ use crate::pkce::Pkce;
 /// Open the user's browser, falling back to an error that carries the URL so
 /// the caller can print it for manual use.
 pub fn open_browser(url: &str) -> Result<()> {
-    open_browser_with(url, |target| open::that(target))
+    map_open_result(url, open::that(url))
 }
 
+#[cfg(test)]
 fn open_browser_with(url: &str, opener: impl FnOnce(&str) -> std::io::Result<()>) -> Result<()> {
-    if opener(url).is_ok() {
-        Ok(())
-    } else {
-        Err(AuthError::BrowserUnavailable(url.to_string()))
+    map_open_result(url, opener(url))
+}
+
+fn map_open_result(url: &str, result: std::io::Result<()>) -> Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(_open) => Err(AuthError::BrowserUnavailable(url.to_string())),
     }
 }
 
@@ -212,9 +216,17 @@ fn cors_headers(origin: Option<&str>) -> String {
 
 /// Bind a loopback listener on an ephemeral port for the OAuth redirect.
 pub fn bind_loopback() -> Result<(TcpListener, u16)> {
-    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(AuthError::Io)?;
-    let port = listener.local_addr().map_err(AuthError::Io)?.port();
+    listener_and_port(TcpListener::bind(("127.0.0.1", 0)))
+}
+
+fn listener_and_port(bound: std::io::Result<TcpListener>) -> Result<(TcpListener, u16)> {
+    let listener = bound.map_err(AuthError::Io)?;
+    let port = port_from_addr(listener.local_addr())?;
     Ok((listener, port))
+}
+
+fn port_from_addr(addr: std::io::Result<std::net::SocketAddr>) -> Result<u16> {
+    Ok(addr.map_err(AuthError::Io)?.port())
 }
 
 /// Build an authorization URL with the common PKCE S256 parameters.

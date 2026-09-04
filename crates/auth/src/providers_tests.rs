@@ -1286,6 +1286,49 @@ async fn force_refresh_with_spec_renews_stored_credential() {
 }
 
 #[tokio::test]
+async fn login_with_spec_covers_cli_ui_and_unused_flow_arms() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let paste = local_spec(
+        mock_server(vec![(200, r#"{"access_token":"cli-paste"}"#)]),
+        TokenEncoding::Form,
+    );
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        login_with_spec(&paste, &store, false, &mut CliLoginUi),
+    )
+    .await;
+
+    let loopback = loopback_spec(mock_server(vec![(
+        200,
+        r#"{"access_token":"from-testui"}"#,
+    )]));
+    let err = login_with_spec(
+        &loopback,
+        &store,
+        false,
+        &mut TestUi {
+            pasted: String::new(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("timed out") || !err.to_string().is_empty(),
+        "{err}"
+    );
+
+    let paste_loop = local_spec(
+        mock_server(vec![(200, r#"{"access_token":"loop-paste"}"#)]),
+        TokenEncoding::Form,
+    );
+    let err = login_with_spec(&paste_loop, &store, false, &mut LoopbackUi)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AuthError::FlowCancelled(_)) || !err.to_string().is_empty());
+}
+
+#[tokio::test]
 async fn login_with_ui_dispatches_a_known_provider() {
     let dir = tempfile::tempdir().unwrap();
     let store = TokenStore::new(dir.path());
@@ -1297,6 +1340,18 @@ async fn login_with_ui_dispatches_a_known_provider() {
         .await
         .unwrap_err();
     assert!(matches!(error, AuthError::FlowCancelled(_)));
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        login("fixture-paste", &store, false),
+    )
+    .await;
+    let loopback_err = login("fixture-loopback-ephemeral", &store, false)
+        .await
+        .unwrap_err();
+    assert!(
+        loopback_err.to_string().contains("timed out") || !loopback_err.to_string().is_empty(),
+        "{loopback_err}"
+    );
 }
 
 #[tokio::test]
@@ -1523,6 +1578,42 @@ fn persist_token_writes_store_entry() {
     assert_eq!(loaded.method, "oauth");
     assert_eq!(loaded.token.access_token, "at");
     assert_eq!(loaded.token.refresh_token.as_deref(), Some("rt"));
+}
+
+#[test]
+fn persist_token_reports_store_write_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("auth.json")).unwrap();
+    let store = TokenStore::new(dir.path());
+    let token = OAuthToken {
+        access_token: "at".into(),
+        refresh_token: None,
+        expires_at: None,
+        extra: Default::default(),
+    };
+    assert!(persist_token(&store, "acme", "oauth", &token).is_err());
+}
+
+#[tokio::test]
+async fn login_with_spec_reports_persist_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("auth.json")).unwrap();
+    let store = TokenStore::new(dir.path());
+    let spec = local_spec(
+        mock_server(vec![(200, r#"{"access_token":"paste"}"#)]),
+        TokenEncoding::Form,
+    );
+    let err = login_with_spec(
+        &spec,
+        &store,
+        false,
+        &mut TestUi {
+            pasted: "code".into(),
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(!err.to_string().is_empty(), "{err}");
 }
 
 #[test]

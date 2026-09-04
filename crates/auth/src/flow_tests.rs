@@ -183,6 +183,16 @@ fn open_browser_with_maps_opener_result() {
 }
 
 #[test]
+fn listener_and_port_maps_bind_errors() {
+    let err = listener_and_port(Err(std::io::Error::other("bind failed"))).unwrap_err();
+    assert!(matches!(err, AuthError::Io(_)));
+    let err = port_from_addr(Err(std::io::Error::other("addr failed"))).unwrap_err();
+    assert!(matches!(err, AuthError::Io(_)));
+    let (listener, port) = bind_loopback().unwrap();
+    assert_eq!(port_from_addr(listener.local_addr()).unwrap(), port);
+}
+
+#[test]
 fn accept_connection_surfaces_io_errors() {
     let err = accept_connection(|| Err(std::io::Error::other("accept failed"))).unwrap_err();
     assert!(matches!(err, AuthError::Io(_)));
