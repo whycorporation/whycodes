@@ -4,6 +4,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use axum::Router;
 use axum::extract::Path;
@@ -14,7 +15,8 @@ use axum::{Json, response::IntoResponse};
 use serde_json::json;
 use tokio::net::TcpListener;
 use whycodes_protocol::sdk::{
-    Handshake, PROTOCOL_MAJOR, SdkEvent, SessionHistory, SessionInfo, SessionList,
+    Handshake, PROTOCOL_MAJOR, QuestionAnswerWire, SdkEvent, SessionHistory, SessionInfo,
+    SessionList,
 };
 
 use crate::{ErrorCode, LaunchOptions, RunOptions, WhyCodesClient};
@@ -248,6 +250,16 @@ async fn healthy() -> Json<Handshake> {
     })
 }
 
+fn sse(
+    events: impl IntoIterator<Item = SdkEvent>,
+) -> Sse<futures::stream::Iter<std::vec::IntoIter<Result<Event, std::convert::Infallible>>>> {
+    let events: Vec<_> = events
+        .into_iter()
+        .map(|event| Ok(Event::default().data(serde_json::to_string(&event).unwrap())))
+        .collect();
+    Sse::new(futures::stream::iter(events))
+}
+
 #[tokio::test]
 async fn connect_and_session_surface() {
     let (base, _h) = spawn_ok().await;
@@ -261,6 +273,7 @@ async fn connect_and_session_surface() {
 
     let created = c.create_session(Some("/tmp")).await.unwrap();
     assert_eq!(created.id, "s-new");
+    let _ = c.create_session(None::<String>).await.unwrap();
 
     let got = c.get_session("abc").await.unwrap();
     assert_eq!(got.title, "got");
@@ -406,10 +419,7 @@ async fn request_options_are_sent_as_protocol_json() {
                 "auto_approve": false
             })
         );
-        let done = SdkEvent::TurnDone { text: "ok".into() };
-        Sse::new(futures::stream::once(async move {
-            Ok(Event::default().data(serde_json::to_string(&done).unwrap()))
-        }))
+        sse([SdkEvent::TurnDone { text: "ok".into() }])
     }
 
     let app = Router::new()
@@ -501,6 +511,10 @@ async fn run_collects_cancel_and_error_event_branches() {
                     text: String::new(),
                 },
             ]
+        } else if id == "empty-done" {
+            vec![SdkEvent::TurnDone {
+                text: String::new(),
+            }]
         } else {
             vec![
                 SdkEvent::Cancelled,
@@ -514,9 +528,7 @@ async fn run_collects_cancel_and_error_event_branches() {
                 },
             ]
         };
-        Sse::new(futures::stream::iter(events.into_iter().map(|event| {
-            Ok(Event::default().data(serde_json::to_string(&event).unwrap()))
-        })))
+        sse(events)
     }
 
     let app = Router::new()
@@ -541,6 +553,12 @@ async fn run_collects_cancel_and_error_event_branches() {
         .unwrap_err();
     assert_eq!(error.code, ErrorCode::Auth);
     assert_eq!(error.message, "provider rejected credentials");
+
+    let empty = client
+        .run("empty-done", "go", RunOptions::default())
+        .await
+        .unwrap();
+    assert!(empty.text.is_empty());
 }
 
 #[test]
@@ -550,4 +568,418 @@ fn unused_launch_options_fields_exist() {
         home: Some(std::path::PathBuf::from("/tmp")),
         ..Default::default()
     };
+}
+
+#[tokio::test]
+async fn non_404_failures_and_run_event_status_codes() {
+    async fn get_session() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    async fn history() -> StatusCode {
+        StatusCode::FORBIDDEN
+    }
+    async fn set_model() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    async fn rename() -> StatusCode {
+        StatusCode::BAD_GATEWAY
+    }
+    async fn rewind() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    async fn compact() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    async fn permission() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    async fn question() -> StatusCode {
+        StatusCode::BAD_REQUEST
+    }
+    async fn models() -> StatusCode {
+        StatusCode::INTERNAL_SERVER_ERROR
+    }
+    async fn run(Path(id): Path<String>) -> StatusCode {
+        if id == "empty" {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+    }
+
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/{id}", get(get_session))
+        .route("/v1/sessions/{id}/messages", get(history))
+        .route("/v1/sessions/{id}/model", post(set_model))
+        .route("/v1/sessions/{id}/rename", post(rename))
+        .route("/v1/sessions/{id}/rewind", post(rewind))
+        .route("/v1/sessions/{id}/compact", post(compact))
+        .route("/v1/sessions/{id}/permission", post(permission))
+        .route("/v1/sessions/{id}/question", post(question))
+        .route("/v1/sessions/{id}/run", post(run))
+        .route("/v1/models", get(models));
+    let (base, _server) = bind_app(app).await;
+    let client = WhyCodesClient::connect(&base).await.unwrap();
+
+    assert_eq!(
+        client.get_session("fail").await.unwrap_err().code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client.list_models().await.unwrap_err().code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client.get_history("fail", None).await.unwrap_err().code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client
+            .set_model("fail", "openai", "m")
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client.rename_session("fail", "t").await.unwrap_err().code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client.rewind("fail", 0).await.unwrap_err().code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client.compact("fail", None).await.unwrap_err().code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client
+            .respond_to_permission(
+                "fail",
+                "r",
+                whycodes_protocol::sdk::PermissionDecision::AllowAlways
+            )
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::Internal
+    );
+    assert_eq!(
+        client
+            .respond_to_question(
+                "fail",
+                "q",
+                Some(vec![QuestionAnswerWire {
+                    selected: vec!["a".into()],
+                    free_text: Some("b".into()),
+                }]),
+                false
+            )
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        client
+            .run("empty", "", RunOptions::default())
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::InvalidRequest
+    );
+    assert_eq!(
+        client
+            .run("fail", "x", RunOptions::default())
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::Internal
+    );
+}
+
+#[tokio::test]
+async fn health_non_success_and_timeout_map_error_codes() {
+    async fn unhealthy() -> StatusCode {
+        StatusCode::SERVICE_UNAVAILABLE
+    }
+    async fn hang() {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+
+    let app = Router::new().route("/v1/health", get(unhealthy));
+    let (base, _server) = bind_app(app).await;
+    let err = match WhyCodesClient::connect(&base).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected health failure"),
+    };
+    assert_eq!(err.code, ErrorCode::Internal);
+
+    let app = Router::new().route("/v1/health", get(hang));
+    let (base, _server) = bind_app(app).await;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_millis(80))
+        .build()
+        .unwrap();
+    let client = WhyCodesClient::unconnected(&base, http);
+    let err = client.health().await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout);
+    assert!(err.source.is_some());
+
+    async fn not_json() -> &'static str {
+        "not-handshake"
+    }
+    let app = Router::new().route("/v1/health", get(not_json));
+    let (base, _server) = bind_app(app).await;
+    let err = match WhyCodesClient::connect(&base).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected handshake decode failure"),
+    };
+    assert_eq!(err.code, ErrorCode::Disconnected);
+}
+
+#[tokio::test]
+async fn run_covers_ignored_events_and_keeps_delta_over_turn_done() {
+    async fn events() -> impl IntoResponse {
+        let mut frames: Vec<String> = [
+            SdkEvent::TextDelta {
+                text: "keep".into(),
+            },
+            SdkEvent::ReasoningDelta {
+                text: "think".into(),
+            },
+            SdkEvent::Status {
+                message: "working".into(),
+            },
+            SdkEvent::Intent {
+                kind: "code".into(),
+                confidence: 0.9,
+                badge: String::new(),
+                notice_kind: String::new(),
+                notice: String::new(),
+            },
+            SdkEvent::FileConflict {
+                path: "a.rs".into(),
+                claimant: "a".into(),
+                owner: "b".into(),
+            },
+            SdkEvent::SwarmStatus {
+                active: 1,
+                total: 2,
+                message: "go".into(),
+            },
+            SdkEvent::Background {
+                id: "bg".into(),
+                status: "running".into(),
+                summary: "s".into(),
+            },
+            SdkEvent::PermissionRequest {
+                request_id: "p".into(),
+                tool_name: "read".into(),
+                detail: "d".into(),
+            },
+            SdkEvent::QuestionRequest {
+                request_id: "q".into(),
+                questions: json!([]),
+            },
+            SdkEvent::TurnDone {
+                text: "ignored".into(),
+            },
+        ]
+        .into_iter()
+        .map(|event| serde_json::to_string(&event).unwrap())
+        .collect();
+        frames.insert(frames.len() - 1, r#"{"ev":"future_event"}"#.into());
+        Sse::new(futures::stream::iter(frames.into_iter().map(|data| {
+            Ok::<_, std::convert::Infallible>(Event::default().data(data))
+        })))
+    }
+
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/{id}/run", post(events));
+    let (base, _server) = bind_app(app).await;
+    let client = WhyCodesClient::connect(base).await.unwrap();
+    let turn = client.run("s1", "go", RunOptions::default()).await.unwrap();
+    assert_eq!(turn.text, "keep");
+}
+
+#[tokio::test]
+async fn run_stream_timeout_maps_to_timeout_code() {
+    async fn hang() {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+    }
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/{id}/run", post(hang));
+    let (base, _server) = bind_app(app).await;
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_millis(80))
+        .build()
+        .unwrap();
+    let client = WhyCodesClient::unconnected(&base, http);
+    let err = client
+        .run("s1", "go", RunOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Timeout);
+}
+
+#[tokio::test]
+async fn run_events_stream_error_maps_disconnected() {
+    async fn blank_then_done() -> impl IntoResponse {
+        let stream = futures::stream::iter([
+            Ok::<_, std::convert::Infallible>(Event::default().comment("keep-alive")),
+            Ok(Event::default().data(r#"{"ev":"turn_done","text":"from-blank"}"#)),
+        ]);
+        Sse::new(stream)
+    }
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/{id}/run", post(blank_then_done));
+    let (base, _server) = bind_app(app).await;
+    let client = WhyCodesClient::connect(base).await.unwrap();
+    let turn = client
+        .run("blank", "go", RunOptions::default())
+        .await
+        .unwrap();
+    assert_eq!(turn.text, "from-blank");
+    async fn broken() -> impl IntoResponse {
+        let stream = futures::stream::iter([
+            Ok::<_, std::io::Error>(axum::body::Bytes::from("data: {\"ev\":\"cancelled\"}\n\n")),
+            Err(std::io::Error::other("truncated")),
+        ]);
+        (
+            [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+            axum::body::Body::from_stream(stream),
+        )
+    }
+
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/{id}/run", post(broken));
+    let (base, _server) = bind_app(app).await;
+    let client = WhyCodesClient::connect(base).await.unwrap();
+    let err = client
+        .run("s1", "go", RunOptions::default())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::Disconnected);
+}
+
+#[tokio::test]
+async fn run_structured_schema_retry_and_success_paths() {
+    async fn scripted(
+        Path(id): Path<String>,
+        Json(body): Json<serde_json::Value>,
+    ) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
+        let msg = body.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let retry = msg.contains("previous reply");
+        let text = match id.as_str() {
+            "ok" => "{\"n\":1}".to_string(),
+            "retry-ok" => {
+                if retry {
+                    "{\"n\":2}".into()
+                } else {
+                    "not json".into()
+                }
+            }
+            "bad-then-ok" => {
+                if retry {
+                    "{\"n\":3}".into()
+                } else {
+                    "{\"n\":\"x\"}".into()
+                }
+            }
+            "always-bad" => "nope".into(),
+            "always-schema" => "{\"n\":\"x\"}".into(),
+            other => panic!("unexpected session {other}"),
+        };
+        sse([SdkEvent::TurnDone { text }])
+    }
+
+    let schema = json!({"type":"object","properties":{"n":{"type":"integer"}},"required":["n"]});
+    let app = Router::new()
+        .route("/v1/health", get(healthy))
+        .route("/v1/sessions/{id}/run", post(scripted));
+    let (base, _server) = bind_app(app).await;
+    let client = WhyCodesClient::connect(base).await.unwrap();
+
+    let invalid = client
+        .run_structured(
+            "ok",
+            "give json",
+            json!(["not", "object"]),
+            RunOptions::default(),
+            None,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(invalid.code, ErrorCode::StructuredSchemaInvalid);
+
+    let ok = client
+        .run_structured(
+            "ok",
+            "give json",
+            schema.clone(),
+            RunOptions::default(),
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(ok.data["n"], 1);
+    assert_eq!(ok.attempts.len(), 1);
+    assert!(ok.attempts[0].ok);
+
+    let recovered = client
+        .run_structured(
+            "retry-ok",
+            "give json",
+            schema.clone(),
+            RunOptions::default(),
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(recovered.data["n"], 2);
+    assert_eq!(recovered.attempts.len(), 2);
+    assert!(!recovered.attempts[0].ok);
+
+    let schema_recovered = client
+        .run_structured(
+            "bad-then-ok",
+            "give json",
+            schema.clone(),
+            RunOptions::default(),
+            Some(1),
+        )
+        .await
+        .unwrap();
+    assert_eq!(schema_recovered.data["n"], 3);
+
+    let parse_fail = client
+        .run_structured(
+            "always-bad",
+            "give json",
+            schema.clone(),
+            RunOptions::default(),
+            Some(0),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(parse_fail.code, ErrorCode::StructuredOutputInvalid);
+
+    let schema_fail = client
+        .run_structured(
+            "always-schema",
+            "give json",
+            schema,
+            RunOptions::default(),
+            Some(0),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(schema_fail.code, ErrorCode::StructuredOutputInvalid);
 }

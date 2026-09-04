@@ -9,7 +9,7 @@ description = "Thin client for the whycodes local daemon (protocol v1)"
 
 [dependencies]
 whycodes-protocol = { path = "../protocol" }
-tokio.workspace = true
+tokio = { workspace = true, features = ["io-util", "process", "time"] }
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
