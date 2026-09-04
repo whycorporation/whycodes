@@ -16,6 +16,31 @@ const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 const ACCEPT_SSE: &str = "text/event-stream";
 const SESSION_HEADER: &str = "mcp-session-id";
 
+fn sse_endpoint_timeout() -> Duration {
+    let mut d = Duration::from_secs(15);
+    if cfg!(test) {
+        d = Duration::from_millis(80);
+    }
+    d
+}
+
+fn sse_response_timeout() -> Duration {
+    let mut d = Duration::from_secs(60);
+    if cfg!(test) {
+        d = Duration::from_millis(80);
+    }
+    d
+}
+
+fn remaining_until(deadline: tokio::time::Instant) -> Option<Duration> {
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+        None
+    } else {
+        Some(remaining)
+    }
+}
+
 fn http_client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(60))
@@ -301,7 +326,7 @@ impl LegacySseTransport {
         let (tx, mut rx) = mpsc::unbounded_channel::<SseEvent>();
         let reader = spawn_sse_reader(response, tx);
 
-        let post_url = tokio::time::timeout(Duration::from_secs(15), async {
+        let post_url = tokio::time::timeout(sse_endpoint_timeout(), async {
             while let Some(ev) = rx.recv().await {
                 let name = ev.event.as_deref().unwrap_or("");
                 if name == "endpoint" || (name.is_empty() && looks_like_endpoint(&ev.data)) {
@@ -416,14 +441,24 @@ impl LegacySseTransport {
     }
 
     async fn wait_for_response(&mut self, expected_id: u64) -> Result<serde_json::Value> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        self.wait_for_response_until(
+            expected_id,
+            tokio::time::Instant::now() + sse_response_timeout(),
+        )
+        .await
+    }
+
+    async fn wait_for_response_until(
+        &mut self,
+        expected_id: u64,
+        deadline: tokio::time::Instant,
+    ) -> Result<serde_json::Value> {
         loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(McpError::msg(format!(
+            let remaining = remaining_until(deadline).ok_or_else(|| {
+                McpError::msg(format!(
                     "timed out waiting for MCP SSE response id={expected_id}"
-                )));
-            }
+                ))
+            })?;
             let ev = tokio::time::timeout(remaining, self.rx.recv())
                 .await
                 .map_err(|e| McpError::msg(format!("timed out waiting for MCP SSE response: {e}")))?
@@ -462,6 +497,18 @@ impl LegacySseTransport {
                 continue;
             }
             return unwrap_rpc(rpc, expected_id);
+        }
+    }
+
+    #[cfg(test)]
+    fn from_rx_for_test(rx: mpsc::UnboundedReceiver<SseEvent>) -> Self {
+        Self {
+            client: http_client().expect("http client"),
+            headers: HeaderMap::new(),
+            post_url: "http://127.0.0.1:1/messages".into(),
+            rx,
+            _reader: tokio::spawn(async {}),
+            next_id: 1,
         }
     }
 }
@@ -679,5 +726,475 @@ mod tests {
         assert!(looks_like_endpoint("http://example.test/messages"));
         assert!(!looks_like_endpoint("messages"));
         assert!(!looks_like_endpoint(""));
+    }
+
+    #[test]
+    fn extract_result_skips_blank_data_events() {
+        let body = concat!(
+            "event: message\n",
+            "data:   \n",
+            "\n",
+            "event: message\n",
+            "data: {\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n",
+            "\n"
+        );
+        let result = extract_jsonrpc_result_from_sse(body, 1).unwrap();
+        assert_eq!(result["ok"], true);
+    }
+
+    #[test]
+    fn resolve_endpoint_join_error() {
+        let error = resolve_endpoint_url("mailto:test@example.com", "messages")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("failed to join endpoint"), "{error}");
+    }
+
+    #[test]
+    fn header_map_accepts_valid_pairs() {
+        let map = header_map(&HashMap::from([("X-Test".to_string(), "ok".to_string())])).unwrap();
+        assert_eq!(map.get("x-test").unwrap().to_str().unwrap(), "ok");
+    }
+
+    #[test]
+    fn remaining_until_zero_and_nonzero() {
+        let past = tokio::time::Instant::now() - Duration::from_secs(1);
+        assert!(remaining_until(past).is_none());
+        let future = tokio::time::Instant::now() + Duration::from_secs(5);
+        assert!(remaining_until(future).unwrap() > Duration::from_secs(0));
+        let _ = sse_endpoint_timeout();
+        let _ = sse_response_timeout();
+    }
+
+    #[tokio::test]
+    async fn wait_for_response_filters_events_and_times_out() {
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut t = LegacySseTransport::from_rx_for_test(rx);
+        tx.send(SseEvent {
+            event: Some("ping".into()),
+            data: "keep".into(),
+            id: None,
+        })
+        .unwrap();
+        tx.send(SseEvent {
+            event: Some("message".into()),
+            data: "   ".into(),
+            id: None,
+        })
+        .unwrap();
+        tx.send(SseEvent {
+            event: None,
+            data: "not-json".into(),
+            id: None,
+        })
+        .unwrap();
+        tx.send(SseEvent {
+            event: Some("message".into()),
+            data: r#"{"jsonrpc":"2.0","method":"notifications/progress"}"#.into(),
+            id: None,
+        })
+        .unwrap();
+        tx.send(SseEvent {
+            event: Some("message".into()),
+            data: r#"{"jsonrpc":"2.0","id":99,"result":{"skip":true}}"#.into(),
+            id: None,
+        })
+        .unwrap();
+        tx.send(SseEvent {
+            event: Some("message".into()),
+            data: r#"{"jsonrpc":"2.0","id":1,"result":{"ok":true}}"#.into(),
+            id: None,
+        })
+        .unwrap();
+        let result = t.wait_for_response(1).await.unwrap();
+        assert_eq!(result["ok"], true);
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        let mut t = LegacySseTransport::from_rx_for_test(rx);
+        tx.send(SseEvent {
+            event: Some("message".into()),
+            data: r#"{"jsonrpc":"2.0","id":"x","result":{}}"#.into(),
+            id: None,
+        })
+        .unwrap();
+        let err = t.wait_for_response(1).await.unwrap_err().to_string();
+        assert!(err.contains("failed to parse JSON-RPC"), "{err}");
+
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let mut t = LegacySseTransport::from_rx_for_test(rx);
+        let err = t.wait_for_response(1).await.unwrap_err().to_string();
+        assert!(err.contains("timed out"), "{err}");
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        drop(tx);
+        let mut t = LegacySseTransport::from_rx_for_test(rx);
+        let err = t.wait_for_response(1).await.unwrap_err().to_string();
+        assert!(err.contains("SSE stream closed"), "{err}");
+
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let mut t = LegacySseTransport::from_rx_for_test(rx);
+        let err = t
+            .wait_for_response_until(1, tokio::time::Instant::now() - Duration::from_secs(1))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("timed out waiting for MCP SSE response id=1"),
+            "{err}"
+        );
+    }
+
+    fn json_rpc_result(id: u64, result: serde_json::Value) -> String {
+        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
+    }
+
+    fn init_result() -> serde_json::Value {
+        serde_json::json!({
+            "protocolVersion": "2025-03-26",
+            "capabilities": { "tools": {} },
+            "serverInfo": { "name": "mock-mcp", "version": "0.0.1" }
+        })
+    }
+
+    async fn spawn_app(app: axum::Router) -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        tokio::task::yield_now().await;
+        addr
+    }
+
+    #[tokio::test]
+    async fn streamable_http_covers_json_sse_session_and_errors() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::extract::Request;
+        use axum::http::{HeaderValue, StatusCode, header};
+        use axum::response::{IntoResponse, Response};
+        use axum::routing::post;
+        use http_body_util::BodyExt;
+        use std::sync::Arc;
+        use tokio::sync::Mutex;
+
+        #[derive(Clone, Default)]
+        struct State {
+            posts: Arc<Mutex<Vec<String>>>,
+        }
+
+        async fn handler(
+            axum::extract::State(state): axum::extract::State<State>,
+            req: Request,
+        ) -> Response {
+            let (_parts, body) = req.into_parts();
+            let bytes = body.collect().await.unwrap().to_bytes();
+            let text = String::from_utf8_lossy(&bytes).into_owned();
+            state.posts.lock().await.push(text.clone());
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            if value.get("id").is_none() {
+                let method = value.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                if method == "notifications/fail" {
+                    return (StatusCode::FORBIDDEN, "nope").into_response();
+                }
+                return StatusCode::ACCEPTED.into_response();
+            }
+            let id = value.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
+            let method = value.get("method").and_then(|m| m.as_str()).unwrap_or("");
+            match method {
+                "initialize" => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("mcp-session-id", "sess-1")
+                    .body(Body::from(json_rpc_result(id, init_result())))
+                    .unwrap(),
+                "sse" => {
+                    let payload = json_rpc_result(id, serde_json::json!({"via": "sse"}));
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .header("mcp-session-id", "")
+                        .body(Body::from(format!("event: message\ndata: {payload}\n\n")))
+                        .unwrap()
+                }
+                "fail-http" => (StatusCode::BAD_GATEWAY, "upstream").into_response(),
+                "bad-json" => Response::builder()
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("not-json"))
+                    .unwrap(),
+                "binary-session" => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(
+                        "mcp-session-id",
+                        HeaderValue::from_bytes(&[0xff, 0xfe]).unwrap(),
+                    )
+                    .body(Body::from(json_rpc_result(
+                        id,
+                        serde_json::json!({"ok": true}),
+                    )))
+                    .unwrap(),
+                _ => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json_rpc_result(
+                        id,
+                        serde_json::json!({"ok": true}),
+                    )))
+                    .unwrap(),
+            }
+        }
+
+        let state = State::default();
+        let addr = spawn_app(
+            Router::new()
+                .route("/mcp", post(handler))
+                .with_state(state.clone()),
+        )
+        .await;
+        let url = format!("http://{addr}/mcp");
+        let mut t = StreamableHttpTransport::new(&url, &HashMap::new()).unwrap();
+        assert_eq!(t.session_id(), None);
+        t.send_request("initialize", None).await.unwrap();
+        assert_eq!(t.session_id(), Some("sess-1"));
+        let via = t.send_request("sse", None).await.unwrap();
+        assert_eq!(via["via"], "sse");
+        t.send_notification("notifications/initialized", None)
+            .await
+            .unwrap();
+        let err = t
+            .send_notification("notifications/fail", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("403"), "{err}");
+        let err = t
+            .send_request("fail-http", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("502"), "{err}");
+        let err = t
+            .send_request("bad-json", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("parse JSON-RPC"), "{err}");
+        t.send_request("binary-session", None).await.unwrap();
+        assert_eq!(t.session_id(), Some("sess-1"));
+
+        let err = StreamableHttpTransport::new(&url, &HashMap::new())
+            .unwrap()
+            .send_request("gone", None)
+            .await;
+        drop(err);
+        let mut dead =
+            StreamableHttpTransport::new("http://127.0.0.1:1/", &HashMap::new()).unwrap();
+        let err = dead
+            .send_request("ping", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("HTTP POST"), "{err}");
+        let err = dead
+            .send_notification("n", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("notification"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn legacy_sse_covers_endpoint_wait_and_post_paths() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::extract::State;
+        use axum::http::{StatusCode, header};
+        use axum::response::{IntoResponse, Response};
+        use axum::routing::{get, post};
+        use std::sync::Arc;
+        use tokio::sync::{Mutex, mpsc};
+
+        #[derive(Clone)]
+        struct SseState {
+            tx: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
+            mode: &'static str,
+        }
+
+        async fn sse_get(State(state): State<SseState>) -> Response {
+            let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+            *state.tx.lock().await = Some(tx);
+            let mode = state.mode;
+            let stream = async_stream::stream! {
+                match mode {
+                    "none" => {}
+                    "nameless" => {
+                        yield Ok::<_, std::io::Error>("data: /messages\n\n".to_string());
+                    }
+                    "ignore-then-endpoint" => {
+                        yield Ok::<_, std::io::Error>("event: ping\ndata: keep\n\n".to_string());
+                        yield Ok::<_, std::io::Error>("event: endpoint\ndata: /messages\n\n".to_string());
+                    }
+                    _ => {
+                        yield Ok::<_, std::io::Error>("event: endpoint\ndata: /messages\n\n".to_string());
+                    }
+                }
+                while let Some(msg) = rx.recv().await {
+                    yield Ok::<_, std::io::Error>(msg);
+                }
+            };
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from_stream(stream))
+                .unwrap()
+        }
+
+        async fn messages(State(state): State<SseState>, body: String) -> impl IntoResponse {
+            let value: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+            if value.get("id").is_none() {
+                let method = value.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                if method == "fail" {
+                    return (StatusCode::FORBIDDEN, "nope").into_response();
+                }
+                return StatusCode::ACCEPTED.into_response();
+            }
+            let id = value.get("id").and_then(|i| i.as_u64()).unwrap_or(0);
+            let method = value.get("method").and_then(|m| m.as_str()).unwrap_or("");
+            match method {
+                "json" => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(json_rpc_result(
+                        id,
+                        serde_json::json!({"via":"json"}),
+                    )))
+                    .unwrap()
+                    .into_response(),
+                "empty-json" => {
+                    if let Some(tx) = state.tx.lock().await.as_ref() {
+                        let _ = tx.send(format!(
+                            "event: ping\ndata: keep\n\n\
+                             event: message\ndata: \n\n\
+                             event: message\ndata: not-json\n\n\
+                             event: message\ndata: {{\"jsonrpc\":\"2.0\",\"method\":\"n\"}}\n\n\
+                             event: message\ndata: {{\"jsonrpc\":\"2.0\",\"id\":99,\"result\":{{}}}}\n\n\
+                             event: message\ndata: {}\n\n",
+                            json_rpc_result(id, serde_json::json!({"via":"empty"}))
+                        ));
+                    }
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "application/json")
+                        .body(Body::from(""))
+                        .unwrap()
+                        .into_response()
+                }
+                "drop" => StatusCode::NO_CONTENT.into_response(),
+                "fail-post" => (StatusCode::BAD_REQUEST, "bad").into_response(),
+                "accepted" => {
+                    if let Some(tx) = state.tx.lock().await.as_ref() {
+                        let _ = tx.send(format!(
+                            "event: message\ndata: {}\n\n",
+                            json_rpc_result(id, serde_json::json!({"via":"accepted"}))
+                        ));
+                    }
+                    StatusCode::ACCEPTED.into_response()
+                }
+                _ => {
+                    if let Some(tx) = state.tx.lock().await.as_ref() {
+                        let _ = tx.send(format!(
+                            "event: message\ndata: {}\n\n",
+                            json_rpc_result(id, serde_json::json!({"ok":true}))
+                        ));
+                    }
+                    StatusCode::OK.into_response()
+                }
+            }
+        }
+
+        async fn spawn_sse(mode: &'static str) -> (std::net::SocketAddr, SseState) {
+            let state = SseState {
+                tx: Arc::new(Mutex::new(None)),
+                mode,
+            };
+            let addr = spawn_app(
+                Router::new()
+                    .route("/sse", get(sse_get))
+                    .route("/messages", post(messages))
+                    .with_state(state.clone()),
+            )
+            .await;
+            (addr, state)
+        }
+
+        let err = LegacySseTransport::connect("http://127.0.0.1:1/sse", &HashMap::new())
+            .await
+            .err()
+            .expect("dead SSE GET should fail")
+            .to_string();
+        assert!(err.contains("SSE GET"), "{err}");
+
+        let addr =
+            spawn_app(Router::new().route("/sse", get(|| async { StatusCode::NOT_FOUND }))).await;
+        let err = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+            .await
+            .err()
+            .expect("404 SSE should fail")
+            .to_string();
+        assert!(err.contains("SSE connect failed"), "{err}");
+
+        let (addr, _) = spawn_sse("none").await;
+        let err = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+            .await
+            .err()
+            .expect("missing endpoint should fail")
+            .to_string();
+        assert!(
+            err.contains("SSE stream closed") || err.contains("timed out"),
+            "{err}"
+        );
+
+        let (addr, _) = spawn_sse("nameless").await;
+        let mut t = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+            .await
+            .unwrap();
+        let via = t.send_request("json", None).await.unwrap();
+        assert_eq!(via["via"], "json");
+        let via = t.send_request("empty-json", None).await.unwrap();
+        assert_eq!(via["via"], "empty");
+        t.send_notification("ok", None).await.unwrap();
+        let err = t
+            .send_notification("fail", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("403"), "{err}");
+        let err = t
+            .send_request("fail-post", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("MCP SSE POST error"), "{err}");
+
+        let (addr, _) = spawn_sse("ignore-then-endpoint").await;
+        let mut t = LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+            .await
+            .unwrap();
+        let via = t.send_request("accepted", None).await.unwrap();
+        assert_eq!(via["via"], "accepted");
+        let err = t.send_request("drop", None).await.unwrap_err().to_string();
+        assert!(
+            err.contains("SSE stream closed") || err.contains("timed out"),
+            "{err}"
+        );
+        let mut dead = {
+            let (addr, _) = spawn_sse("ignore-then-endpoint").await;
+            LegacySseTransport::connect(format!("http://{addr}/sse"), &HashMap::new())
+                .await
+                .unwrap()
+        };
+        let _ = dead.send_request("accepted", None).await;
+        let _ = dead.send_notification("n", None).await;
     }
 }

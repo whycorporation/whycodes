@@ -19,6 +19,12 @@ use crate::types::{
 
 const PROTOCOL_VERSION: &str = "2024-11-05";
 
+#[cfg(test)]
+thread_local! {
+    static TEST_STDIN: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+    static TEST_STDOUT: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Run the stdio MCP server until stdin closes.
 pub async fn run_stdio_server(
     executor: Arc<ToolExecutor>,
@@ -26,9 +32,48 @@ pub async fn run_stdio_server(
     profile: ToolProfile,
     working_dir: String,
 ) -> crate::error::Result<()> {
-    let stdin = std::io::stdin();
-    let mut stdout = std::io::stdout();
-    let mut reader = stdin.lock();
+    #[cfg(test)]
+    {
+        let input = TEST_STDIN.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        let mut cursor = std::io::Cursor::new(input);
+        let mut captured = Vec::new();
+        let result = run_stdio_io(
+            &mut cursor,
+            &mut captured,
+            executor,
+            permissions,
+            profile,
+            working_dir,
+        )
+        .await;
+        TEST_STDOUT.with(|s| *s.borrow_mut() = captured);
+        result
+    }
+    #[cfg(not(test))]
+    {
+        let stdin = std::io::stdin();
+        let mut stdout = std::io::stdout();
+        let mut reader = stdin.lock();
+        run_stdio_io(
+            &mut reader,
+            &mut stdout,
+            executor,
+            permissions,
+            profile,
+            working_dir,
+        )
+        .await
+    }
+}
+
+async fn run_stdio_io<R: BufRead, W: Write>(
+    reader: &mut R,
+    stdout: &mut W,
+    executor: Arc<ToolExecutor>,
+    permissions: PermissionSet,
+    profile: ToolProfile,
+    working_dir: String,
+) -> crate::error::Result<()> {
     let mut line = String::new();
 
     loop {
@@ -67,11 +112,9 @@ pub(crate) async fn handle_rpc(
     profile: ToolProfile,
     working_dir: &str,
 ) -> crate::error::Result<Option<Value>> {
-    // Notification (no id)
-    if msg.get("id").is_none() {
+    let Some(id) = msg.get("id").cloned() else {
         return Ok(None);
-    }
-    let id = msg.get("id").cloned().unwrap_or(Value::Null);
+    };
     let method = msg
         .get("method")
         .and_then(|m| m.as_str())
@@ -285,5 +328,133 @@ mod tests {
                 .contains("method not found"),
             "{resp}"
         );
+    }
+
+    #[tokio::test]
+    async fn tools_call_defaults_arguments_and_empty_method() {
+        let missing_method = rpc(json!({"jsonrpc": "2.0", "id": 7})).await.unwrap();
+        assert_eq!(missing_method["error"]["code"], -32601);
+
+        let numeric_method = rpc(json!({"jsonrpc": "2.0", "id": 8, "method": 1}))
+            .await
+            .unwrap();
+        assert_eq!(numeric_method["error"]["code"], -32601);
+
+        let numeric_name = rpc(json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {"name": 3}
+        }))
+        .await
+        .unwrap();
+        assert_eq!(numeric_name["error"]["code"], -32602);
+
+        let resp = rpc(json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {"name": "read"}
+        }))
+        .await
+        .unwrap();
+        assert_eq!(resp["result"]["isError"], true);
+    }
+
+    #[tokio::test]
+    async fn run_stdio_io_skips_blank_and_bad_json_then_replies() {
+        let input = concat!(
+            "\n",
+            "   \n",
+            "not-json\n",
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+            "\n",
+        );
+        let mut reader = std::io::Cursor::new(input.as_bytes().to_vec());
+        let mut stdout = Vec::new();
+        run_stdio_io(
+            &mut reader,
+            &mut stdout,
+            Arc::new(exec()),
+            perms(),
+            ToolProfile::Core,
+            ".".into(),
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8(stdout).unwrap();
+        assert!(text.contains("\"id\":1"), "{text}");
+        assert!(text.contains("\"result\":{}"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn run_stdio_server_uses_test_stdin() {
+        let input = concat!(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+            "\n",
+            r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+            "\n",
+        );
+        TEST_STDIN.with(|s| *s.borrow_mut() = input.as_bytes().to_vec());
+        run_stdio_server(Arc::new(exec()), perms(), ToolProfile::Core, ".".into())
+            .await
+            .unwrap();
+        let out = TEST_STDOUT.with(|s| s.borrow().clone());
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.contains("protocolVersion"), "{text}");
+        assert!(text.contains("\"id\":2"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn run_stdio_io_surfaces_read_and_write_errors() {
+        struct FailRead;
+        impl std::io::Read for FailRead {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("read boom"))
+            }
+        }
+        impl std::io::BufRead for FailRead {
+            fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+                Err(std::io::Error::other("read boom"))
+            }
+            fn consume(&mut self, _: usize) {}
+        }
+        struct FailWrite;
+        impl std::io::Write for FailWrite {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("write boom"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let err = run_stdio_io(
+            &mut FailRead,
+            &mut Vec::new(),
+            Arc::new(exec()),
+            perms(),
+            ToolProfile::Core,
+            ".".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("read boom"), "{err}");
+
+        let mut reader =
+            std::io::Cursor::new(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec());
+        let err = run_stdio_io(
+            &mut reader,
+            &mut FailWrite,
+            Arc::new(exec()),
+            perms(),
+            ToolProfile::Core,
+            ".".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("write boom"), "{err}");
     }
 }
