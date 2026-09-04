@@ -115,8 +115,11 @@ events are wrapped as
 The last event is always `result` (with `is_error` and optional `error`).
 
 Structured formats auto-approve tool permission prompts so pipelines do not
-hang on stdin. Catastrophic shell risk is still hard-blocked. Prefer explicit
-permission allow rules in config when you want tighter control.
+hang on stdin. The `question` tool is likewise auto-answered (first option,
+stamped `auto-picked` in the tool result) — `--format json` / `stream-json`
+is not interactive and has no reply path. Catastrophic shell risk is still
+hard-blocked. Prefer explicit permission allow rules in config when you want
+tighter control.
 
 ## Interactive session
 

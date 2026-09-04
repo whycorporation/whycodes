@@ -509,6 +509,7 @@ impl Default for Config {
                     "webfetch".to_string(),
                     "websearch".to_string(),
                     "lsp".to_string(),
+                    "question".to_string(),
                 ]),
                 denied_tools: Some(vec![
                     "write".to_string(),
@@ -558,6 +559,7 @@ impl Default for Config {
                     "apply_patch".to_string(),
                     "todowrite".to_string(),
                     "todo".to_string(),
+                    "question".to_string(),
                 ]),
                 allow_file_writes: false,
                 allow_network: true,
@@ -566,7 +568,7 @@ impl Default for Config {
                 rules: Default::default(),
             },
             model: None,
-            system_prompt: Some("You are a read-only exploration subagent. Find files, search code, answer questions. No file modifications.".to_string()),
+            system_prompt: Some("You are a read-only exploration subagent. Find files, search code, answer questions. No file modifications. Do not call `question` — report findings to the parent.".to_string()),
             temperature: None,
             top_p: None,
         };
@@ -616,6 +618,7 @@ impl Default for Config {
                     "apply_patch".to_string(),
                     "todowrite".to_string(),
                     "todo".to_string(),
+                    "question".to_string(),
                 ]),
                 allow_file_writes: false,
                 allow_network: true,
@@ -624,7 +627,7 @@ impl Default for Config {
                 rules: Default::default(),
             },
             model: None,
-            system_prompt: Some("You are a scout subagent. Research external docs and dependencies. Prefer webfetch/websearch. Do not modify the workspace project files.".to_string()),
+            system_prompt: Some("You are a scout subagent. Research external docs and dependencies. Prefer webfetch/websearch. Do not modify the workspace project files. Do not call `question` — report findings to the parent.".to_string()),
             temperature: None,
             top_p: None,
         };

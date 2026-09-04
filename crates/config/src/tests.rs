@@ -97,8 +97,33 @@ fn test_default_config() {
     let ask = cfg.get_agent("ask").expect("ask agent");
     assert!(!ask.permission.allow_file_writes);
     assert!(!ask.permission.allow_shell);
+    assert!(
+        ask.permission
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|t| t.iter().any(|n| n == "question")),
+        "ask mode should include the question tool"
+    );
     let plan = cfg.get_agent("plan").expect("plan agent");
     assert!(!plan.permission.allow_file_writes);
+    let explore = cfg.get_agent("explore").expect("explore agent");
+    assert!(
+        explore
+            .permission
+            .denied_tools
+            .as_ref()
+            .is_some_and(|t| t.iter().any(|n| n == "question")),
+        "explore must not advertise question"
+    );
+    let scout = cfg.get_agent("scout").expect("scout agent");
+    assert!(
+        scout
+            .permission
+            .denied_tools
+            .as_ref()
+            .is_some_and(|t| t.iter().any(|n| n == "question")),
+        "scout must not advertise question"
+    );
 }
 
 // ── test_config_load_save ───────────────────────────────────────────

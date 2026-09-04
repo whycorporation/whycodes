@@ -144,7 +144,23 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-04 — Default TUI `auto` never opened the question panel
+
+**Symptom:** Interactive TUI in default `auto` silently picked option 1. Discord
+`need_input` never fired for questionnaires. Serve timed out at 5 min vs TUI
+30. Subagents blocked on stdin under the alt-screen.
+
+**Fix:** Interactive TUI defaults to `important` (config omitted). Auto-picks
+stamp `(auto-picked; approval_mode=auto — not a user choice)`. Channel/serve
+prompters call `spawn_need_input_wait`. Serve uses `[tools.question]` timeout
+and includes `preview`. `POST /v1/.../question` validates answers (400).
+Subagents return a tool error instead of stdin.
+
+**Prevention:** Do not route TUI `question` through `AutoAnswerPrompter`. Do
+not call `ToolExecutor::execute` for `question` in subagents.
+
 ### 2026-09-03 — Windows TUI painted grayscale after RGB quantize
+
 
 **Symptom:** On Windows PowerShell / Windows Terminal the whole TUI went
 black-and-white. Agent-tinted prompt borders (build green, plan purple, …)
