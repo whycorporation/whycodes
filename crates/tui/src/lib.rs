@@ -34,5 +34,9 @@ pub use run::{
 pub use theme::file as theme_file;
 pub use theme::tokens;
 
+/// Serializes tests that mutate `WHYCODES_HOME` (session DB path is process-global).
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests;

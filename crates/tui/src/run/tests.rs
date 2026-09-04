@@ -350,6 +350,7 @@ fn load_session_todos_invalid_json_and_wrong_shape() {
 fn configured_models_from_providers_and_oauth() {
     use std::sync::OnceLock;
     static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+    let _g = isolate_home_lock();
     let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
     // Isolate WHYCODES_HOME so TokenStore reads a temp dir, not user keys.
     let prev = std::env::var_os("WHYCODES_HOME");
@@ -572,8 +573,14 @@ fn switch_to_runtime_moves_transcripts() {
 fn test_runtime() -> SessionRuntime {
     use std::sync::OnceLock;
     static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
-    let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
-    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+    // Do not take ENV_LOCK if a caller already holds it (`isolate_home`).
+    if std::env::var_os("WHYCODES_HOME").is_none() {
+        let _g = isolate_home_lock();
+        if std::env::var_os("WHYCODES_HOME").is_none() {
+            let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
+            unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        }
+    }
 
     let info = whycodes_core::types::AgentInfo {
         name: "build".into(),
@@ -604,9 +611,15 @@ fn test_runtime() -> SessionRuntime {
     )
 }
 
-fn isolate_home() {
-    let _g = isolate_home_lock();
+/// Newtype so tests can hold `ENV_LOCK` across `.await` without
+/// `clippy::await_holding_lock` (the inner guard is not a local).
+#[allow(dead_code)] // RAII: dropping the inner `MutexGuard` releases `ENV_LOCK`.
+struct HomeLock(std::sync::MutexGuard<'static, ()>);
+
+fn isolate_home() -> HomeLock {
+    let g = isolate_home_lock();
     unsafe { std::env::set_var("WHYCODES_HOME", shared_test_home()) };
+    g
 }
 
 fn shared_test_home() -> &'static std::path::Path {
@@ -619,21 +632,23 @@ fn shared_test_home() -> &'static std::path::Path {
 /// Exclusive empty `WHYCODES_HOME` for tests that assert on an empty session
 /// store. The shared [`isolate_home`] OnceLock is process-wide, so a
 /// sibling persist can make `RESUME_LATEST` look populated.
-fn isolate_home_lock() -> std::sync::MutexGuard<'static, ()> {
-    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    LOCK.lock().unwrap_or_else(|e| e.into_inner())
+fn isolate_home_lock() -> HomeLock {
+    HomeLock(crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
-fn isolate_home_fresh() -> (std::sync::MutexGuard<'static, ()>, tempfile::TempDir) {
+fn isolate_home_fresh() -> (HomeLock, tempfile::TempDir) {
     let lock = isolate_home_lock();
     let dir = tempfile::tempdir().expect("tempdir");
     unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+    // `with_session_db` caches the SQLite handle for process lifetime; a
+    // sibling persist would otherwise keep `RESUME_LATEST` populated.
+    reset_session_db_cache();
     (lock, dir)
 }
 
 #[test]
 fn apply_turn_event_covers_every_variant() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
 
     apply_turn_event(&mut app, TurnEvent::TextDelta("hello".into()));
@@ -944,7 +959,7 @@ fn drain_turn_events_coalesces_deltas() {
 
 #[test]
 fn helpers_tui_available_summary_share_and_diff() {
-    isolate_home();
+    let _home = isolate_home();
     let _ = tui_available();
     print_session_summary("coverage-summary");
     assert!(!share_server_up(1), "port 1 should be closed");
@@ -983,7 +998,7 @@ fn helpers_tui_available_summary_share_and_diff() {
 
 #[test]
 fn refresh_sidebar_and_dashboard() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.rs"), "fn a() {}").unwrap();
     std::fs::create_dir_all(dir.path().join(".whycodes")).unwrap();
@@ -1148,6 +1163,7 @@ fn run_options_and_turn_outcome_exist() {
 }
 
 struct SlashHarness {
+    _home: HomeLock,
     _tmp: tempfile::TempDir,
     app: TuiApp,
     session: Session,
@@ -1166,7 +1182,7 @@ struct SlashHarness {
 
 impl SlashHarness {
     fn new() -> Self {
-        isolate_home();
+        let _home = isolate_home();
         let tmp = tempfile::tempdir().expect("tmpdir");
         let info = whycodes_core::types::AgentInfo {
             name: "build".into(),
@@ -1183,6 +1199,7 @@ impl SlashHarness {
         let (auth_tx, auth_rx) = mpsc::unbounded_channel();
         let session = Session::new(tmp.path().to_path_buf(), "sys".into());
         Self {
+            _home,
             app: TuiApp::from_config(TuiAppConfig::default()),
             session,
             history: SessionHistory::new(),
@@ -1438,7 +1455,7 @@ async fn handle_slash_covers_local_commands() {
 
 #[test]
 fn memory_and_index_helpers() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let config = Config::default();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
@@ -1520,7 +1537,7 @@ fn sample_question() -> whycodes_tools::question::QuestionSpec {
 
 #[test]
 fn force_stop_applies_outcome_or_rebuilds() {
-    isolate_home();
+    let _home = isolate_home();
     let (dir, idx) = temp_index();
     let config = Config::default();
     let mut rt = test_runtime();
@@ -1571,7 +1588,7 @@ fn force_stop_applies_outcome_or_rebuilds() {
 
 #[test]
 fn rebuild_agent_resolves_pending_name() {
-    isolate_home();
+    let _home = isolate_home();
     let (dir, idx) = temp_index();
     let config = Config::default();
     let (perm, _) = ChannelPermissionPrompter::new();
@@ -1611,7 +1628,7 @@ fn rebuild_agent_resolves_pending_name() {
 
 #[tokio::test]
 async fn cycle_agent_walks_primary_list() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let (perm, _) = ChannelPermissionPrompter::new();
     let (question, _) = ChannelQuestionPrompter::new(None);
@@ -1856,7 +1873,7 @@ fn resume_after_question_opens_next_or_permission() {
 
 #[tokio::test]
 async fn spawn_runtime_and_drain_outcomes() {
-    isolate_home();
+    let _home = isolate_home();
     let (dir, idx) = temp_index();
     let rt = spawn_new_session_runtime(
         "no-such-agent",
@@ -1971,7 +1988,7 @@ async fn drain_background_queues_prompter_asks() {
 
 #[test]
 fn suggestion_and_catalog_helpers_short_circuit() {
-    isolate_home();
+    let _home = isolate_home();
     let session = Session::new(PathBuf::from("/work"), "sys".into());
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -2005,7 +2022,7 @@ fn suggestion_and_catalog_helpers_short_circuit() {
 
 #[test]
 fn load_session_entries_and_picker_merge() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
     session.add_user_message("hello there");
@@ -2036,7 +2053,7 @@ fn load_session_entries_and_picker_merge() {
 
 #[test]
 fn doctor_report_flags_missing_project() {
-    isolate_home();
+    let _home = isolate_home();
     let session = Session::new(PathBuf::from("/no/such/project/dir"), "sys".into());
     let app = TuiApp::from_config(TuiAppConfig::default());
     let config = Config::default();
@@ -2127,7 +2144,7 @@ fn outcome_ok(name: &str, text: &str) -> TurnOutcome {
 
 #[test]
 fn apply_turn_outcome_ok_remote_and_errors() {
-    isolate_home();
+    let _home = isolate_home();
     let mut rt = test_runtime();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.add_message(ChatRole::Assistant, "");
@@ -2291,7 +2308,7 @@ fn apply_turn_outcome_ok_remote_and_errors() {
 
 #[test]
 fn close_session_slot_busy_last_and_parked() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
     let mut runtimes = Vec::new();
@@ -2339,7 +2356,7 @@ fn close_session_slot_busy_last_and_parked() {
 
 #[test]
 fn resume_or_switch_session_paths() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
     let mut parked = test_runtime();
@@ -2482,7 +2499,7 @@ fn questionnaire_complete_and_cancel() {
 
 #[test]
 fn warn_suggestion_catalog_and_shutdown() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     warn_missing_api_key(&mut app, "acme");
     assert!(app.status_message.contains("no API key"));
@@ -2523,7 +2540,7 @@ fn warn_suggestion_catalog_and_shutdown() {
 
 #[tokio::test]
 async fn apply_auth_flow_note_code_and_results() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut key = String::new();
     let mut provider = "anthropic".to_string();
@@ -2777,7 +2794,7 @@ fn project_diff_on_a_real_repo() {
 
 #[test]
 fn context_report_counts_tool_blocks() {
-    isolate_home();
+    let _home = isolate_home();
     let mut session = Session::new(PathBuf::from("/work"), "sys".into());
     session.add_user_message("go");
     session.add_tool_results(vec![whycodes_core::types::ToolResult {
@@ -2804,7 +2821,7 @@ fn tui_login_prompt_pasted_code_cancels_when_dropped() {
 
 #[test]
 fn arm_record_route_and_model_choice() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
     let mut at = Some(Instant::now());
@@ -2933,7 +2950,7 @@ fn arm_record_route_and_model_choice() {
 
 #[test]
 fn apply_async_title_active_parked_and_pending() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
     rt.session.add_user_message("topic");
@@ -2999,7 +3016,7 @@ fn boot_opts(dir: &std::path::Path, key: &str) -> TuiRunOptions {
 
 #[tokio::test]
 async fn prepare_tui_boot_sets_chrome_and_defaults() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("README.md"), "hi").unwrap();
     let mut opts = boot_opts(dir.path(), "");
@@ -3062,7 +3079,7 @@ fn apply_resume_found_missing_and_latest() {
 
 #[tokio::test]
 async fn apply_remote_hydrate_error_still_attaches() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut session = Session::new(PathBuf::from("/work"), "sys".into());
     let rem = crate::remote::RemoteAttach::new("127.0.0.1:1", "sid-9");
@@ -3084,7 +3101,7 @@ async fn apply_remote_hydrate_error_still_attaches() {
 
 #[test]
 fn spinner_session_keys_slash_and_busy_ctrl_c() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut frame = 0usize;
     app.status_message = "Generating…".into();
@@ -3228,7 +3245,7 @@ fn spinner_session_keys_slash_and_busy_ctrl_c() {
 
 #[tokio::test]
 async fn prepare_boot_with_resume_and_remote() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let mut saved = Session::new(dir.path().to_path_buf(), "sys".into());
     saved.add_user_message("boot resume");
@@ -3249,7 +3266,7 @@ async fn prepare_boot_with_resume_and_remote() {
 
 #[tokio::test]
 async fn apply_remote_hydrate_success() {
-    isolate_home();
+    let _home = isolate_home();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -3566,7 +3583,7 @@ fn apply_compact_view_sets_status_and_idle() {
 
 #[test]
 fn apply_reasoning_effort_unknown_and_unsupported_and_ok() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     app.provider_name = "anthropic".into();
     app.model_name = "claude-3".into();
@@ -3604,7 +3621,7 @@ fn persist_session_reasoning_effort_is_noop_in_tests() {
 
 #[test]
 fn apply_approval_mode_raw_unknown_and_ok() {
-    isolate_home();
+    let _home = isolate_home();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut agent = Agent::new(dummy_info("build"));
     let mut config = Config::default();
@@ -3646,7 +3663,7 @@ fn close_interactive_overlays_clears_permission_dialog() {
 
 #[test]
 fn explicit_provider_key_from_config_and_env() {
-    isolate_home();
+    let _home = isolate_home();
     let mut config = Config::default();
     config.providers.insert(
         "acme".into(),
@@ -3706,7 +3723,7 @@ fn try_fill_api_key_fills_empty_and_skips_set() {
 
 #[test]
 fn record_user_turn_appends_message_and_title() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("note.txt"), "hello").unwrap();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
@@ -3757,7 +3774,7 @@ fn maybe_offer_update_self_install_and_homebrew() {
 /// Exclusive `WHYCODES_HOME` + `$HOME` so import discovery cannot see the
 /// developer's real Claude/OpenCode files, and `config.toml` is missing.
 struct IsolatedImportHome {
-    _lock: std::sync::MutexGuard<'static, ()>,
+    _lock: HomeLock,
     dir: tempfile::TempDir,
     prev_home: Option<std::ffi::OsString>,
     prev_skip: Option<std::ffi::OsString>,
@@ -3808,6 +3825,7 @@ impl Drop for IsolatedImportHome {
             // `_lock`; `isolate_home()` would deadlock).
             std::env::set_var("WHYCODES_HOME", shared_test_home());
         }
+        reset_session_db_cache();
     }
 }
 
@@ -3959,7 +3977,7 @@ fn mark_import_declined_sets_first_run_asked() {
 
 #[tokio::test]
 async fn start_compact_task_marks_generating() {
-    isolate_home();
+    let _home = isolate_home();
     let dir = tempfile::tempdir().unwrap();
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut rt = test_runtime();
@@ -3992,4 +4010,9 @@ fn cycle_live_session_noop_when_empty() {
     let mut mru = Vec::new();
     cycle_live_session(&mut app, &mut rt, &mut runtimes, &mut mru, true);
     assert!(mru.is_empty());
+}
+
+#[test]
+fn tui_available_does_not_panic() {
+    let _ = tui_available();
 }

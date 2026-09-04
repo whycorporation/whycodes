@@ -144,6 +144,29 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-05 — TUI resume tests saw a sibling session DB
+
+**Symptom:** `run::tests::apply_resume_found_missing_and_latest` failed
+asserting a "No saved sessions" toast (784 passed / 1 failed under
+`cargo test -p whycodes-tui --lib`).
+
+**JSONL / crash:** none (unit test).
+
+**Root cause:** `with_session_db` keeps a process-lifetime SQLite handle.
+`isolate_home_fresh()` pointed `WHYCODES_HOME` at an empty temp dir, but
+the cached connection still listed sessions from a sibling persist
+(`persist_session_best_effort` / shared test home). `WHYCODES_HOME`
+mutations in `persist.rs` / `session_runtime` also skipped the TUI env
+lock.
+
+**Fix:** `reset_session_db_cache()` after every test home switch; crate
+`ENV_LOCK` covers all `WHYCODES_HOME` writes.
+
+**Prevention:** Tests that persist then load, or that assert an empty
+store, must hold `ENV_LOCK` for the whole sequence (`let _home =
+isolate_home()`). Do not `set_var` the home without the lock. `test_runtime()`
+must not re-lock when the home is already set.
+
 ### 2026-09-04 — `kill(u32::MAX)` logged the desktop session out
 
 **Symptom:** `cargo test -p whycodes-cli` (lockfile / serve takeover tests)

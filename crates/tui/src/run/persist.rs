@@ -36,19 +36,38 @@ pub(super) fn persist_session_best_effort(session: &Session, reason: &str) {
     }
 }
 
+struct CachedSessionDb {
+    path: std::path::PathBuf,
+    db: whycodes_storage::db::Database,
+}
+
+fn session_db_slot() -> &'static std::sync::Mutex<Option<CachedSessionDb>> {
+    use std::sync::{Mutex, OnceLock};
+    static DB: OnceLock<Mutex<Option<CachedSessionDb>>> = OnceLock::new();
+    DB.get_or_init(|| Mutex::new(None))
+}
+
 /// Process-lifetime SQLite handle for the TUI (avoids re-running migrations
-/// and reopening the file on every turn persist).
+/// and reopening the file on every turn persist). Reopens when the data-dir
+/// path changes (`WHYCODES_HOME` in tests).
 pub(super) fn with_session_db<T>(
     f: impl FnOnce(&whycodes_storage::db::Database) -> T,
 ) -> Option<T> {
-    use std::sync::{Mutex, OnceLock};
-    static DB: OnceLock<Mutex<Option<whycodes_storage::db::Database>>> = OnceLock::new();
-    let lock = DB.get_or_init(|| Mutex::new(None));
-    let mut guard = lock.lock().ok()?;
-    if guard.is_none() {
-        *guard = open_db_quiet();
+    let data_dir = whycodes_config::Config::data_dir().ok()?;
+    let db_path = data_dir.join("whycodes.db");
+    let mut guard = session_db_slot().lock().ok()?;
+    let stale = guard.as_ref().is_none_or(|c| c.path != db_path);
+    if stale {
+        *guard = open_db_quiet().map(|db| CachedSessionDb { path: db_path, db });
     }
-    guard.as_ref().map(f)
+    guard.as_ref().map(|c| f(&c.db))
+}
+
+/// Drop the cached handle so the next [`with_session_db`] opens `WHYCODES_HOME`.
+#[cfg(test)]
+pub(crate) fn reset_session_db_cache() {
+    let mut guard = session_db_slot().lock().unwrap_or_else(|e| e.into_inner());
+    *guard = None;
 }
 
 pub(super) fn open_db_quiet() -> Option<whycodes_storage::db::Database> {
@@ -689,8 +708,78 @@ pub(super) fn session_details(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use whycodes_config::Config;
+    use whycodes_core::types::Usage;
+    use whycodes_session::session::Session;
+
     #[test]
-    fn persist_module_loads() {
-        assert!(!module_path!().is_empty());
+    fn persist_session_best_effort_does_not_panic() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+        reset_session_db_cache();
+        let session = Session::new(home.path().to_path_buf(), "sys".into());
+        persist_session_best_effort(&session, "test");
+        reset_session_db_cache();
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("WHYCODES_HOME", v),
+                None => std::env::remove_var("WHYCODES_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn configured_models_includes_config_entries() {
+        let mut cfg = Config::default();
+        cfg.providers.insert(
+            "local".into(),
+            whycodes_core::types::ProviderConfig {
+                name: "local".into(),
+                api_key: None,
+                api_base: None,
+                base_url: None,
+                headers: None,
+                models: vec!["tiny-test".into()],
+                tool_arguments: None,
+                extra: Default::default(),
+            },
+        );
+        let models = configured_models(&cfg);
+        assert!(
+            models.iter().any(|(p, m)| p == "local" && m == "tiny-test"),
+            "{models:?}"
+        );
+    }
+
+    #[test]
+    fn cost_report_empty_usage_is_estimated() {
+        let session = Session::new("/tmp/p".into(), "sys".into());
+        let app = TuiApp::new(TuiAppConfig::default());
+        let out = cost_report(&session, &app);
+        assert!(out.contains("Cost"), "{out}");
+        assert!(
+            out.contains("estimated") || out.contains("none yet"),
+            "{out}"
+        );
+        let mut session = session;
+        session.usage = Usage {
+            input_tokens: 10,
+            output_tokens: 4,
+            cache_creation_input_tokens: Some(2),
+            cache_read_input_tokens: Some(1),
+        };
+        let mut app = TuiApp::new(TuiAppConfig::default());
+        app.turn_usage = Some(Usage {
+            input_tokens: 3,
+            output_tokens: 1,
+            cache_creation_input_tokens: None,
+            cache_read_input_tokens: None,
+        });
+        let out = cost_report(&session, &app);
+        assert!(out.contains("last turn"), "{out}");
+        assert!(out.contains("cache"), "{out}");
     }
 }

@@ -440,6 +440,7 @@ mod tests {
     fn isolate_data_dir() {
         use std::sync::OnceLock;
         static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = HOME.get_or_init(|| tempfile::tempdir().expect("tempdir"));
         unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     }
