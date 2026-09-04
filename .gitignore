@@ -50,3 +50,9 @@ auth.json
 lcov.info
 *.profraw
 *.profdata
+
+# Local sqlite fixtures and leftover llvm-cov dirs (never commit)
+*.db
+.cov-*/
+.tmp-cov-*/
+.agents/
