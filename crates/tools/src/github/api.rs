@@ -1,19 +1,103 @@
 /// Shared GitHub REST API helpers for tools (issues, PRs, etc.)
 use std::env;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use reqwest::header::{HeaderMap, HeaderValue};
 use whycodes_core::network::NetworkPolicy;
 
 const GITHUB_API_BASE: &str = "https://api.github.com";
+const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Resolve a GitHub token: explicit argument first, then GITHUB_TOKEN env var.
+/// Resolve a GitHub token without prompting.
+///
+/// Order: explicit tool arg → `GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token`.
+/// Git credential helpers are skipped: they can open a GUI / hang on Windows.
 pub fn resolve_token(explicit_token: Option<&str>) -> Option<String> {
-    if let Some(t) = explicit_token
-        && !t.is_empty()
-    {
-        return Some(t.to_string());
+    if let Some(t) = nonempty(explicit_token) {
+        return Some(t);
     }
-    env::var("GITHUB_TOKEN").ok()
+    env_token().or_else(gh_auth_token)
+}
+
+/// User-facing line when [`resolve_token`] returns `None`.
+pub fn missing_token_message() -> &'static str {
+    "GitHub token not found. Set GITHUB_TOKEN or GH_TOKEN, run `gh auth login`, or pass 'token'."
+}
+
+fn nonempty(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn env_token() -> Option<String> {
+    for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
+        if let Some(t) = nonempty(env::var(key).ok().as_deref()) {
+            return Some(t);
+        }
+    }
+    None
+}
+
+fn gh_auth_token() -> Option<String> {
+    #[cfg(test)]
+    {
+        // Integration/unit tests must not depend on a host `gh` login.
+        if env::var_os("WHYCODES_TEST_SKIP_GH_AUTH").is_some() {
+            return None;
+        }
+        if let Some(t) = nonempty(env::var("WHYCODES_TEST_GH_AUTH_TOKEN").ok().as_deref()) {
+            return Some(t);
+        }
+        return None;
+    }
+    #[cfg(not(test))]
+    {
+        gh_auth_token_from_cli()
+    }
+}
+
+/// Non-interactive `gh auth token`. Kills the child after [`GH_AUTH_TIMEOUT`].
+fn gh_auth_token_from_cli() -> Option<String> {
+    let mut child = Command::new("gh")
+        .args(["auth", "token"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut buf = String::new();
+                child.stdout.take()?.read_to_string(&mut buf).ok()?;
+                return nonempty(Some(buf.as_str()));
+            }
+            Ok(None) => {
+                if start.elapsed() >= GH_AUTH_TIMEOUT {
+                    if let Err(err) = child.kill() {
+                        tracing::debug!(error = %err, "gh auth token: kill after timeout");
+                    }
+                    if let Err(err) = child.wait() {
+                        tracing::debug!(error = %err, "gh auth token: wait after kill");
+                    }
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(err) => {
+                tracing::debug!(error = %err, "gh auth token: wait failed");
+                return None;
+            }
+        }
+    }
 }
 
 /// Build common headers for GitHub API requests (auth, accept, user-agent).
@@ -167,27 +251,78 @@ mod tests {
         }
     }
 
+    fn restore_var(key: &str, prev: Option<std::ffi::OsString>) {
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
     #[test]
     fn resolve_token_falls_back_to_env_and_override_base() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev_token = std::env::var_os("GITHUB_TOKEN");
+        let prev_gh = std::env::var_os("GH_TOKEN");
         let prev_base = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+        let prev_skip = std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH");
         unsafe {
             std::env::set_var("GITHUB_TOKEN", "from-env");
+            std::env::remove_var("GH_TOKEN");
+            std::env::set_var("WHYCODES_TEST_SKIP_GH_AUTH", "1");
             std::env::set_var("WHYCODES_GITHUB_API_BASE", "http://127.0.0.1:9");
         }
         assert_eq!(resolve_token(None), Some("from-env".into()));
         assert_eq!(resolve_token(Some("")), Some("from-env".into()));
+        assert_eq!(resolve_token(Some("  ")), Some("from-env".into()));
         assert_eq!(api_url("repos/x/y"), "http://127.0.0.1:9/repos/x/y");
+        restore_var("GITHUB_TOKEN", prev_token);
+        restore_var("GH_TOKEN", prev_gh);
+        restore_var("WHYCODES_GITHUB_API_BASE", prev_base);
+        restore_var("WHYCODES_TEST_SKIP_GH_AUTH", prev_skip);
+    }
+
+    #[test]
+    fn resolve_token_falls_back_to_gh_token_then_cli_mock() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_github = std::env::var_os("GITHUB_TOKEN");
+        let prev_gh = std::env::var_os("GH_TOKEN");
+        let prev_skip = std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH");
+        let prev_mock = std::env::var_os("WHYCODES_TEST_GH_AUTH_TOKEN");
         unsafe {
-            match prev_token {
-                Some(v) => std::env::set_var("GITHUB_TOKEN", v),
-                None => std::env::remove_var("GITHUB_TOKEN"),
-            }
-            match prev_base {
-                Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
-                None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
-            }
+            std::env::remove_var("GITHUB_TOKEN");
+            std::env::remove_var("WHYCODES_TEST_SKIP_GH_AUTH");
+            std::env::set_var("GH_TOKEN", "from-gh-token");
+            std::env::set_var("WHYCODES_TEST_GH_AUTH_TOKEN", "from-cli");
+        }
+        assert_eq!(resolve_token(None), Some("from-gh-token".into()));
+        unsafe {
+            std::env::remove_var("GH_TOKEN");
+        }
+        assert_eq!(resolve_token(None), Some("from-cli".into()));
+        unsafe {
+            std::env::set_var("WHYCODES_TEST_SKIP_GH_AUTH", "1");
+        }
+        assert_eq!(resolve_token(None), None);
+        restore_var("GITHUB_TOKEN", prev_github);
+        restore_var("GH_TOKEN", prev_gh);
+        restore_var("WHYCODES_TEST_SKIP_GH_AUTH", prev_skip);
+        restore_var("WHYCODES_TEST_GH_AUTH_TOKEN", prev_mock);
+    }
+
+    #[test]
+    fn missing_token_message_mentions_gh_login() {
+        let msg = missing_token_message();
+        assert!(msg.contains("gh auth login"), "{msg}");
+        assert!(msg.contains("GITHUB_TOKEN"), "{msg}");
+        assert!(msg.contains("GH_TOKEN"), "{msg}");
+    }
+
+    #[test]
+    fn gh_auth_cli_probe_does_not_panic() {
+        if let Some(token) = gh_auth_token_from_cli() {
+            assert!(!token.is_empty());
         }
     }
 

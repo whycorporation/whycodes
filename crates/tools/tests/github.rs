@@ -6,9 +6,16 @@
 use whycodes_core::ToolContext;
 use whycodes_tools::executor::ToolExecutor;
 
-/// Returns the GitHub token from the environment, or None if not set.
+/// Env tokens only (not `gh auth`). Live tests skip when neither is set.
 fn github_token() -> Option<String> {
-    std::env::var("GITHUB_TOKEN").ok()
+    std::env::var("GITHUB_TOKEN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("GH_TOKEN")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
 }
 
 fn neutral_ctx() -> ToolContext {
@@ -92,28 +99,18 @@ async fn test_github_issue_list_without_token() {
         "state": "open"
     });
 
-    // Without explicit token and without GITHUB_TOKEN env var,
-    // if GITHUB_TOKEN is set in the env this might accidentally pass.
-    // So we explicitly clear it for this test.
+    // Env token present: empty `token` falls through to env / `gh`, so skip.
+    // No env token: missing-token error, unless the host has `gh auth login`.
     if github_token().is_some() {
-        // Token IS available. We test with an explicit invalid token
-        // to ensure the error path works.
-        let args_bad = serde_json::json!({
-            "action": "list",
-            "owner": TEST_OWNER,
-            "repo": TEST_REPO,
-            "token": "",
-            "state": "open"
-        });
-        let result = tool.execute(args_bad, &ctx).await;
-        // Empty token should fail (resolve_token returns None for empty)
-        assert!(result.is_error, "empty token should produce error");
-    } else {
-        // No token anywhere — the tool should error
-        let result = tool.execute(args, &ctx).await;
-        assert!(result.is_error, "missing token should produce error");
+        eprintln!("SKIP: GITHUB_TOKEN/GH_TOKEN set; missing-token path not isolated");
+        return;
+    }
+    let result = tool.execute(args, &ctx).await;
+    if result.is_error {
         assert!(
-            result.content.contains("token not found") || result.content.contains("token"),
+            result.content.contains("token not found")
+                || result.content.contains("gh auth login")
+                || result.content.contains("token"),
             "should mention token: {}",
             result.content
         );
@@ -175,21 +172,15 @@ async fn test_github_pr_list_without_token() {
     });
 
     if github_token().is_some() {
-        // Test with empty token
-        let args_bad = serde_json::json!({
-            "action": "list",
-            "owner": TEST_OWNER,
-            "repo": TEST_REPO,
-            "token": "",
-            "state": "open"
-        });
-        let result = tool.execute(args_bad, &ctx).await;
-        assert!(result.is_error, "empty token should produce error");
-    } else {
-        let result = tool.execute(args, &ctx).await;
-        assert!(result.is_error, "missing token should produce error");
+        eprintln!("SKIP: GITHUB_TOKEN/GH_TOKEN set; missing-token path not isolated");
+        return;
+    }
+    let result = tool.execute(args, &ctx).await;
+    if result.is_error {
         assert!(
-            result.content.contains("token") || result.content.contains("required"),
+            result.content.contains("token")
+                || result.content.contains("gh auth login")
+                || result.content.contains("required"),
             "should mention token: {}",
             result.content
         );

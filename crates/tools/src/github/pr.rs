@@ -24,7 +24,7 @@ impl Tool for GitHubPrTool {
 
     fn description(&self) -> &str {
         "Create, list, view, or merge GitHub Pull Requests via the REST API. \
-         Requires a GitHub token (passed as parameter or set via GITHUB_TOKEN env var)."
+         Token: tool arg, GITHUB_TOKEN, GH_TOKEN, or `gh auth login`."
     }
 
     fn parameters(&self) -> Value {
@@ -46,7 +46,7 @@ impl Tool for GitHubPrTool {
                 },
                 "token": {
                     "type": "string",
-                    "description": "GitHub personal access token (optional; falls back to GITHUB_TOKEN env var)"
+                    "description": "GitHub token (optional; GITHUB_TOKEN, GH_TOKEN, or `gh auth login`)"
                 },
                 "title": {
                     "type": "string",
@@ -112,10 +112,10 @@ impl Tool for GitHubPrTool {
                 Some(t) => t,
                 None => {
                     return ToolResult {
-                    tool_call_id: String::new(),
-                    content: "GitHub token is required. Provide via the 'token' parameter or set the GITHUB_TOKEN environment variable.".to_string(),
-                    is_error: true,
-                };
+                        tool_call_id: String::new(),
+                        content: api::missing_token_message().to_string(),
+                        is_error: true,
+                    };
                 }
             };
 

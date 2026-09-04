@@ -45,7 +45,7 @@ impl Tool for GithubIssueTool {
                 },
                 "token": {
                     "type": "string",
-                    "description": "GitHub personal access token (defaults to GITHUB_TOKEN env var)"
+                    "description": "GitHub token (optional; GITHUB_TOKEN, GH_TOKEN, or `gh auth login`)"
                 },
                 "title": {
                     "type": "string",
@@ -109,9 +109,7 @@ impl Tool for GithubIssueTool {
                 None => {
                     return ToolResult {
                         tool_call_id: String::new(),
-                        content:
-                            "GitHub token not found. Set GITHUB_TOKEN env var or pass 'token' arg."
-                                .to_string(),
+                        content: super::api::missing_token_message().to_string(),
                         is_error: true,
                     };
                 }
