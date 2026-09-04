@@ -278,6 +278,9 @@ mod tests {
         );
         let long = "a".repeat(40);
         assert_eq!(default_title(Path::new(&long), "12").len(), 35);
+        assert_eq!(default_title(Path::new("."), "zz"), "session-00");
+        assert_eq!(project_basename(Path::new("")), "session");
+        assert_eq!(short_id_suffix("zz"), "00");
     }
 
     #[test]

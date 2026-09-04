@@ -2361,11 +2361,8 @@ mod tests {
         assert!(shaken > 0);
         let old = session.messages[1].content.as_text().unwrap();
         // Cap plus the `[N chars truncated]` notice.
-        assert!(
-            old.chars().count() <= TOOL_RESULT_SHAKE_CHARS + 80,
-            "{}",
-            old.chars().count()
-        );
+        let old_chars = old.chars().count();
+        assert!(old_chars <= TOOL_RESULT_SHAKE_CHARS + 80, "{old_chars}");
         assert!(old.contains("truncated"));
         let last = session.messages.last().unwrap().content.as_text().unwrap();
         assert!(
@@ -2719,6 +2716,19 @@ mod tests {
             format!("{}{}", "b".repeat(4), "\n[11 chars truncated]")
         );
         assert_eq!(split_truncation_notice("plain"), ("plain", None));
+        assert_eq!(
+            split_truncation_notice("body\n[not-a-number chars truncated]"),
+            ("body\n[not-a-number chars truncated]", None)
+        );
+        assert_eq!(
+            split_truncation_notice(
+                "body\n\n[... not-a-number characters truncated for context management]"
+            ),
+            (
+                "body\n\n[... not-a-number characters truncated for context management]",
+                None
+            )
+        );
 
         let mut session = Session::new(test_project_path(), String::new());
         session.add_tool_results(vec![whycodes_core::types::ToolResult {
@@ -3064,6 +3074,69 @@ mod tests {
     }
 
     #[test]
+    fn truncate_and_shake_cover_tool_text_and_block_mutations() {
+        let huge = "x".repeat(TOOL_RESULT_MAX_CHARS + 50);
+        let mut truncating = Session::new(test_project_path(), String::new());
+        truncating.set_messages(vec![Message {
+            role: Role::Tool,
+            content: MessageContent::Text(huge),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        }]);
+        assert_eq!(truncating.truncate_large_tool_results(), 1);
+        assert!(
+            truncating.messages[0]
+                .content
+                .as_text()
+                .unwrap()
+                .contains("chars truncated")
+        );
+
+        let mut shaking = Session::new(test_project_path(), String::new());
+        for i in 0..5 {
+            shaking.messages.push(Message {
+                role: Role::Tool,
+                content: if i == 0 {
+                    MessageContent::Blocks(vec![
+                        ContentBlock::Text {
+                            text: "y".repeat(3000),
+                        },
+                        ContentBlock::ToolResult {
+                            tool_use_id: "x".into(),
+                            content: "z".repeat(3000),
+                            is_error: None,
+                        },
+                        ContentBlock::RedactedThinking {
+                            data: "opaque".into(),
+                        },
+                    ])
+                } else {
+                    MessageContent::Text("short".into())
+                },
+                tool_call_id: None,
+                name: None,
+                created_at: None,
+            });
+        }
+        assert_eq!(shaking.shake_old_tool_results(), 2);
+        assert_eq!(shaking.shake_old_tool_results(), 0);
+        assert!(matches!(
+            &shaking.messages[0].content,
+            MessageContent::Blocks(blocks)
+                if blocks.iter().all(|block| match block {
+                    ContentBlock::Text { text }
+                    | ContentBlock::ToolResult { content: text, .. } =>
+                        text.contains("chars truncated"),
+                    ContentBlock::Image { .. }
+                    | ContentBlock::ToolUse { .. }
+                    | ContentBlock::Thinking { .. }
+                    | ContentBlock::RedactedThinking { .. } => true,
+                })
+        ));
+    }
+
+    #[test]
     fn transcript_and_full_replace_edge_cases() {
         let mut session = Session::new(test_project_path(), String::new());
         for i in 0..6 {
@@ -3371,5 +3444,88 @@ mod tests {
             let loaded = Session::load_from_db(&db, id).unwrap().unwrap();
             assert!(loaded.messages[0].created_at.is_some(), "{created}");
         }
+    }
+
+    #[test]
+    fn title_and_token_cache_noop_and_invalid_branches() {
+        let mut session = Session::new(test_project_path(), "sys".into());
+        session.set_title_manual("   ");
+        assert_eq!(session.title_source, crate::title::TitleSource::Default);
+        session.set_title_manual("Manual name");
+        assert_eq!(session.title_source, crate::title::TitleSource::Manual);
+        assert!(!session.apply_heuristic_title("ignored"));
+        session.title_source = crate::title::TitleSource::Default;
+        session.title = crate::title::heuristic_title("same heuristic");
+        assert!(!session.apply_heuristic_title("same heuristic"));
+        assert!(!session.apply_generated_title("   "));
+        session.prepend_compact_summary("  ");
+        assert!(session.messages.is_empty());
+
+        session.token_cache.invalidate();
+        session.token_cache.push_msg(&Message {
+            role: Role::User,
+            content: MessageContent::text("ignored"),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        });
+        session.token_cache.set_system("also ignored");
+        assert!(!session.token_cache.valid);
+        session.token_cache.ensure("sys", &[]);
+        assert!(session.token_cache.valid);
+        session.token_cache.ensure("sys", &[]);
+    }
+
+    #[test]
+    fn last_real_user_skips_compact_summary_carriers() {
+        let mut session = Session::new(test_project_path(), String::new());
+        session.messages.push(Message {
+            role: Role::User,
+            content: MessageContent::text("[Compacted earlier conversation]\nold"),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        });
+        session.messages.push(Message {
+            role: Role::Assistant,
+            content: MessageContent::text("tail"),
+            tool_call_id: None,
+            name: None,
+            created_at: None,
+        });
+        assert_eq!(session.last_real_user_index(), None);
+        let summary = session.local_full_replace_summary();
+        assert!(summary.contains("assistant=1"));
+    }
+
+    #[test]
+    fn compact_outcome_default_and_undo_without_user() {
+        let outcome = CompactOutcome::default();
+        assert!(!outcome.reduced());
+        assert!(!outcome.still_over(0));
+        assert!(!outcome.failed(10));
+        assert!(!outcome.dropped_messages());
+        let mut session = Session::new(test_project_path(), String::new());
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "only assistant".into(),
+        }]);
+        assert_eq!(session.undo_last_turn(), 0);
+        let text = session.conversation_text();
+        assert!(text.contains("Assistant: only assistant"));
+    }
+
+    #[test]
+    fn export_share_writes_markdown_even_if_json_exists() {
+        let project = tempfile::tempdir().unwrap();
+        let mut session = Session::new(project.path().to_path_buf(), "system".into());
+        session.add_user_message("hello");
+        let path = session.export_share().unwrap();
+        assert!(std::path::Path::new(&path).exists());
+        let md = project
+            .path()
+            .join(".whycodes")
+            .join("shares")
+            .join(format!("{}.md", session.id));
+        assert!(md.exists());
     }
 }

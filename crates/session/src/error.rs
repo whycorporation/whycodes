@@ -33,5 +33,13 @@ mod tests {
         assert_eq!(msg.to_string(), "no messages");
         let io = SessionError::from(std::io::Error::other("disk"));
         assert!(io.to_string().contains("disk"));
+        let json = SessionError::from(serde_json::from_str::<i32>("nope").unwrap_err());
+        assert!(!json.to_string().is_empty());
+        let chrono = SessionError::from(chrono::DateTime::parse_from_rfc3339("bad").unwrap_err());
+        assert!(!chrono.to_string().is_empty());
+        let storage = SessionError::from(whycodes_storage::StorageError::from(
+            rusqlite::Error::InvalidQuery,
+        ));
+        assert!(!storage.to_string().is_empty());
     }
 }
