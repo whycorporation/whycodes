@@ -40,17 +40,12 @@ mod tests {
         assert!(!json.to_string().is_empty());
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("whycodes.db")).unwrap();
-        let err = match crate::MemoryService::open(
-            dir.path(),
-            dir.path(),
-            crate::MemorySettings::default(),
-        )
-        .unwrap()
-        .open_db()
-        {
-            Err(err) => err,
-            Ok(_) => panic!("expected sqlite open to fail on a directory"),
-        };
+        let err =
+            crate::MemoryService::open(dir.path(), dir.path(), crate::MemorySettings::default())
+                .unwrap()
+                .open_db()
+                .err()
+                .expect("sqlite open should fail on a directory");
         assert!(matches!(err, MemoryError::Storage(_)), "{err}");
     }
 }

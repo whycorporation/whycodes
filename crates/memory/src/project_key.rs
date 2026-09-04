@@ -149,6 +149,22 @@ mod tests {
         let missing = dir.path().join("no-such-dir");
         let self_path = canonicalize_or_self(&missing);
         assert_eq!(self_path, missing);
+
+        #[cfg(unix)]
+        {
+            let real = tempfile::tempdir().unwrap();
+            let status = std::process::Command::new("git")
+                .args(["init"])
+                .current_dir(real.path())
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let link_dir = tempfile::tempdir().unwrap();
+            let link = link_dir.path().join("alias");
+            std::os::unix::fs::symlink(real.path(), &link).unwrap();
+            let top = git_toplevel(&link).expect("symlink repo");
+            assert_eq!(top, link.canonicalize().unwrap());
+        }
     }
 
     #[test]
@@ -168,6 +184,20 @@ mod tests {
         std::fs::write(&git, "#!/bin/sh\nexit 1\n").unwrap();
         assert!(git_toplevel(cwd.path()).is_none());
         match prev {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+
+        let restore = std::env::var_os("PATH");
+        unsafe { std::env::remove_var("PATH") };
+        let none = std::env::var_os("PATH");
+        unsafe { std::env::set_var("PATH", dir.path()) };
+        assert!(git_toplevel(cwd.path()).is_none());
+        match none {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        match restore {
             Some(v) => unsafe { std::env::set_var("PATH", v) },
             None => unsafe { std::env::remove_var("PATH") },
         }

@@ -30,9 +30,11 @@ fn cap_content(raw: &str, max_lines: usize, max_bytes: usize) -> String {
 
 /// Append a fact line to MEMORY.md (creates file with header if needed).
 pub fn append_entry(path: &Path, id: &str, text: &str) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)?;
     let date = Utc::now().format("%Y-%m-%d");
     let line = format!("- [{date}] {} (id:{id})\n", text.trim());
 

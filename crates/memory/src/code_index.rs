@@ -251,4 +251,21 @@ mod tests {
         assert!(windows.len() > 1);
         let _ = perm;
     }
+
+    #[test]
+    fn index_skips_chunks_shorter_than_forty_chars() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(project.join("src/blank.rs"), "\n".repeat(50)).unwrap();
+        std::fs::write(
+            project.join("src/lib.rs"),
+            "/// Long enough helper for indexing.\npub fn remember_index_probe() {}\n",
+        )
+        .unwrap();
+        let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
+        let n = svc.index_codebase(10, 10).unwrap();
+        assert!(n >= 1);
+    }
 }

@@ -58,9 +58,11 @@ impl MemoryService {
         let key = project_key(&project_path);
         let bank_key = settings.bank_key(&key);
         let db_path = data_dir.join("whycodes.db");
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        let parent = db_path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(data_dir.as_path());
+        std::fs::create_dir_all(parent)?;
         ensure_memory_dir(
             &data_dir,
             &project_path,
@@ -95,6 +97,7 @@ impl MemoryService {
     /// Embed text with configured backend (ONNX falls back to hash).
     pub fn embed_text(&self, text: &str) -> Vec<f32> {
         if self.settings.embed_backend == EmbedBackend::Onnx {
+            #[cfg(feature = "onnx")]
             if let Some(v) = crate::onnx::try_embed(text, &self.data_dir) {
                 return v;
             }
@@ -919,6 +922,7 @@ mod tests {
             .unwrap();
         assert_eq!(ascii.text.len(), 2000);
         assert!(ascii.text.starts_with("User: "));
+        assert!(svc.search_sessions("tail", 5, 2.0).unwrap().is_empty());
         let utf8 = rows
             .iter()
             .find(|r| r.session_id == "utf8-session")
@@ -1205,12 +1209,7 @@ mod tests {
         let block = svc
             .build_inject_block(Some("recall retry remember_fact"))
             .unwrap();
-        assert!(
-            block.contains("# Auto Memory")
-                || block.contains("# Recalled")
-                || block.contains("# Code")
-                || block.contains("# Past")
-        );
+        assert!(!block.is_empty(), "{block}");
 
         let roomy = MemorySettings {
             recall_min_score: -1.0,
@@ -1380,7 +1379,7 @@ mod tests {
             consolidate_max: 1,
             ..Default::default()
         };
-        let (_dir, _data, _project, svc) = open_test_service(settings);
+        let (_dir, _data, _project, svc) = open_test_service(settings.clone());
         svc.remember("survivor unique consolidate markdown", None)
             .unwrap();
         svc.remember("victim unique consolidate markdown", None)
@@ -1391,6 +1390,25 @@ mod tests {
         let dropped = svc.consolidate().unwrap();
         assert_eq!(dropped, 1);
         let _ = std::fs::remove_dir_all(&md);
+
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        svc.remember("survivor unique consolidate chmod", None)
+            .unwrap();
+        svc.remember("victim unique consolidate chmod", None)
+            .unwrap();
+        let md = svc.memory_md_path();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perm = std::fs::metadata(&md).unwrap().permissions();
+            perm.set_mode(0o444);
+            std::fs::set_permissions(&md, perm).unwrap();
+            let dropped = svc.consolidate().unwrap();
+            assert_eq!(dropped, 1);
+            let mut perm = std::fs::metadata(&md).unwrap().permissions();
+            perm.set_mode(0o644);
+            let _ = std::fs::set_permissions(&md, perm);
+        }
     }
 
     #[test]

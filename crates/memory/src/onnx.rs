@@ -370,6 +370,13 @@ mod tests {
             let err = smoke_embed(dir.path()).unwrap_err();
             assert!(err.to_string().contains("features onnx"));
         }
+        let prev = std::env::var_os("PATH");
+        unsafe { std::env::remove_var("PATH") };
+        let _ = with_path_bins(&[("true", "#!/bin/sh\nexit 0\n")], || 1 + 1);
+        match prev {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
     }
 
     #[cfg(feature = "onnx")]
