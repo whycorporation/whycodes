@@ -331,6 +331,7 @@ mod tests {
     fn unknown_name_is_unsupported() {
         assert!(!supports_oauth("definitely-missing-oauth-provider"));
         assert!(spec_for("definitely-missing-oauth-provider").is_err());
+        assert!(spec_get("definitely-missing-oauth-provider").is_none());
         assert!(suggested_models("definitely-missing-oauth-provider").is_empty());
         assert!(inference_identity("definitely-missing-oauth-provider").is_none());
     }
