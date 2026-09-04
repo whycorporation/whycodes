@@ -289,6 +289,7 @@ async fn issue_comment(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -392,5 +393,221 @@ mod tests {
         .expect_err("empty comment must fail");
 
         assert_eq!(error, "body is required for comment action.");
+    }
+
+    struct ApiBaseGuard {
+        prev: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ApiBaseGuard {
+        fn set(base: &str) -> Self {
+            let lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+            unsafe { std::env::set_var("WHYCODES_GITHUB_API_BASE", base) };
+            Self { prev, _lock: lock }
+        }
+    }
+
+    impl Drop for ApiBaseGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prev {
+                    Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
+                    None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
+                }
+            }
+        }
+    }
+
+    fn spawn_json_server(status: &str, body: &str, n: usize) -> std::net::SocketAddr {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let payload = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        std::thread::spawn(move || {
+            for _ in 0..n {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(payload.as_bytes());
+                }
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn execute_create_list_view_close_reopen_comment_on_loopback() {
+        let addr = spawn_json_server("200 OK", r#"{"number":1}"#, 8);
+        let base = format!("http://{addr}");
+        let tool = GithubIssueTool;
+        assert!(!tool.description().is_empty());
+        let ctx = ToolContext::new(".");
+        let _g = ApiBaseGuard::set(&base);
+        let create = tool
+            .execute(
+                json!({
+                    "action": "create",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "title": "Bug",
+                    "body": "details",
+                    "labels": ["bug"]
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!create.is_error, "{}", create.content);
+
+        let list = tool
+            .execute(
+                json!({
+                    "action": "list",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "state": "all",
+                    "per_page": 200
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!list.is_error, "{}", list.content);
+
+        let view = tool
+            .execute(
+                json!({
+                    "action": "view",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "issue_number": 1
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!view.is_error, "{}", view.content);
+
+        let close = tool
+            .execute(
+                json!({
+                    "action": "close",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "issue_number": 1
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!close.is_error, "{}", close.content);
+
+        let reopen = tool
+            .execute(
+                json!({
+                    "action": "reopen",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "issue_number": 1
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!reopen.is_error, "{}", reopen.content);
+
+        let comment = tool
+            .execute(
+                json!({
+                    "action": "comment",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "issue_number": 1,
+                    "body": "ship it"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!comment.is_error, "{}", comment.content);
+    }
+
+    #[tokio::test]
+    async fn execute_missing_token_and_api_error() {
+        {
+            let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var_os("GITHUB_TOKEN");
+            unsafe { std::env::remove_var("GITHUB_TOKEN") };
+            let missing = GithubIssueTool::new()
+                .execute(
+                    json!({"action": "list", "owner": "o", "repo": "r"}),
+                    &ToolContext::new("."),
+                )
+                .await;
+            assert!(missing.is_error, "{}", missing.content);
+            assert!(missing.content.contains("token"), "{}", missing.content);
+            unsafe {
+                match prev {
+                    Some(v) => std::env::set_var("GITHUB_TOKEN", v),
+                    None => std::env::remove_var("GITHUB_TOKEN"),
+                }
+            }
+        }
+
+        let addr = spawn_json_server("404 Not Found", "missing", 1);
+        let base = format!("http://{addr}");
+        let _g2 = ApiBaseGuard::set(&base);
+        let err = GithubIssueTool::new()
+            .execute(
+                json!({
+                    "action": "list",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t"
+                }),
+                &ToolContext::new("."),
+            )
+            .await;
+        assert!(err.is_error, "{}", err.content);
+        assert!(err.content.contains("GitHub API error"), "{}", err.content);
+
+        drop(_g2);
+
+        let mut ctx = ToolContext::new(".");
+        ctx.network = whycodes_core::NetworkPolicy {
+            allowlist: vec!["example.com".into()],
+            denylist: vec![],
+        };
+        let blocked = GithubIssueTool::new()
+            .execute(
+                json!({"action": "list", "owner": "o", "repo": "r", "token": "t"}),
+                &ctx,
+            )
+            .await;
+        assert!(blocked.is_error, "{}", blocked.content);
+
+        let bad_token = GithubIssueTool::new()
+            .execute(
+                json!({
+                    "action": "list",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "bad\ntoken"
+                }),
+                &ToolContext::new("."),
+            )
+            .await;
+        assert!(bad_token.is_error, "{}", bad_token.content);
+        assert!(
+            bad_token.content.contains("headers"),
+            "{}",
+            bad_token.content
+        );
     }
 }

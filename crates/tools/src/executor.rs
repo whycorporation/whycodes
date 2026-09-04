@@ -730,4 +730,27 @@ description = "Has no command"
         assert_eq!(n, 0);
         unsafe { std::env::remove_var("WHYCODES_HOME") };
     }
+
+    #[test]
+    fn register_config_plugins_invalid_toml_and_empty_json_name() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join("plugins.toml"), "[[plugins]]\nname = [").unwrap();
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+
+        let dir = tempfile::tempdir().unwrap();
+        let why = dir.path().join(".whycodes");
+        std::fs::create_dir_all(why.join("plugins").join("blank")).unwrap();
+        std::fs::write(why.join("plugins.toml"), "[[plugins]]\nname = [").unwrap();
+        std::fs::write(
+            why.join("plugins").join("blank").join("plugin.json"),
+            r#"{"name":"","command":"echo"}"#,
+        )
+        .unwrap();
+        let mut ex = ToolExecutor::new();
+        let _ = ex.register_config_plugins(Some(dir.path()));
+        let n = ex.register_config_plugins(None);
+        assert_eq!(n, 0);
+        unsafe { std::env::remove_var("WHYCODES_HOME") };
+    }
 }

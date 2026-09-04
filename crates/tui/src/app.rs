@@ -206,6 +206,7 @@ impl QuestionDialogState {
             QuestionAnswer {
                 selected,
                 free_text: free,
+                auto_picked: false,
             }
         } else if q.options.is_empty() || self.is_other_index(self.cursor) || self.free_text_focus {
             let t = self.free_text.trim();
@@ -217,12 +218,14 @@ impl QuestionDialogState {
             QuestionAnswer {
                 selected: vec![],
                 free_text: Some(t.to_string()),
+                auto_picked: false,
             }
         } else {
             let label = q.options.get(self.cursor)?.label.clone();
             QuestionAnswer {
                 selected: vec![label],
                 free_text: None,
+                auto_picked: false,
             }
         };
 

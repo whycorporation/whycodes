@@ -194,4 +194,72 @@ mod tests {
         assert!(out.content.contains("File conflict"), "{}", out.content);
         assert_eq!(std::fs::read_to_string(&target).expect("read"), "old");
     }
+
+    #[tokio::test]
+    async fn default_constructs() {
+        assert_eq!(WriteTool.name(), "write");
+    }
+
+    #[tokio::test]
+    async fn parent_dir_create_and_atomic_write_errors() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let blocker = dir.path().join("blocked");
+        std::fs::write(&blocker, "file-not-dir").unwrap();
+        let nested = blocker.join("child.txt");
+        let out = WriteTool::new()
+            .execute(
+                json!({ "path": nested.to_string_lossy(), "content": "x" }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("Error creating directory"),
+            "{}",
+            out.content
+        );
+
+        let as_dir = dir.path().join("as-dir");
+        std::fs::create_dir(&as_dir).unwrap();
+        let out = WriteTool::new()
+            .execute(
+                json!({ "path": as_dir.to_string_lossy(), "content": "x" }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("Error writing file"),
+            "{}",
+            out.content
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_atomic_fails_on_readonly_parent() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let parent = dir.path().join("rodir");
+        std::fs::create_dir(&parent).unwrap();
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&parent, perms).unwrap();
+        let path = parent.join("ro.txt");
+        let out = WriteTool::new()
+            .execute(
+                json!({ "path": path.to_string_lossy(), "content": "new" }),
+                &ctx(dir.path()),
+            )
+            .await;
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&parent, perms);
+        assert!(out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("Error writing file"),
+            "{}",
+            out.content
+        );
+    }
 }

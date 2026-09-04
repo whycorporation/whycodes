@@ -705,4 +705,40 @@ mod tests {
         assert!(!out.content.contains("a.txt"), "{}", out.content);
         assert!(out.content.contains("(empty)"), "{}", out.content);
     }
+
+    #[tokio::test]
+    async fn default_constructs() {
+        assert_eq!(ListTool.name(), "list");
+    }
+
+    #[tokio::test]
+    async fn list_dir_entries_error_is_surfaced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("not-a-dir");
+        std::fs::write(&file, "x").expect("write");
+        // Point working dir at a real dir, but race the target into a file via absolute path.
+        let out = ListTool::new()
+            .execute(json!({ "path": file.to_string_lossy() }), &ctx(dir.path()))
+            .await;
+        assert!(out.is_error, "{}", out.content);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_directory_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("locked");
+        std::fs::create_dir(&nested).unwrap();
+        let mut perms = std::fs::metadata(&nested).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&nested, perms).unwrap();
+        let out = ListTool::new()
+            .execute(json!({ "path": "locked" }), &ctx(dir.path()))
+            .await;
+        let mut perms = std::fs::metadata(&nested).unwrap().permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&nested, perms);
+        assert!(out.is_error, "{}", out.content);
+    }
 }

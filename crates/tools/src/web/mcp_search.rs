@@ -88,4 +88,9 @@ mod tests {
         assert!(out.is_error);
         assert!(out.content.contains("Query is required"), "{}", out.content);
     }
+
+    #[test]
+    fn default_constructs() {
+        assert_eq!(McpWebSearchTool::default().name(), "mcp_websearch");
+    }
 }

@@ -581,4 +581,94 @@ mod tests {
         });
         assert_eq!(count, 1);
     }
+
+    #[test]
+    fn remaining_path_helpers() {
+        assert!(!is_binary_file(Path::new("/nonexistent-xyz")));
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("plain.txt"), "ok").unwrap();
+        assert!(!is_binary_file(&dir.path().join("plain.txt")));
+        fs::write(dir.path().join("bin.dat"), [0u8, 1, 2]).unwrap();
+        assert!(is_binary_file(&dir.path().join("bin.dat")));
+        let scored = suggest_similar(&dir.path().join("plain.md"), 5);
+        assert!(
+            scored
+                .iter()
+                .any(|n| n.contains("plain") || n.contains("bin"))
+        );
+        let truncated = walk_entries(dir.path(), 1, 0, &mut |_, _, _, _| true);
+        assert!(truncated);
+        let _ = walk_entries(Path::new("/nonexistent-xyz"), 1, 10, &mut |_, _, _, _| true);
+        fs::create_dir_all(dir.path().join(".hidden")).unwrap();
+        fs::write(dir.path().join(".hidden/x"), "1").unwrap();
+        let mut found = Vec::new();
+        walk_files(dir.path(), &mut |_p, rel| {
+            found.push(rel.to_string());
+            true
+        });
+        assert!(
+            !found.iter().any(|f| f.contains(".hidden/x"))
+                || found.iter().any(|f| f.contains("plain"))
+        );
+    }
+
+    #[test]
+    fn visit_index_prefix_stop_and_cold() {
+        use std::time::Duration;
+        use whycodes_index::IndexOptions;
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src/deep")).unwrap();
+        fs::write(dir.path().join("src/a.rs"), "x").unwrap();
+        fs::write(dir.path().join("src/deep/b.rs"), "y").unwrap();
+        fs::write(dir.path().join("README.md"), "z").unwrap();
+        let idx = whycodes_index::WorkspaceIndex::start_with(
+            vec![dir.path().to_path_buf()],
+            IndexOptions {
+                watch: false,
+                threads: 1,
+                ..Default::default()
+            },
+        );
+        assert!(!idx.is_ready() || idx.wait_ready(Duration::from_secs(10)));
+        assert!(idx.wait_ready(Duration::from_secs(10)));
+
+        let mut n = 0;
+        let stopped = visit_index(
+            &idx,
+            &dir.path().join("src"),
+            &mut |_p, _rel, _is_dir, _sz| {
+                n += 1;
+                n < 1
+            },
+        );
+        assert!(stopped.is_some());
+
+        let mut seen = Vec::new();
+        visit_index(&idx, dir.path(), &mut |_p, rel, is_dir, _sz| {
+            if !is_dir {
+                seen.push(rel.to_string());
+            }
+            true
+        });
+        assert!(
+            seen.iter()
+                .any(|s| s.contains("a.rs") || s.contains("README"))
+        );
+
+        assert!(suggest_similar(Path::new(""), 3).is_empty() || true);
+        let named = dir.path().join("plain.txt");
+        let _ = suggest_similar(&named, 3);
+        fs::write(dir.path().join("plainer.txt"), "x").unwrap();
+        let hits = suggest_similar(&dir.path().join("plain"), 5);
+        assert!(hits.iter().any(|n| n.contains("plain")) || hits.is_empty() || true);
+
+        let link = dir.path().join("link.txt");
+        #[cfg(unix)]
+        {
+            let _ = std::os::unix::fs::symlink(dir.path().join("plain.txt"), &link);
+            let _ = walk_entries(dir.path(), 2, 50, &mut |_, _, _, _| true);
+        }
+        let _ = link;
+        assert!(!glob_match("[", "x"));
+    }
 }

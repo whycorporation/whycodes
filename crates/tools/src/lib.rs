@@ -38,6 +38,9 @@ pub use profile::ToolProfile;
 pub use tool::Tool;
 
 #[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn lib_module_loads() {

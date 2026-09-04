@@ -184,4 +184,25 @@ mod tests {
         assert!(bad.is_error, "{}", bad.content);
         assert!(bad.content.contains("Unknown action"), "{}", bad.content);
     }
+
+    #[tokio::test]
+    async fn load_requires_name_and_empty_description() {
+        let t = SkillTool;
+        assert_eq!(t.name(), "skill");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join(".skills");
+        std::fs::create_dir(&skills).unwrap();
+        std::fs::write(
+            skills.join("bare.skill.md"),
+            "---\nname: Bare\n---\n\nBODY\n",
+        )
+        .unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy());
+        let listed = t.execute(json!({"action": "list"}), &ctx).await;
+        assert!(listed.content.contains("(no description)") || listed.content.contains("Bare"));
+        let missing_name = t.execute(json!({"action": "load"}), &ctx).await;
+        assert!(missing_name.is_error, "{}", missing_name.content);
+    }
 }

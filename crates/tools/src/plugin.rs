@@ -177,4 +177,99 @@ description = "from toml"
         assert!(hello.is_some(), "{listed:?}");
         assert_eq!(hello.unwrap().command, "echo json");
     }
+
+    #[tokio::test]
+    async fn plugin_shell_tool_execute_and_list_skips() {
+        let cfg = PluginConfig {
+            name: "echo".into(),
+            command: "echo $PLUGIN_ARG_INPUT $PLUGIN_WORKSPACE".into(),
+            description: "d".into(),
+            parameters: None,
+            working_dir: None,
+        };
+        let tool = PluginShellTool::from_config(cfg);
+        assert_eq!(tool.name(), "plugin_echo");
+        assert_eq!(tool.description(), "d");
+        let params = tool.parameters();
+        assert_eq!(params["properties"]["input"]["type"], "string");
+        let out = tool
+            .execute(
+                serde_json::json!({"input": "hi", "n": 1}),
+                &crate::tool::ToolContext::new("/tmp"),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(out.content.contains("hi"), "{}", out.content);
+
+        let schema = serde_json::json!({"type": "object"});
+        let cfg = PluginConfig {
+            name: "typed".into(),
+            command: "true".into(),
+            description: "t".into(),
+            parameters: Some(schema.clone()),
+            working_dir: Some("/tmp".into()),
+        };
+        let tool = PluginShellTool::from_config(cfg);
+        assert_eq!(tool.parameters(), schema);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let why = tmp.path().join(".whycodes");
+        std::fs::create_dir_all(&why).unwrap();
+        std::fs::write(
+            why.join("plugins.toml"),
+            r#"
+[[plugins]]
+name = ""
+command = "echo"
+[[plugins]]
+name = "ok"
+command = ""
+"#,
+        )
+        .unwrap();
+        let listed = list_shell_plugins(Some(tmp.path()));
+        assert!(listed.iter().all(|p| p.tool_name != "plugin_"));
+
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let home = tempfile::tempdir().unwrap();
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+        let _ = list_shell_plugins(None);
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("WHYCODES_HOME", v),
+                None => std::env::remove_var("WHYCODES_HOME"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_non_object_args_and_empty_json_name() {
+        let cfg = PluginConfig {
+            name: "echo".into(),
+            command: "echo ok".into(),
+            description: "d".into(),
+            parameters: None,
+            working_dir: None,
+        };
+        let tool = PluginShellTool::from_config(cfg);
+        let out = tool
+            .execute(
+                serde_json::json!("not-an-object"),
+                &crate::tool::ToolContext::new("/tmp"),
+            )
+            .await;
+        assert!(!out.is_error || !out.content.is_empty(), "{}", out.content);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let why = tmp.path().join(".whycodes");
+        std::fs::create_dir_all(why.join("plugins").join("blank")).unwrap();
+        std::fs::write(
+            why.join("plugins").join("blank").join("plugin.json"),
+            r#"{"name":"","command":"echo"}"#,
+        )
+        .unwrap();
+        let listed = list_shell_plugins(Some(tmp.path()));
+        assert!(listed.iter().all(|p| p.tool_name != "plugin_"));
+    }
 }

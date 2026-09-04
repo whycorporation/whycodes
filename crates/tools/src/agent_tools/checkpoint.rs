@@ -187,4 +187,15 @@ mod tests {
         assert!(!r.is_error);
         assert!(r.content.contains("root cause is X"));
     }
+
+    #[tokio::test]
+    async fn defaults_and_parameters() {
+        let c = CheckpointTool;
+        assert_eq!(c.name(), "checkpoint");
+        let _ = c.parameters();
+        let r = RewindTool;
+        assert_eq!(r.name(), "rewind");
+        assert!(!r.description().is_empty());
+        let _ = r.parameters();
+    }
 }

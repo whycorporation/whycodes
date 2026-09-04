@@ -110,4 +110,12 @@ mod tests {
             .await;
         assert!(other.content.contains("No todos yet"));
     }
+
+    #[tokio::test]
+    async fn default_and_parameters() {
+        let t = TodoReadTool;
+        assert_eq!(t.name(), "todoread");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+    }
 }

@@ -159,4 +159,35 @@ mod tests {
         let missing = read_internal("agent://nope", &ctx).unwrap();
         assert!(missing.is_error);
     }
+
+    #[test]
+    fn remaining_agent_and_skill_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy());
+        let none = read_internal("agent://", &ctx).unwrap();
+        assert!(!none.is_error);
+        let agents = dir.path().join(".whycodes").join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        let empty_list = read_internal("agent://", &ctx).unwrap();
+        assert!(empty_list.content.contains("No agent artifacts"));
+        std::fs::write(agents.join("empty.md"), "   ").unwrap();
+        let empty_body = read_internal("agent://empty", &ctx).unwrap();
+        assert!(empty_body.is_error);
+        std::fs::write(agents.join("skip.bin"), "x").unwrap();
+        let listed = read_internal("agent://", &ctx).unwrap();
+        assert!(!listed.content.contains("skip"));
+        let dots = read_internal("skill://..", &ctx).unwrap();
+        assert!(dots.is_error);
+    }
+
+    #[test]
+    fn skill_load_error_is_surfaced_for_unreadable_project() {
+        let ctx = ToolContext::new("/nonexistent-xyz-project");
+        let r = read_internal("skill://demo", &ctx).unwrap();
+        assert!(
+            r.is_error || r.content.contains("not found") || r.content.contains("Error"),
+            "{}",
+            r.content
+        );
+    }
 }

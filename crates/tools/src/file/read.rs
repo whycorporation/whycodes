@@ -537,4 +537,108 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("Missing required parameter"));
     }
+
+    #[tokio::test]
+    async fn remaining_read_branches() {
+        let t = ReadTool;
+        assert_eq!(t.name(), "read");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+        let dir = TempDir::new().unwrap();
+        fs::write(dir.path().join("empty.png"), []).unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+        let empty_img = t
+            .execute(serde_json::json!({"path": "empty.png"}), &ctx)
+            .await;
+        assert!(empty_img.is_error, "{}", empty_img.content);
+
+        let skill = t
+            .execute(serde_json::json!({"path": "skill://nope"}), &ctx)
+            .await;
+        assert!(skill.is_error);
+
+        let long = "x".repeat(5000);
+        fs::write(dir.path().join("long.txt"), format!("{long}\nmore\n")).unwrap();
+        let window = t
+            .execute(
+                serde_json::json!({"path": "long.txt", "offset": 1, "limit": 1}),
+                &ctx,
+            )
+            .await;
+        assert!(!window.is_error, "{}", window.content);
+        assert!(window.content.contains("[truncated"), "{}", window.content);
+    }
+
+    #[tokio::test]
+    async fn stale_read_huge_file_and_image_read_error() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "stale.txt", "hello\n");
+        let claims = whycodes_core::file_claims::FileClaimRegistry::new();
+        let path = dir.path().join("stale.txt");
+        assert!(matches!(
+            claims.try_claim("writer", "writer-agent", &path),
+            whycodes_core::file_claims::ClaimResult::Acquired
+        ));
+        let mut ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+        ctx.file_claims = Some(claims);
+        ctx.agent_id = Some("reader".into());
+        let stale = ReadTool::new()
+            .execute(serde_json::json!({"path": "stale.txt"}), &ctx)
+            .await;
+        assert!(!stale.is_error, "{}", stale.content);
+        assert!(stale.content.contains("[stale]"), "{}", stale.content);
+
+        let huge = vec![b'a'; (MAX_FULL_READ_BYTES as usize) + 8];
+        fs::write(dir.path().join("huge.txt"), huge).unwrap();
+        let window = ReadTool::new()
+            .execute(
+                serde_json::json!({"path": "huge.txt", "offset": 1, "limit": 400}),
+                &ctx,
+            )
+            .await;
+        assert!(!window.is_error, "{}", window.content);
+
+        let fifo = dir.path().join("pipe.jpg");
+        #[cfg(unix)]
+        {
+            use std::os::unix::net::UnixListener;
+            let _ = UnixListener::bind(&fifo);
+            if fifo.exists() {
+                let img = ReadTool::new()
+                    .execute(serde_json::json!({"path": "pipe.jpg"}), &ctx)
+                    .await;
+                assert!(img.is_error || !img.content.is_empty(), "{}", img.content);
+            }
+        }
+        let _ = fifo;
+    }
+
+    #[tokio::test]
+    async fn huge_file_reports_unknown_total() {
+        let dir = TempDir::new().unwrap();
+        let mut content = String::new();
+        for i in 0..20 {
+            content.push_str(&format!("line {i}\n"));
+        }
+        let huge_prefix = "x".repeat(64 * 1024);
+        let mut body = String::new();
+        for _ in 0..((MAX_FULL_READ_BYTES as usize / huge_prefix.len()) + 2) {
+            body.push_str(&huge_prefix);
+            body.push('\n');
+        }
+        fs::write(dir.path().join("huge.txt"), body).unwrap();
+        let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+        let out = ReadTool::new()
+            .execute(
+                serde_json::json!({"path": "huge.txt", "offset": 1, "limit": 1}),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("≥") || out.content.contains("lines"),
+            "{}",
+            out.content
+        );
+    }
 }

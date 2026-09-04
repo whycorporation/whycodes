@@ -376,4 +376,54 @@ mod tests {
         assert!(out.contains("[truncated]"));
         // Must not panic on multi-byte.
     }
+
+    #[test]
+    fn remaining_format_and_html_helpers() {
+        let t = WebFetchTool;
+        assert_eq!(t.name(), "webfetch");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+        assert!(looks_like_json("[1]"));
+        assert!(!looks_like_json("nope"));
+        assert!(looks_like_html("<!DOCTYPE html>"));
+        assert!(looks_like_html("<p></p>"));
+        assert!(!looks_like_html("plain"));
+        let md = format_body("text/markdown", "hello\n\nworld");
+        assert!(md.contains("hello"));
+        let html = format_body("text/html", "<p>Hi</p>");
+        assert!(html.contains("Hi"));
+        let unknown = format_body("application/octet-stream", "plain text");
+        assert!(unknown.contains("plain"));
+        let markup = format_body("", "<div></div>");
+        assert!(!markup.contains("<div"));
+        let bad_json = format_body("application/json", "{not json");
+        assert_eq!(bad_json, "{not json");
+        let decoded = decode_basic_entities("&lt;&gt;&quot;&#39;&apos;&nbsp;");
+        assert!(decoded.contains('<'));
+        let short = truncate_chars("abc", 10);
+        assert_eq!(short, "abc");
+        let _ = http_client();
+        let _ = http_client();
+    }
+
+    #[tokio::test]
+    async fn fetch_connect_error_and_html_fallback() {
+        let ctx = ToolContext::unsandboxed("/");
+        let err = WebFetchTool::new()
+            .execute(json!({ "url": "http://127.0.0.1:1/missing" }), &ctx)
+            .await;
+        assert!(err.is_error, "{}", err.content);
+        assert!(
+            err.content.contains("Error fetching URL"),
+            "{}",
+            err.content
+        );
+
+        let htmlish = format_body("application/octet-stream", "<div>Hi</div>");
+        assert!(htmlish.contains("Hi"));
+        let truncated = truncate_chars("héllo", 2);
+        assert!(truncated.contains("[truncated]"));
+        let unclosed = strip_tag_blocks("<script>alert(1)", &["script"]);
+        assert!(unclosed.contains("alert") || unclosed.contains("<script"));
+    }
 }

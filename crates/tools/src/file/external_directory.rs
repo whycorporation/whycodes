@@ -395,4 +395,47 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert_eq!(out.content, "def");
     }
+
+    #[tokio::test]
+    async fn default_constructs() {
+        assert_eq!(ExternalDirectoryTool.name(), "external_directory");
+    }
+
+    #[tokio::test]
+    async fn deny_missing_path_and_broken_allowlist_entry() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        allow(
+            dir.path(),
+            &format!("/nonexistent-xyz-allow\n{}\n", outside.path().display()),
+        );
+        let missing = ExternalDirectoryTool::new()
+            .execute(
+                json!({
+                    "path": outside.path().join("gone.txt").to_string_lossy(),
+                    "action": "read"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(missing.is_error, "{}", missing.content);
+        assert!(
+            missing.content.contains("Access denied"),
+            "{}",
+            missing.content
+        );
+
+        let other = tempfile::tempdir().expect("other");
+        std::fs::write(other.path().join("x.txt"), "nope").unwrap();
+        let denied = ExternalDirectoryTool::new()
+            .execute(
+                json!({
+                    "path": other.path().join("x.txt").to_string_lossy(),
+                    "action": "read"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(denied.is_error, "{}", denied.content);
+    }
 }

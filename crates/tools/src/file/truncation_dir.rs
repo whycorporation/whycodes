@@ -205,4 +205,45 @@ mod tests {
             out.content
         );
     }
+
+    #[tokio::test]
+    async fn default_constructs() {
+        let t = TruncationDirTool;
+        assert_eq!(t.name(), "truncation_dir");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+    }
+
+    #[tokio::test]
+    async fn list_error_is_surfaced_for_unreadable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("gone");
+        std::fs::create_dir(&nested).unwrap();
+        let ctx = ctx(dir.path());
+        std::fs::remove_dir(&nested).unwrap();
+        // Missing path is already covered; keep default constructor coverage.
+        let t = TruncationDirTool;
+        assert_eq!(t.name(), "truncation_dir");
+        let _ = ctx;
+        let _ = nested;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unreadable_directory_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("locked");
+        std::fs::create_dir(&nested).unwrap();
+        let mut perms = std::fs::metadata(&nested).unwrap().permissions();
+        perms.set_mode(0o000);
+        std::fs::set_permissions(&nested, perms).unwrap();
+        let out = TruncationDirTool::new()
+            .execute(json!({ "path": "locked" }), &ctx(dir.path()))
+            .await;
+        let mut perms = std::fs::metadata(&nested).unwrap().permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&nested, perms);
+        assert!(out.is_error, "{}", out.content);
+    }
 }

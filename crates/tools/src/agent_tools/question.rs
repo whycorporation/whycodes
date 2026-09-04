@@ -13,6 +13,13 @@ use std::io::{self, Write};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
+#[cfg(test)]
+static TEST_STDIN: std::sync::Mutex<std::collections::VecDeque<String>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// Soft product cap (schema says “max 4 recommended”). Hard-refuse dumps.
+const MAX_QUESTIONS: usize = 8;
+
 // ── Public types (shared by agent prompter + TUI) ──────────────────────
 
 /// One selectable option.
@@ -38,6 +45,8 @@ pub struct QuestionAnswer {
     pub selected: Vec<String>,
     /// Free-text when Other was used (or sole free-form answer).
     pub free_text: Option<String>,
+    /// Set when `AutoAnswerPrompter` filled this — not a user choice.
+    pub auto_picked: bool,
 }
 
 impl QuestionAnswer {
@@ -57,6 +66,50 @@ impl QuestionAnswer {
     }
 }
 
+/// Reject answers that do not match the questionnaire.
+pub fn validate_answers(
+    questions: &[QuestionSpec],
+    answers: &[QuestionAnswer],
+) -> Result<(), String> {
+    if answers.len() != questions.len() {
+        return Err(format!(
+            "expected {} answers, got {}",
+            questions.len(),
+            answers.len()
+        ));
+    }
+    for (i, (q, a)) in questions.iter().zip(answers.iter()).enumerate() {
+        let labels: Vec<&str> = q.options.iter().map(|o| o.label.as_str()).collect();
+        for sel in &a.selected {
+            if !labels.iter().any(|l| *l == sel) {
+                return Err(format!(
+                    "answers[{i}]: unknown option `{sel}` (not in this question)"
+                ));
+            }
+        }
+        if q.multi_select {
+            if a.selected.is_empty() && a.free_text.as_ref().is_none_or(|t| t.trim().is_empty()) {
+                return Err(format!(
+                    "answers[{i}]: select at least one option or Other text"
+                ));
+            }
+        } else if a.selected.len() > 1 {
+            return Err(format!(
+                "answers[{i}]: single-select question got multiple labels"
+            ));
+        }
+        if q.options.is_empty() && a.free_text.as_ref().is_none_or(|t| t.trim().is_empty()) {
+            return Err(format!("answers[{i}]: free-form question requires text"));
+        }
+        if a.selected.is_empty() && a.free_text.as_ref().is_none_or(|t| t.trim().is_empty()) {
+            return Err(format!(
+                "answers[{i}]: empty selection (pick an option or provide Other text)"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Parse tool arguments into question specs.
 ///
 /// Accepts:
@@ -66,6 +119,12 @@ pub fn parse_questions(args: &serde_json::Value) -> Result<Vec<QuestionSpec>, St
     if let Some(arr) = args.get("questions").and_then(|v| v.as_array()) {
         if arr.is_empty() {
             return Err("questions array must not be empty".into());
+        }
+        if arr.len() > MAX_QUESTIONS {
+            return Err(format!(
+                "at most {MAX_QUESTIONS} questions (got {})",
+                arr.len()
+            ));
         }
         let mut out = Vec::with_capacity(arr.len());
         for (i, item) in arr.iter().enumerate() {
@@ -156,7 +215,8 @@ fn parse_choices_or_options(item: &serde_json::Value) -> Result<Vec<QuestionOpti
             });
         }
         if out.is_empty() {
-            return Err("options must contain at least one entry".into());
+            // Models often emit `"options": []` for free-form; treat like omitted.
+            return Ok(Vec::new());
         }
         return Ok(out);
     }
@@ -193,7 +253,11 @@ pub fn format_question_result(questions: &[QuestionSpec], answers: &[QuestionAns
             out.push_str(&format!("### Question {}\n", i + 1));
         }
         out.push_str(&format!("Question: {}\n", q.prompt));
-        out.push_str(&format!("Answer: {}\n", a.summary()));
+        out.push_str(&format!("Answer: {}", a.summary()));
+        if a.auto_picked {
+            out.push_str("  (auto-picked; approval_mode=auto — not a user choice)");
+        }
+        out.push('\n');
         if i + 1 < questions.len() {
             out.push('\n');
         }
@@ -333,7 +397,7 @@ impl Tool for QuestionTool {
     }
 }
 
-fn stdin_questionnaire(questions: &[QuestionSpec]) -> Result<Vec<QuestionAnswer>, String> {
+pub fn stdin_questionnaire(questions: &[QuestionSpec]) -> Result<Vec<QuestionAnswer>, String> {
     let mut answers = Vec::with_capacity(questions.len());
     for (qi, q) in questions.iter().enumerate() {
         eprintln!();
@@ -351,6 +415,7 @@ fn stdin_questionnaire(questions: &[QuestionSpec]) -> Result<Vec<QuestionAnswer>
             answers.push(QuestionAnswer {
                 selected: vec![],
                 free_text: Some(line),
+                auto_picked: false,
             });
             continue;
         }
@@ -409,6 +474,7 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
         return QuestionAnswer {
             selected,
             free_text: free,
+            auto_picked: false,
         };
     }
 
@@ -417,6 +483,7 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
             return QuestionAnswer {
                 selected: vec![q.options[n - 1].label.clone()],
                 free_text: None,
+                auto_picked: false,
             };
         }
         if n == other_n {
@@ -426,6 +493,7 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
             return QuestionAnswer {
                 selected: vec![],
                 free_text: if t.is_empty() { None } else { Some(t) },
+                auto_picked: false,
             };
         }
     }
@@ -435,16 +503,26 @@ fn resolve_stdin_answer(q: &QuestionSpec, line: &str, other_n: usize) -> Questio
             return QuestionAnswer {
                 selected: vec![opt.label.clone()],
                 free_text: None,
+                auto_picked: false,
             };
         }
     }
     QuestionAnswer {
         selected: vec![],
         free_text: Some(line.to_string()),
+        auto_picked: false,
     }
 }
 
 fn read_line_stdin() -> Result<String, String> {
+    #[cfg(test)]
+    if let Some(line) = TEST_STDIN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pop_front()
+    {
+        return Ok(line);
+    }
     let mut line = String::new();
     io::stdin()
         .read_line(&mut line)
@@ -453,6 +531,7 @@ fn read_line_stdin() -> Result<String, String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -562,8 +641,8 @@ mod tests {
                 "questions[0]: missing question text",
             ),
             (
-                r#"{"questions":[{"question":"Pick","options":[]}] }"#,
-                "questions[0]: options must contain at least one entry",
+                r#"{"questions":[{"question":"Pick","options":[{"description":"none"}]}]}"#,
+                "questions[0]: options[0]: missing label",
             ),
             (
                 r#"{"questions":[{"question":"Pick","options":[{"description":"none"}]}]}"#,
@@ -588,14 +667,17 @@ mod tests {
             QuestionAnswer {
                 selected: vec!["SQLite".into()],
                 free_text: None,
+                auto_picked: false,
             },
             QuestionAnswer {
                 selected: vec!["Search".into(), "Export".into()],
                 free_text: Some("  Audit log  ".into()),
+                auto_picked: false,
             },
             QuestionAnswer {
                 selected: vec![],
                 free_text: Some("  ".into()),
+                auto_picked: false,
             },
         ];
 
@@ -620,6 +702,7 @@ mod tests {
             QuestionAnswer {
                 selected: vec!["Postgres".into()],
                 free_text: None,
+                auto_picked: false,
             }
         );
         assert_eq!(
@@ -627,6 +710,7 @@ mod tests {
             QuestionAnswer {
                 selected: vec!["SQLite".into()],
                 free_text: None,
+                auto_picked: false,
             }
         );
         assert_eq!(
@@ -634,6 +718,7 @@ mod tests {
             QuestionAnswer {
                 selected: vec![],
                 free_text: Some("custom".into()),
+                auto_picked: false,
             }
         );
         assert_eq!(
@@ -641,6 +726,7 @@ mod tests {
             QuestionAnswer {
                 selected: vec!["Search".into(), "Export".into()],
                 free_text: Some("extra".into()),
+                auto_picked: false,
             }
         );
         assert_eq!(
@@ -648,6 +734,7 @@ mod tests {
             QuestionAnswer {
                 selected: vec![],
                 free_text: Some("99".into()),
+                auto_picked: false,
             }
         );
     }
@@ -656,7 +743,9 @@ mod tests {
     async fn execute_reports_invalid_state_without_reading_stdin() {
         let result = QuestionTool::new()
             .execute(
-                fixture(r#"{"questions":[{"question":"Pick","options":[]}]}"#),
+                fixture(
+                    r#"{"questions":[{"question":"Pick","options":[{"description":"none"}]}]}"#,
+                ),
                 &ToolContext::unsandboxed("."),
             )
             .await;
@@ -665,7 +754,257 @@ mod tests {
         assert!(result.tool_call_id.is_empty());
         assert_eq!(
             result.content,
-            "Invalid question arguments: questions[0]: options must contain at least one entry"
+            "Invalid question arguments: questions[0]: options[0]: missing label"
         );
+    }
+
+    #[test]
+    fn empty_options_array_is_free_form() {
+        let q = parse_questions(&json!({
+            "questions": [{"question": "Notes?", "options": []}]
+        }))
+        .unwrap();
+        assert!(q[0].options.is_empty());
+    }
+
+    #[test]
+    fn parse_rejects_too_many_questions() {
+        let items: Vec<_> = (0..9)
+            .map(|i| json!({"question": format!("Q{i}"), "choices": ["a"]}))
+            .collect();
+        let err = parse_questions(&json!({"questions": items})).unwrap_err();
+        assert!(err.contains("at most 8"), "{err}");
+    }
+
+    #[test]
+    fn validate_answers_rejects_length_and_unknown_labels() {
+        let q = parse_questions(&json!({
+            "question": "Pick",
+            "choices": ["A", "B"]
+        }))
+        .unwrap();
+        assert!(validate_answers(&q, &[]).is_err());
+        assert!(
+            validate_answers(
+                &q,
+                &[QuestionAnswer {
+                    selected: vec!["Z".into()],
+                    free_text: None,
+                    auto_picked: false,
+                }]
+            )
+            .unwrap_err()
+            .contains("unknown option")
+        );
+        assert!(
+            validate_answers(
+                &q,
+                &[QuestionAnswer {
+                    selected: vec!["A".into()],
+                    free_text: None,
+                    auto_picked: false,
+                }]
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn format_stamps_auto_picked_answers() {
+        let q = parse_questions(&json!({"question": "Pick", "choices": ["A"]})).unwrap();
+        let a = [QuestionAnswer {
+            selected: vec!["A".into()],
+            free_text: None,
+            auto_picked: true,
+        }];
+        let body = format_question_result(&q, &a);
+        assert!(body.contains("auto-picked"), "{body}");
+        assert!(body.contains("approval_mode=auto"), "{body}");
+    }
+
+    static STDIN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn queue_stdin(lines: &[&str]) {
+        let mut q = TEST_STDIN.lock().unwrap_or_else(|e| e.into_inner());
+        q.clear();
+        for line in lines {
+            q.push_back((*line).to_string());
+        }
+    }
+
+    #[test]
+    fn default_and_metadata() {
+        let tool = QuestionTool;
+        assert_eq!(tool.name(), "question");
+        assert!(!tool.description().is_empty());
+    }
+
+    #[test]
+    fn validate_answers_covers_remaining_rules() {
+        let multi = parse_questions(&json!({
+            "question": "Pick many",
+            "choices": ["A", "B"],
+            "multi_select": true
+        }))
+        .unwrap();
+        assert!(
+            validate_answers(
+                &multi,
+                &[QuestionAnswer {
+                    selected: vec![],
+                    free_text: None,
+                    auto_picked: false,
+                }]
+            )
+            .unwrap_err()
+            .contains("at least one option")
+        );
+
+        let single = parse_questions(&json!({
+            "question": "Pick one",
+            "choices": ["A", "B"]
+        }))
+        .unwrap();
+        assert!(
+            validate_answers(
+                &single,
+                &[QuestionAnswer {
+                    selected: vec!["A".into(), "B".into()],
+                    free_text: None,
+                    auto_picked: false,
+                }]
+            )
+            .unwrap_err()
+            .contains("single-select")
+        );
+        assert!(
+            validate_answers(
+                &single,
+                &[QuestionAnswer {
+                    selected: vec![],
+                    free_text: None,
+                    auto_picked: false,
+                }]
+            )
+            .unwrap_err()
+            .contains("empty selection")
+        );
+
+        let free = parse_questions(&json!({"question": "Notes?"})).unwrap();
+        assert!(
+            validate_answers(
+                &free,
+                &[QuestionAnswer {
+                    selected: vec![],
+                    free_text: Some("  ".into()),
+                    auto_picked: false,
+                }]
+            )
+            .unwrap_err()
+            .contains("free-form")
+        );
+    }
+
+    #[test]
+    fn stdin_questionnaire_covers_free_form_and_options() {
+        let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let questions = parse_questions(&fixture(WAVE4_QUESTIONNAIRE)).unwrap();
+        queue_stdin(&["1", "1,2", "more notes"]);
+        let answers = stdin_questionnaire(&questions).unwrap();
+        assert_eq!(answers[0].selected, vec!["SQLite".to_string()]);
+        assert_eq!(
+            answers[1].selected,
+            vec!["Search".to_string(), "Export".to_string()]
+        );
+        assert_eq!(answers[2].free_text.as_deref(), Some("more notes"));
+
+        queue_stdin(&[""]);
+        let err = stdin_questionnaire(&questions[2..]).unwrap_err();
+        assert!(err.contains("empty input"), "{err}");
+
+        let labelled = parse_questions(&json!({
+            "question": "Pick",
+            "options": [{"label": "Yes", "description": "do it"}]
+        }))
+        .unwrap();
+        queue_stdin(&[""]);
+        let err = stdin_questionnaire(&labelled).unwrap_err();
+        assert!(err.contains("empty input"), "{err}");
+
+        queue_stdin(&["2", "typed other"]);
+        let other = stdin_questionnaire(&labelled).unwrap();
+        assert_eq!(other[0].free_text.as_deref(), Some("typed other"));
+
+        queue_stdin(&["2", ""]);
+        let empty_other = stdin_questionnaire(&labelled).unwrap();
+        assert!(empty_other[0].free_text.is_none());
+
+        queue_stdin(&["1 extra"]);
+        let multi = stdin_questionnaire(&questions[1..2]).unwrap();
+        assert!(
+            multi[0].selected.contains(&"Search".to_string()),
+            "{:?}",
+            multi[0]
+        );
+        assert_eq!(multi[0].free_text.as_deref(), Some("extra"));
+    }
+
+    #[test]
+    fn remaining_stdin_and_parse_arms() {
+        let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let q = parse_questions(&json!({
+            "questions": [{
+                "question": "Pick",
+                "options": ["", "A", {"label": "B", "description": "bee"}]
+            }]
+        }))
+        .unwrap();
+        assert_eq!(q[0].options.len(), 2);
+
+        let multi = parse_questions(&json!({
+            "question": "Many",
+            "choices": ["A", "B"],
+            "multi_select": true
+        }))
+        .unwrap();
+        queue_stdin(&["3", "typed-other"]);
+        let ans = stdin_questionnaire(&multi).unwrap();
+        assert_eq!(ans[0].free_text.as_deref(), Some("typed-other"));
+
+        queue_stdin(&["3", ""]);
+        let empty_other = stdin_questionnaire(&multi).unwrap();
+        assert!(
+            empty_other[0].free_text.is_none() || empty_other[0].selected.is_empty(),
+            "{:?}",
+            empty_other[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_reads_queued_stdin() {
+        let _g = STDIN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        queue_stdin(&["hello from stdin"]);
+        let result = QuestionTool::new()
+            .execute(
+                json!({"question": "Notes?"}),
+                &ToolContext::unsandboxed("."),
+            )
+            .await;
+        assert!(!result.is_error, "{}", result.content);
+        assert!(
+            result.content.contains("hello from stdin"),
+            "{}",
+            result.content
+        );
+
+        queue_stdin(&[""]);
+        let empty = QuestionTool::new()
+            .execute(
+                json!({"question": "Notes?"}),
+                &ToolContext::unsandboxed("."),
+            )
+            .await;
+        assert!(empty.is_error, "{}", empty.content);
+        assert!(empty.content.contains("empty input"), "{}", empty.content);
     }
 }

@@ -100,11 +100,13 @@ impl QuestionPrompter for AutoAnswerPrompter {
                         QuestionAnswer {
                             selected: vec![opt.label.clone()],
                             free_text: None,
+                            auto_picked: true,
                         }
                     } else {
                         QuestionAnswer {
                             selected: vec![],
                             free_text: Some("auto".into()),
+                            auto_picked: true,
                         }
                     }
                 })
@@ -139,6 +141,7 @@ impl QuestionPrompter for StdinQuestionPrompter {
                     answers.push(QuestionAnswer {
                         selected: vec![],
                         free_text: Some(line),
+                        auto_picked: false,
                     });
                     continue;
                 }
@@ -162,6 +165,7 @@ impl QuestionPrompter for StdinQuestionPrompter {
                         answers.push(QuestionAnswer {
                             selected: vec![q.options[n - 1].label.clone()],
                             free_text: None,
+                            auto_picked: false,
                         });
                         continue;
                     }
@@ -172,6 +176,7 @@ impl QuestionPrompter for StdinQuestionPrompter {
                         answers.push(QuestionAnswer {
                             selected: vec![],
                             free_text: if t.is_empty() { None } else { Some(t) },
+                            auto_picked: false,
                         });
                         continue;
                     }
@@ -179,6 +184,7 @@ impl QuestionPrompter for StdinQuestionPrompter {
                 answers.push(QuestionAnswer {
                     selected: vec![],
                     free_text: Some(line),
+                    auto_picked: false,
                 });
             }
             Ok(answers)

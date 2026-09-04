@@ -2463,6 +2463,7 @@ fn questionnaire_complete_and_cancel() {
         Some(vec![whycodes_tools::question::QuestionAnswer {
             selected: vec!["Yes".into()],
             free_text: None,
+            auto_picked: false,
         }]),
     );
     assert!(rx.blocking_recv().unwrap().is_ok());
@@ -2708,6 +2709,7 @@ fn flush_pending_question_replies_completes_oneshot() {
     app.pending_question_answers = Some(vec![whycodes_tools::question::QuestionAnswer {
         selected: vec!["Yes".into()],
         free_text: None,
+        auto_picked: false,
     }]);
     flush_pending_question_replies(&mut app, &mut q, &p);
     assert!(q.is_empty());

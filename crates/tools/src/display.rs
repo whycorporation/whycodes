@@ -190,4 +190,9 @@ mod tests {
         assert!(!out.is_error);
         assert_eq!(out.content, "");
     }
+
+    #[tokio::test]
+    async fn default_constructs() {
+        assert_eq!(DisplayTool.name(), "display");
+    }
 }

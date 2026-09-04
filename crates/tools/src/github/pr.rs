@@ -334,6 +334,7 @@ impl GitHubPrTool {
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -435,5 +436,212 @@ mod tests {
             result.content,
             "Invalid merge method 'fast-forward'. Valid methods: merge, squash, rebase."
         );
+    }
+
+    struct ApiBaseGuard {
+        prev: Option<std::ffi::OsString>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl ApiBaseGuard {
+        fn set(base: &str) -> Self {
+            let lock = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+            unsafe { std::env::set_var("WHYCODES_GITHUB_API_BASE", base) };
+            Self { prev, _lock: lock }
+        }
+    }
+
+    impl Drop for ApiBaseGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.prev {
+                    Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
+                    None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
+                }
+            }
+        }
+    }
+
+    fn spawn_server(status: &str, body: &str, n: usize) -> std::net::SocketAddr {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let payload = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        std::thread::spawn(move || {
+            for _ in 0..n {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(payload.as_bytes());
+                }
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn execute_create_list_view_merge_on_loopback() {
+        let addr = spawn_server("200 OK", r#"{"number":7,"title":"ok"}"#, 6);
+        let base = format!("http://{addr}");
+        let tool = GitHubPrTool;
+        assert!(!tool.description().is_empty());
+        let ctx = ToolContext::new(".");
+        let _g = ApiBaseGuard::set(&base);
+        let create = tool
+            .execute(
+                json!({
+                    "action": "create",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "title": "PR",
+                    "head": "feat",
+                    "base": "main",
+                    "body": "desc"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!create.is_error, "{}", create.content);
+        assert!(create.content.contains("Status:"), "{}", create.content);
+
+        let list = tool
+            .execute(
+                json!({
+                    "action": "list",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "state": "closed"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!list.is_error, "{}", list.content);
+
+        let view = tool
+            .execute(
+                json!({
+                    "action": "view",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "pr_number": 7
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!view.is_error, "{}", view.content);
+
+        let merge = tool
+            .execute(
+                json!({
+                    "action": "merge",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "pr_number": 7,
+                    "method": "squash"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!merge.is_error, "{}", merge.content);
+    }
+
+    #[tokio::test]
+    async fn execute_missing_token_and_non_json_error() {
+        {
+            let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            let prev = std::env::var_os("GITHUB_TOKEN");
+            unsafe { std::env::remove_var("GITHUB_TOKEN") };
+            let missing = GitHubPrTool::new()
+                .execute(
+                    json!({"action": "list", "owner": "o", "repo": "r"}),
+                    &ToolContext::new("."),
+                )
+                .await;
+            assert!(missing.is_error, "{}", missing.content);
+            unsafe {
+                match prev {
+                    Some(v) => std::env::set_var("GITHUB_TOKEN", v),
+                    None => std::env::remove_var("GITHUB_TOKEN"),
+                }
+            }
+        }
+
+        let addr = spawn_server("500 Internal Server Error", "not-json", 1);
+        let base = format!("http://{addr}");
+        let _g2 = ApiBaseGuard::set(&base);
+        let err = GitHubPrTool::new()
+            .execute(
+                json!({
+                    "action": "list",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t"
+                }),
+                &ToolContext::new("."),
+            )
+            .await;
+        assert!(err.is_error, "{}", err.content);
+        assert!(err.content.contains("not-json"), "{}", err.content);
+        drop(_g2);
+
+        let mut ctx = ToolContext::new(".");
+        ctx.network = whycodes_core::NetworkPolicy {
+            allowlist: vec!["example.com".into()],
+            denylist: vec![],
+        };
+        let blocked = GitHubPrTool::new()
+            .execute(
+                json!({"action": "list", "owner": "o", "repo": "r", "token": "t"}),
+                &ctx,
+            )
+            .await;
+        assert!(blocked.is_error, "{}", blocked.content);
+    }
+
+    #[tokio::test]
+    async fn request_errors_and_non_json_success() {
+        let addr = spawn_server("200 OK", "plain-text", 4);
+        let base = format!("http://{addr}");
+        let _g = ApiBaseGuard::set(&base);
+        let tool = GitHubPrTool::new();
+        let ctx = ToolContext::new(".");
+        let create = tool
+            .execute(
+                json!({
+                    "action": "create",
+                    "owner": "o",
+                    "repo": "r",
+                    "token": "t",
+                    "title": "PR",
+                    "head": "feat",
+                    "base": "main"
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!create.is_error, "{}", create.content);
+        assert!(create.content.contains("plain-text"), "{}", create.content);
+
+        drop(_g);
+        unsafe { std::env::set_var("WHYCODES_GITHUB_API_BASE", "http://127.0.0.1:1") };
+        let _g2 = ApiBaseGuard::set("http://127.0.0.1:1");
+        for action in [
+            json!({"action":"create","owner":"o","repo":"r","token":"t","title":"t","head":"h","base":"b"}),
+            json!({"action":"list","owner":"o","repo":"r","token":"t"}),
+            json!({"action":"view","owner":"o","repo":"r","token":"t","pr_number":1}),
+            json!({"action":"merge","owner":"o","repo":"r","token":"t","pr_number":1}),
+        ] {
+            let err = tool.execute(action, &ctx).await;
+            assert!(err.is_error, "{}", err.content);
+        }
     }
 }

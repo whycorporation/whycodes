@@ -433,4 +433,147 @@ mod tests {
             .await;
         assert!(out.is_error, "{}", out.content);
     }
+
+    #[tokio::test]
+    async fn remaining_edit_branches() {
+        let t = EditTool;
+        assert_eq!(t.name(), "edit");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "foo bar\nfoo bar\n").unwrap();
+        let abs = dir.path().join("a.rs");
+        let amb = t
+            .execute(
+                serde_json::json!({
+                    "path": abs.to_string_lossy(),
+                    "old_string": "foo bar",
+                    "new_string": "x"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(amb.is_error, "{}", amb.content);
+        assert!(amb.content.contains("occurrences"), "{}", amb.content);
+
+        let all = t
+            .execute(
+                serde_json::json!({
+                    "path": "a.rs",
+                    "old_string": "foo bar",
+                    "new_string": "X",
+                    "replace_all": true
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(!all.is_error, "{}", all.content);
+
+        let miss = t
+            .execute(
+                serde_json::json!({
+                    "path": "gone.rs",
+                    "old_string": "a",
+                    "new_string": "b"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(miss.is_error);
+        assert!(exact_spans("abc", "").is_empty());
+        assert!(!left_boundary_ok("x", 0, ""));
+        assert!(!right_boundary_ok("x", 0, ""));
+        assert!(left_boundary_ok(" x", 1, "x"));
+        assert!(right_boundary_ok("x ", 1, "x"));
+        let spans = ws_flexible_spans("fooX bar", "foo bar");
+        assert!(spans.is_empty() || spans.len() == 1);
+    }
+
+    #[tokio::test]
+    async fn claim_conflict_and_helper_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("claimed.rs");
+        std::fs::write(&path, "fn run() {}\n").unwrap();
+        let claims = whycodes_core::file_claims::FileClaimRegistry::new();
+        assert!(matches!(
+            claims.try_claim("other", "other-agent", &path),
+            whycodes_core::file_claims::ClaimResult::Acquired
+        ));
+        let mut c = ctx(dir.path());
+        c.file_claims = Some(claims);
+        c.agent_id = Some("me".into());
+        c.agent_label = Some("me-agent".into());
+        let blocked = EditTool::new()
+            .execute(
+                serde_json::json!({
+                    "path": "claimed.rs",
+                    "old_string": "fn run",
+                    "new_string": "fn go"
+                }),
+                &c,
+            )
+            .await;
+        assert!(blocked.is_error, "{}", blocked.content);
+        assert!(
+            blocked.content.contains("File conflict"),
+            "{}",
+            blocked.content
+        );
+
+        let as_dir = dir.path().join("adir");
+        std::fs::create_dir(&as_dir).unwrap();
+        let write_err = EditTool::new()
+            .execute(
+                serde_json::json!({
+                    "path": as_dir.to_string_lossy(),
+                    "old_string": "x",
+                    "new_string": "y"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(write_err.is_error, "{}", write_err.content);
+
+        assert!(ws_flexible_spans("foo bar", "foo bar").len() == 1);
+        assert!(ws_flexible_spans("foobar x", "foo bar").is_empty());
+        assert!(left_boundary_ok("foo", 0, "foo"));
+        assert!(right_boundary_ok("foo", 3, "foo"));
+        assert!(!left_boundary_ok("xfoo", 1, "foo"));
+        assert!(!right_boundary_ok("foox", 3, "foo"));
+        assert!(skip_ws("  a", 0) > 0);
+        assert_eq!(skip_ws("a", 0), 0);
+        assert_eq!(skip_ws("", 0), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_error_on_readonly_parent() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("rodir");
+        std::fs::create_dir(&parent).unwrap();
+        std::fs::write(parent.join("ro.rs"), "fn run() {}\n").unwrap();
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o555);
+        std::fs::set_permissions(&parent, perms).unwrap();
+        let out = EditTool::new()
+            .execute(
+                serde_json::json!({
+                    "path": parent.join("ro.rs").to_string_lossy(),
+                    "old_string": "fn run() {}",
+                    "new_string": "fn go() {}"
+                }),
+                &ctx(dir.path()),
+            )
+            .await;
+        let mut perms = std::fs::metadata(&parent).unwrap().permissions();
+        perms.set_mode(0o755);
+        let _ = std::fs::set_permissions(&parent, perms);
+        assert!(out.is_error, "{}", out.content);
+        assert!(
+            out.content.contains("Error writing file"),
+            "{}",
+            out.content
+        );
+    }
 }

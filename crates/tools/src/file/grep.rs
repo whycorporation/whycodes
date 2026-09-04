@@ -641,4 +641,96 @@ mod tests {
         assert!(!miss.is_error, "{miss:?}");
         assert!(miss.content.contains("No matches found"), "{miss:?}");
     }
+
+    #[tokio::test]
+    async fn remaining_execute_and_search_edges() {
+        let t = GrepTool;
+        assert_eq!(t.name(), "grep");
+        assert!(!t.description().is_empty());
+        let _ = t.parameters();
+        let dir = TempDir::new().unwrap();
+        write(&dir, "a.txt", "hello\n");
+        let ctx = ToolContext::new(dir.path().to_str().unwrap());
+        let hit = t
+            .execute(
+                serde_json::json!({
+                    "pattern": "hello",
+                    "path": "a.txt",
+                    "case_insensitive": true,
+                    "context": 9,
+                    "max_results": 0
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!hit.is_error, "{}", hit.content);
+
+        let bad = t
+            .execute(serde_json::json!({"pattern": "([", "path": "a.txt"}), &ctx)
+            .await;
+        assert!(bad.is_error);
+
+        let out =
+            GrepTool::search("hello", dir.path(), Some("*.txt"), false, 0, 50, "/", None).unwrap();
+        assert!(out.contains("a.txt"));
+        assert_eq!(utf8_line(b"hi\r\n"), "hi");
+    }
+
+    #[tokio::test]
+    async fn search_uses_index_hidden_glob_and_truncates() {
+        use std::time::Duration;
+        use whycodes_index::IndexOptions;
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
+        write(&dir, "src/a.rs", "match me\ncontext\n");
+        write(&dir, ".env", "SECRET=match me\n");
+        write(&dir, "src/b.rs", "match me again\n");
+        write(&dir, "src/c.rs", "match me too\n");
+        let idx = whycodes_index::WorkspaceIndex::start_with(
+            vec![dir.path().to_path_buf()],
+            IndexOptions {
+                watch: false,
+                threads: 1,
+                ..Default::default()
+            },
+        );
+        assert!(idx.wait_ready(Duration::from_secs(10)));
+        let mut ctx = ToolContext::new(dir.path().to_str().unwrap());
+        ctx.file_index = Some(idx);
+
+        let hit = GrepTool::new()
+            .execute(
+                serde_json::json!({"pattern": "match me", "include": "*.rs", "max_results": 1}),
+                &ctx,
+            )
+            .await;
+        assert!(!hit.is_error, "{}", hit.content);
+        assert!(hit.content.contains("[truncated"), "{}", hit.content);
+
+        let hidden = GrepTool::new()
+            .execute(
+                serde_json::json!({"pattern": "SECRET", "include": ".env"}),
+                &ctx,
+            )
+            .await;
+        assert!(!hidden.is_error, "{}", hidden.content);
+        assert!(
+            hidden.content.contains(".env") || hidden.content.contains("SECRET"),
+            "{}",
+            hidden.content
+        );
+
+        let with_ctx = GrepTool::new()
+            .execute(
+                serde_json::json!({
+                    "pattern": "match me",
+                    "path": "src/a.rs",
+                    "context": 1,
+                    "max_results": 1
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!with_ctx.is_error, "{}", with_ctx.content);
+    }
 }

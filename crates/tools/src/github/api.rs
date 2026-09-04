@@ -38,7 +38,17 @@ pub fn github_headers(token: &str) -> Result<HeaderMap, String> {
 
 /// Build a full GitHub API URL: https://api.github.com/{path}
 pub fn api_url(path: &str) -> String {
-    format!("{GITHUB_API_BASE}/{path}")
+    format!("{}/{path}", github_api_base())
+}
+
+fn github_api_base() -> String {
+    #[cfg(test)]
+    if let Ok(base) = env::var("WHYCODES_GITHUB_API_BASE")
+        && !base.is_empty()
+    {
+        return base;
+    }
+    GITHUB_API_BASE.to_string()
 }
 
 /// Perform a GitHub REST API request and return the body text.
@@ -92,6 +102,7 @@ pub async fn make_request_with_policy(
 }
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
 
@@ -129,6 +140,9 @@ mod tests {
 
     #[tokio::test]
     async fn policy_rejection_happens_before_network_io() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+        unsafe { std::env::remove_var("WHYCODES_GITHUB_API_BASE") };
         let policy = NetworkPolicy {
             allowlist: vec!["example.com".to_string()],
             denylist: Vec::new(),
@@ -144,6 +158,88 @@ mod tests {
         .await
         .expect_err("GitHub should be blocked by policy");
 
-        assert!(error.contains("Network policy blocked host `api.github.com`"));
+        assert!(error.contains("Network policy blocked host"), "{error}");
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
+                None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
+            }
+        }
+    }
+
+    #[test]
+    fn resolve_token_falls_back_to_env_and_override_base() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev_token = std::env::var_os("GITHUB_TOKEN");
+        let prev_base = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+        unsafe {
+            std::env::set_var("GITHUB_TOKEN", "from-env");
+            std::env::set_var("WHYCODES_GITHUB_API_BASE", "http://127.0.0.1:9");
+        }
+        assert_eq!(resolve_token(None), Some("from-env".into()));
+        assert_eq!(resolve_token(Some("")), Some("from-env".into()));
+        assert_eq!(api_url("repos/x/y"), "http://127.0.0.1:9/repos/x/y");
+        unsafe {
+            match prev_token {
+                Some(v) => std::env::set_var("GITHUB_TOKEN", v),
+                None => std::env::remove_var("GITHUB_TOKEN"),
+            }
+            match prev_base {
+                Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
+                None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn make_request_hits_loopback_with_and_without_body() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            for _ in 0..2 {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf);
+                    let body = r#"{"ok":true}"#;
+                    let resp = format!(
+                        "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes());
+                }
+            }
+        });
+        let prev = std::env::var_os("WHYCODES_GITHUB_API_BASE");
+        unsafe {
+            std::env::set_var("WHYCODES_GITHUB_API_BASE", format!("http://{addr}"));
+        }
+        let client = reqwest::Client::new();
+        let (status, text) =
+            make_request(&client, reqwest::Method::GET, "repos/o/r", "token", None)
+                .await
+                .expect("get");
+        assert!(status.is_success());
+        assert!(text.contains("ok"));
+        let (status, _) = make_request(
+            &client,
+            reqwest::Method::POST,
+            "repos/o/r",
+            "token",
+            Some(serde_json::json!({"title": "t"})),
+        )
+        .await
+        .expect("post");
+        assert_eq!(status.as_u16(), 201);
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("WHYCODES_GITHUB_API_BASE", v),
+                None => std::env::remove_var("WHYCODES_GITHUB_API_BASE"),
+            }
+        }
     }
 }

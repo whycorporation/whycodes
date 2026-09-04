@@ -130,4 +130,16 @@ mod tests {
             CORE_TOOL_NAMES.len()
         );
     }
+
+    #[test]
+    fn parse_and_as_str_cover_aliases() {
+        assert_eq!(ToolProfile::parse("full"), ToolProfile::Full);
+        assert_eq!(ToolProfile::parse("ALL"), ToolProfile::Full);
+        assert_eq!(ToolProfile::parse("core"), ToolProfile::Core);
+        assert_eq!(ToolProfile::parse(" nope "), ToolProfile::Core);
+        assert_eq!(ToolProfile::Core.as_str(), "core");
+        assert_eq!(ToolProfile::Full.as_str(), "full");
+        assert_eq!(ToolProfile::core_names(), CORE_TOOL_NAMES);
+        assert_eq!(ToolProfile::default(), ToolProfile::Core);
+    }
 }

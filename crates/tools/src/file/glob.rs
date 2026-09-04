@@ -421,4 +421,39 @@ mod tests {
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains(".env"), "{}", out.content);
     }
+
+    #[tokio::test]
+    async fn remaining_glob_edges() {
+        let t = GlobTool;
+        assert_eq!(t.name(), "glob");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.rs"), "x").unwrap();
+        let abs_pat = dir.path().join("*.rs").to_string_lossy().into_owned();
+        let out = t
+            .execute(
+                serde_json::json!({"pattern": abs_pat, "path": dir.path().to_string_lossy()}),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+    }
+
+    #[tokio::test]
+    async fn fallback_glob_skips_heavy_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("target/debug")).unwrap();
+        std::fs::write(dir.path().join("target/debug/foo.rs"), "x").unwrap();
+        let abs_pat = dir
+            .path()
+            .join("target/**/*.rs")
+            .to_string_lossy()
+            .into_owned();
+        let out = GlobTool::new()
+            .execute(
+                serde_json::json!({"pattern": abs_pat, "path": dir.path().to_string_lossy()}),
+                &ctx(dir.path()),
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+    }
 }
