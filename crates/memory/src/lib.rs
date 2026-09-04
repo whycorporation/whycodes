@@ -31,9 +31,22 @@ pub use service::{
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
 
 #[cfg(test)]
+pub(crate) static TEST_PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn lib_module_loads() {
-        assert!(!module_path!().is_empty());
+    fn public_helpers_are_callable() {
+        let v = embed("cargo test memory", DEFAULT_DIM);
+        assert!((cosine(&v, &v) - 1.0).abs() < 1e-5);
+        assert_eq!(decode_blob(&encode_blob(&[1.0, 2.0])).len(), 2);
+        assert!(!project_key(std::path::Path::new("/tmp")).is_empty());
+        assert!(llm_retain_prompt("u", "a").contains("USER:\nu"));
+        assert!(settings_from_flags(true).enabled);
+        assert!(!settings_from_flags(false).enabled);
+        assert_eq!(EmbedBackend::Hash.as_str(), "hash");
+        assert_eq!(MemoryScope::User.as_str(), "user");
     }
 }

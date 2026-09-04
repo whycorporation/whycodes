@@ -36,5 +36,21 @@ mod tests {
         let io = MemoryError::from(std::io::Error::other("disk"));
         assert!(io.to_string().contains("disk"));
         assert_eq!(MemoryError::wrap("onnx load").to_string(), "onnx load");
+        let json = MemoryError::from(serde_json::from_str::<i32>("nope").unwrap_err());
+        assert!(!json.to_string().is_empty());
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("whycodes.db")).unwrap();
+        let err = match crate::MemoryService::open(
+            dir.path(),
+            dir.path(),
+            crate::MemorySettings::default(),
+        )
+        .unwrap()
+        .open_db()
+        {
+            Err(err) => err,
+            Ok(_) => panic!("expected sqlite open to fail on a directory"),
+        };
+        assert!(matches!(err, MemoryError::Storage(_)), "{err}");
     }
 }

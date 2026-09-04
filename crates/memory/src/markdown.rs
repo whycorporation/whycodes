@@ -110,4 +110,33 @@ mod tests {
         assert!(!body.contains("prefer pnpm"));
         assert!(body.contains("use rustfmt"));
     }
+
+    #[test]
+    fn cap_stops_at_byte_limit_and_load_missing() {
+        let capped = cap_content("aaaa\nbbbb\ncccc", 10, 6);
+        assert!(capped.len() <= 6);
+        let dir = tempdir().unwrap();
+        assert!(load_capped(&dir.path().join("missing.md"), 10, 100).is_empty());
+    }
+
+    #[test]
+    fn append_creates_parent_and_clear_missing_or_existing() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("a").join("b").join("MEMORY.md");
+        append_entry(&nested, "id1", "remember nested").unwrap();
+        assert!(nested.exists());
+        assert!(!remove_entry(&nested, "missing").unwrap());
+        assert!(!remove_entry(&dir.path().join("nope.md"), "id1").unwrap());
+        clear_file(&nested).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&nested).unwrap(),
+            "# WhyCodes auto memory\n\n"
+        );
+        clear_file(&dir.path().join("absent.md")).unwrap();
+        // Removing the last fact still rewrites a trailing newline.
+        let last = dir.path().join("last.md");
+        std::fs::write(&last, "- [2026-01-01] only (id:zzz)").unwrap();
+        assert!(remove_entry(&last, "zzz").unwrap());
+        assert_eq!(std::fs::read_to_string(&last).unwrap(), "");
+    }
 }

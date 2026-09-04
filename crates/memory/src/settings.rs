@@ -165,8 +165,44 @@ fn sanitize_bank(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn settings_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[test]
+    fn scope_and_backend_parse_and_display() {
+        assert_eq!(MemoryScope::parse("project"), MemoryScope::Project);
+        assert_eq!(MemoryScope::parse("REPO"), MemoryScope::Project);
+        assert_eq!(MemoryScope::parse("local"), MemoryScope::Project);
+        assert_eq!(MemoryScope::parse("user"), MemoryScope::User);
+        assert_eq!(MemoryScope::User.as_str(), "user");
+        assert_eq!(MemoryScope::Project.as_str(), "project");
+
+        assert_eq!(EmbedBackend::parse("onnx"), EmbedBackend::Onnx);
+        assert_eq!(EmbedBackend::parse("MiniLM"), EmbedBackend::Onnx);
+        assert_eq!(EmbedBackend::parse("neural"), EmbedBackend::Onnx);
+        assert_eq!(EmbedBackend::parse("hash"), EmbedBackend::Hash);
+        assert_eq!(EmbedBackend::Hash.as_str(), "hash");
+        assert_eq!(EmbedBackend::Onnx.as_str(), "onnx");
+    }
+
+    #[test]
+    fn bank_key_sanitizes_agent_and_skips_empty() {
+        let with_agent = MemorySettings {
+            agent_bank: Some("explore/bot".into()),
+            ..Default::default()
+        };
+        assert_eq!(with_agent.bank_key("proj"), "proj::explore_bot");
+        let empty = MemorySettings {
+            agent_bank: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(empty.bank_key("proj"), "proj");
+        assert_eq!(MemorySettings::default().recall_char_budget(), 3200);
+        assert!(!MemorySettings::disabled().enabled);
+        assert_eq!(sanitize_bank("a/b c"), "a_b_c");
     }
 }

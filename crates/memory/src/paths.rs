@@ -59,8 +59,31 @@ fn sanitize_component(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::settings::MemoryScope;
+    use std::path::Path;
+
     #[test]
     fn paths_module_loads() {
         assert!(!module_path!().is_empty());
+    }
+
+    #[test]
+    fn user_and_project_dirs_sanitize_agent_bank() {
+        let data = Path::new("/tmp/data");
+        let project = Path::new("/tmp/proj");
+        let user = memory_dir(data, project, MemoryScope::User, None);
+        assert!(user.iter().any(|c| c == "memory"));
+        let agent = memory_dir(data, project, MemoryScope::User, Some("bot/name"));
+        assert!(agent.ends_with("bot_name"));
+        let empty_bank = memory_dir(data, project, MemoryScope::Project, Some(""));
+        assert!(empty_bank.ends_with("memory"));
+        assert_eq!(sanitize_component("a b/c"), "a_b_c");
+        let md = memory_md(data, project, MemoryScope::Project, Some("explore"));
+        assert!(md.ends_with("MEMORY.md"));
+        let dir = tempfile::tempdir().unwrap();
+        let created =
+            ensure_memory_dir(dir.path(), dir.path(), MemoryScope::User, Some("bank-1")).unwrap();
+        assert!(created.exists());
     }
 }

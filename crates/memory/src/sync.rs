@@ -119,4 +119,25 @@ mod tests {
         let (_dir, svc) = open_svc();
         assert!(svc.import_json("not-json").is_err());
     }
+
+    #[test]
+    fn import_skips_when_remember_fails_non_duplicate() {
+        let (_dir, svc) = open_svc();
+        let json = serde_json::to_string(&MemoryExport {
+            version: 1,
+            project_key: "k".into(),
+            bank_key: "k".into(),
+            exported_at: "now".into(),
+            entries: vec![MemoryExportEntry {
+                id: "1".into(),
+                text: "   ".into(),
+                created_at: "now".into(),
+                source_session: None,
+            }],
+        })
+        .unwrap();
+        let (added, skipped) = svc.import_json(&json).unwrap();
+        assert_eq!(added, 0);
+        assert_eq!(skipped, 1);
+    }
 }

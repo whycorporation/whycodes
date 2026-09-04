@@ -145,4 +145,23 @@ mod tests {
         let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         assert!((norm - 1.0).abs() < 1e-4, "norm={norm}");
     }
+
+    #[test]
+    fn embed_skips_whitespace_trigrams_and_tiny_inputs() {
+        let spaced = embed("a   b", 16);
+        assert_eq!(spaced.len(), 16);
+        let tiny = embed("x", 4);
+        assert_eq!(tiny.len(), 8);
+        let empty = embed("", DEFAULT_DIM);
+        let norm: f32 = empty.iter().map(|x| x * x).sum::<f32>().sqrt();
+        assert!(norm < 1e-6);
+    }
+
+    #[test]
+    fn cosine_and_decode_reject_invalid_inputs() {
+        assert_eq!(cosine(&[], &[1.0]), 0.0);
+        assert_eq!(cosine(&[1.0], &[1.0, 0.0]), 0.0);
+        assert!(decode_blob(&[0, 1, 2]).is_empty());
+        assert_eq!(decode_blob(&[]).len(), 0);
+    }
 }

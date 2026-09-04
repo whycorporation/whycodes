@@ -115,4 +115,61 @@ mod tests {
         assert!(ku.is_char_boundary(ku.len()));
         assert!(ku.len() < uni.len());
     }
+
+    #[test]
+    fn git_toplevel_none_when_not_a_repo() {
+        let _guard = crate::TEST_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        assert!(git_toplevel(dir.path()).is_none());
+        let root = project_root(dir.path());
+        assert!(root.exists() || root == dir.path());
+        let key = project_key(dir.path());
+        assert!(!key.is_empty());
+    }
+
+    #[test]
+    fn git_toplevel_reads_show_toplevel() {
+        let _guard = crate::TEST_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let top = git_toplevel(dir.path()).expect("git repo should have toplevel");
+        assert!(
+            top.ends_with(dir.path().file_name().unwrap())
+                || top == dir.path().canonicalize().unwrap()
+        );
+        let missing = dir.path().join("no-such-dir");
+        let self_path = canonicalize_or_self(&missing);
+        assert_eq!(self_path, missing);
+    }
+
+    #[test]
+    fn git_toplevel_empty_stdout_and_nonzero_exit() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = crate::TEST_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+        let git = dir.path().join("git");
+        std::fs::write(&git, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let prev = std::env::var_os("PATH");
+        unsafe { std::env::set_var("PATH", dir.path()) };
+        let cwd = tempfile::tempdir().unwrap();
+        assert!(git_toplevel(cwd.path()).is_none());
+        std::fs::write(&git, "#!/bin/sh\nexit 1\n").unwrap();
+        assert!(git_toplevel(cwd.path()).is_none());
+        match prev {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+    }
 }

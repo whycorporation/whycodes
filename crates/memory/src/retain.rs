@@ -160,4 +160,72 @@ mod tests {
         let facts = parse_llm_facts(raw);
         assert_eq!(facts.len(), 2);
     }
+
+    #[test]
+    fn covers_noise_corrections_prefixes_and_prompt() {
+        assert!(extract_heuristic("```remember this code fence", None).is_empty());
+        assert!(extract_heuristic("# heading is not a fact", None).is_empty());
+        assert!(extract_heuristic("| table row is skipped", None).is_empty());
+
+        let corrections = extract_heuristic(
+            "actually we ship from main only now\nno, do not use npm here\nno — prefer cargo test\nplease do not use left-pad ever",
+            None,
+        );
+        assert!(corrections.iter().any(|f| f.contains("actually")));
+        assert!(corrections.iter().any(|f| f.contains("npm")));
+        assert!(corrections.iter().any(|f| f.contains("prefer cargo")));
+        assert!(corrections.iter().any(|f| f.contains("left-pad")));
+        let not_use = extract_heuristic("this is not the use case we want going forward", None);
+        assert!(not_use.iter().any(|f| f.contains("not the use")));
+
+        let from_assistant = extract_heuristic(
+            "thanks",
+            Some("Remember that we use pnpm in this project for installs."),
+        );
+        assert!(
+            from_assistant
+                .iter()
+                .any(|f| f.to_lowercase().contains("pnpm"))
+        );
+
+        assert!(
+            extract_heuristic("always go left\nand also this second line", None)
+                .iter()
+                .any(|f| f.contains("always go left"))
+        );
+        assert_eq!(
+            extract_heuristic("never commit secrets to git.", None)[0],
+            "never commit secrets to git."
+        );
+        assert_eq!(
+            extract_heuristic("prefer rustfmt over manual wrapping.", None)[0],
+            "prefer rustfmt over manual wrapping."
+        );
+        let remembered = extract_heuristic("remember we use conventional commits here", None);
+        assert_eq!(remembered.len(), 1);
+        assert!(remembered[0].to_lowercase().contains("conventional"));
+
+        let only_message = extract_heuristic("remember something unique here!!", None);
+        assert_eq!(only_message.len(), 1);
+        assert!(only_message[0].to_lowercase().contains("unique"));
+        let hey = extract_heuristic("hey always use local memory tests here", None);
+        assert!(hey.iter().any(|f| f.starts_with("always use local")));
+
+        let stripped = extract_heuristic("Remember: always run cargo test locally first", None);
+        assert!(stripped.iter().any(|f| f.starts_with("always run cargo")));
+        let long = format!("always {}", "x".repeat(300));
+        let capped = extract_heuristic(&long, None);
+        assert_eq!(capped[0].chars().count(), 280);
+        assert!(capped[0].ends_with("..."));
+
+        let prompt = llm_retain_prompt("user note", "assistant note");
+        assert!(prompt.contains("USER:\nuser note"));
+        assert!(prompt.contains("ASSISTANT:\nassistant note"));
+    }
+
+    #[test]
+    fn parse_llm_skips_fences_and_short_lines() {
+        let facts = parse_llm_facts("```\n* remember that cargo fmt is required\nshort\n");
+        assert_eq!(facts, vec!["cargo fmt is required"]);
+    }
 }

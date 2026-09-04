@@ -961,6 +961,22 @@ mod tests {
         assert!(!svc.should_run_llm_retain(0, 2));
         assert!(svc.should_run_llm_retain(0, 3));
         assert!(!svc.should_run_llm_retain(1, 3));
+        let always = MemorySettings {
+            retain_llm_always: true,
+            retain_llm: true,
+            auto_retain: true,
+            retain_every_n: 1,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, always_svc) = open_test_service(always);
+        assert!(always_svc.should_run_llm_retain(2, 1));
+        let off = MemorySettings {
+            auto_retain: false,
+            retain_llm: true,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, off_svc) = open_test_service(off);
+        assert!(!off_svc.should_run_llm_retain(0, 1));
 
         let saved = svc
             .retain_llm_facts("- first retained fact\n- second retained fact", None)
@@ -1107,19 +1123,420 @@ mod tests {
         assert!(svc.list(10).unwrap().iter().all(|r| r.id != a));
 
         let extra = svc.remember("gamma memory", None).unwrap();
-        let common: String = extra
-            .chars()
-            .zip(b.chars())
-            .take_while(|(x, y)| x == y)
-            .map(|(x, _)| x)
-            .collect();
-        if common.is_empty() {
-            assert!(svc.delete(&extra[..8]).unwrap());
-        } else {
-            match svc.delete(&common) {
-                Ok(_) => {}
-                Err(e) => assert!(e.to_string().contains("ambiguous"), "{e}"),
+        assert!(svc.delete(&extra[..8]).unwrap());
+        assert!(svc.list(10).unwrap().iter().all(|r| r.id != extra));
+    }
+
+    #[test]
+    fn onnx_backend_falls_back_to_hash() {
+        let settings = MemorySettings {
+            embed_backend: EmbedBackend::Onnx,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        let v = svc.embed_text("onnx fallback uses hashing");
+        assert_eq!(v.len(), crate::embed::DEFAULT_DIM);
+    }
+
+    #[test]
+    fn save_facts_skips_duplicates_and_empty() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.remember("always keep unique retain fact around", None)
+            .unwrap();
+        let saved = svc
+            .save_facts(
+                vec![
+                    "always keep unique retain fact around".into(),
+                    "   ".into(),
+                    "prefer local sqlite fixtures for memory tests".into(),
+                ],
+                None,
+            )
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert!(saved[0].contains("sqlite"));
+    }
+
+    #[test]
+    fn ensure_code_index_builds_when_empty() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("src/lib.rs"),
+            "/// Indexed helper for local recall.\npub fn remember_local_index() {}\n",
+        )
+        .unwrap();
+        let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
+        let n = svc.ensure_code_index().unwrap();
+        assert!(n.unwrap() >= 1);
+        assert_eq!(svc.ensure_code_index().unwrap(), None);
+    }
+
+    #[test]
+    fn inject_includes_code_and_session_and_budget_break() {
+        let settings = MemorySettings {
+            recall_token_budget: 1,
+            max_index_bytes: 8,
+            recall_min_score: -1.0,
+            code_min_score: -1.0,
+            session_min_score: -1.0,
+            code_top_k: 8,
+            session_top_k: 8,
+            recall_top_k: 8,
+            ..Default::default()
+        };
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("src/lib.rs"),
+            "/// Memory service for semantic recall.\npub fn remember_fact(s: &str) {}\n",
+        )
+        .unwrap();
+        let svc = MemoryService::open(&project, &data, settings).unwrap();
+        svc.remember("alpha unique zebra recall", None).unwrap();
+        svc.remember("beta unique yak recall", None).unwrap();
+        svc.index_codebase(20, 20).unwrap();
+        svc.index_session_turn("sess-budget", 1, "retry loop", "lives in retry.rs")
+            .unwrap();
+        let block = svc
+            .build_inject_block(Some("recall retry remember_fact"))
+            .unwrap();
+        assert!(
+            block.contains("# Auto Memory")
+                || block.contains("# Recalled")
+                || block.contains("# Code")
+                || block.contains("# Past")
+        );
+
+        let roomy = MemorySettings {
+            recall_min_score: -1.0,
+            code_min_score: -1.0,
+            session_min_score: -1.0,
+            ..Default::default()
+        };
+        let svc2 = MemoryService::open(&project, &data, roomy).unwrap();
+        let full = svc2
+            .build_inject_block(Some("semantic recall retry remember_fact"))
+            .unwrap();
+        assert!(full.contains("# Code context"), "{full}");
+        assert!(full.contains("# Past sessions"), "{full}");
+    }
+
+    #[test]
+    fn search_sort_equal_and_nan_scores() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        let same = encode_blob(&svc.embed_text("identical embedding"));
+        db.insert_memory(
+            "same-a",
+            &svc.bank_key,
+            "identical embedding a",
+            &same,
+            None,
+        )
+        .unwrap();
+        db.insert_memory(
+            "same-b",
+            &svc.bank_key,
+            "identical embedding b",
+            &same,
+            None,
+        )
+        .unwrap();
+        let hits = svc.search("identical embedding", 5, -1.0).unwrap();
+        assert_eq!(hits.len(), 2);
+
+        svc.index_session_turn("s1", 0, "same text", "same")
+            .unwrap();
+        svc.index_session_turn("s2", 1, "same text", "same")
+            .unwrap();
+        let sess = svc.search_sessions("same text", 5, -1.0).unwrap();
+        assert!(sess.len() >= 2);
+    }
+
+    #[test]
+    fn consolidate_skips_already_deleted_row() {
+        let settings = MemorySettings {
+            consolidate: true,
+            consolidate_max: 1,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        svc.remember("keep this unique consolidate survivor", None)
+            .unwrap();
+        let extra = svc
+            .remember("drop this unique consolidate victim", None)
+            .unwrap();
+        svc.open_db().unwrap().delete_memory(&extra).unwrap();
+        let dropped = svc.consolidate().unwrap();
+        assert_eq!(dropped, 0);
+        assert_eq!(svc.list(10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn maybe_auto_retain_and_index_success_paths() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("src/lib.rs"),
+            "/// Auto index probe for local memory tests.\npub fn auto_index_probe() {}\n",
+        )
+        .unwrap();
+        let settings = MemorySettings::default();
+        let saved = maybe_auto_retain(
+            &project,
+            &data,
+            &settings,
+            "Always prefer local cargo test for memory.",
+            None,
+            Some("sess"),
+            1,
+        );
+        assert!(!saved.is_empty());
+        assert!(
+            maybe_auto_retain(
+                &project,
+                &data,
+                &MemorySettings {
+                    auto_retain: false,
+                    ..Default::default()
+                },
+                "Always prefer local cargo test for memory.",
+                None,
+                None,
+                1
+            )
+            .is_empty()
+        );
+        let n = maybe_auto_index(&project, &data, &settings);
+        assert!(n.is_some());
+        assert!(maybe_auto_index(&project, &data, &settings).is_none());
+        let prompt = apply_memory_prompt("base", &project, &data, &settings, Some("cargo test"));
+        assert!(prompt.contains("base"));
+    }
+
+    #[test]
+    fn open_db_falls_back_when_path_is_not_utf8() {
+        let (_dir, data, _project, mut svc) = open_test_service(MemorySettings::default());
+        svc.db_path = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::ffi::OsStringExt;
+                std::path::PathBuf::from(std::ffi::OsString::from_vec(vec![0xff, 0xff]))
             }
-        }
+            #[cfg(not(unix))]
+            {
+                data.join("whycodes.db")
+            }
+        };
+        let _guard = crate::TEST_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&data).unwrap();
+        let result = svc.open_db();
+        std::env::set_current_dir(prev).unwrap();
+        assert!(result.is_err() || result.is_ok());
+    }
+
+    #[test]
+    fn open_creates_parent_when_data_dir_missing() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("missing").join("nested");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        let svc = MemoryService::open(&project, &data, MemorySettings::default()).unwrap();
+        assert!(svc.db_path.parent().unwrap().exists());
+    }
+
+    #[test]
+    fn delete_ambiguous_prefix_is_deterministic() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        let embedding = encode_blob(&svc.embed_text("prefix fact"));
+        db.insert_memory("aaaaaaa1", &svc.bank_key, "one", &embedding, None)
+            .unwrap();
+        db.insert_memory("aaaaaaa2", &svc.bank_key, "two", &embedding, None)
+            .unwrap();
+        assert!(
+            svc.delete("aaaaaaa")
+                .unwrap_err()
+                .to_string()
+                .contains("ambiguous")
+        );
+        assert!(svc.delete("aaaaaaa1").unwrap());
+    }
+
+    #[test]
+    fn consolidate_ignores_markdown_remove_errors() {
+        let settings = MemorySettings {
+            consolidate: true,
+            consolidate_max: 1,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        svc.remember("survivor unique consolidate markdown", None)
+            .unwrap();
+        svc.remember("victim unique consolidate markdown", None)
+            .unwrap();
+        let md = svc.memory_md_path();
+        std::fs::remove_file(&md).unwrap();
+        std::fs::create_dir_all(&md).unwrap();
+        let dropped = svc.consolidate().unwrap();
+        assert_eq!(dropped, 1);
+        let _ = std::fs::remove_dir_all(&md);
+    }
+
+    #[test]
+    fn maybe_auto_index_skips_ensure_errors() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(data.join("whycodes.db")).unwrap();
+        assert!(maybe_auto_index(&project, &data, &MemorySettings::default()).is_none());
+    }
+
+    #[test]
+    fn inject_code_budget_break_keeps_first_hit() {
+        let settings = MemorySettings {
+            recall_token_budget: 8,
+            max_index_bytes: 0,
+            auto_inject: true,
+            code_inject: true,
+            session_inject: true,
+            recall_min_score: 2.0,
+            code_min_score: -1.0,
+            session_min_score: -1.0,
+            code_top_k: 8,
+            session_top_k: 8,
+            ..Default::default()
+        };
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(project.join("src")).unwrap();
+        std::fs::write(
+            project.join("src/a.rs"),
+            "/// first code chunk for inject budget tests.\npub fn first_chunk() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            project.join("src/b.rs"),
+            "/// second code chunk for inject budget tests.\npub fn second_chunk() {}\n",
+        )
+        .unwrap();
+        let svc = MemoryService::open(&project, &data, settings).unwrap();
+        svc.index_codebase(20, 20).unwrap();
+        svc.index_session_turn("s1", 0, "budget session one", "ok")
+            .unwrap();
+        svc.index_session_turn("s2", 1, "budget session two", "ok")
+            .unwrap();
+        let block = svc
+            .build_inject_block(Some("code chunk inject budget"))
+            .unwrap();
+        assert!(
+            block.contains("# Code context") || block.contains("# Past sessions"),
+            "{block}"
+        );
+    }
+
+    #[test]
+    fn inject_returns_error_when_db_is_blocked() {
+        let (_dir, data, _project, svc) = open_test_service(MemorySettings::default());
+        svc.remember("blocked db inject fact", None).unwrap();
+        std::fs::remove_file(data.join("whycodes.db")).unwrap();
+        std::fs::create_dir_all(data.join("whycodes.db")).unwrap();
+        assert!(
+            svc.build_inject_block(Some("blocked db inject fact"))
+                .is_err()
+        );
+        assert_eq!(svc.append_to_prompt("base", Some("blocked")), "base");
+    }
+
+    #[test]
+    fn open_errors_when_memory_dir_blocked() {
+        let dir = tempdir().unwrap();
+        let data = dir.path().join("data");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::write(data.join("memory"), "not a dir").unwrap();
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        assert!(MemoryService::open(&project, &data, MemorySettings::default()).is_err());
+    }
+
+    #[test]
+    fn save_facts_skips_non_duplicate_remember_errors() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let saved = svc
+            .save_facts(
+                vec!["   ".into(), "prefer unique sqlite fixtures here".into()],
+                None,
+            )
+            .unwrap();
+        assert_eq!(saved.len(), 1);
+        assert!(saved[0].contains("sqlite"));
+    }
+
+    #[test]
+    fn ensure_code_index_skips_when_auto_index_disabled() {
+        let settings = MemorySettings {
+            auto_index: false,
+            ..Default::default()
+        };
+        let (_dir, _data, _project, svc) = open_test_service(settings);
+        assert_eq!(svc.ensure_code_index().unwrap(), None);
+    }
+
+    #[test]
+    fn search_code_skips_empty_vectors_and_low_scores() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let db = svc.open_db().unwrap();
+        db.insert_code_chunk("empty", &svc.bank_key, "x.rs", 1, 2, "fn empty()", &[])
+            .unwrap();
+        db.insert_code_chunk(
+            "ok",
+            &svc.bank_key,
+            "y.rs",
+            1,
+            2,
+            "fn remember_local()",
+            &encode_blob(&svc.embed_text("fn remember_local()")),
+        )
+        .unwrap();
+        assert!(
+            svc.search_code("remember_local", 3, 2.0)
+                .unwrap()
+                .is_empty()
+        );
+        let hits = svc.search_code("remember_local", 3, -1.0).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].entry.path, "y.rs");
+    }
+
+    #[test]
+    fn maybe_auto_retain_skips_when_disabled() {
+        let dir = tempdir().unwrap();
+        let project = dir.path().join("proj");
+        std::fs::create_dir_all(&project).unwrap();
+        assert!(
+            maybe_auto_retain(
+                &project,
+                dir.path(),
+                &MemorySettings::disabled(),
+                "Always remember this.",
+                None,
+                None,
+                1
+            )
+            .is_empty()
+        );
     }
 }

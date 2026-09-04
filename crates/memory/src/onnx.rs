@@ -40,16 +40,12 @@ pub fn ensure_model(data_dir: &Path) -> Result<(PathBuf, PathBuf)> {
         "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json";
 
     ensure_file(&onnx_path, ONNX_URL, None)?;
-    ensure_file(
-        &tok_path,
-        TOK_URL,
-        if TOKENIZER_SHA256.is_empty() {
-            None
-        } else {
-            Some(TOKENIZER_SHA256)
-        },
-    )?;
+    ensure_file(&tok_path, TOK_URL, optional_pin(TOKENIZER_SHA256))?;
     Ok((onnx_path, tok_path))
+}
+
+fn optional_pin(pin: &str) -> Option<&str> {
+    if pin.is_empty() { None } else { Some(pin) }
 }
 
 fn ensure_file(path: &Path, url: &str, pinned: Option<&str>) -> Result<()> {
@@ -334,5 +330,206 @@ mod tests {
         let side = sha_sidecar(&p);
         write_sidecar(&side, &d).unwrap();
         verify_or_repair(&p, &side, None).unwrap();
+    }
+
+    fn with_path_bins<R>(names_and_scripts: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = crate::TEST_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().unwrap();
+
+        for (name, script) in names_and_scripts {
+            let p = dir.path().join(name);
+            std::fs::write(&p, script).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let prev = std::env::var_os("PATH");
+        unsafe { std::env::set_var("PATH", dir.path()) };
+        let out = f();
+        match prev {
+            Some(v) => unsafe { std::env::set_var("PATH", v) },
+            None => unsafe { std::env::remove_var("PATH") },
+        }
+        out
+    }
+
+    #[test]
+    fn available_model_dir_and_disabled_embed() {
+        assert_eq!(onnx_available(), cfg!(feature = "onnx"));
+        assert!(optional_pin("").is_none());
+        assert_eq!(optional_pin("abc"), Some("abc"));
+
+        let dir = tempdir().unwrap();
+        assert_eq!(
+            model_dir(dir.path()),
+            dir.path().join("models").join("minilm")
+        );
+        if !cfg!(feature = "onnx") {
+            assert!(try_embed("hello", dir.path()).is_none());
+            let err = smoke_embed(dir.path()).unwrap_err();
+            assert!(err.to_string().contains("features onnx"));
+        }
+    }
+
+    #[cfg(feature = "onnx")]
+    #[test]
+    fn onnx_feature_falls_back_when_model_missing() {
+        let dir = tempdir().unwrap();
+        assert!(try_embed("hello", dir.path()).is_none());
+        assert!(smoke_embed(dir.path()).is_err());
+    }
+
+    #[test]
+    fn verify_pinned_and_sidecar_mismatch() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("m.bin");
+        std::fs::write(&p, b"hello").unwrap();
+        let digest = sha256_file(&p).unwrap();
+        let side = sha_sidecar(&p);
+        verify_or_repair(&p, &side, Some(&digest)).unwrap();
+        assert!(side.exists());
+        let err = verify_or_repair(&p, &side, Some("deadbeef")).unwrap_err();
+        assert!(err.to_string().contains("checksum mismatch"));
+
+        std::fs::write(&side, "0000\n").unwrap();
+        let err = verify_or_repair(&p, &side, None).unwrap_err();
+        assert!(err.to_string().contains("sidecar"));
+
+        std::fs::write(&side, "\n").unwrap();
+        verify_or_repair(&p, &side, None).unwrap();
+    }
+
+    #[test]
+    fn ensure_file_accepts_matching_pin_and_sha256_missing() {
+        let dir = tempdir().unwrap();
+        let curl = concat!(
+            "#!/bin/sh\n",
+            "out=\"\"\n",
+            "while [ $# -gt 0 ]; do\n",
+            "  if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+            "  shift\n",
+            "done\n",
+            "printf abc > \"$out\"\n",
+        );
+        with_path_bins(&[("curl", curl)], || {
+            let dest = dir.path().join("pinned.bin");
+            ensure_file(
+                &dest,
+                "http://127.0.0.1/model",
+                Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            )
+            .unwrap();
+            assert!(dest.exists());
+        });
+        assert!(sha256_file(&dir.path().join("missing.bin")).is_err());
+    }
+
+    #[test]
+    fn ensure_file_existing_and_download_paths() {
+        let dir = tempdir().unwrap();
+        let existing = dir.path().join("present.bin");
+        std::fs::write(&existing, b"abc").unwrap();
+        ensure_file(&existing, "http://127.0.0.1/unused", None).unwrap();
+
+        let curl = concat!(
+            "#!/bin/sh\n",
+            "out=\"\"\n",
+            "while [ $# -gt 0 ]; do\n",
+            "  if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+            "  shift\n",
+            "done\n",
+            "printf abc > \"$out\"\n",
+        );
+        with_path_bins(&[("curl", curl), ("wget", "#!/bin/sh\nexit 1\n")], || {
+            let dest = dir.path().join("from-curl.bin");
+            ensure_file(&dest, "http://127.0.0.1/model", None).unwrap();
+            assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
+
+            let mismatch = dir.path().join("mismatch.bin");
+            let err = ensure_file(&mismatch, "http://127.0.0.1/model", Some("ffff")).unwrap_err();
+            assert!(err.to_string().contains("checksum mismatch"));
+            assert!(!mismatch.exists());
+        });
+
+        let wget = concat!(
+            "#!/bin/sh\n",
+            "out=\"\"\n",
+            "while [ $# -gt 0 ]; do\n",
+            "  if [ \"$1\" = \"-O\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+            "  shift\n",
+            "done\n",
+            "printf wget > \"$out\"\n",
+        );
+        with_path_bins(&[("curl", "#!/bin/sh\nexit 1\n"), ("wget", wget)], || {
+            let dest = dir.path().join("from-wget.bin");
+            download("http://127.0.0.1/model", &dest).unwrap();
+            assert_eq!(std::fs::read(&dest).unwrap(), b"wget");
+        });
+
+        with_path_bins(
+            &[
+                ("curl", "#!/bin/sh\nexit 1\n"),
+                ("wget", "#!/bin/sh\nexit 1\n"),
+            ],
+            || {
+                let dest = dir.path().join("fail.bin");
+                let err = download("http://127.0.0.1/model", &dest).unwrap_err();
+                assert!(err.to_string().contains("failed to download"));
+            },
+        );
+        with_path_bins(
+            &[
+                ("curl", "#!/bin/sh\nexit 0\n"),
+                (
+                    "wget",
+                    concat!(
+                        "#!/bin/sh\n",
+                        "out=\"\"\n",
+                        "while [ $# -gt 0 ]; do\n",
+                        "  if [ \"$1\" = \"-O\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+                        "  shift\n",
+                        "done\n",
+                        "printf later > \"$out\"\n",
+                    ),
+                ),
+            ],
+            || {
+                let dest = dir.path().join("curl-empty-wget.bin");
+                download("http://127.0.0.1/model", &dest).unwrap();
+                assert_eq!(std::fs::read(&dest).unwrap(), b"later");
+            },
+        );
+    }
+
+    #[test]
+    fn ensure_model_with_scripted_curl() {
+        let dir = tempdir().unwrap();
+        let curl = concat!(
+            "#!/bin/sh\n",
+            "out=\"\"\n",
+            "while [ $# -gt 0 ]; do\n",
+            "  if [ \"$1\" = \"-o\" ]; then out=\"$2\"; shift 2; continue; fi\n",
+            "  shift\n",
+            "done\n",
+            "printf model > \"$out\"\n",
+        );
+        with_path_bins(&[("curl", curl)], || {
+            let (onnx, tok) = ensure_model(dir.path()).unwrap();
+            assert!(onnx.ends_with("model.onnx"));
+            assert!(tok.ends_with("tokenizer.json"));
+            assert!(onnx.exists() && tok.exists());
+            // Second call verifies existing files (no download).
+            ensure_model(dir.path()).unwrap();
+        });
+    }
+
+    #[test]
+    fn sha256_streams_large_files() {
+        let dir = tempdir().unwrap();
+        let p = dir.path().join("big.bin");
+        std::fs::write(&p, vec![7u8; 70 * 1024]).unwrap();
+        let d = sha256_file(&p).unwrap();
+        assert_eq!(d.len(), 64);
     }
 }
