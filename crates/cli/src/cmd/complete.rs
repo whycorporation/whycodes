@@ -133,7 +133,13 @@ pub(crate) fn provider_ids() -> Vec<String> {
 
 pub(crate) fn model_ids() -> Vec<String> {
     let cfg = load_config_readonly();
-    let mut names: Vec<String> = cfg.models.keys().cloned().collect();
+    let mut names: Vec<String> = Vec::new();
+    for (alias, mc) in &cfg.models {
+        names.push(alias.clone());
+        if !mc.model_id.is_empty() {
+            names.push(mc.model_id.clone());
+        }
+    }
     for pc in cfg.providers.values() {
         for m in &pc.models {
             if !m.is_empty() {
@@ -217,6 +223,28 @@ mod tests {
     #[test]
     fn session_prefixes_empty_without_db() {
         // Isolated: no assertion on HOME; just must not create files / panic.
+        let _ = session_id_prefixes();
+    }
+
+    #[test]
+    fn parsers_expose_possible_values() {
+        use clap::builder::TypedValueParser;
+        assert!(ProviderValueParser.possible_values().is_some());
+        assert!(ModelValueParser.possible_values().is_some());
+        assert!(AuthProviderValueParser.possible_values().is_some());
+        assert!(SessionIdValueParser.possible_values().is_some());
+        let names = auth_provider_ids();
+        assert!(
+            names.iter().any(|n| n == "anthropic" || n == "openai"),
+            "{names:?}"
+        );
+    }
+
+    #[test]
+    fn load_config_readonly_missing_and_invalid() {
+        let cfg = load_config_readonly();
+        let _ = cfg.providers.len();
+        let _ = model_ids();
         let _ = session_id_prefixes();
     }
 }

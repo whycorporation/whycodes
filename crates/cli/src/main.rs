@@ -213,6 +213,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         // Print once here; exit 1 so CI / scripts can branch on failure.
         // (Returning Ok would make `anyhow` silent and the process succeed.)
         eprintln!("Error: {e:#}");
+        #[cfg(test)]
+        {
+            return result;
+        }
+        #[cfg(not(test))]
         std::process::exit(1);
     }
     result

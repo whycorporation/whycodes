@@ -482,6 +482,7 @@ pub enum MemoryCmd {
 #[command(infer_subcommands = true)]
 pub enum SessionCmd {
     /// List all sessions
+    #[command(visible_alias = "ls")]
     List,
     /// View a session's details
     View {

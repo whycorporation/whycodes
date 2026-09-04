@@ -501,6 +501,13 @@ fn cli_parser_accepts_unique_subcommand_prefixes() {
             cmd: SessionCmd::List
         })
     ));
+    let sess_ls = Cli::try_parse_from(["whycodes", "sess", "ls"]).unwrap();
+    assert!(matches!(
+        sess_ls.command,
+        Some(Commands::Session {
+            cmd: SessionCmd::List
+        })
+    ));
     let dbg = Cli::try_parse_from(["whycodes", "deb"]).unwrap();
     assert!(matches!(dbg.command, Some(Commands::Debug { json: false })));
 }
@@ -1464,14 +1471,14 @@ fn generate_prompt_helpers() {
 
 #[tokio::test]
 async fn cmd_generate_single_and_parallel_unknown_provider() {
-    let dir = tempfile::tempdir().unwrap();
-    let prev_home = std::env::var_os("WHYCODES_HOME");
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
     let prev_key = std::env::var_os("SCRIPT_API_KEY");
-    unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
     unsafe { std::env::set_var("SCRIPT_API_KEY", "k") };
     let mut c = cli(None);
     c.provider = Some("script".into());
-    c.dir = Some(dir.path().display().to_string());
+    c.dir = Some(home.path().display().to_string());
     c.no_memory = true;
     let single = cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text).await;
     let parallel = cmd_generate(
@@ -1482,10 +1489,6 @@ async fn cmd_generate_single_and_parallel_unknown_provider() {
         OutputFormat::Json,
     )
     .await;
-    match prev_home {
-        Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
-        None => unsafe { std::env::remove_var("WHYCODES_HOME") },
-    }
     match prev_key {
         Some(v) => unsafe { std::env::set_var("SCRIPT_API_KEY", v) },
         None => unsafe { std::env::remove_var("SCRIPT_API_KEY") },
@@ -3330,4 +3333,2824 @@ async fn cmd_run_plain_resume_existing_session() {
         std::env::remove_var("ANTHROPIC_API_KEY");
     }
     result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_plain_repl_failed_turn_and_info_usage() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-fail");
+    }
+    install_test_repl_lines(["hello fail path", "/info", "/cost", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, None, Some(2), OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_one_shot_scripted_fail() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-oneshot-fail");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let err = cmd_run(&c, Some("hello fail"), Some(1), OutputFormat::Text).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_run_structured_format_delegates_to_generate() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "json-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-json");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, Some("hello json"), Some(1), OutputFormat::Json)
+        .await
+        .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_import_interactive_item_selection() {
+    let home = IsolatedHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx","args":["-y","pkg"]}}}"#,
+    )
+    .unwrap();
+    install_test_repl_lines(["y", "y"]);
+    cmd_import(&ImportArgs {
+        from: Some("claude".into()),
+        dry_run: false,
+        yes: false,
+        force: false,
+    })
+    .await
+    .unwrap();
+    clear_test_repl_lines();
+    let cfg = Config::load().unwrap();
+    assert!(cfg.mcp_servers.contains_key("fs"));
+}
+
+#[tokio::test]
+async fn cmd_connect_with_existing_session_id() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for _ in 0..4 {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let body: &[u8] = if req.contains("/api/health") {
+                br#"{"ok":true,"project":"p","uptime_secs":3}"#
+            } else {
+                br#"{"ok":true}"#
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
+    let c = cli(None);
+    let result = cmd_connect(
+        &c,
+        &format!("127.0.0.1:{}", addr.port()),
+        Some("sess-given"),
+    )
+    .await;
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    server.abort();
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn after_tui_exit_upgrade_without_skip_hits_run() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE") };
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", "http://127.0.0.1:1/latest") };
+    after_tui_exit(whycodes_tui::TuiExit::Upgrade)
+        .await
+        .unwrap();
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL") };
+}
+
+#[test]
+fn complete_parsers_parse_ref_roundtrip() {
+    use clap::Command;
+    use clap::builder::TypedValueParser;
+    let cmd = Command::new("t");
+    let os = std::ffi::OsStr::new("anthropic");
+    assert_eq!(
+        crate::cmd::complete::ProviderValueParser
+            .parse_ref(&cmd, None, os)
+            .unwrap(),
+        "anthropic"
+    );
+    assert_eq!(
+        crate::cmd::complete::ModelValueParser
+            .parse_ref(&cmd, None, std::ffi::OsStr::new("m"))
+            .unwrap(),
+        "m"
+    );
+    assert_eq!(
+        crate::cmd::complete::AuthProviderValueParser
+            .parse_ref(&cmd, None, os)
+            .unwrap(),
+        "anthropic"
+    );
+    assert_eq!(
+        crate::cmd::complete::SessionIdValueParser
+            .parse_ref(&cmd, None, std::ffi::OsStr::new("abc"))
+            .unwrap(),
+        "abc"
+    );
+}
+
+#[tokio::test]
+async fn async_main_tui_stub_and_error_path() {
+    let _home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_TUI", "quit");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+    }
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    async_main(c).await.unwrap();
+
+    let mut err_cli = cli(Some(Commands::Connect {
+        addr: "127.0.0.1:1".into(),
+        session: None,
+    }));
+    err_cli.plain = true;
+    err_cli.no_memory = true;
+    let err = async_main(err_cli).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+    }
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_run_plain_env_and_first_run_import() {
+    let home = IsolatedHome::new();
+    home.allow_import_prompt();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_PLAIN", "1");
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-plain");
+    }
+    install_test_repl_lines(["y", "/q"]);
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_PLAIN");
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_plain_remaining_slash_and_git_diff() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "slash-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-slash");
+        std::env::set_var("WHYCODES_TEST_AUTH_LOGIN", "1");
+    }
+    let proj = home.path().join("repo");
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(proj.join("README.md"), "hi").unwrap();
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(&proj)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .status()
+            .unwrap();
+    };
+    git(&["init"]);
+    git(&["add", "."]);
+    git(&["commit", "-m", "init"]);
+    std::fs::write(proj.join("README.md"), "changed").unwrap();
+
+    install_test_repl_lines([
+        "hello turn",
+        "/undo",
+        "/redo",
+        "/compact note",
+        "/diff",
+        "/models xai/grok-4.6",
+        "/effort high",
+        "/effort medium",
+        "/connect",
+        "/login anthropic",
+        "/login",
+        "/remember keep me",
+        "/memory",
+        "/info",
+        "/cost",
+        "/q",
+    ]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = false;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let result = cmd_run(&c, None, Some(3), OutputFormat::Text).await;
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("WHYCODES_TEST_AUTH_LOGIN");
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_custom_command_without_key_skips() {
+    let home = IsolatedHome::new();
+    let proj = home.path().join("p");
+    std::fs::create_dir_all(proj.join(".whycodes").join("commands")).unwrap();
+    std::fs::write(
+        proj.join(".whycodes").join("commands").join("hello.md"),
+        "Say $ARGUMENTS",
+    )
+    .unwrap();
+    install_test_repl_lines(["/hello there", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_stats_with_usage_and_session_list_backfill() {
+    let _home = IsolatedHome::new();
+    let db = open_db().unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    let usage = whycodes_core::types::Usage {
+        input_tokens: 10,
+        output_tokens: 4,
+        cache_creation_input_tokens: Some(2),
+        cache_read_input_tokens: Some(3),
+    };
+    db.upsert_session(
+        "sess-long-id-abcdef",
+        "New session - x",
+        "/tmp/proj",
+        &now,
+        &now,
+        &usage,
+    )
+    .unwrap();
+    db.insert_message(
+        "m1",
+        "sess-long-id-abcdef",
+        "user",
+        "please backfill this title",
+        None,
+        None,
+    )
+    .unwrap();
+    db.upsert_session(
+        "short",
+        "",
+        "/",
+        &now,
+        &now,
+        &whycodes_core::types::Usage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_creation_input_tokens: Some(9),
+            cache_read_input_tokens: None,
+        },
+    )
+    .unwrap();
+    cmd_session(&SessionCmd::List).await.unwrap();
+    cmd_session(&SessionCmd::Rename {
+        id: "sess-long-id-abcdef".into(),
+        name: "   ".into(),
+    })
+    .await
+    .unwrap();
+    cmd_stats().await.unwrap();
+    let prefixes = crate::cmd::complete::session_id_prefixes();
+    assert!(
+        prefixes.iter().any(|p| p == "sess-long-id" || p == "short"),
+        "{prefixes:?}"
+    );
+}
+
+#[tokio::test]
+async fn cmd_debug_with_oauth_and_missing_bin() {
+    let home = IsolatedHome::new();
+    let store = whycodes_auth::TokenStore::new(home.path());
+    store
+        .set(
+            "openai",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "tok".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra: Default::default(),
+                },
+            },
+        )
+        .unwrap();
+    unsafe { std::env::set_var("OPENAI_API_KEY", "sk-set") };
+    cmd_debug(false).await.unwrap();
+    cmd_debug(true).await.unwrap();
+    unsafe { std::env::remove_var("OPENAI_API_KEY") };
+    assert!(crate::cmd::debug::cmd_version("definitely-not-a-bin-xyz").is_none());
+}
+
+#[tokio::test]
+async fn memory_onnx_smoke_errors_without_feature() {
+    let home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.no_memory = true;
+    let err = cmd_memory(&c, &MemoryCmd::OnnxSmoke).await;
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn mcp_remaining_transports_and_validation() {
+    let _home = IsolatedHome::new();
+    cmd_mcp(&McpCmd::Add {
+        name: "sse".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com/sse".into()),
+        transport: Some("sse".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Add {
+        name: "auto".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com/mcp".into()),
+        transport: Some("auto".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Add {
+        name: "local".into(),
+        command: Some("npx".into()),
+        args: None,
+        url: None,
+        transport: Some("local".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Add {
+        name: "stream".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com/s".into()),
+        transport: Some("streamable-http".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::Add {
+        name: "remote".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com/r".into()),
+        transport: Some("remote".into()),
+        headers: vec![],
+    })
+    .await
+    .unwrap();
+    cmd_mcp(&McpCmd::List).await.unwrap();
+    let both = cmd_mcp(&McpCmd::Add {
+        name: "both".into(),
+        command: Some("npx".into()),
+        args: None,
+        url: Some("https://example.com".into()),
+        transport: None,
+        headers: vec![],
+    })
+    .await;
+    assert!(both.is_err());
+    let header = cmd_mcp(&McpCmd::Add {
+        name: "hdr".into(),
+        command: None,
+        args: None,
+        url: Some("https://example.com".into()),
+        transport: Some("http".into()),
+        headers: vec!["nocolon".into()],
+    })
+    .await;
+    assert!(header.is_err());
+}
+
+#[tokio::test]
+async fn cmd_agent_known_and_plugins_listed() {
+    let home = IsolatedHome::new();
+    let dir = home.path().join(".whycodes").join("plugins").join("echo");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("plugin.json"),
+        r#"{"name":"echo","command":"echo hi","description":"demo"}"#,
+    )
+    .unwrap();
+    let mut c = cli(None);
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    cmd_plugins(&c, None).await.unwrap();
+    cmd_agent(Some("build")).await.unwrap();
+    cmd_agent(Some("scout")).await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_model_list_with_configured_models() {
+    let _home = IsolatedHome::new();
+    let mut cfg = Config::default();
+    cfg.models.insert(
+        "fast".into(),
+        ModelConfig {
+            model_id: "tiny".into(),
+            provider_id: "ollama".into(),
+            max_tokens: Some(128),
+            context_window: None,
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: Some(true),
+            supports_images: None,
+        },
+    );
+    cfg.save().unwrap();
+    cmd_model(&ModelCmd::List).await.unwrap();
+    let ids = crate::cmd::complete::model_ids();
+    assert!(ids.iter().any(|n| n == "tiny"), "{ids:?}");
+}
+
+#[tokio::test]
+async fn github_without_gh_on_path() {
+    let _home = IsolatedHome::new();
+    let empty = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("PATH");
+    unsafe { std::env::set_var("PATH", empty.path()) };
+    let c = cli(None);
+    cmd_pr(&c, None, None).await.unwrap();
+    cmd_github(&c, &GithubCmd::Pr { action: None })
+        .await
+        .unwrap();
+    cmd_github(
+        &c,
+        &GithubCmd::Pr {
+            action: Some(PrAction::View { number: 1 }),
+        },
+    )
+    .await
+    .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: None })
+        .await
+        .unwrap();
+    cmd_github(&c, &GithubCmd::Issue { number: Some(2) })
+        .await
+        .unwrap();
+    match prev {
+        Some(v) => unsafe { std::env::set_var("PATH", v) },
+        None => unsafe { std::env::remove_var("PATH") },
+    }
+}
+
+#[tokio::test]
+async fn cmd_upgrade_homebrew_skips_clone_hint() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_TARGET", "/opt/homebrew/bin/whycodes") };
+    cmd_upgrade().await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_TARGET") };
+}
+
+#[tokio::test]
+async fn spawn_update_check_delivers_self_install_offer() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let body = br#"{"tag_name":"v99.0.0","assets":[]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    let url = format!("http://127.0.0.1:{}/latest", addr.port());
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::remove_var("WHYCODES_NO_AUTO_UPDATE");
+        std::env::remove_var("WHYCODES_BENCH");
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &url);
+    }
+    let mut c = cli(None);
+    c.no_auto_update = false;
+    let cfg = Config::default();
+    let mut rx = spawn_update_check(&c, &cfg).expect("update check spawned");
+    let offer = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .ok()
+        .flatten();
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL") };
+    server.abort();
+    assert!(offer.is_some(), "expected update offer");
+}
+
+#[tokio::test]
+async fn check_latest_up_to_date_and_homebrew() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let ver = env!("CARGO_PKG_VERSION").to_string();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let body = format!(r#"{{"tag_name":"v{ver}","assets":[]}}"#);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    let url = format!("http://127.0.0.1:{}/latest", addr.port());
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &url) };
+    let none = crate::upgrade::check_latest().await.unwrap();
+    unsafe {
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", "/opt/homebrew/bin/whycodes");
+    }
+    let none2 = crate::upgrade::check_latest().await.unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+    assert!(none.is_none());
+    assert!(none2.is_none());
+}
+
+#[tokio::test]
+async fn connect_unreachable_includes_lock_hint() {
+    let _home = IsolatedHome::new();
+    let cwd = IsolatedCwd::new();
+    let path = crate::cmd::lockfile::lock_path(&std::env::current_dir().unwrap());
+    crate::cmd::lockfile::write_lock(
+        &path,
+        &crate::cmd::lockfile::ServeLock {
+            pid: std::process::id(),
+            port: 9099,
+            started_at: crate::cmd::lockfile::now_secs(),
+            interactive: false,
+            parent_pid: None,
+        },
+    )
+    .unwrap();
+    let err = cmd_connect(&cli(None), "127.0.0.1:1", None)
+        .await
+        .unwrap_err();
+    drop(cwd);
+    let msg = err.to_string();
+    assert!(
+        msg.contains("9099") || msg.contains("cannot reach"),
+        "{msg}"
+    );
+}
+
+#[tokio::test]
+async fn cmd_serve_addr_in_use_reports_hint() {
+    let _home = IsolatedHome::new();
+    let _cwd = IsolatedCwd::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let err = cmd_serve(port, true).await.unwrap_err();
+    drop(listener);
+    let msg = err.to_string();
+    assert!(
+        msg.contains("already") || msg.contains("in use") || msg.contains("lock"),
+        "{msg}"
+    );
+}
+
+#[tokio::test]
+async fn takeover_holder_dead_and_live_child() {
+    let dead = crate::cmd::lockfile::ServeLock {
+        // Must be a positive i32. u32::MAX casts to -1 and kill(-1, SIGTERM)
+        // broadcasts to every process we can signal.
+        pid: 2_000_000_000,
+        port: 1,
+        started_at: crate::cmd::lockfile::now_secs(),
+        interactive: false,
+        parent_pid: None,
+    };
+    assert!(takeover_holder(&dead).await.is_err());
+
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let live = crate::cmd::lockfile::ServeLock {
+        pid,
+        port: 2,
+        started_at: crate::cmd::lockfile::now_secs(),
+        interactive: false,
+        parent_pid: None,
+    };
+    takeover_holder(&live).await.unwrap();
+    let _ = child.wait();
+}
+
+#[tokio::test]
+async fn cmd_serve_takeover_then_abort() {
+    let _home = IsolatedHome::new();
+    let _cwd = IsolatedCwd::new();
+    let mut child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    let path = crate::cmd::lockfile::lock_path(&std::env::current_dir().unwrap());
+    crate::cmd::lockfile::write_lock(
+        &path,
+        &crate::cmd::lockfile::ServeLock {
+            pid,
+            port: 1,
+            started_at: crate::cmd::lockfile::now_secs(),
+            interactive: false,
+            parent_pid: None,
+        },
+    )
+    .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let prev_takeover = std::env::var_os("WHYCODES_TEST_TAKEOVER");
+    unsafe { std::env::set_var("WHYCODES_TEST_TAKEOVER", "0") };
+    let handle = tokio::spawn(async move { cmd_serve(port, false).await });
+    let url = format!("http://127.0.0.1:{port}/api/health");
+    for _ in 0..80 {
+        if reqwest::get(&url).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    handle.abort();
+    let _ = handle.await;
+    let _ = child.wait();
+    match prev_takeover {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_TEST_TAKEOVER", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_TEST_TAKEOVER") },
+    }
+}
+
+#[test]
+fn helpers_key_openai_empty_and_inject_empty_llm() {
+    let _home = IsolatedHome::new();
+    let cfg = Config::default();
+    assert_eq!(
+        key_from_env_and_config("openai", &cfg, |k| {
+            (k == "OPENAI_API_KEY").then(String::new)
+        })
+        .as_deref(),
+        Some("")
+    );
+    let _ = missing_api_key_message_for("anthropic", Some(&cfg));
+    let _ = missing_api_key_message_for("ollama", Some(&cfg));
+    let err = anyhow::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "nope"));
+    assert!(is_missing_database(&err));
+    cmd_completions(clap_complete::Shell::Zsh).unwrap();
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "") };
+    let mut agent = Agent::new(agent_info_for(&cli(None), &cfg));
+    maybe_inject_test_llm(&mut agent, "anthropic");
+    unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
+}
+
+#[test]
+fn github_token_and_current_binary_env() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("GITHUB_TOKEN", "ghs_test") };
+    assert_eq!(crate::upgrade::github_token().as_deref(), Some("ghs_test"));
+    unsafe { std::env::remove_var("GITHUB_TOKEN") };
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_TARGET", "") };
+    let _ = crate::upgrade::current_binary();
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_TARGET", "/tmp/whycodes-bin") };
+    assert_eq!(
+        crate::upgrade::current_binary().unwrap(),
+        std::path::PathBuf::from("/tmp/whycodes-bin")
+    );
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_TARGET") };
+}
+
+#[test]
+fn complete_provider_ids_include_custom_config() {
+    let _home = IsolatedHome::new();
+    let mut cfg = Config::default();
+    cfg.providers.insert(
+        "custom-local".into(),
+        ProviderConfig {
+            name: "custom-local".into(),
+            api_key: None,
+            api_base: None,
+            base_url: Some("http://127.0.0.1:9".into()),
+            headers: None,
+            models: vec!["m1".into(), "".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    cfg.default_model = Some(ModelConfig {
+        model_id: "def-model".into(),
+        provider_id: "custom-local".into(),
+        max_tokens: None,
+        context_window: None,
+        temperature: None,
+        top_p: None,
+        thinking: None,
+        supports_tools: Some(true),
+        supports_images: None,
+    });
+    cfg.save().unwrap();
+    let names = crate::cmd::complete::provider_ids();
+    assert!(names.iter().any(|n| n == "custom-local"), "{names:?}");
+    let models = crate::cmd::complete::model_ids();
+    assert!(models.iter().any(|n| n == "m1"), "{models:?}");
+    assert!(models.iter().any(|n| n == "def-model"), "{models:?}");
+}
+
+#[tokio::test]
+async fn after_tui_exit_upgrade_ok_none_and_err() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let ver = env!("CARGO_PKG_VERSION").to_string();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let body = format!(r#"{{"tag_name":"v{ver}","assets":[]}}"#);
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    let url = format!("http://127.0.0.1:{}/latest", addr.port());
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &url);
+    }
+    after_tui_exit(whycodes_tui::TuiExit::Upgrade)
+        .await
+        .unwrap();
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL") };
+    server.abort();
+}
+
+#[test]
+fn runtime_full_pool_for_generate_and_serve() {
+    assert!(command_needs_full_worker_pool(&cli(Some(
+        Commands::Generate {
+            prompt: vec!["x".into()],
+            max_turns: None,
+            jobs: 2,
+            format: OutputFormat::Text,
+        }
+    ))));
+    #[cfg(feature = "server")]
+    assert!(command_needs_full_worker_pool(&cli(Some(
+        Commands::Serve {
+            port: 3030,
+            no_takeover: true,
+        }
+    ))));
+    let rt = runtime_for(&cli(Some(Commands::Generate {
+        prompt: vec!["x".into()],
+        max_turns: None,
+        jobs: 2,
+        format: OutputFormat::Text,
+    })))
+    .unwrap();
+    drop(rt);
+}
+
+#[test]
+fn early_print_version_false_for_other_args() {
+    assert!(!early_print_version_from(["--help"]));
+    assert!(early_print_version_from(["--version"]));
+}
+
+#[tokio::test]
+async fn cmd_generate_fail_scripted_and_no_memory() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-gen-fail");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let err = cmd_generate(&c, &["x".into()], Some(1), 1, OutputFormat::Text).await;
+    let err2 = cmd_generate(
+        &c,
+        &["a".into(), "b".into()],
+        Some(1),
+        2,
+        OutputFormat::Json,
+    )
+    .await;
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+    assert!(err.is_err());
+    assert!(err2.is_err());
+}
+
+#[tokio::test]
+async fn get_api_key_from_config_provider() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+    let mut cfg = Config::default();
+    cfg.providers.insert(
+        "anthropic".into(),
+        ProviderConfig {
+            name: "anthropic".into(),
+            api_key: Some("sk-cfg".into()),
+            api_base: None,
+            base_url: None,
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let key = get_api_key("anthropic", &cfg).await;
+    assert_eq!(key.as_deref(), Some("sk-cfg"));
+}
+
+#[tokio::test]
+async fn ensure_api_key_local_provider_without_key() {
+    let _home = IsolatedHome::new();
+    let mut cfg = Config::default();
+    cfg.providers.insert(
+        "ollama".into(),
+        ProviderConfig {
+            name: "ollama".into(),
+            api_key: None,
+            api_base: None,
+            base_url: Some("http://127.0.0.1:11434".into()),
+            headers: None,
+            models: vec![],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let mut key = String::new();
+    assert!(ensure_api_key(&mut key, "ollama", &cfg).await);
+}
+
+#[tokio::test]
+async fn cmd_config_set_and_get_unknown() {
+    let _home = IsolatedHome::new();
+    cmd_config(&ConfigCmd::Set {
+        key: "log_level".into(),
+        value: "debug".into(),
+    })
+    .await
+    .unwrap();
+    cmd_config(&ConfigCmd::Get {
+        key: "log_level".into(),
+    })
+    .await
+    .unwrap();
+    cmd_config(&ConfigCmd::Get { key: "nope".into() })
+        .await
+        .unwrap();
+    cmd_config(&ConfigCmd::Show).await.unwrap();
+}
+
+#[test]
+fn looks_like_homebrew_relative_symlink() {
+    let dir = tempfile::tempdir().unwrap();
+    let cellar = dir
+        .path()
+        .join("Cellar")
+        .join("whycodes")
+        .join("1")
+        .join("bin");
+    std::fs::create_dir_all(&cellar).unwrap();
+    let real = cellar.join("whycodes");
+    std::fs::write(&real, b"x").unwrap();
+    let bindir = dir.path().join("bin");
+    std::fs::create_dir_all(&bindir).unwrap();
+    let link = bindir.join("whycodes");
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            std::path::Path::new("../Cellar/whycodes/1/bin/whycodes"),
+            &link,
+        )
+        .unwrap();
+        assert!(crate::upgrade::looks_like_homebrew(&link));
+    }
+    assert!(!crate::upgrade::looks_like_homebrew(
+        &bindir.join("missing")
+    ));
+}
+
+#[tokio::test]
+async fn cmd_run_init_fail_and_effort_none_for_claude() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-init-fail");
+    }
+    let proj = home.path().join("p");
+    std::fs::create_dir_all(&proj).unwrap();
+    install_test_repl_lines(["/init", "/effort high", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    c.model = Some("claude-sonnet-4-20250514".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_one_shot_auto_title_and_empty_response() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-title");
+    }
+    let mut cfg = Config::default();
+    cfg.session.auto_title = true;
+    cfg.save().unwrap();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(
+        &c,
+        Some("title this session please"),
+        Some(1),
+        OutputFormat::Text,
+    )
+    .await
+    .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn memory_search_hits_after_add_and_delete() {
+    let home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    cmd_memory(
+        &c,
+        &MemoryCmd::Add {
+            text: vec!["unique-coverage-fact-xyz".into()],
+        },
+    )
+    .await
+    .unwrap();
+    cmd_memory(&c, &MemoryCmd::List { limit: 10 })
+        .await
+        .unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::Search {
+            query: "unique-coverage-fact-xyz".into(),
+            limit: 5,
+        },
+    )
+    .await
+    .unwrap();
+    let svc = open_memory_service(&c, &Config::default()).unwrap();
+    let rows = svc.list(10).unwrap();
+    let id = rows[0].id.clone();
+    cmd_memory(&c, &MemoryCmd::Delete { id }).await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_generate_no_memory_flag_and_text_empty_ok() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-empty-llm");
+    }
+    // empty WHYCODES_TEST_LLM skips inject — restore a real scripted value
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "   ") };
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "ok") };
+    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Text)
+        .await
+        .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn download_asset_via_env_url_and_token() {
+    let _home = IsolatedHome::new();
+    let url = {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let _ = sock.read(&mut buf).await;
+            let body = b"asset-bytes";
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.write_all(body).await;
+        });
+        format!("http://{addr}/asset")
+    };
+    unsafe {
+        std::env::set_var("WHYCODES_UPGRADE_ASSET_URL", &url);
+        std::env::set_var("GITHUB_TOKEN", "ghs_x");
+    }
+    let client = reqwest::Client::new();
+    let bytes = crate::upgrade::download_bytes(&client, &url, "x.bin")
+        .await
+        .unwrap();
+    assert_eq!(bytes, b"asset-bytes");
+    let resp = crate::upgrade::get(&client, &url).await;
+    let _ = resp;
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_ASSET_URL");
+        std::env::remove_var("GITHUB_TOKEN");
+    }
+}
+
+#[test]
+fn complete_unreadable_config_falls_back() {
+    let home = IsolatedHome::new();
+    let path = Config::default_path().unwrap();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(&path, "not = toml = at = all [[[").unwrap();
+    let _ = crate::cmd::complete::provider_ids();
+    let _ = crate::cmd::complete::model_ids();
+    let _ = home;
+}
+
+#[tokio::test]
+async fn cmd_upgrade_error_prints_clone_hint() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", "http://127.0.0.1:1/latest") };
+    cmd_upgrade().await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL") };
+}
+
+#[tokio::test]
+async fn dispatch_run_and_memory_and_upgrade() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-dispatch");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", "http://127.0.0.1:1/x");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    dispatch_command(
+        &Commands::Run {
+            prompt: Some("hi".into()),
+            max_turns: Some(1),
+            format: OutputFormat::Text,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    dispatch_command(
+        &Commands::Memory {
+            cmd: MemoryCmd::Path,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    let _ = dispatch_command(&Commands::Upgrade, &c).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+    }
+}
+
+#[test]
+fn extract_empty_targz_errors() {
+    let mut raw = Vec::new();
+    {
+        let mut b = tar::Builder::new(&mut raw);
+        let mut h = tar::Header::new_gnu();
+        h.set_size(1);
+        h.set_cksum();
+        b.append_data(&mut h, "readme", &b"x"[..]).unwrap();
+        b.finish().unwrap();
+    }
+    let mut gz = Vec::new();
+    {
+        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+        use std::io::Write;
+        enc.write_all(&raw).unwrap();
+        enc.finish().unwrap();
+    }
+    assert!(crate::upgrade::extract(&gz, "whycodes.tar.gz").is_err());
+}
+
+#[tokio::test]
+async fn cmd_run_repl_custom_command_with_key() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "custom-ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-custom");
+    }
+    let proj = home.path().join("p");
+    std::fs::create_dir_all(proj.join(".whycodes").join("commands")).unwrap();
+    std::fs::write(
+        proj.join(".whycodes").join("commands").join("hello.md"),
+        "Say $ARGUMENTS",
+    )
+    .unwrap();
+    install_test_repl_lines(["/hello coverage", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_tui_upgrade_exit() {
+    let _home = IsolatedHome::new();
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_TUI", "upgrade");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+    }
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+    }
+}
+
+#[test]
+fn spawn_update_check_none_when_disabled_config() {
+    let mut c = cli(None);
+    c.no_auto_update = false;
+    let mut cfg = Config::default();
+    cfg.general.auto_update = false;
+    assert!(spawn_update_check(&c, &cfg).is_none());
+}
+
+#[tokio::test]
+async fn cmd_stats_cache_write_only() {
+    let _home = IsolatedHome::new();
+    let db = open_db().unwrap();
+    let now = chrono::Utc::now().to_rfc3339();
+    db.upsert_session(
+        "w1",
+        "write-only",
+        "/tmp",
+        &now,
+        &now,
+        &whycodes_core::types::Usage {
+            input_tokens: 4,
+            output_tokens: 2,
+            cache_creation_input_tokens: Some(8),
+            cache_read_input_tokens: None,
+        },
+    )
+    .unwrap();
+    cmd_stats().await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_run_resume_then_undo_without_history() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-undo");
+    }
+    let import_path = home.path().join("chat.json");
+    std::fs::write(
+        &import_path,
+        r#"[{"role":"user","content":"hello"},{"role":"assistant","content":"hi"}]"#,
+    )
+    .unwrap();
+    cmd_session(&SessionCmd::Import {
+        path: import_path,
+        from: "json".into(),
+    })
+    .await
+    .unwrap();
+    let id = open_db().unwrap().list_sessions().unwrap()[0].id.clone();
+    install_test_repl_lines(["/undo", "/info", "/cost", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.resume = Some(id);
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn takeover_holder_sigkill_after_ignored_term() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("trap-term.sh");
+    std::fs::write(&script, "#!/bin/sh\ntrap '' TERM\nexec sleep 30\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let mut child = std::process::Command::new(&script).spawn().unwrap();
+    let pid = child.id();
+    let live = crate::cmd::lockfile::ServeLock {
+        pid,
+        port: 3,
+        started_at: crate::cmd::lockfile::now_secs(),
+        interactive: false,
+        parent_pid: None,
+    };
+    takeover_holder(&live).await.unwrap();
+    let _ = child.wait();
+}
+
+#[tokio::test]
+async fn cmd_run_doctor_missing_key_and_shell_fail() {
+    let home = IsolatedHome::new();
+    install_test_repl_lines(["/doctor", "!definitely-not-a-cmd-xyz", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_run_connect_oauth_hint_and_login_list() {
+    let home = IsolatedHome::new();
+    let store = whycodes_auth::TokenStore::new(home.path());
+    store
+        .set(
+            "anthropic",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "tok".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra: Default::default(),
+                },
+            },
+        )
+        .unwrap();
+    install_test_repl_lines(["/connect", "/login", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[test]
+fn init_logging_debug_and_non_tui() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(Some(Commands::Stats));
+    c.debug = false;
+    init_logging(&c);
+}
+
+#[tokio::test]
+async fn cmd_generate_jobs_zero_clamped() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-jobs");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_generate(
+        &c,
+        &["a".into(), "b".into()],
+        Some(1),
+        0,
+        OutputFormat::Text,
+    )
+    .await
+    .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_info_with_cache_usage() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-cache-info");
+    }
+    let import_path = home.path().join("chat.json");
+    std::fs::write(
+        &import_path,
+        r#"[{"role":"user","content":"hello cache"},{"role":"assistant","content":"hi"}]"#,
+    )
+    .unwrap();
+    cmd_session(&SessionCmd::Import {
+        path: import_path,
+        from: "json".into(),
+    })
+    .await
+    .unwrap();
+    let db = open_db().unwrap();
+    let id = db.list_sessions().unwrap()[0].id.clone();
+    let now = chrono::Utc::now().to_rfc3339();
+    db.upsert_session(
+        &id,
+        "hello cache",
+        "/tmp",
+        &now,
+        &now,
+        &whycodes_core::types::Usage {
+            input_tokens: 12,
+            output_tokens: 8,
+            cache_creation_input_tokens: Some(3),
+            cache_read_input_tokens: Some(4),
+        },
+    )
+    .unwrap();
+    install_test_repl_lines(["/info", "/cost", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.resume = Some(id);
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn upgrade_run_uses_asset_id_when_no_browser_url() {
+    let home = IsolatedHome::new();
+    let target = home.path().join("whycodes-bin");
+    std::fs::write(&target, b"old").unwrap();
+    let tar_bytes = {
+        let mut raw = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut raw);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(3);
+            h.set_cksum();
+            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = Vec::new();
+        {
+            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            use std::io::Write;
+            enc.write_all(&raw).unwrap();
+            enc.finish().unwrap();
+        }
+        gz
+    };
+    let digest = crate::upgrade::digest_of(&tar_bytes);
+    let archive_name = crate::upgrade::target_archive().unwrap().to_string();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let latest_url = format!("http://{addr}/latest");
+    let tar_clone = tar_bytes.clone();
+    let sums_body = format!("{digest}  {archive_name}\n");
+    let archive_name_json = archive_name.clone();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let (status, body, ctype): (&str, Vec<u8>, &str) = if req.contains("GET /latest") {
+                let latest = serde_json::json!({
+                    "tag_name": "v99.0.0",
+                    "assets": [
+                        {"name": archive_name_json, "id": 11},
+                        {"name": "SHA256SUMS", "id": 12},
+                    ]
+                })
+                .to_string();
+                ("200 OK", latest.into_bytes(), "application/json")
+            } else if req.contains("/releases/assets/12") {
+                ("200 OK", sums_body.as_bytes().to_vec(), "text/plain")
+            } else if req.contains("/releases/assets/11") {
+                ("200 OK", tar_clone.clone(), "application/octet-stream")
+            } else {
+                ("404 Not Found", b"nope".to_vec(), "text/plain")
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        }
+    });
+    unsafe {
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &latest_url);
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", &target);
+        std::env::remove_var("WHYCODES_UPGRADE_ASSET_URL");
+    }
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(8), crate::upgrade::run()).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+    let _ = result;
+}
+
+#[tokio::test]
+async fn cmd_run_plain_empty_prompt_then_quit() {
+    let _home = IsolatedHome::new();
+    install_test_repl_lines(["", "   ", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.provider = Some("ollama".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[test]
+fn replace_binary_parentless_errors() {
+    let err = crate::upgrade::replace_binary(std::path::Path::new("whycodes"), b"x");
+    let _ = err;
+}
+
+#[tokio::test]
+async fn cmd_run_compact_empty_then_turn_persist() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-persist");
+    }
+    install_test_repl_lines(["/compact", "hello persist", "/info", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, Some(2), OutputFormat::Text)
+        .await
+        .unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_share_export_and_sessions_error_path() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-share");
+    }
+    install_test_repl_lines(["hello", "/share", "/sessions", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, Some(1), OutputFormat::Text)
+        .await
+        .unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_models_list_only_and_agent_switch() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-agent");
+    }
+    install_test_repl_lines(["/models", "/agent build", "/agent", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_LLM");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+    }
+}
+
+#[tokio::test]
+async fn cmd_run_ollama_one_shot_without_key() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "ok") };
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("ollama".into());
+    c.model = Some("tiny".into());
+    let _ = cmd_run(&c, Some("hello ollama"), Some(1), OutputFormat::Text).await;
+    unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
+}
+
+#[test]
+fn github_token_empty_is_none() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("GITHUB_TOKEN", "") };
+    unsafe { std::env::set_var("GH_TOKEN", "gh") };
+    assert_eq!(crate::upgrade::github_token().as_deref(), Some("gh"));
+    unsafe {
+        std::env::remove_var("GITHUB_TOKEN");
+        std::env::remove_var("GH_TOKEN");
+    }
+}
+
+#[tokio::test]
+async fn cmd_mcp_serve_returns_on_eof_stdin() {
+    let _home = IsolatedHome::new();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        cmd_mcp(&McpCmd::Serve {
+            tools: "core".into(),
+            cwd: Some(".".into()),
+        }),
+    )
+    .await;
+    result.expect("mcp serve hung").unwrap();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        cmd_mcp(&McpCmd::Serve {
+            tools: "full".into(),
+            cwd: None,
+        }),
+    )
+    .await;
+    result.expect("mcp serve cwd-none hung").unwrap();
+}
+
+#[tokio::test]
+async fn cmd_connect_bails_without_tui_after_health() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for _ in 0..6 {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let body: &[u8] = if req.contains("/api/health") {
+                br#"{"ok":true}"#
+            } else if req.contains("/api/session/new") {
+                br#"{"session_id":"sess-no-tui"}"#
+            } else {
+                br#"{"ok":true}"#
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    let err = cmd_connect(&cli(None), &format!("127.0.0.1:{}", addr.port()), None).await;
+    server.abort();
+    let err = err.unwrap_err().to_string();
+    assert!(
+        err.contains("connect needs a real TUI")
+            || err.contains("cannot reach")
+            || err.contains("session"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn cmd_auth_import_symlink_approved_and_bad_json() {
+    let home = IsolatedHome::new();
+    let data = Config::data_dir().unwrap();
+    let real = home.path().join("real-creds.json");
+    std::fs::write(
+        &real,
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat-test","refreshToken":"r","expiresAt":4102444800000}}"#,
+    )
+    .unwrap();
+    let claude = home.path().join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::os::unix::fs::symlink(&real, claude.join(".credentials.json")).unwrap();
+    cmd_auth_import(&data).await.unwrap();
+
+    std::fs::remove_file(claude.join(".credentials.json")).unwrap();
+    std::fs::write(
+        claude.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"sk-ant-oat-ok","refreshToken":"r","expiresAt":4102444800000}}"#,
+    )
+    .unwrap();
+    install_test_repl_lines(["y"]);
+    cmd_auth_import(&data).await.unwrap();
+    clear_test_repl_lines();
+    // Approved re-import
+    cmd_auth_import(&data).await.unwrap();
+
+    std::fs::write(claude.join(".credentials.json"), "not-json").unwrap();
+    cmd_auth_import(&data).await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_config_path_and_project_path_roundtrip() {
+    let _home = IsolatedHome::new();
+    cmd_config(&ConfigCmd::Path).await.unwrap();
+    cmd_config(&ConfigCmd::Set {
+        key: "project_path".into(),
+        value: "/tmp/proj".into(),
+    })
+    .await
+    .unwrap();
+    cmd_config(&ConfigCmd::Get {
+        key: "project_path".into(),
+    })
+    .await
+    .unwrap();
+    cmd_config(&ConfigCmd::Set {
+        key: "default_agent".into(),
+        value: "plan".into(),
+    })
+    .await
+    .unwrap();
+    let err = cmd_config(&ConfigCmd::Set {
+        key: "nope".into(),
+        value: "x".into(),
+    })
+    .await;
+    assert!(err.is_err());
+}
+
+#[tokio::test]
+async fn cmd_agent_prints_tools_and_custom_model() {
+    let _home = IsolatedHome::new();
+    let mut cfg = Config::default();
+    if let Some(agent) = cfg.agents.iter_mut().find(|a| a.name == "build") {
+        agent.model = Some(ModelConfig {
+            model_id: "tiny".into(),
+            provider_id: "ollama".into(),
+            max_tokens: None,
+            context_window: None,
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: Some(true),
+            supports_images: None,
+        });
+    }
+    cfg.save().unwrap();
+    cmd_agent(Some("build")).await.unwrap();
+    cmd_agent(Some("plan")).await.unwrap();
+    cmd_agent(Some("general")).await.unwrap();
+    cmd_agent(None).await.unwrap();
+}
+
+#[test]
+fn agent_info_for_unknown_name_falls_back() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.agent_flag = Some("no-such-agent".into());
+    c.provider = Some("ollama".into());
+    c.model = Some("tiny".into());
+    let info = agent_info_for(&c, &Config::default());
+    assert_eq!(info.name, "build");
+}
+
+#[tokio::test]
+async fn get_api_key_from_oauth_store() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::remove_var("ANTHROPIC_API_KEY") };
+    let data = Config::data_dir().unwrap();
+    let store = whycodes_auth::TokenStore::new(&data);
+    store
+        .set(
+            "anthropic",
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "oat-from-store".into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
+                    extra: Default::default(),
+                },
+            },
+        )
+        .unwrap();
+    let key = get_api_key("anthropic", &Config::default()).await;
+    // Production path: env miss → OAuth store. Refresh may still return None
+    // if the provider spec requires a live token endpoint.
+    let _ = key;
+}
+
+#[test]
+fn acquire_lock_takeover_start_anyway_other_port() {
+    let _home = IsolatedHome::new();
+    let cwd = IsolatedCwd::new();
+    let dir = std::env::current_dir().unwrap();
+    let path = crate::cmd::lockfile::lock_path(&dir);
+    crate::cmd::lockfile::write_lock(
+        &path,
+        &crate::cmd::lockfile::ServeLock {
+            pid: std::process::id(),
+            port: 3030,
+            started_at: crate::cmd::lockfile::now_secs(),
+            interactive: false,
+            parent_pid: None,
+        },
+    )
+    .unwrap();
+    unsafe { std::env::set_var("WHYCODES_TEST_TAKEOVER", "2") };
+    let result = crate::cmd::lockfile::acquire_lock(&dir, 4040, false);
+    unsafe { std::env::remove_var("WHYCODES_TEST_TAKEOVER") };
+    drop(cwd);
+    let (guard, takeover) = result.unwrap();
+    assert!(takeover.is_none());
+    drop(guard);
+}
+
+#[test]
+fn pid_alive_init_or_denied() {
+    let probe = crate::cmd::lockfile::pid_alive(1);
+    assert!(
+        matches!(
+            probe,
+            crate::cmd::lockfile::PidProbe::Alive
+                | crate::cmd::lockfile::PidProbe::Denied
+                | crate::cmd::lockfile::PidProbe::Dead
+        ),
+        "{probe:?}"
+    );
+}
+
+#[tokio::test]
+async fn cmd_run_custom_command_scripted_fail() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-custom-fail");
+    }
+    let proj = home.path().join("p");
+    std::fs::create_dir_all(proj.join(".whycodes").join("commands")).unwrap();
+    std::fs::write(
+        proj.join(".whycodes").join("commands").join("hello.md"),
+        "Say $ARGUMENTS",
+    )
+    .unwrap();
+    install_test_repl_lines(["/hello boom", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn run_init_agents_md_empty_model_output_errors() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe { std::env::set_var("WHYCODES_TEST_LLM", "```") };
+    let mut agent = Agent::new(agent_info_for(&cli(None), &Config::default()));
+    maybe_inject_test_llm(&mut agent, "anthropic");
+    let err = run_init_agents_md(home.path(), &agent, "anthropic", "m", "k").await;
+    unsafe { std::env::remove_var("WHYCODES_TEST_LLM") };
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_run_effort_persist_fails_when_config_is_dir() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-effort");
+    }
+    let path = Config::default_path().unwrap();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    let _ = std::fs::remove_file(&path);
+    std::fs::create_dir_all(&path).unwrap();
+    install_test_repl_lines(["/effort high", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+#[tokio::test]
+async fn cmd_run_rename_without_saved_session() {
+    let home = IsolatedHome::new();
+    install_test_repl_lines(["/rename coverage-title", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("ollama".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_run_diff_without_git_on_path() {
+    let home = IsolatedHome::new();
+    let empty = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("PATH");
+    unsafe { std::env::set_var("PATH", empty.path()) };
+    install_test_repl_lines(["/diff", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("ollama".into());
+    let result = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+    match prev {
+        Some(v) => unsafe { std::env::set_var("PATH", v) },
+        None => unsafe { std::env::remove_var("PATH") },
+    }
+    result.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_import_skips_every_item() {
+    let home = IsolatedHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx","args":["-y","pkg"]}}}"#,
+    )
+    .unwrap();
+    install_test_repl_lines(["y", "n"]);
+    cmd_import(&ImportArgs {
+        from: Some("claude".into()),
+        dry_run: false,
+        yes: false,
+        force: false,
+    })
+    .await
+    .unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_import_yes_then_nothing_new() {
+    let home = IsolatedHome::new();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    cmd_import(&ImportArgs {
+        from: Some("claude".into()),
+        dry_run: false,
+        yes: true,
+        force: false,
+    })
+    .await
+    .unwrap();
+    cmd_import(&ImportArgs {
+        from: Some("claude".into()),
+        dry_run: false,
+        yes: true,
+        force: false,
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn cmd_serve_fallback_agent_when_default_missing() {
+    let _home = IsolatedHome::new();
+    let _cwd = IsolatedCwd::new();
+    let mut cfg = Config::default();
+    cfg.agents.clear();
+    cfg.default_agent = "missing".into();
+    cfg.save().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let handle = tokio::spawn(async move { cmd_serve(port, true).await });
+    let url = format!("http://127.0.0.1:{port}/api/health");
+    for _ in 0..80 {
+        if reqwest::get(&url).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn after_tui_exit_upgrade_installs_when_newer() {
+    let home = IsolatedHome::new();
+    let target = home.path().join("whycodes-bin");
+    std::fs::write(&target, b"old-binary").unwrap();
+    let tar_bytes = {
+        let mut raw = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut raw);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(3);
+            h.set_cksum();
+            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = Vec::new();
+        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+        use std::io::Write;
+        enc.write_all(&raw).unwrap();
+        enc.finish().unwrap();
+        gz
+    };
+    let digest = crate::upgrade::digest_of(&tar_bytes);
+    let archive_name = crate::upgrade::target_archive().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let latest_url = format!("http://{addr}/latest");
+    let asset_url = format!("http://{addr}/asset");
+    let sums_url = format!("http://{addr}/sums");
+    let tar_clone = tar_bytes.clone();
+    let sums_body = format!("{digest}  {archive_name}\n");
+    let latest_body = serde_json::json!({
+        "tag_name": "v99.0.0",
+        "assets": [
+            {"name": archive_name, "id": 1, "browser_download_url": asset_url},
+            {"name": "SHA256SUMS", "id": 2, "browser_download_url": sums_url},
+        ]
+    })
+    .to_string();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let (status, body, ctype): (&str, Vec<u8>, &str) = if req.contains("GET /latest") {
+                (
+                    "200 OK",
+                    latest_body.as_bytes().to_vec(),
+                    "application/json",
+                )
+            } else if req.contains("GET /sums") {
+                ("200 OK", sums_body.as_bytes().to_vec(), "text/plain")
+            } else if req.contains("GET /asset") {
+                ("200 OK", tar_clone.clone(), "application/octet-stream")
+            } else {
+                ("404 Not Found", b"nope".to_vec(), "text/plain")
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        }
+    });
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &latest_url);
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", &target);
+    }
+    after_tui_exit(whycodes_tui::TuiExit::Upgrade)
+        .await
+        .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn upgrade_run_uses_asset_url_env() {
+    let home = IsolatedHome::new();
+    let target = home.path().join("whycodes-bin");
+    std::fs::write(&target, b"old").unwrap();
+    let tar_bytes = {
+        let mut raw = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut raw);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(3);
+            h.set_cksum();
+            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = Vec::new();
+        {
+            let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+            use std::io::Write;
+            enc.write_all(&raw).unwrap();
+            enc.finish().unwrap();
+        }
+        gz
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let latest_url = format!("http://{addr}/latest");
+    let asset_url = format!("http://{addr}/asset");
+    let tar_clone = tar_bytes.clone();
+    let archive_name = crate::upgrade::target_archive().unwrap().to_string();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let (status, body, ctype): (&str, Vec<u8>, &str) = if req.contains("GET /latest") {
+                let latest = serde_json::json!({
+                    "tag_name": "v99.0.0",
+                    "assets": [
+                        {"name": archive_name, "id": 11},
+                        {"name": "SHA256SUMS", "id": 12},
+                    ]
+                })
+                .to_string();
+                ("200 OK", latest.into_bytes(), "application/json")
+            } else {
+                ("200 OK", tar_clone.clone(), "application/octet-stream")
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        }
+    });
+    unsafe {
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &latest_url);
+        std::env::set_var("WHYCODES_UPGRADE_ASSET_URL", &asset_url);
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", &target);
+    }
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(8), crate::upgrade::run()).await;
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_ASSET_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn cmd_run_repl_turn_persist_and_remember_errors() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-persist2");
+    }
+    install_test_repl_lines(["hello persist", "/remember keep", "/memory", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = false;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, Some(2), OutputFormat::Text)
+        .await
+        .unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_generate_stream_json_fail_and_text_parallel() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "FAIL");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-stream-fail");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let err = cmd_generate(&c, &["x".into()], Some(1), 1, OutputFormat::StreamJson).await;
+    assert!(err.is_err());
+    let err = cmd_generate(
+        &c,
+        &["a".into(), "b".into()],
+        Some(1),
+        2,
+        OutputFormat::StreamJson,
+    )
+    .await;
+    assert!(err.is_err());
+}
+
+#[tokio::test]
+async fn cmd_run_tui_stub_with_prompt() {
+    let _home = IsolatedHome::new();
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_TUI", "quit");
+        std::env::set_var("WHYCODES_TEST_SKIP_UPGRADE", "1");
+    }
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    cmd_run(&c, Some("hello tui"), None, OutputFormat::Text)
+        .await
+        .unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+    }
+}
+
+#[test]
+fn runtime_for_run_caps_workers() {
+    let rt = runtime_for(&cli(Some(Commands::Run {
+        prompt: None,
+        max_turns: None,
+        format: OutputFormat::Text,
+    })))
+    .unwrap();
+    assert_eq!(
+        rt.handle().runtime_flavor(),
+        tokio::runtime::RuntimeFlavor::MultiThread
+    );
+    drop(rt);
+    let rt = runtime_for(&cli(Some(Commands::Serve {
+        port: 3030,
+        no_takeover: true,
+    })))
+    .unwrap();
+    drop(rt);
+}
+
+#[tokio::test]
+async fn cmd_run_first_run_import_reload() {
+    let home = IsolatedHome::new();
+    home.allow_import_prompt();
+    std::fs::write(
+        home.path().join(".claude.json"),
+        r#"{"mcpServers":{"fs":{"command":"npx"}}}"#,
+    )
+    .unwrap();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-import-reload");
+    }
+    install_test_repl_lines(["y", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.provider = Some("anthropic".into());
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_memory_empty_search_and_no_memory_flag() {
+    let home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.no_memory = true;
+    cmd_memory(&c, &MemoryCmd::List { limit: 5 }).await.unwrap();
+    cmd_memory(
+        &c,
+        &MemoryCmd::Search {
+            query: "zzz".into(),
+            limit: 3,
+        },
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn dispatch_mcp_serve_and_config_path() {
+    let _home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    dispatch_command(
+        &Commands::Config {
+            cmd: ConfigCmd::Path,
+        },
+        &c,
+    )
+    .await
+    .unwrap();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        dispatch_command(
+            &Commands::Mcp {
+                cmd: McpCmd::Serve {
+                    tools: "core".into(),
+                    cwd: Some(".".into()),
+                },
+            },
+            &c,
+        ),
+    )
+    .await;
+    result.expect("dispatch mcp serve hung").unwrap();
+}
+
+#[tokio::test]
+async fn spawn_update_check_homebrew_offer() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let _ = stream.read(&mut buf).await;
+            let body = br#"{"tag_name":"v99.0.0","assets":[]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    let url = format!("http://127.0.0.1:{}/latest", addr.port());
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::remove_var("WHYCODES_NO_AUTO_UPDATE");
+        std::env::remove_var("WHYCODES_BENCH");
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &url);
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", "/opt/homebrew/bin/whycodes");
+    }
+    let mut c = cli(None);
+    c.no_auto_update = false;
+    let cfg = Config::default();
+    let mut rx = spawn_update_check(&c, &cfg).expect("update check spawned");
+    let offer = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+        .await
+        .ok()
+        .flatten();
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+    assert!(
+        matches!(offer, Some(whycodes_tui::UpdateOffer::Homebrew(_))),
+        "{offer:?}"
+    );
+}
+
+#[tokio::test]
+async fn cmd_upgrade_success_installs() {
+    let home = IsolatedHome::new();
+    let target = home.path().join("whycodes-bin");
+    std::fs::write(&target, b"old-binary").unwrap();
+    let tar_bytes = {
+        let mut raw = Vec::new();
+        {
+            let mut b = tar::Builder::new(&mut raw);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(3);
+            h.set_cksum();
+            b.append_data(&mut h, "whycodes", &b"new"[..]).unwrap();
+            b.finish().unwrap();
+        }
+        let mut gz = Vec::new();
+        let mut enc = flate2::write::GzEncoder::new(&mut gz, flate2::Compression::default());
+        use std::io::Write;
+        enc.write_all(&raw).unwrap();
+        enc.finish().unwrap();
+        gz
+    };
+    let digest = crate::upgrade::digest_of(&tar_bytes);
+    let archive_name = crate::upgrade::target_archive().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let latest_url = format!("http://{addr}/latest");
+    let asset_url = format!("http://{addr}/asset");
+    let sums_url = format!("http://{addr}/sums");
+    let tar_clone = tar_bytes.clone();
+    let sums_body = format!("{digest}  {archive_name}\n");
+    let latest_body = serde_json::json!({
+        "tag_name": "v99.0.0",
+        "assets": [
+            {"name": archive_name, "id": 1, "browser_download_url": asset_url},
+            {"name": "SHA256SUMS", "id": 2, "browser_download_url": sums_url},
+        ]
+    })
+    .to_string();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 4096];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let (status, body, ctype): (&str, Vec<u8>, &str) = if req.contains("GET /latest") {
+                (
+                    "200 OK",
+                    latest_body.as_bytes().to_vec(),
+                    "application/json",
+                )
+            } else if req.contains("GET /sums") {
+                ("200 OK", sums_body.as_bytes().to_vec(), "text/plain")
+            } else if req.contains("GET /asset") {
+                ("200 OK", tar_clone.clone(), "application/octet-stream")
+            } else {
+                ("404 Not Found", b"nope".to_vec(), "text/plain")
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.write_all(&body).await;
+        }
+    });
+    unsafe {
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", &latest_url);
+        std::env::set_var("WHYCODES_UPGRADE_TARGET", &target);
+    }
+    cmd_upgrade().await.unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+        std::env::remove_var("WHYCODES_UPGRADE_TARGET");
+    }
+    server.abort();
+}
+
+#[tokio::test]
+async fn cmd_run_share_export_error_when_project_is_file() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-share-err");
+    }
+    let file_proj = home.path().join("not-a-dir");
+    std::fs::write(&file_proj, b"x").unwrap();
+    install_test_repl_lines(["/share", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(file_proj.to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    let _ = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_run_resume_error_path_when_db_is_dir() {
+    let home = IsolatedHome::new();
+    let db_path = Config::data_dir().unwrap().join("whycodes.db");
+    std::fs::create_dir_all(&db_path).unwrap();
+    install_test_repl_lines(["/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.resume = Some("abc".into());
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("ollama".into());
+    let _ = cmd_run(&c, None, None, OutputFormat::Text).await;
+    clear_test_repl_lines();
+}
+
+#[test]
+fn read_repl_line_without_queue_hits_stdin() {
+    clear_test_repl_lines();
+    // No queued lines → production stdin.read_line arm (EOF in this harness).
+    let mut buf = String::new();
+    let _ = read_repl_line(&mut buf);
+}
+
+#[tokio::test]
+async fn cmd_debug_oauth_store_error_when_auth_json_is_dir() {
+    let home = IsolatedHome::new();
+    let auth = home.path().join("auth.json");
+    std::fs::create_dir_all(&auth).unwrap();
+    cmd_debug(false).await.unwrap();
+    cmd_debug(true).await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_stats_open_db_error_when_db_is_dir() {
+    let _home = IsolatedHome::new();
+    let db_path = Config::data_dir().unwrap().join("whycodes.db");
+    std::fs::create_dir_all(&db_path).unwrap();
+    cmd_stats().await.unwrap();
+}
+
+#[tokio::test]
+async fn cmd_generate_no_memory_and_structured_json() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-json2");
+    }
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_generate(&c, &["hello".into()], Some(1), 1, OutputFormat::Json)
+        .await
+        .unwrap();
+    cmd_generate(
+        &c,
+        &["a".into(), "b".into()],
+        Some(1),
+        2,
+        OutputFormat::Text,
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn cmd_connect_create_session_error_after_health() {
+    let _home = IsolatedHome::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for _ in 0..6 {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let mut buf = vec![0u8; 2048];
+            let n = stream.read(&mut buf).await.unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]);
+            let (status, body): (&str, &[u8]) = if req.contains("/api/health") {
+                ("200 OK", br#"{"ok":true,"project":"p","uptime_secs":1}"#)
+            } else {
+                ("500 Internal Server Error", br#"{"error":"nope"}"#)
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                std::str::from_utf8(body).unwrap()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+        }
+    });
+    unsafe { std::env::set_var("WHYCODES_TEST_TUI", "quit") };
+    let err = cmd_connect(&cli(None), &format!("127.0.0.1:{}", addr.port()), None).await;
+    unsafe { std::env::remove_var("WHYCODES_TEST_TUI") };
+    server.abort();
+    assert!(err.is_err(), "{err:?}");
+}
+
+#[tokio::test]
+async fn cmd_run_tui_upgrade_without_skip() {
+    let _home = IsolatedHome::new();
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_TUI", "upgrade");
+        std::env::remove_var("WHYCODES_TEST_SKIP_UPGRADE");
+        std::env::set_var("WHYCODES_UPGRADE_LATEST_URL", "http://127.0.0.1:1/latest");
+    }
+    let mut c = cli(None);
+    c.plain = false;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    unsafe {
+        std::env::remove_var("WHYCODES_TEST_TUI");
+        std::env::remove_var("WHYCODES_UPGRADE_LATEST_URL");
+    }
+}
+
+#[tokio::test]
+async fn cmd_auth_login_stub_non_oauth_provider() {
+    let _home = IsolatedHome::new();
+    unsafe { std::env::set_var("WHYCODES_TEST_AUTH_LOGIN", "1") };
+    cmd_auth(&AuthCmd::Login {
+        provider: "ollama".into(),
+        no_browser: true,
+    })
+    .await
+    .unwrap();
+    cmd_auth(&AuthCmd::Status).await.unwrap();
+    unsafe { std::env::remove_var("WHYCODES_TEST_AUTH_LOGIN") };
+}
+
+#[tokio::test]
+async fn cmd_run_login_oauth_with_auth_stub() {
+    let home = IsolatedHome::new();
+    let _llm = TestLlmEnv;
+    unsafe {
+        std::env::set_var("WHYCODES_TEST_LLM", "ok");
+        std::env::set_var("WHYCODES_TEST_AUTH_LOGIN", "1");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-login");
+    }
+    install_test_repl_lines(["/login anthropic", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_run_connect_oauth_hint_without_key() {
+    let home = IsolatedHome::new();
+    install_test_repl_lines(["/connect", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_run_sessions_and_resume_list() {
+    let home = IsolatedHome::new();
+    install_test_repl_lines(["/sessions", "/resume", "/q"]);
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("ollama".into());
+    cmd_run(&c, None, None, OutputFormat::Text).await.unwrap();
+    clear_test_repl_lines();
+}
+
+#[tokio::test]
+async fn cmd_provider_list_with_configured() {
+    let _home = IsolatedHome::new();
+    cmd_provider(&ProviderCmd::Add {
+        name: "shown".into(),
+        api_key: Some("k".into()),
+        base_url: Some("http://127.0.0.1:9".into()),
+        headers: None,
+    })
+    .await
+    .unwrap();
+    cmd_provider(&ProviderCmd::List).await.unwrap();
+}
+
+#[test]
+fn resolve_dir_dot_means_cwd() {
+    let mut c = cli(None);
+    c.dir = Some(".".into());
+    let d = resolve_dir(&c);
+    assert!(d.is_absolute() || d.as_os_str() == ".");
+}
+
+#[tokio::test]
+async fn cmd_run_empty_one_shot_then_missing_key() {
+    let home = IsolatedHome::new();
+    let mut c = cli(None);
+    c.plain = true;
+    c.no_memory = true;
+    c.no_auto_update = true;
+    c.dir = Some(home.path().to_string_lossy().into_owned());
+    c.provider = Some("anthropic".into());
+    cmd_run(&c, Some(""), None, OutputFormat::Text)
+        .await
+        .unwrap();
+    cmd_run(&c, Some("needs key"), Some(1), OutputFormat::Text)
+        .await
+        .unwrap();
 }

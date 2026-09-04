@@ -366,4 +366,74 @@ mod tests {
         print_plan(&plan);
         assert!(!maybe_first_run_import(false).unwrap());
     }
+
+    #[test]
+    fn prompt_item_selection_keeps_and_skips() {
+        let mut plan = ImportPlan::default();
+        plan.mcp_add.push((
+            "fs".into(),
+            whycodes_config::McpServerConfig {
+                transport: None,
+                command: Some("npx".into()),
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        ));
+        plan.permission_add
+            .push(("bash".into(), whycodes_core::types::PermissionAction::Ask));
+        crate::cmd::helpers::install_test_repl_lines(["y", "n"]);
+        prompt_item_selection(&mut plan).unwrap();
+        crate::cmd::helpers::clear_test_repl_lines();
+        assert_eq!(plan.mcp_add.len(), 1);
+        assert!(plan.permission_add.is_empty());
+    }
+
+    #[test]
+    fn prompt_item_selection_empty_plan_is_ok() {
+        let mut plan = ImportPlan::default();
+        prompt_item_selection(&mut plan).unwrap();
+        assert!(plan.is_empty());
+    }
+
+    #[test]
+    fn first_run_skips_when_ci_or_skip_env() {
+        let prev_ci = std::env::var_os("CI");
+        unsafe { std::env::set_var("CI", "1") };
+        assert!(!maybe_first_run_import(true).unwrap());
+        match prev_ci {
+            Some(v) => unsafe { std::env::set_var("CI", v) },
+            None => unsafe { std::env::remove_var("CI") },
+        }
+        let prev_skip = std::env::var_os("WHYCODES_SKIP_IMPORT");
+        unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", "1") };
+        assert!(!maybe_first_run_import(true).unwrap());
+        match prev_skip {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_SKIP_IMPORT", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_SKIP_IMPORT") },
+        }
+    }
+
+    #[test]
+    fn prompt_item_selection_empty_line_keeps() {
+        let mut plan = ImportPlan::default();
+        plan.mcp_add.push((
+            "fs".into(),
+            whycodes_config::McpServerConfig {
+                transport: None,
+                command: Some("npx".into()),
+                args: vec![],
+                env: None,
+                cwd: None,
+                url: None,
+                headers: None,
+            },
+        ));
+        crate::cmd::helpers::install_test_repl_lines([""]);
+        prompt_item_selection(&mut plan).unwrap();
+        crate::cmd::helpers::clear_test_repl_lines();
+        assert_eq!(plan.mcp_add.len(), 1);
+    }
 }

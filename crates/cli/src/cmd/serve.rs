@@ -90,8 +90,8 @@ pub(crate) async fn cmd_connect(
 pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()> {
     use std::collections::HashMap;
     use std::sync::Arc;
+    use std::time::Duration;
     use whycodes_agent::{PermissionPrompter, QuestionPrompter};
-
     let project_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (lock_guard, takeover) = super::lockfile::acquire_lock(&project_dir, port, no_takeover)?;
     if let Some(holder) = takeover {
@@ -131,14 +131,22 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     // auto-approve so TUI `connect` stays unattended.
     let perm = whycodes_server::perm::PermHub::new();
     let file_index = whycodes_index::WorkspaceIndex::start(vec![project_dir.clone()]);
+    let mut question_prompter =
+        whycodes_server::perm::ServeQuestionPrompter::new(Arc::clone(&perm));
+    question_prompter.timeout = if config.tools.question.timeout_enabled {
+        Some(Duration::from_secs(
+            config.tools.question.timeout_secs.max(1),
+        ))
+    } else {
+        None
+    };
+    question_prompter.notify = Some(whycodes_agent::notify::handle_from_config(&config.notify));
     let agent = Agent::new(agent_info)
         .with_config(&config)
         .with_permission_prompter(Arc::new(whycodes_server::perm::ServePrompter {
             hub: Arc::clone(&perm),
         }) as Arc<dyn PermissionPrompter>)
-        .with_question_prompter(Arc::new(whycodes_server::perm::ServeQuestionPrompter {
-            hub: Arc::clone(&perm),
-        }) as Arc<dyn QuestionPrompter>)
+        .with_question_prompter(Arc::new(question_prompter) as Arc<dyn QuestionPrompter>)
         .with_file_index(file_index)
         .with_plugins(Some(&project_dir))
         .with_mcp(&config)
@@ -147,7 +155,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     let state = whycodes_server::AppState {
         agent: Arc::new(agent),
         config: Arc::new(config),
-        project_dir,
+        project_dir: project_dir.clone(),
         sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
         max_turns: None,
         mcp_warm: true,
@@ -194,7 +202,19 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     println!("  Bind: {addr} (loopback only). Ctrl+C to stop.");
     println!();
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(err) if err.kind() == std::io::ErrorKind::AddrInUse => {
+            let hint = super::lockfile::connect_hint(&project_dir)
+                .unwrap_or_else(|| {
+                    format!(
+                        "port {port} is already in use (not a WhyCodes serve lock). Try another port or `whycodes connect`."
+                    )
+                });
+            anyhow::bail!("{hint}");
+        }
+        Err(err) => return Err(err.into()),
+    };
     if let Err(err) = super::lockfile::commit_lock(&lock_guard, port) {
         tracing::debug!(error = %err, "serve lock write after bind failed");
     }
@@ -204,7 +224,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
 }
 
 #[cfg(feature = "server")]
-async fn takeover_holder(holder: &super::lockfile::ServeLock) -> anyhow::Result<()> {
+pub(crate) async fn takeover_holder(holder: &super::lockfile::ServeLock) -> anyhow::Result<()> {
     use std::time::Duration;
     println!(
         "{} Taking over pid {} on port {}",
@@ -218,7 +238,11 @@ async fn takeover_holder(holder: &super::lockfile::ServeLock) -> anyhow::Result<
             holder.pid
         );
     }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+    #[cfg(test)]
+    let wait = Duration::from_millis(80);
+    #[cfg(not(test))]
+    let wait = Duration::from_secs(8);
+    let deadline = tokio::time::Instant::now() + wait;
     loop {
         if !matches!(
             super::lockfile::pid_alive(holder.pid),
@@ -257,8 +281,8 @@ pub(crate) async fn cmd_web() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn serve_module_loads() {
-        assert!(!module_path!().is_empty());
+    #[tokio::test]
+    async fn web_stub_runs() {
+        super::cmd_web().await.unwrap();
     }
 }

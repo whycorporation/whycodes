@@ -275,7 +275,9 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn provider_module_loads() {
-        assert!(!module_path!().is_empty());
+    fn default_config_has_named_agents() {
+        let cfg = whycodes_config::Config::default();
+        assert!(cfg.get_agent("build").is_some());
+        assert!(cfg.get_agent("plan").is_some());
     }
 }

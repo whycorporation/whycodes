@@ -124,7 +124,7 @@ fn collect_debug() -> DebugDump {
     }
 }
 
-fn cmd_version(bin: &str) -> Option<String> {
+pub(crate) fn cmd_version(bin: &str) -> Option<String> {
     std::process::Command::new(bin)
         .arg("--version")
         .output()
@@ -400,5 +400,29 @@ mod tests {
             assert!(entry.get("set").and_then(|s| s.as_bool()).is_some());
             assert!(entry.get("value").is_none(), "env must not leak values");
         }
+    }
+
+    #[test]
+    fn auto_update_on_for_interactive_run_and_off_otherwise() {
+        let run = Cli::try_parse_from(["whycodes", "run"]).unwrap();
+        assert!(should_auto_update_with_env(&run, true, false, false, false));
+        let json = Cli::try_parse_from(["whycodes", "run", "--format", "json", "hi"]).unwrap();
+        assert!(!should_auto_update_with_env(
+            &json, true, false, false, false
+        ));
+        let stats = Cli::try_parse_from(["whycodes", "stats"]).unwrap();
+        assert!(!should_auto_update_with_env(
+            &stats, true, false, false, false
+        ));
+        assert!(!should_auto_update_with_env(
+            &run, false, false, false, false
+        ));
+        assert!(!should_auto_update_with_env(&run, true, true, false, false));
+        assert!(!should_auto_update_with_env(&run, true, false, true, false));
+        assert!(!should_auto_update_with_env(&run, true, false, false, true));
+        let dump = collect_debug();
+        let _ = cmd_version("rustc");
+        let _ = cmd_version("definitely-missing-bin");
+        assert!(!dump.version.is_empty());
     }
 }

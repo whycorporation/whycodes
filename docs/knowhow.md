@@ -144,6 +144,22 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-04 — `kill(u32::MAX)` logged the desktop session out
+
+**Symptom:** `cargo test -p whycodes-cli` (lockfile / serve takeover tests)
+dropped the Plasma session to the login screen while the suite was running.
+
+**Root cause:** `signal_term(u32::MAX)` / `signal_kill(u32::MAX)` cast the pid
+with `as i32` → `-1`. `kill(-1, SIGTERM|SIGKILL)` broadcasts to every process
+the user can signal (except init). `kill(0, …)` is the process group.
+
+**Fix:** `unix_kill_pid` only forwards pids that fit in a **positive** `i32`.
+0 / overflow → `PidProbe::Dead` / `ErrorKind::NotFound`. Tests use
+`unused_pid()` (2e9), never `u32::MAX`.
+
+**Prevention:** `invalid_unix_pids_are_not_broadcast`. Never `pid as i32`
+into `kill(2)`.
+
 ### 2026-09-04 — Default TUI `auto` never opened the question panel
 
 **Symptom:** Interactive TUI in default `auto` silently picked option 1. Discord
