@@ -104,7 +104,7 @@ fn registry() -> &'static Mutex<HashMap<String, ProviderSpec>> {
     REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-fn lock_registry() -> std::sync::MutexGuard<'static, HashMap<String, ProviderSpec>> {
+pub(crate) fn lock_registry() -> std::sync::MutexGuard<'static, HashMap<String, ProviderSpec>> {
     match registry().lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -332,6 +332,7 @@ mod tests {
         assert!(!supports_oauth("definitely-missing-oauth-provider"));
         assert!(spec_for("definitely-missing-oauth-provider").is_err());
         assert!(suggested_models("definitely-missing-oauth-provider").is_empty());
+        assert!(inference_identity("definitely-missing-oauth-provider").is_none());
     }
 
     #[test]
@@ -367,5 +368,49 @@ mod tests {
         );
         // Drop only this spec so parallel tests keep extras plugins.
         lock_registry().remove("spec-register-demo");
+    }
+
+    #[test]
+    fn clear_registry_is_restored_from_saved_specs() {
+        let saved: Vec<ProviderSpec> = lock_registry().values().cloned().collect();
+        register_spec(ProviderSpec {
+            name: "spec-clear-demo".into(),
+            label: "Demo".into(),
+            flow: FlowKind::DeviceCode,
+            client_id: "cid".into(),
+            client_secret: None,
+            authorize_url: "https://example.com/auth".into(),
+            token_url: "https://example.com/token".into(),
+            scopes: "read".into(),
+            token_encoding: TokenEncoding::Form,
+            redirect_uri: None,
+            loopback_port: None,
+            loopback_host: None,
+            callback_path: String::new(),
+            extra_authorize: vec![],
+            derived: None,
+            suggested_models: vec![],
+            inference: None,
+        });
+        clear_registry();
+        assert!(!supports_oauth("spec-clear-demo"));
+        for spec in saved {
+            register_spec(spec);
+        }
+    }
+
+    #[test]
+    fn lock_registry_recovers_from_poison() {
+        let _saved: Vec<ProviderSpec> = lock_registry().values().cloned().collect();
+        let handle = std::thread::spawn(|| {
+            let _guard = lock_registry();
+            panic!("poison the auth spec registry");
+        });
+        let _ = handle.join();
+        let _guard = lock_registry();
+        drop(_guard);
+        for spec in _saved {
+            register_spec(spec);
+        }
     }
 }

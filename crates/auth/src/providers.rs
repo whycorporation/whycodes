@@ -20,13 +20,17 @@ use crate::token::{OAuthToken, ProviderAuth};
 
 /// Bound on the whole browser step so a closed tab cannot hang login forever.
 /// Tests use a short window so unused `CliLoginUi` instantiations can finish.
-const BROWSER_FLOW_TIMEOUT: Duration = if cfg!(test) {
-    Duration::from_millis(400)
-} else {
-    Duration::from_secs(5 * 60)
-};
+const BROWSER_FLOW_TIMEOUT: Duration = browser_flow_timeout(cfg!(test));
 /// Device-flow polls stop after the provider's own `expires_in` (15 min cap).
 const DEVICE_FLOW_MAX: Duration = Duration::from_secs(15 * 60);
+
+const fn browser_flow_timeout(for_test: bool) -> Duration {
+    if for_test {
+        Duration::from_millis(400)
+    } else {
+        Duration::from_secs(5 * 60)
+    }
+}
 
 /// User-interaction hooks for the login flows. The CLI implements this
 /// with stdout/stdin ([`CliLoginUi`]); the TUI drives it from status lines
@@ -743,5 +747,6 @@ fn http_client() -> Result<reqwest::Client> {
 pub use crate::spec::{spec_for, suggested_models, supports_oauth, validate};
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 #[path = "providers_tests.rs"]
 mod tests;

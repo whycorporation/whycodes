@@ -531,6 +531,35 @@ fn conformance_grant_bodies_match_declared_encoding() {
 }
 
 #[test]
+fn grant_bodies_include_client_secret_when_set() {
+    let mut spec = local_spec("https://example.com/token".into(), TokenEncoding::Form);
+    spec.client_secret = Some("sekrit".into());
+    let pkce = Pkce {
+        verifier: "ver".into(),
+        challenge: "ch".into(),
+        state: "st".into(),
+    };
+    match code_exchange_body(&spec, "code1", "http://localhost/cb", &pkce) {
+        GrantBody::Form(form) => {
+            assert!(
+                form.iter()
+                    .any(|(k, v)| *k == "client_secret" && v == "sekrit")
+            );
+        }
+        GrantBody::Json(_) => panic!("expected form encoding"),
+    }
+    match refresh_body(&spec, "ref1") {
+        GrantBody::Form(form) => {
+            assert!(
+                form.iter()
+                    .any(|(k, v)| *k == "client_secret" && v == "sekrit")
+            );
+        }
+        GrantBody::Json(_) => panic!("expected form encoding"),
+    }
+}
+
+#[test]
 fn conformance_validate_catches_broken_specs() {
     // Guard the guard: a deliberately broken spec must produce issues.
     let mut broken = fixture_spec("fixture-loopback");
@@ -564,6 +593,22 @@ fn validate_reports_each_flow_specific_error_branch() {
     device.redirect_uri = Some("https://example.com/callback".into());
     let issues = validate(&device).join("\n");
     assert!(issues.contains("device flow has no redirect"));
+
+    let mut ok_host = fixture_spec("fixture-loopback");
+    ok_host.loopback_host = Some("localhost".into());
+    assert!(validate(&ok_host).is_empty(), "{:?}", validate(&ok_host));
+    ok_host.loopback_host = Some("127.0.0.1".into());
+    assert!(validate(&ok_host).is_empty(), "{:?}", validate(&ok_host));
+
+    let mut paste_none = fixture_spec("fixture-paste");
+    paste_none.redirect_uri = None;
+    let issues = validate(&paste_none).join("\n");
+    assert!(issues.contains("registered https redirect_uri"));
+
+    let mut device_host = fixture_spec("fixture-device");
+    device_host.loopback_host = Some("localhost".into());
+    let issues = validate(&device_host).join("\n");
+    assert!(issues.contains("loopback_host is only for LoopbackPkce"));
 }
 
 #[test]
@@ -864,6 +909,31 @@ async fn login_with_spec_persists_loopback_flow() {
         .await
         .unwrap();
     assert_eq!(auth.token.access_token, "loopback");
+}
+
+#[tokio::test]
+async fn login_with_spec_onboards_google_antigravity() {
+    let _lock = crate::cca::tests::cca_test_lock();
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let mut spec = loopback_spec(mock_server(vec![(
+        200,
+        r#"{"access_token":"ag","refresh_token":"rt"}"#,
+    )]));
+    spec.name = "google-antigravity".into();
+    let previous = std::env::var_os("GOOGLE_CLOUD_PROJECT");
+    unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", "proj-from-env") };
+    let result = login_with_spec(&spec, &store, false, &mut LoopbackUi).await;
+    match previous {
+        Some(v) => unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", v) },
+        None => unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") },
+    }
+    let auth = result.unwrap();
+    assert_eq!(auth.token.access_token, "ag");
+    assert_eq!(
+        auth.token.extra[crate::cca::PROJECT_ID_KEY],
+        "proj-from-env"
+    );
 }
 
 #[tokio::test]
@@ -1453,4 +1523,74 @@ fn persist_token_writes_store_entry() {
     assert_eq!(loaded.method, "oauth");
     assert_eq!(loaded.token.access_token, "at");
     assert_eq!(loaded.token.refresh_token.as_deref(), Some("rt"));
+}
+
+#[test]
+fn browser_flow_timeout_covers_test_and_production() {
+    assert_eq!(
+        browser_flow_timeout(true),
+        std::time::Duration::from_millis(400)
+    );
+    assert_eq!(
+        browser_flow_timeout(false),
+        std::time::Duration::from_secs(5 * 60)
+    );
+}
+
+#[tokio::test]
+async fn login_wrapper_dispatches_unknown_and_paste() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    assert!(login("unknown-provider", &store, false).await.is_err());
+}
+
+#[tokio::test]
+async fn send_grant_posts_json_encoding() {
+    let spec = local_spec(
+        mock_server(vec![(200, r#"{"access_token":"json-grant"}"#)]),
+        TokenEncoding::Json,
+    );
+    let pkce = Pkce {
+        verifier: "ver".into(),
+        challenge: "ch".into(),
+        state: "st".into(),
+    };
+    let token = exchange_code(&spec, "code", "https://example.com/cb", &pkce)
+        .await
+        .unwrap();
+    assert_eq!(token.access_token, "json-grant");
+}
+
+#[tokio::test]
+async fn access_token_returns_derived_credential() {
+    register_fixture_specs();
+    let dir = tempfile::tempdir().unwrap();
+    let store = TokenStore::new(dir.path());
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "derived_token".into(),
+        serde_json::Value::String("derived-access".into()),
+    );
+    extra.insert(
+        "derived_expires_at".into(),
+        serde_json::Value::String((Utc::now() + chrono::Duration::hours(1)).to_rfc3339()),
+    );
+    store
+        .set(
+            "fixture-device",
+            ProviderAuth {
+                method: "oauth".into(),
+                token: OAuthToken {
+                    access_token: "github".into(),
+                    refresh_token: None,
+                    expires_at: None,
+                    extra,
+                },
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        access_token("fixture-device", dir.path()).await.as_deref(),
+        Some("derived-access")
+    );
 }

@@ -186,6 +186,17 @@ fn open_browser_with_maps_opener_result() {
 fn accept_connection_surfaces_io_errors() {
     let err = accept_connection(|| Err(std::io::Error::other("accept failed"))).unwrap_err();
     assert!(matches!(err, AuthError::Io(_)));
+    let none =
+        accept_connection(|| Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "later")))
+            .unwrap();
+    assert!(none.is_none());
+}
+
+#[test]
+fn wait_for_callback_loops_until_timeout() {
+    let (listener, _) = bind_loopback().unwrap();
+    let err = wait_for_callback(&listener, "state", Duration::from_millis(80)).unwrap_err();
+    assert!(err.to_string().contains("timed out"));
 }
 
 #[test]
