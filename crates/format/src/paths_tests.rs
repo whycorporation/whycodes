@@ -46,3 +46,11 @@ fn expand_sides_until_budget() {
     let tight = truncate_path(p, 8);
     assert!(tight.contains("..."), "{tight}");
 }
+
+#[test]
+fn three_component_and_single_component_cut() {
+    let three = truncate_path("one/two/three", 8);
+    assert!(three.contains("..."), "{three}");
+    let one = truncate_path("averylongfilename", 6);
+    assert!(one.contains("..."), "{one}");
+}

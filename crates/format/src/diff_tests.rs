@@ -136,3 +136,38 @@ fn render_diff_remaining_sides_and_unified_headers() {
     assert!(looks_like_diff("Edited x\n-old\n+new"));
     assert!(preview_file_path("Edited   \n").is_none());
 }
+
+#[test]
+fn edit_preview_empty_both_and_zero_start() {
+    let empty = format_edit_preview("f.rs", "", "", 1);
+    assert!(empty.contains("Edited f.rs"), "{empty}");
+    let zero = format_edit_preview_at("f.rs", "old", "new", 1, Some(0));
+    assert!(zero.contains("   1|-old"), "{zero}");
+    assert_eq!(preview_file_path("not a header"), None);
+    assert_eq!(
+        preview_file_path("Wrote /tmp/x.rs  ·  3 lines"),
+        Some("/tmp/x.rs")
+    );
+}
+
+#[test]
+fn parse_diff_line_optional_pipe_and_looks_like() {
+    let n = parse_diff_line("  12-body");
+    assert_eq!(n.line_no, Some("12"));
+    assert_eq!(n.marker, Some('-'));
+    assert_eq!(n.body, "body");
+    let p = parse_diff_line("12|+add");
+    assert_eq!(p.marker, Some('+'));
+    assert_eq!(parse_diff_line("12|+").marker, Some('+'));
+    assert_eq!(parse_diff_line("12|++").marker, Some('+'));
+
+    assert!(looks_like_diff("@@ -1 +1 @@\n"));
+    assert!(looks_like_diff("--- a/file\n"));
+    assert!(looks_like_diff("+ added\n- removed\n"));
+    let del = format_edit_preview("f.rs", "only-old", "", 1);
+    assert!(looks_like_diff(&del), "{del}");
+    let mixed = render_diff("a\nb\nc\n", "x\nb\ny\n");
+    assert!(mixed.contains("b"), "{mixed}");
+    let disjoint = render_diff("p\nq\n", "r\ns\n");
+    assert!(disjoint.contains("- p"), "{disjoint}");
+}

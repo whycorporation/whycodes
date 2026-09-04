@@ -62,7 +62,14 @@ fn column_widths_empty_and_shrink_to_floor() {
 fn display_width_treats_cjk_as_double() {
     assert_eq!(display_width("a"), 1);
     assert_eq!(display_width("中"), 2);
-    assert_eq!(display_width("🙂"), 2);
+    assert_eq!(display_width("\u{1100}"), 2); // Hangul Jamo
+    assert_eq!(display_width("\u{AC00}"), 2); // Hangul syllable
+    assert_eq!(display_width("\u{F900}"), 2); // CJK compatibility
+    assert_eq!(display_width("\u{FE10}"), 2); // vertical forms
+    assert_eq!(display_width("\u{FE30}"), 2); // CJK compatibility forms
+    assert_eq!(display_width("\u{FF01}"), 2); // fullwidth
+    assert_eq!(display_width("\u{FFE0}"), 2); // fullwidth symbol
+    assert_eq!(display_width("\u{1F300}"), 2); // emoji
 }
 
 #[test]
@@ -80,4 +87,33 @@ fn pad_cell_center_and_truncate() {
     let padded = truncate_to_width("中中中", 4);
     assert!(padded.contains('…'), "{padded}");
     assert!(display_width(&padded) >= 3, "{padded}");
+}
+
+#[test]
+fn ragged_rows_short_aligns_and_border_fallback() {
+    let rows = &[
+        vec!["1".to_string()],
+        vec!["x".into(), "y".into(), "z".into()],
+    ];
+    let out = format_table(&["A", "B"], rows);
+    assert!(out.contains('│'), "{out}");
+    assert!(out.contains("A"), "{out}");
+
+    let lines = format_table_lines(&["A", "B"], rows, &[]);
+    assert!(lines.iter().any(|l| l.contains('│')));
+
+    let uncapped = column_widths(
+        &["ab".into(), "c".into()],
+        &[vec!["1".into(), "22".into(), "ignored".into()]],
+        Some(80),
+    );
+    assert_eq!(uncapped.len(), 2);
+
+    let row = format_row(&[], &[], &[], 1);
+    assert!(row.contains('│'), "{row}");
+    let row2 = format_row(&["x"], &[3], &[TableAlign::Left], 2);
+    assert!(row2.contains('x'), "{row2}");
+    let _ = format_border(&[1, 1], BorderKind::Top);
+    let _ = format_border(&[1], BorderKind::Mid);
+    let _ = format_border(&[2, 2], BorderKind::Bot);
 }

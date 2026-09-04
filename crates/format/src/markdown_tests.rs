@@ -201,6 +201,24 @@ fn an_unclosed_marker_stays_literal() {
         parse_inline("`unclosed"),
         vec![Inline::Text("`unclosed".into())]
     );
+    // Unclosed `**` does not take the bold arm (find("**") is None).
+    assert_eq!(
+        parse_inline("**unclosed"),
+        vec![Inline::Italic("".into()), Inline::Text("unclosed".into())]
+    );
+    assert_eq!(parse_inline("**"), vec![Inline::Italic("".into())]);
+    // Partial / unclosed links: no `]`, `]` without `(`, `[text](no-close`.
+    assert_eq!(
+        parse_inline("[no-close"),
+        vec![Inline::Text("[no-close".into())]
+    );
+    assert_eq!(parse_inline("[x]"), vec![Inline::Text("[x]".into())]);
+    assert_eq!(parse_inline("[x]("), vec![Inline::Text("[x](".into())]);
+    assert_eq!(
+        parse_inline("[x](url"),
+        vec![Inline::Text("[x](url".into())]
+    );
+    assert_eq!(parse_inline("[x]y"), vec![Inline::Text("[x]y".into())]);
 }
 
 #[test]
@@ -355,6 +373,10 @@ fn inline_link_text_and_table_edges() {
     assert_eq!(crate::markdown::find(&['*', '*', 'z'], 0, "**"), Some(0));
     assert_eq!(crate::markdown::find(&['a', 'b', 'c'], 0, "abc"), Some(0));
     assert!(crate::markdown::find(&['a', 'b'], 2, "ab").is_none());
+    assert_eq!(crate::markdown::find(&['a', 'b', 'c'], 0, "b"), Some(1));
+    assert_eq!(crate::markdown::find(&['x'], 0, "x"), Some(0));
+    assert!(crate::markdown::find(&['a', 'b'], 0, "z").is_none());
+    assert_eq!(crate::markdown::find(&['a', 'b'], 1, "b"), Some(1));
     // non-ascii needle takes the unicode path
     assert_eq!(crate::markdown::find(&['你', '好'], 0, "好"), Some(1));
     assert!(crate::markdown::find(&['a'], 0, "你好").is_none());
@@ -385,4 +407,69 @@ fn render_headers_lists_fences_and_mermaid() {
         mer_empty.contains("render failed") || mer_empty.contains("mermaid"),
         "{mer_empty}"
     );
+}
+
+#[test]
+fn remaining_parse_render_and_table_edges() {
+    let heads = parse_markdown("# a\n## b\n### c\n#### d\n##### e\n###### f");
+    assert!(matches!(&heads[1], Block::Heading { level: 2, .. }));
+    assert!(matches!(&heads[3], Block::Heading { level: 4, .. }));
+    assert!(matches!(&heads[4], Block::Heading { level: 5, .. }));
+    assert!(matches!(&heads[5], Block::Heading { level: 6, .. }));
+
+    assert!(matches!(
+        parse_markdown("999999999999999999999. nope")[0],
+        Block::Paragraph(_)
+    ));
+    assert!(matches!(parse_markdown("1.nope")[0], Block::Paragraph(_)));
+
+    let cells = split_table_cells("| **bold** | `c` | [t](u) |");
+    assert_eq!(cells[0], "bold");
+    assert_eq!(cells[1], "c");
+    assert_eq!(cells[2], "t");
+
+    let resized = parse_markdown("| a | b | c |\n|---|---|\n| 1 | 2 | 3 |");
+    match &resized[0] {
+        Block::Table { aligns, rows, .. } => {
+            assert_eq!(aligns.len(), 3);
+            assert_eq!(rows[0].len(), 3);
+        }
+        other => panic!("{other:?}"),
+    }
+    let extra_sep = parse_markdown("| a | b |\n|---|---|---|---|\n| 1 | 2 |");
+    assert!(matches!(extra_sep[0], Block::Table { .. }));
+
+    let stop_sep = parse_markdown("| A | B |\n|---|---|\n|---|---|");
+    match &stop_sep[0] {
+        Block::Table { rows, .. } => assert!(rows.is_empty()),
+        other => panic!("{other:?}"),
+    }
+
+    assert!(!looks_like_table_row("no pipes here"));
+    assert!(!looks_like_table_row("|only|"));
+    assert!(!is_table_separator("| --- | --x |"));
+    assert!(!is_table_separator("| ::: | ::: |"));
+    assert!(is_table_separator("| --- | :-- |"));
+    assert!(is_table_separator(" --- | --- "));
+
+    let indented = render_markdown("   ```rust\nlet x = 1;\n   ```");
+    assert!(
+        indented.contains("let") || indented.contains("```"),
+        "{indented}"
+    );
+
+    let empty_open = render_markdown("```rust");
+    assert!(
+        empty_open.is_empty() || !empty_open.contains("let"),
+        "{empty_open}"
+    );
+
+    let mmd = render_markdown("```mmd\ngraph LR; A --> B\n```");
+    assert!(mmd.contains("A") || mmd.contains("mermaid"), "{mmd}");
+
+    let nested = render_markdown("    - nested\n+ plus-item\n");
+    assert!(nested.contains("nested"), "{nested}");
+
+    let blank_in_fence = render_markdown("```\n\nplain\n```");
+    assert!(blank_in_fence.contains("plain"), "{blank_in_fence}");
 }

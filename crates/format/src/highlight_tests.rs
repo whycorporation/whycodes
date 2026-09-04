@@ -403,3 +403,148 @@ fn styles_helpers_and_stream_replay() {
     let mut s2 = OpenStreamHighlighter::new();
     let _ = s2.highlight("partial", Some("rust")).unwrap();
 }
+
+#[test]
+fn detect_language_covers_filenames_and_extensions() {
+    let names = [
+        ("Dockerfile", "dockerfile"),
+        ("Makefile", "makefile"),
+        ("GNUmakefile", "makefile"),
+        ("CMakeLists.txt", "cmake"),
+        ("Cargo.toml", "toml"),
+        ("pyproject.toml", "toml"),
+    ];
+    for (path, lang) in names {
+        assert_eq!(detect_language(path), Some(lang), "{path}");
+    }
+
+    let exts = [
+        ("a.rs", "rust"),
+        ("a.py", "python"),
+        ("a.js", "javascript"),
+        ("a.mjs", "javascript"),
+        ("a.cjs", "javascript"),
+        ("a.jsx", "jsx"),
+        ("a.ts", "typescript"),
+        ("a.mts", "typescript"),
+        ("a.cts", "typescript"),
+        ("a.tsx", "tsx"),
+        ("a.html", "html"),
+        ("a.htm", "html"),
+        ("a.css", "css"),
+        ("a.scss", "scss"),
+        ("a.json", "json"),
+        ("a.jsonc", "json"),
+        ("a.toml", "toml"),
+        ("a.yaml", "yaml"),
+        ("a.yml", "yaml"),
+        ("a.md", "markdown"),
+        ("a.markdown", "markdown"),
+        ("a.sh", "bash"),
+        ("a.bash", "bash"),
+        ("a.zsh", "bash"),
+        ("a.sql", "sql"),
+        ("a.c", "c"),
+        ("a.h", "c"),
+        ("a.cpp", "c++"),
+        ("a.cc", "c++"),
+        ("a.cxx", "c++"),
+        ("a.hpp", "c++"),
+        ("a.hh", "c++"),
+        ("a.go", "go"),
+        ("a.java", "java"),
+        ("a.rb", "ruby"),
+        ("a.swift", "swift"),
+        ("a.kt", "kotlin"),
+        ("a.kts", "kotlin"),
+        ("a.scala", "scala"),
+        ("a.r", "r"),
+        ("a.lua", "lua"),
+        ("a.php", "php"),
+        ("a.xml", "xml"),
+        ("a.svg", "xml"),
+        ("a.vue", "vue"),
+        ("a.svelte", "svelte"),
+        ("a.dockerfile", "dockerfile"),
+        ("a.makefile", "makefile"),
+        ("a.mk", "makefile"),
+        ("a.zig", "zig"),
+        ("a.ex", "elixir"),
+        ("a.exs", "elixir"),
+        ("a.hs", "haskell"),
+        ("a.nim", "nim"),
+        ("a.dart", "dart"),
+        ("a.proto", "protobuf"),
+        ("a.graphql", "graphql"),
+        ("a.gql", "graphql"),
+        ("a.tf", "hcl"),
+        ("a.hcl", "hcl"),
+        ("a.nix", "nix"),
+        ("a.vim", "vim"),
+        ("a.diff", "diff"),
+        ("a.patch", "diff"),
+    ];
+    for (path, lang) in exts {
+        assert_eq!(detect_language(path), Some(lang), "{path}");
+    }
+
+    assert_eq!(detect_language(""), None);
+    assert_eq!(detect_language("/"), None);
+    assert_eq!(detect_language("noext"), None);
+    assert_eq!(detect_language("dir/file.unknown"), None);
+}
+
+#[test]
+fn find_syntax_aliases_and_first_line() {
+    let ps = syntax_set();
+    assert!(find_syntax(ps, None).is_none());
+    assert!(find_syntax(ps, Some("")).is_none());
+    assert!(find_syntax(ps, Some("   ")).is_none());
+    assert!(find_syntax(ps, Some("not-a-language")).is_none());
+
+    // Uppercase so token/extension lookup often misses and the alias match runs.
+    // Default syntect pack does not include every alias target (e.g. typescript).
+    for alias in [
+        "RS",
+        "PY",
+        "JS",
+        "MJS",
+        "CJS",
+        "TS",
+        "MTS",
+        "CTS",
+        "TSX",
+        "JSX",
+        "YML",
+        "SH",
+        "ZSH",
+        "SHELL",
+        "DOCKERFILE",
+        "KT",
+        "KTS",
+        "CS",
+        "CPP",
+        "CC",
+        "CXX",
+        "HPP",
+        "rs",
+        "mjs",
+        "cjs",
+        "shell",
+        "yml",
+        "kt",
+    ] {
+        let _ = find_syntax(ps, Some(alias));
+    }
+
+    let shebang = "#!/usr/bin/env python3\nprint(1)\n";
+    assert!(find_syntax_for(ps, None, shebang).is_some());
+    let skipped_blank = "\n\n#!/bin/bash\necho hi\n";
+    assert!(find_syntax_for(ps, None, skipped_blank).is_some());
+    assert!(find_syntax_for(ps, None, "\n\n").is_none());
+    assert!(find_syntax_for(ps, None, "").is_none());
+
+    let _ = highlight_code(shebang, "");
+    let _ = highlight_code_spans(shebang, None);
+    let _ = highlight_uncached("\n\n", None);
+}

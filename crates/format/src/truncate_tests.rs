@@ -32,3 +32,17 @@ fn test_single_line_text() {
     // Single line, 0 lines kept, truncated
     assert!(result.contains("truncated"));
 }
+
+#[test]
+fn singular_line_truncated_message() {
+    let result = truncate("a\nb", 1, 1000);
+    assert!(result.contains("[... 1 line truncated]"), "{result}");
+    assert!(!result.contains("lines"), "{result}");
+}
+
+#[test]
+fn later_line_exceeds_char_budget() {
+    let result = truncate("aa\nbb\ncc", 10, 7);
+    assert!(result.contains("truncated"), "{result}");
+    assert!(result.starts_with("aa\n"), "{result}");
+}

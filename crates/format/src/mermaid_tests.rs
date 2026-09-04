@@ -66,3 +66,13 @@ fn cache_evicts_when_full() {
     let again = render_mermaid("graph TD; A0 --> B0", None);
     assert!(again.is_ok());
 }
+
+#[test]
+fn mermaid_language_trims_and_width_keys_differ() {
+    assert!(is_mermaid_language(Some("  mermaid  ")));
+    assert!(is_mermaid_language(Some("MMD")));
+    let a = render_mermaid("graph TD; A --> B", Some(40));
+    let b = render_mermaid("graph TD; A --> B", Some(80));
+    assert!(a.is_ok());
+    assert!(b.is_ok());
+}
