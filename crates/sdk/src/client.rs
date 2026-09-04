@@ -1032,13 +1032,36 @@ mod tests {
     fn write_fake_binary(dir: &Path, body: &str) -> PathBuf {
         let path = dir.join("whycodes");
         let script = format!("#!/usr/bin/env python3\n{body}\n");
-        std::fs::write(&path, script).unwrap();
+        {
+            use std::io::Write;
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(script.as_bytes()).unwrap();
+            f.sync_all().unwrap();
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         path
+    }
+
+    async fn launch_or_retry_busy(opts: LaunchOptions) -> WhyCodesClient {
+        let mut last = None;
+        for i in 0..8 {
+            match WhyCodesClient::launch(opts.clone()).await {
+                Ok(client) => return client,
+                Err(e)
+                    if e.code == ErrorCode::ServeNotFound
+                        && e.message.to_ascii_lowercase().contains("busy") =>
+                {
+                    last = Some(e);
+                    tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
+                }
+                Err(e) => panic!("{e:?}"),
+            }
+        }
+        panic!("{}", last.expect("busy retries exhausted"));
     }
 
     const PY_HEALTH: &str = r#"
@@ -1271,7 +1294,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         let dir = tempfile::tempdir().unwrap();
         let body = format!("import time\ntime.sleep(0.12)\n{PY_HEALTH}");
         let binary = write_fake_binary(dir.path(), &body);
-        let client = WhyCodesClient::launch(LaunchOptions {
+        let client = launch_or_retry_busy(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(binary),
             inherit_logins: true,
@@ -1279,8 +1302,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_secs(5),
             port: Some(ephemeral_port().unwrap()),
         })
-        .await
-        .unwrap();
+        .await;
         client.close().await.unwrap();
     }
 
