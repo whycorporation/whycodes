@@ -534,6 +534,21 @@ pub(crate) mod tests {
         assert_eq!(out.extra[PROJECT_ID_KEY], "from-extra");
     }
 
+    #[test]
+    fn env_restore_puts_back_existing_project() {
+        let _lock = env_lock();
+        unsafe { std::env::set_var("GOOGLE_CLOUD_PROJECT", "keep-me") };
+        {
+            let _restore = EnvRestore::capture();
+            unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") };
+        }
+        assert_eq!(
+            std::env::var("GOOGLE_CLOUD_PROJECT").as_deref(),
+            Ok("keep-me")
+        );
+        unsafe { std::env::remove_var("GOOGLE_CLOUD_PROJECT") };
+    }
+
     #[tokio::test]
     async fn onboarding_uses_env_project_when_extra_empty() {
         let _lock = env_lock();
