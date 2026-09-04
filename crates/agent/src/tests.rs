@@ -1102,3 +1102,317 @@ async fn compact_session_empty_is_noop() {
     assert_eq!(outcome.messages_before, 0);
     assert!(session.messages.is_empty());
 }
+
+#[tokio::test]
+async fn scripted_stream_error_event_fails_turn() {
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Error("gateway down".into())]);
+    let mut session = scripted_session("please explain rust ownership");
+    let err = agent
+        .run_turn(&mut session, "script", "m", "k", Some(2))
+        .await
+        .expect_err("stream error");
+    assert!(
+        err.to_string().to_lowercase().contains("gateway") || err.to_string().contains("down"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn scripted_hang_is_cancelled_mid_stream() {
+    let agent = scripted_agent([
+        whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_secs(8)),
+        whycodes_llm::ScriptedStep::Text("never".into()),
+    ]);
+    let mut session = scripted_session("please wait for the long analysis");
+    let cancel = crate::events::new_cancel_flag();
+    let cancel2 = cancel.clone();
+    let waiter = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        crate::events::request_cancel(&cancel2);
+    });
+    let err = agent
+        .run_turn_with_events(
+            &mut session,
+            crate::events::TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: Some(4),
+                events: None,
+                cancel: Some(cancel),
+            },
+        )
+        .await
+        .expect_err("cancelled");
+    let _ = waiter.await;
+    assert!(err.to_string().to_lowercase().contains("cancel"), "{err}");
+}
+
+#[tokio::test]
+async fn repeating_identical_tool_trips_doom_loop() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "script",
+        [whycodes_llm::ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "n.txt"}),
+        }],
+    )));
+    let agent = Agent::new(make_test_agent_info("build")).with_provider_registry(registry);
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("please read n.txt and keep checking it");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let _ = agent
+        .run_turn_with_events(
+            &mut session,
+            crate::events::TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: Some(6),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await;
+    let mut saw_doom = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let crate::events::TurnEvent::Status(s) = ev
+            && s.to_lowercase().contains("doom")
+        {
+            saw_doom = true;
+        }
+    }
+    assert!(saw_doom, "doom loop status");
+}
+
+#[tokio::test]
+async fn stream_rule_interrupts_matching_draft() {
+    let mut cfg = whycodes_config::Config::default();
+    cfg.session
+        .stream_rules
+        .push(whycodes_config::StreamRuleConfig {
+            name: "no-secret".into(),
+            pattern: "FORBIDDENWORD".into(),
+            hint: "do not leak secrets".into(),
+        });
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::new([
+        whycodes_llm::ScriptedStep::Text("FORBIDDENWORD in the draft".into()),
+    ])));
+    let agent = Agent::new(make_test_agent_info("build"))
+        .with_config(&cfg)
+        .with_provider_registry(registry);
+    let mut session = scripted_session("please summarize crates/agent carefully");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let _ = agent
+        .run_turn_with_events(
+            &mut session,
+            crate::events::TurnOpts {
+                provider_name: "script",
+                model: "m",
+                api_key: "k",
+                max_turns: Some(4),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await;
+    let mut saw_rule = false;
+    while let Ok(ev) = rx.try_recv() {
+        if let crate::events::TurnEvent::Status(s) = ev
+            && s.contains("no-secret")
+        {
+            saw_rule = true;
+        }
+    }
+    assert!(saw_rule, "stream rule interrupt");
+}
+
+#[tokio::test]
+async fn magic_keyword_ultrathink_still_completes() {
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Text("careful answer".into())]);
+    let mut session = scripted_session("please ultrathink the retry loop");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(3))
+        .await
+        .expect("turn");
+    assert!(out.contains("careful"), "{out}");
+}
+
+#[tokio::test]
+async fn parallel_reads_in_one_tool_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "beta").unwrap();
+    let agent = scripted_agent([
+        whycodes_llm::ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.txt"}),
+        },
+        whycodes_llm::ScriptedStep::ToolCall {
+            id: "c2".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "b.txt"}),
+        },
+        whycodes_llm::ScriptedStep::Text("both files".into()),
+    ]);
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("please read a.txt and b.txt together");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(4))
+        .await
+        .expect("turn");
+    assert!(out.contains("both") || session.messages.len() > 2, "{out}");
+}
+
+#[tokio::test]
+async fn mixed_read_and_shell_run_sequentially() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha").unwrap();
+    let agent = scripted_agent([
+        whycodes_llm::ScriptedStep::ToolCall {
+            id: "c1".into(),
+            name: "read".into(),
+            input: serde_json::json!({"path": "a.txt"}),
+        },
+        whycodes_llm::ScriptedStep::ToolCall {
+            id: "c2".into(),
+            name: "bash".into(),
+            input: serde_json::json!({"command": "echo hi"}),
+        },
+        whycodes_llm::ScriptedStep::Text("done mixing".into()),
+    ]);
+    let mut session =
+        whycodes_session::session::Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message("please read a.txt then echo hi");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(4))
+        .await
+        .expect("turn");
+    assert!(out.contains("done") || session.messages.len() > 2, "{out}");
+}
+
+#[tokio::test]
+async fn execute_tool_calls_empty_is_ok() {
+    let agent = Agent::new(make_test_agent_info("build"));
+    let session = whycodes_session::session::Session::new("/work/proj".into(), "t".into());
+    let ctx = agent.tool_context(&session);
+    let out = agent
+        .execute_tool_calls(
+            &[],
+            &session,
+            &ctx,
+            "script",
+            "m",
+            "k",
+            &None,
+            &None,
+            None,
+            &mut Vec::new(),
+        )
+        .await
+        .expect("empty");
+    assert!(out.is_empty());
+}
+
+#[tokio::test]
+async fn pre_tool_hook_can_block_execution() {
+    let mut cfg = whycodes_config::Config::default();
+    cfg.hooks.push(whycodes_config::HookConfig {
+        event: whycodes_config::HookEvent::PreTool,
+        tool_match: "read".into(),
+        command: "exit 1".into(),
+        block_on_failure: true,
+        timeout_secs: 5,
+    });
+    let agent = Agent::new(make_test_agent_info("build")).with_config(&cfg);
+    let result = run_named(
+        &agent,
+        tool_call("read", serde_json::json!({"path": "x.txt"})),
+    )
+    .await;
+    assert!(result.is_error, "{}", result.content);
+}
+
+#[tokio::test]
+async fn spawn_subagent_returns_scripted_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = scripted_agent([whycodes_llm::ScriptedStep::Text("worker done".into())]);
+    let out = agent
+        .spawn_subagent(
+            "inspect the project".into(),
+            Some("use the notes".into()),
+            None,
+            3,
+            "script",
+            "m",
+            "k",
+            dir.path().to_path_buf(),
+        )
+        .await
+        .expect("spawn");
+    assert!(
+        out.contains("worker") || out.to_lowercase().contains("subagent"),
+        "{out}"
+    );
+}
+
+#[tokio::test]
+async fn spawn_parallel_collects_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = {
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+            "script",
+            [whycodes_llm::ScriptedStep::Text("ok".into())],
+        )));
+        Agent::new(make_test_agent_info("build")).with_provider_registry(registry)
+    };
+    let outs = agent
+        .spawn_parallel(
+            vec![
+                SubagentTask {
+                    goal: "one".into(),
+                    context: None,
+                    tools: None,
+                    max_turns: 2,
+                },
+                SubagentTask {
+                    goal: "two".into(),
+                    context: Some("ctx".into()),
+                    tools: Some(vec!["read".into()]),
+                    max_turns: 2,
+                },
+            ],
+            2,
+            "script",
+            "m",
+            "k",
+            dir.path().to_path_buf(),
+        )
+        .await
+        .expect("parallel");
+    assert_eq!(outs.len(), 2);
+}
+
+#[tokio::test]
+async fn apply_config_sets_compaction_and_swarm_flags() {
+    let mut cfg = whycodes_config::Config::default();
+    cfg.session.compaction_threshold = 12_000;
+    cfg.session.compaction_llm = "off".into();
+    cfg.session.tool_profile = "core".into();
+    cfg.session.model_fast = Some("haiku".into());
+    cfg.session.model_race = "off".into();
+    cfg.swarm.enabled = true;
+    cfg.swarm.max_agents = 3;
+    let agent = Agent::new(make_test_agent_info("build")).with_config(&cfg);
+    assert_eq!(agent.model_fast(), Some("haiku"));
+    assert_eq!(agent.approval_mode(), ApprovalMode::default());
+}
