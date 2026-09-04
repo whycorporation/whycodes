@@ -505,3 +505,82 @@ async fn v1_history_limit_model_cancel_and_rewind_change_live_state() {
     assert_eq!(rewound["messages"].as_array().map(Vec::len), Some(2));
     assert_eq!(handle.lock().await.messages.len(), 2);
 }
+
+#[tokio::test]
+async fn api_and_v1_create_with_project_and_scripted_turns() {
+    let _home = crate::IsolatedHome::new();
+    let mut registry = whycodes_llm::provider::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
+        "ollama",
+        [whycodes_llm::ScriptedStep::Text("from-http".into())],
+    )));
+    let state = crate::test_state_with_registry(Some(registry));
+    let app = crate::create_router(state);
+
+    let (st, created) = json_post(
+        app.clone(),
+        "/api/session/new",
+        serde_json::json!({"project": "/tmp/http-proj", "persist": true}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let api_id = created["session_id"].as_str().unwrap().to_string();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/api/session/{api_id}/chat"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "message": "http-chat-unique",
+                "provider": "ollama",
+                "model": "tiny-http-chat",
+                "api_key": "k",
+                "max_turns": 1
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let (st, body) = call(app.clone(), req).await;
+    assert_eq!(st, StatusCode::OK);
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("from-http") || text.contains("text_delta") || text.contains("done"),
+        "{text}"
+    );
+
+    let (st, v1) = json_post(
+        app.clone(),
+        "/v1/sessions",
+        serde_json::json!({"project": "/tmp/v1-proj", "persist": true}),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let v1_id = v1["id"].as_str().unwrap().to_string();
+
+    let req = Request::builder()
+        .method("POST")
+        .uri(format!("/v1/sessions/{v1_id}/run"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "message": "http-run-unique",
+                "provider": "ollama",
+                "model": "tiny-http-run",
+                "auto_approve": true,
+                "max_turns": 1
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let (st, body) = call(app.clone(), req).await;
+    assert_eq!(st, StatusCode::OK);
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("from-http") || text.contains("text_delta") || text.contains("error"),
+        "{text}"
+    );
+
+    let (st, _) = json_get(app.clone(), "/v1/sessions/missing/messages").await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}

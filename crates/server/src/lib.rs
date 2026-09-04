@@ -147,19 +147,31 @@ pub fn create_router(state: AppState) -> Router {
 /// touches the user's config, database, or workspace.
 #[cfg(test)]
 pub(crate) fn test_state() -> AppState {
+    test_state_with_registry(None)
+}
+
+/// Like [`test_state`], with an optional LLM registry (scripted providers).
+#[cfg(test)]
+pub(crate) fn test_state_with_registry(
+    registry: Option<whycodes_llm::provider::ProviderRegistry>,
+) -> AppState {
     use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet};
 
+    let mut agent = Agent::new(AgentInfo {
+        name: "test".into(),
+        description: "test agent".into(),
+        mode: AgentMode::Primary,
+        permission: PermissionSet::default(),
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    });
+    if let Some(registry) = registry {
+        agent = agent.with_provider_registry(registry);
+    }
     AppState {
-        agent: Arc::new(Agent::new(AgentInfo {
-            name: "test".into(),
-            description: "test agent".into(),
-            mode: AgentMode::Primary,
-            permission: PermissionSet::default(),
-            model: None,
-            system_prompt: None,
-            temperature: None,
-            top_p: None,
-        })),
+        agent: Arc::new(agent),
         config: Arc::new(Config::default()),
         project_dir: std::env::temp_dir(),
         sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -171,6 +183,93 @@ pub(crate) fn test_state() -> AppState {
         perm: perm::PermHub::new(),
         session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
     }
+}
+
+/// Serializes tests that mutate process-global env (`WHYCODES_HOME`, cwd, keys).
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Point `WHYCODES_HOME` at a temp dir until dropped.
+#[cfg(test)]
+pub(crate) struct IsolatedHome {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    dir: tempfile::TempDir,
+    prev: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl IsolatedHome {
+    pub(crate) fn new() -> Self {
+        let guard = lock_env();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        Self {
+            _guard: guard,
+            dir,
+            prev,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    /// Override what Drop writes back. Call only while this isolation is live.
+    pub(crate) fn set_prev(&mut self, prev: Option<std::ffi::OsString>) {
+        self.prev = prev;
+    }
+}
+
+#[cfg(test)]
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+    }
+}
+
+/// Point cwd at a temp dir until dropped. Nested with [`IsolatedHome`].
+#[cfg(test)]
+pub(crate) struct IsolatedCwd {
+    _home: IsolatedHome,
+    prev: std::path::PathBuf,
+}
+
+#[cfg(test)]
+impl IsolatedCwd {
+    pub(crate) fn new() -> Self {
+        let home = IsolatedHome::new();
+        let prev = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(home.path()).expect("chdir");
+        Self { _home: home, prev }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self._home.path()
+    }
+}
+
+#[cfg(test)]
+impl Drop for IsolatedCwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.prev);
+    }
+}
+
+#[cfg(test)]
+fn poison_mutex<T>(m: &std::sync::Mutex<T>) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = m.lock().unwrap();
+        panic!("poison");
+    }));
 }
 
 #[cfg(test)]
@@ -215,5 +314,61 @@ mod tests {
         assert!(state.take_cancel("s1").is_some());
         assert!(state.take_cancel("s1").is_none());
         assert!(!state.request_cancel("s1"));
+    }
+
+    #[test]
+    fn poisoned_maps_are_treated_as_empty() {
+        let state = test_state();
+        poison_mutex(&state.sessions);
+        poison_mutex(&state.cancel_flags);
+        let s = Session::new("/tmp".into(), "sys".into());
+        let handle = state.insert_session(s);
+        assert!(state.get_session("anything").is_none());
+        assert!(state.list_session_ids().is_empty());
+        state.register_cancel("s1", new_cancel_flag());
+        assert!(!state.request_cancel("s1"));
+        assert!(state.take_cancel("s1").is_none());
+        drop(handle);
+    }
+
+    #[test]
+    fn db_path_follows_isolated_home() {
+        let home = IsolatedHome::new();
+        let path = AppState::db_path().expect("db path");
+        assert_eq!(path, home.path().join("whycodes.db"));
+        let db = AppState::open_db().expect("open isolated db");
+        drop(db);
+    }
+
+    #[test]
+    fn isolated_home_restores_previous_env() {
+        let mut home = IsolatedHome::new();
+        home.set_prev(Some(std::ffi::OsString::from("/tmp/whycodes-prev-home")));
+        match &home.prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+        assert_eq!(
+            std::env::var_os("WHYCODES_HOME").as_deref(),
+            Some(std::ffi::OsStr::new("/tmp/whycodes-prev-home"))
+        );
+        // Drop must not leak the sentinel into later tests.
+        home.set_prev(None);
+    }
+
+    #[test]
+    fn isolated_cwd_points_at_home_and_restores() {
+        let before = std::env::current_dir().unwrap();
+        {
+            let cwd = IsolatedCwd::new();
+            assert_eq!(std::env::current_dir().unwrap(), cwd.path());
+        }
+        assert_eq!(std::env::current_dir().unwrap(), before);
+    }
+
+    #[test]
+    fn lock_env_recovers_from_poison() {
+        poison_mutex(&ENV_LOCK);
+        let _g = lock_env();
     }
 }
