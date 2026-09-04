@@ -118,9 +118,7 @@ mod tests {
 
     #[test]
     fn git_toplevel_none_when_not_a_repo() {
-        let _guard = crate::TEST_PATH_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let dir = tempfile::tempdir().unwrap();
         assert!(git_toplevel(dir.path()).is_none());
         let root = project_root(dir.path());
@@ -131,9 +129,7 @@ mod tests {
 
     #[test]
     fn git_toplevel_reads_show_toplevel() {
-        let _guard = crate::TEST_PATH_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let dir = tempfile::tempdir().unwrap();
         let status = std::process::Command::new("git")
             .args(["init"])
@@ -142,10 +138,10 @@ mod tests {
             .unwrap();
         assert!(status.success());
         let top = git_toplevel(dir.path()).expect("git repo should have toplevel");
-        assert!(
-            top.ends_with(dir.path().file_name().unwrap())
-                || top == dir.path().canonicalize().unwrap()
-        );
+        let canon = dir.path().canonicalize().unwrap();
+        let named = top.ends_with(dir.path().file_name().unwrap());
+        let same = top == canon;
+        assert!(named || same, "top={top:?} canon={canon:?}");
         let missing = dir.path().join("no-such-dir");
         let self_path = canonicalize_or_self(&missing);
         assert_eq!(self_path, missing);
@@ -170,9 +166,7 @@ mod tests {
     #[test]
     fn git_toplevel_empty_stdout_and_nonzero_exit() {
         use std::os::unix::fs::PermissionsExt;
-        let _guard = crate::TEST_PATH_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let dir = tempfile::tempdir().unwrap();
         let git = dir.path().join("git");
         std::fs::write(&git, "#!/bin/sh\nexit 0\n").unwrap();
@@ -183,23 +177,6 @@ mod tests {
         assert!(git_toplevel(cwd.path()).is_none());
         std::fs::write(&git, "#!/bin/sh\nexit 1\n").unwrap();
         assert!(git_toplevel(cwd.path()).is_none());
-        match prev {
-            Some(v) => unsafe { std::env::set_var("PATH", v) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-
-        let restore = std::env::var_os("PATH");
-        unsafe { std::env::remove_var("PATH") };
-        let none = std::env::var_os("PATH");
-        unsafe { std::env::set_var("PATH", dir.path()) };
-        assert!(git_toplevel(cwd.path()).is_none());
-        match none {
-            Some(v) => unsafe { std::env::set_var("PATH", v) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
-        match restore {
-            Some(v) => unsafe { std::env::set_var("PATH", v) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+        crate::restore_os_env("PATH", prev);
     }
 }

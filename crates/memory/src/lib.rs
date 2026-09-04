@@ -30,12 +30,71 @@ pub use service::{
 };
 pub use settings::{EmbedBackend, MemoryScope, MemorySettings};
 
+pub(crate) fn recover_lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub(crate) fn recover_mutex<T>(m: std::sync::Mutex<T>) -> T {
+    m.into_inner().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 pub(crate) static TEST_PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
+pub(crate) fn restore_os_env(key: &str, prev: Option<std::ffi::OsString>) {
+    match prev {
+        Some(v) => unsafe { std::env::set_var(key, v) },
+        None => unsafe { std::env::remove_var(key) },
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recover_lock_and_mutex_survive_poison() {
+        let m = std::sync::Arc::new(std::sync::Mutex::new(1u8));
+        let m2 = std::sync::Arc::clone(&m);
+        assert!(
+            std::thread::spawn(move || {
+                let _g = m2.lock().unwrap();
+                panic!("poison");
+            })
+            .join()
+            .is_err()
+        );
+        drop(recover_lock(&m));
+
+        let owned = std::sync::Arc::new(std::sync::Mutex::new(3u8));
+        let owned2 = std::sync::Arc::clone(&owned);
+        assert!(
+            std::thread::spawn(move || {
+                let _g = owned2.lock().unwrap();
+                panic!("poison mutex");
+            })
+            .join()
+            .is_err()
+        );
+        let leftover = std::sync::Arc::try_unwrap(owned).expect("unique");
+        assert_eq!(recover_mutex(leftover), 3);
+    }
+
+    #[test]
+    fn restore_os_env_covers_both_arms() {
+        let _guard = recover_lock(&TEST_PATH_LOCK);
+        let key = "WHYCODES_MEMORY_TEST_ENV";
+        restore_os_env(key, None);
+        assert!(std::env::var_os(key).is_none());
+        restore_os_env(key, Some("present".into()));
+        assert_eq!(
+            std::env::var_os(key).as_deref(),
+            Some(std::ffi::OsStr::new("present"))
+        );
+        restore_os_env(key, None);
+        assert!(std::env::var_os(key).is_none());
+    }
 
     #[test]
     fn public_helpers_are_callable() {

@@ -53,15 +53,7 @@ impl MemoryService {
                 let vec = self.embed_text(&indexed);
                 let blob = encode_blob(&vec);
                 let id = uuid::Uuid::new_v4().to_string();
-                db.insert_code_chunk(
-                    &id,
-                    &self.bank_key,
-                    &rel,
-                    start as i64,
-                    end as i64,
-                    text,
-                    &blob,
-                )?;
+                put_chunk(&db, &id, &self.bank_key, &rel, start, end, text, &blob)?;
                 n += 1;
             }
         }
@@ -98,6 +90,20 @@ impl MemoryService {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn put_chunk(
+    db: &whycodes_storage::db::Database,
+    id: &str,
+    bank_key: &str,
+    rel: &str,
+    start: usize,
+    end: usize,
+    text: &str,
+    blob: &[u8],
+) -> Result<()> {
+    Ok(db.insert_code_chunk(id, bank_key, rel, start as i64, end as i64, text, blob)?)
+}
+
 /// Collect indexable source files under `root` via the shared workspace
 /// walker (gitignore-aware, policy-pruned — see `whycodes_index::walk`).
 fn walk_files(root: &Path, out: &mut Vec<String>, max_files: usize) {
@@ -112,14 +118,14 @@ fn walk_files(root: &Path, out: &mut Vec<String>, max_files: usize) {
         if !EXT_OK.contains(&ext.as_str()) {
             return;
         }
-        let mut g = collected.lock().unwrap_or_else(|p| p.into_inner());
+        let mut g = crate::recover_lock(&collected);
         if g.len() >= max_files {
             cancel.store(true, Ordering::Relaxed);
             return;
         }
         g.push(e.rel.to_string());
     });
-    *out = collected.into_inner().unwrap_or_else(|p| p.into_inner());
+    *out = crate::recover_mutex(collected);
 }
 
 /// Sliding windows of `window` lines with `overlap` lines shared.

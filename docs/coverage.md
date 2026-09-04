@@ -59,7 +59,7 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory` | **100%** lines | Production files only (`tests.rs` ignored) |
 | `format` | **95%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
@@ -88,9 +88,8 @@ informational.
 | Crate | Lines |
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format, index | **100%** |
-| session | **100%** |
-| auth | **99.2%** |
-| memory | 87.7% |
+| session, memory | **100%** |
+| auth | **99.9%** |
 | tui | 86.3% |
 | tools | 86.0% |
 | llm | 83.6% |

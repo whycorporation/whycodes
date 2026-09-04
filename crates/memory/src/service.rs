@@ -37,6 +37,17 @@ pub struct SessionHit {
     pub score: f32,
 }
 
+fn record_consolidated_delete(md_path: &Path, id: &str, deleted: bool) -> usize {
+    if !deleted {
+        return 0;
+    }
+    let short = &id[..8.min(id.len())];
+    if let Err(e) = markdown::remove_entry(md_path, short) {
+        tracing::debug!(id = %short, error = %e, "MEMORY.md remove after consolidate");
+    }
+    1
+}
+
 /// Project-scoped memory service.
 pub struct MemoryService {
     pub project_key: String,
@@ -228,15 +239,28 @@ impl MemoryService {
         let blob = encode_blob(&vec);
         let id = uuid::Uuid::new_v4().to_string();
         let db = self.open_db()?;
-        db.insert_session_chunk(
-            &id,
+        self.put_session_chunk(&db, &id, session_id, turn_index, &clip, &blob)?;
+        Ok(())
+    }
+
+    fn put_session_chunk(
+        &self,
+        db: &Database,
+        id: &str,
+        session_id: &str,
+        turn_index: usize,
+        clip: &str,
+        blob: &[u8],
+    ) -> Result<()> {
+        let written = db.insert_session_chunk(
+            id,
             &self.bank_key,
             session_id,
             turn_index as i64,
-            &clip,
-            &blob,
-        )?;
-        Ok(())
+            clip,
+            blob,
+        );
+        Ok(written?)
     }
 
     /// Semantic search over prior session turns.
@@ -293,15 +317,18 @@ impl MemoryService {
         let overflow = ranked.len() - cap;
         let mut dropped = 0usize;
         for row in ranked.into_iter().take(overflow) {
-            if db.delete_memory(&row.id)? {
-                let short = &row.id[..8.min(row.id.len())];
-                if let Err(e) = markdown::remove_entry(&self.memory_md_path(), short) {
-                    tracing::debug!(id = %short, error = %e, "MEMORY.md remove after consolidate");
-                }
-                dropped += 1;
-            }
+            let deleted = db.delete_memory(&row.id)?;
+            dropped += record_consolidated_delete(&self.memory_md_path(), &row.id, deleted);
         }
         Ok(dropped)
+    }
+
+    fn bump_recall_counts(&self, ids: &[String]) {
+        if let Ok(db) = self.open_db() {
+            for id in ids {
+                let _ = db.touch_memory_recall(id);
+            }
+        }
     }
 
     /// Post-turn auto-retain (heuristic). Returns saved fact texts.
@@ -368,11 +395,14 @@ impl MemoryService {
         if !existing.is_empty() {
             return Ok(None);
         }
-        let n = self.index_codebase(
+        Ok(Some(self.rebuild_auto_index()?))
+    }
+
+    fn rebuild_auto_index(&self) -> Result<usize> {
+        self.index_codebase(
             self.settings.auto_index_max_files,
             self.settings.auto_index_max_chunks,
-        )?;
-        Ok(Some(n))
+        )
     }
 
     /// Retain from pre-parsed LLM fact lines.
@@ -450,11 +480,7 @@ impl MemoryService {
                 }
                 if !lines.is_empty() {
                     parts.push(format!("{header}{}", lines.join("")));
-                    if let Ok(db) = self.open_db() {
-                        for id in ids {
-                            let _ = db.touch_memory_recall(&id);
-                        }
-                    }
+                    self.bump_recall_counts(&ids);
                 }
             }
 
@@ -1334,9 +1360,7 @@ mod tests {
                 data.join("whycodes.db")
             }
         };
-        let _guard = crate::TEST_PATH_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let prev = std::env::current_dir().unwrap();
         std::env::set_current_dir(&data).unwrap();
         let result = svc.open_db();
@@ -1587,5 +1611,38 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn record_consolidated_delete_covers_both_arms() {
+        let dir = tempdir().unwrap();
+        let md = dir.path().join("MEMORY.md");
+        std::fs::write(&md, "- abcdef12 leftover\n").unwrap();
+        assert_eq!(record_consolidated_delete(&md, "missing", false), 0);
+        assert_eq!(record_consolidated_delete(&md, "abcdef12dead", true), 1);
+        assert_eq!(record_consolidated_delete(&md, "", true), 1);
+    }
+
+    #[test]
+    fn bump_recall_counts_ignores_open_and_touch_errors() {
+        let (_dir, _data, _project, svc) = open_test_service(MemorySettings::default());
+        let id = svc
+            .remember("bump recall unique fact for coverage", None)
+            .unwrap();
+        svc.bump_recall_counts(&[id.clone(), "missing-id".into()]);
+        let row = svc.open_db().unwrap().get_memory(&id).unwrap().unwrap();
+        assert!(row.recall_count >= 1);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&svc.db_path, std::fs::Permissions::from_mode(0o444)).unwrap();
+            svc.bump_recall_counts(std::slice::from_ref(&id));
+            std::fs::set_permissions(&svc.db_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+
+        std::fs::remove_file(&svc.db_path).expect("remove sqlite file");
+        std::fs::create_dir_all(&svc.db_path).unwrap();
+        svc.bump_recall_counts(&[id]);
     }
 }

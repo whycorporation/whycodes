@@ -334,9 +334,7 @@ mod tests {
 
     fn with_path_bins<R>(names_and_scripts: &[(&str, &str)], f: impl FnOnce() -> R) -> R {
         use std::os::unix::fs::PermissionsExt;
-        let _guard = crate::TEST_PATH_LOCK
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::recover_lock(&crate::TEST_PATH_LOCK);
         let dir = tempfile::tempdir().unwrap();
 
         for (name, script) in names_and_scripts {
@@ -347,10 +345,7 @@ mod tests {
         let prev = std::env::var_os("PATH");
         unsafe { std::env::set_var("PATH", dir.path()) };
         let out = f();
-        match prev {
-            Some(v) => unsafe { std::env::set_var("PATH", v) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+        crate::restore_os_env("PATH", prev);
         out
     }
 
@@ -365,18 +360,16 @@ mod tests {
             model_dir(dir.path()),
             dir.path().join("models").join("minilm")
         );
-        if !cfg!(feature = "onnx") {
-            assert!(try_embed("hello", dir.path()).is_none());
-            let err = smoke_embed(dir.path()).unwrap_err();
-            assert!(err.to_string().contains("features onnx"));
-        }
-        let prev = std::env::var_os("PATH");
-        unsafe { std::env::remove_var("PATH") };
         let _ = with_path_bins(&[("true", "#!/bin/sh\nexit 0\n")], || 1 + 1);
-        match prev {
-            Some(v) => unsafe { std::env::set_var("PATH", v) },
-            None => unsafe { std::env::remove_var("PATH") },
-        }
+    }
+
+    #[cfg(not(feature = "onnx"))]
+    #[test]
+    fn try_embed_none_without_onnx_feature() {
+        let dir = tempdir().unwrap();
+        assert!(try_embed("hello", dir.path()).is_none());
+        let err = smoke_embed(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("features onnx"));
     }
 
     #[cfg(feature = "onnx")]
