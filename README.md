@@ -51,6 +51,8 @@ curl -fsSL https://why.codes/install | bash
 irm https://why.codes/install.ps1 | iex
 ```
 
+Adds `%LOCALAPPDATA%\Programs\whycodes` to your user PATH. No WSL required.
+
 ### Homebrew (macOS; Linuxbrew x86_64)
 
 ```bash

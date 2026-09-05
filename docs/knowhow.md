@@ -13,7 +13,7 @@ When you fix a non-obvious bug: **append an entry** (newest first under [Log](#l
 | TUI opens and dies immediately | `tail -40 ~/.local/share/whycodes/logs/unified.jsonl` |
 | Panic? | `ls ~/.local/share/whycodes/crash/` (empty ⇒ usually not a panic) |
 | Silent clean exit | Look for `tui.exit` / `tui.loop_error` / `main.exit_error` in JSONL |
-| No TUI, plain mode | `stdin_tty` / `stdout_tty` / `/dev/tty` in `tui.starting` |
+| No TUI, plain mode | `stdin_tty` / `stdout_tty` / controlling console in `tui.starting` |
 | CI `Budgets` / `Check & Lint` red | Rule 8 — run the three `scripts/check_*.py` + `clippy -D warnings` locally |
 
 Lifecycle events written to **`~/.local/share/whycodes/logs/unified.jsonl`** (always-on):
@@ -64,7 +64,7 @@ true   →  continue
 
 Hosts (IDE, wrappers) often report `stdout_tty=false` while still having a controlling terminal.
 
-- Prefer **`/dev/tty`** for alt-screen + draws (`open_tui_writer` in `run.rs`).
+- Prefer the **controlling console** for alt-screen + draws (`open_tui_writer` in `run.rs`): `/dev/tty` on Unix, `CONOUT$` on Windows.
 - Fall back to stdout only if it is a TTY.
 - Do not require `stdout.is_terminal()` alone to enter TUI mode (`tui_available()`).
 
@@ -150,14 +150,19 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 `HCS_E_HYPERV_NOT_INSTALLED` / “WSL2 başlatılamıyor”. `git_status` /
 `git_commit` still work.
 
-**Root cause:** Those tools go through a Linux sandbox path that starts
-WSL2. This machine has no Hyper-V/WSL. Native `git.exe` wrappers do not.
+**Root cause:** Host shell was always `bash -c`. On Windows, PATH `bash`
+is often `C:\Windows\System32\bash.exe`, the WSL stub. No Hyper-V ⇒
+WSL2 cannot start. Native `git.exe` wrappers do not go through that path.
 
-**Fix / workaround:** Do not use WSL. Prefer `git_*` tools and Git for
-Windows (`git.exe`). Do not ask the user to install WSL.
+**Fix:** `whycodes-sandbox` host spawn never launches WSL. Windows picks
+Git Bash (`Git\bin\bash.exe`) when present, else `cmd.exe /C`, and
+rejects `System32\bash.exe` / `WindowsApps\bash.exe` / `wsl.exe`.
+Optional override: `WHYCODES_SHELL`. Installer adds the binary dir to
+the user PATH.
 
-**Prevention:** Windows hosts without WSL must keep a native command
-path (cmd/PowerShell/`git.exe`), not `wsl.exe`.
+**Prevention:** Do not `Command::new("bash")` on Windows. Keep
+`is_wsl_stub` + `find_native_bash` coverage. Do not ask the user to
+install WSL.
 
 ### 2026-09-05 — TUI resume tests saw a sibling session DB
 

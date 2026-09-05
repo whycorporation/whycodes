@@ -51,7 +51,7 @@ fn main() -> anyhow::Result<()> {
 
     // Hosts that capture/close stdout (IDE, wrappers: stdout_tty=false) will
     // SIGPIPE-kill the process on any accidental write to stdout. Ignore it so
-    // the TUI (which draws on /dev/tty) keeps running.
+    // the TUI (which draws on the controlling console) keeps running.
     ignore_sigpipe();
 
     // Parse before building any runtime so `--help` (and mixed `--version`

@@ -16,6 +16,21 @@ param(
 $ErrorActionPreference = "Stop"
 $removed = $false
 
+function Normalize-PathEntry([string]$p) {
+    return $p.Trim().TrimEnd('\', '/').ToLowerInvariant()
+}
+
+function Remove-UserPath([string]$dir) {
+    $current = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    if ([string]::IsNullOrEmpty($current)) { return $false }
+    $want = Normalize-PathEntry $dir
+    $parts = @($current.Split(';') | Where-Object { $_.Length -gt 0 -and (Normalize-PathEntry $_) -ne $want })
+    $new = $parts -join ';'
+    if ($new -eq $current) { return $false }
+    [Environment]::SetEnvironmentVariable('PATH', $new, 'User')
+    return $true
+}
+
 foreach ($name in @("whycodes.exe", "whycodes.exe.old")) {
     $path = Join-Path $InstallDir $name
     if (Test-Path $path) {
@@ -41,6 +56,11 @@ if ($Purge) {
     }
 } else {
     Write-Host "Config and session data were kept. Pass -Purge to remove them too."
+}
+
+if (Remove-UserPath $InstallDir) {
+    Write-Host "Removed $InstallDir from your user PATH"
+    $removed = $true
 }
 
 if (-not $removed) { Write-Host "Nothing to remove." }

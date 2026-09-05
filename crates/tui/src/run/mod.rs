@@ -470,53 +470,40 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
 
 /// True when a full-screen TUI can attach to a real terminal.
 ///
-/// Prefer the controlling terminal (`/dev/tty`) so IDEs/wrappers that capture
-/// stdout (`stdout_tty=false`) still get a normal TUI. Falls back to stdout
-/// when it is itself a TTY.
+/// Prefer the controlling terminal (`/dev/tty` on Unix, `CONOUT$` on
+/// Windows) so IDEs/wrappers that capture stdout (`stdout_tty=false`) still
+/// get a normal TUI. Falls back to stdout when it is itself a TTY.
 pub fn tui_available() -> bool {
     open_tui_writer().is_ok()
 }
 
 /// Concrete writer for ratatui/crossterm (`execute!` needs `Sized`).
 enum TuiWriter {
-    #[cfg(unix)]
-    Tty(std::fs::File),
+    Console(std::fs::File),
     Stdout(io::Stdout),
 }
 
 impl Write for TuiWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
-            #[cfg(unix)]
-            Self::Tty(f) => f.write(buf),
+            Self::Console(f) => f.write(buf),
             Self::Stdout(s) => s.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
-            #[cfg(unix)]
-            Self::Tty(f) => f.flush(),
+            Self::Console(f) => f.flush(),
             Self::Stdout(s) => s.flush(),
         }
     }
 }
 
-/// Writer for alt-screen / draw / mouse: `/dev/tty` first, else stdout if TTY.
+/// Writer for alt-screen / draw / mouse: controlling console first, else stdout if TTY.
 fn open_tui_writer() -> io::Result<TuiWriter> {
     // 1) Controlling terminal — works when stdout is piped/logged by a host.
-    #[cfg(unix)]
-    {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("/dev/tty")
-        {
-            Ok(f) => return Ok(TuiWriter::Tty(f)),
-            Err(e) => {
-                tracing::debug!(error = %e, "open /dev/tty failed, trying stdout");
-            }
-        }
+    if let Some(console) = open_controlling_console() {
+        return Ok(TuiWriter::Console(console));
     }
 
     // 2) Direct stdout when it is a terminal.
@@ -527,8 +514,40 @@ fn open_tui_writer() -> io::Result<TuiWriter> {
 
     Err(io::Error::new(
         io::ErrorKind::NotConnected,
-        "no interactive terminal (stdout is not a TTY and /dev/tty is unavailable)",
+        "no interactive terminal (stdout is not a TTY and the controlling console is unavailable)",
     ))
+}
+
+/// `/dev/tty` on Unix, `CONOUT$` on Windows. `None` if this process has no console.
+fn open_controlling_console() -> Option<std::fs::File> {
+    #[cfg(unix)]
+    {
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open("/dev/tty")
+        {
+            Ok(f) => Some(f),
+            Err(e) => {
+                tracing::debug!(error = %e, "open /dev/tty failed, trying stdout");
+                None
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        match std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+            Ok(f) => Some(f),
+            Err(e) => {
+                tracing::debug!(error = %e, "open CONOUT$ failed, trying stdout");
+                None
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        None
+    }
 }
 
 fn restore_terminal_on(out: &mut impl Write) {
@@ -1968,18 +1987,15 @@ fn event_forces_redraw(ev: &Event) -> bool {
 
 /// Print the exit summary where the user will see it after alt-screen leave.
 ///
-/// The TUI draws on `/dev/tty`; after restore, prefer that same device so the
-/// lines land in the real terminal scrollback even when stdout is captured.
-/// Fall back to stdout, then stderr.
+/// The TUI draws on the controlling console; after restore, prefer that same
+/// device so the lines land in the real terminal scrollback even when stdout
+/// is captured. Fall back to stdout, then stderr.
 fn print_session_summary(summary: &str) {
-    #[cfg(unix)]
+    if let Some(mut tty) = open_controlling_console()
+        && writeln!(tty, "{summary}").is_ok()
+        && tty.flush().is_ok()
     {
-        if let Ok(mut tty) = std::fs::OpenOptions::new().write(true).open("/dev/tty")
-            && writeln!(tty, "{summary}").is_ok()
-            && tty.flush().is_ok()
-        {
-            return;
-        }
+        return;
     }
     let mut out = io::stdout();
     if writeln!(out, "{summary}").is_ok() && out.flush().is_ok() {

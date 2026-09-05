@@ -114,12 +114,15 @@ irm https://why.codes/install.ps1 | iex
 
 GitHub raw URLs still work; why.codes is the short alias.
 
-The scripts verify the download against the release `SHA256SUMS`. They do
-not modify `PATH`; they print the install directory if it is not already on
-it. `WHYCODES_INSTALL_DIR` overrides the location. Installers and Homebrew
-ship only the `whycodes` binary. Public releases need no GitHub token;
-`GITHUB_TOKEN` / `GH_TOKEN` remain an optional fallback if you point the
-scripts at a private fork.
+The scripts verify the download against the release `SHA256SUMS`.
+`install.sh` prints a PATH hint when `$HOME/.local/bin` is missing from
+`PATH`. `install.ps1` adds `%LOCALAPPDATA%\Programs\whycodes` to the
+current user's PATH (and this session) so `whycodes` works immediately
+without WSL. `WHYCODES_INSTALL_DIR` overrides the Unix location;
+`install.ps1 -InstallDir` overrides the Windows location. Installers and
+Homebrew ship only the `whycodes` binary. Public releases need no GitHub
+token; `GITHUB_TOKEN` / `GH_TOKEN` remain an optional fallback if you
+point the scripts at a private fork.
 
 `scripts/uninstall.sh` / `uninstall.ps1` remove the binary. Add `--purge` /
 `-Purge` to delete config and session data as well. Homebrew users should

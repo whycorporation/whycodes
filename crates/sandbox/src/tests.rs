@@ -20,7 +20,173 @@ fn off_mode_prepares_host_bash() {
     };
     let prepared = prepare(&req).expect("off always prepares");
     assert_eq!(prepared.backend, Backend::Host);
-    assert_eq!(prepared.program, "bash");
+    #[cfg(windows)]
+    {
+        let p = prepared.program.to_ascii_lowercase();
+        assert!(
+            p.contains("bash") || p.contains("cmd"),
+            "windows host shell should be git bash or cmd, got {}",
+            prepared.program
+        );
+        assert!(
+            !p.contains("system32") && !p.contains("windowsapps"),
+            "must not pick the WSL stub: {}",
+            prepared.program
+        );
+    }
+    #[cfg(not(windows))]
+    {
+        assert_eq!(prepared.program, "bash");
+        assert_eq!(prepared.args, ["-c", "echo hi"]);
+    }
+}
+
+#[test]
+fn wsl_stub_paths_are_rejected() {
+    use std::path::Path;
+    assert!(crate::host::is_wsl_stub(Path::new(
+        r"C:\Windows\System32\bash.exe"
+    )));
+    assert!(crate::host::is_wsl_stub(Path::new(
+        r"C:/Windows/SysWOW64/bash.exe"
+    )));
+    assert!(crate::host::is_wsl_stub(Path::new(
+        r"C:\Users\me\AppData\Local\Microsoft\WindowsApps\bash.exe"
+    )));
+    assert!(crate::host::is_wsl_stub(Path::new(
+        r"C:\Windows\System32\wsl.exe"
+    )));
+    assert!(crate::host::is_wsl_stub(Path::new("wsl")));
+    assert!(!crate::host::is_wsl_stub(Path::new(
+        r"C:\Program Files\Git\bin\bash.exe"
+    )));
+    assert!(!crate::host::is_wsl_stub(Path::new(
+        r"C:\Program Files\Git\cmd\git.exe"
+    )));
+}
+
+#[test]
+fn find_native_bash_skips_wsl_stub_and_hits_git() {
+    let dir = tempfile::tempdir().unwrap();
+    let wsl = dir.path().join("System32");
+    std::fs::create_dir_all(&wsl).unwrap();
+    let wsl_bash = wsl.join("bash.exe");
+    std::fs::write(&wsl_bash, b"").unwrap();
+
+    let git = dir.path().join("Git").join("bin");
+    std::fs::create_dir_all(&git).unwrap();
+    let git_bash = git.join("bash.exe");
+    std::fs::write(&git_bash, b"").unwrap();
+
+    let path = std::env::join_paths([&wsl, git.as_path()]).expect("join");
+    let found = crate::host::find_native_bash(Some(path.as_os_str()), &[]);
+    assert_eq!(found.as_deref(), Some(git_bash.as_path()));
+
+    let via_extra = crate::host::find_native_bash(None, &[wsl_bash.clone(), git_bash.clone()]);
+    assert_eq!(via_extra.as_deref(), Some(git_bash.as_path()));
+
+    let none = crate::host::find_native_bash(None, &[wsl_bash]);
+    assert!(none.is_none());
+}
+
+#[test]
+fn windows_host_shell_prefers_git_bash_then_cmd() {
+    let git = PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
+    let picked = crate::host::resolve_windows_host_shell(
+        None,
+        Some(git.clone()),
+        Some(r"C:\Windows\System32\cmd.exe"),
+    );
+    assert_eq!(picked.program, git.to_string_lossy());
+    assert_eq!(picked.args_prefix, ["-c"]);
+    assert!(picked.warning.is_none());
+
+    let cmd =
+        crate::host::resolve_windows_host_shell(None, None, Some(r"C:\Windows\System32\cmd.exe"));
+    assert!(cmd.program.to_ascii_lowercase().contains("cmd"));
+    assert_eq!(cmd.args_prefix, ["/C"]);
+    assert!(cmd.warning.as_deref().unwrap_or("").contains("Git Bash"));
+
+    let default_cmd = crate::host::resolve_windows_host_shell(None, None, Some(""));
+    assert_eq!(default_cmd.program, "cmd.exe");
+
+    let overridden = crate::host::resolve_windows_host_shell(
+        Some(r"C:\bin\pwsh.exe"),
+        Some(git.clone()),
+        Some("cmd.exe"),
+    );
+    assert!(overridden.program.to_ascii_lowercase().contains("pwsh"));
+    assert_eq!(
+        overridden.args_prefix,
+        ["-NoProfile", "-NonInteractive", "-Command"]
+    );
+
+    let wsl_override = crate::host::resolve_windows_host_shell(
+        Some(r"C:\Windows\System32\bash.exe"),
+        Some(git),
+        Some("cmd.exe"),
+    );
+    assert!(wsl_override.program.to_ascii_lowercase().contains("git"));
+}
+
+#[test]
+fn windows_shell_from_program_picks_flag_style() {
+    let cmd = crate::host::windows_shell_from_program("cmd", None);
+    assert_eq!(cmd.args_prefix, ["/C"]);
+    let ps = crate::host::windows_shell_from_program("powershell.exe", None);
+    assert_eq!(
+        ps.args_prefix,
+        ["-NoProfile", "-NonInteractive", "-Command"]
+    );
+    let bash = crate::host::windows_shell_from_program("bash", Some("w".into()));
+    assert_eq!(bash.args_prefix, ["-c"]);
+    assert_eq!(bash.warning.as_deref(), Some("w"));
+}
+
+#[test]
+fn well_known_git_bash_paths_cover_install_layouts() {
+    let paths = crate::host::well_known_git_bash_paths(
+        Some(PathBuf::from(r"C:\Program Files")),
+        Some(PathBuf::from(r"C:\Program Files (x86)")),
+        Some(PathBuf::from(r"C:\Users\me\AppData\Local")),
+        Some(PathBuf::from(r"C:\Users\me")),
+    );
+    let joined = paths
+        .iter()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        joined.contains("Program Files/Git/bin/bash.exe"),
+        "{joined}"
+    );
+    assert!(
+        joined.contains("Program Files (x86)/Git/bin/bash.exe"),
+        "{joined}"
+    );
+    assert!(joined.contains("Programs/Git/bin/bash.exe"), "{joined}");
+    assert!(
+        joined.contains("scoop/apps/git/current/bin/bash.exe"),
+        "{joined}"
+    );
+    assert!(crate::host::well_known_git_bash_paths(None, None, None, None).is_empty());
+}
+
+#[test]
+fn merge_warnings_joins_or_passes_through() {
+    assert_eq!(crate::host::merge_warnings(None, None), None);
+    assert_eq!(
+        crate::host::merge_warnings(Some("a".into()), None).as_deref(),
+        Some("a")
+    );
+    assert_eq!(
+        crate::host::merge_warnings(None, Some("b".into())).as_deref(),
+        Some("b")
+    );
+    assert_eq!(
+        crate::host::merge_warnings(Some("a".into()), Some("b".into())).as_deref(),
+        Some("a; b")
+    );
 }
 
 /// Program name stored on `PreparedCommand`. Need not exist — prepare

@@ -49,8 +49,9 @@ WhyCodes special-cases `TERM_PROGRAM=Apple_Terminal` (256-colour quantize),
 treats Windows (`WT_SESSION` / `ConEmuANSI` / Win10+ conhost) as truecolor
 when `TERM` is empty, and honours `WHYCODES_COLOR=truecolor|256|16`. Other
 `TERM` strings still follow the emulator. Setup is in `crates/tui/src/run.rs`:
-`/dev/tty`, alt-screen, mouse capture, bracketed paste, and (when
-`supports_keyboard_enhancement`) `DISAMBIGUATE_ESCAPE_CODES`.
+controlling console (`/dev/tty` on Unix, `CONOUT$` on Windows), alt-screen,
+mouse capture, bracketed paste, and (when `supports_keyboard_enhancement`)
+`DISAMBIGUATE_ESCAPE_CODES`.
 
 ## Checklist (every host)
 

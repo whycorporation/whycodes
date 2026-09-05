@@ -9,9 +9,9 @@
     irm https://raw.githubusercontent.com/whycorporation/whycodes/main/scripts/install.ps1 | iex
 
     The downloaded archive is verified against the release's SHA256SUMS before
-    anything is written to the install directory. PATH is not modified: an
-    installer editing a user's PATH is intrusive and easy to get wrong, so the
-    directory is printed instead.
+    anything is written to the install directory. The install directory is
+    added to the current user's PATH when it is missing, so `whycodes` works
+    in this session and in new terminals without extra setup.
 #>
 
 [CmdletBinding()]
@@ -26,6 +26,53 @@ $Repo = "whycorporation/whycodes"
 function Fail($message) {
     Write-Error $message
     exit 1
+}
+
+function Normalize-PathEntry([string]$p) {
+    return $p.Trim().TrimEnd('\', '/').ToLowerInvariant()
+}
+
+function PathList-HasDir([string]$pathList, [string]$dir) {
+    if ([string]::IsNullOrEmpty($pathList)) { return $false }
+    $want = Normalize-PathEntry $dir
+    foreach ($part in $pathList.Split(';')) {
+        if ((Normalize-PathEntry $part) -eq $want) { return $true }
+    }
+    return $false
+}
+
+function Add-UserPath([string]$dir) {
+    $current = [Environment]::GetEnvironmentVariable('PATH', 'User')
+    if (PathList-HasDir $current $dir) { return $false }
+    if ([string]::IsNullOrEmpty($current)) {
+        $new = $dir
+    } elseif ($current.EndsWith(';')) {
+        $new = "$current$dir"
+    } else {
+        $new = "$current;$dir"
+    }
+    [Environment]::SetEnvironmentVariable('PATH', $new, 'User')
+    return $true
+}
+
+function Add-SessionPath([string]$dir) {
+    if (PathList-HasDir $env:PATH $dir) { return }
+    $env:PATH = "$dir;$env:PATH"
+}
+
+function Broadcast-Environment {
+    try {
+        if (-not ("WhyCodes.NativeMethods" -as [type])) {
+            Add-Type -Namespace WhyCodes -Name NativeMethods -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true, CharSet = System.Runtime.InteropServices.CharSet.Auto)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+"@
+        }
+        $result = [UIntPtr]::Zero
+        [void][WhyCodes.NativeMethods]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result)
+    } catch {
+        # New terminals still pick up the User PATH; broadcasting is best-effort.
+    }
 }
 
 # Only x86_64 Windows is published; arm64 would need its own release target.
@@ -93,11 +140,13 @@ try {
     Write-Host "Installed to $dest"
     & $dest --version
 
-    $onPath = ($env:PATH -split ';') -contains $InstallDir
-    if (-not $onPath) {
-        Write-Host ""
-        Write-Host "$InstallDir is not on your PATH. Add it with:"
-        Write-Host "    [Environment]::SetEnvironmentVariable('PATH', `"`$env:PATH;$InstallDir`", 'User')"
+    Add-SessionPath $InstallDir
+    if (Add-UserPath $InstallDir) {
+        Broadcast-Environment
+        Write-Host "Added $InstallDir to your user PATH"
+        Write-Host "This terminal can already run 'whycodes'. New terminals pick it up automatically."
+    } else {
+        Write-Host "$InstallDir is already on your user PATH"
     }
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

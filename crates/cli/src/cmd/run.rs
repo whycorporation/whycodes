@@ -69,7 +69,7 @@ pub(crate) async fn cmd_run(
     // Full-screen TUI unless --plain / WHYCODES_PLAIN.
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
     // while still having a controlling terminal — tui_available() opens
-    // /dev/tty in that case so the TUI still works.
+    // /dev/tty (Unix) or CONOUT$ (Windows) in that case so the TUI still works.
     let force_plain = cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some();
     let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
     let use_tui = !force_plain && (stub_tui || whycodes_tui::tui_available());
@@ -98,7 +98,7 @@ pub(crate) async fn cmd_run(
         use std::io::IsTerminal;
         eprintln!(
             "whycodes: no interactive terminal \
-             (stdin_tty={} stdout_tty={} /dev/tty unavailable).\n\
+             (stdin_tty={} stdout_tty={} controlling console unavailable).\n\
              Falling back to plain mode. Use a real terminal, or pass --plain.",
             std::io::stdin().is_terminal(),
             std::io::stdout().is_terminal(),

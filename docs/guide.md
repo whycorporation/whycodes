@@ -572,7 +572,7 @@ Default `security.sandbox = "workspace"`. On Linux this uses
 | Mode | Behaviour |
 |---|---|
 | `workspace` (default) | Project is read-write; the rest of the host is read-only; `/tmp` is a private tmpfs. Common toolchain caches (`~/.cargo`, `~/.npm`, …) stay writable. |
-| `off` | Host `bash -c` with no namespace isolation. |
+| `off` | Host shell with no namespace isolation (`bash -c` on Unix; Git Bash or `cmd.exe /C` on Windows — never WSL). |
 
 Network is allowed inside the sandbox by default. Set
 `sandbox_network = false` to cut TCP/UDP (`--unshare-net`). Dedicated
@@ -593,12 +593,20 @@ sandbox_fallback = "allow"            # allow | deny (when bwrap is missing)
 | `WHYCODES_SANDBOX` | `off` or `workspace` |
 | `WHYCODES_SANDBOX_NETWORK` | `0`/`1` |
 | `WHYCODES_SANDBOX_FALLBACK` | `allow` or `deny` |
+| `WHYCODES_SHELL` | Windows only: explicit host interpreter (Git Bash path, `cmd.exe`, `pwsh.exe`). WSL stubs are ignored. |
 | `WHYCODES_NETWORK_ALLOWLIST` | comma/space-separated host patterns |
 | `WHYCODES_NETWORK_DENYLIST` | comma/space-separated host patterns |
 
 If `bwrap` is missing (or you are on macOS/Windows), `sandbox_fallback =
 "allow"` warns and runs on the host; `"deny"` fails the tool call.
 This is not a multi-tenant security boundary — it reduces blast radius.
+
+On Windows the host shell is **not** WSL. WhyCodes looks for Git for
+Windows (`bash.exe` outside `System32` / `WindowsApps`), then falls back
+to `cmd.exe`. Set `WHYCODES_SHELL` to an explicit interpreter
+(`pwsh.exe`, a Git Bash path, `cmd.exe`) if you need to override. Git
+for Windows is recommended so the Unix-style commands models emit keep
+working; it is not required to install or run the TUI.
 
 ### Network allowlist (HTTP tools)
 
