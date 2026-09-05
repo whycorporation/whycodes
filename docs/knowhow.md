@@ -154,7 +154,7 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 WSL2. This machine has no Hyper-V/WSL. Native `git.exe` wrappers do not.
 
 **Fix / workaround:** Do not use WSL. Prefer `git_*` tools and Git for
-Windows. Do not ask the user to install WSL.
+Windows (`git.exe`). Do not ask the user to install WSL.
 
 **Prevention:** Windows hosts without WSL must keep a native command
 path (cmd/PowerShell/`git.exe`), not `wsl.exe`.
