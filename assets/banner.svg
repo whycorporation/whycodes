@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="980" height="230" viewBox="0 0 980 230" role="img" aria-label="WhyCodes — the AI coding agent for your terminal">
 <title>WhyCodes</title>
-<defs><radialGradient id="glow" cx="78%" cy="42%" r="58%"><stop offset="0%" stop-color="#27272A" stop-opacity="0.62"/><stop offset="50%" stop-color="#27272A" stop-opacity="0.22"/><stop offset="100%" stop-color="#000" stop-opacity="0"/></radialGradient></defs>
-<rect width="980" height="230" fill="#000"/>
+<defs><radialGradient id="glow" cx="78%" cy="42%" r="58%"><stop offset="0%" stop-color="#161b22" stop-opacity="0.72"/><stop offset="50%" stop-color="#161b22" stop-opacity="0.28"/><stop offset="100%" stop-color="#0d1117" stop-opacity="0"/></radialGradient></defs>
+<rect width="980" height="230" fill="#0d1117"/>
 <rect width="980" height="230" fill="url(#glow)"/>
 <g transform="translate(740 -14) scale(9.4)" opacity="0.08" fill="#FAFAFA"><path d="M19.464 20.54H10.363V17.998L15.816 12.546H19.731V7.832H12.29V10.558H3.21V7.832L8.662 2.4H23.359L28.79 7.832V12.546L23.359 17.998H19.464V20.54ZM19.464 29.6H10.363V23.266H19.464V29.6Z"/></g>
 <g fill="#FAFAFA" transform="translate(64 62) scale(3.3)"><path d="M19.464 20.54H10.363V17.998L15.816 12.546H19.731V7.832H12.29V10.558H3.21V7.832L8.662 2.4H23.359L28.79 7.832V12.546L23.359 17.998H19.464V20.54ZM19.464 29.6H10.363V23.266H19.464V29.6Z"/></g>
