@@ -418,6 +418,8 @@ async fn prepare_tui_boot(opts: &TuiRunOptions) -> TuiBoot {
         None
     };
     let (question_prompter, question_rx) = ChannelQuestionPrompter::new(q_timeout);
+    let question_prompter = question_prompter
+        .with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
     config.general.project_path = Some(opts.project_dir.clone());
@@ -2289,6 +2291,8 @@ async fn spawn_new_session_runtime(
         None
     };
     let (question_prompter, question_rx) = ChannelQuestionPrompter::new(q_timeout);
+    let question_prompter = question_prompter
+        .with_notify(whycodes_agent::notify::handle_from_config(&config.notify));
     let question_prompter: Arc<ChannelQuestionPrompter> = Arc::new(question_prompter);
 
     let agent = Agent::new(agent_info)

@@ -988,6 +988,7 @@ fn test_ask_question_opens_dialog() {
             },
         ],
         multi_select: false,
+        important: false,
     }]);
     assert_eq!(app.current_agent_state, AgentState::WaitingForQuestion);
     assert!(matches!(
@@ -1016,6 +1017,7 @@ fn test_question_dialog_confirm_single() {
             },
         ],
         multi_select: false,
+        important: false,
     }]);
     st.cursor = 0;
     let done = st.confirm_current().expect("should finish one question");
@@ -1037,11 +1039,13 @@ fn test_question_navigate_prev_next_and_copy() {
             prompt: "Backend?".into(),
             options: vec![opt("SQLite"), opt("Postgres")],
             multi_select: false,
+            important: false,
         },
         QuestionSpec {
             prompt: "Deploy?".into(),
             options: vec![opt("Local"), opt("Cloud")],
             multi_select: false,
+            important: false,
         },
     ]);
 
@@ -2144,11 +2148,13 @@ fn question_dialog_covers_other_multi_and_rehydration() {
             prompt: "Features?".into(),
             options: vec![option("Fast"), option("Safe")],
             multi_select: true,
+            important: false,
         },
         QuestionSpec {
             prompt: "Notes?".into(),
             options: vec![],
             multi_select: false,
+            important: false,
         },
     ]);
 
@@ -2191,6 +2197,7 @@ fn question_dialog_requires_an_answer_and_wraps_cursor() {
             preview: None,
         }],
         multi_select: false,
+        important: false,
     }]);
     state.move_cursor(-1);
     assert_eq!(state.cursor, 1);

@@ -8,9 +8,20 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
+
+use crate::notify::{NotifyHandle, spawn_need_input_wait};
+use whycodes_core::types::ApprovalMode;
 use whycodes_tools::question::{
-    QuestionAnswer, QuestionSpec, format_question_result, parse_questions,
+    QuestionAnswer, QuestionSpec, format_question_result, parse_questions, validate_answers,
 };
+
+/// `auto` auto-picks routine questions; `important: true` still prompts.
+pub fn should_prompt_questions(mode: ApprovalMode, questions: &[QuestionSpec]) -> bool {
+    match mode {
+        ApprovalMode::Auto => questions.iter().any(|q| q.important),
+        ApprovalMode::Important | ApprovalMode::Manual => true,
+    }
+}
 
 /// Failure modes for a questionnaire.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,18 +63,35 @@ pub struct QuestionRequest {
 pub struct ChannelQuestionPrompter {
     tx: mpsc::UnboundedSender<QuestionRequest>,
     timeout: Option<Duration>,
+    notify: Option<NotifyHandle>,
 }
 
 impl ChannelQuestionPrompter {
     pub fn new(timeout: Option<Duration>) -> (Self, mpsc::UnboundedReceiver<QuestionRequest>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self { tx, timeout }, rx)
+        (Self {
+            tx,
+            timeout,
+            notify: None,
+        }, rx)
+    }
+
+    pub fn with_notify(mut self, notify: NotifyHandle) -> Self {
+        self.notify = Some(notify);
+        self
     }
 }
 
 impl QuestionPrompter for ChannelQuestionPrompter {
     fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
         Box::pin(async move {
+            if let Some(cfg) = self.notify.as_deref() {
+                let summary = questions
+                    .first()
+                    .map(|q| q.prompt.as_str())
+                    .unwrap_or("questionnaire");
+                spawn_need_input_wait(cfg, "Question", summary);
+            }
             let (reply_tx, reply_rx) = oneshot::channel();
             if self
                 .tx
@@ -233,10 +261,17 @@ pub async fn run_question_tool(
     };
 
     match prompter.ask(questions.clone()).await {
-        Ok(answers) => whycodes_core::types::ToolResult {
-            tool_call_id: tool_call_id.to_string(),
-            content: format_question_result(&questions, &answers),
-            is_error: false,
+        Ok(answers) => match validate_answers(&questions, &answers) {
+            Ok(()) => whycodes_core::types::ToolResult {
+                tool_call_id: tool_call_id.to_string(),
+                content: format_question_result(&questions, &answers),
+                is_error: false,
+            },
+            Err(e) => whycodes_core::types::ToolResult {
+                tool_call_id: tool_call_id.to_string(),
+                content: QuestionError::Invalid(e).message(),
+                is_error: true,
+            },
         },
         Err(e) => whycodes_core::types::ToolResult {
             tool_call_id: tool_call_id.to_string(),
@@ -269,8 +304,30 @@ mod tests {
                 },
             ],
             multi_select: false,
+            important: false,
         }];
         let a = p.ask(qs).await.unwrap();
         assert_eq!(a[0].selected, vec!["A".to_string()]);
+        assert!(a[0].auto_picked);
+    }
+
+    #[test]
+    fn auto_prompts_only_when_any_question_is_important() {
+        let routine = vec![QuestionSpec {
+            prompt: "x".into(),
+            options: vec![],
+            multi_select: false,
+            important: false,
+        }];
+        let important = vec![QuestionSpec {
+            prompt: "y".into(),
+            options: vec![],
+            multi_select: false,
+            important: true,
+        }];
+        assert!(!should_prompt_questions(ApprovalMode::Auto, &routine));
+        assert!(should_prompt_questions(ApprovalMode::Auto, &important));
+        assert!(should_prompt_questions(ApprovalMode::Important, &routine));
+        assert!(should_prompt_questions(ApprovalMode::Manual, &routine));
     }
 }

@@ -468,8 +468,9 @@ pub enum AgentMode {
 #[serde(rename_all = "lowercase")]
 pub enum ApprovalMode {
     /// Auto-allow permission `ask`. Never prompt `question` while session todos
-    /// or background jobs are still open; otherwise auto-pick the first option.
-    /// Never overrides `[permission]` deny, bash catastrophic, or sandbox/network.
+    /// or background jobs are still open. Routine questions auto-pick the first
+    /// option; `important: true` questions still prompt. Never overrides
+    /// `[permission]` deny, bash catastrophic, or sandbox/network.
     #[default]
     Auto,
     /// Prompt on `question`. Auto-allow low-risk `ask`; still prompt high-risk.

@@ -3773,6 +3773,7 @@ mod event_tests {
                 preview: None,
             }],
             multi_select: false,
+            important: false,
         }]);
         handle_event(&mut a, key(KeyCode::Esc));
         assert!(a.question_dismissed);
@@ -3790,6 +3791,7 @@ mod event_tests {
                 preview: None,
             }],
             multi_select: false,
+            important: false,
         }]);
         handle_event(&mut a, key(KeyCode::Enter));
         assert!(matches!(a.dialogs.active(), Some(DialogKind::Question(_))));
@@ -3840,6 +3842,7 @@ mod event_tests {
                 },
             ],
             multi_select: false,
+            important: false,
         }]);
         a.dialog_modal_hit = Some(Rect {
             x: 10,
@@ -4185,6 +4188,7 @@ mod event_tests {
                 },
             ],
             multi_select: true,
+            important: false,
         }]);
         handle_event(&mut a, key(KeyCode::Down));
         handle_event(&mut a, key(KeyCode::Up));

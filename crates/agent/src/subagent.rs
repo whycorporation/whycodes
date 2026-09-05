@@ -4,11 +4,16 @@ use std::time::Instant;
 use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
 use whycodes_core::tool::ToolContext;
-use whycodes_core::types::{AgentInfo, PermissionSet};
+use whycodes_core::types::{AgentInfo, ApprovalMode, PermissionSet};
 use whycodes_llm::provider::ProviderRegistry;
 use whycodes_memory::MemorySettings;
 use whycodes_session::session::Session;
 use whycodes_tools::executor::ToolExecutor;
+use whycodes_tools::question::parse_questions;
+
+use crate::question::{
+    QuestionPrompter, default_question_prompter, run_question_tool, should_prompt_questions,
+};
 
 use super::agent::DEFAULT_SYSTEM_PROMPT;
 
@@ -59,6 +64,8 @@ pub struct SubagentRunner {
     /// Parent TUI panel sink (so workers can pin a preview).
     panel: Option<whycodes_core::PanelSink>,
     swarm_hub: Option<whycodes_core::SwarmHub>,
+    question_prompter: Arc<dyn QuestionPrompter>,
+    approval_mode: ApprovalMode,
 }
 
 impl SubagentRunner {
@@ -85,7 +92,19 @@ impl SubagentRunner {
             file_index: None,
             panel: None,
             swarm_hub: None,
+            question_prompter: default_question_prompter(),
+            approval_mode: ApprovalMode::Auto,
         }
+    }
+
+    pub fn with_question_prompter(mut self, prompter: Arc<dyn QuestionPrompter>) -> Self {
+        self.question_prompter = prompter;
+        self
+    }
+
+    pub fn with_approval_mode(mut self, mode: ApprovalMode) -> Self {
+        self.approval_mode = mode;
+        self
     }
 
     /// Inherit the parent agent's workspace file index.
@@ -394,13 +413,13 @@ impl SubagentRunner {
                 }) {
                 let futs: Vec<_> = tool_calls
                     .iter()
-                    .map(|tc| self.tool_executor.execute(tc, &tool_ctx, permission))
+                    .map(|tc| self.execute_tool_call(tc, &tool_ctx, permission))
                     .collect();
                 futures::future::join_all(futs).await
             } else {
                 let mut results = Vec::with_capacity(tool_calls.len());
                 for tc in &tool_calls {
-                    results.push(self.tool_executor.execute(tc, &tool_ctx, permission).await);
+                    results.push(self.execute_tool_call(tc, &tool_ctx, permission).await);
                 }
                 results
             };
@@ -409,6 +428,34 @@ impl SubagentRunner {
         }
 
         Ok((final_text, total_usage))
+    }
+
+    async fn execute_tool_call(
+        &self,
+        tc: &whycodes_core::types::ToolCall,
+        tool_ctx: &ToolContext,
+        permission: &PermissionSet,
+    ) -> whycodes_core::types::ToolResult {
+        if tc.name == "question" {
+            let questions = match parse_questions(&tc.arguments) {
+                Ok(q) => q,
+                Err(e) => {
+                    return whycodes_core::types::ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!("Invalid questionnaire: {e}"),
+                        is_error: true,
+                    };
+                }
+            };
+            let must_prompt = should_prompt_questions(self.approval_mode, &questions);
+            let prompter: &dyn QuestionPrompter = if must_prompt {
+                self.question_prompter.as_ref()
+            } else {
+                &crate::question::AutoAnswerPrompter
+            };
+            return run_question_tool(prompter, &tc.arguments, &tc.id).await;
+        }
+        self.tool_executor.execute(tc, tool_ctx, permission).await
     }
 }
 

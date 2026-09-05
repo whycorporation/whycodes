@@ -543,6 +543,7 @@ fn single_spec(multi: bool) -> Vec<QuestionSpec> {
             },
         ],
         multi_select: multi,
+        important: false,
     }]
 }
 
@@ -596,6 +597,7 @@ fn question_dialog_empty_options_is_free_form() {
         prompt: "Anything else?".into(),
         options: vec![],
         multi_select: false,
+        important: false,
     }]);
     // No options → free-text focus is auto-enabled by the constructor.
     assert!(state.free_text_focus);

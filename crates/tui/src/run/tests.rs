@@ -1549,6 +1549,7 @@ fn sample_question() -> whycodes_tools::question::QuestionSpec {
             },
         ],
         multi_select: false,
+        important: false,
     }
 }
 
@@ -2676,6 +2677,7 @@ fn handle_question_enter_confirms_and_multi_space() {
             },
         ],
         multi_select: true,
+        important: false,
     };
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut q = std::collections::VecDeque::new();
@@ -2710,6 +2712,7 @@ fn empty_free_text_esc_cancels_question_immediately() {
         prompt: "Type it?".into(),
         options: vec![],
         multi_select: false,
+        important: false,
     };
     let mut app = TuiApp::from_config(TuiAppConfig::default());
     let mut q = std::collections::VecDeque::new();

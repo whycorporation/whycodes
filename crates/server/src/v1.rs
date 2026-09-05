@@ -1027,6 +1027,7 @@ mod tests {
                 preview: None,
             }],
             multi_select: false,
+            important: false,
         }];
         let task =
             tokio::spawn(

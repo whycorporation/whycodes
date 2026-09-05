@@ -40,7 +40,7 @@ pub use permission::{
 };
 pub use question::{
     AutoAnswerPrompter, ChannelQuestionPrompter, QuestionError, QuestionPrompter, QuestionRequest,
-    StdinQuestionPrompter, default_question_prompter, run_question_tool,
+    StdinQuestionPrompter, default_question_prompter, run_question_tool, should_prompt_questions,
 };
 pub use routing::{
     resolve_agent_model, resolve_override, resolve_turn_model, resolve_worker_model,

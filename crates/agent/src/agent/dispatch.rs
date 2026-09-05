@@ -1228,7 +1228,9 @@ impl Agent {
         )
         .with_memory(self.memory.clone())
         .with_file_index(self.file_index.clone())
-        .with_panel(self.panel_sink());
+        .with_panel(self.panel_sink())
+        .with_question_prompter(Arc::clone(&self.question_prompter))
+        .with_approval_mode(self.approval_mode);
 
         let child_id = format!("task-{}", call.id);
         let started = std::time::Instant::now();

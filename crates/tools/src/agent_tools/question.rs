@@ -36,6 +36,9 @@ pub struct QuestionSpec {
     pub prompt: String,
     pub options: Vec<QuestionOption>,
     pub multi_select: bool,
+    /// When true, `approval_mode=auto` still shows the TUI/SDK prompt.
+    /// Routine questions (false) are auto-picked in auto.
+    pub important: bool,
 }
 
 /// User response for one question.
@@ -145,11 +148,16 @@ pub fn parse_questions(args: &serde_json::Value) -> Result<Vec<QuestionSpec>, St
         .get("multi_select")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let important = args
+        .get("important")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
 
     Ok(vec![QuestionSpec {
         prompt: prompt.to_string(),
         options,
         multi_select,
+        important,
     }])
 }
 
@@ -168,10 +176,16 @@ fn parse_one_question(item: &serde_json::Value) -> Result<QuestionSpec, String> 
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
+    let important = item
+        .get("important")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+
     Ok(QuestionSpec {
         prompt: prompt.to_string(),
         options,
         multi_select,
+        important,
     })
 }
 
@@ -341,6 +355,10 @@ impl Tool for QuestionTool {
                             "multi_select": {
                                 "type": "boolean",
                                 "description": "Allow selecting more than one option (default false)"
+                            },
+                            "important": {
+                                "type": "boolean",
+                                "description": "If true, prompt even in approval_mode=auto (destructive / irreversible). Default false."
                             }
                         },
                         "required": ["question"]
@@ -358,6 +376,10 @@ impl Tool for QuestionTool {
                 "multi_select": {
                     "type": "boolean",
                     "description": "Legacy multi_select for the single-question form"
+                },
+                "important": {
+                    "type": "boolean",
+                    "description": "Legacy: if true, prompt even in auto mode"
                 }
             }
         })
@@ -578,6 +600,20 @@ mod tests {
         assert_eq!(q[0].prompt, "Pick one");
         assert_eq!(q[0].options.len(), 2);
         assert_eq!(q[0].options[0].label, "A");
+        assert!(!q[0].important);
+    }
+
+    #[test]
+    fn parse_important_flag() {
+        let q = parse_questions(&json!({
+            "questions": [{
+                "question": "Delete prod?",
+                "options": [{"label": "Yes"}, {"label": "No"}],
+                "important": true
+            }]
+        }))
+        .unwrap();
+        assert!(q[0].important);
     }
 
     #[test]

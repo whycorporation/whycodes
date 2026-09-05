@@ -280,6 +280,7 @@ mod tests {
                 preview: None,
             }],
             multi_select: false,
+            important: false,
         }]);
         let backend = TestBackend::new(80, 24);
         let mut terminal = Terminal::new(backend).unwrap();

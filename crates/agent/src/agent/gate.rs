@@ -8,7 +8,8 @@ use whycodes_plugin::hooks::{HookContext, PreHookDecision, run_post_hooks, run_p
 use whycodes_session::session::Session;
 
 use crate::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
-use crate::question::{QuestionPrompter, run_question_tool};
+use crate::question::{QuestionPrompter, run_question_tool, should_prompt_questions};
+use whycodes_tools::question::parse_questions;
 use crate::tool_policy::*;
 
 use super::Agent;
@@ -396,9 +397,21 @@ impl Agent {
             {
                 return refuse_question_open_work(&tc.id, kind);
             }
-            let prompter: &dyn QuestionPrompter = match self.approval_mode {
-                ApprovalMode::Auto => &crate::question::AutoAnswerPrompter,
-                ApprovalMode::Important | ApprovalMode::Manual => self.question_prompter.as_ref(),
+            let questions = match parse_questions(&tc.arguments) {
+                Ok(q) => q,
+                Err(e) => {
+                    return ToolResult {
+                        tool_call_id: tc.id.clone(),
+                        content: format!("Invalid questionnaire: {e}"),
+                        is_error: true,
+                    };
+                }
+            };
+            let must_prompt = should_prompt_questions(self.approval_mode, &questions);
+            let prompter: &dyn QuestionPrompter = if must_prompt {
+                self.question_prompter.as_ref()
+            } else {
+                &crate::question::AutoAnswerPrompter
             };
             return run_question_tool(prompter, &tc.arguments, &tc.id).await;
         }

@@ -523,6 +523,7 @@ mod tests {
                 preview: Some("#f00".into()),
             }],
             multi_select: false,
+            important: false,
         }];
         let task =
             tokio::spawn(
@@ -598,6 +599,7 @@ mod tests {
                 preview: None,
             }],
             multi_select: false,
+            important: false,
         }];
         let task =
             tokio::spawn(
@@ -639,6 +641,7 @@ mod tests {
                 preview: None,
             }],
             multi_select: false,
+            important: false,
         }];
         let answers = RUN
             .scope(s, async { prompter.ask(questions).await })

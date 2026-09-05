@@ -40,7 +40,9 @@ impl Agent {
         )
         .with_memory(self.memory.clone())
         .with_file_index(self.file_index.clone())
-        .with_panel(self.panel_sink());
+        .with_panel(self.panel_sink())
+        .with_question_prompter(Arc::clone(&self.question_prompter))
+        .with_approval_mode(self.approval_mode);
 
         let result = runner.run(task, provider_name, model, api_key).await?;
 
@@ -79,7 +81,9 @@ impl Agent {
             )
             .with_memory(self.memory.clone())
             .with_file_index(self.file_index.clone())
-            .with_panel(self.panel_sink()),
+            .with_panel(self.panel_sink())
+            .with_question_prompter(Arc::clone(&self.question_prompter))
+            .with_approval_mode(self.approval_mode),
         );
 
         let mut handles = Vec::with_capacity(goals.len());

@@ -402,6 +402,31 @@ async fn auto_answers_question_without_ui_prompter() {
 }
 
 #[tokio::test]
+async fn auto_prompts_when_question_is_important() {
+    let prompter = Arc::new(CountingCancelQuestionPrompter {
+        asks: AtomicUsize::new(0),
+    });
+    let mut agent =
+        Agent::new(make_test_agent_info("build")).with_question_prompter(prompter.clone());
+    agent.set_approval_mode(ApprovalMode::Auto);
+    let result = run_named(
+        &agent,
+        tool_call(
+            "question",
+            serde_json::json!({
+                "question": "Delete prod?",
+                "choices": ["Yes", "No"],
+                "important": true
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(prompter.asks.load(Ordering::SeqCst), 1);
+    assert!(result.is_error, "{}", result.content);
+    assert!(result.content.contains("cancelled"), "{}", result.content);
+}
+
+#[tokio::test]
 async fn important_and_manual_prompt_on_question() {
     for mode in [ApprovalMode::Important, ApprovalMode::Manual] {
         let prompter = Arc::new(CountingCancelQuestionPrompter {

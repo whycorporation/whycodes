@@ -4134,6 +4134,7 @@ mod state_tests {
                 })
                 .collect(),
             multi_select,
+            important: false,
         }
     }
 
