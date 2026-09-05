@@ -1046,15 +1046,16 @@ mod tests {
         path
     }
 
+    fn is_busy_exec(err: &SdkError) -> bool {
+        err.code == ErrorCode::ServeNotFound && err.message.to_ascii_lowercase().contains("busy")
+    }
+
     async fn launch_or_retry_busy(opts: LaunchOptions) -> WhyCodesClient {
         let mut last = None;
         for i in 0..8 {
             match WhyCodesClient::launch(opts.clone()).await {
                 Ok(client) => return client,
-                Err(e)
-                    if e.code == ErrorCode::ServeNotFound
-                        && e.message.to_ascii_lowercase().contains("busy") =>
-                {
+                Err(e) if is_busy_exec(&e) => {
                     last = Some(e);
                     tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
                 }
@@ -1062,6 +1063,23 @@ mod tests {
             }
         }
         panic!("{}", last.expect("busy retries exhausted"));
+    }
+
+    /// Retry `launch` while the fake binary is ETXTBSY, then return the
+    /// non-busy error. Parallel coverage instrumentation races write+exec.
+    async fn launch_expecting_err(opts: LaunchOptions) -> SdkError {
+        let mut last_busy = None;
+        for i in 0..8 {
+            match WhyCodesClient::launch(opts.clone()).await {
+                Ok(_) => panic!("expected launch error"),
+                Err(e) if is_busy_exec(&e) => {
+                    last_busy = Some(e);
+                    tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
+                }
+                Err(e) => return e,
+            }
+        }
+        panic!("{}", last_busy.expect("busy retries exhausted"));
     }
 
     const PY_HEALTH: &str = r#"
@@ -1307,7 +1325,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
     async fn launch_unsupported_version_does_not_retry() {
         let dir = tempfile::tempdir().unwrap();
         let script = format!("import os\nos.environ['FAKE_PROTO']='99'\n{PY_HEALTH}");
-        let err = match WhyCodesClient::launch(LaunchOptions {
+        let err = launch_expecting_err(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(write_fake_binary(dir.path(), &script)),
             inherit_logins: false,
@@ -1315,11 +1333,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_secs(5),
             port: Some(ephemeral_port().unwrap()),
         })
-        .await
-        {
-            Err(e) => e,
-            Ok(_) => panic!("expected UnsupportedVersion"),
-        };
+        .await;
         assert_eq!(err.code, ErrorCode::UnsupportedVersion);
     }
 
@@ -1330,7 +1344,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             dir.path(),
             "import sys\nsys.stderr.write('nope\\n')\nraise SystemExit(7)\n",
         );
-        let err = match WhyCodesClient::launch(LaunchOptions {
+        let err = launch_expecting_err(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(binary),
             inherit_logins: false,
@@ -1338,11 +1352,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_secs(3),
             port: Some(ephemeral_port().unwrap()),
         })
-        .await
-        {
-            Err(e) => e,
-            Ok(_) => panic!("expected StartupFailed"),
-        };
+        .await;
         assert_eq!(err.code, ErrorCode::StartupFailed);
         assert!(err.message.contains("nope") || err.message.contains("exited"));
     }
@@ -1354,7 +1364,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             dir.path(),
             "import os, sys, time\nsys.stderr.write('waiting\\n')\nsys.stderr.flush()\nos.close(2)\ntime.sleep(30)\n",
         );
-        let err = match WhyCodesClient::launch(LaunchOptions {
+        let err = launch_expecting_err(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(binary),
             inherit_logins: false,
@@ -1362,11 +1372,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_millis(250),
             port: Some(ephemeral_port().unwrap()),
         })
-        .await
-        {
-            Err(e) => e,
-            Ok(_) => panic!("expected StartupTimeout"),
-        };
+        .await;
         assert_eq!(err.code, ErrorCode::StartupTimeout);
         assert!(err.message.contains("waiting") || err.message.contains("did not become healthy"));
     }

@@ -38,11 +38,16 @@ jobs:
           token: ${{ secrets.LANDING_GITHUB_TOKEN }}
           path: landing
 
+      # Self-hosted runner ships a broken bundled Node 24 `npm` (externals/node24:
+      # Cannot find module '../lib/cli.js'). pnpm/action-setup's default installer
+      # shells out to that npm. `standalone: true` downloads @pnpm/exe and skips it.
+      # Keep this *before* setup-node so `cache: pnpm` finds pnpm on PATH.
       - name: Install pnpm
         uses: pnpm/action-setup@v6
         with:
           # Match landing/package.json "packageManager" (do not also pin version).
           package_json_file: landing/package.json
+          standalone: true
 
       - name: Install node
         uses: actions/setup-node@v7

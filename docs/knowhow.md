@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-05 — Deploy landing: pnpm/action-setup hits broken runner npm
+
+**Symptom:** `Deploy landing` / Cloudflare Workers fails at `Install pnpm`
+with `Cannot find module '../lib/cli.js'` from
+`actions-runner/externals.2.337.0/node24/bin/npm`. Checkout succeeded;
+`actions/setup-node` never ran.
+
+**Root cause:** Self-hosted runner Node 24 ships a stub `npm` without
+`lib/cli.js`. `pnpm/action-setup@v6` default (`standalone: false`) shells
+out to that `npm` to install pnpm.
+
+**Fix:** `standalone: true` so the action downloads `@pnpm/exe` and skips
+npm. Keep the step before `actions/setup-node` so `cache: pnpm` still
+finds pnpm on PATH.
+
+**Prevention:** Do not rely on the runner-bundled `npm` on this host.
+`ci.yml` already uses `actions/setup-node` first for the TypeScript SDK.
+
 ### 2026-09-05 — GitHub tools required GITHUB_TOKEN even when the terminal was logged in
 
 **Symptom:** `github_issue` / `github_pr` failed with "GitHub token not found"
