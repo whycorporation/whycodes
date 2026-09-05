@@ -5,6 +5,7 @@ pub mod log;
 pub mod status;
 
 #[cfg(test)]
+#[allow(clippy::await_holding_lock)]
 mod tests {
     use super::*;
     use crate::tool::{Tool, ToolContext};
@@ -62,6 +63,7 @@ mod tests {
 
     #[tokio::test]
     async fn git_log_status_diff_blame_and_commit_on_repo() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (_keep, root) = init_repo();
         let ctx = ctx(&root);
 

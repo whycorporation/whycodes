@@ -1248,7 +1248,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         let dir = tempfile::tempdir().unwrap();
         let binary = write_fake_binary(dir.path(), PY_HEALTH);
         let home = dir.path().join("home");
-        let client = WhyCodesClient::launch(LaunchOptions {
+        let client = launch_or_retry_busy(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(binary.clone()),
             inherit_logins: false,
@@ -1256,14 +1256,13 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_secs(5),
             port: None,
         })
-        .await
-        .unwrap();
+        .await;
         assert!(home.is_dir());
         assert!(client.base_url().starts_with("http://127.0.0.1:"));
         client.close().await.unwrap();
 
         let inherit_home = dir.path().join("inherit-home");
-        let client = WhyCodesClient::launch(LaunchOptions {
+        let client = launch_or_retry_busy(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(binary.clone()),
             inherit_logins: true,
@@ -1271,12 +1270,11 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_secs(5),
             port: Some(ephemeral_port().unwrap()),
         })
-        .await
-        .unwrap();
+        .await;
         assert!(inherit_home.is_dir());
         client.close().await.unwrap();
 
-        let client = WhyCodesClient::launch(LaunchOptions {
+        let client = launch_or_retry_busy(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
             binary: Some(binary),
             inherit_logins: false,
@@ -1284,8 +1282,7 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             startup_timeout: Duration::from_secs(5),
             port: Some(ephemeral_port().unwrap()),
         })
-        .await
-        .unwrap();
+        .await;
         client.close().await.unwrap();
     }
 
