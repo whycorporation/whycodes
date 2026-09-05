@@ -144,6 +144,21 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-05 — Agent `bash`/`shell` tools spawn WSL2 on this Windows host
+
+**Symptom:** `bash`, `shell`, and `schedule` fail immediately with
+`HCS_E_HYPERV_NOT_INSTALLED` / “WSL2 başlatılamıyor”. `git_status` /
+`git_commit` still work.
+
+**Root cause:** Those tools go through a Linux sandbox path that starts
+WSL2. This machine has no Hyper-V/WSL. Native `git.exe` wrappers do not.
+
+**Fix / workaround:** Do not use WSL. Prefer `git_*` tools and Git for
+Windows. Do not ask the user to install WSL.
+
+**Prevention:** Windows hosts without WSL must keep a native command
+path (cmd/PowerShell/`git.exe`), not `wsl.exe`.
+
 ### 2026-09-05 — TUI resume tests saw a sibling session DB
 
 **Symptom:** `run::tests::apply_resume_found_missing_and_latest` failed
