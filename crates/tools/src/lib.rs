@@ -24,7 +24,8 @@ pub use agent_tools::{
     swarm_message, task, todo_read, todo_write, tool_search, worktree,
 };
 pub use file::{
-    apply_patch, edit, external_directory, glob, grep, list, read, truncate, truncation_dir, write,
+    apply_patch, edit, external_directory, glob, grep, list, read, repomap, truncate,
+    truncation_dir, write,
 };
 pub use git::{blame, commit, diff, log, status};
 pub use github::{api, issue, pr};

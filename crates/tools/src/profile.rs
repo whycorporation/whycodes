@@ -47,7 +47,7 @@ impl ToolProfile {
     }
 }
 
-/// Stable, sorted-friendly core set. Keep ≤ ~12 primary names for TTFT
+/// Stable, sorted-friendly core set. Keep ≤ ~15 primary names for TTFT
 /// (`todo` is an alias of `todowrite`; `bg` is the counterpart of
 /// `bash background=true` — not extra product surface).
 /// Everything else (`apply_patch`, `memory`, `schedule`, `swarm`, …)
@@ -62,6 +62,7 @@ const CORE_TOOL_NAMES: &[&str] = &[
     "list",
     "question",
     "read",
+    "repomap",
     "task",
     "todo", // alias of todowrite
     "todoread",
@@ -101,6 +102,11 @@ mod tests {
     }
 
     #[test]
+    fn core_includes_repomap() {
+        assert!(ToolProfile::Core.includes("repomap"));
+    }
+
+    #[test]
     fn core_includes_tool_search_for_deferred_activation() {
         assert!(ToolProfile::Core.includes("tool_search"));
         assert!(!ToolProfile::Core.includes("worktree"));
@@ -125,7 +131,7 @@ mod tests {
             assert!(ToolProfile::Full.includes(name), "{name} stays in Full");
         }
         assert!(
-            CORE_TOOL_NAMES.len() <= 14,
+            CORE_TOOL_NAMES.len() <= 15,
             "core set grew: {}",
             CORE_TOOL_NAMES.len()
         );

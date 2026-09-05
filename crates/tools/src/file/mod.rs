@@ -8,6 +8,7 @@ pub mod internal;
 pub mod list;
 pub mod paths;
 pub mod read;
+pub mod repomap;
 pub mod truncate;
 pub mod truncation_dir;
 pub mod write;

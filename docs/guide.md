@@ -307,7 +307,7 @@ model answers instead of over-eager edits. Set
 | Category | Tools |
 |---|---|
 | Files | `read` (also `skill://`, `agent://`), `write`, `edit`, `apply_patch` |
-| Search | `grep`, `glob`, `list` |
+| Search | `grep`, `glob`, `list`, `repomap` |
 | Execution | `bash` (alias `shell`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
 | GitHub | `github_issue`, `github_pr` |

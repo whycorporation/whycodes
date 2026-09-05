@@ -100,7 +100,7 @@ pub(crate) fn path_outside_workspace(path: &str, working_dir: &str) -> bool {
 
 pub(crate) fn file_tool_path(tc: &ToolCall) -> Option<String> {
     let key = match tc.name.as_str() {
-        "read" | "write" | "edit" | "glob" | "list" => "path",
+        "read" | "write" | "edit" | "glob" | "list" | "repomap" => "path",
         "apply_patch" => "path", // may also use multi-file; path optional
         "grep" => "path",
         _ => return None,
@@ -204,6 +204,10 @@ mod tests {
             file_tool_path(&call("read", json!({"path": "a.rs"}))).as_deref(),
             Some("a.rs")
         );
+        assert_eq!(
+            file_tool_path(&call("repomap", json!({"path": "src"}))).as_deref(),
+            Some("src")
+        );
         assert!(file_tool_path(&call("bash", json!({"command": "ls"}))).is_none());
 
         let perms = PermissionSet {
@@ -218,6 +222,7 @@ mod tests {
         assert!(is_parallel_safe_tool("read", &perms));
         assert!(is_parallel_safe_tool("grep", &perms));
         assert!(is_parallel_safe_tool("glob", &perms));
+        assert!(is_parallel_safe_tool("repomap", &perms));
         assert!(!is_parallel_safe_tool("bash", &perms));
         assert!(!is_parallel_safe_tool("write", &perms));
         assert!(!is_parallel_safe_tool("edit", &perms));

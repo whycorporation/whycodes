@@ -8,8 +8,8 @@ use super::tool::{Tool, ToolContext};
 use crate::{
     apply_patch, background, blame, browser, checkpoint, code_mode, commit, diff, edit,
     external_directory, fetch, glob, grep, issue, list, log, lsp, memory, panel, plan, pr,
-    question, read, schedule, search, shell, skill, status, swarm, swarm_message, task, todo_read,
-    todo_write, tool_search, truncate, worktree, write,
+    question, read, repomap, schedule, search, shell, skill, status, swarm, swarm_message, task,
+    todo_read, todo_write, tool_search, truncate, worktree, write,
 };
 
 /// Central executor that manages all available tools
@@ -61,6 +61,7 @@ impl ToolExecutor {
         executor.register(Box::new(grep::GrepTool::new()));
         executor.register(Box::new(glob::GlobTool::new()));
         executor.register(Box::new(list::ListTool::new()));
+        executor.register(Box::new(repomap::RepoMapTool::new()));
         // Primary name matches OpenCode (`bash`); `shell` kept as legacy alias
         executor.register(Box::new(shell::ShellTool::new()));
         executor.register(Box::new(shell::ShellTool::as_shell()));
@@ -138,7 +139,7 @@ impl ToolExecutor {
 
     /// Like [`get_definitions`] but limited to a [`crate::profile::ToolProfile`].
     ///
-    /// `Core` shrinks the tools JSON prefix (~12 tools) for faster TTFT while
+    /// `Core` shrinks the tools JSON prefix (~15 tools) for faster TTFT while
     /// still allowing execute of non-core tools if the model invents a name
     /// (execute path is not profile-gated — only the schema sent to the LLM).
     pub fn get_definitions_profile(
@@ -373,6 +374,7 @@ mod tests {
             "grep",
             "glob",
             "list",
+            "repomap",
             "apply_patch",
             "bash",
             "shell",
@@ -613,6 +615,7 @@ mod tests {
         assert!(names.contains(&"worktree"));
         assert!(!names.contains(&"read"));
         assert!(!names.contains(&"bash"));
+        assert!(!names.contains(&"repomap"));
         // Every entry has a description.
         assert!(cat.iter().all(|(_, d)| !d.is_empty()));
         // Permission filtering applies (network off hides webfetch again).

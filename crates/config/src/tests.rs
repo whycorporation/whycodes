@@ -106,7 +106,22 @@ fn test_default_config() {
     );
     let plan = cfg.get_agent("plan").expect("plan agent");
     assert!(!plan.permission.allow_file_writes);
+    assert!(
+        plan.permission
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|t| t.iter().any(|n| n == "repomap")),
+        "plan should include repomap"
+    );
     let explore = cfg.get_agent("explore").expect("explore agent");
+    assert!(
+        explore
+            .permission
+            .allowed_tools
+            .as_ref()
+            .is_some_and(|t| t.iter().any(|n| n == "repomap")),
+        "explore should include repomap"
+    );
     assert!(
         explore
             .permission

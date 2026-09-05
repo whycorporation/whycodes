@@ -708,6 +708,10 @@ fn test_agent_system_prompt_for_ask() {
 fn test_agent_system_prompt_for_explore() {
     let prompt = Agent::system_prompt_for("explore");
     assert!(!prompt.is_empty());
+    assert!(
+        prompt.contains("repomap"),
+        "explore should start with a signature map"
+    );
 }
 
 #[test]
@@ -898,6 +902,7 @@ fn core_tool_profile_shrinks_definitions() {
         full.len()
     );
     assert!(core.iter().any(|d| d.name == "read"));
+    assert!(core.iter().any(|d| d.name == "repomap"));
     assert!(!core.iter().any(|d| d.name == "webfetch"));
     assert!(full.iter().any(|d| d.name == "webfetch"));
 }

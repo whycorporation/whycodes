@@ -1750,6 +1750,8 @@ fn tool_header_verb(name: &str, running: bool) -> String {
         ("run", false) => "Run".into(),
         ("grep", true) => "Searching".into(),
         ("grep", false) => "Searched".into(),
+        ("repomap", true) => "Mapping".into(),
+        ("repomap", false) => "Mapped".into(),
         ("list" | "list_dir", true) => "Listing".into(),
         ("list" | "list_dir", false) => "Listed".into(),
         ("edit" | "write" | "apply_patch", true) => "Editing".into(),
@@ -1805,7 +1807,7 @@ impl VerbKind {
 fn verb_kind(name: &str) -> Option<VerbKind> {
     match tool_display_name(name) {
         "read" => Some(VerbKind::File),
-        "grep" | "glob" => Some(VerbKind::Search),
+        "grep" | "glob" | "repomap" => Some(VerbKind::Search),
         "list" | "list_dir" => Some(VerbKind::Dir),
         "web_search" => Some(VerbKind::WebSearch),
         "web_fetch" | "webfetch" | "fetch" => Some(VerbKind::WebFetch),
