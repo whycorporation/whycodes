@@ -69,11 +69,14 @@ pub struct ChannelQuestionPrompter {
 impl ChannelQuestionPrompter {
     pub fn new(timeout: Option<Duration>) -> (Self, mpsc::UnboundedReceiver<QuestionRequest>) {
         let (tx, rx) = mpsc::unbounded_channel();
-        (Self {
-            tx,
-            timeout,
-            notify: None,
-        }, rx)
+        (
+            Self {
+                tx,
+                timeout,
+                notify: None,
+            },
+            rx,
+        )
     }
 
     pub fn with_notify(mut self, notify: NotifyHandle) -> Self {

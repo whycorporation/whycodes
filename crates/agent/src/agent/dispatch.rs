@@ -774,6 +774,8 @@ impl Agent {
         let file_index = self.file_index.clone();
         let panel = self.panel_sink();
         let hub = hub.clone();
+        let question_prompter = Arc::clone(&self.question_prompter);
+        let approval_mode = self.approval_mode;
 
         let mut handles = Vec::with_capacity(specs.len());
 
@@ -799,6 +801,7 @@ impl Agent {
             let file_index = file_index.clone();
             let panel = panel.clone();
             let hub = hub.clone();
+            let question_prompter = Arc::clone(&question_prompter);
             hub.ensure(&worker_id);
 
             handles.push(tokio::spawn(async move {
@@ -959,7 +962,9 @@ impl Agent {
                         .with_memory(memory)
                         .with_file_index(file_index.clone())
                         .with_panel(panel.clone())
-                        .with_swarm_hub(Some(hub.clone()));
+                        .with_swarm_hub(Some(hub.clone()))
+                        .with_question_prompter(question_prompter)
+                        .with_approval_mode(approval_mode);
                 if !use_worktrees {
                     runner =
                         runner.with_file_claims(claims.clone(), worker_id.clone(), label.clone());
