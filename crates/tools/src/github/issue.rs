@@ -45,7 +45,7 @@ impl Tool for GithubIssueTool {
                 },
                 "token": {
                     "type": "string",
-                    "description": "GitHub token (optional; GITHUB_TOKEN, GH_TOKEN, or `gh auth login`)"
+                    "description": "GitHub token (optional). Falls back to GITHUB_TOKEN / GH_TOKEN, `gh auth login`, gh hosts.yml, or git credentials."
                 },
                 "title": {
                     "type": "string",
@@ -541,7 +541,17 @@ mod tests {
         {
             let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
             let prev = std::env::var_os("GITHUB_TOKEN");
-            unsafe { std::env::remove_var("GITHUB_TOKEN") };
+            let prev_gh = std::env::var_os("GH_TOKEN");
+            let prev_skip = std::env::var_os("WHYCODES_TEST_SKIP_GH_AUTH");
+            let prev_skip_git = std::env::var_os("WHYCODES_TEST_SKIP_GIT_CREDENTIAL");
+            let prev_hosts = std::env::var_os("WHYCODES_TEST_GH_HOSTS_TOKEN");
+            unsafe {
+                std::env::remove_var("GITHUB_TOKEN");
+                std::env::remove_var("GH_TOKEN");
+                std::env::set_var("WHYCODES_TEST_SKIP_GH_AUTH", "1");
+                std::env::set_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL", "1");
+                std::env::remove_var("WHYCODES_TEST_GH_HOSTS_TOKEN");
+            }
             let missing = GithubIssueTool::new()
                 .execute(
                     json!({"action": "list", "owner": "o", "repo": "r"}),
@@ -554,6 +564,22 @@ mod tests {
                 match prev {
                     Some(v) => std::env::set_var("GITHUB_TOKEN", v),
                     None => std::env::remove_var("GITHUB_TOKEN"),
+                }
+                match prev_gh {
+                    Some(v) => std::env::set_var("GH_TOKEN", v),
+                    None => std::env::remove_var("GH_TOKEN"),
+                }
+                match prev_skip {
+                    Some(v) => std::env::set_var("WHYCODES_TEST_SKIP_GH_AUTH", v),
+                    None => std::env::remove_var("WHYCODES_TEST_SKIP_GH_AUTH"),
+                }
+                match prev_skip_git {
+                    Some(v) => std::env::set_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL", v),
+                    None => std::env::remove_var("WHYCODES_TEST_SKIP_GIT_CREDENTIAL"),
+                }
+                match prev_hosts {
+                    Some(v) => std::env::set_var("WHYCODES_TEST_GH_HOSTS_TOKEN", v),
+                    None => std::env::remove_var("WHYCODES_TEST_GH_HOSTS_TOKEN"),
                 }
             }
         }

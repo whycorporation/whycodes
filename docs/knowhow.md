@@ -144,6 +144,24 @@ Only bump a budget in the **same commit**, and say why. If the count is *below* 
 
 ## Log
 
+### 2026-09-05 — GitHub tools required GITHUB_TOKEN even when the terminal was logged in
+
+**Symptom:** `github_issue` / `github_pr` failed with "GitHub token not found"
+while `gh auth login` or Git Credential Manager already had a session.
+
+**Root cause:** Token resolve was env + `gh auth token` only. Git credential
+helpers were skipped (GUI hang). `gh` hosts.yml was never read. `gh` missing
+from PATH (common when the TUI is launched from a shortcut) skipped the CLI.
+
+**Fix:** After env, try `gh auth token` (known install paths, no prompt),
+then `hosts.yml` from `GH_CONFIG_DIR` / `%APPDATA%\GitHub CLI` / `~/.config/gh`,
+then `git credential fill` with `GIT_TERMINAL_PROMPT=0` and
+`GCM_INTERACTIVE=never` (timeout-killed). SSH remotes still have no API token.
+
+**Prevention:** Do not require `GITHUB_TOKEN` when a terminal GitHub login
+exists. Never spawn credential helpers without a timeout and
+`GCM_INTERACTIVE=never`.
+
 ### 2026-09-05 — Agent `bash`/`shell` tools spawn WSL2 on this Windows host
 
 **Symptom:** `bash`, `shell`, and `schedule` fail immediately with

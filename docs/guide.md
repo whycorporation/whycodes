@@ -310,7 +310,7 @@ model answers instead of over-eager edits. Set
 | Search | `grep`, `glob`, `list`, `repomap` |
 | Execution | `bash` (alias `shell`) |
 | Git | `git_status`, `git_diff`, `git_log`, `git_blame`, `git_commit`, `worktree` |
-| GitHub | `github_issue`, `github_pr` |
+| GitHub | `github_issue`, `github_pr` (token: env, `gh auth login`, or stored git credentials — not SSH-only remotes) |
 | Web | `webfetch`, `websearch`, `browser` |
 | Workflow | `task`, `swarm`, `swarm_msg`, `plan`, `todowrite` (`todo`), `todoread`, `question`, `bg`, `schedule`, `panel`, `checkpoint`, `rewind` |
 | Memory | `memory` (`write` / `list` / `search` / `delete` / `learn` / `code_search` / `index`) |
