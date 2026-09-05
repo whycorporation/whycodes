@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use super::api::{api_url, github_headers, resolve_token};
+use super::api::{api_url, github_headers, missing_token_message, resolve_token};
 use crate::tool::{Tool, ToolContext};
 use whycodes_core::types::ToolResult;
 
@@ -109,7 +109,7 @@ impl Tool for GithubIssueTool {
                 None => {
                     return ToolResult {
                         tool_call_id: String::new(),
-                        content: super::api::missing_token_message().to_string(),
+                        content: missing_token_message().to_string(),
                         is_error: true,
                     };
                 }

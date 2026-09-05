@@ -15,10 +15,9 @@ const GH_AUTH_TIMEOUT: Duration = Duration::from_secs(2);
 /// Order: explicit tool arg → `GITHUB_TOKEN` → `GH_TOKEN` → `gh auth token`.
 /// Git credential helpers are skipped: they can open a GUI / hang on Windows.
 pub fn resolve_token(explicit_token: Option<&str>) -> Option<String> {
-    if let Some(t) = nonempty(explicit_token) {
-        return Some(t);
-    }
-    env_token().or_else(gh_auth_token)
+    nonempty(explicit_token)
+        .or_else(env_token)
+        .or_else(gh_auth_token)
 }
 
 /// User-facing line when [`resolve_token`] returns `None`.
@@ -27,36 +26,44 @@ pub fn missing_token_message() -> &'static str {
 }
 
 fn nonempty(value: Option<&str>) -> Option<String> {
-    value
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToOwned::to_owned)
+    nonempty_str(value?)
+}
+
+fn nonempty_str(value: &str) -> Option<String> {
+    let s = value.trim();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s.to_string())
+    }
 }
 
 fn env_token() -> Option<String> {
-    for key in ["GITHUB_TOKEN", "GH_TOKEN"] {
-        if let Some(t) = nonempty(env::var(key).ok().as_deref()) {
-            return Some(t);
-        }
-    }
-    None
+    ["GITHUB_TOKEN", "GH_TOKEN"]
+        .into_iter()
+        .find_map(|key| env::var(key).ok().and_then(|s| nonempty_str(&s)))
 }
 
 fn gh_auth_token() -> Option<String> {
     #[cfg(test)]
     {
-        // Integration/unit tests must not depend on a host `gh` login.
-        if env::var_os("WHYCODES_TEST_SKIP_GH_AUTH").is_some() {
-            return None;
-        }
-        if let Some(t) = nonempty(env::var("WHYCODES_TEST_GH_AUTH_TOKEN").ok().as_deref()) {
-            return Some(t);
-        }
-        return None;
+        gh_auth_token_from_test_env()
     }
     #[cfg(not(test))]
     {
         gh_auth_token_from_cli()
+    }
+}
+
+/// Host `gh` is never spawned from unit tests (CI / developer logins).
+#[cfg(test)]
+fn gh_auth_token_from_test_env() -> Option<String> {
+    if env::var_os("WHYCODES_TEST_SKIP_GH_AUTH").is_some() {
+        None
+    } else {
+        env::var("WHYCODES_TEST_GH_AUTH_TOKEN")
+            .ok()
+            .and_then(|s| nonempty_str(&s))
     }
 }
 
@@ -78,7 +85,7 @@ fn gh_auth_token_from_cli() -> Option<String> {
                 }
                 let mut buf = String::new();
                 child.stdout.take()?.read_to_string(&mut buf).ok()?;
-                return nonempty(Some(buf.as_str()));
+                return nonempty_str(&buf);
             }
             Ok(None) => {
                 if start.elapsed() >= GH_AUTH_TIMEOUT {
