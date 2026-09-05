@@ -65,6 +65,21 @@ Options (global):
       --no-memory            Disable cross-session memory for this process
 ```
 
+Unique prefixes work like `git` / `gh`: `whycodes sess` is `session`,
+`whycodes deb` is `debug`. An ambiguous prefix (`whycodes s`) is rejected
+without guessing. A typo with two equally close matches (`auth logn` →
+`login` and `logout`) is not auto-picked and does not print both as if
+they were unique.
+
+`whycodes debug --json` prints a camelCase dump (paths, whether env names
+are set — never values or tokens).
+
+`whycodes serve` writes `.whycodes/serve.lock` (pid, port). A second
+invoke on a TTY offers takeover; stale locks (dead PID, 24h, clock skew)
+are removed. CI and `whycodes serve --no-takeover` exit non-zero instead
+of prompting. `whycodes connect` names the lock holder when the daemon is
+unreachable.
+
 The prompt is positional: `whycodes generate "<prompt>"`, not `whycodes -p`.
 `generate` (and `run --format json|stream-json`) accept `-t, --max-turns <N>` as
 an optional cap with **no default**. Interactive TUI / `whycodes run` ignores
@@ -212,6 +227,7 @@ auto-approved there). This is **not** `/connect` (OAuth login):
 whycodes serve
 whycodes connect                 # new session on 127.0.0.1:3030
 whycodes connect 127.0.0.1:3030 --session <id>
+whycodes serve --no-takeover     # scripts / CI: fail if a lock is live
 ```
 
 ## Embed via the SDK (protocol v1)

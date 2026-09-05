@@ -520,6 +520,13 @@ fn cli_parser_rejects_ambiguous_prefixes() {
     assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
     let err = Cli::try_parse_from(["whycodes", "auth", "log"]).unwrap_err();
     assert_eq!(err.kind(), ErrorKind::InvalidSubcommand);
+    let logn = Cli::try_parse_from(["whycodes", "auth", "logn"]).unwrap_err();
+    assert_eq!(logn.kind(), ErrorKind::InvalidSubcommand);
+    let clean = crate::args::sanitize_clap_error(logn).to_string();
+    assert!(
+        !(clean.contains("Did you mean") && clean.contains("login") && clean.contains("logout")),
+        "tied login/logout suggestions must be dropped:\n{clean}"
+    );
 }
 
 #[test]
@@ -5130,6 +5137,7 @@ async fn cmd_connect_bails_without_tui_after_health() {
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn cmd_auth_import_symlink_approved_and_bad_json() {
     let home = IsolatedHome::new();

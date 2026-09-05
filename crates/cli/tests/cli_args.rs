@@ -190,6 +190,21 @@ fn test_ambiguous_subcommand_prefix_fails() {
 }
 
 #[test]
+fn test_tied_auth_typo_does_not_list_both() {
+    let o = run(&["auth", "logn"]);
+    assert!(!o.status.success());
+    let s = format!(
+        "{}{}",
+        String::from_utf8_lossy(&o.stdout),
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(
+        !(s.contains("Did you mean") && s.contains("login") && s.contains("logout")),
+        "tied suggestions must be dropped:\n{s}"
+    );
+}
+
+#[test]
 fn test_global_debug_flag_in_help() {
     let o = run(&["--help"]);
     assert_ok(&["--help"], &o);

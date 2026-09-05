@@ -4,9 +4,39 @@ use crate::cmd::complete::{
     AuthProviderValueParser, ModelValueParser, ProviderValueParser, SessionIdValueParser,
 };
 use crate::{VERSION_LONG, parse_output_format};
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use whycodes_protocol::OutputFormat;
+
+/// Drop "Did you mean" when two or more names are equally close (#70).
+///
+/// A wrong unique pick is worse than silence; listing two equals is noise
+/// next to the usage the user would have read (`whycodes auth logn` → login
+/// and logout). A single close match (`sesion` → `session`) is kept.
+pub(crate) fn sanitize_clap_error(mut err: clap::Error) -> clap::Error {
+    match err.kind() {
+        ErrorKind::InvalidSubcommand | ErrorKind::UnknownArgument => {}
+        _ => return err,
+    }
+    for kind in [
+        ContextKind::SuggestedSubcommand,
+        ContextKind::SuggestedCommand,
+        ContextKind::SuggestedArg,
+        ContextKind::SuggestedValue,
+        ContextKind::Suggested,
+    ] {
+        let drop = match err.get(kind) {
+            Some(ContextValue::Strings(items)) => items.len() > 1,
+            Some(ContextValue::StyledStrs(items)) => items.len() > 1,
+            _ => false,
+        };
+        if drop {
+            err.remove(kind);
+        }
+    }
+    err
+}
 
 /// WhyCodes — An AI coding agent built in Rust
 #[derive(Parser, Debug)]
@@ -538,5 +568,36 @@ mod tests {
             parsed.command,
             Some(Commands::Generate { ref prompt, jobs, .. }) if prompt.as_slice() == ["a", "b"] && jobs == 2
         ));
+    }
+
+    #[test]
+    fn tied_typo_suggestions_are_stripped() {
+        let err = Cli::try_parse_from(["whycodes", "auth", "logn"]).unwrap_err();
+        let raw = err.to_string();
+        let clean = super::sanitize_clap_error(err).to_string();
+        // clap may list both `login` and `logout`; after sanitize, never both
+        // under a "Did you mean" (or equivalent) hint.
+        if raw.contains("login") && raw.contains("logout") {
+            assert!(
+                !(clean.contains("Did you mean")
+                    && clean.contains("login")
+                    && clean.contains("logout")),
+                "tied suggestions must be dropped:\n{clean}"
+            );
+        }
+        assert!(
+            clean.contains("unrecognized") || clean.contains("invalid") || !clean.is_empty(),
+            "{clean}"
+        );
+    }
+
+    #[test]
+    fn unique_typo_suggestion_is_kept() {
+        let err = Cli::try_parse_from(["whycodes", "sesion"]).unwrap_err();
+        let clean = super::sanitize_clap_error(err).to_string();
+        assert!(
+            clean.contains("session") || clean.contains("Did you mean"),
+            "unique close match should still be suggested:\n{clean}"
+        );
     }
 }

@@ -56,7 +56,10 @@ fn main() -> anyhow::Result<()> {
 
     // Parse before building any runtime so `--help` (and mixed `--version`
     // forms clap still handles) exit without a thread pool.
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => args::sanitize_clap_error(err).exit(),
+    };
 
     // Completions are stdout-only. Skip Tokio, logging, and plugin discovery
     // so Homebrew `generate_completions_from_executable` can run in a sandbox

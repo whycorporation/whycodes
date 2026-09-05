@@ -9,8 +9,8 @@ use whycodes_session::session::Session;
 
 use crate::events::{CancelFlag, EventSink, TurnEvent, emit, is_cancelled, wait_until_cancelled};
 use crate::question::{QuestionPrompter, run_question_tool, should_prompt_questions};
-use whycodes_tools::question::parse_questions;
 use crate::tool_policy::*;
+use whycodes_tools::question::parse_questions;
 
 use super::Agent;
 
