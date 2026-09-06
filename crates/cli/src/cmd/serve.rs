@@ -18,16 +18,16 @@ pub(crate) async fn cmd_connect(
     match remote::health(&base).await {
         Ok(h) => {
             println!(
-                "{} Attached to {base} (project {}, uptime {}s)",
-                "•".bold(),
-                h.get("project").and_then(|p| p.as_str()).unwrap_or("?"),
-                h.get("uptime_secs").and_then(|u| u.as_u64()).unwrap_or(0)
+                "{}",
+                attach_health_line(
+                    &base,
+                    h.get("project").and_then(|p| p.as_str()).unwrap_or("?"),
+                    h.get("uptime_secs").and_then(|u| u.as_u64()).unwrap_or(0),
+                )
             );
         }
         Err(e) => {
-            let mut msg = format!(
-                "cannot reach {base}: {e}\n\nStart the daemon first:\n  whycodes serve\nthen:\n  whycodes connect {addr}"
-            );
+            let mut msg = connect_unreachable_msg(&base, &e.to_string(), addr);
             let project_dir = resolve_dir(cli);
             if let Some(hint) = super::lockfile::connect_hint(&project_dir) {
                 msg.push_str("\n\n");
@@ -47,7 +47,7 @@ pub(crate) async fn cmd_connect(
     } else {
         remote::create_session(&base).await?
     };
-    println!("{} session {}", "•".bold(), session_id.cyan());
+    println!("{}", connect_session_line(&session_id));
 
     let project_dir = resolve_dir(cli);
     let mut config = Config::load_layered(&project_dir)
@@ -97,11 +97,7 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     if let Some(holder) = takeover {
         takeover_holder(&holder).await?;
     }
-    println!(
-        "{} Starting WhyCodes warm server on http://localhost:{}",
-        "•".bold(),
-        port.to_string().cyan()
-    );
+    println!("{}", serve_start_line(port));
     println!("  project: {}", project_dir.display());
 
     let config = Config::load()?;
@@ -169,38 +165,9 @@ pub(crate) async fn cmd_serve(port: u16, no_takeover: bool) -> anyhow::Result<()
     let router = whycodes_server::create_router(state);
     // Loopback only — this is a local warm daemon, not a public API.
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
-    println!("  Endpoints:");
-    println!("    GET  /v1/health              (protocol handshake)");
-    println!("    GET  /v1/sessions");
-    println!("    POST /v1/sessions");
-    println!("    GET  /v1/sessions/:id");
-    println!("    POST /v1/sessions/:id/run    (SSE v1 event stream)");
-    println!("    POST /v1/sessions/:id/cancel");
-    println!("    POST /v1/sessions/:id/permission");
-    println!("    POST /v1/sessions/:id/question");
-    println!("    GET  /v1/sessions/:id/messages");
-    println!("    GET  /v1/models");
-    println!("    POST /v1/sessions/:id/model");
-    println!("    POST /v1/sessions/:id/rename");
-    println!("    POST /v1/sessions/:id/rewind");
-    println!("    POST /v1/sessions/:id/compact");
-    println!("    GET  /api/health             (TUI attach, legacy)");
-    println!("    GET  /api/tools");
-    println!("    GET  /api/models");
-    println!("    GET  /api/sessions");
-    println!("    POST /api/session/new");
-    println!("    GET  /api/session/:id");
-    println!("    POST /api/session/:id/chat   (SSE, TUI attach)");
-    println!("    GET  /api/shares");
-    println!("    GET  /s/:id[.json|.md]");
-    println!();
-    println!(
-        "  Share tip: in TUI run {} then open {}",
-        "/share".cyan(),
-        format!("http://localhost:{port}/s/<session-id>").cyan()
-    );
-    println!("  Bind: {addr} (loopback only). Ctrl+C to stop.");
-    println!();
+    for line in serve_endpoint_lines(port, &addr.to_string()) {
+        println!("{line}");
+    }
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
@@ -272,10 +239,80 @@ pub(crate) async fn takeover_holder(holder: &super::lockfile::ServeLock) -> anyh
 }
 
 /// `web` — Open web UI
+pub(crate) fn attach_health_line(base: &str, project: &str, uptime_secs: u64) -> String {
+    format!(
+        "{} Attached to {base} (project {project}, uptime {uptime_secs}s)",
+        "•".bold()
+    )
+}
+
+pub(crate) fn connect_unreachable_msg(base: &str, err: &str, addr: &str) -> String {
+    format!(
+        "cannot reach {base}: {err}\n\nStart the daemon first:\n  whycodes serve\nthen:\n  whycodes connect {addr}"
+    )
+}
+
+pub(crate) fn connect_session_line(session_id: &str) -> String {
+    format!("{} session {}", "•".bold(), session_id.cyan())
+}
+
+pub(crate) fn serve_start_line(port: u16) -> String {
+    format!(
+        "{} Starting WhyCodes warm server on http://localhost:{}",
+        "•".bold(),
+        port.to_string().cyan()
+    )
+}
+
+pub(crate) fn serve_endpoint_lines(port: u16, addr: &str) -> Vec<String> {
+    vec![
+        "  Endpoints:".into(),
+        "    GET  /v1/health              (protocol handshake)".into(),
+        "    GET  /v1/sessions".into(),
+        "    POST /v1/sessions".into(),
+        "    GET  /v1/sessions/:id".into(),
+        "    POST /v1/sessions/:id/run    (SSE v1 event stream)".into(),
+        "    POST /v1/sessions/:id/cancel".into(),
+        "    POST /v1/sessions/:id/permission".into(),
+        "    POST /v1/sessions/:id/question".into(),
+        "    GET  /v1/sessions/:id/messages".into(),
+        "    GET  /v1/models".into(),
+        "    POST /v1/sessions/:id/model".into(),
+        "    POST /v1/sessions/:id/rename".into(),
+        "    POST /v1/sessions/:id/rewind".into(),
+        "    POST /v1/sessions/:id/compact".into(),
+        "    GET  /api/health             (TUI attach, legacy)".into(),
+        "    GET  /api/tools".into(),
+        "    GET  /api/models".into(),
+        "    GET  /api/sessions".into(),
+        "    POST /api/session/new".into(),
+        "    GET  /api/session/:id".into(),
+        "    POST /api/session/:id/chat   (SSE, TUI attach)".into(),
+        "    GET  /api/shares".into(),
+        "    GET  /s/:id[.json|.md]".into(),
+        String::new(),
+        format!(
+            "  Share tip: in TUI run {} then open {}",
+            "/share".cyan(),
+            format!("http://localhost:{port}/s/<session-id>").cyan()
+        ),
+        format!("  Bind: {addr} (loopback only). Ctrl+C to stop."),
+        String::new(),
+    ]
+}
+
+pub(crate) fn web_stub_lines() -> Vec<String> {
+    vec![
+        format!("{} Web UI — not yet implemented.", "🌐".cyan()),
+        "Start the server with: whycodes serve".into(),
+        "Then open http://localhost:3030 in your browser.".into(),
+    ]
+}
+
 pub(crate) async fn cmd_web() -> anyhow::Result<()> {
-    println!("{} Web UI — not yet implemented.", "🌐".cyan());
-    println!("Start the server with: whycodes serve");
-    println!("Then open http://localhost:3030 in your browser.");
+    for line in web_stub_lines() {
+        println!("{line}");
+    }
     Ok(())
 }
 

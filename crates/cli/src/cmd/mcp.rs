@@ -3,6 +3,82 @@ use crate::args::*;
 use colored::*;
 use whycodes_config::Config;
 
+pub(crate) fn parse_mcp_transport(
+    raw: Option<&str>,
+) -> anyhow::Result<Option<whycodes_config::McpTransportKind>> {
+    match raw {
+        None => Ok(None),
+        Some("stdio") | Some("local") => Ok(Some(whycodes_config::McpTransportKind::Stdio)),
+        Some("http") | Some("streamable-http") | Some("remote") => {
+            Ok(Some(whycodes_config::McpTransportKind::Http))
+        }
+        Some("sse") => Ok(Some(whycodes_config::McpTransportKind::Sse)),
+        Some("auto") => Ok(Some(whycodes_config::McpTransportKind::Auto)),
+        Some(other) => {
+            anyhow::bail!("unknown MCP transport '{other}' (expected stdio|http|sse|auto)")
+        }
+    }
+}
+
+pub(crate) fn parse_mcp_headers(
+    headers: &[String],
+) -> anyhow::Result<Option<std::collections::HashMap<String, String>>> {
+    if headers.is_empty() {
+        return Ok(None);
+    }
+    let mut map = std::collections::HashMap::new();
+    for h in headers {
+        let (k, v) = h
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("invalid --header '{h}' (expected 'Key: Value')"))?;
+        map.insert(k.trim().to_string(), v.trim().to_string());
+    }
+    Ok(Some(map))
+}
+
+pub(crate) fn mcp_remote_line(name: &str, kind: &str, url: &str) -> String {
+    format!("  {} → {} {url}", name.cyan(), kind.dimmed())
+}
+
+pub(crate) fn mcp_stdio_line(name: &str, command: &str, args: &[String]) -> String {
+    let args = if args.is_empty() {
+        String::new()
+    } else {
+        format!(" {}", args.join(" "))
+    };
+    format!(
+        "  {} → {}{}{}",
+        name.cyan(),
+        "stdio ".dimmed(),
+        command,
+        args.dimmed()
+    )
+}
+
+pub(crate) fn mcp_saved_remote_line(name: &str, url: &str) -> String {
+    format!(
+        "{} MCP server '{}' saved (remote {url}).",
+        "✓".green(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn mcp_saved_stdio_line(name: &str, command: &str, args: &str) -> String {
+    format!(
+        "{} MCP server '{}' saved (stdio {command} {args}).",
+        "✓".green(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn mcp_removed_line(name: &str) -> String {
+    format!("{} MCP server '{}' removed.", "✓".green(), name.cyan())
+}
+
+pub(crate) fn mcp_not_found_line(name: &str) -> String {
+    format!("{} MCP server '{}' not found.", "✗".red(), name.cyan())
+}
+
 pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
@@ -52,21 +128,10 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
                             .transport
                             .map(|t| format!("{t:?}").to_lowercase())
                             .unwrap_or_else(|| "auto".into());
-                        println!("  {} → {} {}", name.cyan(), kind.dimmed(), url);
+                        println!("{}", mcp_remote_line(name, &kind, url));
                     } else {
                         let cmd = server.command.as_deref().unwrap_or("?");
-                        let args = if server.args.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" {}", server.args.join(" "))
-                        };
-                        println!(
-                            "  {} → {}{}{}",
-                            name.cyan(),
-                            "stdio ".dimmed(),
-                            cmd,
-                            args.dimmed()
-                        );
+                        println!("{}", mcp_stdio_line(name, cmd, &server.args));
                     }
                 }
             }
@@ -79,31 +144,8 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             transport,
             headers,
         } => {
-            let transport_kind = match transport.as_deref() {
-                None => None,
-                Some("stdio") | Some("local") => Some(whycodes_config::McpTransportKind::Stdio),
-                Some("http") | Some("streamable-http") | Some("remote") => {
-                    Some(whycodes_config::McpTransportKind::Http)
-                }
-                Some("sse") => Some(whycodes_config::McpTransportKind::Sse),
-                Some("auto") => Some(whycodes_config::McpTransportKind::Auto),
-                Some(other) => {
-                    anyhow::bail!("unknown MCP transport '{other}' (expected stdio|http|sse|auto)");
-                }
-            };
-
-            let header_map = if headers.is_empty() {
-                None
-            } else {
-                let mut map = std::collections::HashMap::new();
-                for h in headers {
-                    let (k, v) = h.split_once(':').ok_or_else(|| {
-                        anyhow::anyhow!("invalid --header '{h}' (expected 'Key: Value')")
-                    })?;
-                    map.insert(k.trim().to_string(), v.trim().to_string());
-                }
-                Some(map)
-            };
+            let transport_kind = parse_mcp_transport(transport.as_deref())?;
+            let header_map = parse_mcp_headers(headers)?;
 
             if url.is_none() && command.is_none() {
                 anyhow::bail!("provide either a local <command> or --url <endpoint>");
@@ -134,28 +176,24 @@ pub(crate) async fn cmd_mcp(cmd: &McpCmd) -> anyhow::Result<()> {
             config.save()?;
 
             if let Some(url) = url {
-                println!(
-                    "{} MCP server '{}' saved (remote {}).",
-                    "✓".green(),
-                    name.cyan(),
-                    url
-                );
+                println!("{}", mcp_saved_remote_line(name, url));
             } else {
                 println!(
-                    "{} MCP server '{}' saved (stdio {} {}).",
-                    "✓".green(),
-                    name.cyan(),
-                    command.as_deref().unwrap_or("?"),
-                    arg_vec.join(" ")
+                    "{}",
+                    mcp_saved_stdio_line(
+                        name,
+                        command.as_deref().unwrap_or("?"),
+                        &arg_vec.join(" ")
+                    )
                 );
             }
         }
         McpCmd::Remove { name } => {
             if config.mcp_servers.remove(name).is_some() {
                 config.save()?;
-                println!("{} MCP server '{}' removed.", "✓".green(), name.cyan());
+                println!("{}", mcp_removed_line(name));
             } else {
-                eprintln!("{} MCP server '{}' not found.", "✗".red(), name.cyan());
+                eprintln!("{}", mcp_not_found_line(name));
             }
         }
     }
