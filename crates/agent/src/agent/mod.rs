@@ -1366,6 +1366,15 @@ mod permission_detail_tests {
         );
         a.model_race = "not-a-provider/x".into();
         assert!(a.race_partner("anthropic", "claude").is_none());
+
+        a.model_race = "script/m".into();
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::text("hi")));
+        a.set_provider_registry(registry);
+        assert!(
+            a.race_partner("script", "m").is_none(),
+            "same provider+model must skip the race"
+        );
     }
 
     #[test]
@@ -3292,13 +3301,27 @@ for line in sys.stdin:
         let dir = tempfile::tempdir().unwrap();
         let prev = std::env::var_os("WHYCODES_HOME");
         unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        let why = dir.path().join(".whycodes");
+        std::fs::create_dir_all(&why).unwrap();
+        std::fs::write(
+            why.join("plugins.toml"),
+            r#"[[plugins]]
+name = "covhome"
+command = "echo cov"
+description = "coverage plugin"
+"#,
+        )
+        .unwrap();
         let a = test_agent().with_plugins(Some(dir.path()));
         if let Some(v) = prev {
             unsafe { std::env::set_var("WHYCODES_HOME", v) };
         } else {
             unsafe { std::env::remove_var("WHYCODES_HOME") };
         }
-        let _ = a.info.name;
+        assert!(
+            a.tool_executor.get("plugin_covhome").is_some(),
+            "with_plugins should register when a plugin file is present"
+        );
     }
 
     #[tokio::test]
@@ -3329,11 +3352,14 @@ for line in sys.stdin:
         registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
             "script",
             [
-                vec![whycodes_llm::ScriptedStep::ToolCall {
-                    id: "w".into(),
-                    name: "write".into(),
-                    input: json!({"path": "a.txt", "content": "from-worker"}),
-                }],
+                vec![
+                    whycodes_llm::ScriptedStep::Hang(std::time::Duration::from_millis(250)),
+                    whycodes_llm::ScriptedStep::ToolCall {
+                        id: "w".into(),
+                        name: "write".into(),
+                        input: json!({"path": "a.txt", "content": "from-worker"}),
+                    },
+                ],
                 vec![whycodes_llm::ScriptedStep::Text("worker done".into())],
             ],
         )));
@@ -3356,39 +3382,28 @@ for line in sys.stdin:
         a.swarm_enabled = true;
         a.swarm_worktrees = true;
         let (_keep, root) = init_git_repo();
-        std::fs::write(root.join("a.txt"), "from-main-later").unwrap();
-        let _ = std::process::Command::new("git")
-            .args(["add", "a.txt"])
-            .current_dir(&root)
-            .status();
-        let _ = std::process::Command::new("git")
-            .args(["commit", "-m", "main later", "--allow-empty"])
-            .current_dir(&root)
-            .status();
         let session = Session::new(root.clone(), "sys".into());
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         drop(rx);
-        let out = a
-            .execute_swarm_tool(
-                &tc(
-                    "swarm",
-                    json!({
-                        "tasks": [{
-                            "goal": "rewrite a.txt",
-                            "subagent_type": "general",
-                            "max_turns": 3
-                        }]
-                    }),
-                ),
-                &session,
-                "script",
-                "m",
-                "k",
-                Some(&tx),
-            )
-            .await;
+        let call = tc(
+            "swarm",
+            json!({
+                "tasks": [{
+                    "goal": "rewrite a.txt",
+                    "subagent_type": "general",
+                    "context": "keep the file local",
+                    "max_turns": 4
+                }]
+            }),
+        );
+        let swarm = a.execute_swarm_tool(&call, &session, "script", "m", "k", Some(&tx));
+        tokio::pin!(swarm);
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        std::fs::write(root.join("a.txt"), "from-main-later").unwrap();
+        let out = swarm.await;
         assert!(
             out.content.to_lowercase().contains("merge")
+                || out.content.contains("conflict")
                 || out.content.contains("worker")
                 || !out.content.is_empty(),
             "{}",

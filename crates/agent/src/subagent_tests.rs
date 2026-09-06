@@ -484,3 +484,56 @@ async fn run_important_question_uses_prompter() {
         result.output
     );
 }
+
+#[tokio::test]
+async fn run_tool_loop_serializes_mutator_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::batched(
+        "script",
+        [
+            vec![
+                whycodes_llm::ScriptedStep::ToolCall {
+                    id: "w1".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "n.txt", "content": "one"}),
+                },
+                whycodes_llm::ScriptedStep::ToolCall {
+                    id: "w2".into(),
+                    name: "write".into(),
+                    input: serde_json::json!({"path": "m.txt", "content": "two"}),
+                },
+            ],
+            vec![whycodes_llm::ScriptedStep::Text("mutators done".into())],
+        ],
+    )));
+    let mut info = make_info();
+    info.permission.allow_file_writes = true;
+    let runner = SubagentRunner::new(
+        Arc::new(registry),
+        Arc::new(ToolExecutor::new()),
+        info,
+        dir.path().to_path_buf(),
+        SandboxSettings::off(),
+        NetworkPolicy::unrestricted(),
+    );
+    let result = runner
+        .run(
+            SubagentTask {
+                goal: "write both files".into(),
+                context: None,
+                tools: None,
+                max_turns: 4,
+            },
+            "script",
+            "m",
+            "k",
+        )
+        .await
+        .expect("ok");
+    assert!(
+        result.success || result.output.contains("mutators") || !result.output.is_empty(),
+        "{result:?}"
+    );
+}

@@ -118,3 +118,16 @@ fn named_id_delta_reuses_existing_key() {
     let calls = a.finish();
     assert_eq!(calls.len(), 1);
 }
+
+#[test]
+fn new_named_alias_id_inserts_when_active_is_set() {
+    let mut a = ToolCallAssembler::new();
+    a.on_tool_use("n1".into(), "read".into(), json!({}));
+    a.on_tool_use_delta("alias-x", r#"{"path":"x.rs"}"#);
+    let snaps = a.pending_snapshots();
+    assert_eq!(snaps.len(), 1);
+    assert!(snaps[0].2.contains("path"), "{snaps:?}");
+    a.on_tool_use_delta("alias-x", r#","offset":1}"#);
+    let calls = a.finish();
+    assert_eq!(calls.len(), 1);
+}

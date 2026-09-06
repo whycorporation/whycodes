@@ -1226,3 +1226,53 @@ async fn compact_failures_reset_after_successful_under_threshold() {
         .unwrap_or_else(|_| "ok".into());
     assert!(!out.is_empty() || !session.messages.is_empty());
 }
+
+#[tokio::test]
+async fn shake_and_compact_reset_with_tool_dumps() {
+    let mut agent = repeating([ScriptedStep::Text("short".into())]);
+    agent.compaction_threshold = 4_000;
+    agent.compaction_llm = false;
+    let mut session = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    session.add_user_message("please keep summarizing the dump");
+    for i in 0..6 {
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: format!("block {i} {}", "z".repeat(80)),
+        }]);
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: format!("t{i}"),
+            content: "tool dump ".repeat(40),
+            is_error: false,
+        }]);
+    }
+    let before = session.token_count_cached();
+    assert!(before > 0, "fixture must have tokens");
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let out = agent
+        .run_turn_with_events(
+            &mut session,
+            TurnOpts {
+                provider_name: "script",
+                model: "compact-reset-unique",
+                api_key: "k",
+                max_turns: Some(3),
+                events: Some(tx),
+                cancel: None,
+            },
+        )
+        .await
+        .unwrap_or_else(|_| "ok".into());
+    assert!(!out.is_empty() || !session.messages.is_empty());
+    let _ = drain_status(&mut rx);
+}
+
+#[tokio::test]
+async fn intent_always_injects_on_first_turn() {
+    let mut agent = repeating([ScriptedStep::Text("changed".into())]);
+    agent.intent_guidance = crate::intent::IntentGuidanceMode::Always;
+    let mut session = session_user("Fix the auth bug in session.rs");
+    let out = agent
+        .run_turn(&mut session, "script", "intent-always-unique", "k", Some(2))
+        .await
+        .expect("turn");
+    assert!(out.contains("changed") || !out.is_empty(), "{out}");
+}

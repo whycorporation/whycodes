@@ -193,7 +193,9 @@ for line in sys.stdin:
     elif method == "tools/list":
         send({"jsonrpc":"2.0","id":rid,"result":{"tools":[
             {"name":"echo","description":"e","inputSchema":{"type":"object"}},
-            {"name":"bare","description":"bare","inputSchema":{"type":"object"}}
+            {"name":"bare","description":"bare","inputSchema":{"type":"object"}},
+            {"name":"nullschema","inputSchema":None},
+            {"name":"nodesc","inputSchema":{"type":"object","properties":{}}}
         ]}})
     elif method == "tools/call":
         args = (msg.get("params") or {}).get("arguments") or {}
@@ -261,6 +263,14 @@ async fn register_stdio_success_and_call_bridged_tool() {
     assert!(count >= 1, "expected at least one MCP tool, got {count}");
     assert!(executor.get("ghost_echo").is_some());
     assert!(executor.get("ghost_bare").is_some());
+    assert!(
+        executor.get("ghost_nullschema").is_some(),
+        "null inputSchema should fall back to an empty object schema"
+    );
+    assert!(
+        executor.get("ghost_nodesc").is_some(),
+        "missing description should still register"
+    );
 
     let ctx = whycodes_core::ToolContext::new(dir.path().to_string_lossy().into_owned());
     let call = whycodes_core::types::ToolCall {

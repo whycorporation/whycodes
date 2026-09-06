@@ -157,3 +157,17 @@ fn byte_and_file_caps_and_duplicate_paths() {
 fn git_root_at_filesystem_root_is_none_or_some() {
     let _ = discover(Path::new("/"));
 }
+
+#[test]
+fn nested_whycodes_dir_skips_duplicate_absolute_path() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    std::fs::create_dir(dir.path().join(".whycodes")).unwrap();
+    std::fs::write(dir.path().join(".whycodes/AGENTS.md"), "nested unique").unwrap();
+    let files = discover(&dir.path().join(".whycodes"));
+    let hits = files
+        .iter()
+        .filter(|f| f.content.contains("nested unique"))
+        .count();
+    assert_eq!(hits, 1, "{files:?}");
+}
