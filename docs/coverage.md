@@ -61,7 +61,7 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth`, `agent` | **100%** lines | Production files only (`tests.rs` ignored) |
 | `format` | **95%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
@@ -70,8 +70,8 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-09-06 (`cargo llvm-cov --workspace`, flags above — `whycodes-auth` 100% floor, #65).
-Workspace line coverage last measured 2026-09-01 at **85.58%**; crate floors now include `llm` and `auth` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
+Linux x86_64, 2026-09-06 (`cargo llvm-cov --workspace`, flags above — `whycodes-agent` 100% floor, #61).
+Workspace line coverage last measured 2026-09-06 at **92.56%**; crate floors now include `llm`, `auth`, and `agent` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
@@ -89,14 +89,13 @@ informational.
 | Crate | Lines |
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format, index | **100%** |
-| session, memory, llm, auth | **100%** |
+| session, memory, llm, auth, agent | **100%** |
 | tui | 86.3% |
 | tools | 86.0% |
 | mcp | 80.8% |
 | sdk | 80.4% |
 | server | 79.1% |
 | cli | 69.6% |
-| agent | 65.4% |
 | lsp | 64.1% |
 
 When re-measuring, update this breakdown and the dated workspace total here,
