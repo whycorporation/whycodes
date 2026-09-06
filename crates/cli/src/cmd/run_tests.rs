@@ -113,3 +113,35 @@ fn tui_plain_and_resume_helpers() {
     );
     assert_eq!(resume_missing_label("sess-1"), "sess-1");
 }
+
+#[test]
+fn slash_info_cost_doctor_and_resume_helpers() {
+    assert_eq!(session_token_label(true, 42, 0, 0, 0), "Tokens≈42 (est)");
+    assert_eq!(
+        session_token_label(false, 0, 10, 3, 13),
+        "Tokens: 10 in / 3 out / 13 total"
+    );
+    assert_eq!(
+        session_cost_line(true, 7, 0, 0, 0),
+        "  session: ~7 tokens (estimated)"
+    );
+    assert_eq!(
+        session_cost_line(false, 0, 2, 4, 6),
+        "  session: 2 in / 4 out · total 6"
+    );
+    assert_eq!(doctor_api_key_status(true, true), "not required");
+    assert_eq!(doctor_api_key_status(true, false), "set");
+    assert_eq!(doctor_api_key_status(false, true), "MISSING");
+    match resume_slash_want("/resume", "abc") {
+        ResumeSlash::Id(id) => assert_eq!(id, "abc"),
+        ResumeSlash::List => panic!("expected id"),
+    }
+    match resume_slash_want("/continue", "") {
+        ResumeSlash::Id(id) => assert_eq!(id, whycodes_tui::RESUME_LATEST),
+        ResumeSlash::List => panic!("expected latest"),
+    }
+    assert!(matches!(
+        resume_slash_want("/resume", ""),
+        ResumeSlash::List
+    ));
+}

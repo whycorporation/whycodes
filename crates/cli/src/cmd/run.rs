@@ -32,6 +32,57 @@ pub(crate) fn resume_missing_label(want: &str) -> &str {
     }
 }
 
+pub(crate) fn session_token_label(
+    usage_empty: bool,
+    estimated: usize,
+    input: u64,
+    output: u64,
+    total: u64,
+) -> String {
+    if usage_empty {
+        format!("Tokens≈{estimated} (est)")
+    } else {
+        format!("Tokens: {input} in / {output} out / {total} total")
+    }
+}
+
+pub(crate) fn session_cost_line(
+    usage_empty: bool,
+    estimated: usize,
+    input: u64,
+    output: u64,
+    total: u64,
+) -> String {
+    if usage_empty {
+        format!("  session: ~{estimated} tokens (estimated)")
+    } else {
+        format!("  session: {input} in / {output} out · total {total}")
+    }
+}
+
+pub(crate) fn doctor_api_key_status(key_ok: bool, api_key_empty: bool) -> &'static str {
+    if key_ok {
+        if api_key_empty { "not required" } else { "set" }
+    } else {
+        "MISSING"
+    }
+}
+
+pub(crate) enum ResumeSlash {
+    List,
+    Id(String),
+}
+
+pub(crate) fn resume_slash_want(cmd: &str, rest: &str) -> ResumeSlash {
+    if !rest.is_empty() {
+        ResumeSlash::Id(rest.to_string())
+    } else if cmd == "/continue" {
+        ResumeSlash::Id(whycodes_tui::RESUME_LATEST.to_string())
+    } else {
+        ResumeSlash::List
+    }
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -433,16 +484,13 @@ pub(crate) async fn cmd_run(
                     // character heuristic only otherwise, and labelled as an
                     // estimate. They are different measurements and printing
                     // them the same way would suggest they are not.
-                    let tokens = if session.usage.is_empty() {
-                        format!("Tokens≈{} (est)", session.token_count())
-                    } else {
-                        format!(
-                            "Tokens: {} in / {} out / {} total",
-                            session.usage.input_tokens,
-                            session.usage.output_tokens,
-                            session.usage.total()
-                        )
-                    };
+                    let tokens = session_token_label(
+                        session.usage.is_empty(),
+                        session.token_count(),
+                        session.usage.input_tokens,
+                        session.usage.output_tokens,
+                        session.usage.total(),
+                    );
                     println!("Title: {} ({:?})", i.title.cyan(), session.title_source);
                     println!(
                         "ID: {} | Messages: {} | {} | Agent: {} | {}/{}",
@@ -596,16 +644,16 @@ pub(crate) async fn cmd_run(
                 "/cost" | "/usage" => {
                     let u = &session.usage;
                     println!("{}", "Cost / usage".bold());
-                    if u.is_empty() {
-                        println!("  session: ~{} tokens (estimated)", session.token_count());
-                    } else {
-                        println!(
-                            "  session: {} in / {} out · total {}",
+                    println!(
+                        "{}",
+                        session_cost_line(
+                            u.is_empty(),
+                            session.token_count(),
                             u.input_tokens,
                             u.output_tokens,
-                            u.total()
-                        );
-                    }
+                            u.total(),
+                        )
+                    );
                     continue;
                 }
                 "/context" => {
@@ -628,15 +676,7 @@ pub(crate) async fn cmd_run(
                         || !whycodes_llm::provider_requires_api_key(&provider, Some(&config));
                     println!(
                         "  api_key:  {}",
-                        if key_ok {
-                            if api_key.is_empty() {
-                                "not required"
-                            } else {
-                                "set"
-                            }
-                        } else {
-                            "MISSING"
-                        }
+                        doctor_api_key_status(key_ok, api_key.is_empty())
                     );
                     println!(
                         "  sandbox:  {} network={}",
@@ -652,17 +692,16 @@ pub(crate) async fn cmd_run(
                     continue;
                 }
                 "/resume" | "/continue" => {
-                    let want = if !rest.is_empty() {
-                        rest.to_string()
-                    } else if cmd == "/continue" {
-                        whycodes_tui::RESUME_LATEST.to_string()
-                    } else {
-                        // /resume with no id → list, same as /sessions
-                        if let Err(err) = super::session::cmd_session(&SessionCmd::List).await {
-                            eprintln!("{} {}", "✗".red(), err);
+                    let want = match resume_slash_want(cmd, rest) {
+                        ResumeSlash::Id(id) => id,
+                        ResumeSlash::List => {
+                            // /resume with no id → list, same as /sessions
+                            if let Err(err) = super::session::cmd_session(&SessionCmd::List).await {
+                                eprintln!("{} {}", "✗".red(), err);
+                            }
+                            println!("{}", "Tip: /resume <id> or /continue (latest)".dimmed());
+                            continue;
                         }
-                        println!("{}", "Tip: /resume <id> or /continue (latest)".dimmed());
-                        continue;
                     };
                     match resume_session_into(&mut session, &want) {
                         Ok(true) => {

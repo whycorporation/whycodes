@@ -384,7 +384,7 @@ async fn pipe_to_job_stops_on_read_error() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
     }));
-    pipe_to_job(FailRead, &job).await;
+    pipe_to_job(Box::new(FailRead), &job).await;
 }
 
 #[tokio::test]
@@ -441,8 +441,9 @@ async fn spawn_pipe_task_none_reader_is_noop() {
         exit_code: None,
         kill_flag: Arc::new(AtomicBool::new(false)),
     }));
-    let handle = spawn_pipe_task::<tokio::io::Empty>(None, Arc::clone(&job));
+    let handle = spawn_pipe_task(None, Arc::clone(&job));
     handle.await.expect("join");
+    pipe_to_job(Box::new(tokio::io::empty()), &job).await;
 }
 
 #[tokio::test]
@@ -558,6 +559,10 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
         Ok(_) => {}
         Err(e) => assert!(!e.is_empty(), "{e}"),
     }
+    let err = BackgroundRegistry::new(1)
+        .start_prepared("echo hi", None, Err("sandbox unavailable".into()))
+        .unwrap_err();
+    assert!(err.contains("sandbox unavailable"), "{err}");
     let mut already = "…keep".to_string();
     prefix_ellipsis(&mut already);
     assert_eq!(already, "…keep");

@@ -60,27 +60,14 @@ impl Tool for GitLogTool {
             let working_dir = ctx.working_dir.clone();
             crate::blocking::tool(move || {
                 let count = args["count"].as_u64().unwrap_or(10);
-                let author = args["author"].as_str();
-                let since = args["since"].as_str();
-                let path_filter = args["path"].as_str();
-
+                let argv = git_log_argv(
+                    count,
+                    args["author"].as_str(),
+                    args["since"].as_str(),
+                    args["path"].as_str(),
+                );
                 let mut cmd = Command::new("git");
-                cmd.arg("log")
-                    .arg("--oneline")
-                    .arg("-n")
-                    .arg(count.to_string());
-
-                if let Some(a) = author {
-                    cmd.arg("--author").arg(a);
-                }
-
-                if let Some(s) = since {
-                    cmd.arg("--since").arg(s);
-                }
-
-                if let Some(path) = path_filter {
-                    cmd.arg("--").arg(path);
-                }
+                cmd.args(argv);
 
                 cmd.current_dir(&working_dir);
 
@@ -119,6 +106,33 @@ impl Tool for GitLogTool {
             .await
         })
     }
+}
+
+fn git_log_argv(
+    count: u64,
+    author: Option<&str>,
+    since: Option<&str>,
+    path: Option<&str>,
+) -> Vec<String> {
+    let mut argv = vec![
+        "log".into(),
+        "--oneline".into(),
+        "-n".into(),
+        count.to_string(),
+    ];
+    if let Some(a) = author {
+        argv.push("--author".into());
+        argv.push(a.to_string());
+    }
+    if let Some(s) = since {
+        argv.push("--since".into());
+        argv.push(s.to_string());
+    }
+    if let Some(path) = path {
+        argv.push("--".into());
+        argv.push(path.to_string());
+    }
+    argv
 }
 
 #[cfg(test)]

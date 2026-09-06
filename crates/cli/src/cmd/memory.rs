@@ -22,17 +22,12 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
                 println!("{} No memories for this project.", "ℹ".cyan());
             } else {
                 println!(
-                    "{} {} memories ({})",
+                    "{} {}",
                     "🧠".bold(),
-                    rows.len(),
-                    svc.project_key.dimmed()
+                    memory_list_header(rows.len(), &svc.project_key)
                 );
                 for r in rows {
-                    println!(
-                        "  {}  {}",
-                        r.id.chars().take(8).collect::<String>().dimmed(),
-                        r.text
-                    );
+                    println!("{}", memory_row_line(&r.id, &r.text));
                 }
             }
         }
@@ -43,10 +38,8 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
             } else {
                 for h in hits {
                     println!(
-                        "  [{:.2}] {}  {}",
-                        h.score,
-                        h.entry.id.chars().take(8).collect::<String>().dimmed(),
-                        h.entry.text
+                        "{}",
+                        memory_search_line(h.score, &h.entry.id, &h.entry.text)
                     );
                 }
             }
@@ -101,10 +94,7 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
         MemoryCmd::Import { path } => {
             let json = std::fs::read_to_string(path)?;
             let (added, skipped) = svc.import_json(&json)?;
-            println!(
-                "{} Import complete: {added} added, {skipped} skipped",
-                "✓".green()
-            );
+            println!("{} {}", "✓".green(), memory_import_summary(added, skipped));
         }
         MemoryCmd::Index {
             max_files,
@@ -124,12 +114,9 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
                 );
             } else {
                 for h in hits {
-                    let sid = &h.entry.session_id;
                     println!(
-                        "  [{:.2}] {} turn {}",
-                        h.score,
-                        &sid[..8.min(sid.len())],
-                        h.entry.turn_index
+                        "{}",
+                        memory_session_hit_line(h.score, &h.entry.session_id, h.entry.turn_index)
                     );
                     for line in h.entry.text.lines().take(4) {
                         println!("      {}", line.dimmed());
@@ -147,8 +134,13 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
             } else {
                 for h in hits {
                     println!(
-                        "  [{:.2}] {}:{}-{}",
-                        h.score, h.entry.path, h.entry.start_line, h.entry.end_line
+                        "{}",
+                        memory_code_hit_line(
+                            h.score,
+                            &h.entry.path,
+                            h.entry.start_line,
+                            h.entry.end_line
+                        )
                     );
                     for line in h.entry.text.lines().take(4) {
                         println!("      {}", line.dimmed());
@@ -179,6 +171,46 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
         }
     }
     Ok(())
+}
+
+pub(crate) fn memory_list_header(count: usize, project_key: &str) -> String {
+    format!("{count} memories ({project_key})")
+}
+
+pub(crate) fn memory_row_line(id: &str, text: &str) -> String {
+    format!(
+        "  {}  {text}",
+        id.chars().take(8).collect::<String>().dimmed()
+    )
+}
+
+pub(crate) fn memory_search_line(score: f32, id: &str, text: &str) -> String {
+    format!(
+        "  [{:.2}] {}  {text}",
+        score,
+        id.chars().take(8).collect::<String>().dimmed()
+    )
+}
+
+pub(crate) fn memory_session_hit_line(score: f32, session_id: &str, turn_index: i64) -> String {
+    format!(
+        "  [{:.2}] {} turn {turn_index}",
+        score,
+        &session_id[..8.min(session_id.len())]
+    )
+}
+
+pub(crate) fn memory_code_hit_line(
+    score: f32,
+    path: &str,
+    start_line: i64,
+    end_line: i64,
+) -> String {
+    format!("  [{score:.2}] {path}:{start_line}-{end_line}")
+}
+
+pub(crate) fn memory_import_summary(added: usize, skipped: usize) -> String {
+    format!("Import complete: {added} added, {skipped} skipped")
 }
 
 #[cfg(test)]

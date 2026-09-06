@@ -147,13 +147,14 @@ pub struct StdinQuestionPrompter;
 
 impl QuestionPrompter for StdinQuestionPrompter {
     fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
-        Box::pin(async move { ask_stdin_questions(questions, read_line) })
+        Box::pin(async move { ask_stdin_questions(questions, &mut read_line) })
     }
 }
 
+#[allow(clippy::question_mark)]
 fn ask_stdin_questions(
     questions: Vec<QuestionSpec>,
-    mut read_line: impl FnMut() -> Result<String, String>,
+    read_line: &mut dyn FnMut() -> Result<String, String>,
 ) -> Result<Vec<QuestionAnswer>, QuestionError> {
     use std::io::Write;
     let mut answers = Vec::with_capacity(questions.len());
@@ -166,11 +167,14 @@ fn ask_stdin_questions(
         if q.options.is_empty() {
             eprint!("   Your answer: ");
             let _ = std::io::stderr().flush();
-            let line = invalid_line(read_line())?;
-            answers.push(apply_free_stdin_parse(
-                parse_stdin_question_line(q, &line),
-                &line,
-            )?);
+            let line = match invalid_line(read_line()) {
+                Ok(line) => line,
+                Err(e) => return Err(e),
+            };
+            match apply_free_stdin_parse(parse_stdin_question_line(q, &line), &line) {
+                Ok(answer) => answers.push(answer),
+                Err(e) => return Err(e),
+            }
             continue;
         }
         for (i, opt) in q.options.iter().enumerate() {
@@ -184,7 +188,10 @@ fn ask_stdin_questions(
         eprintln!("  {other_n}. Other (type your own)");
         eprint!("   Choice: ");
         let _ = std::io::stderr().flush();
-        let line = invalid_line(read_line())?;
+        let line = match invalid_line(read_line()) {
+            Ok(line) => line,
+            Err(e) => return Err(e),
+        };
         let parsed = parse_stdin_question_line(q, &line);
         let other_text = if matches!(parsed, StdinQuestionParse::Other) {
             eprint!("   Other text: ");
@@ -193,7 +200,10 @@ fn ask_stdin_questions(
         } else {
             None
         };
-        answers.push(apply_choice_stdin_parse(parsed, other_text.as_deref())?);
+        match apply_choice_stdin_parse(parsed, other_text.as_deref()) {
+            Ok(answer) => answers.push(answer),
+            Err(e) => return Err(e),
+        }
     }
     Ok(answers)
 }
@@ -217,7 +227,7 @@ fn read_line() -> Result<String, String> {
     read_buf_line(&mut std::io::stdin().lock())
 }
 
-fn read_buf_line(input: &mut impl std::io::BufRead) -> Result<String, String> {
+fn read_buf_line(input: &mut dyn std::io::BufRead) -> Result<String, String> {
     let mut line = String::new();
     finish_read_line(input.read_line(&mut line), line)
 }

@@ -137,7 +137,12 @@ fn proc_is_zombie(pid: i32) -> bool {
     let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else {
         return false;
     };
-    // `pid (comm) state ...`; comm may contain `)`.
+    proc_stat_is_zombie(&stat)
+}
+
+/// `pid (comm) state ...`; comm may contain `)`.
+#[cfg(any(test, target_os = "linux"))]
+fn proc_stat_is_zombie(stat: &str) -> bool {
     let Some(after) = stat.rsplit_once(')').map(|(_, rest)| rest) else {
         return false;
     };

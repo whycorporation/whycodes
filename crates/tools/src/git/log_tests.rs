@@ -25,6 +25,29 @@ async fn log_filters_and_empty() {
     assert!(err.is_error, "{}", err.content);
 }
 
+#[test]
+fn git_log_argv_includes_optional_filters() {
+    assert_eq!(
+        git_log_argv(10, None, None, None),
+        vec!["log", "--oneline", "-n", "10"]
+    );
+    assert_eq!(
+        git_log_argv(3, Some("me"), Some("2020-01-01"), Some("a.txt")),
+        vec![
+            "log",
+            "--oneline",
+            "-n",
+            "3",
+            "--author",
+            "me",
+            "--since",
+            "2020-01-01",
+            "--",
+            "a.txt"
+        ]
+    );
+}
+
 fn init_repo() -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().unwrap();
     assert!(

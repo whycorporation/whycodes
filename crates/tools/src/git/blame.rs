@@ -77,13 +77,10 @@ impl Tool for GitBlameTool {
                     cmd.arg(rev);
                 }
 
-                let line_start = args["line_start"].as_u64();
-                let line_end = args["line_end"].as_u64();
-
-                if let (Some(start), Some(end)) = (line_start, line_end) {
-                    cmd.arg("-L").arg(format!("{},{}", start, end));
-                } else if let Some(start) = line_start {
-                    cmd.arg("-L").arg(format!("{},", start));
+                if let Some(range) =
+                    blame_line_args(args["line_start"].as_u64(), args["line_end"].as_u64())
+                {
+                    cmd.arg("-L").arg(range);
                 }
 
                 cmd.arg("--").arg(&file);
@@ -123,6 +120,14 @@ impl Tool for GitBlameTool {
             })
             .await
         })
+    }
+}
+
+fn blame_line_args(line_start: Option<u64>, line_end: Option<u64>) -> Option<String> {
+    match (line_start, line_end) {
+        (Some(start), Some(end)) => Some(format!("{start},{end}")),
+        (Some(start), None) => Some(format!("{start},")),
+        _ => None,
     }
 }
 

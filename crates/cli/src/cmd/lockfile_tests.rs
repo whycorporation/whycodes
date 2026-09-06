@@ -230,6 +230,19 @@ fn invalid_unix_pids_are_not_broadcast() {
 }
 
 #[test]
+fn proc_stat_is_zombie_parses_comm_and_state() {
+    assert!(proc_stat_is_zombie("1 (init) Z 0 1 1"));
+    assert!(proc_stat_is_zombie("42 (name with ) paren) Z 1 2"));
+    assert!(!proc_stat_is_zombie("1 (init) R 0 1 1"));
+    assert!(!proc_stat_is_zombie("no-paren-here"));
+    #[cfg(target_os = "linux")]
+    {
+        assert!(!proc_is_zombie(unused_pid() as i32));
+        assert!(!proc_is_zombie(std::process::id() as i32));
+    }
+}
+
+#[test]
 fn apply_takeover_choice_covers_all_arms() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("serve.lock");

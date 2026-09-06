@@ -240,11 +240,18 @@ pub(super) async fn apply_pending_import(
 ) {
     let selected =
         (!app.import_picker.items.is_empty()).then_some(app.import_picker.checked.as_slice());
-    match apply_import_now(config, project_dir, selected) {
+    let outcome = apply_import_now(config, project_dir, selected);
+    if matches!(&outcome, Ok(ApplyOutcome::Wrote { .. })) {
+        agent.apply_config(config);
+        agent.load_mcp(config).await;
+        refresh_sidebar(app, config, file_index);
+    }
+    apply_import_outcome(app, outcome);
+}
+
+pub(super) fn apply_import_outcome(app: &mut TuiApp, outcome: anyhow::Result<ApplyOutcome>) {
+    match outcome {
         Ok(ApplyOutcome::Wrote { path, summary }) => {
-            agent.apply_config(config);
-            agent.load_mcp(config).await;
-            refresh_sidebar(app, config, file_index);
             app.status_message = format!("Imported · {summary}");
             app.toasts.push(
                 crate::toast::ToastKind::Success,

@@ -2010,6 +2010,80 @@ async fn cycle_agent_walks_primary_list() {
     assert!(app.status_message.contains("plan"));
 }
 
+#[tokio::test]
+async fn switch_to_agent_picker_unknown_and_rebuild() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let (perm, _) = ChannelPermissionPrompter::new();
+    let (question, _) = ChannelQuestionPrompter::new(None);
+    let perm = Arc::new(perm);
+    let question = Arc::new(question);
+    let (event_tx, _) = mpsc::unbounded_channel();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.primary_agents = vec!["build".into(), "plan".into()];
+    app.agent_cycle_idx = 0;
+    app.intent_badge = Some("x".into());
+    let claims = whycodes_core::FileClaimRegistry::new();
+    let mut agent = Agent::new(dummy_info("build")).with_session_claims(claims);
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    let mut config = Config::default();
+
+    switch_to_agent(
+        &mut app,
+        &mut agent,
+        &mut session,
+        &config,
+        dir.path(),
+        Arc::clone(&perm),
+        Arc::clone(&question),
+        &event_tx,
+        "ghost",
+        false,
+    )
+    .await;
+    assert_eq!(app.agent_name, "ghost");
+    assert_eq!(agent.info.name, "build");
+    assert!(app.intent_badge.is_none());
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message == "Agent → ghost")
+    );
+    assert!(
+        !app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Ctrl+T"))
+    );
+
+    config.agents.push(dummy_info("plan"));
+    switch_to_agent(
+        &mut app,
+        &mut agent,
+        &mut session,
+        &config,
+        dir.path(),
+        perm,
+        question,
+        &event_tx,
+        "plan",
+        true,
+    )
+    .await;
+    assert_eq!(app.agent_cycle_idx, 1);
+    assert_eq!(app.agent_name, "plan");
+    assert_eq!(agent.info.name, "plan");
+    assert!(agent.session_claims().is_some());
+    assert!(session.system_prompt.contains("sys") || !session.system_prompt.is_empty());
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.message.contains("Ctrl+T"))
+    );
+}
+
 #[test]
 fn handle_question_key_navigates_confirms_and_cancels() {
     let spec = sample_question();
@@ -4304,6 +4378,48 @@ fn apply_import_now_empty_selection_writes_nothing() {
         other => panic!("expected nothing, got {other:?}"),
     }
     assert!(!config.mcp_servers.contains_key("fs"));
+}
+
+#[test]
+fn apply_import_outcome_toasts_wrote_nothing_and_error() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_import_outcome(
+        &mut app,
+        Ok(ApplyOutcome::Wrote {
+            path: PathBuf::from("/tmp/config.toml"),
+            summary: "MCP 1".into(),
+        }),
+    );
+    assert_eq!(app.status_message, "Imported · MCP 1");
+    assert!(
+        app.toasts.visible().iter().any(
+            |t| t.kind == crate::toast::ToastKind::Success && t.message.contains("config.toml")
+        )
+    );
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_import_outcome(
+        &mut app,
+        Ok(ApplyOutcome::Nothing {
+            message: "Nothing new to write".into(),
+        }),
+    );
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.kind == crate::toast::ToastKind::Info && t.message.contains("Nothing new"))
+    );
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    apply_import_outcome(&mut app, Err(anyhow::anyhow!("boom")));
+    assert!(
+        app.toasts
+            .visible()
+            .iter()
+            .any(|t| t.kind == crate::toast::ToastKind::Error
+                && t.message.contains("Import failed: boom"))
+    );
 }
 
 #[test]

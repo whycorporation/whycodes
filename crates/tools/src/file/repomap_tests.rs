@@ -1,5 +1,6 @@
 use super::*;
 use crate::tool::ToolContext;
+use std::path::Path;
 
 fn ctx(dir: &std::path::Path) -> ToolContext {
     ToolContext::new(dir.to_string_lossy().into_owned())
@@ -106,4 +107,45 @@ fn rust_and_js_extractors() {
 fn rank_prefers_src_over_tests() {
     assert!(rank_key("src/lib.rs") < rank_key("tests/foo.rs"));
     assert!(rank_key("Cargo.toml") < rank_key("src/lib.rs"));
+}
+
+#[test]
+fn signature_line_covers_remaining_languages() {
+    assert!(is_signature_line("def foo():", "py"));
+    assert!(is_signature_line("async def bar():", "py"));
+    assert!(is_signature_line("class C:", "py"));
+    assert!(!is_signature_line("x = 1", "py"));
+
+    assert!(is_signature_line("func main() {", "go"));
+    assert!(is_signature_line("type T struct {", "go"));
+    assert!(is_signature_line("package main", "go"));
+
+    assert!(is_signature_line("public class Foo {", "java"));
+    assert!(is_signature_line("interface Bar {", "kt"));
+    assert!(is_signature_line("enum Kind {", "cs"));
+    assert!(is_signature_line("fun baz() {", "kts"));
+
+    assert!(is_signature_line("struct Foo(int x) {", "c"));
+    assert!(is_signature_line("class Bar(int x) {", "cpp"));
+    assert!(!is_signature_line("int x;", "h"));
+    assert!(!is_signature_line("if (x) {", "cc"));
+
+    assert!(is_signature_line("[package]", "toml"));
+    assert!(!is_signature_line("name = \"x\"", "toml"));
+    assert!(is_signature_line("# Title", "md"));
+    assert!(is_signature_line("## Sub", "md"));
+    assert!(!is_signature_line("#### Deep", "md"));
+    assert!(!is_signature_line("#NoSpace", "md"));
+    assert!(!is_signature_line("anything", "xyz"));
+
+    assert!(!is_source_path(Path::new("README")));
+    assert!(is_source_path(Path::new("src/lib.rs")));
+    assert!(!is_source_path(Path::new("blob.bin")));
+
+    let short = truncate_sig("fn foo() {");
+    assert_eq!(short, "fn foo()");
+    let long = "a".repeat(200);
+    let cut = truncate_sig(&long);
+    assert_eq!(cut.chars().count(), 120);
+    assert!(cut.ends_with('…'));
 }

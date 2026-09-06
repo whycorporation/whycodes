@@ -240,6 +240,36 @@ password=gho_from_gcm
 }
 
 #[test]
+fn wait_child_stdout_reads_success_and_times_out() {
+    let child = Command::new("sh")
+        .args(["-c", "printf 'token-ok'"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn printf");
+    assert_eq!(
+        wait_child_stdout(child, Duration::from_secs(2), "printf").as_deref(),
+        Some("token-ok")
+    );
+
+    let child = Command::new("sh")
+        .args(["-c", "exit 1"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn fail");
+    assert!(wait_child_stdout(child, Duration::from_secs(2), "fail").is_none());
+
+    let child = Command::new("sh")
+        .args(["-c", "sleep 2"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn sleep");
+    assert!(wait_child_stdout(child, Duration::from_millis(40), "sleep").is_none());
+}
+
+#[test]
 fn gh_hosts_path_prefers_config_dir_then_platform() {
     let custom = gh_hosts_path_from(
         Some(PathBuf::from("/custom/gh")),

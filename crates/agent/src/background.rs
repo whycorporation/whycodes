@@ -255,7 +255,20 @@ impl BackgroundRegistry {
             working_dir,
             settings: sandbox,
         };
-        let prepared = prepare_job(&request)?;
+        self.start_prepared(command, label, prepare_job(&request))
+    }
+
+    #[allow(clippy::question_mark)]
+    fn start_prepared(
+        &self,
+        command: &str,
+        label: Option<String>,
+        prepared: Result<PreparedCommand, String>,
+    ) -> Result<String, String> {
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
+            Err(e) => return Err(e),
+        };
 
         let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let label = nonempty_or_truncated(label, command);
@@ -392,8 +405,8 @@ async fn run_background_job(
         }
     };
 
-    let out_task = spawn_pipe_task(child.stdout.take(), Arc::clone(&job));
-    let err_task = spawn_pipe_task(child.stderr.take(), Arc::clone(&job));
+    let out_task = spawn_pipe_task(boxed_reader(child.stdout.take()), Arc::clone(&job));
+    let err_task = spawn_pipe_task(boxed_reader(child.stderr.take()), Arc::clone(&job));
 
     let status = loop {
         if kill_flag.load(Ordering::SeqCst) {
@@ -506,10 +519,19 @@ fn prefix_ellipsis(output: &mut String) {
     output.insert(0, '…');
 }
 
-fn spawn_pipe_task<R>(reader: Option<R>, job: Arc<Mutex<JobInner>>) -> tokio::task::JoinHandle<()>
+type JobReader = Box<dyn tokio::io::AsyncRead + Unpin + Send>;
+
+fn boxed_reader<R>(reader: Option<R>) -> Option<JobReader>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
+    reader.map(|r| Box::new(r) as JobReader)
+}
+
+fn spawn_pipe_task(
+    reader: Option<JobReader>,
+    job: Arc<Mutex<JobInner>>,
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         if let Some(out) = reader {
             pipe_to_job(out, &job).await;
@@ -524,7 +546,7 @@ async fn join_pipe_task(task: tokio::task::JoinHandle<()>, skipped: &'static str
     }
 }
 
-async fn pipe_to_job<R: tokio::io::AsyncRead + Unpin>(mut reader: R, job: &Arc<Mutex<JobInner>>) {
+async fn pipe_to_job(mut reader: JobReader, job: &Arc<Mutex<JobInner>>) {
     use tokio::io::AsyncReadExt;
     let mut buf = [0u8; 4096];
     loop {

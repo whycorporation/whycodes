@@ -463,7 +463,7 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
         multi_select: false,
         important: false,
     }];
-    let answers = ask_stdin_questions(free, || Ok("hello".into())).expect("free");
+    let answers = ask_stdin_questions(free, &mut || Ok("hello".into())).expect("free");
     assert_eq!(answers[0].free_text.as_deref(), Some("hello"));
 
     let mut other_fail = std::collections::VecDeque::from(["2".to_string()]);
@@ -478,7 +478,7 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
             multi_select: false,
             important: false,
         }],
-        || other_fail.pop_front().ok_or_else(|| "eof".into()),
+        &mut || other_fail.pop_front().ok_or_else(|| "eof".into()),
     )
     .expect("other text falls back to empty");
     assert!(other_empty[0].free_text.is_none());
@@ -492,7 +492,7 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
             multi_select: false,
             important: false,
         }],
-        || Ok(String::new()),
+        &mut || Ok(String::new()),
     );
     assert_eq!(cancelled, Err(QuestionError::Cancelled));
 
@@ -503,7 +503,7 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
             multi_select: false,
             important: false,
         }],
-        || Err("boom".into()),
+        &mut || Err("boom".into()),
     );
     assert_eq!(invalid, Err(QuestionError::Invalid("boom".into())));
 
@@ -518,7 +518,7 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
             multi_select: false,
             important: false,
         }],
-        || Err("choice-boom".into()),
+        &mut || Err("choice-boom".into()),
     );
     assert_eq!(
         invalid_choice,
@@ -542,17 +542,17 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
         multi_select: false,
         important: false,
     }];
-    let selected = ask_stdin_questions(choice.clone(), || Ok("1".into())).expect("selected");
+    let selected = ask_stdin_questions(choice.clone(), &mut || Ok("1".into())).expect("selected");
     assert_eq!(selected[0].selected, vec!["A".to_string()]);
 
     let mut other_lines = std::collections::VecDeque::from(["3".to_string(), "custom".to_string()]);
-    let other = ask_stdin_questions(choice.clone(), || {
+    let other = ask_stdin_questions(choice.clone(), &mut || {
         other_lines.pop_front().ok_or_else(|| "eof".into())
     })
     .expect("other");
     assert_eq!(other[0].free_text.as_deref(), Some("custom"));
 
-    let typed = ask_stdin_questions(choice, || Ok("typed".into())).expect("typed");
+    let typed = ask_stdin_questions(choice, &mut || Ok("typed".into())).expect("typed");
     assert_eq!(typed[0].free_text.as_deref(), Some("typed"));
 
     let two = vec![
@@ -578,7 +578,7 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
         },
     ];
     let mut lines = std::collections::VecDeque::from(["1".to_string(), "1".to_string()]);
-    let both = ask_stdin_questions(two, || lines.pop_front().ok_or_else(|| "eof".into()))
+    let both = ask_stdin_questions(two, &mut || lines.pop_front().ok_or_else(|| "eof".into()))
         .expect("two questions");
     assert_eq!(both[0].selected, vec!["A".to_string()]);
     assert_eq!(both[1].selected, vec!["B".to_string()]);
