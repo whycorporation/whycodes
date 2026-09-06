@@ -44,6 +44,55 @@ pub(crate) fn agent_default_marker(name: &str, default_agent: &str) -> String {
     }
 }
 
+pub(crate) fn provider_updating_line(name: &str) -> String {
+    format!(
+        "{} Provider '{}' already exists. Updating...",
+        "⚠".yellow(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn provider_saved_line(name: &str, summary: &str) -> String {
+    format!("{} Provider '{}' {}", "✓".green(), name.cyan(), summary)
+}
+
+pub(crate) fn provider_removed_line(name: &str) -> String {
+    format!("{} Provider '{}' removed.", "✓".green(), name.cyan())
+}
+
+pub(crate) fn provider_not_found_line(name: &str) -> String {
+    format!("{} Provider '{}' not found.", "✗".red(), name.cyan())
+}
+
+pub(crate) fn provider_default_set_line(name: &str) -> String {
+    format!("{} Default provider set to '{}'.", "✓".green(), name.cyan())
+}
+
+pub(crate) fn provider_default_use_line(name: &str) -> String {
+    format!("  Use: whycodes -P {name} ...")
+}
+
+pub(crate) fn provider_default_missing_line(name: &str) -> String {
+    format!(
+        "{} Provider '{}' not found. Add it first: whycodes provider add {name}",
+        "✗".red(),
+        name.cyan()
+    )
+}
+
+pub(crate) fn model_default_set_line(provider: &str, model: &str) -> String {
+    format!(
+        "{} Default model set to {}/{}",
+        "✓".green(),
+        provider.cyan(),
+        model.cyan()
+    )
+}
+
+pub(crate) fn agent_not_found_line(name: &str) -> String {
+    format!("{} Agent '{}' not found.", "✗".red(), name)
+}
+
 pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
     let mut config = Config::load()?;
 
@@ -108,43 +157,32 @@ pub(crate) async fn cmd_provider(cmd: &ProviderCmd) -> anyhow::Result<()> {
             };
 
             if config.providers.contains_key(name) {
-                println!(
-                    "{} Provider '{}' already exists. Updating...",
-                    "⚠".yellow(),
-                    name.cyan()
-                );
+                println!("{}", provider_updating_line(name));
             }
 
             config.providers.insert(name.clone(), provider);
             config.save()?;
             println!(
-                "{} Provider '{}' {}",
-                "✓".green(),
-                name.cyan(),
-                provider_add_summary(api_key.is_some())
+                "{}",
+                provider_saved_line(name, provider_add_summary(api_key.is_some()))
             );
         }
         ProviderCmd::Remove { name } => {
             if config.providers.remove(name).is_some() {
                 config.save()?;
-                println!("{} Provider '{}' removed.", "✓".green(), name.cyan());
+                println!("{}", provider_removed_line(name));
             } else {
-                eprintln!("{} Provider '{}' not found.", "✗".red(), name.cyan());
+                eprintln!("{}", provider_not_found_line(name));
             }
         }
         ProviderCmd::Default { name } => {
             if config.providers.contains_key(name) {
                 // Save provider name as metadata
                 config.save()?;
-                println!("{} Default provider set to '{}'.", "✓".green(), name.cyan());
-                println!("  Use: whycodes -P {} ...", name);
+                println!("{}", provider_default_set_line(name));
+                println!("{}", provider_default_use_line(name));
             } else {
-                eprintln!(
-                    "{} Provider '{}' not found. Add it first: whycodes provider add {}",
-                    "✗".red(),
-                    name.cyan(),
-                    name
-                );
+                eprintln!("{}", provider_default_missing_line(name));
             }
         }
     }
@@ -194,12 +232,7 @@ pub(crate) async fn cmd_model(cmd: &ModelCmd) -> anyhow::Result<()> {
                 supports_images: None,
             });
             config.save()?;
-            println!(
-                "{} Default model set to {}/{}",
-                "✓".green(),
-                provider.cyan(),
-                model.cyan()
-            );
+            println!("{}", model_default_set_line(provider, model));
         }
     }
 
@@ -263,7 +296,7 @@ pub(crate) async fn cmd_agent(name: Option<&str>) -> anyhow::Result<()> {
                     println!("  Model: {}/{}", model.provider_id, model.model_id);
                 }
             } else {
-                eprintln!("{} Agent '{}' not found.", "✗".red(), name);
+                eprintln!("{}", agent_not_found_line(name));
                 println!();
                 println!("Available agents:");
                 for a in &config.agents {

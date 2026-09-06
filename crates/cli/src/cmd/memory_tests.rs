@@ -28,4 +28,15 @@ fn memory_printer_helpers_cover_list_search_and_hits() {
         memory_import_summary(3, 1),
         "Import complete: 3 added, 1 skipped"
     );
+    assert!(memory_empty_line().contains("No memories"));
+    assert!(memory_no_matches_line().contains("No matches"));
+    assert!(memory_saved_line("abcdefghij", "note").contains("note"));
+    assert!(memory_deleted_line("abc").contains("abc"));
+    assert!(memory_delete_missing_line("abc").contains("abc"));
+    assert!(memory_cleared_line(4).contains("4"));
+    assert!(memory_exported_line("/tmp/m.json").contains("/tmp/m.json"));
+    assert!(memory_indexing_line().contains("Indexing"));
+    assert!(memory_indexed_line(9).contains("9"));
+    assert!(memory_no_session_hits_line().contains("session hits"));
+    assert!(memory_no_code_hits_line().contains("memory index"));
 }

@@ -62,3 +62,30 @@ fn auto_update_on_for_interactive_run_and_off_otherwise() {
     let _ = cmd_version("definitely-missing-bin");
     assert!(!dump.version.is_empty());
 }
+
+#[test]
+fn debug_printer_helpers() {
+    assert!(debug_header_line().contains("Debug"));
+    assert!(debug_exists_mark(true).contains("✓") || debug_exists_mark(true).contains("green"));
+    assert!(debug_exists_mark(false).contains("not found"));
+    assert!(!debug_dir_exists_mark(false).contains("not found"));
+    assert!(debug_config_line("/tmp/c.toml", true).contains("/tmp/c.toml"));
+    assert!(debug_data_dir_line("/tmp/data", false).contains("/tmp/data"));
+    assert!(debug_jsonl_line("/tmp/log.jsonl", true).contains("JSONL"));
+    assert!(debug_jsonl_line("/tmp/log.jsonl", false).contains("/tmp/log.jsonl"));
+    assert!(debug_crash_dir_line("/tmp/crash").contains("/tmp/crash"));
+    assert!(debug_log_line("/tmp/latest.log").contains("WHYCODES_LOG_FILE"));
+    assert!(debug_path_error_line("Config", "boom").contains("boom"));
+    assert!(debug_cwd_line("/tmp").contains("/tmp"));
+    assert!(debug_home_line("/home/x").contains("/home/x"));
+    assert!(debug_tool_line("Rust", "rustc 1").contains("rustc 1"));
+    assert!(debug_env_set_line("FOO", "sk-xxxx").contains("set"));
+    assert!(debug_env_unset_line("FOO").contains("not set"));
+    assert!(debug_oauth_empty_line().contains("auth login"));
+    assert!(debug_oauth_entry_line("acme", "oauth", "no expiry").contains("acme"));
+    assert!(debug_oauth_store_error_line("denied").contains("denied"));
+    assert!(debug_oauth_data_dir_error_line("missing").contains("missing"));
+    assert!(after_tui_upgrade_skip_line().contains("latest"));
+    assert!(after_tui_upgrade_ok_line("1.0", "1.1").contains("1.1"));
+    assert!(after_tui_upgrade_failed_line("offline").contains("offline"));
+}

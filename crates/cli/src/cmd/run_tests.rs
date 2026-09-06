@@ -202,4 +202,13 @@ fn slash_printer_helpers_cover_repl_status_lines() {
     assert!(tools_list_header(3).contains("3"));
     assert!(remembered_line("abcdefghij", "note").contains("note"));
     assert!(repl_memory_status(true, 2, "/tmp/m.md").contains("entries=2"));
+    assert!(nothing_to_undo_line().contains("Nothing to undo"));
+    assert!(nothing_to_redo_line().contains("Nothing to redo"));
+    assert!(init_wrote_line("AGENTS.md").contains("AGENTS.md"));
+    assert!(init_failed_line("boom").contains("boom"));
+    assert!(session_exported_line("/tmp/s.md").contains("/tmp/s.md"));
+    assert!(export_failed_line("io").contains("io"));
+    assert!(skip_prompt_cache_line().contains("prompt cache"));
+    assert!(nothing_to_compact_line().contains("Nothing to compact"));
+    assert!(compacting_line().contains("Compacting"));
 }

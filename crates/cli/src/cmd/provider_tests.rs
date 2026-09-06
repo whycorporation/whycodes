@@ -26,4 +26,13 @@ fn provider_printer_helpers() {
     assert!(headers.contains_key("C"));
     assert!(agent_default_marker("build", "build").contains("default"));
     assert!(agent_default_marker("plan", "build").is_empty());
+    assert!(provider_updating_line("acme").contains("already exists"));
+    assert!(provider_saved_line("acme", "added with API key").contains("acme"));
+    assert!(provider_removed_line("acme").contains("removed"));
+    assert!(provider_not_found_line("acme").contains("not found"));
+    assert!(provider_default_set_line("acme").contains("Default"));
+    assert!(provider_default_use_line("acme").contains("-P acme"));
+    assert!(provider_default_missing_line("acme").contains("provider add"));
+    assert!(model_default_set_line("openai", "gpt").contains("openai"));
+    assert!(agent_not_found_line("plan").contains("plan"));
 }

@@ -297,6 +297,49 @@ pub(crate) fn repl_memory_status(enabled: bool, n: usize, path: impl std::fmt::D
     format!("Memory: enabled={enabled}  entries={n}  path={path}")
 }
 
+pub(crate) fn nothing_to_undo_line() -> String {
+    format!("{} Nothing to undo.", "ℹ".cyan())
+}
+
+pub(crate) fn nothing_to_redo_line() -> String {
+    format!("{} Nothing to redo.", "ℹ".cyan())
+}
+
+pub(crate) fn init_wrote_line(path: &str) -> String {
+    format!(
+        "{} Wrote project instructions: {}",
+        "✓".green(),
+        path.cyan()
+    )
+}
+
+pub(crate) fn init_failed_line(err: &str) -> String {
+    format!("{} /init failed: {}", "✗".red(), err)
+}
+
+pub(crate) fn session_exported_line(path: &str) -> String {
+    format!("{} Session exported: {}", "✓".green(), path.cyan())
+}
+
+pub(crate) fn export_failed_line(err: &str) -> String {
+    format!("{} Export failed: {}", "✗".red(), err)
+}
+
+pub(crate) fn skip_prompt_cache_line() -> String {
+    format!(
+        "{} Next turn will skip the provider prompt cache.",
+        "✓".green()
+    )
+}
+
+pub(crate) fn nothing_to_compact_line() -> String {
+    format!("{} Nothing to compact.", "ℹ".cyan())
+}
+
+pub(crate) fn compacting_line() -> String {
+    format!("{} Compacting conversation…", "…".dimmed())
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -723,12 +766,8 @@ pub(crate) async fn cmd_run(
                     match run_init_agents_md(&project_dir, &agent, &provider, &model, &api_key)
                         .await
                     {
-                        Ok(path) => println!(
-                            "{} Wrote project instructions: {}",
-                            "✓".green(),
-                            path.cyan()
-                        ),
-                        Err(e) => eprintln!("{} /init failed: {}", "✗".red(), e),
+                        Ok(path) => println!("{}", init_wrote_line(&path)),
+                        Err(e) => eprintln!("{}", init_failed_line(&e.to_string())),
                     }
                     // Reload system prompt with new AGENTS.md + memory
                     session.set_system_prompt(&with_project_memory(
@@ -749,7 +788,7 @@ pub(crate) async fn cmd_run(
                     } else if session.undo_last_turn() > 0 {
                         println!("{}", undid_turn_line(session.messages.len()));
                     } else {
-                        println!("{} Nothing to undo.", "ℹ".cyan());
+                        println!("{}", nothing_to_undo_line());
                     }
                     continue;
                 }
@@ -758,32 +797,29 @@ pub(crate) async fn cmd_run(
                         session.set_messages(msgs);
                         println!("{}", redid_turn_line(session.messages.len()));
                     } else {
-                        println!("{} Nothing to redo.", "ℹ".cyan());
+                        println!("{}", nothing_to_redo_line());
                     }
                     continue;
                 }
                 "/share" | "/export" => {
                     match session.export_share() {
-                        Ok(path) => println!("{} Session exported: {}", "✓".green(), path.cyan()),
-                        Err(e) => eprintln!("{} Export failed: {}", "✗".red(), e),
+                        Ok(path) => println!("{}", session_exported_line(&path)),
+                        Err(e) => eprintln!("{}", export_failed_line(&e.to_string())),
                     }
                     continue;
                 }
                 "/fresh" => {
                     agent.skip_prompt_cache_next();
-                    println!(
-                        "{} Next turn will skip the provider prompt cache.",
-                        "✓".green()
-                    );
+                    println!("{}", skip_prompt_cache_line());
                     continue;
                 }
                 "/compact" | "/summarize" => {
                     if session.messages.is_empty() {
-                        println!("{} Nothing to compact.", "ℹ".cyan());
+                        println!("{}", nothing_to_compact_line());
                         continue;
                     }
                     let note = rest.trim();
-                    println!("{} Compacting conversation…", "…".dimmed());
+                    println!("{}", compacting_line());
                     let outcome = agent
                         .compact_session(
                             &mut session,

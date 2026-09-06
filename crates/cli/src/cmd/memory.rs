@@ -19,7 +19,7 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
         MemoryCmd::List { limit } => {
             let rows = svc.list(*limit)?;
             if rows.is_empty() {
-                println!("{} No memories for this project.", "ℹ".cyan());
+                println!("{}", memory_empty_line());
             } else {
                 println!(
                     "{} {}",
@@ -34,7 +34,7 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
         MemoryCmd::Search { query, limit } => {
             let hits = svc.search(query, *limit, config.memory.recall_min_score.min(0.15))?;
             if hits.is_empty() {
-                println!("{} No matches.", "ℹ".cyan());
+                println!("{}", memory_no_matches_line());
             } else {
                 for h in hits {
                     println!(
@@ -50,23 +50,18 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
                 anyhow::bail!("usage: whycodes memory add <text>");
             }
             let id = svc.remember(&text, None)?;
-            println!(
-                "{} Saved {} — {}",
-                "✓".green(),
-                id.chars().take(8).collect::<String>().cyan(),
-                text
-            );
+            println!("{}", memory_saved_line(&id, &text));
         }
         MemoryCmd::Delete { id } => {
             if svc.delete(id)? {
-                println!("{} Deleted {id}", "✓".green());
+                println!("{}", memory_deleted_line(id));
             } else {
-                println!("{} No memory matching '{id}'", "ℹ".cyan());
+                println!("{}", memory_delete_missing_line(id));
             }
         }
         MemoryCmd::Clear => {
             let n = svc.clear()?;
-            println!("{} Cleared {n} memories", "✓".green());
+            println!("{}", memory_cleared_line(n));
         }
         MemoryCmd::Path => {
             println!("{}", svc.memory_md_path().display());
@@ -86,7 +81,7 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
             match output {
                 Some(path) => {
                     std::fs::write(path, &json)?;
-                    println!("{} Exported to {}", "✓".green(), path.display());
+                    println!("{}", memory_exported_line(&path.display().to_string()));
                 }
                 None => println!("{json}"),
             }
@@ -100,18 +95,15 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
             max_files,
             max_chunks,
         } => {
-            println!("{} Indexing codebase…", "⚡".bold());
+            println!("{}", memory_indexing_line());
             let n = svc.index_codebase(*max_files, *max_chunks)?;
-            println!("{} Indexed {n} code chunks", "✓".green());
+            println!("{}", memory_indexed_line(n));
         }
         MemoryCmd::SessionSearch { query, limit } => {
             let hits =
                 svc.search_sessions(query, *limit, config.memory.session_min_score.min(0.1))?;
             if hits.is_empty() {
-                println!(
-                    "{} No session hits yet. They appear after turns are retained.",
-                    "ℹ".cyan()
-                );
+                println!("{}", memory_no_session_hits_line());
             } else {
                 for h in hits {
                     println!(
@@ -127,10 +119,7 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
         MemoryCmd::CodeSearch { query, limit } => {
             let hits = svc.search_code(query, *limit, config.memory.code_min_score.min(0.1))?;
             if hits.is_empty() {
-                println!(
-                    "{} No code hits. Run `whycodes memory index` first.",
-                    "ℹ".cyan()
-                );
+                println!("{}", memory_no_code_hits_line());
             } else {
                 for h in hits {
                     println!(
@@ -171,6 +160,60 @@ pub(crate) async fn cmd_memory(cli: &Cli, cmd: &MemoryCmd) -> anyhow::Result<()>
         }
     }
     Ok(())
+}
+
+pub(crate) fn memory_empty_line() -> String {
+    format!("{} No memories for this project.", "ℹ".cyan())
+}
+
+pub(crate) fn memory_no_matches_line() -> String {
+    format!("{} No matches.", "ℹ".cyan())
+}
+
+pub(crate) fn memory_saved_line(id: &str, text: &str) -> String {
+    format!(
+        "{} Saved {} — {text}",
+        "✓".green(),
+        id.chars().take(8).collect::<String>().cyan()
+    )
+}
+
+pub(crate) fn memory_deleted_line(id: &str) -> String {
+    format!("{} Deleted {id}", "✓".green())
+}
+
+pub(crate) fn memory_delete_missing_line(id: &str) -> String {
+    format!("{} No memory matching '{id}'", "ℹ".cyan())
+}
+
+pub(crate) fn memory_cleared_line(n: usize) -> String {
+    format!("{} Cleared {n} memories", "✓".green())
+}
+
+pub(crate) fn memory_exported_line(path: &str) -> String {
+    format!("{} Exported to {path}", "✓".green())
+}
+
+pub(crate) fn memory_indexing_line() -> String {
+    format!("{} Indexing codebase…", "⚡".bold())
+}
+
+pub(crate) fn memory_indexed_line(n: usize) -> String {
+    format!("{} Indexed {n} code chunks", "✓".green())
+}
+
+pub(crate) fn memory_no_session_hits_line() -> String {
+    format!(
+        "{} No session hits yet. They appear after turns are retained.",
+        "ℹ".cyan()
+    )
+}
+
+pub(crate) fn memory_no_code_hits_line() -> String {
+    format!(
+        "{} No code hits. Run `whycodes memory index` first.",
+        "ℹ".cyan()
+    )
 }
 
 pub(crate) fn memory_list_header(count: usize, project_key: &str) -> String {
