@@ -18,13 +18,15 @@
 //! project) → `onboardUser` on the free tier (long-running operation,
 //! polled). The result is cached process-wide per OAuth provider.
 
+use crate::json_value::{self, arr, bool as jbool, obj, str as jstr};
 use crate::provider::ProviderEventStream;
-use async_stream::stream;
-use futures::stream::{Stream, StreamExt};
-use serde_json::{Value, json};
-use std::collections::HashMap;
+use futures::stream::Stream;
+use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
 use std::pin::Pin;
 use std::sync::{OnceLock, RwLock};
+use std::task::{Context, Poll};
+use std::time::Duration;
 use whycodes_core::types::{
     ContentBlock, LlmRequest, LlmResponse, MessageContent, Role, StreamEvent, Usage,
 };
@@ -54,6 +56,53 @@ const ANTIGRAVITY: Profile = Profile {
     antigravity: true,
 };
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static TEST_GEMINI_BASES: std::cell::RefCell<Option<&'static [&'static str]>> =
+        const { std::cell::RefCell::new(None) };
+    pub(crate) static TEST_ANTIGRAVITY_BASES: std::cell::RefCell<Option<&'static [&'static str]>> =
+        const { std::cell::RefCell::new(None) };
+    pub(crate) static TEST_POLL_SLEEP: std::cell::Cell<Duration> =
+        const { std::cell::Cell::new(Duration::ZERO) };
+}
+
+fn gemini_cli_profile() -> Profile {
+    #[cfg(test)]
+    if let Some(bases) = TEST_GEMINI_BASES.with(|c| *c.borrow()) {
+        return Profile {
+            oauth_provider: "google",
+            bases,
+            antigravity: false,
+        };
+    }
+    GEMINI_CLI
+}
+
+fn antigravity_profile() -> Profile {
+    #[cfg(test)]
+    if let Some(bases) = TEST_ANTIGRAVITY_BASES.with(|c| *c.borrow()) {
+        return Profile {
+            oauth_provider: "google-antigravity",
+            bases,
+            antigravity: true,
+        };
+    }
+    ANTIGRAVITY
+}
+
+const PRODUCTION_ONBOARD_POLL: Duration = Duration::from_secs(1);
+
+fn onboard_poll_sleep() -> Duration {
+    #[cfg(test)]
+    {
+        let d = TEST_POLL_SLEEP.with(|c| c.get());
+        if d != Duration::MAX {
+            return d;
+        }
+    }
+    PRODUCTION_ONBOARD_POLL
+}
+
 /// Logical picker ids collapse to a wire id on `daily-cloudcode-pa`. Sending
 /// the family name (`gemini-3.1-pro`) 404s; the hub uses the effort member.
 fn antigravity_wire_model(model: &str) -> &str {
@@ -70,16 +119,16 @@ fn antigravity_wire_model(model: &str) -> &str {
 /// Client metadata the Code Assist service expects (Gemini CLI sends the
 /// same shape; the values label an unspecified IDE on the current platform).
 fn client_metadata() -> Value {
-    json!({
-        "ideType": "IDE_UNSPECIFIED",
-        "platform": "PLATFORM_UNSPECIFIED",
-        "pluginType": "GEMINI",
-    })
+    obj([
+        ("ideType", jstr("IDE_UNSPECIFIED")),
+        ("platform", jstr("PLATFORM_UNSPECIFIED")),
+        ("pluginType", jstr("GEMINI")),
+    ])
 }
 
 fn metadata_for(profile: &Profile) -> Value {
     if profile.antigravity {
-        json!({ "ideType": "ANTIGRAVITY" })
+        obj([("ideType", jstr("ANTIGRAVITY"))])
     } else {
         client_metadata()
     }
@@ -99,13 +148,23 @@ fn project_cache() -> &'static RwLock<HashMap<String, String>> {
 }
 
 fn cached_project(provider: &str) -> Option<String> {
-    project_cache().read().ok()?.get(provider).cloned()
+    project_cache()
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(provider)
+        .cloned()
 }
 
 fn cache_project(provider: &str, id: &str) {
-    if let Ok(mut guard) = project_cache().write() {
-        guard.insert(provider.to_string(), id.to_string());
-    }
+    project_cache()
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(provider.to_string(), id.to_string());
+}
+
+#[cfg(test)]
+pub(crate) fn cache_project_for_tests(provider: &str, id: &str) {
+    cache_project(provider, id);
 }
 
 fn authorize(
@@ -164,17 +223,20 @@ async fn post_generate(
     api_key: &str,
     body: &Value,
 ) -> whycodes_core::Result<reqwest::Response> {
-    let last = profile.bases.len() - 1;
-    for (i, base) in profile.bases.iter().enumerate() {
+    let mut iter = profile.bases.iter().enumerate().peekable();
+    loop {
+        let Some((_, base)) = iter.next() else {
+            return Err(whycodes_core::Error::llm(
+                "Code Assist generate: no endpoints configured".to_string(),
+            ));
+        };
+        let last = iter.peek().is_none();
         let resp = post_at(profile, base, path, api_key, body).await?;
-        if resp.status().is_success() || i == last || !failover_http(resp.status().as_u16()) {
+        if resp.status().is_success() || last || !failover_http(resp.status().as_u16()) {
             return Ok(resp);
         }
-        if let Err(error) = resp.bytes().await {
-            tracing::debug!(%error, "discarding Antigravity failover response body");
-        }
+        let _ = resp.bytes().await;
     }
-    unreachable!("post_generate always returns inside the loop")
 }
 
 /// GET an LRO status (`GET {base}/{operation_name}`) with the same retry.
@@ -220,7 +282,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
         });
 
     // 1. loadCodeAssist: an already-onboarded account reports its project.
-    let mut load_body = json!({ "metadata": metadata_for(profile) });
+    let mut load_body = obj([("metadata", metadata_for(profile))]);
     if let Some(p) = &env_project {
         load_body["cloudaicompanionProject"] = Value::String(p.clone());
     }
@@ -251,7 +313,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
     // 2. Not onboarded: pick a tier (free tier unless the user brought a
     // project) and run onboardUser, polling the long-running operation.
     let tier = pick_tier(&json, env_project.is_some());
-    let mut onboard = json!({ "tierId": tier, "metadata": metadata_for(profile) });
+    let mut onboard = obj([("tierId", jstr(tier)), ("metadata", metadata_for(profile))]);
     if let Some(p) = &env_project {
         onboard["cloudaicompanionProject"] = Value::String(p.clone());
     }
@@ -276,7 +338,7 @@ async fn project_id(profile: &Profile, api_key: &str) -> whycodes_core::Result<S
         let Some(name) = operation["name"].as_str().map(str::to_string) else {
             break;
         };
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(onboard_poll_sleep()).await;
         let resp = get(profile, &format!("/{name}"), api_key).await?;
         operation = resp
             .json()
@@ -350,28 +412,30 @@ fn build_inner_request(request: &LlmRequest) -> Value {
         match &m.content {
             MessageContent::Text(text) => {
                 if !text.trim().is_empty() {
-                    parts.push(json!({ "text": text }));
+                    parts.push(obj([("text", jstr(text))]));
                 }
             }
             MessageContent::Blocks(blocks) => {
                 for b in blocks {
                     match b {
-                        ContentBlock::Text { text } => parts.push(json!({ "text": text })),
-                        ContentBlock::ToolUse { name, input, .. } => parts.push(json!({
-                            "functionCall": { "name": name, "args": input }
-                        })),
+                        ContentBlock::Text { text } => parts.push(obj([("text", jstr(text))])),
+                        ContentBlock::ToolUse { name, input, .. } => parts.push(obj([(
+                            "functionCall",
+                            obj([("name", jstr(name)), ("args", input.clone())]),
+                        )])),
                         ContentBlock::ToolResult {
                             tool_use_id,
                             content,
                             ..
                         } => {
                             let name = names.get(tool_use_id.as_str()).copied().unwrap_or("tool");
-                            parts.push(json!({
-                                "functionResponse": {
-                                    "name": name,
-                                    "response": { "result": content }
-                                }
-                            }));
+                            parts.push(obj([(
+                                "functionResponse",
+                                obj([
+                                    ("name", jstr(name)),
+                                    ("response", obj([("result", jstr(content))])),
+                                ]),
+                            )]));
                         }
                         ContentBlock::Image { .. } => {}
                         ContentBlock::Thinking { text, signature } => {
@@ -379,20 +443,17 @@ fn build_inner_request(request: &LlmRequest) -> Value {
                             // dropped and later replayed as `text`. Echo the
                             // Gemini thought part (and signature when we have
                             // one) so the converted Anthropic history stays valid.
-                            let mut part = json!({ "text": text, "thought": true });
+                            let mut part = obj([("text", jstr(text)), ("thought", jbool(true))]);
                             if let Some(sig) = signature
                                 && !sig.is_empty()
                             {
-                                part["thoughtSignature"] = json!(sig);
+                                json_value::insert(&mut part, "thoughtSignature", jstr(sig));
                             }
                             parts.push(part);
                         }
                         ContentBlock::RedactedThinking { data } => {
                             if !data.is_empty() {
-                                parts.push(json!({
-                                    "text": data,
-                                    "thought": true,
-                                }));
+                                parts.push(obj([("text", jstr(data)), ("thought", jbool(true))]));
                             }
                         }
                     }
@@ -400,24 +461,40 @@ fn build_inner_request(request: &LlmRequest) -> Value {
             }
         }
         if !parts.is_empty() {
-            contents.push(json!({ "role": role, "parts": parts }));
+            contents.push(obj([("role", jstr(role)), ("parts", arr(parts))]));
         }
     }
 
-    let mut inner = json!({ "contents": contents });
+    let mut inner = obj([("contents", arr(contents))]);
     if !request.system.is_empty() {
-        inner["systemInstruction"] = json!({ "parts": [{ "text": request.system }] });
+        json_value::insert(
+            &mut inner,
+            "systemInstruction",
+            obj([("parts", arr([obj([("text", jstr(&request.system))])]))]),
+        );
     }
     if !request.tools.is_empty() {
-        inner["tools"] = json!([{
-            "functionDeclarations": request.tools.iter().map(|t| json!({
-                "name": t.name,
-                "description": t.description,
-                "parameters": crate::openai_compat::sanitize_schema_for_openai(&t.parameters)
-            })).collect::<Vec<_>>()
-        }]);
+        let decls: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                obj([
+                    ("name", jstr(&t.name)),
+                    ("description", jstr(&t.description)),
+                    (
+                        "parameters",
+                        crate::openai_compat::sanitize_schema_for_openai(&t.parameters),
+                    ),
+                ])
+            })
+            .collect();
+        json_value::insert(
+            &mut inner,
+            "tools",
+            arr([obj([("functionDeclarations", arr(decls))])]),
+        );
     }
-    let mut gen_config = json!({});
+    let mut gen_config = obj([]);
     if let Some(max_tokens) = request.max_tokens {
         gen_config["maxOutputTokens"] = max_tokens.into();
     }
@@ -432,12 +509,14 @@ fn build_inner_request(request: &LlmRequest) -> Value {
 
 fn apply_antigravity_inner(inner: &mut Value, request: &LlmRequest) {
     if let Some(si) = inner.get_mut("systemInstruction") {
-        si["role"] = json!("user");
+        json_value::insert(si, "role", jstr("user"));
     }
     if !request.tools.is_empty() {
-        inner["toolConfig"] = json!({
-            "functionCallingConfig": { "mode": "VALIDATED" }
-        });
+        json_value::insert(
+            inner,
+            "toolConfig",
+            obj([("functionCallingConfig", obj([("mode", jstr("VALIDATED"))]))]),
+        );
     }
 }
 
@@ -464,27 +543,31 @@ fn wrap_envelope(
         apply_antigravity_inner(&mut inner, request);
         let (session, request_id, traj) = antigravity_ids();
         let claude = model.to_ascii_lowercase().contains("claude");
-        inner["sessionId"] = json!(session);
-        inner["labels"] = json!({
-            "last_step_index": "1",
-            "trajectory_id": traj,
-            "used_claude": claude.to_string(),
-            "used_claude_conservative": claude.to_string(),
-        });
-        json!({
-            "model": model,
-            "project": project,
-            "request": inner,
-            "userAgent": "antigravity",
-            "requestType": "agent",
-            "requestId": request_id,
-        })
+        json_value::insert(&mut inner, "sessionId", jstr(session));
+        json_value::insert(
+            &mut inner,
+            "labels",
+            obj([
+                ("last_step_index", jstr("1")),
+                ("trajectory_id", jstr(traj)),
+                ("used_claude", jstr(claude.to_string())),
+                ("used_claude_conservative", jstr(claude.to_string())),
+            ]),
+        );
+        obj([
+            ("model", jstr(model)),
+            ("project", jstr(project)),
+            ("request", inner),
+            ("userAgent", jstr("antigravity")),
+            ("requestType", jstr("agent")),
+            ("requestId", jstr(request_id)),
+        ])
     } else {
-        json!({
-            "model": model,
-            "project": project,
-            "request": inner,
-        })
+        obj([
+            ("model", jstr(model)),
+            ("project", jstr(project)),
+            ("request", inner),
+        ])
     }
 }
 
@@ -572,7 +655,7 @@ fn events_for_chunk(data: &str, call_seq: &mut u64) -> Vec<StreamEvent> {
             }
             if let Some(reason) = c["finishReason"].as_str() {
                 events.push(StreamEvent::MessageDelta {
-                    delta: json!({"finishReason": reason}),
+                    delta: obj([("finishReason", jstr(reason))]),
                 });
             }
         }
@@ -592,7 +675,7 @@ pub async fn complete(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<LlmResponse> {
-    complete_with(&GEMINI_CLI, request, api_key, model).await
+    complete_with(&gemini_cli_profile(), request, api_key, model).await
 }
 
 /// Antigravity subscription path (`google-antigravity` OAuth).
@@ -601,7 +684,7 @@ pub async fn complete_antigravity(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<LlmResponse> {
-    complete_with(&ANTIGRAVITY, request, api_key, model).await
+    complete_with(&antigravity_profile(), request, api_key, model).await
 }
 
 async fn complete_with(
@@ -687,7 +770,7 @@ pub async fn stream(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
-    stream_with(&GEMINI_CLI, request, api_key, model).await
+    stream_with(&gemini_cli_profile(), request, api_key, model).await
 }
 
 /// Antigravity subscription path (`google-antigravity` OAuth).
@@ -696,7 +779,7 @@ pub async fn stream_antigravity(
     api_key: &str,
     model: &str,
 ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>> {
-    stream_with(&ANTIGRAVITY, request, api_key, model).await
+    stream_with(&antigravity_profile(), request, api_key, model).await
 }
 
 async fn stream_with(
@@ -729,540 +812,79 @@ async fn stream_with(
         )));
     }
 
-    let s = stream! {
-        let mut byte_stream = resp.bytes_stream();
-        let mut buffer = String::new();
-        let mut call_seq = 0u64;
-        let mut stopped = false;
+    Ok(Box::pin(CodeAssistSse {
+        bytes: crate::openai_compat::response_bytes(resp),
+        buffer: String::new(),
+        pending: VecDeque::new(),
+        call_seq: 0,
+        done: false,
+    }) as ProviderEventStream)
+}
 
-        while let Some(chunk) = byte_stream.next().await {
-            match chunk {
-                Ok(bytes) => {
-                    buffer.push_str(&String::from_utf8_lossy(&bytes));
-                    while let Some(pos) = buffer.find('\n') {
-                        let line = buffer[..pos].trim().to_string();
-                        buffer = buffer[pos + 1..].to_string();
-                        if line.is_empty() || !line.starts_with("data: ") {
-                            continue;
-                        }
-                        for ev in events_for_chunk(&line[6..], &mut call_seq) {
-                            if matches!(ev, StreamEvent::MessageStop) {
-                                stopped = true;
-                            }
-                            yield Ok(ev);
+struct CodeAssistSse {
+    bytes: crate::openai_compat::ByteStream,
+    buffer: String,
+    pending: VecDeque<whycodes_core::Result<StreamEvent>>,
+    call_seq: u64,
+    done: bool,
+}
+
+impl CodeAssistSse {
+    fn push_data_line(&mut self, line: &str) {
+        if line.is_empty() || !line.starts_with("data: ") {
+            return;
+        }
+        for ev in events_for_chunk(&line[6..], &mut self.call_seq) {
+            if matches!(ev, StreamEvent::MessageStop) {
+                self.done = true;
+            }
+            self.pending.push_back(Ok(ev));
+        }
+    }
+}
+
+impl Stream for CodeAssistSse {
+    type Item = whycodes_core::Result<StreamEvent>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(ev) = this.pending.pop_front() {
+                return Poll::Ready(Some(ev));
+            }
+            if this.done {
+                return Poll::Ready(None);
+            }
+            match this.bytes.as_mut().poll_next(cx) {
+                Poll::Ready(Some(Ok(bytes))) => {
+                    this.buffer.push_str(&String::from_utf8_lossy(&bytes));
+                    while let Some(pos) = this.buffer.find('\n') {
+                        let line = this.buffer[..pos].trim().to_string();
+                        this.buffer = this.buffer[pos + 1..].to_string();
+                        this.push_data_line(&line);
+                        if this.done {
+                            break;
                         }
                     }
                 }
-                Err(e) => {
-                    yield Err(crate::openai_compat::stream_chunk_error("codeassist", e));
+                Poll::Ready(Some(Err(e))) => {
+                    return Poll::Ready(Some(Err(crate::openai_compat::stream_chunk_error(
+                        "codeassist",
+                        e,
+                    ))));
                 }
+                Poll::Ready(None) => {
+                    if !this.done {
+                        this.pending.push_back(Ok(StreamEvent::MessageStop));
+                        this.done = true;
+                    }
+                }
+                Poll::Pending => return Poll::Pending,
             }
         }
-        if !stopped {
-            yield Ok(StreamEvent::MessageStop);
-        }
-    };
-
-    Ok(Box::pin(s) as ProviderEventStream)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use whycodes_core::types::{ImageSource, Message, ToolDefinition};
-
-    fn message(role: Role, content: MessageContent) -> Message {
-        Message {
-            role,
-            content,
-            tool_call_id: None,
-            name: None,
-            created_at: None,
-        }
-    }
-
-    fn empty_request(messages: Vec<Message>) -> LlmRequest {
-        LlmRequest {
-            system: String::new(),
-            messages: std::sync::Arc::from(messages),
-            tools: std::sync::Arc::from([]),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        }
-    }
-
-    #[test]
-    fn client_metadata_matches_code_assist_contract() {
-        assert_eq!(
-            client_metadata(),
-            json!({
-                "ideType": "IDE_UNSPECIFIED",
-                "platform": "PLATFORM_UNSPECIFIED",
-                "pluginType": "GEMINI",
-            })
-        );
-        assert_eq!(
-            metadata_for(&ANTIGRAVITY),
-            json!({ "ideType": "ANTIGRAVITY" })
-        );
-    }
-
-    #[test]
-    fn antigravity_envelope_tags_native_client() {
-        let request = empty_request(vec![message(
-            Role::User,
-            MessageContent::Text("hi".to_string()),
-        )]);
-        let mut inner = build_inner_request(&history_with_tool_call());
-        apply_antigravity_inner(&mut inner, &history_with_tool_call());
-        assert_eq!(inner["systemInstruction"]["role"], "user");
-        assert_eq!(
-            inner["toolConfig"]["functionCallingConfig"]["mode"],
-            "VALIDATED"
-        );
-
-        let body = wrap_envelope(&ANTIGRAVITY, "gemini-3.1-pro-low", "proj", inner, &request);
-        assert_eq!(body["userAgent"], "antigravity");
-        assert_eq!(body["requestType"], "agent");
-        assert_eq!(body["project"], "proj");
-        assert_eq!(body["model"], "gemini-3.1-pro-low");
-        assert!(
-            body["requestId"]
-                .as_str()
-                .is_some_and(|id| id.starts_with("agent/")),
-            "requestId={}",
-            body["requestId"]
-        );
-        assert!(body["request"]["sessionId"].as_str().is_some());
-
-        let gemini = wrap_envelope(
-            &GEMINI_CLI,
-            "gemini-2.5-pro",
-            "g",
-            build_inner_request(&request),
-            &request,
-        );
-        assert!(gemini.get("userAgent").is_none());
-        assert!(gemini.get("requestType").is_none());
-    }
-
-    #[test]
-    fn antigravity_wire_model_collapses_family_ids() {
-        assert_eq!(
-            antigravity_wire_model("gemini-3.1-pro"),
-            "gemini-3.1-pro-low"
-        );
-        assert_eq!(
-            antigravity_wire_model("gemini-3.1-flash"),
-            "gemini-3.5-flash-low"
-        );
-        assert_eq!(
-            antigravity_wire_model("claude-sonnet-4-6"),
-            "claude-sonnet-4-6"
-        );
-        assert_eq!(
-            antigravity_wire_model("gemini-3.1-pro-low"),
-            "gemini-3.1-pro-low"
-        );
-    }
-
-    #[test]
-    fn token_shape_detection() {
-        assert!(is_google_oauth_token("ya29.a0AfH6SMBx…"));
-        assert!(!is_google_oauth_token("AIzaSyAbc123"));
-        assert!(!is_google_oauth_token(""));
-    }
-
-    fn history_with_tool_call() -> LlmRequest {
-        LlmRequest {
-            system: "sys".to_string(),
-            messages: std::sync::Arc::from(vec![
-                Message {
-                    role: Role::User,
-                    content: MessageContent::Text("run ls".to_string()),
-                    tool_call_id: None,
-                    name: None,
-                    created_at: None,
-                },
-                Message {
-                    role: Role::Assistant,
-                    content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
-                        id: "gcall_1".to_string(),
-                        name: "bash".to_string(),
-                        input: json!({"cmd": "ls"}),
-                    }]),
-                    tool_call_id: None,
-                    name: None,
-                    created_at: None,
-                },
-                Message {
-                    role: Role::User,
-                    content: MessageContent::Blocks(vec![ContentBlock::ToolResult {
-                        tool_use_id: "gcall_1".to_string(),
-                        content: "a.rs".to_string(),
-                        is_error: None,
-                    }]),
-                    tool_call_id: None,
-                    name: None,
-                    created_at: None,
-                },
-            ]),
-            tools: vec![ToolDefinition {
-                name: "bash".to_string(),
-                description: "Run a command".to_string(),
-                parameters: json!({"type": "object", "properties": {}}),
-            }]
-            .into(),
-            max_tokens: Some(1024),
-            temperature: Some(0.5),
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: true,
-        }
-    }
-
-    #[test]
-    fn inner_request_maps_function_parts() {
-        let inner = build_inner_request(&history_with_tool_call());
-        assert_eq!(inner["systemInstruction"]["parts"][0]["text"], "sys");
-        assert_eq!(inner["generationConfig"]["maxOutputTokens"], 1024);
-        assert_eq!(inner["tools"][0]["functionDeclarations"][0]["name"], "bash");
-
-        let contents = inner["contents"].as_array().unwrap();
-        assert_eq!(contents[0]["role"], "user");
-        assert_eq!(contents[1]["role"], "model");
-        assert_eq!(contents[1]["parts"][0]["functionCall"]["name"], "bash");
-        assert_eq!(contents[1]["parts"][0]["functionCall"]["args"]["cmd"], "ls");
-        // ToolResult must be matched back to its tool *name* via the id map.
-        assert_eq!(contents[2]["parts"][0]["functionResponse"]["name"], "bash");
-        assert_eq!(
-            contents[2]["parts"][0]["functionResponse"]["response"]["result"],
-            "a.rs"
-        );
-    }
-
-    #[test]
-    fn inner_request_omits_empty_optional_sections_and_unsupported_blocks() {
-        let request = empty_request(vec![
-            message(Role::System, MessageContent::Text("   ".to_string())),
-            message(
-                Role::Assistant,
-                MessageContent::Blocks(vec![
-                    ContentBlock::Image {
-                        source: ImageSource::Base64 {
-                            media_type: "image/png".to_string(),
-                            data: "AAAA".to_string(),
-                        },
-                    },
-                    ContentBlock::Thinking {
-                        text: "private".to_string(),
-                        signature: None,
-                    },
-                    ContentBlock::RedactedThinking {
-                        data: "opaque".to_string(),
-                    },
-                ]),
-            ),
-        ]);
-
-        let inner = build_inner_request(&request);
-        let parts = &inner["contents"][0]["parts"];
-        assert_eq!(parts[0]["thought"], true);
-        assert_eq!(parts[0]["text"], "private");
-        assert_eq!(parts[1]["thought"], true);
-        assert_eq!(parts[1]["text"], "opaque");
-        assert_eq!(inner["contents"][0]["role"], "model");
-    }
-
-    #[test]
-    fn inner_request_echoes_thought_signature() {
-        let request = empty_request(vec![message(
-            Role::Assistant,
-            MessageContent::Blocks(vec![
-                ContentBlock::Thinking {
-                    text: "plan".to_string(),
-                    signature: Some("sig-9".to_string()),
-                },
-                ContentBlock::Text {
-                    text: "ok".to_string(),
-                },
-            ]),
-        )]);
-        let inner = build_inner_request(&request);
-        assert_eq!(inner["contents"][0]["parts"][0]["thought"], true);
-        assert_eq!(
-            inner["contents"][0]["parts"][0]["thoughtSignature"],
-            "sig-9"
-        );
-        assert_eq!(inner["contents"][0]["parts"][1]["text"], "ok");
-        assert!(inner["contents"][0]["parts"][1].get("thought").is_none());
-    }
-
-    #[test]
-    fn inner_request_uses_fallback_name_for_unmatched_tool_result() {
-        let request = empty_request(vec![message(
-            Role::Tool,
-            MessageContent::Blocks(vec![ContentBlock::ToolResult {
-                tool_use_id: "missing-call".to_string(),
-                content: "failed".to_string(),
-                is_error: Some(true),
-            }]),
-        )]);
-
-        let inner = build_inner_request(&request);
-        assert_eq!(inner["contents"][0]["role"], "user");
-        assert_eq!(
-            inner["contents"][0]["parts"][0]["functionResponse"],
-            json!({"name": "tool", "response": {"result": "failed"}})
-        );
-        assert!(inner.get("systemInstruction").is_none());
-        assert!(inner.get("tools").is_none());
-        assert!(inner.get("generationConfig").is_none());
-    }
-
-    #[test]
-    fn chunk_maps_text_function_call_and_usage() {
-        let mut seq = 0u64;
-        let events = events_for_chunk(
-            r#"{"candidates":[{"content":{"parts":[{"text":"hi "},{"functionCall":{"name":"read","args":{"path":"x"}}}]}}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3}}"#,
-            &mut seq,
-        );
-        assert!(matches!(&events[0], StreamEvent::TextDelta { text } if text == "hi "));
-        match &events[1] {
-            StreamEvent::ToolUse { id, name, input } => {
-                assert_eq!(id, "gcall_1");
-                assert_eq!(name, "read");
-                assert_eq!(input["path"], "x");
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-        assert!(matches!(
-            events[2],
-            StreamEvent::Usage {
-                input_tokens: 7,
-                output_tokens: 3
-            }
-        ));
-        assert!(matches!(events[3], StreamEvent::MessageStop));
-    }
-
-    #[test]
-    fn chunk_maps_thought_parts_not_visible_text() {
-        let mut seq = 0u64;
-        let events = events_for_chunk(
-            r#"{"candidates":[{"content":{"parts":[{"text":"hmm","thought":true,"thoughtSignature":"sig"},{"text":"hi"}]}}]}"#,
-            &mut seq,
-        );
-        assert!(
-            matches!(&events[0], StreamEvent::ThinkingSignature { signature } if signature == "sig")
-        );
-        assert!(matches!(&events[1], StreamEvent::Thinking { text } if text == "hmm"));
-        assert!(matches!(&events[2], StreamEvent::TextDelta { text } if text == "hi"));
-    }
-
-    #[test]
-    fn http_error_unwraps_nested_anthropic_message() {
-        let json = json!({
-            "error": {
-                "code": 400,
-                "message": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.2: The final block in an assistant message cannot be `thinking`.\"}}",
-                "status": "INVALID_ARGUMENT"
-            }
-        });
-        let s = code_assist_http_error(
-            reqwest::StatusCode::BAD_REQUEST,
-            "claude-sonnet-4-6",
-            &json,
-            &json.to_string(),
-        );
-        assert!(s.contains("claude-sonnet-4-6"), "{s}");
-        assert!(s.contains("cannot be `thinking`"), "{s}");
-        assert!(!s.contains("INVALID_ARGUMENT"), "{s}");
-    }
-
-    #[test]
-    fn chunk_tolerates_response_wrapper() {
-        let mut seq = 0u64;
-        let events = events_for_chunk(
-            r#"{"response":{"candidates":[{"content":{"parts":[{"text":"wrapped"}]}}]}}"#,
-            &mut seq,
-        );
-        assert!(matches!(&events[0], StreamEvent::TextDelta { text } if text == "wrapped"));
-    }
-
-    #[test]
-    fn malformed_and_structurally_empty_chunks_are_ignored() {
-        let mut seq = 41u64;
-        assert!(events_for_chunk("not json", &mut seq).is_empty());
-        assert!(events_for_chunk(r#"{"candidates":null}"#, &mut seq).is_empty());
-        assert_eq!(seq, 41);
-    }
-
-    #[test]
-    fn chunk_defaults_missing_call_fields_and_usage_counts() {
-        let mut seq = 7u64;
-        let events = events_for_chunk(
-            r#"{"candidates":[{"content":{"parts":[{"functionCall":{}}]},"finishReason":"MAX_TOKENS"}],"usageMetadata":{}}"#,
-            &mut seq,
-        );
-
-        match &events[0] {
-            StreamEvent::ToolUse { id, name, input } => {
-                assert_eq!(id, "gcall_8");
-                assert!(name.is_empty());
-                assert!(input.is_null());
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-        assert!(matches!(
-            &events[1],
-            StreamEvent::MessageDelta { delta }
-                if delta == &json!({"finishReason": "MAX_TOKENS"})
-        ));
-        assert!(matches!(
-            events[2],
-            StreamEvent::Usage {
-                input_tokens: 0,
-                output_tokens: 0
-            }
-        ));
-        assert!(matches!(events[3], StreamEvent::MessageStop));
-        assert_eq!(seq, 8);
-    }
-
-    #[test]
-    fn tier_picking() {
-        let load = json!({"allowedTiers": [
-            {"id": "free-tier", "userDefinedCloudaicompanionProject": false},
-            {"id": "standard-tier", "userDefinedCloudaicompanionProject": true}
-        ]});
-        assert_eq!(pick_tier(&load, false), "free-tier");
-        assert_eq!(pick_tier(&load, true), "standard-tier");
-        // No tier list: sane defaults.
-        let empty = json!({});
-        assert_eq!(pick_tier(&empty, false), "free-tier");
-        assert_eq!(pick_tier(&empty, true), "standard-tier");
-
-        // Matching entries without string ids are unusable and fall back.
-        let malformed = json!({"allowedTiers": [
-            {"id": null, "userDefinedCloudaicompanionProject": false},
-            {"id": 7, "userDefinedCloudaicompanionProject": true}
-        ]});
-        assert_eq!(pick_tier(&malformed, false), "free-tier");
-        assert_eq!(pick_tier(&malformed, true), "standard-tier");
-    }
-
-    fn serve_once(status: &str, body: &str, content_type: &str) -> String {
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        use std::thread;
-        use std::time::Duration;
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let header = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        );
-        let payload = format!("{header}{body}");
-        thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 2048];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(payload.as_bytes());
-                thread::sleep(Duration::from_millis(20));
-            }
-        });
-        format!("http://{addr}/v1internal")
-    }
-
-    fn loopback_profile(base: String, provider: &'static str) -> Profile {
-        let url: &'static str = Box::leak(base.into_boxed_str());
-        let bases: &'static [&'static str] = Box::leak(Box::new([url]));
-        Profile {
-            oauth_provider: provider,
-            bases,
-            antigravity: false,
-        }
-    }
-
-    fn assist_request() -> LlmRequest {
-        empty_request(vec![message(
-            Role::User,
-            MessageContent::Text("hi".to_string()),
-        )])
-    }
-
-    #[tokio::test]
-    async fn complete_and_stream_against_loopback() {
-        cache_project("google-loopback-ok", "proj-test");
-        let json = serde_json::json!({
-            "candidates": [{
-                "content": {"parts": [{"text": "hello-assist"}]},
-                "finishReason": "STOP"
-            }],
-            "usageMetadata": {"promptTokenCount": 1, "candidatesTokenCount": 2}
-        })
-        .to_string();
-        let profile = loopback_profile(
-            serve_once("200 OK", &json, "application/json"),
-            "google-loopback-ok",
-        );
-        let req = assist_request();
-        let resp = complete_with(&profile, &req, "ya29.test", "gemini-test")
-            .await
-            .unwrap();
-        assert!(
-            resp.content.iter().any(|b| matches!(
-                b,
-                ContentBlock::Text { text } if text.contains("hello-assist")
-            )),
-            "{resp:?}"
-        );
-
-        cache_project("google-loopback-err", "proj-test");
-        let err_p = loopback_profile(
-            serve_once(
-                "403 Forbidden",
-                r#"{"error":{"message":"nope"}}"#,
-                "application/json",
-            ),
-            "google-loopback-err",
-        );
-        let err = complete_with(&err_p, &req, "ya29.bad", "gemini-test")
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("nope") || !err.to_string().is_empty(),
-            "{err}"
-        );
-
-        cache_project("google-loopback-sse", "proj-test");
-        let sse = format!(
-            "data: {}\n\n",
-            serde_json::json!({
-                "candidates": [{"content": {"parts": [{"text": "hello"}]}}]
-            })
-        );
-        let sse_p = loopback_profile(
-            serve_once("200 OK", &sse, "text/event-stream"),
-            "google-loopback-sse",
-        );
-        let mut stream = stream_with(&sse_p, &req, "ya29.test", "gemini-test")
-            .await
-            .unwrap();
-        let mut text = String::new();
-        while let Some(ev) = stream.next().await {
-            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
-                text.push_str(&d);
-            }
-        }
-        assert_eq!(text, "hello");
-    }
-}
+#[path = "codeassist_tests.rs"]
+mod tests;

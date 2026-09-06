@@ -582,6 +582,10 @@ mod tests {
         let hub = PermHub::new();
         let err = hub.answer_question("s1", "q-999", None, false).unwrap_err();
         assert!(err.contains("unknown question request"));
+        let err = hub
+            .answer_question("s1", "q-missing", None, true)
+            .unwrap_err();
+        assert!(err.contains("unknown question request"));
     }
 
     #[tokio::test]
@@ -764,6 +768,20 @@ mod tests {
         );
         let err = hub.answer_question("s1", "q-1", None, false).unwrap_err();
         assert!(err.contains("timed out"), "{err}");
+
+        let (tx, rx) = oneshot::channel::<Result<Vec<QuestionAnswer>, QuestionError>>();
+        drop(rx);
+        hub.pending_q.lock().unwrap().insert(
+            ("s1".into(), "q-cancel".into()),
+            PendingQuestion {
+                questions: Vec::new(),
+                reply: tx,
+            },
+        );
+        let err = hub
+            .answer_question("s1", "q-cancel", None, true)
+            .unwrap_err();
+        assert!(err.contains("timed out"), "{err}");
     }
 
     #[test]
@@ -899,6 +917,47 @@ mod tests {
         assert_eq!(
             task.await.expect("ask task panicked").unwrap_err(),
             QuestionError::Timeout
+        );
+    }
+
+    #[tokio::test]
+    async fn question_ask_without_timeout_unblocks_and_can_notify() {
+        let hub = PermHub::new();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let mut q = ServeQuestionPrompter::new(Arc::clone(&hub));
+        q.timeout = None;
+        q.notify = Some(Arc::new(whycodes_config::NotifyConfig {
+            on: vec!["need_input".into()],
+            ..Default::default()
+        }));
+        let s = scope("s1", false, Arc::clone(&hub));
+        let task =
+            tokio::spawn(async move { RUN.scope(s, async { q.ask(Vec::new()).await }).await });
+        let ev = rx.recv().await.expect("no question ask");
+        let TurnEvent::QuestionAsk { request_id, .. } = ev else {
+            panic!("expected QuestionAsk");
+        };
+        hub.answer_question("s1", &request_id, None, false).unwrap();
+        assert!(task.await.expect("ask task panicked").is_ok());
+
+        let mut q = ServeQuestionPrompter::new(Arc::clone(&hub));
+        q.timeout = None;
+        let s = scope("s1", false, Arc::clone(&hub));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
+        hub.register_run("s1", tx);
+        let task =
+            tokio::spawn(async move { RUN.scope(s, async { q.ask(Vec::new()).await }).await });
+        let _ = rx.recv().await.expect("no question ask");
+        let pending = {
+            let mut map = hub.pending_q.lock().unwrap();
+            let key = map.keys().next().cloned().expect("pending key");
+            map.remove(&key)
+        };
+        drop(pending);
+        assert_eq!(
+            task.await.expect("ask task panicked").unwrap_err(),
+            QuestionError::Disconnected
         );
     }
 

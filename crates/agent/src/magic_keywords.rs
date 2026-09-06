@@ -267,4 +267,18 @@ mod tests {
         assert!(MagicHit::default().notice().is_empty());
         assert!(!MagicHit::default().any());
     }
+
+    #[test]
+    fn unclosed_html_and_short_fence_are_safe() {
+        assert!(!scan("<note>ultrathink", &on()).ultrathink);
+        // Two backticks is an inline span, not a fence (`fence_open` needs 3).
+        assert!(!scan("`ultrathink`", &on()).ultrathink);
+        assert!(scan("please ultrathink\n~~x", &on()).ultrathink);
+        // Unclosed 3-tick fence still masks the keyword until EOF.
+        assert!(!scan("```\nultrathink", &on()).ultrathink);
+        // 4-tick open vs 3-tick close: `fence_close` needs `i + run <= len`.
+        assert!(!scan("````\nultrathink\n```", &on()).ultrathink);
+        assert!(!scan("please <foo ultrathink", &on()).ultrathink);
+        assert!(scan("please ultrathink <foo", &on()).ultrathink);
+    }
 }

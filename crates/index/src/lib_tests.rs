@@ -88,6 +88,7 @@ fn end_to_end_scan_query_browse() {
     assert!(idx.resolve(m).ends_with("src/main.rs"));
 }
 
+// Skipped by `scripts/coverage.sh` (notify-timing flake under llvm-cov).
 #[test]
 fn watcher_picks_up_changes() {
     let dir = fixture();

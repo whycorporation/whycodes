@@ -391,4 +391,62 @@ mod tests {
         session.add_user_message("selam");
         assert!(!should_refine_title(&session));
     }
+
+    #[test]
+    fn google_antigravity_and_openrouter_o_family() {
+        let (_, m) = resolve_title_model("google-antigravity", "gemini-3-pro", None);
+        // "gemini" contains "mini", so already-small keeps the original.
+        assert_eq!(m, "gemini-3-pro");
+        let (_, m) = resolve_title_model("openrouter", "openai/o3-pro", None);
+        assert_eq!(m, "openai/gpt-4o-mini");
+        assert!(is_trivial_title_seed(""));
+        assert!(is_trivial_title_seed("   "));
+        assert!(!is_trivial_title_seed(&"x".repeat(49)));
+        let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
+        session.title_source = whycodes_session::TitleSource::Manual;
+        session.add_user_message("fix auth");
+        assert!(!should_refine_title(&session));
+    }
+
+    #[tokio::test]
+    async fn generate_title_uses_scripted_text_and_strips_prefix() {
+        let provider = whycodes_llm::ScriptedProvider::named(
+            "title-script",
+            [whycodes_llm::ScriptedStep::Text(
+                "Title: Retry Loop\n".into(),
+            )],
+        );
+        let title = generate_title(
+            &provider,
+            "k",
+            "title-gen-unique-model",
+            "please explain the retry loop",
+            Some("I walked through crates/llm"),
+        )
+        .await
+        .expect("title");
+        assert!(!title.is_empty(), "{title}");
+        assert!(!title.to_lowercase().starts_with("title:"), "{title}");
+    }
+
+    #[tokio::test]
+    async fn generate_title_empty_on_non_text() {
+        let provider = whycodes_llm::ScriptedProvider::named(
+            "title-empty",
+            [whycodes_llm::ScriptedStep::Thinking("only think".into())],
+        );
+        let title = generate_title(&provider, "k", "title-empty-unique-model", "fix auth", None)
+            .await
+            .expect("ok empty");
+        assert!(title.is_empty(), "{title}");
+    }
+
+    #[test]
+    fn apply_refine_result_skips_manual_title_source() {
+        let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());
+        session.title = "Keep me".into();
+        session.title_source = whycodes_session::TitleSource::Manual;
+        apply_refine_result(&mut session, "Retry Loop", "gpt-4o-mini");
+        assert_eq!(session.title, "Keep me");
+    }
 }

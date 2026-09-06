@@ -3,11 +3,139 @@
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tower::ServiceExt;
+use whycodes_agent::agent::Agent;
+use whycodes_agent::events::new_cancel_flag;
+use whycodes_config::Config;
 use whycodes_core::types::ContentBlock;
 use whycodes_session::session::Session;
 
-use crate::{create_router, test_state};
+use crate::{AppState, create_router};
+
+/// Serializes tests that mutate process-global env (`WHYCODES_HOME`, cwd, keys).
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn lock_env() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Point `WHYCODES_HOME` at a temp dir until dropped.
+pub(crate) struct IsolatedHome {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    dir: tempfile::TempDir,
+    prev: Option<std::ffi::OsString>,
+}
+
+impl IsolatedHome {
+    pub(crate) fn new() -> Self {
+        let guard = lock_env();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev = std::env::var_os("WHYCODES_HOME");
+        unsafe { std::env::set_var("WHYCODES_HOME", dir.path()) };
+        Self {
+            _guard: guard,
+            dir,
+            prev,
+        }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self.dir.path()
+    }
+
+    /// Override what Drop writes back. Call only while this isolation is live.
+    pub(crate) fn set_prev(&mut self, prev: Option<std::ffi::OsString>) {
+        self.prev = prev;
+    }
+}
+
+impl Drop for IsolatedHome {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_HOME", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_HOME") },
+        }
+    }
+}
+
+/// Build a minimal, fully in-memory [`AppState`] for unit tests.
+pub(crate) fn test_state() -> AppState {
+    test_state_with_registry(None)
+}
+
+/// Like [`test_state`], with an optional LLM registry (scripted providers).
+pub(crate) fn test_state_with_registry(
+    registry: Option<whycodes_llm::provider::ProviderRegistry>,
+) -> AppState {
+    use whycodes_core::types::{AgentInfo, AgentMode, PermissionSet};
+
+    let mut agent = Agent::new(AgentInfo {
+        name: "test".into(),
+        description: "test agent".into(),
+        mode: AgentMode::Primary,
+        permission: PermissionSet::default(),
+        model: None,
+        system_prompt: None,
+        temperature: None,
+        top_p: None,
+    });
+    if let Some(registry) = registry {
+        agent = agent.with_provider_registry(registry);
+    }
+    AppState {
+        agent: Arc::new(agent),
+        config: Arc::new(Config::default()),
+        project_dir: std::env::temp_dir(),
+        sessions: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        max_turns: Some(5),
+        mcp_warm: false,
+        index_warm: false,
+        started_at: std::time::Instant::now(),
+        cancel_flags: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        perm: crate::perm::PermHub::new(),
+        session_route: Arc::new(std::sync::Mutex::new(HashMap::new())),
+    }
+}
+
+fn poison_mutex<T>(m: &std::sync::Mutex<T>) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = m.lock().unwrap();
+        panic!("poison");
+    }));
+}
+
+/// Point cwd at a temp dir until dropped. Nested with [`IsolatedHome`].
+pub(crate) struct IsolatedCwd {
+    _home: IsolatedHome,
+    prev: std::path::PathBuf,
+}
+
+impl IsolatedCwd {
+    pub(crate) fn new() -> Self {
+        let home = IsolatedHome::new();
+        let prev = std::env::current_dir().expect("cwd");
+        let target = home.path().to_path_buf();
+        std::env::set_current_dir(&target)
+            .unwrap_or_else(|e| panic!("chdir {}: {e}", target.display()));
+        let now = std::env::current_dir().expect("cwd after chdir");
+        let now_c = now.canonicalize().unwrap_or(now);
+        let want_c = target.canonicalize().unwrap_or(target);
+        assert_eq!(now_c, want_c, "chdir did not stick");
+        Self { _home: home, prev }
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        self._home.path()
+    }
+}
+
+impl Drop for IsolatedCwd {
+    fn drop(&mut self) {
+        let _ = std::env::set_current_dir(&self.prev);
+    }
+}
 
 async fn call(app: axum::Router, req: Request<Body>) -> (StatusCode, Vec<u8>) {
     let resp = app.oneshot(req).await.expect("oneshot");
@@ -508,13 +636,13 @@ async fn v1_history_limit_model_cancel_and_rewind_change_live_state() {
 
 #[tokio::test]
 async fn api_and_v1_create_with_project_and_scripted_turns() {
-    let _home = crate::IsolatedHome::new();
+    let _home = IsolatedHome::new();
     let mut registry = whycodes_llm::provider::ProviderRegistry::new();
     registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
         "ollama",
         [whycodes_llm::ScriptedStep::Text("from-http".into())],
     )));
-    let state = crate::test_state_with_registry(Some(registry));
+    let state = test_state_with_registry(Some(registry));
     let app = crate::create_router(state);
 
     let (st, created) = json_post(
@@ -583,4 +711,108 @@ async fn api_and_v1_create_with_project_and_scripted_turns() {
 
     let (st, _) = json_get(app.clone(), "/v1/sessions/missing/messages").await;
     assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
+#[test]
+fn isolated_cwd_points_at_home_and_restores() {
+    let before = std::env::current_dir()
+        .unwrap()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap());
+    {
+        let cwd = IsolatedCwd::new();
+        let now = std::env::current_dir()
+            .unwrap()
+            .canonicalize()
+            .unwrap_or_else(|_| std::env::current_dir().unwrap());
+        let want = cwd
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| cwd.path().to_path_buf());
+        assert_eq!(now, want);
+    }
+    let after = std::env::current_dir()
+        .unwrap()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::current_dir().unwrap());
+    assert_eq!(after, before);
+}
+
+#[test]
+fn session_round_trip_through_the_warm_map() {
+    let state = test_state();
+
+    let s1 = Session::new("/tmp".into(), "sys".into());
+    let id1 = s1.id.clone();
+    state.insert_session(s1);
+    assert!(state.get_session(&id1).is_some());
+    assert_eq!(state.list_session_ids(), vec![id1.clone()]);
+
+    let s2 = Session::new("/tmp".into(), "sys".into());
+    let id2 = s2.id.clone();
+    state.insert_session(s2);
+    let mut ids = state.list_session_ids();
+    ids.sort();
+    let mut want = vec![id1, id2];
+    want.sort();
+    assert_eq!(ids, want);
+
+    assert!(state.get_session("missing").is_none());
+}
+
+#[test]
+fn cancel_flags_register_take_and_request() {
+    let state = test_state();
+    assert!(!state.request_cancel("s1"));
+    assert!(state.take_cancel("s1").is_none());
+
+    state.register_cancel("s1", new_cancel_flag());
+    assert!(state.request_cancel("s1"));
+    assert!(state.take_cancel("s1").is_some());
+    assert!(state.take_cancel("s1").is_none());
+    assert!(!state.request_cancel("s1"));
+}
+
+#[test]
+fn poisoned_maps_are_treated_as_empty() {
+    let state = test_state();
+    poison_mutex(&state.sessions);
+    poison_mutex(&state.cancel_flags);
+    let s = Session::new("/tmp".into(), "sys".into());
+    let handle = state.insert_session(s);
+    assert!(state.get_session("anything").is_none());
+    assert!(state.list_session_ids().is_empty());
+    state.register_cancel("s1", new_cancel_flag());
+    assert!(!state.request_cancel("s1"));
+    assert!(state.take_cancel("s1").is_none());
+    drop(handle);
+}
+
+#[test]
+fn db_path_follows_isolated_home() {
+    let home = IsolatedHome::new();
+    let path = AppState::db_path().expect("db path");
+    assert_eq!(path, home.path().join("whycodes.db"));
+    let db = AppState::open_db().expect("open isolated db");
+    drop(db);
+}
+
+#[test]
+fn isolated_home_restores_previous_env() {
+    let sentinel = std::ffi::OsString::from("/tmp/whycodes-prev-home");
+    let mut home = IsolatedHome::new();
+    home.set_prev(Some(sentinel.clone()));
+    drop(home);
+    assert_eq!(
+        std::env::var_os("WHYCODES_HOME").as_deref(),
+        Some(sentinel.as_os_str())
+    );
+    // Do not leak the sentinel into later tests.
+    unsafe { std::env::remove_var("WHYCODES_HOME") };
+}
+
+#[test]
+fn lock_env_recovers_from_poison() {
+    poison_mutex(&ENV_LOCK);
+    let _g = lock_env();
 }

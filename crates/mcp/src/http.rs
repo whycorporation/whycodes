@@ -17,19 +17,23 @@ const ACCEPT_SSE: &str = "text/event-stream";
 const SESSION_HEADER: &str = "mcp-session-id";
 
 fn sse_endpoint_timeout() -> Duration {
-    let mut d = Duration::from_secs(15);
-    if cfg!(test) {
-        d = Duration::from_millis(80);
-    }
-    d
+    sse_timeout(
+        cfg!(test),
+        Duration::from_secs(15),
+        Duration::from_millis(80),
+    )
 }
 
 fn sse_response_timeout() -> Duration {
-    let mut d = Duration::from_secs(60);
-    if cfg!(test) {
-        d = Duration::from_millis(80);
-    }
-    d
+    sse_timeout(
+        cfg!(test),
+        Duration::from_secs(60),
+        Duration::from_millis(80),
+    )
+}
+
+fn sse_timeout(for_test: bool, production: Duration, test: Duration) -> Duration {
+    if for_test { test } else { production }
 }
 
 fn remaining_until(deadline: tokio::time::Instant) -> Option<Duration> {
@@ -764,6 +768,14 @@ mod tests {
         assert!(remaining_until(future).unwrap() > Duration::from_secs(0));
         let _ = sse_endpoint_timeout();
         let _ = sse_response_timeout();
+        assert_eq!(
+            sse_timeout(false, Duration::from_secs(15), Duration::from_millis(80)),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            sse_timeout(true, Duration::from_secs(15), Duration::from_millis(80)),
+            Duration::from_millis(80)
+        );
     }
 
     #[tokio::test]
@@ -1092,6 +1104,30 @@ mod tests {
                 }
                 "drop" => StatusCode::NO_CONTENT.into_response(),
                 "fail-post" => (StatusCode::BAD_REQUEST, "bad").into_response(),
+                "plain" => {
+                    if let Some(tx) = state.tx.lock().await.as_ref() {
+                        let _ = tx.send(format!(
+                            "event: message\ndata: {}\n\n",
+                            json_rpc_result(id, serde_json::json!({"via":"plain"}))
+                        ));
+                    }
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/plain")
+                        .body(Body::from("ignored"))
+                        .unwrap()
+                        .into_response()
+                }
+                "bad-json" => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("not-json"))
+                    .unwrap()
+                    .into_response(),
+                "dead-notify" => StatusCode::ACCEPTED.into_response(),
+                "reset" => {
+                    panic!("reset sse post")
+                }
                 "accepted" => {
                     if let Some(tx) = state.tx.lock().await.as_ref() {
                         let _ = tx.send(format!(
@@ -1163,7 +1199,17 @@ mod tests {
         assert_eq!(via["via"], "json");
         let via = t.send_request("empty-json", None).await.unwrap();
         assert_eq!(via["via"], "empty");
+        let via = t.send_request("plain", None).await.unwrap();
+        assert_eq!(via["via"], "plain");
+        let err = t
+            .send_request("bad-json", None)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("parse JSON-RPC"), "{err}");
         t.send_notification("ok", None).await.unwrap();
+        let err = t.send_notification("dead-notify", None).await;
+        let _ = err; // POST may succeed (202) even when the SSE reader later dies.
         let err = t
             .send_notification("fail", None)
             .await

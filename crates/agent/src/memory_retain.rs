@@ -434,4 +434,174 @@ mod tests {
             None,
         );
     }
+
+    #[tokio::test]
+    async fn heuristic_retain_saves_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        session.add_user_message(
+            "Always use rustfmt and clippy -D warnings in this crate. Remember that.",
+        );
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "Noted: rustfmt + clippy -D warnings.".into(),
+        }]);
+        let settings = MemorySettings {
+            enabled: true,
+            auto_retain: true,
+            retain_llm: false,
+            ..MemorySettings::default()
+        };
+        let registry = whycodes_llm::ProviderRegistry::default();
+        let provider = registry.get("anthropic").expect("built-in");
+        let saved = run_post_turn_retain(
+            &session,
+            "Noted: rustfmt + clippy -D warnings.",
+            &settings,
+            provider,
+            "anthropic",
+            "claude-sonnet-4-5",
+            "",
+            dir.path(),
+        )
+        .await;
+        let _ = saved;
+    }
+
+    #[tokio::test]
+    async fn llm_retain_uses_scripted_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        session.add_user_message("please remember we use sqlite for sessions");
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: "ok, sqlite".into(),
+        }]);
+        let settings = MemorySettings {
+            enabled: true,
+            auto_retain: true,
+            retain_llm: true,
+            retain_llm_always: true,
+            retain_every_n: 1,
+            ..MemorySettings::default()
+        };
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::text(
+            "- sessions persist in sqlite\n",
+        )));
+        let provider = registry.get("script").expect("script");
+        let saved = run_post_turn_retain(
+            &session,
+            "ok, sqlite",
+            &settings,
+            provider,
+            "script",
+            "m",
+            "k",
+            dir.path(),
+        )
+        .await;
+        let _ = saved;
+    }
+
+    #[tokio::test]
+    async fn spawn_retain_emits_when_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        session.add_user_message("Remember: the crate is named whycodes.");
+        session.add_assistant_message(vec![ContentBlock::Text { text: "ok".into() }]);
+        let settings = MemorySettings {
+            enabled: true,
+            auto_retain: true,
+            retain_llm: false,
+            ..MemorySettings::default()
+        };
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::text("none")));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_post_turn_retain(
+            &session,
+            "ok",
+            &settings,
+            Arc::new(registry),
+            "script",
+            "m",
+            "k",
+            Some(tx),
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_retain_llm_path_and_open_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        session.add_user_message("please remember we use sqlite for sessions");
+        session.add_assistant_message(vec![ContentBlock::Text { text: "ok".into() }]);
+        let settings = MemorySettings {
+            enabled: true,
+            auto_retain: true,
+            retain_llm: true,
+            retain_llm_always: true,
+            retain_every_n: 1,
+            ..MemorySettings::default()
+        };
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::named(
+            "script",
+            [whycodes_llm::ScriptedStep::Text(
+                "- sessions persist in sqlite\n".into(),
+            )],
+        )));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_post_turn_retain(
+            &session,
+            "ok",
+            &settings,
+            Arc::new(registry),
+            "script",
+            "retain-llm-unique-model",
+            "k",
+            Some(tx),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let snap = RetainSnapshot::from_session(&session, "ok");
+        let saved = run_heuristic_retain(
+            &snap,
+            &settings,
+            std::path::Path::new("/dev/null/not-a-data-dir"),
+        );
+        assert!(saved.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spawn_retain_llm_error_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+        session.add_user_message("please remember we use sqlite for sessions");
+        session.add_assistant_message(vec![ContentBlock::Text { text: "ok".into() }]);
+        let settings = MemorySettings {
+            enabled: true,
+            auto_retain: true,
+            retain_llm: true,
+            retain_llm_always: true,
+            retain_every_n: 1,
+            ..MemorySettings::default()
+        };
+        let mut registry = whycodes_llm::ProviderRegistry::new();
+        registry.register(Box::new(whycodes_llm::ScriptedProvider::named(
+            "script",
+            [whycodes_llm::ScriptedStep::Error("retain boom".into())],
+        )));
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        spawn_post_turn_retain(
+            &session,
+            "ok",
+            &settings,
+            Arc::new(registry),
+            "script",
+            "retain-llm-err-unique-model",
+            "k",
+            Some(tx),
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
 }

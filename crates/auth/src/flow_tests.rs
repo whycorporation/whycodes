@@ -190,6 +190,10 @@ fn listener_and_port_maps_bind_errors() {
     assert!(matches!(err, AuthError::Io(_)));
     let (listener, port) = bind_loopback().unwrap();
     assert_eq!(port_from_addr(listener.local_addr()).unwrap(), port);
+    let (listener, _) = bind_loopback().unwrap();
+    let err =
+        listener_with_port(listener, |_| Err(std::io::Error::other("addr failed"))).unwrap_err();
+    assert!(matches!(err, AuthError::Io(_)));
 }
 
 #[test]
@@ -200,6 +204,19 @@ fn accept_connection_surfaces_io_errors() {
         accept_connection(|| Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "later")))
             .unwrap();
     assert!(none.is_none());
+
+    let (listener, _) = bind_loopback().unwrap();
+    let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let handle = thread::spawn(move || TcpStream::connect(addr));
+    let accepted = loop {
+        match accept_connection(|| listener.accept()).unwrap() {
+            Some(pair) => break pair,
+            None => thread::sleep(Duration::from_millis(1)),
+        }
+    };
+    handle.join().unwrap().unwrap();
+    drop(accepted);
 }
 
 #[test]

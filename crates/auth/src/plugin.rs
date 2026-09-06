@@ -165,19 +165,14 @@ pub fn load_dir(dir: &Path) -> usize {
         }
         match register_from_json(&text) {
             Ok(provider) => {
-                tracing::info!(
-                    path = %path.display(),
-                    provider,
-                    "registered auth plugin"
-                );
+                let path = path.display().to_string();
+                tracing::info!(path, provider, "registered auth plugin");
                 n += 1;
             }
             Err(e) => {
-                tracing::warn!(
-                    path = %path.display(),
-                    error = %e,
-                    "auth plugin rejected"
-                );
+                let path = path.display().to_string();
+                let error = e.to_string();
+                tracing::warn!(path, error, "auth plugin rejected");
             }
         }
     }
@@ -232,6 +227,7 @@ mod tests {
 
     #[test]
     fn load_dir_registers_auth_and_skips_shell() {
+        let _ = tracing_subscriber::fmt().with_test_writer().try_init();
         let tmp = tempfile::tempdir().unwrap();
         let auth = tmp.path().join("auth-plug");
         let shell = tmp.path().join("shell-plug");
@@ -396,6 +392,8 @@ mod tests {
     fn rejects_invalid_json() {
         let err = spec_from_json("not json").unwrap_err();
         assert!(err.to_string().contains("auth plugin"), "{err}");
+        let err = register_from_json("not json").unwrap_err();
+        assert!(err.to_string().contains("auth plugin"), "{err}");
     }
 
     #[test]
@@ -473,5 +471,13 @@ mod tests {
         assert!(supports_oauth("fixture-from-manifest"));
         assert!(!supports_oauth("broken-https"));
         assert!(!supports_oauth("never-loaded"));
+    }
+
+    #[test]
+    fn looks_like_auth_plugin_requires_kind_and_auth() {
+        assert!(looks_like_auth_plugin(r#"{"kind":"auth"}"#));
+        assert!(!looks_like_auth_plugin(r#"{"kind":"shell"}"#));
+        assert!(!looks_like_auth_plugin(r#"{"name":"auth-helper"}"#));
+        assert!(!looks_like_auth_plugin("{}"));
     }
 }

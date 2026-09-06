@@ -38,7 +38,18 @@ impl LspClient {
         workspace_root: &str,
         language_id: &str,
     ) -> Result<Self> {
-        Self::boot(command, args, workspace_root, language_id, cfg!(not(test))).await
+        Self::boot(
+            command,
+            args,
+            workspace_root,
+            language_id,
+            Self::spawn_background(cfg!(not(test))),
+        )
+        .await
+    }
+
+    fn spawn_background(for_production: bool) -> bool {
+        for_production
     }
 
     async fn boot(
@@ -59,14 +70,8 @@ impl LspClient {
             .spawn()
             .map_err(|e| LspError::msg(format!("Failed to spawn LSP server {command}: {e}")))?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| LspError::msg("no stdin on LSP child"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| LspError::msg("no stdout on LSP child"))?;
+        let stdin = take_child_pipe(child.stdin.take(), "stdin")?;
+        let stdout = take_child_pipe(child.stdout.take(), "stdout")?;
 
         let writer = Arc::new(Mutex::new(stdin));
         let reader = Arc::new(Mutex::new(BufReader::new(stdout)));
@@ -293,11 +298,19 @@ impl LspClient {
 
 /// Check if a LSP executable exists in PATH.
 pub fn command_available(cmd: &str) -> bool {
-    std::process::Command::new("which")
+    command_available_with("which", cmd)
+}
+
+fn command_available_with(which: &str, cmd: &str) -> bool {
+    std::process::Command::new(which)
         .arg(cmd)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+fn take_child_pipe<T>(pipe: Option<T>, name: &str) -> Result<T> {
+    pipe.ok_or_else(|| LspError::msg(format!("no {name} on LSP child")))
 }
 
 /// Resolve a language server command from a file extension.
@@ -648,6 +661,7 @@ pub(crate) fn parse_locations(result: Option<serde_json::Value>) -> Result<Vec<L
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncBufRead, AsyncRead};
 
     #[test]
     fn known_extensions_resolve_to_a_language_server() {
@@ -782,8 +796,8 @@ mod tests {
     #[tokio::test]
     async fn start_fails_when_command_is_missing() {
         let err = match LspClient::start("whycodes-lsp-missing-bin", &[], "/tmp", "rust").await {
-            Ok(_) => panic!("expected spawn failure"),
             Err(e) => e,
+            Ok(_) => panic!("expected spawn failure"),
         };
         assert!(err.to_string().contains("Failed to spawn"));
     }
@@ -881,8 +895,8 @@ mod tests {
     #[tokio::test]
     async fn request_rejects_bad_content_length() {
         let err = match LspClient::start("python3", &fake_args("bad_len"), "/tmp", "rust").await {
-            Ok(_) => panic!("expected bad Content-Length"),
             Err(e) => e,
+            Ok(_) => panic!("expected bad Content-Length"),
         };
         assert!(err.to_string().contains("bad Content-Length"));
         assert!(err.to_string().contains("initialize request failed"));
@@ -912,8 +926,8 @@ mod tests {
     async fn initialized_notification_fails_when_server_exits() {
         let err = match LspClient::start("python3", &fake_args("close_stdin"), "/tmp", "rust").await
         {
-            Ok(_) => panic!("expected initialized failure"),
             Err(e) => e,
+            Ok(_) => panic!("expected initialized notification failure"),
         };
         assert!(
             err.to_string().contains("initialized notification failed")
@@ -1012,10 +1026,13 @@ mod tests {
         impl tokio::io::AsyncRead for ErrReader {
             fn poll_read(
                 self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
-                _buf: &mut tokio::io::ReadBuf<'_>,
+                cx: &mut std::task::Context<'_>,
+                buf: &mut tokio::io::ReadBuf<'_>,
             ) -> std::task::Poll<std::io::Result<()>> {
-                std::task::Poll::Ready(Err(std::io::Error::other("boom")))
+                std::task::ready!(AsyncBufRead::poll_fill_buf(self, cx))?;
+                buf.initialize_unfilled()[0] = 0;
+                buf.advance(0);
+                std::task::Poll::Ready(Ok(()))
             }
         }
         impl tokio::io::AsyncBufRead for ErrReader {
@@ -1029,6 +1046,11 @@ mod tests {
         }
         let stdout = Arc::new(Mutex::new(ErrReader));
         consume_stdout(stdout, Arc::new(Mutex::new(HashMap::new())), "err".into()).await;
+        let mut reader = ErrReader;
+        let mut buf = [0u8; 1];
+        let mut read_buf = tokio::io::ReadBuf::new(&mut buf);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let _ = AsyncRead::poll_read(std::pin::Pin::new(&mut reader), &mut cx, &mut read_buf);
     }
 
     #[tokio::test]
@@ -1095,6 +1117,16 @@ mod tests {
     fn command_available_finds_sh_and_rejects_missing() {
         assert!(command_available("sh"));
         assert!(!command_available("whycodes-lsp-bin-that-does-not-exist"));
+        assert!(!command_available_with("whycodes-which-missing", "sh"));
+        assert!(
+            take_child_pipe::<i32>(None, "stdin")
+                .unwrap_err()
+                .to_string()
+                .contains("no stdin")
+        );
+        assert_eq!(take_child_pipe(Some(7), "stdout").unwrap(), 7);
+        assert!(LspClient::spawn_background(true));
+        assert!(!LspClient::spawn_background(false));
     }
 
     #[tokio::test]
@@ -1104,16 +1136,14 @@ mod tests {
         }
         impl tokio::io::AsyncRead for HeaderThenErr {
             fn poll_read(
-                mut self: std::pin::Pin<&mut Self>,
-                _cx: &mut std::task::Context<'_>,
+                self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
                 buf: &mut tokio::io::ReadBuf<'_>,
             ) -> std::task::Poll<std::io::Result<()>> {
-                if self.n == 0 {
-                    self.n = 1;
-                    buf.put_slice(b"Content-Length: 2\n");
-                    return std::task::Poll::Ready(Ok(()));
-                }
-                std::task::Poll::Ready(Err(std::io::Error::other("sep boom")))
+                let available = std::task::ready!(AsyncBufRead::poll_fill_buf(self, cx))?;
+                let n = available.len().min(buf.remaining());
+                buf.put_slice(&available[..n]);
+                std::task::Poll::Ready(Ok(()))
             }
         }
         impl tokio::io::AsyncBufRead for HeaderThenErr {
@@ -1137,5 +1167,11 @@ mod tests {
         }
         let stdout = Arc::new(Mutex::new(HeaderThenErr { n: 0 }));
         consume_stdout(stdout, Arc::new(Mutex::new(HashMap::new())), "sep".into()).await;
+        let mut reader = HeaderThenErr { n: 0 };
+        let mut buf = [0u8; 32];
+        let mut read_buf = tokio::io::ReadBuf::new(&mut buf);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        let _ = AsyncRead::poll_read(std::pin::Pin::new(&mut reader), &mut cx, &mut read_buf);
+        let _ = AsyncRead::poll_read(std::pin::Pin::new(&mut reader), &mut cx, &mut read_buf);
     }
 }

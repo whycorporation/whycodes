@@ -49,12 +49,9 @@ impl LlmTransport {
         model: &str,
     ) -> whycodes_core::Result<Pin<Box<dyn Stream<Item = whycodes_core::Result<StreamEvent>> + Send>>>
     {
-        debug!(
-            provider = provider.name(),
-            model,
-            max_retries = self.retry.max_retries,
-            "llm.stream_open"
-        );
+        let name = provider.name();
+        let max_retries = self.retry.max_retries;
+        debug!("llm.stream_open provider={name} model={model} max_retries={max_retries}");
         execute_with_policy(&self.retry, "stream_open", || {
             provider.stream(request, api_key, model)
         })
@@ -73,15 +70,12 @@ impl LlmTransport {
         model: &str,
     ) -> whycodes_core::Result<LlmResponse> {
         if let Some(hit) = ResponseCache::global().lookup(request, model) {
-            debug!(model, "llm.complete_cache_hit");
+            debug!("llm.complete_cache_hit model={model}");
             return Ok(ResponseCache::to_response(&hit, model));
         }
-        debug!(
-            provider = provider.name(),
-            model,
-            max_retries = self.retry.max_retries,
-            "llm.complete"
-        );
+        let name = provider.name();
+        let max_retries = self.retry.max_retries;
+        debug!("llm.complete provider={name} model={model} max_retries={max_retries}");
         let retry = self.retry.clone();
         let timeout = self.complete_timeout;
 
@@ -115,11 +109,11 @@ impl LlmTransport {
         if opts.cache
             && let Some(hit) = ResponseCache::global().lookup(request, primary.model)
         {
-            debug!(model = primary.model, "llm.stream_cache_hit");
+            debug!("llm.stream_cache_hit model={}", primary.model);
             let text = hit.text;
-            let events: EventStream = Box::pin(async_stream::stream! {
-                yield Ok(StreamEvent::TextDelta { text });
-                yield Ok(StreamEvent::MessageStop);
+            let events: EventStream = Box::pin(CachedReplay {
+                text: Some(text),
+                stop: false,
             });
             return Ok(StreamTurn {
                 events,
@@ -150,6 +144,30 @@ pub struct StreamTurn {
     pub events: EventStream,
     pub cache_hit: bool,
     pub race: RaceOutcome,
+}
+
+struct CachedReplay {
+    text: Option<String>,
+    stop: bool,
+}
+
+impl Stream for CachedReplay {
+    type Item = whycodes_core::Result<StreamEvent>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if let Some(text) = this.text.take() {
+            return std::task::Poll::Ready(Some(Ok(StreamEvent::TextDelta { text })));
+        }
+        if !this.stop {
+            this.stop = true;
+            return std::task::Poll::Ready(Some(Ok(StreamEvent::MessageStop)));
+        }
+        std::task::Poll::Ready(None)
+    }
 }
 
 /// Global default transport (cheap to construct; no shared state yet).
@@ -186,139 +204,5 @@ pub fn format_turn_error(err: &whycodes_core::Error) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn format_turn_error_cleans_server_json() {
-        let err = whycodes_core::Error::llm(
-            r#"{"error":{"message":"[500]: An internal server error occurred","type":"server_error","code":"internal_server_error"}}"#,
-        );
-        let s = format_turn_error(&err);
-        assert!(!s.contains('{'), "{s}");
-        assert!(
-            s.to_ascii_lowercase().contains("server") || s.contains("500"),
-            "{s}"
-        );
-    }
-
-    fn req() -> LlmRequest {
-        LlmRequest {
-            system: String::new(),
-            messages: std::sync::Arc::from(vec![whycodes_core::types::Message {
-                role: whycodes_core::types::Role::User,
-                content: whycodes_core::types::MessageContent::Text("hi".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: vec![].into(),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        }
-    }
-
-    #[tokio::test]
-    async fn complete_and_stream_via_scripted_provider() {
-        use crate::scripted::{ScriptedProvider, ScriptedStep};
-        use tokio_stream::StreamExt;
-        use whycodes_core::types::ContentBlock;
-
-        let transport = LlmTransport::default().with_retry(crate::retry::RetryPolicy::test_fast());
-        let provider = ScriptedProvider::new([ScriptedStep::Text("hello-transport".into())]);
-        let req = req();
-        let resp = transport.complete(&provider, &req, "k", "m").await.unwrap();
-        assert!(
-            resp.content.iter().any(
-                |b| matches!(b, ContentBlock::Text { text } if text.contains("hello-transport"))
-            ),
-            "{resp:?}"
-        );
-
-        let provider = ScriptedProvider::new([
-            ScriptedStep::Text("he".into()),
-            ScriptedStep::Text("llo".into()),
-        ]);
-        let mut stream = transport.stream(&provider, &req, "k", "m").await.unwrap();
-        let mut text = String::new();
-        while let Some(ev) = stream.next().await {
-            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
-                text.push_str(&d);
-            }
-        }
-        assert_eq!(text, "hello");
-    }
-
-    #[tokio::test]
-    async fn complete_times_out_when_scripted_hang_exceeds_budget() {
-        use crate::scripted::{ScriptedProvider, ScriptedStep};
-        let transport = LlmTransport {
-            retry: crate::retry::RetryPolicy {
-                max_retries: 0,
-                ..crate::retry::RetryPolicy::test_fast()
-            },
-            complete_timeout: Some(std::time::Duration::from_millis(20)),
-        };
-        let provider =
-            ScriptedProvider::new([ScriptedStep::Hang(std::time::Duration::from_secs(2))]);
-        let err = transport
-            .complete(&provider, &req(), "k", "hang-timeout")
-            .await
-            .unwrap_err();
-        assert!(
-            err.to_string().to_ascii_lowercase().contains("timed out")
-                || err.to_string().contains("Timeout"),
-            "{err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn stream_turn_replays_cache_hit() {
-        use crate::response_cache::ResponseCache;
-        use crate::scripted::{ScriptedProvider, ScriptedStep};
-        use tokio_stream::StreamExt;
-
-        let req = req();
-        ResponseCache::global().store(&req, "cache-model", "cached-text");
-        let transport = LlmTransport::default();
-        let provider = ScriptedProvider::new([ScriptedStep::Text("should-not-run".into())]);
-        let mut turn = transport
-            .stream_turn(
-                crate::race::StreamTarget {
-                    provider: &provider,
-                    api_key: "k",
-                    model: "cache-model",
-                },
-                &req,
-                StreamTurnOpts {
-                    cache: true,
-                    race: None,
-                    race_after: std::time::Duration::from_millis(10),
-                },
-            )
-            .await
-            .unwrap();
-        assert!(turn.cache_hit);
-        let mut text = String::new();
-        while let Some(ev) = turn.events.next().await {
-            if let Ok(StreamEvent::TextDelta { text: d }) = ev {
-                text.push_str(&d);
-            }
-        }
-        assert_eq!(text, "cached-text");
-    }
-
-    #[test]
-    fn default_transport_and_user_facing_error() {
-        let t = default_transport();
-        assert!(t.complete_timeout.is_some());
-        let err = whycodes_core::Error::llm("rate limited 429");
-        let msg = user_facing_error(&err);
-        assert!(!msg.is_empty());
-    }
-}
+#[path = "transport_tests.rs"]
+mod tests;

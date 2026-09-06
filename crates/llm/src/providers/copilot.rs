@@ -6,13 +6,10 @@
 /// the short-lived Copilot API token obtained via `whycodes auth login
 /// github-copilot` (device flow → token exchange); refresh is handled by
 /// `whycodes-auth` before the token reaches this provider.
-use async_stream::stream;
 use serde_json::Value;
-use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent};
+use whycodes_core::types::{LlmRequest, LlmResponse};
 
-use crate::provider::{
-    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
-};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
 
 pub struct CopilotProvider {
     name: String,
@@ -118,54 +115,10 @@ impl LlmProvider for CopilotProvider {
                 )));
             }
 
-            let s = stream! {
-                let mut stream = resp.bytes_stream();
-                let mut buffer = String::new();
-
-                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                    match chunk {
-                        Ok(bytes) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
-                            while let Some(pos) = buffer.find('\n') {
-                                let line = buffer[..pos].trim().to_string();
-                                buffer = buffer[pos + 1..].to_string();
-
-                                if line.is_empty() || !line.starts_with("data: ") {
-                                    continue;
-                                }
-
-                                let data = &line[6..];
-                                if data == "[DONE]" {
-                                    yield Ok(StreamEvent::MessageStop);
-                                    return;
-                                }
-
-                                if let Ok(event) = serde_json::from_str::<Value>(data) {
-                                    let choice = &event["choices"][0];
-                                    let delta = &choice["delta"];
-
-                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                        yield Ok(ev);
-                                    }
-
-                                    // Final include_usage chunk often has empty choices —
-                                    // do not require finish_reason.
-                                    if let Some(ev) =
-                                        crate::openai_compat::stream_usage_from_chunk(&event)
-                                    {
-                                        yield Ok(ev);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            yield Err(crate::openai_compat::stream_chunk_error("github-copilot", e));
-                        }
-                    }
-                }
-            };
-
-            Ok(Box::pin(s) as ProviderEventStream)
+            Ok(crate::openai_compat::chat_sse_stream(
+                resp,
+                "github-copilot",
+            ))
         })
     }
 }
@@ -177,20 +130,5 @@ impl Default for CopilotProvider {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::provider::LlmProvider;
-
-    #[test]
-    fn from_base_blank_keeps_cloud_and_override_normalizes() {
-        let cloud = CopilotProvider::from_base(Some("   "));
-        assert!(cloud.default_base_url().contains("githubcopilot.com"));
-        let local = CopilotProvider::from_base(Some("http://127.0.0.1:9/v1"));
-        assert!(
-            local.default_base_url().ends_with("/chat/completions"),
-            "{}",
-            local.default_base_url()
-        );
-        assert_eq!(CopilotProvider::default().name(), "github-copilot");
-    }
-}
+#[path = "copilot_tests.rs"]
+mod tests;

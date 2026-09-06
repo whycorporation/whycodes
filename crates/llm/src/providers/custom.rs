@@ -1,13 +1,10 @@
 /// A generic OpenAI-compatible provider that can be configured at runtime.
 /// Supports custom base URLs, headers, and authentication schemas.
-use async_stream::stream;
 use serde_json::Value;
 use std::collections::HashMap;
-use whycodes_core::types::{LlmRequest, LlmResponse, StreamEvent, ToolArgumentsFormat};
+use whycodes_core::types::{LlmRequest, LlmResponse, ToolArgumentsFormat};
 
-use crate::provider::{
-    LlmProvider, ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture,
-};
+use crate::provider::{LlmProvider, ProviderResponseFuture, ProviderStreamFuture};
 
 /// A provider that works with any OpenAI-compatible API endpoint.
 ///
@@ -76,35 +73,11 @@ impl CustomProvider {
     }
 
     fn build_body(&self, request: &LlmRequest, model: &str) -> Value {
-        let mut body = serde_json::json!({
-            "model": model,
-            "messages": self.convert_messages(request),
-            "stream": true,
-        });
-
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = max_tokens.into();
-        }
-
-        if !request.tools.is_empty() {
-            body["tools"] = serde_json::Value::Array(self.convert_tools(&request.tools));
-            body["tool_choice"] = serde_json::json!("auto");
-            body["parallel_tool_calls"] = serde_json::json!(true);
-        }
-
-        crate::openai_compat::apply_sampling(&mut body, request);
-
-        crate::thinking::ThinkingConfig::apply_openai_effort(&mut body, request.thinking.as_ref());
-
-        body
+        crate::openai_compat::chat_completions_body(request, model, self.convert_messages(request))
     }
 
     fn convert_messages(&self, request: &LlmRequest) -> Vec<Value> {
         crate::openai_compat::convert_messages_with_format(request, self.tool_arguments)
-    }
-
-    fn convert_tools(&self, tools: &[whycodes_core::types::ToolDefinition]) -> Vec<Value> {
-        crate::openai_compat::convert_tools(tools)
     }
 
     fn build_request(&self, body: &Value) -> reqwest::RequestBuilder {
@@ -221,177 +194,12 @@ impl LlmProvider for CustomProvider {
                 )));
             }
 
-            let provider = self.name.clone();
-            let s = stream! {
-                let mut stream = resp.bytes_stream();
-                let mut buf = String::new();
-                while let Some(chunk) = futures::StreamExt::next(&mut stream).await {
-                    match chunk {
-                        Ok(bytes) => {
-                            buf.push_str(&String::from_utf8_lossy(&bytes));
-                            while let Some(pos) = buf.find('\n') {
-                                let line = buf[..pos].trim().to_string();
-                                buf = buf[pos + 1..].to_string();
-                                if line.is_empty() || !line.starts_with("data: ") { continue; }
-                                let data = &line[6..];
-                                if data == "[DONE]" { yield Ok(StreamEvent::MessageStop); return; }
-                                if let Ok(evt) = serde_json::from_str::<Value>(data) {
-                                    let delta = &evt["choices"][0]["delta"];
-                                    for ev in crate::openai_compat::stream_events_for_chat_delta(delta) {
-                                        yield Ok(ev);
-                                    }
-                                    if let Some(ev) =
-                                        crate::openai_compat::stream_usage_from_chunk(&evt)
-                                    {
-                                        yield Ok(ev);
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            yield Err(crate::openai_compat::stream_chunk_error(&provider, e));
-                        }
-                    }
-                }
-            };
-            Ok(Box::pin(s) as ProviderEventStream)
+            Ok(crate::openai_compat::chat_sse_stream(resp, &self.name))
         })
     }
 }
 
 /// Test for custom provider with auth modes
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_req() -> LlmRequest {
-        LlmRequest {
-            system: "You are helpful.".to_string(),
-            messages: std::sync::Arc::from([]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: true,
-        }
-    }
-
-    #[test]
-    fn normalizes_v1_base_to_chat_completions() {
-        assert_eq!(
-            normalize_chat_completions_url("http://example.local:1234/v1"),
-            "http://example.local:1234/v1/chat/completions"
-        );
-        assert_eq!(
-            normalize_chat_completions_url("http://example.local:1234/v1/"),
-            "http://example.local:1234/v1/chat/completions"
-        );
-        assert_eq!(
-            normalize_chat_completions_url("http://example.local:1234/v1/chat/completions"),
-            "http://example.local:1234/v1/chat/completions"
-        );
-    }
-
-    #[test]
-    fn from_config_uses_normalized_base_url() {
-        let pc = whycodes_core::types::ProviderConfig {
-            name: "custom".into(),
-            api_key: Some("sk-test".into()),
-            api_base: None,
-            base_url: Some("http://example.local:1234/v1".into()),
-            headers: None,
-            models: vec!["some/model".into()],
-            tool_arguments: None,
-            extra: Default::default(),
-        };
-        let p = CustomProvider::from_config(&pc);
-        assert_eq!(
-            p.default_base_url(),
-            "http://example.local:1234/v1/chat/completions"
-        );
-        assert_eq!(p.name(), "custom");
-        assert_eq!(p.tool_arguments, ToolArgumentsFormat::JsonString);
-    }
-
-    #[test]
-    fn from_config_honors_tool_arguments_object() {
-        let pc = whycodes_core::types::ProviderConfig {
-            name: "omniroute".into(),
-            api_key: Some("sk-test".into()),
-            api_base: None,
-            base_url: Some("http://127.0.0.1:9999/v1".into()),
-            headers: None,
-            models: vec![],
-            tool_arguments: Some(ToolArgumentsFormat::Object),
-            extra: Default::default(),
-        };
-        let p = CustomProvider::from_config(&pc);
-        assert_eq!(p.tool_arguments, ToolArgumentsFormat::Object);
-
-        let req = make_req();
-        let mut req = req;
-        // Build a body that includes a tool call in history.
-        use whycodes_core::types::{ContentBlock, Message, MessageContent, Role};
-        req.messages = std::sync::Arc::from(vec![Message {
-            role: Role::Assistant,
-            content: MessageContent::Blocks(vec![ContentBlock::ToolUse {
-                id: "c1".into(),
-                name: "websearch".into(),
-                input: serde_json::json!({"query": "nuxt"}),
-            }]),
-            tool_call_id: None,
-            name: None,
-            created_at: None,
-        }]);
-        let body = p.build_body(&req, "any/model");
-        let args = &body["messages"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|m| m["role"] == "assistant")
-            .unwrap()["tool_calls"][0]["function"]["arguments"];
-        assert!(args.is_object(), "provider config asked for object: {args}");
-        assert_eq!(args["query"], "nuxt");
-    }
-
-    #[test]
-    fn test_custom_provider_creation() {
-        let p = CustomProvider::new(
-            "my-api",
-            "https://api.example.com/v1/chat/completions",
-            Some("sk-test".to_string()),
-            HashMap::from([("X-Custom".to_string(), "val".to_string())]),
-        );
-        assert_eq!(p.name(), "my-api");
-        assert_eq!(
-            p.default_base_url(),
-            "https://api.example.com/v1/chat/completions"
-        );
-    }
-
-    #[test]
-    fn test_custom_provider_build_body() {
-        let p = CustomProvider::new("test", "http://localhost/v1", None, HashMap::new());
-        let body = p.build_body(&make_req(), "test-model");
-        assert_eq!(body["model"], "test-model");
-        assert!(body["messages"].as_array().unwrap()[0]["content"] == "You are helpful.");
-    }
-
-    #[test]
-    fn test_custom_provider_with_tools() {
-        let p = CustomProvider::new("test", "http://localhost/v1", None, HashMap::new());
-        let mut req = make_req();
-        req.tools = vec![whycodes_core::types::ToolDefinition {
-            name: "read".to_string(),
-            description: "read file".to_string(),
-            parameters: serde_json::json!({"type": "object"}),
-        }]
-        .into();
-        let body = p.build_body(&req, "m");
-        assert!(body["tools"].as_array().unwrap().len() == 1);
-        assert_eq!(body["tool_choice"], "auto");
-    }
-}
+#[path = "custom_tests.rs"]
+mod tests;

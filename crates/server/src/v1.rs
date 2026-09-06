@@ -749,7 +749,7 @@ mod tests {
             }
         }
 
-        let mut state = crate::test_state();
+        let mut state = crate::http_tests::test_state();
         let mut cfg = Config::default();
         cfg.models.insert("gpt".into(), model("openai", "gpt-4o"));
         cfg.default_model = Some(model("openai", "gpt-4o"));
@@ -782,8 +782,8 @@ mod tests {
 
     #[tokio::test]
     async fn persist_list_rename_rewind_compact_hit_db() {
-        let _home = crate::IsolatedHome::new();
-        let state = crate::test_state();
+        let _home = crate::http_tests::IsolatedHome::new();
+        let state = crate::http_tests::test_state();
         let created = create_session(
             State(state.clone()),
             Json(CreateSessionRequest {
@@ -797,7 +797,7 @@ mod tests {
         let listed = list_sessions(State(state.clone())).await;
         assert!(listed.sessions.iter().any(|s| s.id == id));
 
-        let cold = crate::test_state();
+        let cold = crate::http_tests::test_state();
         let listed_cold = list_sessions(State(cold.clone())).await;
         assert!(
             listed_cold
@@ -841,13 +841,13 @@ mod tests {
 
     #[tokio::test]
     async fn run_streams_scripted_success_and_error() {
-        let _home = crate::IsolatedHome::new();
+        let _home = crate::http_tests::IsolatedHome::new();
         let mut registry = whycodes_llm::provider::ProviderRegistry::new();
         registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
             "ollama",
             [whycodes_llm::ScriptedStep::Text("v1-ok".into())],
         )));
-        let state = crate::test_state_with_registry(Some(registry));
+        let state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         state.insert_session(session);
@@ -879,7 +879,7 @@ mod tests {
             "ollama",
             [whycodes_llm::ScriptedStep::FailOpen("v1-fail".into())],
         )));
-        let err_state = crate::test_state_with_registry(Some(registry));
+        let err_state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         err_state.insert_session(session);
@@ -905,13 +905,13 @@ mod tests {
 
     #[tokio::test]
     async fn run_persists_after_scripted_turn() {
-        let _home = crate::IsolatedHome::new();
+        let _home = crate::http_tests::IsolatedHome::new();
         let mut registry = whycodes_llm::provider::ProviderRegistry::new();
         registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
             "ollama",
             [whycodes_llm::ScriptedStep::Text("persist-ok".into())],
         )));
-        let state = crate::test_state_with_registry(Some(registry));
+        let state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         state.insert_session(session);
@@ -940,7 +940,7 @@ mod tests {
 
     #[tokio::test]
     async fn permission_and_question_http_success() {
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         state.perm.register_run("s1", tx);
         let hub = Arc::clone(&state.perm);
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[tokio::test]
     async fn question_http_rejects_unknown_labels_with_400() {
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         state.perm.register_run("s1", tx);
         let hub = Arc::clone(&state.perm);
@@ -1099,10 +1099,10 @@ mod tests {
 
     #[tokio::test]
     async fn run_reports_join_error_when_worker_panics() {
-        let _home = crate::IsolatedHome::new();
+        let _home = crate::http_tests::IsolatedHome::new();
         let mut registry = whycodes_llm::provider::ProviderRegistry::new();
         registry.register(Box::new(PanicProvider));
-        let state = crate::test_state_with_registry(Some(registry));
+        let state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         state.insert_session(session);
@@ -1131,7 +1131,7 @@ mod tests {
 
     #[tokio::test]
     async fn set_model_survives_poisoned_route_map() {
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         state.insert_session(session);
@@ -1157,9 +1157,9 @@ mod tests {
 
     #[tokio::test]
     async fn persist_warns_when_db_path_is_a_directory() {
-        let home = crate::IsolatedHome::new();
+        let home = crate::http_tests::IsolatedHome::new();
         std::fs::create_dir_all(home.path().join("whycodes.db")).unwrap();
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let created = create_session(
             State(state.clone()),
             Json(CreateSessionRequest {
@@ -1207,12 +1207,12 @@ mod tests {
 
     #[tokio::test]
     async fn session_or_default_model_prefers_route_override() {
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let (p, m) = session_or_default_model(&state, "no-such-session");
         let (dp, dm) = default_provider_model(&state.config);
         assert_eq!((p, m), (dp, dm));
 
-        let state2 = crate::test_state();
+        let state2 = crate::http_tests::test_state();
         if let Ok(mut map) = state2.session_route.lock() {
             map.insert("s1".into(), ("openai".into(), "gpt-4o".into()));
         }

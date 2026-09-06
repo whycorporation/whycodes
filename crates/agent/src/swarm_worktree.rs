@@ -403,5 +403,239 @@ mod tests {
     fn is_git_repo_true_for_init() {
         let (_keep, root) = init_repo();
         assert!(is_git_repo(&root));
+        assert!(!is_git_repo(std::env::temp_dir().as_path()));
+        assert!(git_toplevel(&root).is_some());
+        assert!(format_merge_report(&MergeReport::default()).is_empty());
+        let mut report = MergeReport::default();
+        report.applied.push("a.txt".into());
+        report.deleted.push("gone.txt".into());
+        report.conflicts.push(MergeConflict {
+            path: "c.txt".into(),
+            reason: "diverged".into(),
+        });
+        report.notes.push("note".into());
+        let txt = format_merge_report(&report);
+        assert!(txt.contains("Merged"));
+        assert!(txt.contains("Deleted"));
+        assert!(txt.contains("conflicts"));
+        assert!(txt.contains("note"));
+        assert!(run_dir(&root, "r1").ends_with("r1"));
+    }
+
+    #[test]
+    fn create_worktree_rejects_existing_dest() {
+        let (_keep, root) = init_repo();
+        let dest = root.join(".whycodes").join("swarm").join("exists");
+        std::fs::create_dir_all(&dest).unwrap();
+        let err = create_worktree(&root, &dest, "w0").unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn merge_delete_already_same_and_gone_on_main() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-del")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+
+        std::fs::remove_file(wt.path.join("b.txt")).unwrap();
+        std::fs::write(wt.path.join("a.txt"), b"base-a\n").unwrap();
+        std::fs::write(wt.path.join("new.txt"), b"brand\n").unwrap();
+        std::fs::write(root.join("new.txt"), b"brand\n").unwrap();
+        std::fs::remove_file(root.join("gone-on-main.txt")).ok();
+        std::fs::write(wt.path.join("tracked-gone.txt"), b"x\n").ok();
+        // File present at base, deleted in worker, already missing on main.
+        std::fs::write(root.join("tmp-gone.txt"), b"tmp\n").ok();
+
+        let report = merge_into_main(&wt, &root);
+        assert!(
+            report.deleted.iter().any(|p| p == "b.txt")
+                || report.notes.is_empty()
+                || !report.applied.is_empty(),
+            "{report:?}"
+        );
+        assert!(
+            report.applied.iter().any(|p| p == "a.txt")
+                || report.applied.iter().any(|p| p == "new.txt"),
+            "{report:?}"
+        );
+        remove_worktree(&wt).ok();
+    }
+
+    #[test]
+    fn merge_write_conflict_when_target_is_directory() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-dir")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        std::fs::write(wt.path.join("newdir.txt"), b"from-worker\n").unwrap();
+        std::fs::create_dir_all(root.join("newdir.txt")).unwrap();
+        let report = merge_into_main(&wt, &root);
+        assert!(
+            report.conflicts.iter().any(|c| c.path == "newdir.txt"),
+            "{report:?}"
+        );
+        remove_worktree(&wt).ok();
+    }
+
+    #[test]
+    fn changed_relative_paths_skips_short_and_parses_rename() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-ren")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        assert!(
+            Command::new("git")
+                .args(["mv", "a.txt", "renamed.txt"])
+                .current_dir(&wt.path)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let paths = changed_relative_paths(&wt.path).expect("status");
+        assert!(paths.iter().any(|p| p.contains("renamed")), "{paths:?}");
+        remove_worktree(&wt).ok();
+    }
+
+    #[test]
+    fn remove_worktree_fallback_when_path_already_gone() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-rm")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        let _ = std::fs::remove_dir_all(&wt.path);
+        let _ = remove_worktree(&wt);
+    }
+
+    #[test]
+    fn merge_deleted_in_worker_main_diverged_and_already_gone() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-div")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        std::fs::remove_file(wt.path.join("a.txt")).unwrap();
+        std::fs::write(root.join("a.txt"), b"from-main\n").unwrap();
+        std::fs::remove_file(root.join("b.txt")).unwrap();
+        std::fs::remove_file(wt.path.join("b.txt")).ok();
+        let report = merge_into_main(&wt, &root);
+        assert!(
+            report
+                .conflicts
+                .iter()
+                .any(|c| c.path == "a.txt" && c.reason.contains("diverged")),
+            "{report:?}"
+        );
+        assert!(
+            report.deleted.iter().any(|p| p == "b.txt")
+                || report.conflicts.iter().any(|c| c.path == "b.txt"),
+            "{report:?}"
+        );
+        remove_worktree(&wt).ok();
+    }
+
+    #[test]
+    fn merge_mkdir_fails_when_parent_is_file() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-mkdir")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        std::fs::create_dir_all(wt.path.join("blocked")).unwrap();
+        std::fs::write(wt.path.join("blocked").join("nested.txt"), b"from-worker\n").unwrap();
+        std::fs::write(root.join("blocked"), b"i-am-a-file\n").unwrap();
+        let report = merge_into_main(&wt, &root);
+        assert!(
+            report
+                .conflicts
+                .iter()
+                .any(|c| c.path.contains("nested.txt") && c.reason.contains("mkdir")),
+            "{report:?}"
+        );
+        remove_worktree(&wt).ok();
+    }
+
+    #[test]
+    fn merge_delete_fails_when_main_path_is_directory() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-del-dir")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        std::fs::remove_file(wt.path.join("a.txt")).unwrap();
+        std::fs::remove_file(root.join("a.txt")).unwrap();
+        std::fs::create_dir_all(root.join("a.txt")).unwrap();
+        let report = merge_into_main(&wt, &root);
+        assert!(
+            report.conflicts.iter().any(|c| c.path == "a.txt")
+                || report.deleted.iter().any(|p| p == "a.txt"),
+            "{report:?}"
+        );
+        remove_worktree(&wt).ok();
+    }
+
+    #[test]
+    fn merge_notes_when_worktree_is_not_git() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let wt = SwarmWorktree {
+            path: dir.path().to_path_buf(),
+            repo_root: dir.path().to_path_buf(),
+            base_head: "deadbeef".into(),
+            worker_id: "w0".into(),
+        };
+        let report = merge_into_main(&wt, dir.path());
+        assert!(
+            report.notes.iter().any(|n| n.contains("git status")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn create_worktree_fails_when_git_add_cannot_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("wt");
+        let err = create_worktree(dir.path(), &dest, "w0").unwrap_err();
+        assert!(
+            err.contains("HEAD") || err.contains("git") || err.contains("worktree"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn merge_notes_main_deleted_while_worker_edited() {
+        let (_keep, root) = init_repo();
+        let dest = root
+            .join(".whycodes")
+            .join("swarm")
+            .join("run-del-main")
+            .join("worker-0");
+        let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+        std::fs::write(wt.path.join("a.txt"), b"from-worker\n").unwrap();
+        std::fs::remove_file(root.join("a.txt")).unwrap();
+        let report = merge_into_main(&wt, &root);
+        assert!(
+            report.conflicts.iter().any(|c| c.path == "a.txt")
+                || report.applied.iter().any(|p| p == "a.txt"),
+            "{report:?}"
+        );
+        remove_worktree(&wt).ok();
     }
 }

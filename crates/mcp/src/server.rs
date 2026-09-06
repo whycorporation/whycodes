@@ -32,37 +32,45 @@ pub async fn run_stdio_server(
     profile: ToolProfile,
     working_dir: String,
 ) -> crate::error::Result<()> {
+    let (mut stdin, mut stdout) = open_stdio(cfg!(test));
+    run_stdio_io(
+        &mut stdin,
+        &mut stdout,
+        executor,
+        permissions,
+        profile,
+        working_dir,
+    )
+    .await
+}
+
+fn open_stdio(for_test: bool) -> (Box<dyn BufRead + Send>, Box<dyn Write + Send>) {
     #[cfg(test)]
-    {
+    if for_test {
         let input = TEST_STDIN.with(|s| std::mem::take(&mut *s.borrow_mut()));
-        let mut cursor = std::io::Cursor::new(input);
-        let mut captured = Vec::new();
-        let result = run_stdio_io(
-            &mut cursor,
-            &mut captured,
-            executor,
-            permissions,
-            profile,
-            working_dir,
-        )
-        .await;
-        TEST_STDOUT.with(|s| *s.borrow_mut() = captured);
-        result
+        return (
+            Box::new(std::io::Cursor::new(input)),
+            Box::new(CaptureStdout),
+        );
     }
-    #[cfg(not(test))]
-    {
-        let stdin = std::io::stdin();
-        let mut stdout = std::io::stdout();
-        let mut reader = stdin.lock();
-        run_stdio_io(
-            &mut reader,
-            &mut stdout,
-            executor,
-            permissions,
-            profile,
-            working_dir,
-        )
-        .await
+    let _ = for_test;
+    (
+        Box::new(std::io::BufReader::new(std::io::stdin())),
+        Box::new(std::io::stdout()),
+    )
+}
+
+#[cfg(test)]
+struct CaptureStdout;
+
+#[cfg(test)]
+impl Write for CaptureStdout {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        TEST_STDOUT.with(|s| s.borrow_mut().extend_from_slice(buf));
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -456,5 +464,47 @@ mod tests {
         .await
         .unwrap_err();
         assert!(err.to_string().contains("write boom"), "{err}");
+
+        struct FailFlush {
+            wrote: bool,
+        }
+        impl std::io::Write for FailFlush {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.wrote = true;
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(std::io::Error::other("flush boom"))
+            }
+        }
+        let mut reader =
+            std::io::Cursor::new(br#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#.to_vec());
+        let err = run_stdio_io(
+            &mut reader,
+            &mut FailFlush { wrote: false },
+            Arc::new(exec()),
+            perms(),
+            ToolProfile::Core,
+            ".".into(),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("flush boom"), "{err}");
+    }
+
+    #[test]
+    fn stdio_handles_are_readable() {
+        TEST_STDIN.with(|s| *s.borrow_mut() = b"{}\n".to_vec());
+        let (mut reader, mut writer) = open_stdio(true);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        assert_eq!(line, "{}\n");
+        writer.write_all(b"ok").unwrap();
+        writer.flush().unwrap();
+        let out = TEST_STDOUT.with(|s| s.borrow().clone());
+        assert_eq!(out, b"ok");
+
+        // Production constructors: build and drop without reading the process stdin.
+        let (_reader, _writer) = open_stdio(false);
     }
 }

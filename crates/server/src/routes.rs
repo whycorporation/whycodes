@@ -1055,14 +1055,14 @@ mod tests {
 
     #[test]
     fn system_prompt_includes_runtime_context() {
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let prompt = system_prompt_for(&state.agent, &state.project_dir);
         assert!(prompt.contains("Today's date:"), "{prompt}");
     }
 
     #[tokio::test]
     async fn resolve_api_key_prefers_env_then_config_then_openai() {
-        let _home = crate::IsolatedHome::new();
+        let _home = crate::http_tests::IsolatedHome::new();
         let mut c = Config::default();
         c.providers.insert(
             "groq".into(),
@@ -1128,7 +1128,7 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_api_key_reads_oauth_store() {
-        let home = crate::IsolatedHome::new();
+        let home = crate::http_tests::IsolatedHome::new();
         whycodes_auth::spec::register_spec(whycodes_auth::spec::ProviderSpec {
             name: "server-cov-oauth".into(),
             label: "cov".into(),
@@ -1169,7 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn share_routes_serve_files_and_error_on_unreadable() {
-        let cwd = crate::IsolatedCwd::new();
+        let cwd = crate::http_tests::IsolatedCwd::new();
         let project_shares = cwd.path().join(".whycodes").join("shares");
         let global_shares = cwd.path().join("shares");
         std::fs::create_dir_all(&project_shares).unwrap();
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_models_uses_catalog_or_default() {
-        let mut state = crate::test_state();
+        let mut state = crate::http_tests::test_state();
         let mut cfg = Config::default();
         cfg.models.insert("gpt".into(), model("openai", "gpt-4o"));
         cfg.providers.insert(
@@ -1253,8 +1253,8 @@ mod tests {
 
     #[tokio::test]
     async fn sessions_persist_merge_and_reload_from_db() {
-        let _home = crate::IsolatedHome::new();
-        let state = crate::test_state();
+        let _home = crate::http_tests::IsolatedHome::new();
+        let state = crate::http_tests::test_state();
         let created = create_session(
             State(state.clone()),
             Json(CreateSessionRequest {
@@ -1274,7 +1274,7 @@ mod tests {
                 .any(|s| s["id"] == id && s["source"] == "memory")
         );
 
-        let cold = crate::test_state();
+        let cold = crate::http_tests::test_state();
         let listed_cold = list_sessions(State(cold.clone())).await;
         assert!(
             listed_cold["sessions"]
@@ -1296,9 +1296,9 @@ mod tests {
 
     #[tokio::test]
     async fn persist_warns_when_db_path_is_a_directory() {
-        let home = crate::IsolatedHome::new();
+        let home = crate::http_tests::IsolatedHome::new();
         std::fs::create_dir_all(home.path().join("whycodes.db")).unwrap();
-        let state = crate::test_state();
+        let state = crate::http_tests::test_state();
         let created = create_session(
             State(state.clone()),
             Json(CreateSessionRequest {
@@ -1328,13 +1328,13 @@ mod tests {
 
     #[tokio::test]
     async fn chat_streams_scripted_success_and_error() {
-        let _home = crate::IsolatedHome::new();
+        let _home = crate::http_tests::IsolatedHome::new();
         let mut registry = whycodes_llm::provider::ProviderRegistry::new();
         registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
             "ollama",
             [whycodes_llm::ScriptedStep::Text("hello-sse".into())],
         )));
-        let state = crate::test_state_with_registry(Some(registry));
+        let state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         state.insert_session(session);
@@ -1367,7 +1367,7 @@ mod tests {
             "ollama",
             [whycodes_llm::ScriptedStep::FailOpen("scripted-fail".into())],
         )));
-        let err_state = crate::test_state_with_registry(Some(registry));
+        let err_state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         err_state.insert_session(session);
@@ -1396,13 +1396,13 @@ mod tests {
 
     #[tokio::test]
     async fn chat_persists_after_scripted_turn() {
-        let _home = crate::IsolatedHome::new();
+        let _home = crate::http_tests::IsolatedHome::new();
         let mut registry = whycodes_llm::provider::ProviderRegistry::new();
         registry.register(Box::new(whycodes_llm::ScriptedProvider::repeating(
             "ollama",
             [whycodes_llm::ScriptedStep::Text("chat-persist-ok".into())],
         )));
-        let state = crate::test_state_with_registry(Some(registry));
+        let state = crate::http_tests::test_state_with_registry(Some(registry));
         let session = whycodes_session::session::Session::new("/tmp".into(), "sys".into());
         let id = session.id.clone();
         state.insert_session(session);

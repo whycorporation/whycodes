@@ -1619,11 +1619,11 @@ async fn login_with_spec_reports_persist_errors() {
 #[test]
 fn browser_flow_timeout_covers_test_and_production() {
     assert_eq!(
-        browser_flow_timeout(true),
+        browser_flow_timeout_for_test(true),
         std::time::Duration::from_millis(400)
     );
     assert_eq!(
-        browser_flow_timeout(false),
+        browser_flow_timeout_for_test(false),
         std::time::Duration::from_secs(5 * 60)
     );
 }

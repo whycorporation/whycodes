@@ -396,10 +396,17 @@ mod tests {
         let mut no_result = stdout_of(r#"printf '%s\n' '{"jsonrpc":"2.0","id":1}'"#).await;
         let e = read_stdio_response(&mut no_result, 1).await.unwrap_err();
         assert!(e.to_string().contains("no result"), "{e}");
+
+        assert_eq!(python_bin(true), "/usr/bin/python3");
+        assert_eq!(python_bin(false), "python3");
     }
 
     fn python() -> &'static str {
-        if std::path::Path::new("/usr/bin/python3").exists() {
+        python_bin(std::path::Path::new("/usr/bin/python3").exists())
+    }
+
+    fn python_bin(usr_bin_exists: bool) -> &'static str {
+        if usr_bin_exists {
             "/usr/bin/python3"
         } else {
             "python3"
@@ -877,6 +884,19 @@ sys.exit(0)
             .expect("initialized notification should fail")
             .to_string();
         assert!(err.contains("initialized"), "{err}");
+
+        let bad_name = HashMap::from([("bad name".into(), "x".into())]);
+        let err = match McpClient::connect_http("http://127.0.0.1:1/mcp", &bad_name).await {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("invalid header name should fail"),
+        };
+        assert!(err.contains("invalid header"), "{err}");
+        let bad_value = HashMap::from([("x".into(), "bad\nvalue".into())]);
+        let err = match McpClient::connect_sse("http://127.0.0.1:1/sse", &bad_value).await {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("invalid header value should fail"),
+        };
+        assert!(err.contains("invalid header"), "{err}");
     }
 
     fn init_result_rpc(id: u64) -> String {

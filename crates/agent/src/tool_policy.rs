@@ -239,4 +239,23 @@ mod tests {
         };
         assert!(!is_parallel_safe_tool("bash", &deny_shell));
     }
+
+    #[test]
+    fn pretty_one_liner_and_absolute_path_inside_workspace() {
+        let compact_arr = format_permission_detail(&json!({"items": [1, 2]}));
+        assert!(compact_arr.contains("items:"), "{compact_arr}");
+        let cwd = std::env::current_dir().unwrap();
+        let cwd_s = cwd.to_string_lossy();
+        let inside = cwd.join("Cargo.toml");
+        if inside.is_file() {
+            assert!(
+                !path_outside_workspace(&inside.to_string_lossy(), &cwd_s),
+                "canonicalized workspace file must be inside"
+            );
+        }
+        assert!(file_tool_path(&call("grep", json!({"path": "src"}))).is_some());
+        assert!(file_tool_path(&call("apply_patch", json!({"path": "a.rs"}))).is_some());
+        assert!(file_tool_path(&call("write", json!({"path": ""}))).is_none());
+        assert!(SHELL_TOOLS.contains(&"bash"));
+    }
 }

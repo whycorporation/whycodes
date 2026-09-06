@@ -39,7 +39,10 @@ fn shared_client() -> &'static reqwest::Client {
             .tcp_keepalive(std::time::Duration::from_secs(30))
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
-            .unwrap_or_else(|_| reqwest::Client::new())
+            .unwrap_or_else(|e| {
+                tracing::debug!("shared HTTP client builder failed, using default: {e}");
+                reqwest::Client::new()
+            })
     })
 }
 
@@ -98,49 +101,5 @@ pub fn post_for_provider(url: &str, provider: &str) -> RequestBuilder {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn user_agent_starts_with_whycodes() {
-        assert!(
-            USER_AGENT.starts_with("whycodes/"),
-            "USER_AGENT={USER_AGENT}"
-        );
-        assert!(!USER_AGENT.ends_with('/'));
-        assert!(USER_AGENT.len() > "whycodes/".len());
-    }
-
-    #[test]
-    fn identity_constants() {
-        assert_eq!(X_TITLE, "whycodes");
-        assert!(HTTP_REFERER.contains("why.codes"));
-    }
-
-    #[test]
-    fn http_client_builds() {
-        let _ = http_client();
-    }
-
-    #[test]
-    fn http_client_is_shared() {
-        // Process-wide client: same static reference on every call.
-        assert!(std::ptr::eq(shared_client(), shared_client()));
-        // Clones are cheap and keep the pool warm.
-        let _a = http_client();
-        let _b = http_client();
-    }
-
-    #[test]
-    fn plugin_identity_falls_back_to_whycodes() {
-        let _ = with_plugin_identity(http_client().get("https://example.invalid/"), "no-such");
-    }
-
-    #[test]
-    fn connect_timeout_is_finite() {
-        // Guard against regressions that drop connect_timeout and re-inflate
-        // "Worked for Xs" on dead VPN/Tailscale hops.
-        assert!(CONNECT_TIMEOUT.as_secs() >= 1);
-        assert!(CONNECT_TIMEOUT.as_secs() <= 10);
-    }
-}
+#[path = "client_identity_tests.rs"]
+mod tests;

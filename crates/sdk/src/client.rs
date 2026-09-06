@@ -102,60 +102,17 @@ impl WhyCodesClient {
     /// The child inherits this process's environment (API keys, `HOME`), so
     /// it spends the same provider quota as the user. `close` / drop kills it.
     pub async fn launch(opts: LaunchOptions) -> Result<Self, SdkError> {
-        let port = match opts.port {
-            Some(p) => p,
-            None => ephemeral_port()?,
-        };
-        let binary = resolve_binary(opts.binary.as_deref())?;
-        let isolated = !opts.inherit_logins || opts.home.is_some();
-        let (home_env, held_home) = if isolated {
-            if let Some(p) = opts.home.clone() {
-                std::fs::create_dir_all(&p).map_err(|e| {
-                    SdkError::with_source(ErrorCode::StartupFailed, "create WHYCODES_HOME", e)
-                })?;
-                (Some(p), None)
-            } else {
-                let tmp = tempfile::tempdir().map_err(|e| {
-                    SdkError::with_source(ErrorCode::StartupFailed, "temp WHYCODES_HOME", e)
-                })?;
-                let path = tmp.path().to_path_buf();
-                (Some(path), Some(tmp))
-            }
-        } else {
-            (None, None)
-        };
-        let mut cmd = Command::new(&binary);
-        cmd.arg("serve")
-            .arg(port.to_string())
-            .current_dir(&opts.working_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        if let Some(home) = &home_env {
-            cmd.env("WHYCODES_HOME", home);
-        }
-        if !opts.inherit_logins {
-            for key in [
-                "ANTHROPIC_API_KEY",
-                "OPENAI_API_KEY",
-                "OPENROUTER_API_KEY",
-                "XAI_API_KEY",
-                "GROQ_API_KEY",
-                "GOOGLE_API_KEY",
-                "DEEPSEEK_API_KEY",
-                "MISTRAL_API_KEY",
-            ] {
-                cmd.env_remove(key);
-            }
-        }
+        let prepared = prepare_launch(&opts)?;
+        let mut cmd = launch_command(&prepared, &opts);
         let child = cmd.spawn().map_err(|e| {
             SdkError::with_source(
                 ErrorCode::ServeNotFound,
-                format!("could not execute {}: {e}", binary.display()),
+                format!("could not execute {}: {e}", prepared.binary.display()),
                 e,
             )
         })?;
+        let port = prepared.port;
+        let held_home = prepared.held_home;
 
         let base = format!("http://127.0.0.1:{port}");
         let http = http_client()?;
@@ -168,29 +125,28 @@ impl WhyCodesClient {
 
         let deadline = Instant::now() + opts.startup_timeout;
         loop {
-            if Instant::now() >= deadline {
-                let stderr = take_stderr(&mut client.child).await;
-                return Err(SdkError::new(
-                    ErrorCode::StartupTimeout,
-                    format!(
-                        "daemon at {base} did not become healthy in {:?}. {stderr}",
-                        opts.startup_timeout
-                    ),
-                ));
-            }
-            if let Some(child) = client.child.as_mut()
-                && let Ok(Some(status)) = child.try_wait()
-            {
-                let stderr = take_stderr(&mut client.child).await;
-                return Err(SdkError::new(
-                    ErrorCode::StartupFailed,
-                    format!("whycodes serve exited ({status}). {stderr}"),
-                ));
-            }
-            match client.handshake().await {
-                Ok(_) => return Ok(client),
-                Err(e) if matches!(e.code, ErrorCode::UnsupportedVersion) => return Err(e),
-                Err(_retry) => tokio::time::sleep(Duration::from_millis(50)).await,
+            let child_status = match client.child.as_mut() {
+                Some(child) => match child.try_wait() {
+                    Ok(Some(status)) => Some(status.to_string()),
+                    _ => None,
+                },
+                None => None,
+            };
+            let handshake = client.handshake().await.map(|_| ());
+            match launch_poll(
+                Instant::now(),
+                deadline,
+                opts.startup_timeout,
+                &base,
+                child_status,
+                handshake,
+            ) {
+                LaunchPoll::Ready => return Ok(client),
+                LaunchPoll::Retry => tokio::time::sleep(Duration::from_millis(50)).await,
+                LaunchPoll::Failed(err) => {
+                    let stderr = take_stderr(&mut client.child).await;
+                    return Err(attach_stderr(err, &stderr));
+                }
             }
         }
     }
@@ -815,6 +771,11 @@ fn binary_names() -> &'static [&'static str] {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn ephemeral_port_for_test() -> u16 {
+    ephemeral_port().expect("ephemeral port")
+}
+
 fn ephemeral_port() -> Result<u16, SdkError> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")
         .map_err(|e| SdkError::with_source(ErrorCode::StartupFailed, "bind ephemeral port", e))?;
@@ -822,6 +783,117 @@ fn ephemeral_port() -> Result<u16, SdkError> {
         .local_addr()
         .map(|a| a.port())
         .map_err(|e| SdkError::with_source(ErrorCode::StartupFailed, "ephemeral port", e))
+}
+
+const STRIPPED_LOGIN_KEYS: &[&str] = &[
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "XAI_API_KEY",
+    "GROQ_API_KEY",
+    "GOOGLE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "MISTRAL_API_KEY",
+];
+
+struct PreparedLaunch {
+    port: u16,
+    binary: PathBuf,
+    home_env: Option<PathBuf>,
+    held_home: Option<tempfile::TempDir>,
+}
+
+fn prepare_launch(opts: &LaunchOptions) -> Result<PreparedLaunch, SdkError> {
+    let port = match opts.port {
+        Some(p) => p,
+        None => ephemeral_port()?,
+    };
+    let binary = resolve_binary(opts.binary.as_deref())?;
+    let isolated = !opts.inherit_logins || opts.home.is_some();
+    let (home_env, held_home) = if isolated {
+        if let Some(p) = opts.home.clone() {
+            std::fs::create_dir_all(&p).map_err(|e| {
+                SdkError::with_source(ErrorCode::StartupFailed, "create WHYCODES_HOME", e)
+            })?;
+            (Some(p), None)
+        } else {
+            let tmp = tempfile::tempdir().map_err(|e| {
+                SdkError::with_source(ErrorCode::StartupFailed, "temp WHYCODES_HOME", e)
+            })?;
+            let path = tmp.path().to_path_buf();
+            (Some(path), Some(tmp))
+        }
+    } else {
+        (None, None)
+    };
+    Ok(PreparedLaunch {
+        port,
+        binary,
+        home_env,
+        held_home,
+    })
+}
+
+fn launch_command(prepared: &PreparedLaunch, opts: &LaunchOptions) -> Command {
+    let mut cmd = Command::new(&prepared.binary);
+    cmd.arg("serve")
+        .arg(prepared.port.to_string())
+        .current_dir(&opts.working_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    if let Some(home) = &prepared.home_env {
+        cmd.env("WHYCODES_HOME", home);
+    }
+    if !opts.inherit_logins {
+        for key in STRIPPED_LOGIN_KEYS {
+            cmd.env_remove(key);
+        }
+    }
+    cmd
+}
+
+#[derive(Debug)]
+enum LaunchPoll {
+    Ready,
+    Retry,
+    Failed(SdkError),
+}
+
+fn launch_poll(
+    now: Instant,
+    deadline: Instant,
+    timeout: Duration,
+    base: &str,
+    child_exited: Option<String>,
+    handshake: Result<(), SdkError>,
+) -> LaunchPoll {
+    if now >= deadline {
+        return LaunchPoll::Failed(SdkError::new(
+            ErrorCode::StartupTimeout,
+            format!("daemon at {base} did not become healthy in {timeout:?}."),
+        ));
+    }
+    if let Some(status) = child_exited {
+        return LaunchPoll::Failed(SdkError::new(
+            ErrorCode::StartupFailed,
+            format!("whycodes serve exited ({status})."),
+        ));
+    }
+    match handshake {
+        Ok(()) => LaunchPoll::Ready,
+        Err(e) if matches!(e.code, ErrorCode::UnsupportedVersion) => LaunchPoll::Failed(e),
+        Err(_retry) => LaunchPoll::Retry,
+    }
+}
+
+fn attach_stderr(err: SdkError, stderr: &str) -> SdkError {
+    if stderr.is_empty() {
+        err
+    } else {
+        SdkError::new(err.code, format!("{} {stderr}", err.message))
+    }
 }
 
 fn status_error(status: reqwest::StatusCode, what: &str) -> SdkError {
@@ -844,6 +916,10 @@ async fn take_stderr(child: &mut Option<Child>) -> String {
     let Some(mut stderr) = child.stderr.take() else {
         return String::new();
     };
+    // A live child holds the pipe open; kill it so `read_to_end` can finish.
+    if let Err(_kill) = child.start_kill() {
+        // Best-effort teardown of a launched daemon.
+    }
     let mut buf = Vec::new();
     if let Err(_read) = tokio::io::AsyncReadExt::read_to_end(&mut stderr, &mut buf).await {
         // Diagnostic only; empty stderr is fine.
@@ -1029,88 +1105,6 @@ mod tests {
         }
     }
 
-    fn write_fake_binary(dir: &Path, body: &str) -> PathBuf {
-        let path = dir.join("whycodes");
-        let script = format!("#!/usr/bin/env python3\n{body}\n");
-        {
-            use std::io::Write;
-            let mut f = std::fs::File::create(&path).unwrap();
-            f.write_all(script.as_bytes()).unwrap();
-            f.sync_all().unwrap();
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        path
-    }
-
-    fn is_busy_exec(err: &SdkError) -> bool {
-        err.code == ErrorCode::ServeNotFound && err.message.to_ascii_lowercase().contains("busy")
-    }
-
-    async fn launch_or_retry_busy(opts: LaunchOptions) -> WhyCodesClient {
-        let mut last = None;
-        for i in 0..8 {
-            match WhyCodesClient::launch(opts.clone()).await {
-                Ok(client) => return client,
-                Err(e) if is_busy_exec(&e) => {
-                    last = Some(e);
-                    tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
-                }
-                Err(e) => panic!("{e:?}"),
-            }
-        }
-        panic!("{}", last.expect("busy retries exhausted"));
-    }
-
-    /// Retry `launch` while the fake binary is ETXTBSY, then return the
-    /// non-busy error. Parallel coverage instrumentation races write+exec.
-    async fn launch_expecting_err(opts: LaunchOptions) -> SdkError {
-        let mut last_busy = None;
-        for i in 0..8 {
-            match WhyCodesClient::launch(opts.clone()).await {
-                Ok(_) => panic!("expected launch error"),
-                Err(e) if is_busy_exec(&e) => {
-                    last_busy = Some(e);
-                    tokio::time::sleep(Duration::from_millis(20 * (i + 1))).await;
-                }
-                Err(e) => return e,
-            }
-        }
-        panic!("{}", last_busy.expect("busy retries exhausted"));
-    }
-
-    const PY_HEALTH: &str = r#"
-import json, sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
-PORT = int(sys.argv[2])
-PROTO = int(__import__("os").environ.get("FAKE_PROTO", "1"))
-class H(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path.split("?", 1)[0] == "/v1/health":
-            body = json.dumps({
-                "protocol": PROTO,
-                "version": "test",
-                "healthy": True,
-                "project": "/tmp",
-                "uptime_secs": 1,
-                "sessions_in_memory": 0,
-            }).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_response(404)
-            self.end_headers()
-    def log_message(self, *args):
-        pass
-HTTPServer(("127.0.0.1", PORT), H).serve_forever()
-"#;
-
     #[tokio::test]
     async fn event_stream_covers_poll_states() {
         struct OncePendingThenNone {
@@ -1206,6 +1200,18 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         let _ = noisy.as_mut().unwrap().wait().await;
         let text = take_stderr(&mut noisy).await;
         assert!(text.contains("boom"), "{text}");
+
+        let mut live = Some(
+            Command::new("sleep")
+                .arg("30")
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap(),
+        );
+        assert!(take_stderr(&mut live).await.is_empty());
+        let mut none: Option<Child> = None;
+        assert!(take_stderr(&mut none).await.is_empty());
     }
 
     #[tokio::test]
@@ -1245,6 +1251,147 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
             .unwrap();
     }
 
+    #[test]
+    fn prepare_launch_covers_port_home_and_isolation() {
+        let dir = tempfile::tempdir().unwrap();
+        let explicit = prepare_launch(&LaunchOptions {
+            working_dir: dir.path().to_path_buf(),
+            binary: Some(dir.path().join("bin")),
+            inherit_logins: true,
+            home: None,
+            startup_timeout: Duration::from_millis(200),
+            port: Some(9),
+        })
+        .unwrap();
+        assert_eq!(explicit.port, 9);
+        assert!(explicit.home_env.is_none());
+        assert!(explicit.held_home.is_none());
+
+        let ephemeral = prepare_launch(&LaunchOptions {
+            working_dir: dir.path().to_path_buf(),
+            binary: Some(dir.path().join("bin")),
+            inherit_logins: true,
+            home: None,
+            startup_timeout: Duration::from_millis(200),
+            port: None,
+        })
+        .unwrap();
+        assert!(ephemeral.port > 0);
+
+        let home = dir.path().join("home");
+        let isolated = prepare_launch(&LaunchOptions {
+            working_dir: dir.path().to_path_buf(),
+            binary: Some(dir.path().join("bin")),
+            inherit_logins: true,
+            home: Some(home.clone()),
+            startup_timeout: Duration::from_millis(200),
+            port: Some(11),
+        })
+        .unwrap();
+        assert_eq!(isolated.home_env.as_deref(), Some(home.as_path()));
+        assert!(home.is_dir());
+        assert!(isolated.held_home.is_none());
+
+        let temp = prepare_launch(&LaunchOptions {
+            working_dir: dir.path().to_path_buf(),
+            binary: Some(dir.path().join("bin")),
+            inherit_logins: false,
+            home: None,
+            startup_timeout: Duration::from_millis(200),
+            port: Some(12),
+        })
+        .unwrap();
+        assert!(temp.home_env.is_some());
+        assert!(temp.held_home.is_some());
+
+        let cmd = launch_command(
+            &temp,
+            &LaunchOptions {
+                working_dir: dir.path().to_path_buf(),
+                inherit_logins: false,
+                ..Default::default()
+            },
+        );
+        drop(cmd);
+        assert_eq!(STRIPPED_LOGIN_KEYS.len(), 8);
+    }
+
+    #[test]
+    fn launch_poll_covers_timeout_exit_version_retry_and_ready() {
+        let now = Instant::now();
+        let timeout = Duration::from_millis(200);
+        match launch_poll(
+            now + timeout,
+            now,
+            timeout,
+            "http://127.0.0.1:9",
+            None,
+            Err(SdkError::new(ErrorCode::Disconnected, "down")),
+        ) {
+            LaunchPoll::Failed(err) => {
+                assert_eq!(err.code, ErrorCode::StartupTimeout);
+                assert!(err.message.contains("http://127.0.0.1:9"));
+            }
+            other => panic!("timeout: {other:?}"),
+        }
+
+        match launch_poll(
+            now,
+            now + timeout,
+            timeout,
+            "http://127.0.0.1:9",
+            Some("exit status: 7".into()),
+            Ok(()),
+        ) {
+            LaunchPoll::Failed(err) => {
+                assert_eq!(err.code, ErrorCode::StartupFailed);
+                assert!(err.message.contains("exit status: 7"));
+            }
+            other => panic!("exit: {other:?}"),
+        }
+
+        match launch_poll(
+            now,
+            now + timeout,
+            timeout,
+            "http://127.0.0.1:9",
+            None,
+            Err(SdkError::new(ErrorCode::UnsupportedVersion, "proto")),
+        ) {
+            LaunchPoll::Failed(err) => assert_eq!(err.code, ErrorCode::UnsupportedVersion),
+            other => panic!("version: {other:?}"),
+        }
+
+        assert!(matches!(
+            launch_poll(
+                now,
+                now + timeout,
+                timeout,
+                "http://127.0.0.1:9",
+                None,
+                Err(SdkError::new(ErrorCode::Disconnected, "retry")),
+            ),
+            LaunchPoll::Retry
+        ));
+        assert!(matches!(
+            launch_poll(
+                now,
+                now + timeout,
+                timeout,
+                "http://127.0.0.1:9",
+                None,
+                Ok(())
+            ),
+            LaunchPoll::Ready
+        ));
+
+        let timeout_err = SdkError::new(ErrorCode::StartupTimeout, "daemon down.");
+        let with_stderr = attach_stderr(timeout_err, "stderr: waiting");
+        assert!(with_stderr.message.contains("stderr: waiting"));
+        let empty = attach_stderr(SdkError::new(ErrorCode::StartupFailed, "exited."), "");
+        assert_eq!(empty.message, "exited.");
+    }
+
     #[tokio::test]
     async fn launch_missing_binary_is_serve_not_found() {
         let err = match WhyCodesClient::launch(LaunchOptions {
@@ -1262,119 +1409,30 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
     }
 
     #[tokio::test]
-    async fn launch_isolated_home_and_tempdir_connect() {
+    async fn launch_temp_home_create_failure_is_startup_failed() {
         let dir = tempfile::tempdir().unwrap();
-        let binary = write_fake_binary(dir.path(), PY_HEALTH);
-        let home = dir.path().join("home");
-        let client = launch_or_retry_busy(LaunchOptions {
+        let blocker = dir.path().join("not-a-dir");
+        std::fs::write(&blocker, b"x").unwrap();
+        let err = match WhyCodesClient::launch(LaunchOptions {
             working_dir: dir.path().to_path_buf(),
-            binary: Some(binary.clone()),
-            inherit_logins: false,
-            home: Some(home.clone()),
-            startup_timeout: Duration::from_secs(5),
-            port: None,
-        })
-        .await;
-        assert!(home.is_dir());
-        assert!(client.base_url().starts_with("http://127.0.0.1:"));
-        client.close().await.unwrap();
-
-        let inherit_home = dir.path().join("inherit-home");
-        let client = launch_or_retry_busy(LaunchOptions {
-            working_dir: dir.path().to_path_buf(),
-            binary: Some(binary.clone()),
-            inherit_logins: true,
-            home: Some(inherit_home.clone()),
-            startup_timeout: Duration::from_secs(5),
-            port: Some(ephemeral_port().unwrap()),
-        })
-        .await;
-        assert!(inherit_home.is_dir());
-        client.close().await.unwrap();
-
-        let client = launch_or_retry_busy(LaunchOptions {
-            working_dir: dir.path().to_path_buf(),
-            binary: Some(binary),
+            binary: Some(dir.path().join("unused")),
             inherit_logins: false,
             home: None,
-            startup_timeout: Duration::from_secs(5),
-            port: Some(ephemeral_port().unwrap()),
+            startup_timeout: Duration::from_millis(200),
+            port: Some(1),
         })
-        .await;
-        client.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn launch_inherited_logins_retries_until_healthy() {
-        let dir = tempfile::tempdir().unwrap();
-        let body = format!("import time\ntime.sleep(0.12)\n{PY_HEALTH}");
-        let binary = write_fake_binary(dir.path(), &body);
-        let client = launch_or_retry_busy(LaunchOptions {
-            working_dir: dir.path().to_path_buf(),
-            binary: Some(binary),
-            inherit_logins: true,
-            home: None,
-            startup_timeout: Duration::from_secs(5),
-            port: Some(ephemeral_port().unwrap()),
-        })
-        .await;
-        client.close().await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn launch_unsupported_version_does_not_retry() {
-        let dir = tempfile::tempdir().unwrap();
-        let script = format!("import os\nos.environ['FAKE_PROTO']='99'\n{PY_HEALTH}");
-        let err = launch_expecting_err(LaunchOptions {
-            working_dir: dir.path().to_path_buf(),
-            binary: Some(write_fake_binary(dir.path(), &script)),
-            inherit_logins: false,
-            home: Some(dir.path().join("home3")),
-            startup_timeout: Duration::from_secs(5),
-            port: Some(ephemeral_port().unwrap()),
-        })
-        .await;
-        assert_eq!(err.code, ErrorCode::UnsupportedVersion);
-    }
-
-    #[tokio::test]
-    async fn launch_child_exit_is_startup_failed() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = write_fake_binary(
-            dir.path(),
-            "import sys\nsys.stderr.write('nope\\n')\nraise SystemExit(7)\n",
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected StartupFailed or ServeNotFound"),
+        };
+        assert!(
+            matches!(
+                err.code,
+                ErrorCode::StartupFailed | ErrorCode::ServeNotFound
+            ),
+            "{err:?}"
         );
-        let err = launch_expecting_err(LaunchOptions {
-            working_dir: dir.path().to_path_buf(),
-            binary: Some(binary),
-            inherit_logins: false,
-            home: None,
-            startup_timeout: Duration::from_secs(3),
-            port: Some(ephemeral_port().unwrap()),
-        })
-        .await;
-        assert_eq!(err.code, ErrorCode::StartupFailed);
-        assert!(err.message.contains("nope") || err.message.contains("exited"));
-    }
-
-    #[tokio::test]
-    async fn launch_timeout_closes_stderr_then_hangs() {
-        let dir = tempfile::tempdir().unwrap();
-        let binary = write_fake_binary(
-            dir.path(),
-            "import os, sys, time\nsys.stderr.write('waiting\\n')\nsys.stderr.flush()\nos.close(2)\ntime.sleep(30)\n",
-        );
-        let err = launch_expecting_err(LaunchOptions {
-            working_dir: dir.path().to_path_buf(),
-            binary: Some(binary),
-            inherit_logins: false,
-            home: None,
-            startup_timeout: Duration::from_millis(250),
-            port: Some(ephemeral_port().unwrap()),
-        })
-        .await;
-        assert_eq!(err.code, ErrorCode::StartupTimeout);
-        assert!(err.message.contains("waiting") || err.message.contains("did not become healthy"));
     }
 
     #[tokio::test]
@@ -1397,5 +1455,143 @@ HTTPServer(("127.0.0.1", PORT), H).serve_forever()
         };
         assert_eq!(err.code, ErrorCode::StartupFailed);
         assert!(err.message.contains("WHYCODES_HOME"));
+    }
+
+    fn system_bin(name: &str) -> PathBuf {
+        for candidate in [format!("/usr/bin/{name}"), format!("/bin/{name}")] {
+            let path = PathBuf::from(&candidate);
+            if path.is_file() {
+                return path;
+            }
+        }
+        PathBuf::from(name)
+    }
+
+    /// Spawns a real child (`true` ignores extra `serve <port>` args) so the
+    /// production launch loop is covered without the coverage.sh-skipped
+    /// fake-daemon tests.
+    #[tokio::test]
+    async fn launch_true_child_exit_is_startup_failed() {
+        let err = match WhyCodesClient::launch(LaunchOptions {
+            binary: Some(system_bin("true")),
+            inherit_logins: false,
+            startup_timeout: Duration::from_secs(2),
+            port: Some(1),
+            ..Default::default()
+        })
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected StartupFailed"),
+        };
+        assert_eq!(err.code, ErrorCode::StartupFailed);
+        assert!(err.message.contains("exited"), "{err:?}");
+    }
+
+    /// `yes` stays alive and ignores extra `serve <port>` args, so handshake
+    /// retries until `startup_timeout` (covers Retry loop + stderr attach).
+    /// `take_stderr` kills the child first so `read_to_end` cannot hang.
+    #[tokio::test]
+    async fn launch_yes_retries_until_startup_timeout() {
+        let err = match WhyCodesClient::launch(LaunchOptions {
+            binary: Some(system_bin("yes")),
+            inherit_logins: true,
+            startup_timeout: Duration::from_millis(250),
+            port: Some(1),
+            ..Default::default()
+        })
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected StartupTimeout"),
+        };
+        assert_eq!(err.code, ErrorCode::StartupTimeout);
+        assert!(err.message.contains("did not become healthy"), "{err:?}");
+    }
+
+    fn python3() -> PathBuf {
+        system_bin("python3")
+    }
+
+    fn write_health_serve_script(dir: &std::path::Path, protocol: u32) {
+        // `launch` runs `<binary> serve <port>` with `current_dir` = working_dir,
+        // so a file named `serve` is the Python script python3 executes.
+        std::fs::write(
+            dir.join("serve"),
+            format!(
+                r#"
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v1/health":
+            body = json.dumps({{
+                "protocol": {protocol},
+                "version": "0.0.0",
+                "healthy": True,
+                "project": "/tmp",
+                "uptime_secs": 1,
+                "sessions_in_memory": 0,
+            }}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
+    def log_message(self, *_args):
+        pass
+
+port = int(sys.argv[-1])
+HTTPServer(("127.0.0.1", port), H).serve_forever()
+"#
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Real spawn + handshake Ready path: `python3 serve <port>` binds
+    /// `/v1/health` on the requested port.
+    #[tokio::test]
+    async fn launch_python_health_server_is_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        write_health_serve_script(dir.path(), PROTOCOL_MAJOR);
+        let client = WhyCodesClient::launch(LaunchOptions {
+            working_dir: dir.path().to_path_buf(),
+            binary: Some(python3()),
+            inherit_logins: false,
+            startup_timeout: Duration::from_secs(5),
+            port: None,
+            home: None,
+        })
+        .await
+        .expect("python health server should become ready");
+        assert!(client.base_url().starts_with("http://127.0.0.1:"));
+        client.close().await.unwrap();
+    }
+
+    /// Same spawn loop, but `/v1/health` speaks protocol 99 so launch fails
+    /// with UnsupportedVersion instead of retrying.
+    #[tokio::test]
+    async fn launch_python_wrong_protocol_is_unsupported_version() {
+        let dir = tempfile::tempdir().unwrap();
+        write_health_serve_script(dir.path(), 99);
+        let err = match WhyCodesClient::launch(LaunchOptions {
+            working_dir: dir.path().to_path_buf(),
+            binary: Some(python3()),
+            inherit_logins: false,
+            startup_timeout: Duration::from_secs(5),
+            port: None,
+            home: None,
+        })
+        .await
+        {
+            Err(e) => e,
+            Ok(_) => panic!("expected UnsupportedVersion"),
+        };
+        assert_eq!(err.code, ErrorCode::UnsupportedVersion);
     }
 }

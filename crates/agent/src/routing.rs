@@ -135,4 +135,11 @@ mod tests {
         assert_eq!(p, "xai");
         assert_eq!(m, "grok-3-mini");
     }
+
+    #[test]
+    fn greeting_bare_fast_override_keeps_provider() {
+        let (p, m) = resolve_turn_model("anthropic", "claude-sonnet-4-5", "hi", Some("haiku"));
+        assert_eq!(p, "anthropic");
+        assert_eq!(m, "haiku");
+    }
 }

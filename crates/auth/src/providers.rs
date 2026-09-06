@@ -32,6 +32,11 @@ const fn browser_flow_timeout(for_test: bool) -> Duration {
     }
 }
 
+#[cfg(test)]
+pub(crate) const fn browser_flow_timeout_for_test(for_test: bool) -> Duration {
+    browser_flow_timeout(for_test)
+}
+
 /// User-interaction hooks for the login flows. The CLI implements this
 /// with stdout/stdin ([`CliLoginUi`]); the TUI drives it from status lines
 /// and the prompt box. Token material never passes through this interface.

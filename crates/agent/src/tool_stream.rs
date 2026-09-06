@@ -204,4 +204,64 @@ mod tests {
         let calls = a.finish();
         assert_eq!(calls[0].arguments["path"], "x.rs");
     }
+
+    #[test]
+    fn empty_assembler_and_non_object_input() {
+        let a = ToolCallAssembler::new();
+        assert!(a.is_empty());
+        assert!(a.pending_snapshots().is_empty());
+        assert!(a.last_updated().is_none());
+
+        let mut a = ToolCallAssembler::new();
+        a.on_tool_use("n1".into(), "read".into(), json!(12));
+        a.on_tool_use_delta("n1", "");
+        a.on_tool_use_delta("missing", r#"{"path":"x"}"#);
+        a.on_tool_use_delta("0", r#"{"path":"x.rs"}"#);
+        let snaps = a.pending_snapshots();
+        assert_eq!(snaps.len(), 1);
+        assert!(snaps[0].2.contains("path") || snaps[0].2.contains("12"));
+        let last = a.last_updated().expect("active");
+        assert_eq!(last.0, "n1");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn numeric_alias_id_inserts_key_on_delta() {
+        let mut a = ToolCallAssembler::new();
+        a.on_tool_use("n1".into(), "read".into(), json!({}));
+        a.on_tool_use_delta("00", r#"{"path":"x.rs"}"#);
+        let snaps = a.pending_snapshots();
+        assert_eq!(snaps.len(), 1);
+        assert!(snaps[0].2.contains("path"), "{snaps:?}");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 1);
+    }
+
+    #[test]
+    fn pending_snapshots_use_preparsed_object() {
+        let mut a = ToolCallAssembler::new();
+        a.on_tool_use("c".into(), "read".into(), json!({"path": "x.rs"}));
+        let snaps = a.pending_snapshots();
+        assert!(snaps[0].2.contains("x.rs"), "{snaps:?}");
+        a.on_tool_use("c2".into(), "grep".into(), Value::Null);
+        let snaps = a.pending_snapshots();
+        assert_eq!(snaps.len(), 2);
+        assert!(snaps[1].2.is_empty());
+        let calls = a.finish();
+        assert_eq!(calls[1].arguments, json!({}));
+    }
+
+    #[test]
+    fn named_id_delta_reuses_existing_key() {
+        let mut a = ToolCallAssembler::new();
+        a.on_tool_use("call_abc".into(), "read".into(), json!({}));
+        a.on_tool_use_delta("call_abc", r#"{"path":"x.rs"}"#);
+        a.on_tool_use_delta("call_abc", r#""}"#);
+        let snaps = a.pending_snapshots();
+        assert_eq!(snaps[0].0, "call_abc");
+        assert!(snaps[0].2.contains("path"), "{snaps:?}");
+        let calls = a.finish();
+        assert_eq!(calls.len(), 1);
+    }
 }

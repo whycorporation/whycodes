@@ -31,6 +31,8 @@ installed (`pkg-config sqlite3`).
   normal `test` job still runs them.
 - Crate floors at 100% also ignore `tests.rs` so host-only branches cannot
   sink the gate (`CRATE_IGNORE` in the wrapper).
+- JSON crate floors pass `LLVM_COV_FLAGS=--skip-expansions` so rustc macro
+  expansions (`format!`, tracing fields) are not counted as uncovered lines.
 
 Needs `cargo-llvm-cov` and `llvm-tools` (`llvm-cov`, `llvm-profdata`):
 
@@ -59,7 +61,7 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm` | **100%** lines | Production files only (`tests.rs` ignored) |
 | `format` | **95%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
@@ -68,9 +70,8 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-09-01 (`cargo llvm-cov --workspace`, flags above — re-measured after #48).
-Workspace line coverage **85.58%** (was 85.58% on 2026-08-21; delta within noise — #48 was
-`core::ErrorKind`/`TransportError` + `ToolExecutor` cache + swallow ratchet + `agent/{mod,turn,gate,dispatch,compact}` file move, no line-coverage change).
+Linux x86_64, 2026-09-06 (`cargo llvm-cov --workspace`, flags above — `whycodes-llm` 100% floor, #64).
+Workspace line coverage last measured 2026-09-01 at **85.58%**; crate floors now include `llm` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
@@ -88,11 +89,10 @@ informational.
 | Crate | Lines |
 |---|---|
 | function, schema, skill, sandbox, protocol, plugin, command-risk, storage, core, config, format, index | **100%** |
-| session, memory | **100%** |
+| session, memory, llm | **100%** |
 | auth | **99.9%** |
 | tui | 86.3% |
 | tools | 86.0% |
-| llm | 83.6% |
 | mcp | 80.8% |
 | sdk | 80.4% |
 | server | 79.1% |

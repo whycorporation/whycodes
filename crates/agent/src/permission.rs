@@ -222,4 +222,75 @@ mod tests {
             None => unsafe { std::env::remove_var("CI") },
         }
     }
+
+    #[test]
+    fn stdin_prompter_constructs_and_atty_true_without_ci() {
+        let _ = StdinPrompter::default();
+        let _ = StdinPrompter::default().with_notify(crate::notify::handle_from_config(
+            &whycodes_config::NotifyConfig::default(),
+        ));
+        let prev_ci = std::env::var_os("CI");
+        let prev_approve = std::env::var_os("WHYCODES_AUTO_APPROVE");
+        let prev_deny = std::env::var_os("WHYCODES_AUTO_DENY");
+        unsafe { std::env::remove_var("CI") };
+        unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") };
+        unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") };
+        assert!(atty_stderr());
+        let _ = default_prompter();
+        match prev_ci {
+            Some(v) => unsafe { std::env::set_var("CI", v) },
+            None => unsafe { std::env::remove_var("CI") },
+        }
+        match prev_approve {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_APPROVE", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_AUTO_APPROVE") },
+        }
+        match prev_deny {
+            Some(v) => unsafe { std::env::set_var("WHYCODES_AUTO_DENY", v) },
+            None => unsafe { std::env::remove_var("WHYCODES_AUTO_DENY") },
+        }
+    }
+
+    #[tokio::test]
+    async fn stdin_prompter_eof_denies() {
+        let allowed = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            StdinPrompter::default().ask("bash", ""),
+        )
+        .await
+        .expect("stdin ask must not hang on EOF");
+        let _ = allowed;
+        let allowed = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            StdinPrompter::default().ask("bash", "rm -rf /tmp/x"),
+        )
+        .await
+        .expect("stdin ask with detail must not hang on EOF");
+        let _ = allowed;
+    }
+
+    #[tokio::test]
+    async fn channel_prompter_with_notify_constructs() {
+        let (prompter, rx) = ChannelPermissionPrompter::new();
+        let _ = prompter.with_notify(crate::notify::handle_from_config(
+            &whycodes_config::NotifyConfig::default(),
+        ));
+        drop(rx);
+    }
+
+    #[tokio::test]
+    async fn channel_prompter_with_notify_asks() {
+        let cfg = whycodes_config::NotifyConfig {
+            on: vec!["need_input".into()],
+            discord_webhook: Some("https://example.invalid/webhook".into()),
+            ..Default::default()
+        };
+        let (prompter, mut rx) = ChannelPermissionPrompter::new();
+        let prompter = prompter.with_notify(crate::notify::handle_from_config(&cfg));
+        let ask = tokio::spawn(async move { prompter.ask("bash", "rm -rf /tmp/x").await });
+        let req = rx.recv().await.expect("request");
+        assert_eq!(req.tool_name, "bash");
+        req.reply.send(true).unwrap();
+        assert!(ask.await.unwrap());
+    }
 }

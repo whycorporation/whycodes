@@ -293,4 +293,45 @@ mod tests {
             "CLAUDE.md"
         );
     }
+
+    #[test]
+    fn byte_and_file_caps_and_duplicate_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "native").unwrap();
+        std::fs::write(dir.path().join("CLAUDE.md"), "native").unwrap();
+        let files = discover(dir.path());
+        assert_eq!(files.len(), 1, "duplicate content skipped");
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("AGENTS.md"),
+            "a".repeat(MAX_CONTEXT_BYTES + 10),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("CLAUDE.md"), "second").unwrap();
+        let files = discover(dir.path());
+        assert!(
+            files.len() == 1 || files.iter().any(|f| f.label.contains("AGENTS")),
+            "{:?}",
+            files.iter().map(|f| f.label.as_str()).collect::<Vec<_>>()
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("AGENTS.md"), "one").unwrap();
+        std::fs::create_dir_all(dir.path().join(".cursor/rules")).unwrap();
+        for i in 0..(MAX_CONTEXT_FILES + 4) {
+            std::fs::write(
+                dir.path().join(".cursor/rules").join(format!("r{i}.mdc")),
+                format!("rule {i} unique body"),
+            )
+            .unwrap();
+        }
+        let files = discover(dir.path());
+        assert!(files.len() <= MAX_CONTEXT_FILES, "{}", files.len());
+    }
+
+    #[test]
+    fn git_root_at_filesystem_root_is_none_or_some() {
+        let _ = discover(Path::new("/"));
+    }
 }

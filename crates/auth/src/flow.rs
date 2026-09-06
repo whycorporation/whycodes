@@ -221,7 +221,14 @@ pub fn bind_loopback() -> Result<(TcpListener, u16)> {
 
 fn listener_and_port(bound: std::io::Result<TcpListener>) -> Result<(TcpListener, u16)> {
     let listener = bound.map_err(AuthError::Io)?;
-    let port = port_from_addr(listener.local_addr())?;
+    listener_with_port(listener, |l| l.local_addr())
+}
+
+fn listener_with_port(
+    listener: TcpListener,
+    addr: impl FnOnce(&TcpListener) -> std::io::Result<std::net::SocketAddr>,
+) -> Result<(TcpListener, u16)> {
+    let port = port_from_addr(addr(&listener))?;
     Ok((listener, port))
 }
 

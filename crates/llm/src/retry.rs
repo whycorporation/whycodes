@@ -65,7 +65,7 @@ impl RetryPolicy {
     /// Backoff for attempt `n` (1-based failed attempt count before sleep).
     pub fn backoff_for_attempt(&self, failed_attempts: usize) -> Duration {
         let exp = failed_attempts.saturating_sub(1).min(16) as u32;
-        let mult = 1u64.checked_shl(exp).unwrap_or(u64::MAX);
+        let mult = 1u64 << exp;
         let base_ms = self.initial_backoff.as_millis() as u64;
         let raw = base_ms.saturating_mul(mult);
         let capped = raw.min(self.max_backoff.as_millis() as u64);
@@ -138,11 +138,9 @@ where
         match f().await {
             Ok(value) => {
                 if attempt > 1 {
+                    let elapsed_ms = started.elapsed().as_millis();
                     info!(
-                        op,
-                        attempt,
-                        elapsed_ms = started.elapsed().as_millis() as u64,
-                        "LLM call succeeded after retry"
+                        "LLM call succeeded after retry op={op} attempt={attempt} elapsed_ms={elapsed_ms}"
                     );
                 }
                 return Ok(value);
@@ -156,38 +154,28 @@ where
                     && started.elapsed() < policy.max_elapsed;
 
                 if !allow {
+                    let kind = classified.kind.as_str();
+                    let retryable = classified.retryable;
+                    let status = classified.status;
+                    let elapsed_ms = started.elapsed().as_millis();
                     warn!(
-                        op,
-                        attempt,
-                        kind = classified.kind.as_str(),
-                        retryable = classified.retryable,
-                        status = ?classified.status,
-                        attempt_ms,
-                        elapsed_ms = started.elapsed().as_millis() as u64,
-                        error = %e,
-                        "LLM call failed (no more retries)"
+                        "LLM call failed (no more retries) op={op} attempt={attempt} kind={kind} retryable={retryable} status={status:?} attempt_ms={attempt_ms} elapsed_ms={elapsed_ms} error={e}"
                     );
                     return Err(e);
                 }
 
                 let delay = policy.sleep_duration(attempt, &classified);
+                // `allow` already requires `elapsed < max_elapsed`, so remaining > 0.
                 let remaining = policy.max_elapsed.saturating_sub(started.elapsed());
                 let delay = delay.min(remaining);
-                if remaining.is_zero() {
-                    return Err(e);
-                }
 
+                let next_attempt = attempt + 1;
+                let max_tries = policy.max_retries + 1;
+                let kind = classified.kind.as_str();
+                let status = classified.status;
+                let delay_ms = delay.as_millis();
                 warn!(
-                    op,
-                    attempt,
-                    next_attempt = attempt + 1,
-                    max_tries = policy.max_retries + 1,
-                    kind = classified.kind.as_str(),
-                    status = ?classified.status,
-                    delay_ms = delay.as_millis() as u64,
-                    attempt_ms,
-                    error = %e,
-                    "LLM call failed, retrying"
+                    "LLM call failed, retrying op={op} attempt={attempt} next_attempt={next_attempt} max_tries={max_tries} kind={kind} status={status:?} delay_ms={delay_ms} attempt_ms={attempt_ms} error={e}"
                 );
                 sleep(delay).await;
             }
@@ -206,75 +194,5 @@ pub fn is_retryable_message(msg: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    #[test]
-    fn retryable_omniroute_bracket_500_json() {
-        let body = r#"{"error":{"message":"[500]: An internal server error occurred","type":"server_error","code":"internal_server_error"}}"#;
-        assert!(is_retryable_message(body));
-    }
-
-    #[test]
-    fn non_retryable_401() {
-        assert!(!is_retryable_message(
-            "Provider API error (401): Unauthorized"
-        ));
-    }
-
-    #[test]
-    fn backoff_grows_and_caps() {
-        let p = RetryPolicy {
-            initial_backoff: Duration::from_millis(100),
-            max_backoff: Duration::from_millis(1000),
-            full_jitter: false,
-            ..RetryPolicy::default()
-        };
-        assert_eq!(p.backoff_for_attempt(1), Duration::from_millis(100));
-        assert_eq!(p.backoff_for_attempt(2), Duration::from_millis(200));
-        assert_eq!(p.backoff_for_attempt(3), Duration::from_millis(400));
-        assert_eq!(p.backoff_for_attempt(10), Duration::from_millis(1000));
-    }
-
-    #[tokio::test]
-    async fn retries_then_succeeds() {
-        let n = Arc::new(AtomicUsize::new(0));
-        let c = n.clone();
-        let policy = RetryPolicy::test_fast();
-        let out = execute_with_policy(&policy, "test", || {
-            let c = c.clone();
-            async move {
-                let i = c.fetch_add(1, Ordering::SeqCst);
-                if i < 2 {
-                    Err(whycodes_core::Error::llm("API error (503): unavailable"))
-                } else {
-                    Ok(42)
-                }
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(out, 42);
-        assert_eq!(n.load(Ordering::SeqCst), 3);
-    }
-
-    #[tokio::test]
-    async fn does_not_retry_client_errors() {
-        let n = Arc::new(AtomicUsize::new(0));
-        let c = n.clone();
-        let policy = RetryPolicy::test_fast();
-        let err = execute_with_policy(&policy, "test", || {
-            let c = c.clone();
-            async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                Err::<(), _>(whycodes_core::Error::llm("API error (400): bad request"))
-            }
-        })
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("400"));
-        assert_eq!(n.load(Ordering::SeqCst), 1);
-    }
-}
+#[path = "retry_tests.rs"]
+mod tests;

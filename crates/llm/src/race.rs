@@ -5,8 +5,9 @@
 //! The loser is dropped (HTTP body cancelled). Opt-in: racing can bill both
 //! prefills until cancel.
 
-use std::future::Future;
+use std::future::{Future, poll_fn};
 use std::pin::Pin;
+use std::task::Poll;
 use std::time::Duration;
 
 use futures::Stream;
@@ -88,7 +89,7 @@ pub async fn stream_raced(
     {
         Ok(s) => s,
         Err(e) => {
-            warn!(error = %e, "race: primary stream open failed");
+            warn!("race: primary stream open failed: {e}");
             let s = transport
                 .stream(race.provider, request, race.api_key, race.model)
                 .await?;
@@ -103,7 +104,7 @@ pub async fn stream_raced(
 
     match tokio::time::timeout(race_after, next_first_token(&mut primary_stream)).await {
         Ok(Some(Ok(ev))) => {
-            debug!(model = primary.model, "race: primary first token");
+            debug!("race: primary first token model={}", primary.model);
             return Ok((prefix_stream(ev, primary_stream), RaceOutcome::Primary));
         }
         Ok(Some(Err(e))) => return Err(e),
@@ -120,10 +121,9 @@ pub async fn stream_raced(
             ));
         }
         Err(elapsed) => {
+            let after_ms = race_after.as_millis() as u64;
             debug!(
-                after_ms = race_after.as_millis() as u64,
-                error = %elapsed,
-                "race: no primary token yet; starting partner"
+                "race: no primary token yet; starting partner after_ms={after_ms} error={elapsed}"
             );
         }
     }
@@ -144,11 +144,11 @@ async fn race_immediate(
     match (p, r) {
         (Ok(ps), Ok(rs)) => first_of_two(ps, rs).await,
         (Ok(ps), Err(e)) => {
-            warn!(error = %e, "race: partner open failed");
+            warn!("race: partner open failed: {e}");
             Ok((ps, RaceOutcome::Primary))
         }
         (Err(e), Ok(rs)) => {
-            warn!(error = %e, "race: primary open failed");
+            warn!("race: primary open failed: {e}");
             Ok((
                 rs,
                 RaceOutcome::Race {
@@ -176,103 +176,103 @@ async fn race_after_timeout(
     let mut primary_dead: Option<whycodes_core::Error> = None;
 
     loop {
-        tokio::select! {
-            p = next_first_token(&mut primary_stream), if primary_dead.is_none() => {
-                match p {
-                    Some(Ok(ev)) => {
-                        drop(race_open);
-                        drop(race_stream);
-                        return Ok((prefix_stream(ev, primary_stream), RaceOutcome::Primary));
-                    }
-                    Some(Err(e)) => {
-                        if race_open.is_none() && race_stream.is_none() {
-                            return Err(e);
-                        }
-                        primary_dead = Some(e);
-                    }
-                    None => {
-                        let e = whycodes_core::Error::Provider(
-                            "primary stream ended before first token".into(),
-                        );
-                        if race_open.is_none() && race_stream.is_none() {
-                            return Err(e);
-                        }
-                        primary_dead = Some(e);
-                    }
-                }
-            }
-            opened = await_opt_open(&mut race_open) => {
-                match opened {
-                    Some(Ok(s)) => race_stream = Some(s),
-                    Some(Err(e)) => {
-                        warn!(error = %e, "race: partner open failed after timeout");
-                        if let Some(pe) = primary_dead.take() {
-                            return Err(pe);
-                        }
-                    }
-                    None => {}
-                }
-            }
-            r = await_opt_first_token(&mut race_stream) => {
-                match r {
-                    Some(Ok(ev)) => {
-                        let Some(rs) = race_stream.take() else {
-                            return Err(whycodes_core::Error::Provider(
-                                "race stream missing after first token".into(),
-                            ));
-                        };
-                        drop(primary_stream);
-                        return Ok((
-                            prefix_stream(ev, rs),
-                            RaceOutcome::Race {
-                                reason: "first_token",
-                            },
-                        ));
-                    }
-                    Some(Err(e)) => {
-                        race_stream = None;
-                        if let Some(pe) = primary_dead.take() {
-                            return Err(pe);
-                        }
-                        warn!(error = %e, "race: partner stream failed");
-                    }
-                    None => {
-                        if race_stream.is_some() {
-                            race_stream = None;
-                            if let Some(pe) = primary_dead.take() {
-                                return Err(pe);
-                            }
-                        }
-                    }
-                }
-            }
+        enum AfterTimeout {
+            Primary(Option<whycodes_core::Result<StreamEvent>>),
+            Opened(whycodes_core::Result<EventStream>),
+            Partner(Option<whycodes_core::Result<StreamEvent>>),
         }
-    }
-}
-
-/// Pending when `open` is `None`, so `select!` never needs `unwrap`.
-async fn await_opt_open<F>(
-    open: &mut Option<Pin<Box<F>>>,
-) -> Option<whycodes_core::Result<EventStream>>
-where
-    F: Future<Output = whycodes_core::Result<EventStream>> + ?Sized,
-{
-    match open.as_mut() {
-        Some(fut) => {
-            let r = fut.await;
-            *open = None;
-            Some(r)
+        let event = poll_fn(|cx| {
+            if primary_dead.is_none() {
+                loop {
+                    match Pin::new(&mut primary_stream).poll_next(cx) {
+                        Poll::Ready(Some(Ok(ev))) if is_first_token(&ev) => {
+                            return Poll::Ready(AfterTimeout::Primary(Some(Ok(ev))));
+                        }
+                        Poll::Ready(Some(Ok(_))) => {}
+                        Poll::Ready(Some(Err(e))) => {
+                            return Poll::Ready(AfterTimeout::Primary(Some(Err(e))));
+                        }
+                        Poll::Ready(None) => return Poll::Ready(AfterTimeout::Primary(None)),
+                        Poll::Pending => break,
+                    }
+                }
+            }
+            if let Some(mut fut) = race_open.take() {
+                match fut.as_mut().poll(cx) {
+                    Poll::Ready(r) => return Poll::Ready(AfterTimeout::Opened(r)),
+                    Poll::Pending => race_open = Some(fut),
+                }
+            }
+            if let Some(s) = race_stream.as_mut() {
+                loop {
+                    match Pin::new(&mut *s).poll_next(cx) {
+                        Poll::Ready(Some(Ok(ev))) if is_first_token(&ev) => {
+                            return Poll::Ready(AfterTimeout::Partner(Some(Ok(ev))));
+                        }
+                        Poll::Ready(Some(Ok(_))) => {}
+                        Poll::Ready(Some(Err(e))) => {
+                            return Poll::Ready(AfterTimeout::Partner(Some(Err(e))));
+                        }
+                        Poll::Ready(None) => return Poll::Ready(AfterTimeout::Partner(None)),
+                        Poll::Pending => break,
+                    }
+                }
+            }
+            Poll::Pending
+        })
+        .await;
+        match event {
+            AfterTimeout::Primary(p) => match p {
+                Some(Ok(ev)) => {
+                    drop(race_open);
+                    drop(race_stream);
+                    return Ok((prefix_stream(ev, primary_stream), RaceOutcome::Primary));
+                }
+                Some(Err(e)) => {
+                    if race_open.is_none() && race_stream.is_none() {
+                        return Err(e);
+                    }
+                    primary_dead = Some(e);
+                }
+                None => {
+                    let e = whycodes_core::Error::Provider(
+                        "primary stream ended before first token".into(),
+                    );
+                    if race_open.is_none() && race_stream.is_none() {
+                        return Err(e);
+                    }
+                    primary_dead = Some(e);
+                }
+            },
+            AfterTimeout::Opened(opened) => match opened {
+                Ok(s) => race_stream = Some(s),
+                Err(e) => {
+                    warn!("race: partner open failed after timeout: {e}");
+                    if let Some(pe) = primary_dead.take() {
+                        return Err(pe);
+                    }
+                }
+            },
+            AfterTimeout::Partner(r) => match r {
+                Some(Ok(ev)) => {
+                    drop(primary_stream);
+                    return prefix_partner(ev, race_stream.take());
+                }
+                Some(Err(e)) => {
+                    race_stream = None;
+                    if let Some(pe) = primary_dead.take() {
+                        return Err(pe);
+                    }
+                    warn!("race: partner stream failed: {e}");
+                }
+                None => {
+                    race_stream = None;
+                    if let Some(pe) = primary_dead.take() {
+                        return Err(pe);
+                    }
+                }
+            },
         }
-        None => std::future::pending().await,
-    }
-}
-
-async fn await_opt_first_token(
-    stream: &mut Option<EventStream>,
-) -> Option<whycodes_core::Result<StreamEvent>> {
-    match stream.as_mut() {
-        Some(s) => next_first_token(s).await,
-        None => std::future::pending().await,
     }
 }
 
@@ -280,60 +280,77 @@ async fn first_of_two(
     mut primary: EventStream,
     mut race: EventStream,
 ) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
-    tokio::select! {
-        p = next_first_token(&mut primary) => {
-            match p {
-                Some(Ok(ev)) => {
-                    drop(race);
-                    Ok((prefix_stream(ev, primary), RaceOutcome::Primary))
-                }
-                Some(Err(e)) => {
-                    match next_first_token(&mut race).await {
-                        Some(Ok(ev)) => Ok((
-                            prefix_stream(ev, race),
-                            RaceOutcome::Race {
-                                reason: "primary_error",
-                            },
-                        )),
-                        Some(Err(_)) => Err(e),
-                        None => Err(e),
-                    }
-                }
-                None => match next_first_token(&mut race).await {
-                    Some(Ok(ev)) => Ok((
-                        prefix_stream(ev, race),
-                        RaceOutcome::Race {
-                            reason: "primary_empty",
-                        },
-                    )),
-                    Some(Err(e)) => Err(e),
-                    None => Err(whycodes_core::Error::Provider(
-                        "both race streams empty".into(),
-                    )),
-                },
+    match first_ready2(next_first_token(&mut primary), next_first_token(&mut race)).await {
+        Ready2::A(p) => match p {
+            Some(Ok(ev)) => {
+                drop(race);
+                Ok((prefix_stream(ev, primary), RaceOutcome::Primary))
             }
-        }
-        r = next_first_token(&mut race) => {
-            match r {
-                Some(Ok(ev)) => {
-                    drop(primary);
-                    Ok((
-                        prefix_stream(ev, race),
-                        RaceOutcome::Race {
-                            reason: "first_token",
-                        },
-                    ))
-                }
-                Some(Err(_)) | None => match next_first_token(&mut primary).await {
-                    Some(Ok(ev)) => Ok((prefix_stream(ev, primary), RaceOutcome::Primary)),
-                    Some(Err(e)) => Err(e),
-                    None => Err(whycodes_core::Error::Provider(
-                        "both race streams empty".into(),
-                    )),
-                },
+            Some(Err(e)) => match next_first_token(&mut race).await {
+                Some(Ok(ev)) => Ok((
+                    prefix_stream(ev, race),
+                    RaceOutcome::Race {
+                        reason: "primary_error",
+                    },
+                )),
+                Some(Err(_)) | None => Err(e),
+            },
+            None => match next_first_token(&mut race).await {
+                Some(Ok(ev)) => Ok((
+                    prefix_stream(ev, race),
+                    RaceOutcome::Race {
+                        reason: "primary_empty",
+                    },
+                )),
+                Some(Err(e)) => Err(e),
+                None => Err(whycodes_core::Error::Provider(
+                    "both race streams empty".into(),
+                )),
+            },
+        },
+        Ready2::B(r) => match r {
+            Some(Ok(ev)) => {
+                drop(primary);
+                Ok((
+                    prefix_stream(ev, race),
+                    RaceOutcome::Race {
+                        reason: "first_token",
+                    },
+                ))
             }
-        }
+            Some(Err(_)) | None => match next_first_token(&mut primary).await {
+                Some(Ok(ev)) => Ok((prefix_stream(ev, primary), RaceOutcome::Primary)),
+                Some(Err(e)) => Err(e),
+                None => Err(whycodes_core::Error::Provider(
+                    "both race streams empty".into(),
+                )),
+            },
+        },
     }
+}
+
+enum Ready2<A, B> {
+    A(A),
+    B(B),
+}
+
+async fn first_ready2<FA, FB, A, B>(a: FA, b: FB) -> Ready2<A, B>
+where
+    FA: Future<Output = A>,
+    FB: Future<Output = B>,
+{
+    tokio::pin!(a);
+    tokio::pin!(b);
+    poll_fn(move |cx| {
+        if let Poll::Ready(v) = a.as_mut().poll(cx) {
+            return Poll::Ready(Ready2::A(v));
+        }
+        if let Poll::Ready(v) = b.as_mut().poll(cx) {
+            return Poll::Ready(Ready2::B(v));
+        }
+        Poll::Pending
+    })
+    .await
 }
 
 async fn next_first_token(s: &mut EventStream) -> Option<whycodes_core::Result<StreamEvent>> {
@@ -347,368 +364,50 @@ async fn next_first_token(s: &mut EventStream) -> Option<whycodes_core::Result<S
     None
 }
 
+pub(crate) fn prefix_partner(
+    first: StreamEvent,
+    race_stream: Option<EventStream>,
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
+    let Some(rs) = race_stream else {
+        return Err(whycodes_core::Error::Provider(
+            "partner stream missing after first token".into(),
+        ));
+    };
+    Ok((
+        prefix_stream(first, rs),
+        RaceOutcome::Race {
+            reason: "first_token",
+        },
+    ))
+}
+
 fn prefix_stream(first: StreamEvent, rest: EventStream) -> EventStream {
-    Box::pin(async_stream::stream! {
-        yield Ok(first);
-        let mut rest = rest;
-        while let Some(ev) = rest.next().await {
-            yield ev;
-        }
+    Box::pin(PrefixStream {
+        first: Some(first),
+        rest,
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+struct PrefixStream {
+    first: Option<StreamEvent>,
+    rest: EventStream,
+}
 
-    use whycodes_core::types::{LlmResponse, Message, MessageContent, Role, Usage};
+impl Stream for PrefixStream {
+    type Item = whycodes_core::Result<StreamEvent>;
 
-    use crate::provider::{ProviderEventStream, ProviderResponseFuture, ProviderStreamFuture};
-    use crate::retry::RetryPolicy;
-
-    struct DelayProvider {
-        name: String,
-        delay: Duration,
-        text: String,
-        opens: Arc<AtomicUsize>,
-        fail_open: bool,
-    }
-
-    impl LlmProvider for DelayProvider {
-        fn name(&self) -> &str {
-            &self.name
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if let Some(ev) = this.first.take() {
+            return Poll::Ready(Some(Ok(ev)));
         }
-        fn default_base_url(&self) -> &str {
-            "http://example.invalid"
-        }
-        fn complete<'a>(
-            &'a self,
-            _request: &'a LlmRequest,
-            _api_key: &'a str,
-            model: &'a str,
-        ) -> ProviderResponseFuture<'a> {
-            Box::pin(async move {
-                Ok(LlmResponse {
-                    content: vec![],
-                    stop_reason: None,
-                    usage: Usage::default(),
-                    model: model.into(),
-                })
-            })
-        }
-        fn stream<'a>(
-            &'a self,
-            _request: &'a LlmRequest,
-            _api_key: &'a str,
-            _model: &'a str,
-        ) -> ProviderStreamFuture<'a> {
-            Box::pin(async move {
-                self.opens.fetch_add(1, Ordering::SeqCst);
-                if self.fail_open {
-                    return Err(whycodes_core::Error::Provider("boom".into()));
-                }
-                let delay = self.delay;
-                let text = self.text.clone();
-                Ok(Box::pin(async_stream::stream! {
-                    if !delay.is_zero() {
-                        tokio::time::sleep(delay).await;
-                    }
-                    yield Ok(StreamEvent::TextDelta { text });
-                    yield Ok(StreamEvent::MessageStop);
-                }) as ProviderEventStream)
-            })
-        }
-    }
-
-    fn req() -> LlmRequest {
-        LlmRequest {
-            system: "s".into(),
-            messages: std::sync::Arc::from(vec![Message {
-                role: Role::User,
-                content: MessageContent::Text("hi".into()),
-                tool_call_id: None,
-                name: None,
-                created_at: None,
-            }]),
-            tools: std::sync::Arc::from([]),
-            max_tokens: Some(8),
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            thinking: None,
-            use_prompt_cache: false,
-        }
-    }
-
-    fn transport() -> LlmTransport {
-        LlmTransport {
-            retry: RetryPolicy {
-                max_retries: 0,
-                initial_backoff: Duration::from_millis(1),
-                max_backoff: Duration::from_millis(1),
-                max_elapsed: Duration::from_secs(2),
-                full_jitter: false,
-            },
-            complete_timeout: None,
-        }
-    }
-
-    async fn collect_text(mut s: EventStream) -> String {
-        let mut out = String::new();
-        while let Some(ev) = s.next().await {
-            if let Ok(StreamEvent::TextDelta { text }) = ev {
-                out.push_str(&text);
-            }
-        }
-        out
-    }
-
-    #[tokio::test]
-    async fn fast_primary_never_opens_partner() {
-        let p_opens = Arc::new(AtomicUsize::new(0));
-        let r_opens = Arc::new(AtomicUsize::new(0));
-        let primary = DelayProvider {
-            name: "p".into(),
-            delay: Duration::from_millis(5),
-            text: "primary".into(),
-            opens: Arc::clone(&p_opens),
-            fail_open: false,
-        };
-        let race = DelayProvider {
-            name: "r".into(),
-            delay: Duration::from_millis(5),
-            text: "race".into(),
-            opens: Arc::clone(&r_opens),
-            fail_open: false,
-        };
-        let t = transport();
-        let req = req();
-        let (s, outcome) = stream_raced(
-            &t,
-            StreamTarget {
-                provider: &primary,
-                api_key: "",
-                model: "sonnet",
-            },
-            Some(StreamTarget {
-                provider: &race,
-                api_key: "",
-                model: "haiku",
-            }),
-            &req,
-            Duration::from_millis(200),
-        )
-        .await
-        .unwrap();
-        assert_eq!(collect_text(s).await, "primary");
-        assert_eq!(outcome, RaceOutcome::Primary);
-        assert_eq!(p_opens.load(Ordering::SeqCst), 1);
-        assert_eq!(r_opens.load(Ordering::SeqCst), 0);
-    }
-
-    #[tokio::test]
-    async fn slow_primary_loses_to_partner() {
-        let primary = DelayProvider {
-            name: "p".into(),
-            delay: Duration::from_millis(400),
-            text: "primary".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: false,
-        };
-        let race = DelayProvider {
-            name: "r".into(),
-            delay: Duration::from_millis(5),
-            text: "haiku".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: false,
-        };
-        let t = transport();
-        let req = req();
-        let (s, outcome) = stream_raced(
-            &t,
-            StreamTarget {
-                provider: &primary,
-                api_key: "",
-                model: "sonnet",
-            },
-            Some(StreamTarget {
-                provider: &race,
-                api_key: "",
-                model: "haiku",
-            }),
-            &req,
-            Duration::from_millis(20),
-        )
-        .await
-        .unwrap();
-        assert_eq!(collect_text(s).await, "haiku");
-        assert_eq!(
-            outcome,
-            RaceOutcome::Race {
-                reason: "first_token"
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn primary_open_fail_uses_partner() {
-        let primary = DelayProvider {
-            name: "p".into(),
-            delay: Duration::ZERO,
-            text: "primary".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: true,
-        };
-        let race = DelayProvider {
-            name: "r".into(),
-            delay: Duration::ZERO,
-            text: "backup".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: false,
-        };
-        let t = transport();
-        let req = req();
-        let (s, outcome) = stream_raced(
-            &t,
-            StreamTarget {
-                provider: &primary,
-                api_key: "",
-                model: "sonnet",
-            },
-            Some(StreamTarget {
-                provider: &race,
-                api_key: "",
-                model: "haiku",
-            }),
-            &req,
-            Duration::from_millis(50),
-        )
-        .await
-        .unwrap();
-        assert_eq!(collect_text(s).await, "backup");
-        assert_eq!(
-            outcome,
-            RaceOutcome::Race {
-                reason: "primary_open_failed"
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn empty_primary_uses_partner() {
-        let primary = DelayProvider {
-            name: "p".into(),
-            delay: Duration::ZERO,
-            text: String::new(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: false,
-        };
-        let race = DelayProvider {
-            name: "r".into(),
-            delay: Duration::ZERO,
-            text: "backup".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: false,
-        };
-        let (s, outcome) = stream_raced(
-            &transport(),
-            StreamTarget {
-                provider: &primary,
-                api_key: "",
-                model: "sonnet",
-            },
-            Some(StreamTarget {
-                provider: &race,
-                api_key: "",
-                model: "haiku",
-            }),
-            &req(),
-            Duration::from_secs(1),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(collect_text(s).await, "backup");
-        assert_eq!(
-            outcome,
-            RaceOutcome::Race {
-                reason: "primary_empty"
-            }
-        );
-    }
-
-    #[tokio::test]
-    async fn immediate_race_keeps_primary_when_partner_open_fails() {
-        let primary = DelayProvider {
-            name: "p".into(),
-            delay: Duration::ZERO,
-            text: "primary".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: false,
-        };
-        let race = DelayProvider {
-            name: "r".into(),
-            delay: Duration::ZERO,
-            text: "unused".into(),
-            opens: Arc::new(AtomicUsize::new(0)),
-            fail_open: true,
-        };
-        let (s, outcome) = stream_raced(
-            &transport(),
-            StreamTarget {
-                provider: &primary,
-                api_key: "",
-                model: "sonnet",
-            },
-            Some(StreamTarget {
-                provider: &race,
-                api_key: "",
-                model: "haiku",
-            }),
-            &req(),
-            Duration::ZERO,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(collect_text(s).await, "primary");
-        assert_eq!(outcome, RaceOutcome::Primary);
-    }
-
-    #[tokio::test]
-    async fn same_model_skips_race() {
-        let opens = Arc::new(AtomicUsize::new(0));
-        let p = DelayProvider {
-            name: "same".into(),
-            delay: Duration::ZERO,
-            text: "only".into(),
-            opens: Arc::clone(&opens),
-            fail_open: false,
-        };
-        let t = transport();
-        let req = req();
-        let (s, outcome) = stream_raced(
-            &t,
-            StreamTarget {
-                provider: &p,
-                api_key: "",
-                model: "haiku",
-            },
-            Some(StreamTarget {
-                provider: &p,
-                api_key: "",
-                model: "haiku",
-            }),
-            &req,
-            Duration::from_millis(0),
-        )
-        .await
-        .unwrap();
-        assert_eq!(collect_text(s).await, "only");
-        assert_eq!(outcome, RaceOutcome::PrimaryOnly);
-        assert_eq!(opens.load(Ordering::SeqCst), 1);
+        this.rest.as_mut().poll_next(cx)
     }
 }
+
+#[cfg(test)]
+#[path = "race_tests.rs"]
+mod tests;

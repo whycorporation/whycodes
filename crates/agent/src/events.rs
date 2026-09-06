@@ -217,4 +217,27 @@ mod tests {
         request_cancel(&flag);
         assert!(is_cancelled(&opt));
     }
+
+    #[test]
+    fn is_cancelled_none_is_false() {
+        assert!(!is_cancelled(&None));
+    }
+
+    #[tokio::test]
+    async fn wait_until_cancelled_none_races_with_timeout() {
+        let waiter = wait_until_cancelled(&None);
+        let raced = tokio::time::timeout(Duration::from_millis(30), waiter).await;
+        assert!(raced.is_err(), "None flag must stay pending");
+    }
+
+    #[test]
+    fn emit_none_is_noop_and_some_delivers() {
+        emit(&None, TurnEvent::Status("nope".into()));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        emit(&Some(tx), TurnEvent::Status("hi".into()));
+        match rx.try_recv() {
+            Ok(TurnEvent::Status(s)) => assert_eq!(s, "hi"),
+            other => panic!("{other:?}"),
+        }
+    }
 }
