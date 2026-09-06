@@ -2342,10 +2342,10 @@ mod permission_detail_tests {
             created_at: None,
         }]);
         append_request_user_suffix(&mut req, " [suffix]");
-        match &req.messages[0].content {
-            MessageContent::Text(t) => assert_eq!(t, "hi"),
-            other => panic!("{other:?}"),
-        }
+        let MessageContent::Text(t) = &req.messages[0].content else {
+            panic!("expected text");
+        };
+        assert_eq!(t, "hi");
 
         let mut req = llm_req(vec![
             Message {
@@ -2364,18 +2364,16 @@ mod permission_detail_tests {
             },
         ]);
         append_request_user_suffix(&mut req, " more");
-        match &req.messages[1].content {
-            MessageContent::Blocks(blocks) => {
-                assert!(
-                    blocks.iter().any(|b| matches!(
-                        b,
-                        ContentBlock::Text { text } if text == " more"
-                    )),
-                    "{blocks:?}"
-                );
-            }
-            other => panic!("{other:?}"),
-        }
+        let MessageContent::Blocks(blocks) = &req.messages[1].content else {
+            panic!("expected blocks");
+        };
+        assert!(
+            blocks.iter().any(|b| matches!(
+                b,
+                ContentBlock::Text { text } if text == " more"
+            )),
+            "{blocks:?}"
+        );
 
         let mut req = llm_req(vec![Message {
             role: Role::User,
@@ -2385,10 +2383,10 @@ mod permission_detail_tests {
             created_at: None,
         }]);
         append_request_user_suffix(&mut req, "!");
-        match &req.messages[0].content {
-            MessageContent::Text(t) => assert_eq!(t, "ask!"),
-            other => panic!("{other:?}"),
-        }
+        let MessageContent::Text(t) = &req.messages[0].content else {
+            panic!("expected text");
+        };
+        assert_eq!(t, "ask!");
     }
 
     #[test]

@@ -1336,9 +1336,5 @@ impl Agent {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn dispatch_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-}
+#[path = "dispatch_tests.rs"]
+mod tests;

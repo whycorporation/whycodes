@@ -42,9 +42,5 @@ pub use tool::Tool;
 pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn lib_module_loads() {
-        assert!(!module_path!().is_empty());
-    }
-}
+#[path = "lib_tests.rs"]
+mod tests;

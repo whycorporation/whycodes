@@ -280,9 +280,5 @@ pub(crate) async fn cmd_web() -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn web_stub_runs() {
-        super::cmd_web().await.unwrap();
-    }
-}
+#[path = "serve_tests.rs"]
+mod tests;

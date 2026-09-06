@@ -1,0 +1,312 @@
+use super::*;
+use tempfile::TempDir;
+
+fn write(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
+    let p = dir.path().join(name);
+    fs::write(&p, content).unwrap();
+    p
+}
+
+#[test]
+fn truncate_line_short_and_long() {
+    assert_eq!(truncate_line("short", 10), "short");
+    let t = truncate_line("abcdefghij", 4);
+    assert!(t.starts_with("abcd"));
+    assert!(t.contains("[line truncated]"));
+    // Multibyte
+    let t = truncate_line("türkçe uzun", 3);
+    assert!(t.starts_with("tür"));
+}
+
+#[test]
+fn image_media_type_by_extension() {
+    assert_eq!(image_media_type(Path::new("a.png")), Some("image/png"));
+    assert_eq!(image_media_type(Path::new("a.jpg")), Some("image/jpeg"));
+    assert_eq!(image_media_type(Path::new("a.JPEG")), Some("image/jpeg"));
+    assert_eq!(image_media_type(Path::new("a.gif")), Some("image/gif"));
+    assert_eq!(image_media_type(Path::new("a.webp")), Some("image/webp"));
+    assert_eq!(image_media_type(Path::new("a.bmp")), Some("image/bmp"));
+    assert_eq!(image_media_type(Path::new("a.txt")), None);
+    assert_eq!(image_media_type(Path::new("noext")), None);
+}
+
+#[test]
+fn read_window_basic() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "one\ntwo\nthree\nfour\n");
+    let w = read_window(&f, 2, 2).unwrap();
+    assert_eq!(w.lines, vec!["two", "three"]);
+    assert_eq!(w.start_line, 2);
+    assert_eq!(w.end_line, 3);
+    assert_eq!(w.total_lines, 4);
+    assert!(w.total_known);
+    // Content follows the window -> truncated (prompts the model to page)
+    assert!(w.truncated);
+}
+
+#[test]
+fn read_window_at_eof_not_truncated() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "one\ntwo\nthree\nfour\n");
+    let w = read_window(&f, 3, 2).unwrap();
+    assert_eq!(w.lines, vec!["three", "four"]);
+    assert_eq!(w.total_lines, 4);
+    assert!(!w.truncated);
+}
+
+#[test]
+fn read_window_first_and_last() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "one\ntwo\n");
+    let w = read_window(&f, 1, 100).unwrap();
+    assert_eq!(w.lines, vec!["one", "two"]);
+    assert_eq!(w.start_line, 1);
+    assert_eq!(w.end_line, 2);
+    assert!(!w.truncated);
+}
+
+#[test]
+fn read_window_offset_past_eof() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "one\ntwo\n");
+    let w = read_window(&f, 10, 5).unwrap();
+    assert!(w.lines.is_empty());
+    assert_eq!(w.start_line, 10);
+    assert_eq!(w.end_line, 9); // saturating_sub
+    assert!(!w.truncated);
+}
+
+#[test]
+fn read_window_truncated_flag() {
+    let dir = TempDir::new().unwrap();
+    let content = "l1\nl2\nl3\nl4\nl5\n";
+    let f = write(&dir, "a.txt", content);
+    let w = read_window(&f, 1, 2).unwrap();
+    assert_eq!(w.lines.len(), 2);
+    assert!(w.truncated);
+    assert_eq!(w.total_lines, 5);
+    assert!(w.total_known);
+}
+
+#[test]
+fn read_window_strips_crlf() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "one\r\ntwo\r\n");
+    let w = read_window(&f, 1, 2).unwrap();
+    assert_eq!(w.lines, vec!["one", "two"]);
+}
+
+#[test]
+fn read_window_trailing_newline() {
+    let dir = TempDir::new().unwrap();
+    let f = write(&dir, "a.txt", "one\n\ntwo");
+    let w = read_window(&f, 1, 10).unwrap();
+    assert_eq!(w.lines, vec!["one", "", "two"]);
+    assert!(w.total_known);
+}
+
+#[test]
+fn read_window_missing_file_errors() {
+    assert!(read_window(Path::new("/nonexistent-xyz/a.txt"), 1, 5).is_err());
+}
+
+#[tokio::test]
+async fn execute_reads_window_with_header() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "a.txt", "one\ntwo\nthree\n");
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(
+            serde_json::json!({"path": "a.txt", "offset": 2, "limit": 2}),
+            &ctx,
+        )
+        .await;
+    assert!(!result.is_error);
+    assert!(result.content.contains("# lines 2–3 of 3"));
+    assert!(result.content.contains("2|two"));
+    assert!(result.content.contains("3|three"));
+}
+
+#[tokio::test]
+async fn execute_missing_file_suggests() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "readme.md", "x");
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(serde_json::json!({"path": "Readme.md"}), &ctx)
+        .await;
+    assert!(result.is_error);
+    assert!(result.content.contains("File not found"));
+    assert!(result.content.contains("Did you mean"));
+}
+
+#[tokio::test]
+async fn execute_directory_is_error() {
+    let dir = TempDir::new().unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(serde_json::json!({"path": "."}), &ctx)
+        .await;
+    assert!(result.is_error);
+    assert!(result.content.contains("is a directory"));
+}
+
+#[tokio::test]
+async fn execute_binary_file_refused() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "bin.dat", "text\x00nul\n");
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(serde_json::json!({"path": "bin.dat"}), &ctx)
+        .await;
+    assert!(result.is_error);
+    assert!(result.content.contains("binary"));
+}
+
+#[tokio::test]
+async fn execute_image_returns_b64() {
+    let dir = TempDir::new().unwrap();
+    let png = [0x89u8, b'P', b'N', b'G', 0, 0, 0, 0];
+    fs::write(dir.path().join("img.png"), png).unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let result = ReadTool::new()
+        .execute(serde_json::json!({"path": "img.png"}), &ctx)
+        .await;
+    assert!(!result.is_error);
+    assert!(result.content.contains("image/png"));
+    assert!(result.content.contains("WHYCODES_IMAGE_B64"));
+}
+
+#[tokio::test]
+async fn execute_missing_path_param() {
+    let ctx = ToolContext::new("/");
+    let result = ReadTool::new().execute(serde_json::json!({}), &ctx).await;
+    assert!(result.is_error);
+    assert!(result.content.contains("Missing required parameter"));
+}
+
+#[tokio::test]
+async fn remaining_read_branches() {
+    let t = ReadTool;
+    assert_eq!(t.name(), "read");
+    assert!(!t.description().is_empty());
+    let _ = t.parameters();
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("empty.png"), []).unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let empty_img = t
+        .execute(serde_json::json!({"path": "empty.png"}), &ctx)
+        .await;
+    assert!(empty_img.is_error, "{}", empty_img.content);
+
+    let skill = t
+        .execute(serde_json::json!({"path": "skill://nope"}), &ctx)
+        .await;
+    assert!(skill.is_error);
+
+    let long = "x".repeat(5000);
+    fs::write(dir.path().join("long.txt"), format!("{long}\nmore\n")).unwrap();
+    let window = t
+        .execute(
+            serde_json::json!({"path": "long.txt", "offset": 1, "limit": 1}),
+            &ctx,
+        )
+        .await;
+    assert!(!window.is_error, "{}", window.content);
+    assert!(window.content.contains("[truncated"), "{}", window.content);
+}
+
+#[tokio::test]
+async fn stale_read_huge_file_and_image_read_error() {
+    let dir = TempDir::new().unwrap();
+    write(&dir, "stale.txt", "hello\n");
+    let claims = whycodes_core::file_claims::FileClaimRegistry::new();
+    let path = dir.path().join("stale.txt");
+    assert!(matches!(
+        claims.try_claim("writer", "writer-agent", &path),
+        whycodes_core::file_claims::ClaimResult::Acquired
+    ));
+    let mut ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    ctx.file_claims = Some(claims);
+    ctx.agent_id = Some("reader".into());
+    let stale = ReadTool::new()
+        .execute(serde_json::json!({"path": "stale.txt"}), &ctx)
+        .await;
+    assert!(!stale.is_error, "{}", stale.content);
+    assert!(stale.content.contains("[stale]"), "{}", stale.content);
+
+    let huge = vec![b'a'; (MAX_FULL_READ_BYTES as usize) + 8];
+    fs::write(dir.path().join("huge.txt"), huge).unwrap();
+    let window = ReadTool::new()
+        .execute(
+            serde_json::json!({"path": "huge.txt", "offset": 1, "limit": 400}),
+            &ctx,
+        )
+        .await;
+    assert!(!window.is_error, "{}", window.content);
+
+    let fifo = dir.path().join("pipe.jpg");
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixListener;
+        let _ = UnixListener::bind(&fifo);
+        if fifo.exists() {
+            let img = ReadTool::new()
+                .execute(serde_json::json!({"path": "pipe.jpg"}), &ctx)
+                .await;
+            assert!(img.is_error || !img.content.is_empty(), "{}", img.content);
+        }
+    }
+    let _ = fifo;
+}
+
+#[tokio::test]
+async fn huge_file_reports_unknown_total() {
+    let dir = TempDir::new().unwrap();
+    let mut content = String::new();
+    for i in 0..20 {
+        content.push_str(&format!("line {i}\n"));
+    }
+    let huge_prefix = "x".repeat(64 * 1024);
+    let mut body = String::new();
+    for _ in 0..((MAX_FULL_READ_BYTES as usize / huge_prefix.len()) + 2) {
+        body.push_str(&huge_prefix);
+        body.push('\n');
+    }
+    fs::write(dir.path().join("huge.txt"), body).unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let out = ReadTool::new()
+        .execute(
+            serde_json::json!({"path": "huge.txt", "offset": 1, "limit": 1}),
+            &ctx,
+        )
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(
+        out.content.contains("≥") || out.content.contains("lines"),
+        "{}",
+        out.content
+    );
+}
+
+#[tokio::test]
+async fn execute_skill_url_loads_project_skill() {
+    let dir = TempDir::new().unwrap();
+    let skills = dir.path().join(".skills");
+    fs::create_dir(&skills).unwrap();
+    fs::write(
+        skills.join("demo.skill.md"),
+        "---\nname: demo\ndescription: d\n---\n\nTHE BODY\n",
+    )
+    .unwrap();
+    let ctx = ToolContext::new(dir.path().to_string_lossy().into_owned());
+    let out = ReadTool::new()
+        .execute(serde_json::json!({"path": "skill://demo"}), &ctx)
+        .await;
+    assert!(!out.is_error, "{}", out.content);
+    assert!(out.content.contains("THE BODY"), "{}", out.content);
+    let agent = ReadTool::new()
+        .execute(serde_json::json!({"path": "agent://"}), &ctx)
+        .await;
+    assert!(!agent.is_error, "{}", agent.content);
+}
