@@ -37,8 +37,7 @@ pub(crate) fn format_permission_detail(args: &serde_json::Value) -> String {
                     serde_json::Value::Bool(b) => lines.push(format!("{key}: {b}")),
                     serde_json::Value::Number(n) => lines.push(format!("{key}: {n}")),
                     other => {
-                        let pretty = serde_json::to_string_pretty(other)
-                            .unwrap_or_else(|_| other.to_string());
+                        let pretty = pretty_or_display(other);
                         if pretty.contains('\n') {
                             lines.push(format!("{key}:"));
                             for line in pretty.lines() {
@@ -52,9 +51,17 @@ pub(crate) fn format_permission_detail(args: &serde_json::Value) -> String {
             }
             lines.join("\n")
         }
-        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+        other => pretty_or_display(other),
     };
     truncate_permission_detail(&text)
+}
+
+fn pretty_or_display(value: &serde_json::Value) -> String {
+    pretty_json_or(serde_json::to_string_pretty(value), value)
+}
+
+fn pretty_json_or(result: Result<String, serde_json::Error>, value: &serde_json::Value) -> String {
+    result.unwrap_or_else(|_json| value.to_string())
 }
 
 pub(crate) fn format_shell_risk_detail(command: &str, reason: &str) -> String {

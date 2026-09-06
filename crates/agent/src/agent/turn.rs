@@ -780,22 +780,14 @@ impl Agent {
             }
 
             // Fold subagent tokens into this turn + parent session (plan-performance).
-            {
-                let mut pending = self
-                    .subagent_usage_pending
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
-                if !pending.is_empty() {
-                    let fold = std::mem::take(&mut *pending);
-                    drop(pending);
-                    turn_usage.add(&fold);
-                    session.add_usage(&fold);
-                    tracing::debug!(
-                        input = fold.input_tokens,
-                        output = fold.output_tokens,
-                        "folded subagent usage into parent session"
-                    );
-                }
+            if let Some(fold) = take_pending_usage(&self.subagent_usage_pending) {
+                turn_usage.add(&fold);
+                session.add_usage(&fold);
+                tracing::debug!(
+                    input = fold.input_tokens,
+                    output = fold.output_tokens,
+                    "folded subagent usage into parent session"
+                );
             }
 
             if !failed_tools.is_empty() {
@@ -843,6 +835,16 @@ impl Agent {
 
         Ok(final_text)
     }
+}
+
+fn take_pending_usage(
+    pending: &std::sync::Mutex<whycodes_core::types::Usage>,
+) -> Option<whycodes_core::types::Usage> {
+    let mut pending = super::recover_lock(pending);
+    if pending.is_empty() {
+        return None;
+    }
+    Some(std::mem::take(&mut *pending))
 }
 
 fn next_compact_failures(failures: u32, still_over: bool) -> u32 {

@@ -7,11 +7,16 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use whycodes_core::SandboxSettings;
 use whycodes_sandbox::{SandboxRequest, kill_pid_group, prepare};
+
+/// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Soft cap on concurrent running jobs.
 pub const DEFAULT_MAX_BACKGROUND_JOBS: usize = 8;
@@ -126,35 +131,26 @@ impl BackgroundRegistry {
     }
 
     pub fn set_listener(&self, listener: Option<BackgroundListener>) {
-        if let Ok(mut slot) = self.inner.listener.lock() {
-            *slot = listener;
-        }
+        *lock(&self.inner.listener) = listener;
     }
 
     pub fn running_count(&self) -> usize {
-        let jobs = self.inner.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let jobs = lock(&self.inner.jobs);
         jobs.values()
-            .filter(|j| {
-                j.lock()
-                    .map(|g| g.status == JobStatus::Running)
-                    .unwrap_or(false)
-            })
+            .filter(|j| lock(j).status == JobStatus::Running)
             .count()
     }
 
     pub fn list(&self) -> Vec<JobSnapshot> {
-        let order = self.inner.order.lock().unwrap_or_else(|e| e.into_inner());
-        let jobs = self.inner.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let order = lock(&self.inner.order);
+        let jobs = lock(&self.inner.jobs);
         let mut out = Vec::new();
         for id in order.iter() {
             let Some(j) = jobs.get(id) else {
                 continue;
             };
-            let g = j.lock().unwrap_or_else(|e| e.into_inner());
-            let elapsed = g
-                .finished
-                .map(|f| f.saturating_duration_since(g.started))
-                .unwrap_or_else(|| g.started.elapsed());
+            let g = lock(j);
+            let elapsed = job_elapsed(g.finished, g.started);
             out.push(JobSnapshot {
                 id: g.id.clone(),
                 label: g.label.clone(),
@@ -168,11 +164,11 @@ impl BackgroundRegistry {
     }
 
     pub fn read(&self, id: &str, max_chars: usize) -> Result<String, String> {
-        let jobs = self.inner.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let jobs = lock(&self.inner.jobs);
         let job = jobs
             .get(id)
             .ok_or_else(|| format!("unknown background job `{id}`"))?;
-        let g = job.lock().unwrap_or_else(|e| e.into_inner());
+        let g = lock(job);
         let text = &g.output;
         if max_chars == 0 || text.chars().count() <= max_chars {
             return Ok(format!(
@@ -201,13 +197,13 @@ impl BackgroundRegistry {
     }
 
     pub fn kill(&self, id: &str) -> Result<String, String> {
-        let jobs = self.inner.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let jobs = lock(&self.inner.jobs);
         let job = jobs
             .get(id)
             .ok_or_else(|| format!("unknown background job `{id}`"))?
             .clone();
         drop(jobs);
-        let mut g = job.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = lock(&job);
         if g.status != JobStatus::Running {
             return Ok(format!("job `{}` already {}", g.id, g.status.as_str()));
         }
@@ -262,9 +258,7 @@ impl BackgroundRegistry {
         let prepared = prepare(&request).map_err(|e| e.to_string())?;
 
         let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
-        let label = label
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| truncate_label(command, 72));
+        let label = nonempty_or_truncated(label, command);
         let kill_flag = Arc::new(AtomicBool::new(false));
 
         let job = Arc::new(Mutex::new(JobInner {
@@ -279,9 +273,9 @@ impl BackgroundRegistry {
         }));
 
         {
-            let mut jobs = self.inner.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            let mut jobs = lock(&self.inner.jobs);
             jobs.insert(id.clone(), Arc::clone(&job));
-            let mut order = self.inner.order.lock().unwrap_or_else(|e| e.into_inner());
+            let mut order = lock(&self.inner.order);
             order.push(id.clone());
             // Prune old finished beyond retain count.
             self.prune_locked(&mut jobs, &mut order);
@@ -315,9 +309,7 @@ impl BackgroundRegistry {
     }
 
     fn emit(&self, ev: BackgroundEvent) {
-        if let Ok(slot) = self.inner.listener.lock()
-            && let Some(ref f) = *slot
-        {
+        if let Some(ref f) = *lock(&self.inner.listener) {
             f(ev);
         }
     }
@@ -331,8 +323,7 @@ impl BackgroundRegistry {
             .iter()
             .filter(|id| {
                 jobs.get(id.as_str())
-                    .and_then(|j| j.lock().ok())
-                    .map(|g| g.status != JobStatus::Running)
+                    .map(|j| lock(j).status != JobStatus::Running)
                     .unwrap_or(false)
             })
             .cloned()
@@ -406,9 +397,7 @@ async fn run_background_job(
 
     let status = loop {
         if kill_flag.load(Ordering::SeqCst) {
-            if let Some(pid) = child.id() {
-                kill_pid_group(pid);
-            }
+            kill_child_group(child.id());
             // Kill/wait errors are best-effort: the child may already have exited.
             let kill = child.start_kill();
             let reaped = child.wait().await;
@@ -430,10 +419,35 @@ async fn run_background_job(
     }
 
     let (st, code) = job_status_from_wait(status);
-    let summary = code
-        .map(|c| format!("{label} (exit {c})"))
-        .unwrap_or_else(|| label.clone());
+    let summary = exit_summary(label, code);
     finalize_job(&reg, &job, &id, st, code, &summary);
+}
+
+fn job_elapsed(finished: Option<Instant>, started: Instant) -> Duration {
+    match finished {
+        Some(f) => f.saturating_duration_since(started),
+        None => started.elapsed(),
+    }
+}
+
+fn nonempty_or_truncated(label: Option<String>, command: &str) -> String {
+    match label {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => truncate_label(command, 72),
+    }
+}
+
+fn kill_child_group(pid: Option<u32>) {
+    if let Some(pid) = pid {
+        kill_pid_group(pid);
+    }
+}
+
+fn exit_summary(label: String, code: Option<i32>) -> String {
+    match code {
+        Some(c) => format!("{label} (exit {c})"),
+        None => label,
+    }
 }
 
 fn wait_status(
@@ -458,7 +472,7 @@ fn job_status_from_wait(status: Option<std::process::ExitStatus>) -> (JobStatus,
 }
 
 fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
-    let mut g = job.lock().unwrap_or_else(|e| e.into_inner());
+    let mut g = lock(job);
     g.output.push_str(chunk);
     if g.output.len() > MAX_JOB_OUTPUT_BYTES {
         let excess = g.output.len() - MAX_JOB_OUTPUT_BYTES;
@@ -511,7 +525,7 @@ fn finalize_job(
     summary: &str,
 ) {
     {
-        let mut g = job.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = lock(job);
         // Don't overwrite Killed if already set by kill().
         if g.status == JobStatus::Killed {
             return;

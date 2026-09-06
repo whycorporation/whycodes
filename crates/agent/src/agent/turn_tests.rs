@@ -75,6 +75,24 @@ fn next_compact_failures_increments_resets_and_stays_zero() {
     assert_eq!(next_compact_failures(0, false), 0);
 }
 
+#[test]
+fn take_pending_usage_skips_empty_and_recovers_poison() {
+    let empty = std::sync::Mutex::new(whycodes_core::types::Usage::default());
+    assert!(take_pending_usage(&empty).is_none());
+
+    let pending = std::sync::Mutex::new(whycodes_core::types::Usage {
+        input_tokens: 4,
+        ..Default::default()
+    });
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = pending.lock().unwrap();
+        panic!("poison pending usage");
+    }));
+    let fold = take_pending_usage(&pending).expect("non-empty");
+    assert_eq!(fold.input_tokens, 4);
+    assert!(take_pending_usage(&pending).is_none());
+}
+
 fn drain_status(rx: &mut tokio::sync::mpsc::UnboundedReceiver<TurnEvent>) -> Vec<String> {
     let mut out = Vec::new();
     while let Ok(ev) = rx.try_recv() {

@@ -583,3 +583,14 @@ fn ask_stdin_questions_covers_free_choice_other_and_errors() {
     assert_eq!(both[0].selected, vec!["A".to_string()]);
     assert_eq!(both[1].selected, vec!["B".to_string()]);
 }
+
+#[test]
+fn io_err_string_formats_io_error() {
+    let s = io_err_string(std::io::Error::other("stdin boom"));
+    assert!(s.contains("stdin boom"), "{s}");
+    assert_eq!(trim_line("  hi \n".into()), "hi");
+    assert_eq!(finish_read_line(Ok(3), " hi \n".into()).expect("ok"), "hi");
+    let err =
+        finish_read_line(Err(std::io::Error::other("stdin boom")), String::new()).unwrap_err();
+    assert!(err.contains("stdin boom"), "{err}");
+}

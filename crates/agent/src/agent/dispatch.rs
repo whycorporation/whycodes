@@ -113,9 +113,7 @@ impl Agent {
                         j.status.as_str(),
                         j.elapsed.as_secs_f64(),
                         j.label,
-                        j.exit_code
-                            .map(|c| format!(" exit={c}"))
-                            .unwrap_or_default()
+                        optional_exit_suffix(j.exit_code)
                     ));
                 }
                 ToolResult {
@@ -259,10 +257,7 @@ impl Agent {
                     .collect();
                 let mut added = Vec::new();
                 let mut missing = Vec::new();
-                let mut guard = self
-                    .activated_tools
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner());
+                let mut guard = super::recover_lock(&self.activated_tools);
                 for name in names {
                     if self.tool_executor.get(&name).is_some() {
                         if !ToolProfile::Core.includes(&name) {
@@ -438,11 +433,7 @@ impl Agent {
                     };
                 }
                 let dest = base.join(name);
-                if let Ok(mut g) = self.cwd_override.lock()
-                    && g.as_ref().is_some_and(|p| p.starts_with(&dest))
-                {
-                    *g = None;
-                }
+                clear_cwd_if_under(&self.cwd_override, &dest);
                 let wt = crate::swarm_worktree::SwarmWorktree {
                     path: dest,
                     repo_root: root,
@@ -481,9 +472,7 @@ impl Agent {
                         is_error: true,
                     };
                 }
-                if let Ok(mut g) = self.cwd_override.lock() {
-                    *g = Some(dest.clone());
-                }
+                *super::recover_lock(&self.cwd_override) = Some(dest.clone());
                 ToolResult {
                     tool_call_id: call.id.clone(),
                     content: format!(
@@ -494,7 +483,7 @@ impl Agent {
                 }
             }
             "exit" => {
-                let prev = self.cwd_override.lock().ok().and_then(|mut g| g.take());
+                let prev = super::recover_lock(&self.cwd_override).take();
                 ToolResult {
                     tool_call_id: call.id.clone(),
                     content: match prev {
@@ -551,7 +540,7 @@ impl Agent {
         let background = self.background.clone();
         let sandbox = tool_ctx.sandbox.clone();
         let cwd = std::path::PathBuf::from(&tool_ctx.working_dir);
-        let sink = events.cloned().or_else(|| self.event_sink.clone());
+        let sink = first_event_sink(events, self.event_sink.as_ref());
         let label = call
             .arguments
             .get("description")
@@ -1030,12 +1019,7 @@ impl Agent {
                     events_tx,
                     label,
                 )) => {
-                    if !worker_usage.is_empty() {
-                        self.subagent_usage_pending
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .add(&worker_usage);
-                    }
+                    fold_pending_usage(&self.subagent_usage_pending, &worker_usage);
                     if let Some(wt) = worktree {
                         let merge = crate::swarm_worktree::merge_into_main(&wt, &project_path);
                         for c in &merge.conflicts {
@@ -1243,12 +1227,7 @@ impl Agent {
         let result = runner
             .run(task, &worker_provider, &worker_model, api_key)
             .await;
-        if !result.usage.is_empty() {
-            self.subagent_usage_pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .add(&result.usage);
-        }
+        fold_pending_usage(&self.subagent_usage_pending, &result.usage);
         let usage_note = if result.usage.is_empty() {
             String::new()
         } else {
@@ -1295,6 +1274,34 @@ impl Agent {
             is_error: !result.success,
         }
     }
+}
+
+fn optional_exit_suffix(code: Option<i32>) -> String {
+    match code {
+        Some(c) => format!(" exit={c}"),
+        None => String::new(),
+    }
+}
+
+fn clear_cwd_if_under(cwd: &std::sync::Mutex<Option<std::path::PathBuf>>, dest: &std::path::Path) {
+    let mut g = super::recover_lock(cwd);
+    if g.as_ref().is_some_and(|p| p.starts_with(dest)) {
+        *g = None;
+    }
+}
+
+fn first_event_sink(events: Option<&EventSink>, fallback: Option<&EventSink>) -> Option<EventSink> {
+    events.cloned().or_else(|| fallback.cloned())
+}
+
+fn fold_pending_usage(
+    pending: &std::sync::Mutex<whycodes_core::types::Usage>,
+    usage: &whycodes_core::types::Usage,
+) {
+    if usage.is_empty() {
+        return;
+    }
+    super::recover_lock(pending).add(usage);
 }
 
 fn send_or_debug(tx: &EventSink, event: TurnEvent, dropped: &'static str) {

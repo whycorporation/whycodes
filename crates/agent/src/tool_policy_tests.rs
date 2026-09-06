@@ -112,3 +112,12 @@ fn pretty_one_liner_and_absolute_path_inside_workspace() {
     let bool_nested = format_permission_detail(&json!({"flag": serde_json::Value::Bool(true)}));
     assert!(bool_nested.contains("flag:"), "{bool_nested}");
 }
+
+#[test]
+fn pretty_or_display_falls_back_when_pretty_errors() {
+    assert!(pretty_or_display(&json!({"a": 1})).contains("a"));
+    assert!(pretty_or_display(&json!([1, 2])).contains("1"));
+    let err = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+    assert_eq!(pretty_json_or(Err(err), &json!(true)), "true");
+    assert_eq!(pretty_json_or(Ok("ok".into()), &json!(true)), "ok");
+}

@@ -75,7 +75,7 @@ pub fn create_worktree(
         .args(["worktree", "add", "--detach", dest_s.as_ref(), "HEAD"])
         .current_dir(repo_root)
         .output()
-        .map_err(|e| format!("git worktree add failed to spawn: {e}"))?;
+        .map_err(git_spawn_err("git worktree add failed to spawn"))?;
 
     if !status.status.success() {
         let err = String::from_utf8_lossy(&status.stderr);
@@ -243,7 +243,7 @@ pub fn remove_worktree(wt: &SwarmWorktree) -> Result<(), String> {
         .args(["worktree", "remove", "--force", dest_s.as_ref()])
         .current_dir(&wt.repo_root)
         .output()
-        .map_err(|e| format!("git worktree remove spawn: {e}"))?;
+        .map_err(git_spawn_err("git worktree remove spawn"))?;
 
     if !output.status.success() {
         // Fallback: force-delete directory and prune.
@@ -315,10 +315,15 @@ fn git_show_blob(repo: &Path, rev: &str, rel: &str) -> Option<Vec<u8>> {
         .current_dir(repo)
         .output()
         .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    Some(output.stdout)
+    successful_stdout(output)
+}
+
+fn git_spawn_err(prefix: &'static str) -> impl Fn(std::io::Error) -> String {
+    move |e| format!("{prefix}: {e}")
+}
+
+fn successful_stdout(output: std::process::Output) -> Option<Vec<u8>> {
+    output.status.success().then_some(output.stdout)
 }
 
 fn git_ok(dir: &Path, args: &[&str]) -> Option<String> {

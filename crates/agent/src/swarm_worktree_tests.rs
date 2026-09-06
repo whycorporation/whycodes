@@ -515,6 +515,17 @@ fn after_git_remove_failed_ok_when_gone_and_err_when_present() {
 }
 
 #[test]
+fn git_spawn_and_stdout_helpers() {
+    let err = git_spawn_err("git worktree add failed to spawn")(std::io::Error::other("no git"));
+    assert!(err.contains("git worktree add failed to spawn"), "{err}");
+    assert!(err.contains("no git"), "{err}");
+    let fail = std::process::Command::new("false").output().expect("false");
+    assert!(successful_stdout(fail).is_none());
+    let ok = std::process::Command::new("true").output().expect("true");
+    assert!(successful_stdout(ok).is_some());
+}
+
+#[test]
 fn merge_changed_path_skips_vanished_untracked() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("gone.txt");

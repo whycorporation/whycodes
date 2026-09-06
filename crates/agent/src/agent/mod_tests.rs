@@ -1323,6 +1323,35 @@ async fn execute_swarm_preclaim_conflict_and_fail_open() {
         "{}",
         conflict.content
     );
+    let mut saw_conflict = false;
+    while let Ok(ev) = rx.try_recv() {
+        if matches!(ev, TurnEvent::FileConflict { .. }) {
+            saw_conflict = true;
+        }
+    }
+    assert!(saw_conflict, "pre-claim should emit FileConflict");
+
+    let (drop_tx, drop_rx) = tokio::sync::mpsc::unbounded_channel();
+    drop(drop_rx);
+    let dropped = a
+        .execute_swarm_tool(
+            &tc(
+                "swarm",
+                json!({
+                    "tasks": [
+                        {"goal": "a", "paths": ["note.txt"], "max_turns": 1},
+                        {"goal": "b", "paths": ["note.txt"], "max_turns": 1}
+                    ]
+                }),
+            ),
+            &session,
+            "script",
+            "m",
+            "k",
+            Some(&drop_tx),
+        )
+        .await;
+    assert!(dropped.is_error, "{dropped:?}");
 
     let fail = a
         .execute_swarm_tool(
@@ -2611,6 +2640,28 @@ async fn title_from_optional_provider_none_is_empty() {
         .await
         .expect("none provider is Ok empty");
     assert!(title.is_empty(), "{title}");
+}
+
+fn poison_mutex<T>(value: T) -> std::sync::Mutex<T> {
+    let m = std::sync::Mutex::new(value);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = m.lock().unwrap();
+        panic!("poison agent mutex");
+    }));
+    m
+}
+
+#[test]
+fn recover_lock_and_json_fallback_cover_poison_and_err() {
+    let m = poison_mutex(9u8);
+    assert_eq!(*recover_lock(&m), 9);
+    assert_eq!(json_string_or(Ok("{\"a\":1}".into()), "{}"), "{\"a\":1}");
+    let err = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
+    assert_eq!(json_string_or(Err(err), "{}"), "{}");
+    assert_eq!(
+        json_or_object(&serde_json::json!({"k": 1})),
+        serde_json::to_string(&serde_json::json!({"k": 1})).unwrap()
+    );
 }
 
 #[tokio::test]

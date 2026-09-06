@@ -104,13 +104,16 @@ fn scan_dirs(project_path: &Path) -> Vec<PathBuf> {
     while cur != root {
         // `git_root` only returns an ancestor; jumping to `root` ends the walk
         // if a parent is ever missing (filesystem root).
-        cur = cur
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| root.clone());
+        cur = parent_or(&root, cur.parent());
         dirs.push(cur.clone());
     }
     dirs
+}
+
+fn parent_or(root: &Path, parent: Option<&Path>) -> PathBuf {
+    parent
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.to_path_buf())
 }
 
 fn git_root(start: &Path) -> Option<PathBuf> {
@@ -166,12 +169,14 @@ fn push_glob_files(dir: PathBuf, ext: &str, out: &mut Vec<PathBuf>) {
 fn label_for(path: &Path, project_path: &Path) -> String {
     path.strip_prefix(project_path)
         .map(|rel| rel.display().to_string())
-        .unwrap_or_else(|_| {
-            path.file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string())
-        })
+        .unwrap_or_else(|_| file_name_or_display(path))
         .replace('\\', "/")
+}
+
+fn file_name_or_display(path: &Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
 }
 
 #[cfg(test)]

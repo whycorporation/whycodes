@@ -86,6 +86,21 @@ fn job_status_as_str_and_debug_fmt() {
     let long = truncate_label(&"x".repeat(80), 10);
     assert!(long.ends_with('…'), "{long}");
     assert_eq!(long.chars().count(), 10);
+    assert_eq!(
+        nonempty_or_truncated(Some("keep".into()), "echo hi"),
+        "keep"
+    );
+    assert_eq!(
+        nonempty_or_truncated(Some("   ".into()), "echo hi"),
+        truncate_label("echo hi", 72)
+    );
+    assert_eq!(
+        nonempty_or_truncated(None, "echo hi"),
+        truncate_label("echo hi", 72)
+    );
+    assert_eq!(exit_summary("job".into(), Some(0)), "job (exit 0)");
+    assert_eq!(exit_summary("job".into(), None), "job");
+    kill_child_group(None);
 }
 
 #[tokio::test]
@@ -465,4 +480,63 @@ fn wait_status_records_error_and_success() {
         );
         assert_eq!(job_status_from_wait(None), (JobStatus::Failed, None));
     }
+}
+
+fn poison_mutex<T>(value: T) -> Mutex<T> {
+    let m = Mutex::new(value);
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = m.lock().unwrap();
+        panic!("poison background mutex");
+    }));
+    m
+}
+
+fn sample_job(status: JobStatus, output: &str) -> JobInner {
+    JobInner {
+        id: "bg-1".into(),
+        label: "job".into(),
+        status,
+        started: Instant::now(),
+        finished: None,
+        output: output.into(),
+        exit_code: None,
+        kill_flag: Arc::new(AtomicBool::new(false)),
+    }
+}
+
+#[test]
+fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
+    let m = poison_mutex(7u8);
+    assert_eq!(*lock(&m), 7);
+
+    let job = poison_mutex(sample_job(JobStatus::Running, "out"));
+    append_output(&Arc::new(job), "!");
+
+    let poisoned_jobs = poison_mutex(HashMap::<String, Arc<Mutex<JobInner>>>::new());
+    assert!(lock(&poisoned_jobs).is_empty());
+    let poisoned_order = poison_mutex(Vec::<String>::new());
+    assert!(lock(&poisoned_order).is_empty());
+    let poisoned_listener = poison_mutex(None::<BackgroundListener>);
+    assert!(lock(&poisoned_listener).is_none());
+
+    let job_m = Arc::new(Mutex::new(sample_job(JobStatus::Running, "")));
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _g = job_m.lock().unwrap();
+        panic!("poison job mutex");
+    }));
+    assert_eq!(lock(&job_m).id, "bg-1");
+
+    assert_eq!(nonempty_or_truncated(Some("keep".into()), "cmd"), "keep");
+    assert_eq!(
+        nonempty_or_truncated(Some("   ".into()), "echo hi"),
+        "echo hi"
+    );
+    assert_eq!(nonempty_or_truncated(None, "echo hi"), "echo hi");
+    kill_child_group(None);
+    assert_eq!(exit_summary("echo".into(), Some(0)), "echo (exit 0)");
+    assert_eq!(exit_summary("echo".into(), None), "echo");
+    let started = Instant::now();
+    let finished = started + Duration::from_millis(5);
+    assert!(job_elapsed(Some(finished), started) >= Duration::from_millis(5));
+    let _ = job_elapsed(None, started);
 }

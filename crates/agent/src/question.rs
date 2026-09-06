@@ -204,10 +204,22 @@ fn ask_stdin_questions(
 
 fn read_line() -> Result<String, String> {
     let mut line = String::new();
-    std::io::stdin()
-        .read_line(&mut line)
-        .map_err(|e| e.to_string())?;
-    Ok(line.trim().to_string())
+    finish_read_line(std::io::stdin().read_line(&mut line), line)
+}
+
+fn finish_read_line(result: Result<usize, std::io::Error>, line: String) -> Result<String, String> {
+    match result {
+        Ok(_) => Ok(trim_line(line)),
+        Err(e) => Err(io_err_string(e)),
+    }
+}
+
+fn trim_line(line: String) -> String {
+    line.trim().to_string()
+}
+
+fn io_err_string(err: std::io::Error) -> String {
+    err.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

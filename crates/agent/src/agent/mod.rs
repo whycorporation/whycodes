@@ -10,7 +10,7 @@ mod spawn;
 mod turn;
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use whycodes_core::SandboxSettings;
 use whycodes_core::network::NetworkPolicy;
@@ -101,6 +101,11 @@ pub struct Agent {
     session_claims: Option<whycodes_core::FileClaimRegistry>,
     /// Swarm mailbox when this agent is a worker (or parent mid-swarm).
     swarm_hub: Option<whycodes_core::SwarmHub>,
+}
+
+/// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
+pub(crate) fn recover_lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Stop auto-compact after this many consecutive ineffective passes (Claude Code).
@@ -257,8 +262,16 @@ pub(crate) fn append_request_user_suffix(
 }
 
 pub(crate) fn tool_call_signature(tc: &ToolCall) -> String {
-    let args = serde_json::to_string(&tc.arguments).unwrap_or_else(|_| "{}".into());
+    let args = json_or_object(&tc.arguments);
     format!("{}|{args}", tc.name)
+}
+
+fn json_or_object(value: &serde_json::Value) -> String {
+    json_string_or(serde_json::to_string(value), "{}")
+}
+
+fn json_string_or(result: Result<String, serde_json::Error>, fallback: &str) -> String {
+    result.unwrap_or_else(|_json| fallback.to_string())
 }
 
 /// True when executing `calls` would make the last N signatures all equal.
@@ -618,11 +631,8 @@ impl Agent {
         if !self.info.permission.allow_network {
             sandbox.network = false;
         }
-        let working_dir = self
-            .cwd_override
-            .lock()
-            .ok()
-            .and_then(|g| g.clone())
+        let working_dir = recover_lock(&self.cwd_override)
+            .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|| session.project_path.to_string_lossy().to_string());
         ToolContext {
@@ -645,19 +655,17 @@ impl Agent {
 
     /// Snapshot of tools activated via `tool_search`.
     pub fn activated_tools_snapshot(&self) -> Vec<String> {
-        self.activated_tools
-            .lock()
-            .map(|g| {
-                let mut v: Vec<_> = g.iter().cloned().collect();
-                v.sort();
-                v
-            })
-            .unwrap_or_default()
+        let mut v: Vec<_> = recover_lock(&self.activated_tools)
+            .iter()
+            .cloned()
+            .collect();
+        v.sort();
+        v
     }
 
     /// Active tool cwd (worktree enter), if any.
     pub fn cwd_override_path(&self) -> Option<std::path::PathBuf> {
-        self.cwd_override.lock().ok().and_then(|g| g.clone())
+        recover_lock(&self.cwd_override).clone()
     }
 
     /// Register shell plugins + MCP tools on a fresh executor.

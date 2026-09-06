@@ -23,10 +23,7 @@ impl McpCaller for SharedMcpCaller {
     ) -> futures::future::BoxFuture<'a, Result<String, String>> {
         Box::pin(async move {
             let mut client = self.client.lock().await;
-            client
-                .call_tool(&self.remote_name, arguments)
-                .await
-                .map_err(|e| e.to_string())
+            mcp_call_error(client.call_tool(&self.remote_name, arguments).await)
         })
     }
 }
@@ -39,10 +36,13 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     let headers = server.headers.as_ref().unwrap_or(&empty_headers);
     match kind {
         McpTransportKind::Stdio => {
-            let command = server
-                .command
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("stdio MCP server missing `command`"))?;
+            let command = match required_mcp_field(
+                server.command.as_deref(),
+                "stdio MCP server missing `command`",
+            ) {
+                Ok(command) => command,
+                Err(e) => return Err(e),
+            };
             let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
             Ok(McpClient::connect_stdio_with(
                 command,
@@ -53,24 +53,15 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
             .await?)
         }
         McpTransportKind::Http => {
-            let url = server
-                .url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("http MCP server missing `url`"))?;
+            let url = required_mcp_field(server.url.as_deref(), "http MCP server missing `url`")?;
             Ok(McpClient::connect_http(url, headers).await?)
         }
         McpTransportKind::Sse => {
-            let url = server
-                .url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("sse MCP server missing `url`"))?;
+            let url = required_mcp_field(server.url.as_deref(), "sse MCP server missing `url`")?;
             Ok(McpClient::connect_sse(url, headers).await?)
         }
         McpTransportKind::Auto => {
-            let url = server
-                .url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("auto MCP server missing `url`"))?;
+            let url = required_mcp_field(server.url.as_deref(), "auto MCP server missing `url`")?;
             Ok(McpClient::connect_auto(url, headers).await?)
         }
     }
@@ -157,6 +148,17 @@ pub async fn register_mcp_tools(executor: &mut ToolExecutor, config: &Config) ->
         }
     }
     count
+}
+
+fn mcp_call_error(result: Result<String, whycodes_mcp::McpError>) -> Result<String, String> {
+    result.map_err(|e| e.to_string())
+}
+
+fn required_mcp_field<'a>(
+    value: Option<&'a str>,
+    missing: &'static str,
+) -> anyhow::Result<&'a str> {
+    value.ok_or_else(|| anyhow::anyhow!(missing))
 }
 
 #[cfg(test)]

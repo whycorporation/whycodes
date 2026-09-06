@@ -118,6 +118,21 @@ fn label_falls_back_to_file_name_outside_project() {
 }
 
 #[test]
+fn parent_or_and_file_name_helpers_cover_none() {
+    let root = Path::new("/repo");
+    assert_eq!(
+        parent_or(root, Some(Path::new("/repo/src"))),
+        PathBuf::from("/repo/src")
+    );
+    assert_eq!(parent_or(root, None), PathBuf::from("/repo"));
+    assert_eq!(
+        file_name_or_display(Path::new("/tmp/CLAUDE.md")),
+        "CLAUDE.md"
+    );
+    assert_eq!(file_name_or_display(Path::new("")), "");
+}
+
+#[test]
 fn byte_and_file_caps_and_duplicate_paths() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("AGENTS.md"), "native").unwrap();

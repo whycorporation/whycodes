@@ -289,6 +289,19 @@ async fn register_stdio_success_and_call_bridged_tool() {
     );
 }
 
+#[test]
+fn mcp_helpers_map_error_and_required_field() {
+    assert_eq!(mcp_call_error(Ok("ok".into())).expect("ok"), "ok");
+    let err = mcp_call_error(Err(whycodes_mcp::McpError::msg("boom"))).unwrap_err();
+    assert!(err.contains("boom"), "{err}");
+    assert_eq!(
+        required_mcp_field(Some("cmd"), "missing").expect("present"),
+        "cmd"
+    );
+    let missing = required_mcp_field(None, "stdio MCP server missing `command`").unwrap_err();
+    assert!(missing.to_string().contains("command"), "{missing}");
+}
+
 #[tokio::test]
 async fn register_stdio_list_tools_error_skips_server() {
     let dir = tempfile::tempdir().unwrap();

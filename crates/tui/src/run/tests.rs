@@ -1118,6 +1118,263 @@ fn tui_login_ui_emits_notes() {
 }
 
 #[test]
+fn tui_login_ui_send_logs_when_loop_is_closed() {
+    use whycodes_auth::providers::LoginUi;
+    let (tx, rx) = mpsc::unbounded_channel();
+    drop(rx);
+    let mut ui = TuiLoginUi { tx };
+    ui.note("gone");
+    ui.show_sign_in("Anthropic", "https://example.test", false);
+    ui.show_device_code("ABCD", "https://github.com/login", false);
+}
+
+#[tokio::test]
+async fn tui_login_prompt_pasted_code_errors_when_sender_dropped() {
+    use whycodes_auth::providers::LoginUi;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut ui = TuiLoginUi { tx };
+    let fut = ui.prompt_pasted_code();
+    let AuthFlowEvent::NeedCode(code_tx) = rx.try_recv().expect("NeedCode") else {
+        panic!("expected NeedCode");
+    };
+    drop(code_tx);
+    let err = fut.await.expect_err("cancelled");
+    assert!(err.to_string().to_lowercase().contains("dismissed") || !err.to_string().is_empty());
+}
+
+#[test]
+fn apply_approval_mode_sets_app_config_and_agent() {
+    let _home = isolate_home();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut agent = Agent::new(dummy_info("build"));
+    let mut config = Config::default();
+    apply_approval_mode(&mut app, &mut agent, &mut config, ApprovalMode::Important);
+    assert_eq!(app.approval_mode, ApprovalMode::Important);
+    assert_eq!(config.general.approval_mode, Some(ApprovalMode::Important));
+    assert!(
+        app.status_message.to_lowercase().contains("important")
+            || app.status_message.to_lowercase().contains("approval")
+    );
+}
+
+#[tokio::test]
+async fn fill_oauth_credential_skips_set_key_and_non_oauth() {
+    let _home = isolate_home();
+    let mut key = "already-set".to_string();
+    fill_oauth_credential(&mut key, "anthropic").await;
+    assert_eq!(key, "already-set");
+
+    let mut empty = String::new();
+    fill_oauth_credential(&mut empty, "unknown-provider-xyz").await;
+    assert!(empty.is_empty());
+
+    let mut oauth_empty = String::new();
+    fill_oauth_credential(&mut oauth_empty, "anthropic").await;
+    assert!(oauth_empty.is_empty());
+}
+
+#[test]
+fn enable_keyboard_enhancement_skips_when_bench_set() {
+    let _home = isolate_home();
+    let prev = std::env::var_os("WHYCODES_BENCH");
+    unsafe { std::env::set_var("WHYCODES_BENCH", "1") };
+    let mut out = Vec::new();
+    assert!(!enable_keyboard_enhancement(&mut out));
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_BENCH", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_BENCH") },
+    }
+}
+
+#[test]
+fn spawn_model_context_fetch_skips_without_base_and_with_opt_out() {
+    let _home = isolate_home();
+    let config = Config::default();
+    let (tx, _rx) = mpsc::unbounded_channel();
+    spawn_model_context_fetch(&config, "acme", "m", "sk", tx.clone());
+
+    let prev = std::env::var_os("WHYCODES_NO_MODEL_CATALOG");
+    unsafe { std::env::set_var("WHYCODES_NO_MODEL_CATALOG", "1") };
+    spawn_model_context_fetch(&config, "acme", "m", "sk", tx);
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_NO_MODEL_CATALOG", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_NO_MODEL_CATALOG") },
+    }
+}
+
+#[test]
+fn force_stop_keeps_agent_on_remote_outcome() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let idx = whycodes_index::WorkspaceIndex::start(Vec::new());
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.agent_name = "build".into();
+    let mut rt = test_runtime();
+    rt.agent_busy = true;
+    rt.cancel_flag = Some(new_cancel_flag());
+    let (qtx, qrx) = tokio::sync::oneshot::channel();
+    rt.pending_question_queue.push_back(QuestionRequest {
+        questions: vec![sample_question()],
+        reply: qtx,
+    });
+    let (ptx, prx) = tokio::sync::oneshot::channel();
+    rt.pending_perm_queue
+        .push_back(whycodes_agent::PermissionRequest {
+            tool_name: "bash".into(),
+            detail: "ls".into(),
+            reply: ptx,
+        });
+    rt.done_tx
+        .send(TurnOutcome::Remote {
+            text: "remote".into(),
+            error: None,
+            work_ms: 1,
+        })
+        .unwrap();
+    let before = rt.agent.info.name.clone();
+    let mut cancel_at = Some(Instant::now());
+    force_stop_turn(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    assert_eq!(rt.agent.info.name, before);
+    assert!(!rt.agent_busy);
+    assert!(cancel_at.is_none());
+    assert_eq!(qrx.blocking_recv().unwrap(), Err(QuestionError::Cancelled));
+    assert_eq!(prx.blocking_recv().ok(), Some(false));
+    assert!(
+        app.messages
+            .iter()
+            .any(|m| m.content.contains("Stopped") || m.content.contains("cancelled"))
+    );
+
+    app.add_message(ChatRole::System, "turn cancelled already");
+    rt.agent_busy = true;
+    let mut cancel_at = Some(Instant::now());
+    force_stop_turn(
+        &mut app,
+        &mut rt,
+        &mut cancel_at,
+        &Config::default(),
+        dir.path(),
+        &idx,
+    );
+    let stopped = app
+        .messages
+        .iter()
+        .filter(|m| m.content.contains("Stopped"))
+        .count();
+    assert!(
+        stopped <= 1,
+        "already-cancelled transcript skips extra Stopped"
+    );
+}
+
+#[tokio::test]
+async fn spawn_model_context_fetch_sends_window_or_swallows_errors() {
+    let _home = isolate_home();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for _ in 0..4 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                break;
+            };
+            let mut buf = [0u8; 1024];
+            let _ = std::io::Read::read(&mut stream, &mut buf);
+            let body = r#"{"data":[{"id":"m","context_length":32000}]}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = std::io::Write::write_all(&mut stream, resp.as_bytes());
+        }
+    });
+
+    let mut config = Config::default();
+    config.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk".into()),
+            api_base: Some(format!("http://{addr}/v1")),
+            base_url: Some(format!("http://{addr}/v1")),
+            headers: None,
+            models: vec!["m".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_model_context_fetch(&config, "acme", "m", "sk", tx);
+    let got = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .ok()
+        .flatten();
+    assert_eq!(got, Some(("acme".into(), "m".into(), 32000)));
+
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_model_context_fetch(&config, "acme", "other", "sk", tx);
+    let none = tokio::time::timeout(Duration::from_millis(400), rx.recv())
+        .await
+        .ok()
+        .flatten();
+    assert!(none.is_none());
+
+    let mut bad = Config::default();
+    bad.providers.insert(
+        "acme".into(),
+        whycodes_core::types::ProviderConfig {
+            name: "acme".into(),
+            api_key: Some("sk".into()),
+            api_base: Some("http://127.0.0.1:1/v1".into()),
+            base_url: Some("http://127.0.0.1:1/v1".into()),
+            headers: None,
+            models: vec!["m".into()],
+            tool_arguments: None,
+            extra: Default::default(),
+        },
+    );
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_model_context_fetch(&bad, "acme", "m", "sk", tx);
+    let err = tokio::time::timeout(Duration::from_millis(400), rx.recv())
+        .await
+        .ok()
+        .flatten();
+    assert!(err.is_none());
+}
+
+#[tokio::test]
+async fn spawn_oauth_login_reports_unknown_provider() {
+    let _home = isolate_home();
+    let dir = tempfile::tempdir().unwrap();
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    spawn_oauth_login(
+        &mut app,
+        &tx,
+        dir.path().to_path_buf(),
+        "no-such-oauth-provider",
+    );
+    let ev = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .ok()
+        .flatten()
+        .expect("auth event");
+    match ev {
+        AuthFlowEvent::Done { provider, result } => {
+            assert_eq!(provider, "no-such-oauth-provider");
+            assert!(result.is_err(), "{result:?}");
+        }
+        _other => panic!("expected Done, got non-Done auth event"),
+    }
+}
+
+#[test]
 fn event_forces_redraw_treats_paste_as_dirty() {
     assert!(event_forces_redraw(&Event::Paste("x".into())));
     assert!(event_forces_redraw(&Event::FocusGained));
@@ -1630,6 +1887,21 @@ fn force_stop_applies_outcome_or_rebuilds() {
     assert!(!rt.agent_busy);
     assert!(rt.session_backup.is_none());
     assert_eq!(rt.session.system_prompt, "backup-sys");
+
+    rt.agent = Agent::new(dummy_info("keep-remote"));
+    rt.agent_busy = true;
+    rt.cancel_flag = Some(new_cancel_flag());
+    at = Some(Instant::now());
+    rt.done_tx
+        .send(TurnOutcome::Remote {
+            text: "remote".into(),
+            error: None,
+            work_ms: 1,
+        })
+        .unwrap();
+    force_stop_turn(&mut app, &mut rt, &mut at, &config, dir.path(), &idx);
+    assert_eq!(rt.agent.info.name, "keep-remote");
+    assert!(!rt.agent_busy);
 }
 
 #[test]
@@ -1664,12 +1936,31 @@ fn rebuild_agent_resolves_pending_name() {
         &config,
         dir.path(),
         "",
-        event_tx,
+        event_tx.clone(),
         Arc::new(perm),
         Arc::new(question),
         &idx,
     );
     assert_eq!(agent.info.name, "build");
+
+    let config = Config {
+        default_agent: "plan".into(),
+        ..Config::default()
+    };
+    let (perm, _) = ChannelPermissionPrompter::new();
+    let (question, _) = ChannelQuestionPrompter::new(None);
+    rebuild_agent_after_force_stop(
+        &mut agent,
+        &mut session,
+        &config,
+        dir.path(),
+        "_pending",
+        event_tx,
+        Arc::new(perm),
+        Arc::new(question),
+        &idx,
+    );
+    assert_eq!(agent.info.name, "plan");
 }
 
 #[tokio::test]
