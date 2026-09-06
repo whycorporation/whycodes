@@ -593,4 +593,34 @@ fn io_err_string_formats_io_error() {
     let err =
         finish_read_line(Err(std::io::Error::other("stdin boom")), String::new()).unwrap_err();
     assert!(err.contains("stdin boom"), "{err}");
+    assert_eq!(first_prompt(&[]), "questionnaire");
+    assert_eq!(
+        first_prompt(&[QuestionSpec {
+            prompt: "pick".into(),
+            options: vec![],
+            multi_select: false,
+            important: false,
+        }]),
+        "pick"
+    );
+    assert_eq!(
+        invalid_line(Err("boom".into())),
+        Err(QuestionError::Invalid("boom".into()))
+    );
+    assert_eq!(invalid_line(Ok("ok".into())).expect("ok"), "ok");
+    assert_eq!(line_or_empty(Ok("typed".into())), "typed");
+    assert_eq!(line_or_empty(Err("eof".into())), "");
+    let mut cursor = std::io::Cursor::new(b"  hi \n");
+    assert_eq!(read_buf_line(&mut cursor).expect("line"), "hi");
+    let mut fail = std::io::BufReader::new(FailRead);
+    let err = read_buf_line(&mut fail).unwrap_err();
+    assert!(err.contains("stdin boom"), "{err}");
+}
+
+struct FailRead;
+
+impl std::io::Read for FailRead {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::other("stdin boom"))
+    }
 }

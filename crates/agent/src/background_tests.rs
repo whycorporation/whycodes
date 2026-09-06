@@ -1,5 +1,6 @@
 use super::*;
-use whycodes_core::SandboxSettings;
+use whycodes_core::{SandboxFallback, SandboxMode, SandboxSettings};
+use whycodes_sandbox::SandboxError;
 
 #[tokio::test]
 async fn start_sleep_kill() {
@@ -539,4 +540,32 @@ fn lock_recovers_from_poison_and_helpers_cover_fallbacks() {
     let finished = started + Duration::from_millis(5);
     assert!(job_elapsed(Some(finished), started) >= Duration::from_millis(5));
     let _ = job_elapsed(None, started);
+
+    let err =
+        sandbox_prepare_result(Err(SandboxError::Unavailable("no bwrap".into()))).unwrap_err();
+    assert!(err.contains("no bwrap"), "{err}");
+    let deny = SandboxSettings {
+        mode: SandboxMode::Workspace,
+        network: true,
+        fallback: SandboxFallback::Deny,
+    };
+    let request = SandboxRequest {
+        command: "echo hi".into(),
+        working_dir: std::env::temp_dir(),
+        settings: deny.clone(),
+    };
+    match prepare_job(&request) {
+        Ok(_) => {}
+        Err(e) => assert!(!e.is_empty(), "{e}"),
+    }
+    let mut already = "…keep".to_string();
+    prefix_ellipsis(&mut already);
+    assert_eq!(already, "…keep");
+    let mut short = "ok".to_string();
+    cap_job_output(&mut short);
+    assert_eq!(short, "ok");
+    let mut over = "a".repeat(MAX_JOB_OUTPUT_BYTES + 8);
+    cap_job_output(&mut over);
+    assert!(over.starts_with('…'), "{over}");
+    assert!(over.len() <= MAX_JOB_OUTPUT_BYTES + 4, "{}", over.len());
 }

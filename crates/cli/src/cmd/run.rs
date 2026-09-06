@@ -12,6 +12,26 @@ use whycodes_config::Config;
 use whycodes_core::types::AgentInfo;
 use whycodes_protocol::{CiEvent, OutputFormat, ResultMeta};
 
+pub(crate) fn force_plain_mode(cli_plain: bool) -> bool {
+    cli_plain || std::env::var_os("WHYCODES_PLAIN").is_some()
+}
+
+pub(crate) fn should_use_tui(force_plain: bool, stub_tui: bool, tui_available: bool) -> bool {
+    !force_plain && (stub_tui || tui_available)
+}
+
+pub(crate) fn is_repl_interactive(prompt: Option<&str>, structured: bool) -> bool {
+    prompt.is_none_or(str::is_empty) && !structured
+}
+
+pub(crate) fn resume_missing_label(want: &str) -> &str {
+    if want == whycodes_tui::RESUME_LATEST {
+        "none saved yet"
+    } else {
+        want
+    }
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -70,10 +90,10 @@ pub(crate) async fn cmd_run(
     // Hosts that capture stdout (IDE, some wrappers) report stdout_tty=false
     // while still having a controlling terminal — tui_available() opens
     // /dev/tty (Unix) or CONOUT$ (Windows) in that case so the TUI still works.
-    let force_plain = cli.plain || std::env::var_os("WHYCODES_PLAIN").is_some();
+    let force_plain = force_plain_mode(cli.plain);
     let stub_tui = cfg!(test) && std::env::var_os("WHYCODES_TEST_TUI").is_some();
-    let use_tui = !force_plain && (stub_tui || whycodes_tui::tui_available());
-    let interactive = prompt.is_none_or(str::is_empty) && !format.is_structured();
+    let use_tui = should_use_tui(force_plain, stub_tui, whycodes_tui::tui_available());
+    let interactive = is_repl_interactive(prompt, format.is_structured());
     // TUI owns first-run import as a home-screen confirm (same chrome as
     // the update offer). `--plain` REPL still asks on stdin before the loop.
     match super::import::maybe_first_run_import(interactive && !use_tui) {
@@ -192,11 +212,7 @@ pub(crate) async fn cmd_run(
                 eprintln!(
                     "{} No session to resume ({}).",
                     "ℹ".yellow(),
-                    if want == whycodes_tui::RESUME_LATEST {
-                        "none saved yet"
-                    } else {
-                        want.as_str()
-                    }
+                    resume_missing_label(want)
                 );
             }
             Err(e) => eprintln!("{} Resume failed: {e}", "✗".red()),

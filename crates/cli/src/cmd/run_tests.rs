@@ -77,4 +77,39 @@ fn helpers_all_prompts_and_fan_out() {
     assert!(should_fan_out(&["a".into(), "b".into()]));
     let mapped = map_tui_run_error(anyhow::anyhow!("os error 6"));
     assert!(mapped.to_string().contains("TUI needs a real terminal"));
+    let mapped = map_tui_run_error(anyhow::anyhow!("No such device"));
+    assert!(mapped.to_string().contains("TUI needs a real terminal"));
+    let mapped = map_tui_run_error(anyhow::anyhow!("not a terminal"));
+    assert!(mapped.to_string().contains("TUI needs a real terminal"));
+    let passthrough = map_tui_run_error(anyhow::anyhow!("bind failed"));
+    assert_eq!(passthrough.to_string(), "bind failed");
+}
+
+#[test]
+fn tui_plain_and_resume_helpers() {
+    assert!(!force_plain_mode(false));
+    assert!(force_plain_mode(true));
+    let prev = std::env::var_os("WHYCODES_PLAIN");
+    unsafe { std::env::set_var("WHYCODES_PLAIN", "1") };
+    assert!(force_plain_mode(false));
+    match prev {
+        Some(v) => unsafe { std::env::set_var("WHYCODES_PLAIN", v) },
+        None => unsafe { std::env::remove_var("WHYCODES_PLAIN") },
+    }
+
+    assert!(!should_use_tui(true, true, true));
+    assert!(should_use_tui(false, true, false));
+    assert!(should_use_tui(false, false, true));
+    assert!(!should_use_tui(false, false, false));
+
+    assert!(is_repl_interactive(None, false));
+    assert!(is_repl_interactive(Some(""), false));
+    assert!(!is_repl_interactive(Some("hi"), false));
+    assert!(!is_repl_interactive(None, true));
+
+    assert_eq!(
+        resume_missing_label(whycodes_tui::RESUME_LATEST),
+        "none saved yet"
+    );
+    assert_eq!(resume_missing_label("sess-1"), "sess-1");
 }

@@ -4307,6 +4307,92 @@ fn apply_import_now_empty_selection_writes_nothing() {
 }
 
 #[test]
+fn import_label_and_confirm_helpers() {
+    use whycodes_import::{FoundSource, Product, SourceState};
+    let found = [
+        FoundSource {
+            product: Product::Claude,
+            rel_path: ".claude.json",
+            path: PathBuf::from("/tmp/.claude.json"),
+            state: SourceState::New,
+        },
+        FoundSource {
+            product: Product::Claude,
+            rel_path: "settings.json",
+            path: PathBuf::from("/tmp/settings.json"),
+            state: SourceState::Approved,
+        },
+        FoundSource {
+            product: Product::OpenCode,
+            rel_path: "opencode.json",
+            path: PathBuf::from("/tmp/opencode.json"),
+            state: SourceState::New,
+        },
+    ];
+    let labels = unique_product_labels(&found);
+    assert!(labels.contains("Claude Code"), "{labels}");
+    assert!(labels.contains("OpenCode"), "{labels}");
+    assert_eq!(looked_for(Some(&Product::Grok)), "Grok Build");
+    let all = looked_for(None);
+    assert!(all.contains("Claude Code"), "{all}");
+    assert!(all.contains("Codex CLI"), "{all}");
+
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    offer_import_confirm(&mut app, "Claude Code");
+    match app.dialogs.active() {
+        Some(DialogKind::Confirm {
+            title, on_confirm, ..
+        }) => {
+            assert_eq!(title, "Import settings");
+            assert_eq!(*on_confirm, ConfirmAction::ImportSettings);
+        }
+        other => panic!("expected import confirm, got {other:?}"),
+    }
+}
+
+#[test]
+fn refresh_context_window_sets_max_from_config_model() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    let mut config = Config::default();
+    config.models.insert(
+        "m".into(),
+        whycodes_core::types::ModelConfig {
+            model_id: "m".into(),
+            provider_id: "acme".into(),
+            max_tokens: None,
+            context_window: Some(12_345),
+            temperature: None,
+            top_p: None,
+            thinking: None,
+            supports_tools: None,
+            supports_images: None,
+        },
+    );
+    refresh_context_window(&mut app, &config, "acme", "m");
+    assert_eq!(app.max_context_tokens, 12_345);
+}
+
+#[test]
+fn arm_generating_clears_empty_status_and_reuses_assistant() {
+    let mut app = TuiApp::from_config(TuiAppConfig::default());
+    app.add_message(ChatRole::Assistant, "already");
+    app.status_message = "old".into();
+    let mut rt = test_runtime();
+    let mut at = Some(Instant::now());
+    let _flag = arm_generating(&mut app, &mut rt, &mut at, "");
+    assert!(rt.agent_busy);
+    assert!(at.is_none());
+    assert!(app.status_message.is_empty());
+    assert_eq!(
+        app.messages
+            .iter()
+            .filter(|m| m.role == ChatRole::Assistant)
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn mark_import_declined_sets_first_run_asked() {
     let home = IsolatedImportHome::new();
     mark_import_declined();

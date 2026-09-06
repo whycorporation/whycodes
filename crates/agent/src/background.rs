@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use whycodes_core::SandboxSettings;
-use whycodes_sandbox::{SandboxRequest, kill_pid_group, prepare};
+use whycodes_sandbox::{PreparedCommand, SandboxError, SandboxRequest, kill_pid_group, prepare};
 
 /// Recover from a poisoned mutex instead of aborting (`panic = "abort"` in release).
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -255,7 +255,7 @@ impl BackgroundRegistry {
             working_dir,
             settings: sandbox,
         };
-        let prepared = prepare(&request).map_err(|e| e.to_string())?;
+        let prepared = prepare_job(&request)?;
 
         let id = format!("bg-{}", self.inner.next_id.fetch_add(1, Ordering::SeqCst));
         let label = nonempty_or_truncated(label, command);
@@ -471,16 +471,39 @@ fn job_status_from_wait(status: Option<std::process::ExitStatus>) -> (JobStatus,
     }
 }
 
+fn prepare_job(request: &SandboxRequest) -> Result<PreparedCommand, String> {
+    sandbox_prepare_result(prepare(request))
+}
+
+fn sandbox_prepare_result(
+    result: Result<PreparedCommand, SandboxError>,
+) -> Result<PreparedCommand, String> {
+    match result {
+        Ok(prepared) => Ok(prepared),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
     let mut g = lock(job);
     g.output.push_str(chunk);
-    if g.output.len() > MAX_JOB_OUTPUT_BYTES {
-        let excess = g.output.len() - MAX_JOB_OUTPUT_BYTES;
-        g.output.drain(..excess);
-        if !g.output.starts_with('…') {
-            g.output.insert(0, '…');
-        }
+    cap_job_output(&mut g.output);
+}
+
+fn cap_job_output(output: &mut String) {
+    if output.len() <= MAX_JOB_OUTPUT_BYTES {
+        return;
     }
+    let excess = output.len() - MAX_JOB_OUTPUT_BYTES;
+    output.drain(..excess);
+    prefix_ellipsis(output);
+}
+
+fn prefix_ellipsis(output: &mut String) {
+    if output.starts_with('…') {
+        return;
+    }
+    output.insert(0, '…');
 }
 
 fn spawn_pipe_task<R>(reader: Option<R>, job: Arc<Mutex<JobInner>>) -> tokio::task::JoinHandle<()>

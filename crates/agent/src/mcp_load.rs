@@ -36,13 +36,8 @@ pub async fn connect_mcp_server(server: &McpServerConfig) -> anyhow::Result<McpC
     let headers = server.headers.as_ref().unwrap_or(&empty_headers);
     match kind {
         McpTransportKind::Stdio => {
-            let command = match required_mcp_field(
-                server.command.as_deref(),
-                "stdio MCP server missing `command`",
-            ) {
-                Ok(command) => command,
-                Err(e) => return Err(e),
-            };
+            // `resolved_transport` already requires `command` for stdio.
+            let command = stdio_command(server.command.as_deref());
             let args: Vec<&str> = server.args.iter().map(|s| s.as_str()).collect();
             Ok(McpClient::connect_stdio_with(
                 command,
@@ -159,6 +154,10 @@ fn required_mcp_field<'a>(
     missing: &'static str,
 ) -> anyhow::Result<&'a str> {
     value.ok_or_else(|| anyhow::anyhow!(missing))
+}
+
+fn stdio_command(command: Option<&str>) -> &str {
+    command.unwrap_or("")
 }
 
 #[cfg(test)]

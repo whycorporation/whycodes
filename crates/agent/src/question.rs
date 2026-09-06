@@ -89,11 +89,7 @@ impl QuestionPrompter for ChannelQuestionPrompter {
     fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
         Box::pin(async move {
             if let Some(cfg) = self.notify.as_deref() {
-                let summary = questions
-                    .first()
-                    .map(|q| q.prompt.as_str())
-                    .unwrap_or("questionnaire");
-                spawn_need_input_wait(cfg, "Question", summary);
+                spawn_need_input_wait(cfg, "Question", first_prompt(&questions));
             }
             let (reply_tx, reply_rx) = oneshot::channel();
             if self
@@ -170,7 +166,7 @@ fn ask_stdin_questions(
         if q.options.is_empty() {
             eprint!("   Your answer: ");
             let _ = std::io::stderr().flush();
-            let line = read_line().map_err(QuestionError::Invalid)?;
+            let line = invalid_line(read_line())?;
             answers.push(apply_free_stdin_parse(
                 parse_stdin_question_line(q, &line),
                 &line,
@@ -188,12 +184,12 @@ fn ask_stdin_questions(
         eprintln!("  {other_n}. Other (type your own)");
         eprint!("   Choice: ");
         let _ = std::io::stderr().flush();
-        let line = read_line().map_err(QuestionError::Invalid)?;
+        let line = invalid_line(read_line())?;
         let parsed = parse_stdin_question_line(q, &line);
         let other_text = if matches!(parsed, StdinQuestionParse::Other) {
             eprint!("   Other text: ");
             let _ = std::io::stderr().flush();
-            Some(read_line().unwrap_or_default())
+            Some(line_or_empty(read_line()))
         } else {
             None
         };
@@ -202,9 +198,28 @@ fn ask_stdin_questions(
     Ok(answers)
 }
 
+fn first_prompt(questions: &[QuestionSpec]) -> &str {
+    match questions.first() {
+        Some(q) => q.prompt.as_str(),
+        None => "questionnaire",
+    }
+}
+
+fn invalid_line(result: Result<String, String>) -> Result<String, QuestionError> {
+    result.map_err(QuestionError::Invalid)
+}
+
+fn line_or_empty(result: Result<String, String>) -> String {
+    result.unwrap_or_default()
+}
+
 fn read_line() -> Result<String, String> {
+    read_buf_line(&mut std::io::stdin().lock())
+}
+
+fn read_buf_line(input: &mut impl std::io::BufRead) -> Result<String, String> {
     let mut line = String::new();
-    finish_read_line(std::io::stdin().read_line(&mut line), line)
+    finish_read_line(input.read_line(&mut line), line)
 }
 
 fn finish_read_line(result: Result<usize, std::io::Error>, line: String) -> Result<String, String> {

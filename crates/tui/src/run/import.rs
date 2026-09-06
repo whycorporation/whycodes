@@ -78,7 +78,7 @@ pub(super) fn maybe_offer_import(app: &mut TuiApp) {
     }
 }
 
-fn offer_import_confirm(app: &mut TuiApp, products: &str) {
+pub(super) fn offer_import_confirm(app: &mut TuiApp, products: &str) {
     app.confirm(
         "Import settings",
         format!(
@@ -152,7 +152,7 @@ pub(super) fn parse_product_filter(rest: &str) -> Result<Option<Product>, String
         .ok_or_else(|| format!("Unknown product '{rest}' (claude, opencode, grok, codex)"))
 }
 
-fn unique_product_labels(found: &[FoundSource]) -> String {
+pub(super) fn unique_product_labels(found: &[FoundSource]) -> String {
     found
         .iter()
         .map(|f| f.product.label())
@@ -162,7 +162,7 @@ fn unique_product_labels(found: &[FoundSource]) -> String {
         .join(", ")
 }
 
-fn looked_for(filter: Option<&Product>) -> String {
+pub(super) fn looked_for(filter: Option<&Product>) -> String {
     match filter {
         Some(p) => p.label().to_string(),
         None => whycodes_import::discover::KNOWN_SOURCES

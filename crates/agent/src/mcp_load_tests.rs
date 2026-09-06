@@ -300,6 +300,8 @@ fn mcp_helpers_map_error_and_required_field() {
     );
     let missing = required_mcp_field(None, "stdio MCP server missing `command`").unwrap_err();
     assert!(missing.to_string().contains("command"), "{missing}");
+    assert_eq!(stdio_command(Some("cmd")), "cmd");
+    assert_eq!(stdio_command(None), "");
 }
 
 #[tokio::test]
