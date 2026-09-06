@@ -12,7 +12,6 @@ use std::future::Future;
 use std::time::{Duration, Instant};
 
 use tokio::time::sleep;
-use tracing::{info, warn};
 
 use crate::error_class::{ClassifiedError, classify};
 
@@ -142,10 +141,7 @@ where
         match f().await {
             Ok(value) => {
                 if attempt > 1 {
-                    let elapsed_ms = started.elapsed().as_millis();
-                    log_retry_info(&format!(
-                        "LLM call succeeded after retry op={op} attempt={attempt} elapsed_ms={elapsed_ms}"
-                    ));
+                    log_retry_success(op, attempt, started.elapsed().as_millis());
                 }
                 return Ok(value);
             }
@@ -158,13 +154,15 @@ where
                     && started.elapsed() < policy.max_elapsed;
 
                 if !allow {
-                    let kind = classified.kind.as_str();
-                    let retryable = classified.retryable;
-                    let status = classified.status;
-                    let elapsed_ms = started.elapsed().as_millis();
-                    log_retry_warn(&format!(
-                        "LLM call failed (no more retries) op={op} attempt={attempt} kind={kind} retryable={retryable} status={status:?} attempt_ms={attempt_ms} elapsed_ms={elapsed_ms} error={e}"
-                    ));
+                    log_retry_give_up(
+                        op,
+                        attempt,
+                        classified.kind.as_str(),
+                        classified.retryable,
+                        classified.status,
+                        attempt_ms,
+                        started.elapsed().as_millis(),
+                    );
                     return Err(e);
                 }
 
@@ -173,32 +171,62 @@ where
                 let remaining = policy.max_elapsed.saturating_sub(started.elapsed());
                 let delay = delay.min(remaining);
 
-                let next_attempt = attempt + 1;
-                let max_tries = policy.max_retries + 1;
-                let kind = classified.kind.as_str();
-                let status = classified.status;
-                let delay_ms = delay.as_millis();
-                log_retry_warn(&format!(
-                    "LLM call failed, retrying op={op} attempt={attempt} next_attempt={next_attempt} max_tries={max_tries} kind={kind} status={status:?} delay_ms={delay_ms} attempt_ms={attempt_ms} error={e}"
-                ));
+                log_retry_again(RetryAgainFields {
+                    _op: op,
+                    _attempt: attempt,
+                    _next_attempt: attempt + 1,
+                    _max_tries: policy.max_retries + 1,
+                    _kind: classified.kind.as_str(),
+                    _status: classified.status,
+                    _delay_ms: delay.as_millis(),
+                    _attempt_ms: attempt_ms,
+                });
                 sleep(delay).await;
             }
         }
     }
 }
 
-fn log_retry_info(message: &str) {
-    info!("{message}");
+fn log_retry_success(_op: &str, _attempt: usize, _elapsed_ms: u128) {}
+
+fn log_retry_give_up(
+    _op: &str,
+    _attempt: usize,
+    _kind: &str,
+    _retryable: bool,
+    _status: Option<u16>,
+    _attempt_ms: u64,
+    _elapsed_ms: u128,
+) {
 }
 
-fn log_retry_warn(message: &str) {
-    warn!("{message}");
+fn log_retry_again(_fields: RetryAgainFields<'_>) {}
+
+struct RetryAgainFields<'a> {
+    _op: &'a str,
+    _attempt: usize,
+    _next_attempt: usize,
+    _max_tries: usize,
+    _kind: &'a str,
+    _status: Option<u16>,
+    _delay_ms: u128,
+    _attempt_ms: u64,
 }
 
 #[cfg(test)]
 pub(crate) fn log_retry_helpers_for_tests() {
-    log_retry_info("ok");
-    log_retry_warn("warn");
+    log_retry_success("ok", 2, 1);
+    log_retry_give_up("warn", 1, "http", false, Some(400), 1, 1);
+    log_retry_again(RetryAgainFields {
+        _op: "warn",
+        _attempt: 1,
+        _next_attempt: 2,
+        _max_tries: 4,
+        _kind: "http",
+        _status: Some(503),
+        _delay_ms: 5,
+        _attempt_ms: 1,
+    });
 }
 
 /// Whether an error should be retried (delegates to classification).

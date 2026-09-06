@@ -47,6 +47,7 @@ fn connect_timeout_is_finite() {
 fn fallback_http_client_builds_after_builder_error() {
     let _ = fallback_http_client_for_tests("forced builder failure");
     let _ = client_from_builder_err_for_tests("forced builder failure");
+    let _ = client_from_builder_ok_for_tests();
 }
 
 #[test]

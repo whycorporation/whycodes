@@ -101,9 +101,20 @@ pub(crate) fn poison_sources_for_tests() {
 pub async fn send_with_refresh_retry(
     provider: &str,
     current_key: &str,
-    build: impl Fn(&str) -> reqwest::RequestBuilder,
+    build: impl Fn(&str) -> reqwest::RequestBuilder + Send + Sync,
 ) -> whycodes_core::Result<reqwest::Response> {
-    let resp = build(current_key).send().await.map_err(http_error)?;
+    send_with_refresh_retry_dyn(provider, current_key, &build).await
+}
+
+async fn send_with_refresh_retry_dyn(
+    provider: &str,
+    current_key: &str,
+    build: &(dyn Fn(&str) -> reqwest::RequestBuilder + Send + Sync),
+) -> whycodes_core::Result<reqwest::Response> {
+    let resp = match build(current_key).send().await {
+        Ok(resp) => resp,
+        Err(err) => return Err(http_error(&err.to_string())),
+    };
     if resp.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Ok(resp);
     }
@@ -119,11 +130,16 @@ pub async fn send_with_refresh_retry(
         return Ok(resp);
     }
     let _ = provider;
-    build(&fresh).send().await.map_err(http_error)
+    match build(&fresh).send().await {
+        Ok(resp) => Ok(resp),
+        Err(err) => Err(http_error(&err.to_string())),
+    }
 }
 
-fn http_error(err: impl std::fmt::Display) -> whycodes_core::Error {
-    whycodes_core::Error::llm(format!("HTTP error: {err}"))
+fn http_error(err: &str) -> whycodes_core::Error {
+    let mut msg = String::from("HTTP error: ");
+    msg.push_str(err);
+    whycodes_core::Error::llm(msg)
 }
 
 #[cfg(test)]

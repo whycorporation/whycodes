@@ -306,3 +306,58 @@ async fn send_returns_original_401_when_refresh_yields_same_token() {
     unregister(&name);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn send_maps_connect_error_and_refresh_retry_connect_error() {
+    let err = send_with_refresh_retry("no-such-provider", "token", |key| {
+        crate::client_identity::http_client()
+            .post("http://127.0.0.1:1/")
+            .bearer_auth(key)
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("HTTP error"), "{err}");
+
+    let name = unique_oauth_name("connect");
+    let token_url = serve_status(
+        "200 OK",
+        r#"{"access_token":"fresh-token","token_type":"Bearer"}"#,
+    );
+    whycodes_auth::register_spec(local_spec(name.clone(), token_url));
+    let dir = std::env::temp_dir().join(format!("whycodes-oauth-connect-{name}"));
+    let _ = std::fs::create_dir_all(&dir);
+    let store = whycodes_auth::TokenStore::new(&dir);
+    store
+        .set(
+            &name,
+            whycodes_auth::ProviderAuth {
+                method: "oauth".into(),
+                token: whycodes_auth::OAuthToken {
+                    access_token: "stale-token".into(),
+                    refresh_token: Some("refresh".into()),
+                    expires_at: None,
+                    extra: serde_json::Map::new(),
+                },
+            },
+        )
+        .unwrap();
+    register(&name, dir.clone());
+    let err_url = serve_status("401 Unauthorized", "nope");
+    let n = std::sync::atomic::AtomicUsize::new(0);
+    let err = send_with_refresh_retry(&name, "stale-token", |key| {
+        let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let url = if i == 0 {
+            err_url.as_str()
+        } else {
+            "http://127.0.0.1:1/"
+        };
+        crate::client_identity::http_client()
+            .post(url)
+            .bearer_auth(key)
+    })
+    .await
+    .unwrap_err();
+    assert!(err.to_string().contains("HTTP error"), "{err}");
+    unregister(&name);
+    let _ = std::fs::remove_dir_all(&dir);
+}

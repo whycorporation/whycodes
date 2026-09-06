@@ -207,3 +207,72 @@ async fn complete_cache_hit_and_no_timeout() {
         )
     );
 }
+
+#[tokio::test]
+async fn stream_and_complete_retry_then_succeed() {
+    use crate::scripted::{ScriptedProvider, ScriptedStep};
+    use tokio_stream::StreamExt;
+
+    let transport = LlmTransport::default().with_retry(crate::retry::RetryPolicy::test_fast());
+    let req = req();
+
+    let provider = ScriptedProvider::batched(
+        "retry-stream",
+        [
+            vec![ScriptedStep::FailOpen(
+                "API error (503): unavailable".into(),
+            )],
+            vec![ScriptedStep::Text("after-retry".into())],
+        ],
+    );
+    let mut stream = transport
+        .stream(&provider, &req, "k", "retry-stream-model")
+        .await
+        .unwrap();
+    let mut text = String::new();
+    while let Some(ev) = stream.next().await {
+        if let Ok(StreamEvent::TextDelta { text: d }) = ev {
+            text.push_str(&d);
+        }
+    }
+    assert_eq!(text, "after-retry");
+
+    let provider = ScriptedProvider::batched(
+        "retry-complete",
+        [
+            vec![ScriptedStep::FailOpen(
+                "API error (503): unavailable".into(),
+            )],
+            vec![ScriptedStep::Text("complete-retry".into())],
+        ],
+    );
+    let resp = transport
+        .complete(&provider, &req, "k", "retry-complete-model")
+        .await
+        .unwrap();
+    assert!(resp.content.iter().any(
+        |b| matches!(b, whycodes_core::types::ContentBlock::Text { text } if text == "complete-retry")
+    ));
+
+    let transport = LlmTransport::default().with_retry(crate::retry::RetryPolicy {
+        max_retries: 0,
+        ..crate::retry::RetryPolicy::test_fast()
+    });
+    let provider = ScriptedProvider::new([ScriptedStep::FailOpen(
+        "API error (400): bad request".into(),
+    )]);
+    let err = transport
+        .stream(&provider, &req, "k", "retry-stream-giveup")
+        .await
+        .map(|_| ())
+        .unwrap_err();
+    assert!(err.to_string().contains("400"), "{err}");
+    let provider = ScriptedProvider::new([ScriptedStep::FailOpen(
+        "API error (400): bad request".into(),
+    )]);
+    let err = transport
+        .complete(&provider, &req, "k", "retry-complete-giveup")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("400"), "{err}");
+}

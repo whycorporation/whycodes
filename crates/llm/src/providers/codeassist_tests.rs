@@ -198,6 +198,9 @@ fn inner_request_omits_empty_optional_sections_and_unsupported_blocks() {
                     signature: None,
                 },
                 ContentBlock::RedactedThinking {
+                    data: String::new(),
+                },
+                ContentBlock::RedactedThinking {
                     data: "opaque".to_string(),
                 },
             ]),
@@ -294,6 +297,11 @@ fn chunk_maps_thought_parts_not_visible_text() {
     );
     assert!(matches!(&events[1], StreamEvent::Thinking { text } if text == "hmm"));
     assert!(matches!(&events[2], StreamEvent::TextDelta { text } if text == "hi"));
+    let empty_thought = events_for_chunk(
+        r#"{"candidates":[{"content":{"parts":[{"text":"","thought":true},{"thought":true}]}}]}"#,
+        &mut seq,
+    );
+    assert!(empty_thought.is_empty());
 }
 
 #[test]

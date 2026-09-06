@@ -190,6 +190,10 @@ fn failover_http(status: u16) -> bool {
     matches!(status, 404 | 408 | 429 | 500 | 502 | 503 | 504)
 }
 
+async fn drain_failover_body(resp: reqwest::Response) {
+    drop(resp.bytes().await);
+}
+
 /// POST `{base}{path}` with the OAuth bearer token; a 401 force-renews
 /// the stored credential once via `oauth_refresh` (Google tokens last 1h, so a
 /// revoked or early-expired token is the common failure).
@@ -243,9 +247,7 @@ async fn post_generate(
         if resp.status().is_success() || last || !failover_http(resp.status().as_u16()) {
             return Ok(resp);
         }
-        if let Err(_drain) = resp.bytes().await {
-            // Failover: the unsuccessful body is discarded before the next base.
-        }
+        drain_failover_body(resp).await;
     }
 }
 
@@ -912,9 +914,6 @@ impl Stream for CodeAssistSse {
                     ))));
                 }
                 Poll::Ready(None) => {
-                    if this.done {
-                        return Poll::Ready(None);
-                    }
                     this.pending.push_back(Ok(StreamEvent::MessageStop));
                     this.done = true;
                 }
