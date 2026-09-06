@@ -57,3 +57,20 @@ async fn load_requires_name_and_empty_description() {
     let missing_name = t.execute(json!({"action": "load"}), &ctx).await;
     assert!(missing_name.is_error, "{}", missing_name.content);
 }
+
+#[test]
+fn skill_format_helpers_cover_empty_and_loaded() {
+    assert_eq!(format_skill_list(Vec::new()), "No skills found.");
+    let listed = format_skill_list(vec![("Demo", "d"), ("Bare", "")]);
+    assert!(listed.contains("Available skills (2)"), "{listed}");
+    assert!(listed.contains("Demo: d"), "{listed}");
+    assert!(listed.contains("Bare: (no description)"), "{listed}");
+    assert_eq!(skill_description_label(""), "(no description)");
+    assert_eq!(skill_description_label("hi"), "hi");
+    assert_eq!(
+        format_loaded_skill("Demo", "d", "BODY"),
+        "Loaded skill 'Demo':\n\nd\n\nBODY"
+    );
+    assert!(skill_not_found("nope").contains("nope"));
+    assert!(unknown_skill_action("x").contains("Unknown action 'x'"));
+}

@@ -144,4 +144,17 @@ fn slash_info_cost_doctor_and_resume_helpers() {
         resume_slash_want("/resume", ""),
         ResumeSlash::List
     ));
+    match parse_models_slash("acme/m") {
+        ModelsSlash::ProviderModel(p, m) => {
+            assert_eq!(p, "acme");
+            assert_eq!(m, "m");
+        }
+        ModelsSlash::ModelOnly(_) => panic!("expected provider/model"),
+    }
+    match parse_models_slash("solo") {
+        ModelsSlash::ModelOnly(m) => assert_eq!(m, "solo"),
+        ModelsSlash::ProviderModel(_, _) => panic!("expected model-only"),
+    }
+    assert!(thinking_display_label(true).contains("ON"));
+    assert!(thinking_display_label(false).contains("OFF"));
 }

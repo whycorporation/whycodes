@@ -83,6 +83,27 @@ pub(crate) fn resume_slash_want(cmd: &str, rest: &str) -> ResumeSlash {
     }
 }
 
+pub(crate) enum ModelsSlash {
+    ProviderModel(String, String),
+    ModelOnly(String),
+}
+
+pub(crate) fn parse_models_slash(rest: &str) -> ModelsSlash {
+    if let Some((p, m)) = rest.split_once('/') {
+        ModelsSlash::ProviderModel(p.to_string(), m.to_string())
+    } else {
+        ModelsSlash::ModelOnly(rest.to_string())
+    }
+}
+
+pub(crate) fn thinking_display_label(show_thinking: bool) -> String {
+    if show_thinking {
+        "ON".green().to_string()
+    } else {
+        "OFF".dimmed().to_string()
+    }
+}
+
 pub(crate) fn map_tui_run_error(e: anyhow::Error) -> anyhow::Error {
     let msg = e.to_string();
     if msg.contains("No such device")
@@ -725,22 +746,24 @@ pub(crate) async fn cmd_run(
                     let _ = super::provider::cmd_model(&ModelCmd::List).await;
                     println!("Current: {}/{}", provider.cyan(), model.cyan());
                     if !rest.is_empty() {
-                        // /models provider/model
-                        if let Some((p, m)) = rest.split_once('/') {
-                            whycodes_llm::oauth_refresh::unregister(&provider);
-                            provider = p.to_string();
-                            model = m.to_string();
-                            api_key = get_api_key(&provider, &config).await.unwrap_or_default();
-                            println!(
-                                "{} Switched model to {}/{}",
-                                "✓".green(),
-                                provider.cyan(),
-                                model.cyan()
-                            );
-                            maybe_inject_test_llm(&mut agent, &provider);
-                        } else {
-                            model = rest.to_string();
-                            println!("{} Model set to {}", "✓".green(), model.cyan());
+                        match parse_models_slash(rest) {
+                            ModelsSlash::ProviderModel(p, m) => {
+                                whycodes_llm::oauth_refresh::unregister(&provider);
+                                provider = p;
+                                model = m;
+                                api_key = get_api_key(&provider, &config).await.unwrap_or_default();
+                                println!(
+                                    "{} Switched model to {}/{}",
+                                    "✓".green(),
+                                    provider.cyan(),
+                                    model.cyan()
+                                );
+                                maybe_inject_test_llm(&mut agent, &provider);
+                            }
+                            ModelsSlash::ModelOnly(m) => {
+                                model = m;
+                                println!("{} Model set to {}", "✓".green(), model.cyan());
+                            }
                         }
                     }
                     continue;
@@ -898,13 +921,8 @@ pub(crate) async fn cmd_run(
                     show_thinking = !show_thinking;
                     println!(
                         "Thinking display: {}",
-                        if show_thinking {
-                            "ON".green().to_string()
-                        } else {
-                            "OFF".dimmed().to_string()
-                        }
+                        thinking_display_label(show_thinking)
                     );
-                    let _ = show_thinking; // reserved for TUI streaming
                     continue;
                 }
                 "/themes" => {

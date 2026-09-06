@@ -67,30 +67,15 @@ impl Tool for SkillTool {
                         }
                     };
 
-                    if registry.skills.is_empty() {
-                        return ToolResult {
-                            tool_call_id: String::new(),
-                            content: "No skills found.".to_string(),
-                            is_error: false,
-                        };
-                    }
-
-                    let mut lines = Vec::new();
-                    lines.push(format!("Available skills ({}):", registry.skills.len()));
-                    for skill in &registry.skills {
-                        lines.push(format!(
-                            "  - {}: {}",
-                            skill.name,
-                            if skill.description.is_empty() {
-                                "(no description)"
-                            } else {
-                                &skill.description
-                            }
-                        ));
-                    }
                     ToolResult {
                         tool_call_id: String::new(),
-                        content: lines.join("\n"),
+                        content: format_skill_list(
+                            registry
+                                .skills
+                                .iter()
+                                .map(|s| (s.name.as_str(), s.description.as_str()))
+                                .collect(),
+                        ),
                         is_error: false,
                     }
                 }
@@ -118,30 +103,62 @@ impl Tool for SkillTool {
                     match registry.get_ignore_ascii_case(name) {
                         Some(skill) => ToolResult {
                             tool_call_id: String::new(),
-                            content: format!(
-                                "Loaded skill '{}':\n\n{}\n\n{}",
-                                skill.name, skill.description, skill.prompt
+                            content: format_loaded_skill(
+                                &skill.name,
+                                &skill.description,
+                                &skill.prompt,
                             ),
                             is_error: false,
                         },
                         None => ToolResult {
                             tool_call_id: String::new(),
-                            content: format!(
-                                "Skill '{}' not found. Use action='list' to see available skills.",
-                                name
-                            ),
+                            content: skill_not_found(name),
                             is_error: true,
                         },
                     }
                 }
                 _ => ToolResult {
                     tool_call_id: String::new(),
-                    content: format!("Unknown action '{}'. Valid actions: list, load", action),
+                    content: unknown_skill_action(action),
                     is_error: true,
                 },
             }
         })
     }
+}
+
+fn skill_description_label(description: &str) -> &str {
+    if description.is_empty() {
+        "(no description)"
+    } else {
+        description
+    }
+}
+
+fn format_skill_list(skills: Vec<(&str, &str)>) -> String {
+    if skills.is_empty() {
+        return "No skills found.".to_string();
+    }
+    let mut lines = vec![format!("Available skills ({}):", skills.len())];
+    for (name, description) in skills {
+        lines.push(format!(
+            "  - {name}: {}",
+            skill_description_label(description)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn format_loaded_skill(name: &str, description: &str, prompt: &str) -> String {
+    format!("Loaded skill '{name}':\n\n{description}\n\n{prompt}")
+}
+
+fn skill_not_found(name: &str) -> String {
+    format!("Skill '{name}' not found. Use action='list' to see available skills.")
+}
+
+fn unknown_skill_action(action: &str) -> String {
+    format!("Unknown action '{action}'. Valid actions: list, load")
 }
 
 #[cfg(test)]

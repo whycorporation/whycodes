@@ -83,3 +83,32 @@ async fn default_and_fs_error_paths() {
         exit.content
     );
 }
+
+#[test]
+fn plan_result_helpers_cover_ok_fs_and_invalid() {
+    let ok = plan_ok(PLAN_ENTERED);
+    assert!(!ok.is_error);
+    assert_eq!(ok.content, PLAN_ENTERED);
+
+    let missing = plan_exit_remove_error(std::io::Error::new(std::io::ErrorKind::NotFound, "gone"));
+    assert!(!missing.is_error);
+    assert_eq!(missing.content, PLAN_NOT_ACTIVE);
+
+    let other = plan_exit_remove_error(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "nope",
+    ));
+    assert!(other.is_error);
+    assert!(other.content.contains("Error exiting planning mode"));
+
+    let mkdir = plan_fs_error(
+        "Error creating .whycodes directory",
+        std::io::Error::other("boom"),
+    );
+    assert!(mkdir.is_error);
+    assert!(mkdir.content.contains("Error creating .whycodes directory"));
+
+    let bad = plan_invalid_action("nope");
+    assert!(bad.is_error);
+    assert!(bad.content.contains("Invalid action: 'nope'"));
+}
