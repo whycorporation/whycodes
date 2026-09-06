@@ -106,21 +106,25 @@ impl ResponseCache {
             }
             let s = cosine(&embed, &e.embed);
             if s >= SEMANTIC_THRESHOLD {
-                let better = match best {
-                    None => true,
-                    Some((_, b)) => s > b,
-                };
-                if better {
-                    best = Some((i, s));
-                }
+                best = better_semantic(best, i, s);
             }
         }
-        let (i, score) = best?;
-        let e = guard.remove(i)?;
-        let text = e.text.clone();
-        guard.push_back(e);
-        tracing::debug!("response_cache.semantic_hit score={score}");
-        Some(CachedText { text })
+        take_semantic_hit(&mut guard, best)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn better_semantic_for_tests(
+        best: Option<(usize, f32)>,
+        i: usize,
+        score: f32,
+    ) -> Option<(usize, f32)> {
+        better_semantic(best, i, score)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_semantic_hit_none_for_tests() -> Option<CachedText> {
+        let mut empty = VecDeque::new();
+        take_semantic_hit(&mut empty, Some((0, 1.0)))
     }
 
     pub fn store(&self, request: &LlmRequest, model: &str, text: &str) {
@@ -198,6 +202,26 @@ pub fn text_only_response(resp: &LlmResponse) -> Option<String> {
     } else {
         Some(text.to_string())
     }
+}
+
+fn better_semantic(best: Option<(usize, f32)>, i: usize, score: f32) -> Option<(usize, f32)> {
+    match best {
+        None => Some((i, score)),
+        Some((_, b)) if score > b => Some((i, score)),
+        other => other,
+    }
+}
+
+fn take_semantic_hit(
+    guard: &mut VecDeque<Entry>,
+    best: Option<(usize, f32)>,
+) -> Option<CachedText> {
+    let (i, score) = best?;
+    let e = guard.remove(i)?;
+    let text = e.text.clone();
+    guard.push_back(e);
+    tracing::debug!("response_cache.semantic_hit score={score}");
+    Some(CachedText { text })
 }
 
 fn evict_expired(entries: &mut VecDeque<Entry>, now: Instant) {

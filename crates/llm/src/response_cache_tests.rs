@@ -281,3 +281,20 @@ fn semantic_picks_higher_score_when_two_paraphrases_match() {
         .expect("semantic");
     assert!(!hit.text.is_empty());
 }
+
+#[test]
+fn better_semantic_prefers_higher_score() {
+    assert_eq!(
+        ResponseCache::better_semantic_for_tests(None, 0, 0.90),
+        Some((0, 0.90))
+    );
+    assert_eq!(
+        ResponseCache::better_semantic_for_tests(Some((0, 0.90)), 1, 0.95),
+        Some((1, 0.95))
+    );
+    assert_eq!(
+        ResponseCache::better_semantic_for_tests(Some((0, 0.95)), 1, 0.91),
+        Some((0, 0.95))
+    );
+    assert!(ResponseCache::take_semantic_hit_none_for_tests().is_none());
+}

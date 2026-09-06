@@ -61,12 +61,29 @@ fn source_dir(provider: &str) -> Option<PathBuf> {
 pub async fn stored_extra(provider: &str, key: &str) -> Option<String> {
     let dir = source_dir(provider)?;
     let store = whycodes_auth::TokenStore::new(&dir);
-    let auth = match store.get(provider) {
-        Ok(Some(auth)) => auth,
-        Ok(None) => return None,
-        Err(_store) => return None,
-    };
-    auth.token.extra.get(key)?.as_str().map(str::to_string)
+    auth_from_store(store.get(provider))?
+        .token
+        .extra
+        .get(key)?
+        .as_str()
+        .map(str::to_string)
+}
+
+fn auth_from_store(
+    got: Result<Option<whycodes_auth::ProviderAuth>, whycodes_auth::AuthError>,
+) -> Option<whycodes_auth::ProviderAuth> {
+    match got {
+        Ok(Some(auth)) => Some(auth),
+        Ok(None) => None,
+        Err(_store) => None,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn auth_from_store_err_for_tests() -> Option<whycodes_auth::ProviderAuth> {
+    auth_from_store(Err(whycodes_auth::AuthError::Json(
+        serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
+    )))
 }
 
 #[cfg(test)]
@@ -101,9 +118,7 @@ pub async fn send_with_refresh_retry(
         // the same 401. Hand the original response to the error path.
         return Ok(resp);
     }
-    tracing::info!(
-        "401 with OAuth credential; token renewed, retrying request once provider={provider}"
-    );
+    let _ = provider;
     build(&fresh).send().await.map_err(http_error)
 }
 

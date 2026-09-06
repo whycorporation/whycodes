@@ -1067,6 +1067,145 @@ async fn no_race_when_partner_is_none() {
 }
 
 #[tokio::test]
+async fn no_race_when_partner_is_none_and_primary_fails() {
+    let primary = delay(
+        "p",
+        Duration::ZERO,
+        "only",
+        true,
+        false,
+        false,
+        false,
+        false,
+    );
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        None,
+        &req(),
+        Duration::ZERO,
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(err.to_string().contains("boom"), "{err}");
+}
+
+#[tokio::test]
+async fn timeout_primary_open_fail_and_partner_open_fail() {
+    let primary = delay("p", Duration::ZERO, "p", true, false, false, false, false);
+    let race = delay("r", Duration::ZERO, "r", true, false, false, false, false);
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::from_millis(5),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(err.to_string().contains("boom"), "{err}");
+}
+
+#[tokio::test]
+async fn timeout_hang_then_error_primary_then_partner_stream_fail() {
+    let primary = delay(
+        "p",
+        Duration::from_millis(30),
+        "p",
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
+    let race = delay(
+        "r",
+        Duration::from_millis(40),
+        "unused",
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::from_millis(5),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(err.to_string().contains("mid"), "{err}");
+}
+
+#[tokio::test]
+async fn timeout_hang_then_error_primary_then_partner_empty() {
+    let primary = delay(
+        "p",
+        Duration::from_millis(30),
+        "p",
+        false,
+        true,
+        false,
+        false,
+        false,
+    );
+    let race = crate::scripted::ScriptedProvider::named(
+        "r",
+        [crate::scripted::ScriptedStep::Hang(Duration::from_millis(
+            40,
+        ))],
+    );
+    let err = stream_raced(
+        &transport(),
+        StreamTarget {
+            provider: &primary,
+            api_key: "",
+            model: "sonnet",
+        },
+        Some(StreamTarget {
+            provider: &race,
+            api_key: "",
+            model: "haiku",
+        }),
+        &req(),
+        Duration::from_millis(5),
+    )
+    .await
+    .map(|_| ())
+    .unwrap_err();
+    assert!(
+        err.to_string().contains("mid") || err.to_string().contains("primary stream ended"),
+        "{err}"
+    );
+}
+
+#[tokio::test]
 async fn delay_provider_complete_and_default_url() {
     let p = delay("p", Duration::ZERO, "x", false, false, false, false, false);
     assert_eq!(p.default_base_url(), "http://example.invalid");

@@ -143,9 +143,9 @@ where
             Ok(value) => {
                 if attempt > 1 {
                     let elapsed_ms = started.elapsed().as_millis();
-                    info!(
+                    log_retry_info(&format!(
                         "LLM call succeeded after retry op={op} attempt={attempt} elapsed_ms={elapsed_ms}"
-                    );
+                    ));
                 }
                 return Ok(value);
             }
@@ -162,9 +162,9 @@ where
                     let retryable = classified.retryable;
                     let status = classified.status;
                     let elapsed_ms = started.elapsed().as_millis();
-                    warn!(
+                    log_retry_warn(&format!(
                         "LLM call failed (no more retries) op={op} attempt={attempt} kind={kind} retryable={retryable} status={status:?} attempt_ms={attempt_ms} elapsed_ms={elapsed_ms} error={e}"
-                    );
+                    ));
                     return Err(e);
                 }
 
@@ -178,13 +178,27 @@ where
                 let kind = classified.kind.as_str();
                 let status = classified.status;
                 let delay_ms = delay.as_millis();
-                warn!(
+                log_retry_warn(&format!(
                     "LLM call failed, retrying op={op} attempt={attempt} next_attempt={next_attempt} max_tries={max_tries} kind={kind} status={status:?} delay_ms={delay_ms} attempt_ms={attempt_ms} error={e}"
-                );
+                ));
                 sleep(delay).await;
             }
         }
     }
+}
+
+fn log_retry_info(message: &str) {
+    info!("{message}");
+}
+
+fn log_retry_warn(message: &str) {
+    warn!("{message}");
+}
+
+#[cfg(test)]
+pub(crate) fn log_retry_helpers_for_tests() {
+    log_retry_info("ok");
+    log_retry_warn("warn");
 }
 
 /// Whether an error should be retried (delegates to classification).

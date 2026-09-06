@@ -73,10 +73,7 @@ pub async fn stream_raced(
     let Some(race) =
         race.filter(|r| r.model != primary.model || r.provider.name() != primary.provider.name())
     else {
-        let s = transport
-            .stream(primary.provider, request, primary.api_key, primary.model)
-            .await?;
-        return Ok((s, RaceOutcome::PrimaryOnly));
+        return open_primary_only(transport, primary, request).await;
     };
 
     if race_after.is_zero() {
@@ -90,15 +87,7 @@ pub async fn stream_raced(
         Ok(s) => s,
         Err(e) => {
             warn!("race: primary stream open failed: {e}");
-            let s = transport
-                .stream(race.provider, request, race.api_key, race.model)
-                .await?;
-            return Ok((
-                s,
-                RaceOutcome::Race {
-                    reason: "primary_open_failed",
-                },
-            ));
+            return open_partner_after_primary_fail(transport, race, request).await;
         }
     };
 
@@ -248,7 +237,7 @@ async fn race_after_timeout(
                 Ok(s) => race_stream = Some(s),
                 Err(e) => {
                     warn!("race: partner open failed after timeout: {e}");
-                    if let Some(pe) = primary_dead.take() {
+                    if let Some(pe) = take_primary_dead(&mut primary_dead) {
                         return Err(pe);
                     }
                 }
@@ -260,14 +249,14 @@ async fn race_after_timeout(
                 }
                 Some(Err(e)) => {
                     race_stream = None;
-                    if let Some(pe) = primary_dead.take() {
+                    if let Some(pe) = take_primary_dead(&mut primary_dead) {
                         return Err(pe);
                     }
                     warn!("race: partner stream failed: {e}");
                 }
                 None => {
                     race_stream = None;
-                    if let Some(pe) = primary_dead.take() {
+                    if let Some(pe) = take_primary_dead(&mut primary_dead) {
                         return Err(pe);
                     }
                 }
@@ -379,6 +368,39 @@ pub(crate) fn prefix_partner(
             reason: "first_token",
         },
     ))
+}
+
+async fn open_primary_only(
+    transport: &LlmTransport,
+    primary: StreamTarget<'_>,
+    request: &LlmRequest,
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
+    let s = transport
+        .stream(primary.provider, request, primary.api_key, primary.model)
+        .await?;
+    Ok((s, RaceOutcome::PrimaryOnly))
+}
+
+async fn open_partner_after_primary_fail(
+    transport: &LlmTransport,
+    race: StreamTarget<'_>,
+    request: &LlmRequest,
+) -> whycodes_core::Result<(EventStream, RaceOutcome)> {
+    let s = transport
+        .stream(race.provider, request, race.api_key, race.model)
+        .await?;
+    Ok((
+        s,
+        RaceOutcome::Race {
+            reason: "primary_open_failed",
+        },
+    ))
+}
+
+fn take_primary_dead(
+    primary_dead: &mut Option<whycodes_core::Error>,
+) -> Option<whycodes_core::Error> {
+    primary_dead.take()
 }
 
 fn prefix_stream(first: StreamEvent, rest: EventStream) -> EventStream {

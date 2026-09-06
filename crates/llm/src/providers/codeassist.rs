@@ -912,10 +912,11 @@ impl Stream for CodeAssistSse {
                     ))));
                 }
                 Poll::Ready(None) => {
-                    if !this.done {
-                        this.pending.push_back(Ok(StreamEvent::MessageStop));
-                        this.done = true;
+                    if this.done {
+                        return Poll::Ready(None);
                     }
+                    this.pending.push_back(Ok(StreamEvent::MessageStop));
+                    this.done = true;
                 }
                 Poll::Pending => return Poll::Pending,
             }

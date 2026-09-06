@@ -37,6 +37,11 @@ fn http_error_helper_formats_message() {
     assert!(err.to_string().contains("dial refused"), "{err}");
 }
 
+#[test]
+fn auth_from_store_err_is_none() {
+    assert!(auth_from_store_err_for_tests().is_none());
+}
+
 fn serve_status(status: &str, body: &str) -> String {
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -144,6 +149,24 @@ async fn stored_extra_reads_oauth_map_and_force_refresh_without_token() {
     .unwrap();
     assert_eq!(err.status().as_u16(), 401);
     unregister("google-extra-test");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn stored_extra_none_when_store_has_no_credential() {
+    let dir = std::env::temp_dir().join(format!(
+        "whycodes-oauth-empty-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    let provider = format!("empty-oauth-{}", std::process::id());
+    register(&provider, dir.clone());
+    assert!(stored_extra(&provider, "project_id").await.is_none());
+    unregister(&provider);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

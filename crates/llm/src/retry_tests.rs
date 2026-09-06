@@ -137,4 +137,5 @@ async fn retry_with_backoff_wrapper_and_elapsed_cap() {
     .await
     .unwrap_err();
     assert!(err.to_string().contains("503"));
+    log_retry_helpers_for_tests();
 }

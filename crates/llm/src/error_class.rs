@@ -158,8 +158,7 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         || lower.contains("forbidden")
         || lower.contains("invalid api key")
         || lower.contains("incorrect api key")
-        || lower.contains("authentication")
-            && (lower.contains("fail") || lower.contains("error") || lower.contains("invalid"))
+        || looks_authentication_failure(&lower)
     {
         return ClassifiedError {
             kind: ErrorKind::Auth,
@@ -284,6 +283,13 @@ pub fn classify_message(raw: &str) -> ClassifiedError {
         status,
         message,
     }
+}
+
+fn looks_authentication_failure(lower: &str) -> bool {
+    if !lower.contains("authentication") {
+        return false;
+    }
+    lower.contains("fail") || lower.contains("error") || lower.contains("invalid")
 }
 
 fn looks_context_overflow(lower: &str) -> bool {

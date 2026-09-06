@@ -372,6 +372,30 @@ fn extract_provider_reason_gives_up_after_nested_json() {
 }
 
 #[test]
+fn auth_403_with_json_reason_is_compacted() {
+    let c = classify_message(
+        r#"LLM error: Provider (403 Forbidden): {"error":{"message":"quota exhausted in region X"}}"#,
+    );
+    let msg = c.user_message();
+    assert!(msg.contains("Forbidden by the provider"), "{msg}");
+    assert!(msg.contains("quota exhausted in region X"), "{msg}");
+}
+
+#[test]
+fn authentication_error_and_invalid_are_auth() {
+    for msg in [
+        "authentication error for provider",
+        "authentication invalid token",
+        "authentication failed for provider",
+    ] {
+        let c = classify_message(msg);
+        assert_eq!(c.kind, ErrorKind::Auth, "{msg}");
+        assert!(!c.retryable, "{msg}");
+    }
+    assert!(!looks_authentication_failure("not an auth problem"));
+}
+
+#[test]
 fn client_reason_without_model_label() {
     let c = classify_message("Request rejected (400): {\"error\":{\"message\":\"bad schema\"}}");
     let msg = c.user_message();
