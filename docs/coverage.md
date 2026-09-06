@@ -61,7 +61,7 @@ that work lands.
 | Gate | Floor | What it covers |
 |---|---|---|
 | Workspace | **82%** lines | Every crate, including tests in the same `.rs` files |
-| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm` | **100%** lines | Production files only (`tests.rs` ignored) |
+| `function`, `schema`, `skill`, `sandbox`, `protocol`, `plugin`, `command-risk`, `storage`, `core`, `config`, `index`, `session`, `memory`, `llm`, `auth` | **100%** lines | Production files only (`tests.rs` ignored) |
 | `format` | **95%** lines | Production files only (`tests.rs` ignored) |
 
 The workspace number is a ratchet: CI fails below the floor. When a run lands
@@ -70,8 +70,8 @@ comfortably above it, raise `--fail-under-lines` in
 
 ## Last measurement
 
-Linux x86_64, 2026-09-01 (`cargo llvm-cov --workspace`, flags above — `whycodes-llm` 100% floor, #64).
-Workspace line coverage **85.58%**. Crate floors now include `llm` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`). Auth is not gated at 100% until a measured run.
+Linux x86_64, 2026-09-06 (`cargo llvm-cov --workspace`, flags above — `whycodes-auth` 100% floor, #65).
+Workspace line coverage last measured 2026-09-01 at **85.58%**; crate floors now include `llm` and `auth` at 100% (production files, `tests.rs` ignored, llvm-cov `--skip-expansions`).
 
 `core` 100% floor covers `ErrorKind` / `TransportError` via `crates/core/src/tests.rs`
 (#48). Production modules also have local `#[cfg(test)]` next to the code (`error`,
