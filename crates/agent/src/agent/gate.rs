@@ -521,9 +521,10 @@ impl Agent {
             ) {
                 crate::intent::ToolAuthDecision::Allow => {}
                 crate::intent::ToolAuthDecision::Refuse { reason } => {
+                    let intent_s = intent.intent.as_str();
                     tracing::info!(
                         tool = %tc.name,
-                        intent = intent.intent.as_str(),
+                        intent = intent_s,
                         "intent auth refused tool"
                     );
                     return ToolResult {

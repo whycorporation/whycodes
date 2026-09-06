@@ -84,12 +84,13 @@ impl ToolCallAssembler {
         }
         .or(self.active);
 
-        if let Some(i) = target {
-            self.arg_bufs[i].push_str(fragment);
-            self.active = Some(i);
-            if !id.is_empty() {
-                self.keys.entry(id.to_string()).or_insert(i);
-            }
+        let Some(i) = target else {
+            return;
+        };
+        self.arg_bufs[i].push_str(fragment);
+        self.active = Some(i);
+        if !id.is_empty() {
+            self.keys.entry(id.to_string()).or_insert(i);
         }
     }
 

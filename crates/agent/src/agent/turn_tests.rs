@@ -845,6 +845,58 @@ async fn compact_failures_reset_when_under_threshold() {
     assert!(!out.is_empty() || !session.messages.is_empty());
 }
 
+#[tokio::test]
+async fn compact_failures_reset_after_reducing_under_threshold() {
+    let mut agent = repeating([ScriptedStep::Text("tiny".into())]);
+    agent.compaction_threshold = 200;
+    agent.compaction_llm = false;
+    let mut session = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    session.add_user_message("please keep summarizing");
+    for i in 0..12 {
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: format!("block {i} {}", "z".repeat(80)),
+        }]);
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: format!("t{i}"),
+            content: "tool dump ".repeat(30),
+            is_error: false,
+        }]);
+    }
+    let before = session.token_count_cached();
+    assert!(before > 200, "fixture must start over threshold ({before})");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(3))
+        .await
+        .unwrap_or_else(|_| "ok".into());
+    assert!(!out.is_empty() || !session.messages.is_empty());
+}
+
+#[tokio::test]
+async fn compact_reset_when_local_summary_drops_under_threshold() {
+    let mut agent = repeating([ScriptedStep::Text("tiny".into())]);
+    agent.compaction_threshold = 120;
+    agent.compaction_llm = false;
+    let mut session = Session::new(std::path::PathBuf::from("/work/proj"), "test".into());
+    session.add_user_message("please keep summarizing");
+    for i in 0..40 {
+        session.add_assistant_message(vec![ContentBlock::Text {
+            text: format!("block {i} {}", "z".repeat(200)),
+        }]);
+        session.add_tool_results(vec![whycodes_core::types::ToolResult {
+            tool_call_id: format!("t{i}"),
+            content: "tool dump ".repeat(80),
+            is_error: false,
+        }]);
+    }
+    let before = session.token_count_cached();
+    assert!(before > 120, "fixture must start over threshold ({before})");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(2))
+        .await
+        .unwrap_or_else(|_| "ok".into());
+    assert!(!out.is_empty() || !session.messages.is_empty());
+}
+
 struct OverflowAfterTextProvider {
     calls: std::sync::atomic::AtomicU32,
 }
@@ -1263,6 +1315,41 @@ async fn shake_and_compact_reset_with_tool_dumps() {
         .unwrap_or_else(|_| "ok".into());
     assert!(!out.is_empty() || !session.messages.is_empty());
     let _ = drain_status(&mut rx);
+}
+
+#[tokio::test]
+async fn compact_failures_reset_after_over_then_under() {
+    // compact_session uses `complete`; the turn uses `stream`. Batches:
+    // 0 complete = huge summary (still over) → compact_failures = 1
+    // 1 stream   = tool call so the loop continues
+    // 2 complete = tiny summary (under) → else if compact_failures > 0
+    // 3 stream   = end turn
+    let mut agent = batched([
+        vec![ScriptedStep::Text("x".repeat(4_000))],
+        vec![ScriptedStep::ToolCall {
+            id: "r1".into(),
+            name: "read".into(),
+            input: json!({"path": "note.txt"}),
+        }],
+        vec![ScriptedStep::Text("tiny".into())],
+        vec![ScriptedStep::Text("done".into())],
+    ]);
+    agent.compaction_threshold = 200;
+    agent.compaction_llm = true;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("note.txt"), "ok").unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "test".into());
+    session.add_user_message(&format!(
+        "please keep summarizing this work {}",
+        "w".repeat(2_400)
+    ));
+    let before = session.token_count_cached();
+    assert!(before > 200, "fixture must start over threshold ({before})");
+    let out = agent
+        .run_turn(&mut session, "script", "m", "k", Some(4))
+        .await
+        .unwrap_or_else(|_| "ok".into());
+    assert!(!out.is_empty() || !session.messages.is_empty());
 }
 
 #[tokio::test]

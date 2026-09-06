@@ -151,83 +151,55 @@ pub struct StdinQuestionPrompter;
 
 impl QuestionPrompter for StdinQuestionPrompter {
     fn ask(&self, questions: Vec<QuestionSpec>) -> QuestionAskFuture<'_> {
-        Box::pin(async move {
-            // Re-use tool stdin path by serializing back to args and calling parse-free logic.
-            // Inline minimal stdin to avoid tool execute needing ToolContext.
-            use std::io::{self, Write};
-            let mut answers = Vec::with_capacity(questions.len());
-            for (qi, q) in questions.iter().enumerate() {
-                eprintln!();
-                if questions.len() > 1 {
-                    eprintln!("── Question {}/{} ──", qi + 1, questions.len());
-                }
-                eprintln!("❓ {}", q.prompt);
-                if q.options.is_empty() {
-                    eprint!("   Your answer: ");
-                    let _ = io::stderr().flush();
-                    let line = read_line().map_err(QuestionError::Invalid)?;
-                    match parse_stdin_question_line(q, &line) {
-                        StdinQuestionParse::Cancelled => return Err(QuestionError::Cancelled),
-                        StdinQuestionParse::FreeText(text) | StdinQuestionParse::Selected(text) => {
-                            answers.push(QuestionAnswer {
-                                selected: vec![],
-                                free_text: Some(text),
-                                auto_picked: false,
-                            });
-                        }
-                        StdinQuestionParse::Other => {
-                            answers.push(QuestionAnswer {
-                                selected: vec![],
-                                free_text: Some(line),
-                                auto_picked: false,
-                            });
-                        }
-                    }
-                    continue;
-                }
-                for (i, opt) in q.options.iter().enumerate() {
-                    if opt.description.is_empty() {
-                        eprintln!("  {}. {}", i + 1, opt.label);
-                    } else {
-                        eprintln!("  {}. {} — {}", i + 1, opt.label, opt.description);
-                    }
-                }
-                let other_n = q.options.len() + 1;
-                eprintln!("  {other_n}. Other (type your own)");
-                eprint!("   Choice: ");
-                let _ = io::stderr().flush();
-                let line = read_line().map_err(QuestionError::Invalid)?;
-                match parse_stdin_question_line(q, &line) {
-                    StdinQuestionParse::Cancelled => return Err(QuestionError::Cancelled),
-                    StdinQuestionParse::Selected(label) => {
-                        answers.push(QuestionAnswer {
-                            selected: vec![label],
-                            free_text: None,
-                            auto_picked: false,
-                        });
-                    }
-                    StdinQuestionParse::Other => {
-                        eprint!("   Other text: ");
-                        let _ = io::stderr().flush();
-                        let t = read_line().unwrap_or_default();
-                        answers.push(QuestionAnswer {
-                            selected: vec![],
-                            free_text: if t.is_empty() { None } else { Some(t) },
-                            auto_picked: false,
-                        });
-                    }
-                    StdinQuestionParse::FreeText(text) => {
-                        answers.push(QuestionAnswer {
-                            selected: vec![],
-                            free_text: Some(text),
-                            auto_picked: false,
-                        });
-                    }
-                }
-            }
-            Ok(answers)
-        })
+        Box::pin(async move { ask_stdin_questions(questions, read_line) })
     }
+}
+
+fn ask_stdin_questions(
+    questions: Vec<QuestionSpec>,
+    mut read_line: impl FnMut() -> Result<String, String>,
+) -> Result<Vec<QuestionAnswer>, QuestionError> {
+    use std::io::Write;
+    let mut answers = Vec::with_capacity(questions.len());
+    for (qi, q) in questions.iter().enumerate() {
+        eprintln!();
+        if questions.len() > 1 {
+            eprintln!("── Question {}/{} ──", qi + 1, questions.len());
+        }
+        eprintln!("❓ {}", q.prompt);
+        if q.options.is_empty() {
+            eprint!("   Your answer: ");
+            let _ = std::io::stderr().flush();
+            let line = read_line().map_err(QuestionError::Invalid)?;
+            answers.push(apply_free_stdin_parse(
+                parse_stdin_question_line(q, &line),
+                &line,
+            )?);
+            continue;
+        }
+        for (i, opt) in q.options.iter().enumerate() {
+            if opt.description.is_empty() {
+                eprintln!("  {}. {}", i + 1, opt.label);
+            } else {
+                eprintln!("  {}. {} — {}", i + 1, opt.label, opt.description);
+            }
+        }
+        let other_n = q.options.len() + 1;
+        eprintln!("  {other_n}. Other (type your own)");
+        eprint!("   Choice: ");
+        let _ = std::io::stderr().flush();
+        let line = read_line().map_err(QuestionError::Invalid)?;
+        let parsed = parse_stdin_question_line(q, &line);
+        let other_text = if matches!(parsed, StdinQuestionParse::Other) {
+            eprint!("   Other text: ");
+            let _ = std::io::stderr().flush();
+            Some(read_line().unwrap_or_default())
+        } else {
+            None
+        };
+        answers.push(apply_choice_stdin_parse(parsed, other_text.as_deref())?);
+    }
+    Ok(answers)
 }
 
 fn read_line() -> Result<String, String> {
@@ -262,6 +234,58 @@ fn parse_stdin_question_line(q: &QuestionSpec, line: &str) -> StdinQuestionParse
         }
     }
     StdinQuestionParse::FreeText(line.to_string())
+}
+
+fn apply_free_stdin_parse(
+    parsed: StdinQuestionParse,
+    line: &str,
+) -> Result<QuestionAnswer, QuestionError> {
+    match parsed {
+        StdinQuestionParse::Cancelled => Err(QuestionError::Cancelled),
+        StdinQuestionParse::FreeText(text) | StdinQuestionParse::Selected(text) => {
+            Ok(QuestionAnswer {
+                selected: vec![],
+                free_text: Some(text),
+                auto_picked: false,
+            })
+        }
+        StdinQuestionParse::Other => Ok(QuestionAnswer {
+            selected: vec![],
+            free_text: Some(line.to_string()),
+            auto_picked: false,
+        }),
+    }
+}
+
+fn apply_choice_stdin_parse(
+    parsed: StdinQuestionParse,
+    other_text: Option<&str>,
+) -> Result<QuestionAnswer, QuestionError> {
+    match parsed {
+        StdinQuestionParse::Cancelled => Err(QuestionError::Cancelled),
+        StdinQuestionParse::Selected(label) => Ok(QuestionAnswer {
+            selected: vec![label],
+            free_text: None,
+            auto_picked: false,
+        }),
+        StdinQuestionParse::Other => {
+            let t = other_text.unwrap_or("").trim();
+            Ok(QuestionAnswer {
+                selected: vec![],
+                free_text: if t.is_empty() {
+                    None
+                } else {
+                    Some(t.to_string())
+                },
+                auto_picked: false,
+            })
+        }
+        StdinQuestionParse::FreeText(text) => Ok(QuestionAnswer {
+            selected: vec![],
+            free_text: Some(text),
+            auto_picked: false,
+        }),
+    }
 }
 
 /// Build default prompter for non-TUI:

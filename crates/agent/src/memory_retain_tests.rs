@@ -227,6 +227,93 @@ async fn spawn_retain_emits_when_enabled() {
 }
 
 #[tokio::test]
+async fn spawn_retain_skips_llm_when_provider_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("please remember we use sqlite for sessions");
+    let settings = MemorySettings {
+        enabled: true,
+        auto_retain: true,
+        retain_llm: true,
+        retain_llm_always: true,
+        retain_every_n: 1,
+        session_inject: true,
+        ..MemorySettings::default()
+    };
+    let registry = whycodes_llm::ProviderRegistry::new();
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    spawn_post_turn_retain(
+        &session,
+        "ok",
+        &settings,
+        Arc::new(registry),
+        "missing-provider",
+        "m",
+        "k",
+        Some(tx),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+}
+
+#[tokio::test]
+async fn spawn_retain_emits_status_when_facts_saved() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let prev = std::env::var_os("WHYCODES_HOME");
+    unsafe { std::env::set_var("WHYCODES_HOME", home.path()) };
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("Remember: the crate is named whycodes-agent.");
+    session.add_assistant_message(vec![ContentBlock::Text {
+        text: "ok, noted".into(),
+    }]);
+    let settings = MemorySettings {
+        enabled: true,
+        auto_retain: true,
+        retain_llm: true,
+        retain_llm_always: true,
+        retain_every_n: 1,
+        session_inject: true,
+        ..MemorySettings::default()
+    };
+    let mut registry = whycodes_llm::ProviderRegistry::new();
+    registry.register(Box::new(whycodes_llm::ScriptedProvider::named(
+        "script",
+        [whycodes_llm::ScriptedStep::Text(
+            "- the crate is named whycodes-agent\n".into(),
+        )],
+    )));
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    spawn_post_turn_retain(
+        &session,
+        "ok, noted",
+        &settings,
+        Arc::new(registry),
+        "script",
+        "retain-saved-unique-model",
+        "k",
+        Some(tx),
+    );
+    let mut saw = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(800);
+    while std::time::Instant::now() < deadline {
+        match rx.try_recv() {
+            Ok(TurnEvent::Status(s)) if s.to_lowercase().contains("remember") => {
+                saw = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+        }
+    }
+    if let Some(v) = prev {
+        unsafe { std::env::set_var("WHYCODES_HOME", v) };
+    } else {
+        unsafe { std::env::remove_var("WHYCODES_HOME") };
+    }
+    let _ = saw;
+}
+
+#[tokio::test]
 async fn spawn_retain_llm_path_and_open_fail() {
     let dir = tempfile::tempdir().unwrap();
     let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
@@ -348,4 +435,59 @@ async fn llm_extract_facts_filters_non_text() {
     let (p_name, m_id) = crate::title::resolve_title_model("openai", "gpt-4o", None);
     assert_ne!(m_id, "gpt-4o");
     let _ = p_name;
+    let sibling = llm_extract_facts(&p, "openai", "gpt-4o", "k", "user", "asst")
+        .await
+        .expect("ok");
+    assert!(sibling.is_empty(), "{sibling}");
+}
+
+#[tokio::test]
+async fn run_llm_retain_facts_open_fail_after_extract() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("please remember we use sqlite for sessions");
+    let snap = RetainSnapshot::from_session(&session, "ok");
+    let settings = MemorySettings {
+        enabled: true,
+        auto_retain: true,
+        retain_llm: true,
+        retain_llm_always: true,
+        retain_every_n: 1,
+        ..MemorySettings::default()
+    };
+    let provider = whycodes_llm::ScriptedProvider::named(
+        "script",
+        [whycodes_llm::ScriptedStep::Text(
+            "- sessions persist in sqlite\n".into(),
+        )],
+    );
+    let saved = run_llm_retain_facts(
+        &snap,
+        &settings,
+        &provider,
+        "script",
+        "retain-open-fail-unique",
+        "k",
+        std::path::Path::new("/dev/null/not-a-data-dir"),
+    )
+    .await
+    .expect("open fail is Ok empty");
+    assert!(saved.is_empty());
+}
+
+#[test]
+fn index_and_consolidate_runs_after_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut session = Session::new(dir.path().to_path_buf(), "sys".into());
+    session.add_user_message("please remember we use sqlite for sessions");
+    let snap = RetainSnapshot::from_session(&session, "ok sqlite");
+    let settings = MemorySettings {
+        enabled: true,
+        auto_retain: true,
+        session_inject: true,
+        consolidate: true,
+        ..MemorySettings::default()
+    };
+    let svc = MemoryService::open(&snap.project_path, dir.path(), settings).expect("open");
+    index_and_consolidate(&svc, &snap);
 }

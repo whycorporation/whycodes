@@ -97,17 +97,18 @@ fn render(files: &[ContextFile]) -> String {
 
 fn scan_dirs(project_path: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![project_path.to_path_buf()];
-    if let Some(root) = git_root(project_path) {
-        let mut cur = project_path.to_path_buf();
-        while cur != root {
-            match cur.parent() {
-                Some(parent) => {
-                    cur = parent.to_path_buf();
-                    dirs.push(cur.clone());
-                }
-                None => break,
-            }
-        }
+    let Some(root) = git_root(project_path) else {
+        return dirs;
+    };
+    let mut cur = project_path.to_path_buf();
+    while cur != root {
+        // `git_root` only returns an ancestor; jumping to `root` ends the walk
+        // if a parent is ever missing (filesystem root).
+        cur = cur
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| root.clone());
+        dirs.push(cur.clone());
     }
     dirs
 }

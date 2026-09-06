@@ -136,23 +136,15 @@ pub fn spawn_post_turn_retain(
                 .await
                 {
                     Ok(more) => merge_facts(&mut saved, more),
-                    Err(e) => tracing::debug!("llm retain skipped: {e}"),
+                    Err(e) => {
+                        tracing::debug!("llm retain skipped: {e}");
+                    }
                 }
             }
         }
 
         if let Ok(svc) = MemoryService::open(&snap.project_path, &data_dir, settings.clone()) {
-            if let Err(e) = svc.index_session_turn(
-                &snap.session_id,
-                snap.turn_index,
-                &snap.user_text,
-                &snap.assistant_text,
-            ) {
-                tracing::debug!("session chunk skip: {e}");
-            }
-            if let Err(e) = svc.consolidate() {
-                tracing::debug!("memory consolidate skip: {e}");
-            }
+            index_and_consolidate(&svc, &snap);
         }
 
         if !saved.is_empty() {
@@ -163,6 +155,20 @@ pub fn spawn_post_turn_retain(
             );
         }
     });
+}
+
+fn index_and_consolidate(svc: &MemoryService, snap: &RetainSnapshot) {
+    if let Err(e) = svc.index_session_turn(
+        &snap.session_id,
+        snap.turn_index,
+        &snap.user_text,
+        &snap.assistant_text,
+    ) {
+        tracing::debug!("session chunk skip: {e}");
+    }
+    if let Err(e) = svc.consolidate() {
+        tracing::debug!("memory consolidate skip: {e}");
+    }
 }
 
 fn should_llm_retain(settings: &MemorySettings, heuristic_saved: usize, turn_index: usize) -> bool {
@@ -236,14 +242,10 @@ async fn llm_extract_facts(
     assistant: &str,
 ) -> whycodes_core::Result<String> {
     // Prefer a cheap sibling model (same strategy as title refine).
-    let (p_name, m_id) = resolve_title_model(provider_name, model, None);
-    let use_provider = if p_name == provider_name {
-        provider
-    } else {
-        // Caller only passed one provider handle; stick to the session provider.
-        let _ = p_name;
-        provider
-    };
+    // `resolve_title_model` without an override never remaps the provider name,
+    // so the session provider handle is always the one we call.
+    let (_p_name, m_id) = resolve_title_model(provider_name, model, None);
+    let use_provider = provider;
     let use_model = if m_id != model {
         m_id
     } else {

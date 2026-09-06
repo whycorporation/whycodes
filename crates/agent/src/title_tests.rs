@@ -188,6 +188,59 @@ async fn generate_title_empty_on_non_text() {
     assert!(title.is_empty(), "{title}");
 }
 
+struct ImageOnlyTitleProvider;
+
+impl whycodes_llm::LlmProvider for ImageOnlyTitleProvider {
+    fn name(&self) -> &str {
+        "title-image"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async move {
+            Ok(whycodes_core::types::LlmResponse {
+                content: vec![whycodes_core::types::ContentBlock::Image {
+                    source: whycodes_core::types::ImageSource::Base64 {
+                        media_type: "image/png".into(),
+                        data: "abc".into(),
+                    },
+                }],
+                stop_reason: Some("end_turn".into()),
+                usage: Default::default(),
+                model: model.into(),
+            })
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("complete-only")) })
+    }
+}
+
+#[tokio::test]
+async fn generate_title_filters_non_text_image_block() {
+    let title = generate_title(
+        &ImageOnlyTitleProvider,
+        "k",
+        "title-image-unique-model",
+        "fix auth",
+        None,
+    )
+    .await
+    .expect("ok empty");
+    assert!(title.is_empty(), "{title}");
+}
+
 #[test]
 fn apply_refine_result_skips_manual_title_source() {
     let mut session = Session::new(std::path::PathBuf::from("/tmp/proj"), String::new());

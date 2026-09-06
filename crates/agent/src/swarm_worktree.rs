@@ -62,6 +62,8 @@ pub fn create_worktree(
     }
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+    } else {
+        return Err("worktree path has no parent directory".into());
     }
 
     let base_head = git_ok(repo_root, &["rev-parse", "HEAD"])
@@ -96,24 +98,31 @@ pub fn changed_relative_paths(worktree: &Path) -> Result<Vec<String>, String> {
         .ok_or_else(|| "git status failed in worktree".to_string())?;
     let mut paths = Vec::new();
     for line in out.lines() {
-        if line.len() < 4 {
-            continue;
-        }
-        // XY PATH or XY ORIG -> PATH (renames)
-        let rest = line[3..].trim();
-        let path = if let Some((_, right)) = rest.split_once(" -> ") {
-            right
-        } else {
-            rest
-        };
-        // Unquoted paths; git quotes with " when special chars — strip lightly.
-        let path = path.trim_matches('"').to_string();
-        if !path.is_empty() && !paths.iter().any(|p| p == &path) {
+        if let Some(path) = porcelain_path(line)
+            && !paths.iter().any(|p| p == &path)
+        {
             paths.push(path);
         }
     }
     paths.sort();
     Ok(paths)
+}
+
+/// Parse one `git status --porcelain` line into a repo-relative path.
+fn porcelain_path(line: &str) -> Option<String> {
+    if line.len() < 4 {
+        return None;
+    }
+    // XY PATH or XY ORIG -> PATH (renames)
+    let rest = line[3..].trim();
+    let path = if let Some((_, right)) = rest.split_once(" -> ") {
+        right
+    } else {
+        rest
+    };
+    // Unquoted paths; git quotes with " when special chars — strip lightly.
+    let path = path.trim_matches('"').to_string();
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Three-way merge worktree changes into `main_root` (usually the same as repo_root).
@@ -145,6 +154,7 @@ pub fn merge_into_main(wt: &SwarmWorktree, main_root: &Path) -> MergeReport {
         let base = git_show_blob(&wt.repo_root, &wt.base_head, &rel);
 
         match (base.as_ref(), work.as_ref(), main.as_ref()) {
+            (None, None, _) => continue,
             // Deleted in worktree
             (Some(b), None, Some(m)) if m == b => {
                 if let Err(e) = std::fs::remove_file(&main_path) {
@@ -161,9 +171,6 @@ pub fn merge_into_main(wt: &SwarmWorktree, main_root: &Path) -> MergeReport {
                     path: rel,
                     reason: "deleted in worker but main checkout diverged".into(),
                 });
-            }
-            (None, None, _) => {
-                // nothing
             }
             (Some(_), None, None) => {
                 // already gone on main

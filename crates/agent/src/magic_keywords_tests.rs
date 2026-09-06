@@ -88,4 +88,9 @@ fn unclosed_html_and_short_fence_are_safe() {
     assert!(!scan("````\nultrathink\n```", &on()).ultrathink);
     assert!(!scan("please <foo ultrathink", &on()).ultrathink);
     assert!(scan("please ultrathink <foo", &on()).ultrathink);
+    assert!(!scan("<note>\nultrathink\n</note>", &on()).ultrathink);
+    assert!(!scan("<a>\nultrathink\n</a\n>", &on()).ultrathink);
+    // Open tag with no close tag: inner while runs to EOF (line 170).
+    assert!(!scan("<note>please ultrathink forever", &on()).ultrathink);
+    assert!(!scan("<p>ultrathink</", &on()).ultrathink);
 }

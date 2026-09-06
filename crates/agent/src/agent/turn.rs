@@ -234,7 +234,7 @@ impl Agent {
                                 "autocompact circuit breaker tripped"
                             );
                         }
-                    } else {
+                    } else if compact_failures > 0 {
                         compact_failures = 0;
                     }
                 }
@@ -265,9 +265,11 @@ impl Agent {
                 && let Some(suffix) = crate::intent::posture_suffix(&turn_intent, &self.info.name)
             {
                 append_request_user_suffix(&mut request, &suffix);
+                let intent = turn_intent.intent.as_str();
+                let confidence = turn_intent.confidence;
                 tracing::debug!(
-                    intent = turn_intent.intent.as_str(),
-                    confidence = turn_intent.confidence,
+                    intent,
+                    confidence,
                     agent = %self.info.name,
                     "intent posture injected into request"
                 );
@@ -665,10 +667,8 @@ impl Agent {
                     &events,
                     TurnEvent::Status("Doom loop: identical tool call repeated — refusing".into()),
                 );
-                tracing::warn!(
-                    tools = ?tool_calls.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
-                    "doom loop refused"
-                );
+                let tools: Vec<&str> = tool_calls.iter().map(|t| t.name.as_str()).collect();
+                tracing::warn!(tools = ?tools, "doom loop refused");
                 let mut refused = Vec::with_capacity(tool_calls.len());
                 for tc in &tool_calls {
                     emit(
@@ -774,25 +774,29 @@ impl Agent {
                 session.mark_checkpoint(goal);
             }
             if let Some(report) = rewind_report {
-                if session.apply_rewind(&report) {
-                    tracing::debug!("collapsed exploratory context after rewind");
-                } else {
-                    tracing::debug!("rewind requested with no active checkpoint");
-                }
+                // `settle_checkpoint_rewind` only yields a report when a checkpoint
+                // is already active, so apply always succeeds.
+                let applied = session.apply_rewind(&report);
+                tracing::debug!(applied, "collapsed exploratory context after rewind");
             }
 
             // Fold subagent tokens into this turn + parent session (plan-performance).
-            if let Ok(mut pending) = self.subagent_usage_pending.lock()
-                && !pending.is_empty()
             {
-                let fold = std::mem::take(&mut *pending);
-                turn_usage.add(&fold);
-                session.add_usage(&fold);
-                tracing::debug!(
-                    input = fold.input_tokens,
-                    output = fold.output_tokens,
-                    "folded subagent usage into parent session"
-                );
+                let mut pending = self
+                    .subagent_usage_pending
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if !pending.is_empty() {
+                    let fold = std::mem::take(&mut *pending);
+                    drop(pending);
+                    turn_usage.add(&fold);
+                    session.add_usage(&fold);
+                    tracing::debug!(
+                        input = fold.input_tokens,
+                        output = fold.output_tokens,
+                        "folded subagent usage into parent session"
+                    );
+                }
             }
 
             if !failed_tools.is_empty() {

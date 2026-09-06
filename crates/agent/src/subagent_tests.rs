@@ -79,8 +79,7 @@ async fn run_returns_failed_result_for_preflight_errors() {
                 "test-model",
                 "test-key",
             )
-            .await
-            .expect("runner converts turn errors into a result");
+            .await;
 
         assert_eq!(result.goal, "inspect the project");
         assert!(!result.success);
@@ -186,8 +185,7 @@ async fn run_tool_loop_reads_usage_thinking_and_question() {
             "m",
             "k",
         )
-        .await
-        .expect("ok");
+        .await;
     assert!(result.success, "{result:?}");
     assert!(
         result.output.contains("done") || !result.output.is_empty(),
@@ -244,8 +242,7 @@ async fn run_intercepts_question_and_swarm_inbox() {
             "m",
             "k",
         )
-        .await
-        .expect("ok");
+        .await;
     assert!(result.success, "{result:?}");
     assert!(
         result.output.contains("answered") || !result.output.is_empty(),
@@ -300,8 +297,7 @@ async fn run_wraps_stream_error_as_failed_result() {
             "m",
             "k",
         )
-        .await
-        .expect("always Ok wrapping");
+        .await;
     assert!(!result.success);
     assert!(
         result.output.to_lowercase().contains("boom")
@@ -354,8 +350,7 @@ async fn run_tool_use_delta_then_text() {
             "m",
             "k",
         )
-        .await
-        .expect("ok");
+        .await;
     assert!(result.success, "{result:?}");
     assert!(
         result.output.contains("got it") || !result.output.is_empty(),
@@ -409,7 +404,7 @@ async fn run_invalid_question_and_manual_prompter() {
     while let Ok(req) = rx.try_recv() {
         let _ = req.reply.send(Ok(vec![]));
     }
-    let result = run.await.expect("join").expect("ok wrapping");
+    let result = run.await.expect("join");
     assert!(
         result.output.contains("after invalid")
             || result.output.to_lowercase().contains("invalid")
@@ -477,7 +472,7 @@ async fn run_important_question_uses_prompter() {
             auto_picked: false,
         }]))
         .unwrap();
-    let result = run.await.expect("join").expect("ok wrapping");
+    let result = run.await.expect("join");
     assert!(
         result.output.contains("after ask") || result.success || !result.output.is_empty(),
         "{}",
@@ -530,8 +525,7 @@ async fn run_tool_loop_serializes_mutator_batch() {
             "m",
             "k",
         )
-        .await
-        .expect("ok");
+        .await;
     assert!(
         result.success || result.output.contains("mutators") || !result.output.is_empty(),
         "{result:?}"

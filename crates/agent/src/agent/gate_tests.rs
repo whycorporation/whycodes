@@ -1110,7 +1110,7 @@ async fn shell_ask_rule_allows_and_sets_risk_confirmed() {
     let mut info = info("build");
     info.permission
         .rules
-        .insert("bash".into(), PermissionAction::Ask);
+        .insert("bash(echo *)".into(), PermissionAction::Ask);
     let mut a = Agent::new(info).with_permission_prompter(asks.clone());
     a.set_approval_mode(ApprovalMode::Manual);
     let dir = tempfile::tempdir().unwrap();

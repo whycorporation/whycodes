@@ -467,6 +467,8 @@ fn read_only_shell_empty_segments_and_git_config() {
     assert!(is_read_only_shell("git config --list"));
     assert!(is_read_only_shell("git foo"));
     assert!(!shell_head_readonly_ok("git foo"));
+    assert!(!is_read_only_shell("ls ; touch foo"));
+    assert!(!is_read_only_shell("ls ; mkdir foo"));
 }
 
 #[test]

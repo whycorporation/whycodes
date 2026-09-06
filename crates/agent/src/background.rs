@@ -147,22 +147,22 @@ impl BackgroundRegistry {
         let jobs = self.inner.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let mut out = Vec::new();
         for id in order.iter() {
-            if let Some(j) = jobs.get(id)
-                && let Ok(g) = j.lock()
-            {
-                let elapsed = g
-                    .finished
-                    .map(|f| f.saturating_duration_since(g.started))
-                    .unwrap_or_else(|| g.started.elapsed());
-                out.push(JobSnapshot {
-                    id: g.id.clone(),
-                    label: g.label.clone(),
-                    status: g.status,
-                    elapsed,
-                    output_len: g.output.len(),
-                    exit_code: g.exit_code,
-                });
-            }
+            let Some(j) = jobs.get(id) else {
+                continue;
+            };
+            let g = j.lock().unwrap_or_else(|e| e.into_inner());
+            let elapsed = g
+                .finished
+                .map(|f| f.saturating_duration_since(g.started))
+                .unwrap_or_else(|| g.started.elapsed());
+            out.push(JobSnapshot {
+                id: g.id.clone(),
+                label: g.label.clone(),
+                status: g.status,
+                elapsed,
+                output_len: g.output.len(),
+                exit_code: g.exit_code,
+            });
         }
         out
     }
@@ -297,114 +297,18 @@ impl BackgroundRegistry {
         let warning = prepared.warning.clone();
 
         tokio::spawn(async move {
-            if let Some(ref w) = warning {
-                append_output(&job_for_task, &format!("[sandbox] {w}\n"));
-            }
-
-            let mut cmd = tokio::process::Command::new(&program);
-            cmd.args(&args)
-                .current_dir(&cwd)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
-                .kill_on_drop(true);
-            #[cfg(unix)]
-            {
-                // Own process group so `bg` kill / drop reaps grandchildren.
-                cmd.process_group(0);
-            }
-
-            let mut child = match cmd.spawn() {
-                Ok(c) => c,
-                Err(e) => {
-                    finalize_job(
-                        &reg,
-                        &job_for_task,
-                        &id_for_task,
-                        JobStatus::Failed,
-                        None,
-                        &format!("spawn failed: {e}"),
-                    );
-                    return;
-                }
-            };
-
-            // Dual-read stdout/stderr into shared buffer.
-            let stdout = child.stdout.take();
-            let stderr = child.stderr.take();
-
-            let job_out = Arc::clone(&job_for_task);
-            let out_task = tokio::spawn(async move {
-                if let Some(out) = stdout {
-                    pipe_to_job(out, &job_out).await;
-                }
-            });
-            let job_err = Arc::clone(&job_for_task);
-            let err_task = tokio::spawn(async move {
-                if let Some(err) = stderr {
-                    pipe_to_job(err, &job_err).await;
-                }
-            });
-
-            // Poll kill flag while waiting.
-            let status = loop {
-                if kill_flag.load(Ordering::SeqCst) {
-                    if let Some(pid) = child.id() {
-                        kill_pid_group(pid);
-                    }
-                    if let Err(e) = child.start_kill() {
-                        tracing::debug!(error = %e, "background job kill skipped");
-                    }
-                    if let Err(e) = child.wait().await {
-                        tracing::debug!(error = %e, "background job wait after kill skipped");
-                    }
-                    break None; // killed
-                }
-                match tokio::time::timeout(Duration::from_millis(200), child.wait()).await {
-                    Ok(Ok(st)) => break Some(st),
-                    Ok(Err(e)) => {
-                        append_output(&job_for_task, &format!("\nwait error: {e}\n"));
-                        break None;
-                    }
-                    Err(_timeout) => continue, // timeout — recheck kill
-                }
-            };
-
-            if let Err(e) = out_task.await {
-                tracing::debug!(error = %e, "background stdout task skipped");
-            }
-            if let Err(e) = err_task.await {
-                tracing::debug!(error = %e, "background stderr task skipped");
-            }
-
-            if kill_flag.load(Ordering::SeqCst) {
-                finalize_job(
-                    &reg,
-                    &job_for_task,
-                    &id_for_task,
-                    JobStatus::Killed,
-                    None,
-                    &label_for_task,
-                );
-                return;
-            }
-
-            let (st, code) = match status {
-                Some(s) => {
-                    let code = s.code();
-                    if s.success() {
-                        (JobStatus::Done, code)
-                    } else {
-                        (JobStatus::Failed, code)
-                    }
-                }
-                None => (JobStatus::Failed, None),
-            };
-            let summary = match code {
-                Some(c) => format!("{label_for_task} (exit {c})"),
-                None => label_for_task.clone(),
-            };
-            finalize_job(&reg, &job_for_task, &id_for_task, st, code, &summary);
+            run_background_job(
+                reg,
+                job_for_task,
+                id_for_task,
+                label_for_task,
+                program,
+                args,
+                cwd,
+                warning,
+                kill_flag,
+            )
+            .await;
         });
 
         Ok(id)
@@ -453,16 +357,133 @@ fn truncate_label(s: &str, max: usize) -> String {
     format!("{kept}…")
 }
 
-fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
-    if let Ok(mut g) = job.lock() {
-        g.output.push_str(chunk);
-        if g.output.len() > MAX_JOB_OUTPUT_BYTES {
-            let excess = g.output.len() - MAX_JOB_OUTPUT_BYTES;
-            g.output.drain(..excess);
-            if !g.output.starts_with('…') {
-                g.output.insert(0, '…');
-            }
+#[allow(clippy::too_many_arguments)]
+async fn run_background_job(
+    reg: BackgroundRegistry,
+    job: Arc<Mutex<JobInner>>,
+    id: String,
+    label: String,
+    program: String,
+    args: Vec<String>,
+    cwd: PathBuf,
+    warning: Option<String>,
+    kill_flag: Arc<AtomicBool>,
+) {
+    if let Some(ref w) = warning {
+        append_output(&job, &format!("[sandbox] {w}\n"));
+    }
+
+    let mut cmd = tokio::process::Command::new(&program);
+    cmd.args(&args)
+        .current_dir(&cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    {
+        // Own process group so `bg` kill / drop reaps grandchildren.
+        cmd.process_group(0);
+    }
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => {
+            finalize_job(
+                &reg,
+                &job,
+                &id,
+                JobStatus::Failed,
+                None,
+                &format!("spawn failed: {e}"),
+            );
+            return;
         }
+    };
+
+    let out_task = spawn_pipe_task(child.stdout.take(), Arc::clone(&job));
+    let err_task = spawn_pipe_task(child.stderr.take(), Arc::clone(&job));
+
+    let status = loop {
+        if kill_flag.load(Ordering::SeqCst) {
+            if let Some(pid) = child.id() {
+                kill_pid_group(pid);
+            }
+            // Kill/wait errors are best-effort: the child may already have exited.
+            let kill = child.start_kill();
+            let reaped = child.wait().await;
+            drop((kill, reaped));
+            break None;
+        }
+        match tokio::time::timeout(Duration::from_millis(200), child.wait()).await {
+            Ok(wait) => break wait_status(wait, &job),
+            Err(_timeout) => continue,
+        }
+    };
+
+    join_pipe_task(out_task, "background stdout task skipped").await;
+    join_pipe_task(err_task, "background stderr task skipped").await;
+
+    if kill_flag.load(Ordering::SeqCst) {
+        finalize_job(&reg, &job, &id, JobStatus::Killed, None, &label);
+        return;
+    }
+
+    let (st, code) = job_status_from_wait(status);
+    let summary = code
+        .map(|c| format!("{label} (exit {c})"))
+        .unwrap_or_else(|| label.clone());
+    finalize_job(&reg, &job, &id, st, code, &summary);
+}
+
+fn wait_status(
+    wait: Result<std::process::ExitStatus, std::io::Error>,
+    job: &Arc<Mutex<JobInner>>,
+) -> Option<std::process::ExitStatus> {
+    match wait {
+        Ok(st) => Some(st),
+        Err(e) => {
+            append_output(job, &format!("\nwait error: {e}\n"));
+            None
+        }
+    }
+}
+
+fn job_status_from_wait(status: Option<std::process::ExitStatus>) -> (JobStatus, Option<i32>) {
+    match status {
+        Some(s) if s.success() => (JobStatus::Done, s.code()),
+        Some(s) => (JobStatus::Failed, s.code()),
+        None => (JobStatus::Failed, None),
+    }
+}
+
+fn append_output(job: &Arc<Mutex<JobInner>>, chunk: &str) {
+    let mut g = job.lock().unwrap_or_else(|e| e.into_inner());
+    g.output.push_str(chunk);
+    if g.output.len() > MAX_JOB_OUTPUT_BYTES {
+        let excess = g.output.len() - MAX_JOB_OUTPUT_BYTES;
+        g.output.drain(..excess);
+        if !g.output.starts_with('…') {
+            g.output.insert(0, '…');
+        }
+    }
+}
+
+fn spawn_pipe_task<R>(reader: Option<R>, job: Arc<Mutex<JobInner>>) -> tokio::task::JoinHandle<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        if let Some(out) = reader {
+            pipe_to_job(out, &job).await;
+        }
+    })
+}
+
+async fn join_pipe_task(task: tokio::task::JoinHandle<()>, skipped: &'static str) {
+    if let Err(e) = task.await {
+        let error = e.to_string();
+        tracing::debug!(error = %error, "{skipped}");
     }
 }
 
@@ -489,7 +510,8 @@ fn finalize_job(
     exit_code: Option<i32>,
     summary: &str,
 ) {
-    if let Ok(mut g) = job.lock() {
+    {
+        let mut g = job.lock().unwrap_or_else(|e| e.into_inner());
         // Don't overwrite Killed if already set by kill().
         if g.status == JobStatus::Killed {
             return;

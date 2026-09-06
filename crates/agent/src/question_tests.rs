@@ -370,6 +370,40 @@ fn parse_stdin_question_line_covers_numeric_other_and_free_text() {
         parse_stdin_question_line(&choice, "typed"),
         StdinQuestionParse::FreeText("typed".into())
     );
+
+    let free_text = apply_free_stdin_parse(StdinQuestionParse::FreeText("hello".into()), "hello")
+        .expect("free text");
+    assert_eq!(free_text.free_text.as_deref(), Some("hello"));
+    let free_selected =
+        apply_free_stdin_parse(StdinQuestionParse::Selected("unused".into()), "unused")
+            .expect("selected-as-free");
+    assert_eq!(free_selected.free_text.as_deref(), Some("unused"));
+    let free_other =
+        apply_free_stdin_parse(StdinQuestionParse::Other, "typed-other").expect("other");
+    assert_eq!(free_other.free_text.as_deref(), Some("typed-other"));
+    assert_eq!(
+        apply_free_stdin_parse(StdinQuestionParse::Cancelled, ""),
+        Err(QuestionError::Cancelled)
+    );
+
+    let selected =
+        apply_choice_stdin_parse(StdinQuestionParse::Selected("A".into()), None).expect("selected");
+    assert_eq!(selected.selected, vec!["A".to_string()]);
+    let other_empty =
+        apply_choice_stdin_parse(StdinQuestionParse::Other, Some("  ")).expect("empty");
+    assert!(other_empty.free_text.is_none());
+    let other_text =
+        apply_choice_stdin_parse(StdinQuestionParse::Other, Some("custom")).expect("custom");
+    assert_eq!(other_text.free_text.as_deref(), Some("custom"));
+    let other_none = apply_choice_stdin_parse(StdinQuestionParse::Other, None).expect("none");
+    assert!(other_none.free_text.is_none());
+    let typed = apply_choice_stdin_parse(StdinQuestionParse::FreeText("typed".into()), None)
+        .expect("typed");
+    assert_eq!(typed.free_text.as_deref(), Some("typed"));
+    assert_eq!(
+        apply_choice_stdin_parse(StdinQuestionParse::Cancelled, None),
+        Err(QuestionError::Cancelled)
+    );
 }
 
 #[tokio::test]
@@ -419,4 +453,133 @@ async fn stdin_question_prompter_eof_cancels() {
     .await
     .expect("multi-question stdin must not hang on EOF");
     assert!(err.is_err(), "{err:?}");
+}
+
+#[test]
+fn ask_stdin_questions_covers_free_choice_other_and_errors() {
+    let free = vec![QuestionSpec {
+        prompt: "free?".into(),
+        options: vec![],
+        multi_select: false,
+        important: false,
+    }];
+    let answers = ask_stdin_questions(free, || Ok("hello".into())).expect("free");
+    assert_eq!(answers[0].free_text.as_deref(), Some("hello"));
+
+    let mut other_fail = std::collections::VecDeque::from(["2".to_string()]);
+    let other_empty = ask_stdin_questions(
+        vec![QuestionSpec {
+            prompt: "pick".into(),
+            options: vec![QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        }],
+        || other_fail.pop_front().ok_or_else(|| "eof".into()),
+    )
+    .expect("other text falls back to empty");
+    assert!(other_empty[0].free_text.is_none());
+    assert!(other_empty[0].selected.is_empty());
+    assert!(!other_empty[0].auto_picked);
+
+    let cancelled = ask_stdin_questions(
+        vec![QuestionSpec {
+            prompt: "free?".into(),
+            options: vec![],
+            multi_select: false,
+            important: false,
+        }],
+        || Ok(String::new()),
+    );
+    assert_eq!(cancelled, Err(QuestionError::Cancelled));
+
+    let invalid = ask_stdin_questions(
+        vec![QuestionSpec {
+            prompt: "free?".into(),
+            options: vec![],
+            multi_select: false,
+            important: false,
+        }],
+        || Err("boom".into()),
+    );
+    assert_eq!(invalid, Err(QuestionError::Invalid("boom".into())));
+
+    let invalid_choice = ask_stdin_questions(
+        vec![QuestionSpec {
+            prompt: "pick".into(),
+            options: vec![QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        }],
+        || Err("choice-boom".into()),
+    );
+    assert_eq!(
+        invalid_choice,
+        Err(QuestionError::Invalid("choice-boom".into()))
+    );
+
+    let choice = vec![QuestionSpec {
+        prompt: "pick".into(),
+        options: vec![
+            QuestionOption {
+                label: "A".into(),
+                description: "alpha".into(),
+                preview: None,
+            },
+            QuestionOption {
+                label: "B".into(),
+                description: String::new(),
+                preview: None,
+            },
+        ],
+        multi_select: false,
+        important: false,
+    }];
+    let selected = ask_stdin_questions(choice.clone(), || Ok("1".into())).expect("selected");
+    assert_eq!(selected[0].selected, vec!["A".to_string()]);
+
+    let mut other_lines = std::collections::VecDeque::from(["3".to_string(), "custom".to_string()]);
+    let other = ask_stdin_questions(choice.clone(), || {
+        other_lines.pop_front().ok_or_else(|| "eof".into())
+    })
+    .expect("other");
+    assert_eq!(other[0].free_text.as_deref(), Some("custom"));
+
+    let typed = ask_stdin_questions(choice, || Ok("typed".into())).expect("typed");
+    assert_eq!(typed[0].free_text.as_deref(), Some("typed"));
+
+    let two = vec![
+        QuestionSpec {
+            prompt: "one".into(),
+            options: vec![QuestionOption {
+                label: "A".into(),
+                description: String::new(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        },
+        QuestionSpec {
+            prompt: "two".into(),
+            options: vec![QuestionOption {
+                label: "B".into(),
+                description: "beta".into(),
+                preview: None,
+            }],
+            multi_select: false,
+            important: false,
+        },
+    ];
+    let mut lines = std::collections::VecDeque::from(["1".to_string(), "1".to_string()]);
+    let both = ask_stdin_questions(two, || lines.pop_front().ok_or_else(|| "eof".into()))
+        .expect("two questions");
+    assert_eq!(both[0].selected, vec!["A".to_string()]);
+    assert_eq!(both[1].selected, vec!["B".to_string()]);
 }

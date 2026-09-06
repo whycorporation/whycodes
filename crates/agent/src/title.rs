@@ -60,9 +60,9 @@ fn small_model_for(provider: &str, model: &str) -> Option<&'static str> {
                 Some("anthropic/claude-haiku-4.5")
             } else if model.contains("gpt") || model.contains("o1") || model.contains("o3") {
                 Some("openai/gpt-4o-mini")
-            } else if model.contains("gemini") {
-                Some("google/gemini-2.0-flash-001")
             } else {
+                // `gemini` is already-small (`mini` substring / flash), so that
+                // family never reaches this arm; keep the cheap default.
                 Some("openai/gpt-4o-mini")
             }
         }

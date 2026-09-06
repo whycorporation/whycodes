@@ -70,6 +70,8 @@ fn empty_assembler_and_non_object_input() {
     a.on_tool_use("n1".into(), "read".into(), json!(12));
     a.on_tool_use_delta("n1", "");
     a.on_tool_use_delta("missing", r#"{"path":"x"}"#);
+    a.active = None;
+    a.on_tool_use_delta("", r#"{"ignored":true}"#);
     a.on_tool_use_delta("0", r#"{"path":"x.rs"}"#);
     let snaps = a.pending_snapshots();
     assert_eq!(snaps.len(), 1);

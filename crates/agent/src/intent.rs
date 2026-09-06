@@ -159,25 +159,21 @@ pub fn classify_user_intent(text: &str) -> IntentAssessment {
         q += 0.3;
     }
 
+    // `has_qmark` always lifts `q` to ≥ 1.2 and `imperative` always lifts `c`
+    // to ≥ 1.4, so those fallbacks are unreachable here.
+    // Scores below every threshold stay Ambiguous (e.g. "please" with no
+    // change starter / marker). `has_qmark` and true imperatives never land here.
     let (intent, raw) = if p >= q && p >= c && p >= 1.5 {
         (UserIntent::Plan, p)
     } else if q >= c && q >= p && q >= 1.2 {
         (UserIntent::Question, q)
     } else if c >= q && c >= p && c >= 1.0 {
         (UserIntent::Change, c)
-    } else if has_qmark && c < 1.0 {
-        (
-            UserIntent::Question,
-            1.0 + if starts_question { 0.5 } else { 0.0 },
-        )
-    } else if imperative {
-        (UserIntent::Change, 1.2)
     } else {
         (UserIntent::Ambiguous, 0.4)
     };
 
     let confidence = match intent {
-        UserIntent::Trivial => 0.95,
         UserIntent::Ambiguous => 0.35,
         _ => (raw / 4.0).clamp(0.4, 0.95),
     };
@@ -287,21 +283,15 @@ pub fn apply_intent_to_request(
 
 /// Short chrome badge when confidence is high enough to show.
 pub fn badge_label(assessment: &IntentAssessment) -> Option<&'static str> {
-    if matches!(
-        assessment.intent,
-        UserIntent::Trivial | UserIntent::Ambiguous
-    ) {
-        return None;
-    }
     if !assessment.is_high() {
         return None;
     }
-    Some(match assessment.intent {
-        UserIntent::Question => "Q",
-        UserIntent::Change => "chg",
-        UserIntent::Plan => "plan",
-        UserIntent::Trivial | UserIntent::Ambiguous => unreachable!(),
-    })
+    match assessment.intent {
+        UserIntent::Question => Some("Q"),
+        UserIntent::Change => Some("chg"),
+        UserIntent::Plan => Some("plan"),
+        UserIntent::Trivial | UserIntent::Ambiguous => None,
+    }
 }
 
 /// Toast severity for TUI (`info` / `warning`).

@@ -89,6 +89,11 @@ fn permission_detail_and_parallel_policy() {
 fn pretty_one_liner_and_absolute_path_inside_workspace() {
     let compact_arr = format_permission_detail(&json!({"items": [1, 2]}));
     assert!(compact_arr.contains("items:"), "{compact_arr}");
+    let empty_arr = format_permission_detail(&json!({"items": []}));
+    assert!(
+        empty_arr.contains("items: []") || empty_arr.contains("items:[]"),
+        "{empty_arr}"
+    );
     let cwd = std::env::current_dir().unwrap();
     let cwd_s = cwd.to_string_lossy();
     let inside = cwd.join("Cargo.toml");

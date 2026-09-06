@@ -161,15 +161,14 @@ pub fn request_cancel(flag: &CancelFlag) {
 /// LLM stream is idle between tokens (the previous code only checked cancel
 /// *after* the next SSE event arrived, which is why "Cancelling…" could hang).
 pub async fn wait_until_cancelled(flag: &Option<CancelFlag>) {
-    let Some(f) = flag else {
-        std::future::pending::<()>().await;
-        return;
-    };
-    loop {
-        if f.load(Ordering::Acquire) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(40)).await;
+    match flag {
+        None => std::future::pending::<()>().await,
+        Some(f) => loop {
+            if f.load(Ordering::Acquire) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(40)).await;
+        },
     }
 }
 

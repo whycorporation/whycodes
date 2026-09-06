@@ -144,3 +144,60 @@ async fn spawn_parallel_join_error_from_aborted_task() {
     let msg = format!("Join error: {}", joined.unwrap_err());
     assert!(msg.to_lowercase().contains("join") || msg.to_lowercase().contains("cancel"));
 }
+
+struct PanicOnStreamProvider;
+
+impl whycodes_llm::LlmProvider for PanicOnStreamProvider {
+    fn name(&self) -> &str {
+        "panic-stream"
+    }
+    fn default_base_url(&self) -> &str {
+        "http://script.invalid"
+    }
+    fn complete<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderResponseFuture<'a> {
+        Box::pin(async { Err(whycodes_core::Error::llm("complete-only")) })
+    }
+    fn stream<'a>(
+        &'a self,
+        _request: &'a whycodes_core::types::LlmRequest,
+        _api_key: &'a str,
+        _model: &'a str,
+    ) -> whycodes_llm::provider::ProviderStreamFuture<'a> {
+        panic!("spawn-parallel join coverage");
+    }
+}
+
+#[tokio::test]
+async fn spawn_parallel_join_error_when_worker_panics() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut registry = ProviderRegistry::new();
+    registry.register(Box::new(PanicOnStreamProvider));
+    let agent = Agent::new(info()).with_provider_registry(registry);
+    let outs = agent
+        .spawn_parallel(
+            vec![SubagentTask {
+                goal: "panic".into(),
+                context: None,
+                tools: None,
+                max_turns: 1,
+            }],
+            1,
+            "panic-stream",
+            "m",
+            "k",
+            dir.path().to_path_buf(),
+        )
+        .await
+        .expect("join error is Ok(vec)");
+    assert_eq!(outs.len(), 1);
+    assert!(
+        outs[0].to_lowercase().contains("join error") || outs[0].to_lowercase().contains("panic"),
+        "{}",
+        outs[0]
+    );
+}

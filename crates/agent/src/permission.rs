@@ -110,10 +110,8 @@ impl PermissionPrompter for StdinPrompter {
             eprint!("  Allow? [y/N] ");
             let _ = io::stderr().flush();
             let mut line = String::new();
-            if io::stdin().read_line(&mut line).is_err() {
-                return false;
-            }
-            permission_line_allows(&line)
+            let read = io::stdin().read_line(&mut line);
+            permission_from_read(read, &line)
         })
     }
 }
@@ -149,6 +147,13 @@ fn atty_stderr() -> bool {
         return false;
     }
     true
+}
+
+fn permission_from_read(result: std::io::Result<usize>, line: &str) -> bool {
+    if result.is_err() {
+        return false;
+    }
+    permission_line_allows(line)
 }
 
 fn permission_line_allows(line: &str) -> bool {

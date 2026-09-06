@@ -144,13 +144,16 @@ impl SubagentRunner {
     }
 
     /// Run a single subagent task synchronously (awaited).
+    ///
+    /// Inner turn errors become `success: false` rather than a `Result::Err`, so
+    /// callers always get a `SubagentResult`.
     pub async fn run(
         &self,
         task: SubagentTask,
         provider_name: &str,
         model: &str,
         api_key: &str,
-    ) -> whycodes_core::Result<SubagentResult> {
+    ) -> SubagentResult {
         let start = Instant::now();
 
         // Build the full prompt from goal + optional context
@@ -202,20 +205,20 @@ impl SubagentRunner {
         let duration = start.elapsed();
 
         match output {
-            Ok((text, usage)) => Ok(SubagentResult {
+            Ok((text, usage)) => SubagentResult {
                 goal: task.goal,
                 output: text,
                 success: true,
                 duration,
                 usage,
-            }),
-            Err(e) => Ok(SubagentResult {
+            },
+            Err(e) => SubagentResult {
                 goal: task.goal,
                 output: format!("Subagent error: {}", e),
                 success: false,
                 duration,
                 usage: whycodes_core::types::Usage::default(),
-            }),
+            },
         }
     }
 

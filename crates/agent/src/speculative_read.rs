@@ -226,9 +226,10 @@ pub fn maybe_start(
         return;
     };
     if let Some(job) = spawn_speculative_read(call_id.to_string(), path, offset, limit, ctx) {
+        let path_display = job.path.display().to_string();
         tracing::debug!(
             id = %job.call_id,
-            path = %job.path.display(),
+            path = %path_display,
             offset = job.offset,
             limit = job.limit,
             "speculative early read started"

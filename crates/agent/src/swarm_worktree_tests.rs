@@ -72,6 +72,13 @@ fn worktree_create_edit_merge_cleanup() {
 }
 
 #[test]
+fn create_worktree_rejects_path_without_parent() {
+    // Unix `Path::new("/")` has parent `Some("")`; only `""` has `parent() == None`.
+    let err = create_worktree(Path::new("."), Path::new(""), "worker-root").unwrap_err();
+    assert!(err.contains("parent"), "{err}");
+}
+
+#[test]
 fn merge_detects_main_divergence() {
     let (_keep, root) = init_repo();
     let dest = root
@@ -202,6 +209,27 @@ fn changed_relative_paths_skips_short_and_parses_rename() {
 }
 
 #[test]
+fn porcelain_path_skips_short_and_parses_rename() {
+    assert_eq!(porcelain_path(""), None);
+    assert_eq!(porcelain_path("M"), None);
+    assert_eq!(porcelain_path("M  "), None);
+    assert_eq!(porcelain_path("M   "), None);
+    assert_eq!(porcelain_path("M  a.txt").as_deref(), Some("a.txt"));
+    assert_eq!(
+        porcelain_path("R  old.txt -> new.txt").as_deref(),
+        Some("new.txt")
+    );
+    assert_eq!(
+        porcelain_path("?? \"quoted.txt\"").as_deref(),
+        Some("quoted.txt")
+    );
+    assert_eq!(
+        porcelain_path("M   ").or_else(|| porcelain_path("M  \"\"")),
+        None
+    );
+}
+
+#[test]
 fn remove_worktree_fallback_when_path_already_gone() {
     let (_keep, root) = init_repo();
     let dest = root
@@ -329,6 +357,167 @@ fn merge_notes_main_deleted_while_worker_edited() {
     assert!(
         report.conflicts.iter().any(|c| c.path == "a.txt")
             || report.applied.iter().any(|p| p == "a.txt"),
+        "{report:?}"
+    );
+    remove_worktree(&wt).ok();
+}
+
+#[test]
+fn create_worktree_add_fails_when_dest_is_existing_file() {
+    let (_keep, root) = init_repo();
+    let dest_parent = root.join(".whycodes").join("swarm").join("run-add-fail");
+    std::fs::create_dir_all(&dest_parent).unwrap();
+    let dest = dest_parent.join("worker-0");
+    std::fs::write(&dest, b"i-am-a-file").unwrap();
+    let err = create_worktree(&root, &dest, "worker-0").unwrap_err();
+    assert!(
+        err.contains("exists") || err.contains("worktree") || err.contains("git"),
+        "{err}"
+    );
+}
+
+#[test]
+fn create_worktree_add_fails_when_git_worktree_add_is_disabled() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-add-disabled")
+        .join("worker-0");
+    // `extensions.worktreeConfig` is fine; instead, make `core.worktree` invalid
+    // so `git worktree add` fails after HEAD is already resolved.
+    let _ = std::process::Command::new("git")
+        .args(["config", "core.bare", "true"])
+        .current_dir(&root)
+        .status();
+    let err = create_worktree(&root, &dest, "worker-0");
+    let _ = std::process::Command::new("git")
+        .args(["config", "core.bare", "false"])
+        .current_dir(&root)
+        .status();
+    match err {
+        Ok(wt) => {
+            let _ = remove_worktree(&wt);
+        }
+        Err(e) => {
+            assert!(
+                e.contains("worktree")
+                    || e.contains("git")
+                    || e.contains("HEAD")
+                    || e.contains("bare"),
+                "{e}"
+            );
+        }
+    }
+}
+
+#[test]
+fn create_worktree_add_fails_when_git_dir_is_readonly_after_head() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-add-ro")
+        .join("worker-0");
+    let git_dir = root.join(".git");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let orig = std::fs::metadata(&git_dir).unwrap().permissions();
+        std::fs::set_permissions(&git_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let err = create_worktree(&root, &dest, "worker-0").unwrap_err();
+        std::fs::set_permissions(&git_dir, orig).ok();
+        assert!(
+            err.contains("worktree") || err.contains("git") || err.contains("failed"),
+            "{err}"
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = create_worktree(&root, &dest, "worker-0");
+    }
+}
+
+#[test]
+fn merge_delete_fails_when_main_parent_is_readonly() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-del-chmod")
+        .join("worker-0");
+    let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    std::fs::remove_file(wt.path.join("a.txt")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let orig = std::fs::metadata(&root).unwrap().permissions();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let report = merge_into_main(&wt, &root);
+        std::fs::set_permissions(&root, orig).ok();
+        assert!(
+            report.conflicts.iter().any(|c| c.path == "a.txt")
+                || report.deleted.iter().any(|p| p == "a.txt"),
+            "{report:?}"
+        );
+    }
+    #[cfg(not(unix))]
+    {
+        let report = merge_into_main(&wt, &root);
+        let _ = report;
+    }
+    remove_worktree(&wt).ok();
+}
+
+#[test]
+fn remove_worktree_path_remains_when_replaced_with_readonly_file() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-rm-remain")
+        .join("worker-0");
+    let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    let parent = wt.path.parent().unwrap().to_path_buf();
+    let _ = std::process::Command::new("git")
+        .args(["worktree", "remove", "--force"])
+        .arg(&wt.path)
+        .current_dir(&root)
+        .output();
+    let _ = std::fs::remove_dir_all(&wt.path);
+    std::fs::write(&wt.path, b"stuck").ok();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let orig = std::fs::metadata(&parent).unwrap().permissions();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).ok();
+        let result = remove_worktree(&wt);
+        std::fs::set_permissions(&parent, orig).ok();
+        let _ = std::fs::remove_file(&wt.path);
+        let _ = result;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = remove_worktree(&wt);
+    }
+}
+
+#[test]
+fn merge_skips_vanished_untracked_path() {
+    let (_keep, root) = init_repo();
+    let dest = root
+        .join(".whycodes")
+        .join("swarm")
+        .join("run-none-none")
+        .join("worker-0");
+    let wt = create_worktree(&root, &dest, "worker-0").expect("create");
+    let ghost = wt.path.join("ghost.txt");
+    std::fs::write(&ghost, b"temp\n").unwrap();
+    std::fs::remove_file(&ghost).unwrap();
+    let report = merge_into_main(&wt, &root);
+    assert!(
+        report.applied.iter().all(|p| p != "ghost.txt")
+            && report.conflicts.iter().all(|c| c.path != "ghost.txt"),
         "{report:?}"
     );
     remove_worktree(&wt).ok();

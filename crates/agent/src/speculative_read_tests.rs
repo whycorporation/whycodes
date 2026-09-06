@@ -256,6 +256,23 @@ async fn maybe_start_pretty_json_empty_path_is_none() {
     assert!(jobs.is_empty());
 }
 
+#[tokio::test]
+async fn maybe_start_unicode_escape_falls_back_to_serde() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("n.txt"), "payload").unwrap();
+    let c = ctx(dir.path());
+    let mut jobs = Vec::new();
+    maybe_start(
+        &mut jobs,
+        "c1",
+        "read",
+        r#"{"path": "\u006e.txt", "offset": 1, "limit": 9}"#,
+        &c,
+    );
+    assert_eq!(jobs.len(), 1, "serde path \\u006e.txt should spawn");
+    abort_all(&mut jobs);
+}
+
 #[test]
 fn maybe_start_ignores_non_read_tools() {
     let mut jobs = Vec::new();

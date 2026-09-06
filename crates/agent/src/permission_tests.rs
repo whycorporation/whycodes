@@ -111,6 +111,16 @@ fn permission_line_allows_yes_variants() {
     assert!(!permission_line_allows("nope"));
 }
 
+#[test]
+fn permission_from_read_err_denies() {
+    assert!(!permission_from_read(
+        Err(std::io::Error::other("stdin closed")),
+        "y"
+    ));
+    assert!(permission_from_read(Ok(1), "y"));
+    assert!(!permission_from_read(Ok(0), "n"));
+}
+
 #[tokio::test]
 async fn stdin_prompter_eof_denies() {
     if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
@@ -129,6 +139,21 @@ async fn stdin_prompter_eof_denies() {
     )
     .await
     .expect("stdin ask with detail must not hang on EOF");
+    let _ = allowed;
+
+    let cfg = whycodes_config::NotifyConfig {
+        on: vec!["need_input".into()],
+        discord_webhook: Some("https://example.invalid/webhook".into()),
+        ..Default::default()
+    };
+    let allowed = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        StdinPrompter::default()
+            .with_notify(crate::notify::handle_from_config(&cfg))
+            .ask("bash", "echo notify"),
+    )
+    .await
+    .expect("stdin ask with notify must not hang on EOF");
     let _ = allowed;
 }
 
